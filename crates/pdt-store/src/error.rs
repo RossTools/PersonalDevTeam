@@ -8,6 +8,8 @@ pub enum StoreError {
     Migrate(#[from] sqlx::migrate::MigrateError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("corrupt row: {0}")]
+    Corrupt(String),
 }
 
 impl From<sqlx::Error> for StoreError {

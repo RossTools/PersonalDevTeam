@@ -20,6 +20,12 @@ pub enum GitError {
     GitMissing,
     #[error("git command failed: {0}")]
     Command(String),
+    #[error("invalid branch name: {0}")]
+    InvalidBranch(String),
+    #[error("a branch named {0} already exists")]
+    BranchExists(String),
+    #[error("unknown base branch or commit: {0}")]
+    UnknownRef(String),
 }
 
 /// A git invocation that ran but exited non-zero.
@@ -97,6 +103,68 @@ fn classify_failure(path: &Path, f: Failed) -> GitError {
     } else {
         GitError::Command(f.stderr)
     }
+}
+
+/// Checks a branch name with `git check-ref-format --branch`.
+pub fn check_branch_name(repo: &Path, branch: &str) -> Result<(), GitError> {
+    match git_with_env(repo, &["check-ref-format", "--branch", branch], &[])? {
+        Ok(_) => Ok(()),
+        Err(_) => Err(GitError::InvalidBranch(branch.to_string())),
+    }
+}
+
+/// Creates `path` as a new worktree on new branch `branch`, starting at `base`. Returns the base commit SHA.
+pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Result<String, GitError> {
+    check_branch_name(repo, branch)?;
+    let spec = format!("{base}^{{commit}}");
+    let sha = match git_with_env(repo, &["rev-parse", "--verify", "--quiet", &spec], &[])? {
+        Ok(s) if !s.is_empty() => s,
+        _ => return Err(GitError::UnknownRef(base.to_string())),
+    };
+    if path.exists() {
+        return Err(GitError::Command(format!("worktree path already exists: {}", path.display())));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
+    }
+    let path_str = path.to_string_lossy();
+    match git_with_env(repo, &["worktree", "add", "-b", branch, &path_str, &sha], &[])? {
+        Ok(_) => Ok(sha),
+        Err(f) if f.stderr.contains("already exists") && f.stderr.contains("branch") => {
+            Err(GitError::BranchExists(branch.to_string()))
+        }
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
+/// Adds `pattern` as a line to the repository's `info/exclude` (shared by all its worktrees) unless it is
+/// already there. This is a local ignore file that is never committed.
+pub fn ensure_excluded(repo: &Path, pattern: &str) -> Result<(), GitError> {
+    let common = match git_with_env(repo, &["rev-parse", "--git-common-dir"], &[])? {
+        Ok(s) => PathBuf::from(native_separators(s)),
+        Err(f) => return Err(classify_failure(repo, f)),
+    };
+    let common = if common.is_absolute() { common } else { repo.join(common) };
+    let file = common.join("info").join("exclude");
+    let io = |e: std::io::Error| GitError::Command(format!("updating {}: {e}", file.display()));
+    let mut text = match std::fs::read_to_string(&file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(io(e)),
+    };
+    if text.lines().any(|l| l.trim() == pattern) {
+        return Ok(());
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(pattern);
+    text.push('\n');
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+    }
+    std::fs::write(&file, text).map_err(io)
 }
 
 #[cfg(test)]
@@ -199,5 +267,76 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("nope");
         assert!(matches!(resolve_repo(&missing), Err(GitError::PathNotFound(_))));
+    }
+
+    fn git_ok(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A repo on `main` with one commit; returns the HEAD sha.
+    fn repo_with_commit(dir: &Path) -> String {
+        std::fs::create_dir_all(dir).unwrap();
+        init_repo(dir);
+        git_ok(dir, &["commit", "--allow-empty", "-m", "init", "-q"]);
+        git_ok(dir, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn add_worktree_creates_branch_at_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let head = repo_with_commit(&repo);
+        let wt = repo.join(".worktrees").join("feature-x");
+        let sha = add_worktree(&repo, &wt, "feature/x", "main").unwrap();
+        assert_eq!(sha, head);
+        let info = resolve_repo(&wt).unwrap();
+        assert_eq!(info.current_branch.as_deref(), Some("feature/x"));
+        assert!(same_dir(&info.root, &wt));
+    }
+
+    #[test]
+    fn add_worktree_errors_are_typed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        repo_with_commit(&repo);
+        let wt = |n: &str| tmp.path().join("wts").join(n);
+        assert!(matches!(add_worktree(&repo, &wt("a"), "main", "main"), Err(GitError::BranchExists(b)) if b == "main"));
+        assert!(
+            matches!(add_worktree(&repo, &wt("b"), "b", "no-such-ref"), Err(GitError::UnknownRef(r)) if r == "no-such-ref")
+        );
+        assert!(matches!(add_worktree(&repo, &wt("c"), "bad..name", "main"), Err(GitError::InvalidBranch(_))));
+    }
+
+    #[test]
+    fn worktrees_are_excluded_from_the_main_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        repo_with_commit(&repo);
+        ensure_excluded(&repo, "/.worktrees/").unwrap();
+        ensure_excluded(&repo, "/.worktrees/").unwrap();
+        add_worktree(&repo, &repo.join(".worktrees").join("a"), "a", "main").unwrap();
+        add_worktree(&repo, &repo.join(".worktrees").join("b"), "b", "main").unwrap();
+        assert_eq!(git_ok(&repo, &["status", "--porcelain"]), "", "main checkout stays clean");
+        let exclude = std::fs::read_to_string(repo.join(".git").join("info").join("exclude")).unwrap();
+        assert_eq!(exclude.lines().filter(|l| l.trim() == "/.worktrees/").count(), 1);
+    }
+
+    #[test]
+    fn ensure_excluded_keeps_existing_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        repo_with_commit(&repo);
+        let file = repo.join(".git").join("info").join("exclude");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "*.log").unwrap(); // no trailing newline
+        ensure_excluded(&repo, "/.worktrees/").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "*.log\n/.worktrees/\n");
     }
 }

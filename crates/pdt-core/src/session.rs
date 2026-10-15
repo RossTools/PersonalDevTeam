@@ -1,0 +1,484 @@
+//! Terminal session types and the rules for launching them. Pure: callers supply the platform facts.
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+pub const MAX_TERMINAL_DIM: u16 = 1000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SessionKind {
+    Shell,
+    AgentTui,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AgentKind {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SessionStatus {
+    Running,
+    Finished,
+    Interrupted,
+}
+
+impl SessionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionKind::Shell => "shell",
+            SessionKind::AgentTui => "agent_tui",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        [SessionKind::Shell, SessionKind::AgentTui].into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+impl AgentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentKind::Claude => "claude",
+            AgentKind::Codex => "codex",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        [AgentKind::Claude, AgentKind::Codex].into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+impl SessionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionStatus::Running => "running",
+            SessionStatus::Finished => "finished",
+            SessionStatus::Interrupted => "interrupted",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        [SessionStatus::Running, SessionStatus::Finished, SessionStatus::Interrupted]
+            .into_iter()
+            .find(|k| k.as_str() == s)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Session {
+    pub id: String,
+    pub project_id: String,
+    /// None means the session runs in the project's main checkout.
+    pub worktree_id: Option<String>,
+    pub kind: SessionKind,
+    pub agent: Option<AgentKind>,
+    pub title: String,
+    /// Working directory, native separators.
+    pub cwd: String,
+    pub status: SessionStatus,
+    pub exit_code: Option<i32>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number | null")]
+    pub ended_at: Option<i64>,
+    /// The agent's own conversation id. Only Codex needs it (Claude's conversation id is `id`); it is found in
+    /// Codex's rollout files once a turn has been taken, and None until then.
+    pub external_session_id: Option<String>,
+    /// Codex only: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
+    /// resume), in ms. Matches the session to its conversation's start time. Resuming a bound conversation leaves it
+    /// alone. None for rows from before it was recorded.
+    #[ts(type = "number | null")]
+    pub fresh_started_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TerminalSize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+impl TerminalSize {
+    pub fn validate(self) -> Result<Self, SessionValidationError> {
+        let ok = |d: u16| (1..=MAX_TERMINAL_DIM).contains(&d);
+        if ok(self.cols) && ok(self.rows) { Ok(self) } else { Err(SessionValidationError::BadSize) }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NewSession {
+    pub project_id: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub worktree_id: Option<String>,
+    pub kind: SessionKind,
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent: Option<AgentKind>,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValidSession {
+    pub project_id: String,
+    pub worktree_id: Option<String>,
+    pub kind: SessionKind,
+    pub agent: Option<AgentKind>,
+    pub size: TerminalSize,
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum SessionValidationError {
+    #[error("project id must not be empty")]
+    EmptyProject,
+    #[error("an agent terminal needs an agent (claude or codex)")]
+    MissingAgent,
+    #[error("a shell session must not name an agent")]
+    UnexpectedAgent,
+    #[error("terminal size must be between 1 and 1000 columns and rows")]
+    BadSize,
+}
+
+impl NewSession {
+    pub fn validate(&self) -> Result<ValidSession, SessionValidationError> {
+        let project_id = self.project_id.trim();
+        if project_id.is_empty() {
+            return Err(SessionValidationError::EmptyProject);
+        }
+        let worktree_id = self.worktree_id.as_deref().map(str::trim).filter(|w| !w.is_empty()).map(String::from);
+        match (self.kind, self.agent) {
+            (SessionKind::AgentTui, None) => return Err(SessionValidationError::MissingAgent),
+            (SessionKind::Shell, Some(_)) => return Err(SessionValidationError::UnexpectedAgent),
+            _ => {}
+        }
+        let size = TerminalSize { cols: self.cols, rows: self.rows }.validate()?;
+        Ok(ValidSession { project_id: project_id.into(), worktree_id, kind: self.kind, agent: self.agent, size })
+    }
+}
+
+/// Facts about the host that decide which programs to launch. Built by `pdt_agents::launch::detect_platform`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Platform {
+    pub windows: bool,
+    pub has_pwsh: bool,
+    pub unix_shell: Option<String>,
+    pub claude_program: String,
+    pub codex_program: String,
+    /// The user's login-shell PATH, when pdtd's own PATH is not it (a macOS app started by launchd gets only
+    /// /usr/bin:/bin:/usr/sbin:/sbin). Programs are looked up on it and sessions run with it.
+    pub login_path: Option<String>,
+    /// Codex's home directory (`$CODEX_HOME`, else `~/.codex`), where it saves conversations. None when it cannot be
+    /// determined.
+    pub codex_home: Option<std::path::PathBuf>,
+    /// Claude's config directory (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), where it saves conversations. None when
+    /// it cannot be determined.
+    pub claude_config_dir: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Launch {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// How to start an agent session: a new conversation, or continue one that was saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    Fresh,
+    /// Claude's conversation id is the session id, so each session resumes its own conversation.
+    Claude,
+    /// Codex's own id for this session's conversation (found in its rollout files).
+    Codex(String),
+}
+
+/// What to run for a session. Shells ignore `resume`. A resume that does not match the agent starts fresh.
+pub fn launch(
+    kind: SessionKind,
+    agent: Option<AgentKind>,
+    platform: &Platform,
+    resume: &Resume,
+    session_id: &str,
+) -> Launch {
+    let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    match (kind, agent) {
+        (SessionKind::Shell, _) if platform.windows => Launch {
+            program: if platform.has_pwsh { "pwsh" } else { "powershell.exe" }.into(),
+            args: args(&["-NoLogo"]),
+        },
+        (SessionKind::Shell, _) => Launch {
+            program: platform.unix_shell.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "/bin/zsh".into()),
+            args: args(&["-l"]),
+        },
+        (SessionKind::AgentTui, Some(AgentKind::Codex)) => Launch {
+            program: platform.codex_program.clone(),
+            args: match resume {
+                Resume::Codex(id) => args(&["resume", id]),
+                _ => vec![],
+            },
+        },
+        (SessionKind::AgentTui, _) => Launch {
+            program: platform.claude_program.clone(),
+            args: args(&[if *resume == Resume::Claude { "--resume" } else { "--session-id" }, session_id]),
+        },
+    }
+}
+
+/// `<Kind> · <where>`: where is the worktree's branch, or the project name for the main checkout.
+pub fn default_title(kind: SessionKind, agent: Option<AgentKind>, place: &str) -> String {
+    let label = match (kind, agent) {
+        (SessionKind::Shell, _) => "Shell",
+        (SessionKind::AgentTui, Some(AgentKind::Codex)) => "Codex",
+        (SessionKind::AgentTui, _) => "Claude",
+    };
+    format!("{label} · {place}")
+}
+
+pub const MAX_TITLE_CHARS: usize = 100;
+
+/// Trims a user-supplied session title; None when empty or longer than `MAX_TITLE_CHARS`.
+pub fn clean_title(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    (!t.is_empty() && t.chars().count() <= MAX_TITLE_CHARS).then(|| t.to_string())
+}
+
+/// pdtd's own configuration variables (keep in sync with crates/pdtd/src/config.rs). Never passed to children:
+/// a dev pdtd started inside a stable-hosted terminal must not inherit the stable port or data dir.
+const PDT_ENV_VARS: [&str; 5] = ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"];
+/// Removed for agents so they bill the user's subscription, not an API key (spec §5.5).
+const API_KEY_ENV_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
+/// Inherited from the shell that started pdtd (often Claude Code itself): they disable color or make `claude`
+/// believe it is nested. Never passed to any child. Only a running session's own `CLAUDE_CODE_*` variables are
+/// listed: user settings such as `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_USE_BEDROCK` must pass through.
+const LEAKED_ENV_VARS: [&str; 10] = [
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+];
+
+/// Whether the environment variable `name` must be removed from a child of this kind.
+pub fn is_scrubbed(kind: SessionKind, name: &str) -> bool {
+    PDT_ENV_VARS.contains(&name)
+        || LEAKED_ENV_VARS.contains(&name)
+        || (kind == SessionKind::AgentTui && API_KEY_ENV_VARS.contains(&name))
+}
+
+/// Client → server control messages on the PTY WebSocket (sent as text frames).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum PtyClientMessage {
+    Resize { cols: u16, rows: u16 },
+}
+
+/// Server → client control messages on the PTY WebSocket (sent as text frames).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum PtyServerMessage {
+    /// Sent once per connection after the scrollback replay (even an empty one). Binary frames before it are
+    /// replay: the client must not answer terminal queries in them again.
+    Ready,
+    Exit {
+        code: i32,
+    },
+    /// The session has no terminal in this daemon run (e.g. it was interrupted by a pdtd restart and not resumed).
+    /// Sent instead of `ready`, then the server closes; the client should stop reconnecting until the session is
+    /// restarted. A session that exited during this run still gets `ready` and `exit`.
+    NotRunning,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn platform(windows: bool, has_pwsh: bool, unix_shell: Option<&str>) -> Platform {
+        Platform {
+            windows,
+            has_pwsh,
+            unix_shell: unix_shell.map(Into::into),
+            claude_program: "claude".into(),
+            codex_program: "codex".into(),
+            login_path: None,
+            codex_home: None,
+            claude_config_dir: None,
+        }
+    }
+
+    const SID: &str = "0199e5a8-7c2e-7d4b-9a51-3f0e8c6b2d10";
+
+    fn launch_of(l: Launch) -> (String, Vec<String>) {
+        (l.program, l.args)
+    }
+
+    #[test]
+    fn enum_strings_match_serde() {
+        for k in [SessionKind::Shell, SessionKind::AgentTui] {
+            assert_eq!(serde_json::to_string(&k).unwrap(), format!("\"{}\"", k.as_str()));
+            assert_eq!(SessionKind::parse(k.as_str()), Some(k));
+        }
+        for a in [AgentKind::Claude, AgentKind::Codex] {
+            assert_eq!(serde_json::to_string(&a).unwrap(), format!("\"{}\"", a.as_str()));
+            assert_eq!(AgentKind::parse(a.as_str()), Some(a));
+        }
+        for s in [SessionStatus::Running, SessionStatus::Finished, SessionStatus::Interrupted] {
+            assert_eq!(serde_json::to_string(&s).unwrap(), format!("\"{}\"", s.as_str()));
+            assert_eq!(SessionStatus::parse(s.as_str()), Some(s));
+        }
+        assert_eq!(SessionKind::AgentTui.as_str(), "agent_tui");
+        assert_eq!(SessionKind::parse("bogus"), None);
+    }
+
+    #[test]
+    fn shell_launch_per_platform() {
+        assert_eq!(
+            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), &Resume::Fresh, SID)),
+            ("pwsh".into(), vec!["-NoLogo".into()])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), &Resume::Fresh, SID)),
+            ("powershell.exe".into(), vec!["-NoLogo".into()])
+        );
+        assert_eq!(
+            launch_of(launch(
+                SessionKind::Shell,
+                None,
+                &platform(false, false, Some("/bin/bash")),
+                &Resume::Fresh,
+                SID
+            )),
+            ("/bin/bash".into(), vec!["-l".into()])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("  ")), &Resume::Fresh, SID)),
+            ("/bin/zsh".into(), vec!["-l".into()])
+        );
+    }
+
+    #[test]
+    fn agent_launch_and_resume() {
+        let p = platform(false, false, None);
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Fresh, SID)),
+            ("claude".into(), vec!["--session-id".into(), SID.into()])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Claude, SID)),
+            ("claude".into(), vec!["--resume".into(), SID.into()])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Fresh, SID)),
+            ("codex".into(), vec![])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Codex("019-abc".into()), SID)),
+            ("codex".into(), vec!["resume".into(), "019-abc".into()])
+        );
+        // A resume for the wrong agent starts fresh, and a Claude session never gets Codex's id.
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Claude, SID)),
+            ("codex".into(), vec![])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Codex("x".into()), SID)),
+            ("claude".into(), vec!["--session-id".into(), SID.into()])
+        );
+        let mut custom = p.clone();
+        custom.codex_program = "/opt/codex".into();
+        assert_eq!(
+            launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, &Resume::Fresh, SID).program,
+            "/opt/codex"
+        );
+    }
+
+    #[test]
+    fn scrub_rules() {
+        for kind in [SessionKind::Shell, SessionKind::AgentTui] {
+            for v in ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"] {
+                assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
+            }
+            for v in [
+                "NO_COLOR",
+                "FORCE_COLOR",
+                "CLAUDECODE",
+                "CLAUDE_PID",
+                "CLAUDE_CODE_ENTRYPOINT",
+                "CLAUDE_CODE_SESSION_ID",
+            ] {
+                assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
+            }
+            for v in ["PATH", "TERM", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"] {
+                assert!(!is_scrubbed(kind, v), "{kind:?} drops {v}");
+            }
+        }
+        assert!(is_scrubbed(SessionKind::AgentTui, "ANTHROPIC_API_KEY"));
+        assert!(is_scrubbed(SessionKind::AgentTui, "OPENAI_API_KEY"));
+        assert!(!is_scrubbed(SessionKind::Shell, "ANTHROPIC_API_KEY"));
+    }
+
+    fn new(kind: SessionKind, agent: Option<AgentKind>, cols: u16, rows: u16) -> NewSession {
+        NewSession { project_id: " p1 ".into(), worktree_id: Some("  ".into()), kind, agent, cols, rows }
+    }
+
+    #[test]
+    fn validate_session_input() {
+        let v = new(SessionKind::Shell, None, 80, 24).validate().unwrap();
+        assert_eq!(v.project_id, "p1");
+        assert_eq!(v.worktree_id, None, "blank worktree id means the repo root");
+        assert_eq!(v.size, TerminalSize { cols: 80, rows: 24 });
+        assert_eq!(
+            new(SessionKind::AgentTui, None, 80, 24).validate().unwrap_err(),
+            SessionValidationError::MissingAgent
+        );
+        assert_eq!(
+            new(SessionKind::Shell, Some(AgentKind::Claude), 80, 24).validate().unwrap_err(),
+            SessionValidationError::UnexpectedAgent
+        );
+        assert_eq!(new(SessionKind::Shell, None, 0, 24).validate().unwrap_err(), SessionValidationError::BadSize);
+        assert_eq!(new(SessionKind::Shell, None, 80, 1001).validate().unwrap_err(), SessionValidationError::BadSize);
+        let mut blank = new(SessionKind::Shell, None, 80, 24);
+        blank.project_id = " ".into();
+        assert_eq!(blank.validate().unwrap_err(), SessionValidationError::EmptyProject);
+    }
+
+    #[test]
+    fn pty_messages_wire_format() {
+        assert_eq!(serde_json::to_string(&PtyServerMessage::Exit { code: 3 }).unwrap(), r#"{"type":"exit","code":3}"#);
+        assert_eq!(serde_json::to_string(&PtyServerMessage::Ready).unwrap(), r#"{"type":"ready"}"#);
+        assert_eq!(serde_json::to_string(&PtyServerMessage::NotRunning).unwrap(), r#"{"type":"not_running"}"#);
+        let m: PtyClientMessage = serde_json::from_str(r#"{"type":"resize","cols":100,"rows":30}"#).unwrap();
+        assert_eq!(m, PtyClientMessage::Resize { cols: 100, rows: 30 });
+    }
+
+    #[test]
+    fn titles() {
+        assert_eq!(default_title(SessionKind::Shell, None, "ai-dev-shop"), "Shell · ai-dev-shop");
+        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Claude), "feature-x"), "Claude · feature-x");
+        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Codex), "p"), "Codex · p");
+    }
+
+    #[test]
+    fn title_cleaning() {
+        assert_eq!(clean_title("  hi  ").as_deref(), Some("hi"));
+        assert_eq!(clean_title("   "), None);
+        assert_eq!(clean_title(&"x".repeat(100)).map(|t| t.len()), Some(100));
+        assert_eq!(clean_title(&"x".repeat(101)), None);
+        assert_eq!(clean_title(&"é".repeat(100)).map(|t| t.chars().count()), Some(100));
+    }
+}

@@ -32,4 +32,19 @@ describe('api client', () => {
     expect(err.code).toBe('http_error');
     expect(err.message).toBe('HTTP 502');
   });
+
+  it('returns undefined for 204 responses and encodes ids', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(api.deleteSession('a/b')).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/sessions/a%2Fb');
+    expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+  });
+
+  it('posts new sessions as JSON', async () => {
+    const fetchMock = stubFetch(200, { id: 's1' });
+    await api.createSession({ projectId: 'p', kind: 'shell', cols: 80, rows: 24 });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/sessions');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ projectId: 'p', kind: 'shell', cols: 80, rows: 24 });
+  });
 });

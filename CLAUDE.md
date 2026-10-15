@@ -7,6 +7,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - crates/pdt-core — pure domain types + brand constants (no I/O)
 - crates/pdt-git — git CLI wrapper
 - crates/pdt-store — SQLite (sqlx) + migrations in crates/pdt-store/migrations
+- crates/pdt-agents — PTY terminals (later: structured agent adapters)
 - crates/pdt-api — axum routes; errors are JSON {code, message}
 - crates/pdtd — daemon binary
 - web/ — React + Vite UI; web/ui is the design system (tokens.css is the only place colors live)
@@ -27,11 +28,21 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - Desktop app in dev: `cargo build -p pdtd`, then `cargo run -p pdt-desktop` with `PDT_PROFILE=dev` and `PDT_WEB_DIR` set.
 - Data lives in `<local data dir>/pdt` or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir.
 - `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>` and `localhost:<port>` (DNS-rebinding guard).
+- Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.
+- Agent restart: Claude runs with `--session-id <session id>` and restarts with `--resume <session id>`. Codex cannot be given an id, so each Codex session resumes its own conversation by id: pdtd finds it in `$CODEX_HOME/sessions/**/rollout-*.jsonl` (default `~/.codex`), matches it by working folder and start time against the session's `fresh_started_at` (when it was last launched without a conversation), stores it as `external_session_id` (at process exit or restart) and restarts with `codex resume <id>`. Fresh Codex launches in one folder are spaced 5 s apart so start times stay unambiguous (a create or restart can wait up to 5 s). A session that never took a turn restarts fresh.
+- Auto-resume: at startup pdtd decides how to resume every session left `interrupted` (binding Codex conversations) before serving, then restarts them in the background once it is serving (resume mode, 120x30; clients resize on attach; a manual Restart that gets there first wins and auto-resume skips that session; several fresh Codex sessions in one folder start 5 s apart); a session that fails to start stays `interrupted`. Stopped (`finished`) sessions are never auto-resumed.
+- Resume fallback: Claude saves `<claude config dir>/projects/*/<session id>.jsonl` only after its first turn. If that file is missing, restart/auto-resume launches `--session-id <id>` (fresh conversation, same id) instead of `--resume`. Config dir is `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
+- Terminal reconnect: the WebSocket for an existing session with no PTY upgrades, sends `{"type":"not_running"}` and closes; the browser then shows "Session ended." and reattaches when the session list shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s).
+- Logs: <data dir>/logs/pdtd.<date>.log; the desktop app writes a spawned daemon's startup output to <data dir>/logs/pdtd-launch.log.
+- Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).
+- The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.
+- Stable app: scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd is a sidecar via src-tauri/tauri.bundle.conf.json), stop the stable pdtd, install and launch. -BuildOnly / --build-only only builds.
 
 ## Rules
 - TDD for core logic. Tests must pass on Windows and macOS.
 - Never run or restart the *stable* pdtd (port 7420) from a dev build — it hosts the agents building this repo. Use PDT_PROFILE=dev.
-- Names (product, slug, daemon, ports) live only in crates/pdt-core/src/brand.rs (+ tauri.conf.json).
+- Never run scripts/release-stable.* without -BuildOnly/--build-only, never run the built installer, and never POST /api/shutdown on port 7420. Only the user updates the stable app.
+- Names (product, slug, daemon, ports) live only in crates/pdt-core/src/brand.rs (+ desktop/src-tauri/tauri.conf.json, desktop/src-tauri/tauri.bundle.conf.json and scripts/release-stable.*).
 - Never edit an applied migration (sqlx checksums them); add a new one.
 - On Windows, run cargo from PowerShell, not Git Bash: Git Bash's `link` shadows MSVC `link.exe`.
 - The `codex` on PATH may be the Codex desktop app (an old version) shadowing the npm CLI; check `codex --version`.

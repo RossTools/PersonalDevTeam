@@ -1,7 +1,11 @@
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use pdt_agents::PtyError;
 use pdt_core::project::ValidationError;
+use pdt_core::session::SessionValidationError;
+use pdt_core::worktree::WorktreeValidationError;
 use pdt_git::GitError;
 use pdt_store::StoreError;
 use serde::Serialize;
@@ -48,6 +52,41 @@ impl From<ValidationError> for ApiError {
     }
 }
 
+impl From<WorktreeValidationError> for ApiError {
+    fn from(e: WorktreeValidationError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<SessionValidationError> for ApiError {
+    fn from(e: SessionValidationError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<PtyError> for ApiError {
+    fn from(e: PtyError) -> Self {
+        match e {
+            PtyError::ProgramNotFound(_) => Self::new(StatusCode::BAD_REQUEST, "program_not_found", e.to_string()),
+            PtyError::Spawn(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "spawn_failed", e.to_string()),
+            PtyError::NotFound(_) | PtyError::NotRunning(_) => {
+                Self::new(StatusCode::CONFLICT, "not_running", "this session is not running")
+            }
+            PtyError::AlreadyExists(_) => Self::new(StatusCode::CONFLICT, "already_running", e.to_string()),
+            PtyError::ShuttingDown => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, "shutting_down", "the daemon is shutting down")
+            }
+            PtyError::Io(_) => Self::internal(e),
+        }
+    }
+}
+
+impl From<JsonRejection> for ApiError {
+    fn from(rej: JsonRejection) -> Self {
+        Self::new(rej.status(), "invalid_input", rej.body_text())
+    }
+}
+
 impl From<GitError> for ApiError {
     fn from(e: GitError) -> Self {
         match e {
@@ -55,6 +94,9 @@ impl From<GitError> for ApiError {
             GitError::NotARepo(_) => Self::new(StatusCode::BAD_REQUEST, "not_a_git_repo", e.to_string()),
             GitError::GitMissing => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "git_missing", e.to_string()),
             GitError::Command(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "git_error", e.to_string()),
+            GitError::InvalidBranch(_) => Self::new(StatusCode::BAD_REQUEST, "invalid_branch", e.to_string()),
+            GitError::BranchExists(_) => Self::new(StatusCode::CONFLICT, "branch_exists", e.to_string()),
+            GitError::UnknownRef(_) => Self::new(StatusCode::BAD_REQUEST, "unknown_ref", e.to_string()),
         }
     }
 }
@@ -62,9 +104,7 @@ impl From<GitError> for ApiError {
 impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
         match e {
-            StoreError::Conflict(_) => {
-                Self::new(StatusCode::CONFLICT, "conflict", "a project for this repository already exists")
-            }
+            StoreError::Conflict(_) => Self::new(StatusCode::CONFLICT, "conflict", "this record already exists"),
             other => Self::internal(other),
         }
     }

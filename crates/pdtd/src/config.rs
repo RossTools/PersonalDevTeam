@@ -3,6 +3,8 @@ use pdt_core::brand::{DAEMON_BIN, Profile};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
 
+const VITE_DEV_PORT: u16 = 5173;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub profile: Profile,
@@ -33,9 +35,15 @@ impl Config {
                 None => bail!("could not determine a data directory; set PDT_DATA_DIR"),
             },
         };
-        let web_dir =
-            lookup("PDT_WEB_DIR").map(PathBuf::from).or_else(|| exe_dir.map(|d| d.join("web")).filter(|d| d.is_dir()));
-        let mut allowed_hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+        // Next to the exe (Windows installer, dev layouts), or in a macOS bundle's Contents/Resources.
+        let bundled_web =
+            |d: PathBuf| [d.join("web"), d.join("..").join("Resources").join("web")].into_iter().find(|w| w.is_dir());
+        let web_dir = lookup("PDT_WEB_DIR").map(PathBuf::from).or_else(|| exe_dir.and_then(bundled_web));
+        let mut allowed_hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}")];
+        if profile == Profile::Dev {
+            // `pnpm --dir web dev` serves the UI on 5173 and proxies /api here with its own Host and Origin.
+            allowed_hosts.extend([format!("localhost:{VITE_DEV_PORT}"), format!("127.0.0.1:{VITE_DEV_PORT}")]);
+        }
         if let Some(extra) = lookup("PDT_ALLOWED_HOSTS") {
             allowed_hosts.extend(extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from));
         }
@@ -106,20 +114,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!((c.port, c.data_dir, c.web_dir), (7420, PathBuf::from("/data").join("pdt"), None));
-        assert_eq!(c.allowed_hosts.len(), 2);
+        assert_eq!(c.allowed_hosts.len(), 3);
     }
 
     #[test]
     fn allowed_hosts_default_and_extra() {
         let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
-        assert_eq!(c.allowed_hosts, ["127.0.0.1:7420", "localhost:7420"]);
+        assert_eq!(c.allowed_hosts, ["127.0.0.1:7420", "localhost:7420", "[::1]:7420"]);
         let c = Config::from_lookup(
             lookup(&[("PDT_PORT", "9000"), ("PDT_ALLOWED_HOSTS", " box.tail.ts.net:9000 ,, other:1 ,")]),
             Some("/d".into()),
             None,
         )
         .unwrap();
-        assert_eq!(c.allowed_hosts, ["127.0.0.1:9000", "localhost:9000", "box.tail.ts.net:9000", "other:1"]);
+        assert_eq!(
+            c.allowed_hosts,
+            ["127.0.0.1:9000", "localhost:9000", "[::1]:9000", "box.tail.ts.net:9000", "other:1"]
+        );
+    }
+
+    #[test]
+    fn dev_profile_allows_the_vite_dev_server() {
+        let c = Config::from_lookup(lookup(&[("PDT_PROFILE", "dev")]), Some("/d".into()), None).unwrap();
+        assert!(c.allowed_hosts.contains(&"localhost:5173".to_string()));
+        assert!(c.allowed_hosts.contains(&"127.0.0.1:5173".to_string()));
+        let stable = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert!(!stable.allowed_hosts.iter().any(|h| h.ends_with(":5173")));
     }
 
     #[test]
@@ -133,6 +153,20 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("web")).unwrap();
         let c = Config::from_lookup(lookup(&[]), Some("/d".into()), Some(tmp.path().to_path_buf())).unwrap();
         assert_eq!(c.web_dir, Some(tmp.path().join("web")));
+    }
+
+    #[test]
+    fn web_dir_inside_a_macos_app_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let macos = tmp.path().join("Contents").join("MacOS");
+        let resources_web = tmp.path().join("Contents").join("Resources").join("web");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::create_dir_all(&resources_web).unwrap();
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), Some(macos)).unwrap();
+        assert_eq!(
+            c.web_dir.map(|d| std::fs::canonicalize(d).unwrap()),
+            Some(std::fs::canonicalize(resources_web).unwrap())
+        );
     }
 
     #[tokio::test]

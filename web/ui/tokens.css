@@ -16,6 +16,22 @@
   --pdt-radius: 6px;
   --pdt-font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --pdt-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --pdt-term-black: #17181d;
+  --pdt-term-red: #c9302c;
+  --pdt-term-green: #15803d;
+  --pdt-term-yellow: #a16207;
+  --pdt-term-blue: #2563eb;
+  --pdt-term-magenta: #a21caf;
+  --pdt-term-cyan: #0e7490;
+  --pdt-term-white: #6b7080;
+  --pdt-term-bright-black: #4b5063;
+  --pdt-term-bright-red: #dc2626;
+  --pdt-term-bright-green: #16a34a;
+  --pdt-term-bright-yellow: #b45309;
+  --pdt-term-bright-blue: #1d4ed8;
+  --pdt-term-bright-magenta: #c026d3;
+  --pdt-term-bright-cyan: #0891b2;
+  --pdt-term-bright-white: #3d4150;
   color-scheme: light;
 }
 
@@ -35,6 +51,22 @@
     --pdt-waiting: #f59e0b;
     --pdt-failed: #f87171;
     --pdt-idle: #8a8f9c;
+    --pdt-term-black: #3a3d47;
+    --pdt-term-red: #f87171;
+    --pdt-term-green: #34d399;
+    --pdt-term-yellow: #f59e0b;
+    --pdt-term-blue: #60a5fa;
+    --pdt-term-magenta: #e879f9;
+    --pdt-term-cyan: #22d3ee;
+    --pdt-term-white: #c5c8d2;
+    --pdt-term-bright-black: #6b7080;
+    --pdt-term-bright-red: #fca5a5;
+    --pdt-term-bright-green: #6ee7b7;
+    --pdt-term-bright-yellow: #fcd34d;
+    --pdt-term-bright-blue: #93c5fd;
+    --pdt-term-bright-magenta: #f0abfc;
+    --pdt-term-bright-cyan: #67e8f9;
+    --pdt-term-bright-white: #f5f6fa;
     color-scheme: dark;
   }
 }
@@ -54,5 +86,21 @@
   --pdt-waiting: #f59e0b;
   --pdt-failed: #f87171;
   --pdt-idle: #8a8f9c;
+  --pdt-term-black: #3a3d47;
+  --pdt-term-red: #f87171;
+  --pdt-term-green: #34d399;
+  --pdt-term-yellow: #f59e0b;
+  --pdt-term-blue: #60a5fa;
+  --pdt-term-magenta: #e879f9;
+  --pdt-term-cyan: #22d3ee;
+  --pdt-term-white: #c5c8d2;
+  --pdt-term-bright-black: #6b7080;
+  --pdt-term-bright-red: #fca5a5;
+  --pdt-term-bright-green: #6ee7b7;
+  --pdt-term-bright-yellow: #fcd34d;
+  --pdt-term-bright-blue: #93c5fd;
+  --pdt-term-bright-magenta: #f0abfc;
+  --pdt-term-bright-cyan: #67e8f9;
+  --pdt-term-bright-white: #f5f6fa;
   color-scheme: dark;
 }

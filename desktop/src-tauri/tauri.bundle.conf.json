@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/pdtd"],
+    "resources": { "../../web/dist/": "web/" },
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
+}

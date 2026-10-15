@@ -12,6 +12,7 @@ export function ProjectsList({ selectedId, onSelect }: { selectedId: string | nu
         <li key={p.id}>
           <button
             type="button"
+            aria-current={selectedId === p.id ? 'true' : undefined}
             onClick={() => onSelect(p.id)}
             className={`w-full text-left px-2 py-1 rounded-pdt text-sm truncate ${selectedId === p.id ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
             title={p.repoPath}
