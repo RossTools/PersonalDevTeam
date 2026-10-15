@@ -168,12 +168,17 @@ pub fn menu_label(status: &Status) -> (String, bool) {
 /// per-user NSIS install dir `<local app data>\<product>`, on macOS an `.app` bundle. Err gives the menu text.
 pub fn install_check(os: Os, exe: &Path, local_app_data: Option<&Path>) -> Result<(), String> {
     let installed = match os {
-        Os::Windows => match (exe.parent(), local_app_data) {
-            (Some(dir), Some(lad)) => {
-                let expected = lad.join(PRODUCT_NAME);
-                dir.to_string_lossy().to_lowercase() == expected.to_string_lossy().to_lowercase()
+        // Compared as text, not with Path, so the check means the same on every host (tests run on macOS too,
+        // where `\` is not a separator).
+        Os::Windows => match local_app_data {
+            Some(lad) => {
+                let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
+                let exe = norm(exe);
+                let dir = exe.rsplit_once('\\').map_or("", |(d, _)| d);
+                let expected = format!("{}\\{}", norm(lad).trim_end_matches('\\'), PRODUCT_NAME.to_lowercase());
+                dir == expected
             }
-            _ => false,
+            None => false,
         },
         Os::Mac => app_bundle_of(exe).is_some(),
         Os::Other => false,
