@@ -11,7 +11,7 @@ export function IconRail({ active, onSelect }: { active: ViewId; onSelect: (v: V
           title={label}
           aria-current={active === id ? 'page' : undefined}
           onClick={() => onSelect(id)}
-          className={`p-2 rounded-pdt outline-none focus-visible:ring-2 focus-visible:ring-ring ${active === id ? 'bg-accent-soft text-fg' : 'text-muted hover:text-fg hover:bg-surface-2'}`}
+          className={`min-h-11 min-w-11 md:min-h-0 md:min-w-0 flex items-center justify-center p-2 rounded-pdt outline-none focus-visible:ring-2 focus-visible:ring-ring ${active === id ? 'bg-accent-soft text-fg' : 'text-muted hover:text-fg hover:bg-surface-2'}`}
         >
           <Icon size={18} aria-hidden />
         </button>
