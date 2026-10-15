@@ -55,6 +55,9 @@ impl From<GitError> for ApiError {
             GitError::NotARepo(_) => Self::new(StatusCode::BAD_REQUEST, "not_a_git_repo", e.to_string()),
             GitError::GitMissing => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "git_missing", e.to_string()),
             GitError::Command(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "git_error", e.to_string()),
+            GitError::InvalidBranch(_) => Self::new(StatusCode::BAD_REQUEST, "invalid_branch", e.to_string()),
+            GitError::BranchExists(_) => Self::new(StatusCode::CONFLICT, "branch_exists", e.to_string()),
+            GitError::UnknownRef(_) => Self::new(StatusCode::BAD_REQUEST, "unknown_ref", e.to_string()),
         }
     }
 }
