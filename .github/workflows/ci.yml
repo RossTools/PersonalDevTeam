@@ -16,8 +16,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Rust toolchain (from rust-toolchain.toml)
-        run: rustup show active-toolchain || rustup toolchain install
+      - name: Show Rust toolchain
+        run: rustup show
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -37,3 +37,28 @@ jobs:
       - run: pnpm --dir web build
       - run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
       - run: cargo test -p pdt-desktop
+
+  bundle:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+          - os: macos-latest
+            bundles: app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir web build
+      - run: cargo build --release -p pdtd
+      - run: node scripts/stage-pdtd.mjs
+      - run: pnpm --dir desktop exec tauri build --config ${{ github.workspace }}/desktop/src-tauri/tauri.bundle.conf.json --bundles ${{ matrix.bundles }}

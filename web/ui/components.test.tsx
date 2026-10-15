@@ -17,6 +17,11 @@ describe('Button', () => {
     expect(b).toHaveAttribute('type', 'submit');
     expect(b.className).toContain('border-border');
   });
+
+  it('ghost Button renders with its label', () => {
+    render(<Button variant="ghost">Quiet</Button>);
+    expect(screen.getByRole('button', { name: 'Quiet' })).toBeInTheDocument();
+  });
 });
 
 describe('StatusDot', () => {
@@ -24,5 +29,13 @@ describe('StatusDot', () => {
     render(<StatusDot status="waiting" />);
     const dot = screen.getByRole('img', { name: 'waiting' });
     expect(dot.className).toContain('bg-waiting');
+  });
+
+  it('StatusDot labels every status', () => {
+    for (const s of ['running', 'waiting', 'failed', 'idle'] as const) {
+      const { unmount } = render(<StatusDot status={s} />);
+      expect(screen.getByRole('img', { name: s })).toBeInTheDocument();
+      unmount();
+    }
   });
 });

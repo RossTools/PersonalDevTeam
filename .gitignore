@@ -5,3 +5,4 @@ node_modules/
 dist/
 *.db
 desktop/src-tauri/gen/
+desktop/src-tauri/binaries/

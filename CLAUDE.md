@@ -7,6 +7,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - crates/pdt-core — pure domain types + brand constants (no I/O)
 - crates/pdt-git — git CLI wrapper
 - crates/pdt-store — SQLite (sqlx) + migrations in crates/pdt-store/migrations
+- crates/pdt-agents — PTY terminals (later: structured agent adapters)
 - crates/pdt-api — axum routes; errors are JSON {code, message}
 - crates/pdtd — daemon binary
 - web/ — React + Vite UI; web/ui is the design system (tokens.css is the only place colors live)
@@ -27,10 +28,16 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - Desktop app in dev: `cargo build -p pdtd`, then `cargo run -p pdt-desktop` with `PDT_PROFILE=dev` and `PDT_WEB_DIR` set.
 - Data lives in `<local data dir>/pdt` or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir.
 - `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>` and `localhost:<port>` (DNS-rebinding guard).
+- Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.
+- Logs: <data dir>/logs/pdtd.<date>.log; the desktop app writes a spawned daemon's startup output to <data dir>/logs/pdtd-launch.log.
+- Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).
+- The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.
+- Stable app: scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd is a sidecar via src-tauri/tauri.bundle.conf.json), stop the stable pdtd, install and launch. -BuildOnly / --build-only only builds.
 
 ## Rules
 - TDD for core logic. Tests must pass on Windows and macOS.
 - Never run or restart the *stable* pdtd (port 7420) from a dev build — it hosts the agents building this repo. Use PDT_PROFILE=dev.
+- Never run scripts/release-stable.* without -BuildOnly/--build-only, never run the built installer, and never POST /api/shutdown on port 7420. Only the user updates the stable app.
 - Names (product, slug, daemon, ports) live only in crates/pdt-core/src/brand.rs (+ tauri.conf.json).
 - Never edit an applied migration (sqlx checksums them); add a new one.
 - On Windows, run cargo from PowerShell, not Git Bash: Git Bash's `link` shadows MSVC `link.exe`.

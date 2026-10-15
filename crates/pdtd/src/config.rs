@@ -35,8 +35,10 @@ impl Config {
                 None => bail!("could not determine a data directory; set PDT_DATA_DIR"),
             },
         };
-        let web_dir =
-            lookup("PDT_WEB_DIR").map(PathBuf::from).or_else(|| exe_dir.map(|d| d.join("web")).filter(|d| d.is_dir()));
+        // Next to the exe (Windows installer, dev layouts), or in a macOS bundle's Contents/Resources.
+        let bundled_web =
+            |d: PathBuf| [d.join("web"), d.join("..").join("Resources").join("web")].into_iter().find(|w| w.is_dir());
+        let web_dir = lookup("PDT_WEB_DIR").map(PathBuf::from).or_else(|| exe_dir.and_then(bundled_web));
         let mut allowed_hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}")];
         if profile == Profile::Dev {
             // `pnpm --dir web dev` serves the UI on 5173 and proxies /api here with its own Host and Origin.
@@ -151,6 +153,20 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("web")).unwrap();
         let c = Config::from_lookup(lookup(&[]), Some("/d".into()), Some(tmp.path().to_path_buf())).unwrap();
         assert_eq!(c.web_dir, Some(tmp.path().join("web")));
+    }
+
+    #[test]
+    fn web_dir_inside_a_macos_app_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let macos = tmp.path().join("Contents").join("MacOS");
+        let resources_web = tmp.path().join("Contents").join("Resources").join("web");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::create_dir_all(&resources_web).unwrap();
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), Some(macos)).unwrap();
+        assert_eq!(
+            c.web_dir.map(|d| std::fs::canonicalize(d).unwrap()),
+            Some(std::fs::canonicalize(resources_web).unwrap())
+        );
     }
 
     #[tokio::test]
