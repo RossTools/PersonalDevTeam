@@ -56,6 +56,13 @@ impl Store {
         rows.iter().map(to_session).collect()
     }
 
+    /// Sessions with the given status, oldest first.
+    pub async fn list_sessions_by_status(&self, status: SessionStatus) -> Result<Vec<Session>, StoreError> {
+        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE status = ? ORDER BY created_at, id");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(status.as_str()).fetch_all(&self.pool).await?;
+        rows.iter().map(to_session).collect()
+    }
+
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>, StoreError> {
         let sql = format!("SELECT {COLUMNS} FROM sessions WHERE id = ?");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
@@ -180,6 +187,21 @@ mod tests {
         let a = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((a.status, a.ended_at), (SessionStatus::Interrupted, Some(7)));
         assert_eq!(store.get_session("b").await.unwrap().unwrap().status, SessionStatus::Finished);
+    }
+
+    #[tokio::test]
+    async fn list_sessions_by_status_is_oldest_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for (id, at) in [("c", 3), ("a", 1), ("b", 2)] {
+            store.insert_session(&session(id, at)).await.unwrap();
+        }
+        store.end_session("b", SessionStatus::Finished, Some(0), 5).await.unwrap();
+        store.mark_running_interrupted(7).await.unwrap();
+        let ids = |v: Vec<Session>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(ids(store.list_sessions_by_status(SessionStatus::Interrupted).await.unwrap()), ["a", "c"]);
+        assert_eq!(ids(store.list_sessions_by_status(SessionStatus::Finished).await.unwrap()), ["b"]);
+        assert!(store.list_sessions_by_status(SessionStatus::Running).await.unwrap().is_empty());
     }
 
     #[tokio::test]

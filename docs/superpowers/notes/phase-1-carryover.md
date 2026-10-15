@@ -2,15 +2,10 @@
 
 Items that Phase 1 reviews deferred. Plan the ones tagged with a phase into that phase.
 
-## Fix before remote access (Phase 2)
-- **WebSocket reconnect flapping:** `PtySocket` resets its backoff on every open, so a session that keeps lagging (close 4000) reconnects every 500 ms and re-sends up to 512 KB of scrollback each time. Reset the backoff only after a connection has stayed healthy.
-- **Finished sessions after a pdtd restart** have no terminal. The UI retries 8 times, then shows "Could not connect". Treat 409 `not_running` as final and say "ended; output not kept".
-
 ## Phase 3 (structured agents)
 - **Child-process cleanup:**
   - Put session processes in a Windows Job Object, so `cmd.exe`-wrapped shims and their grandchildren die with the session or with pdtd.
   - On macOS, Stop sends only SIGHUP; escalate to SIGKILL after a grace period.
-- **Claude restart fallback:** restart uses `claude --resume <session id>`. That fails for a session killed before Claude saved its first conversation. Fall back to `--session-id` when the conversation file is missing.
 - **Codex** has no per-session resume id: `codex resume --last` is per folder.
 - **Scrollback is memory-only;** it is lost when pdtd restarts.
 
@@ -37,7 +32,7 @@ Items that Phase 1 reviews deferred. Plan the ones tagged with a phase into that
   - **Theme:** the xterm theme is read once at mount.
   - **Input and resize:** `onBinary` is not wired, and a resize is sent on every ResizeObserver tick.
   - **Accessibility:** the accessible name reads "runningShell" (the StatusDot label runs into the title), and the panel tabs lack arrow-key navigation and a tabpanel.
-  - **WebSocket handling:** unexpected JSON is not guarded, handlers stay attached after dispose, and `retry()` doesn't close a live socket.
+  - **WebSocket handling:** unexpected JSON is not guarded, and handlers stay attached after dispose.
 - **Desktop:**
   - A read timeout is reported as "not Personal Dev Team".
   - If the port goes from foreign to free mid-wait, the app never spawns pdtd.
@@ -47,7 +42,7 @@ Items that Phase 1 reviews deferred. Plan the ones tagged with a phase into that
   - The scripts POST `/api/shutdown` to whatever answers on 7420 without checking `/api/health`.
 - **macOS:** the agent PATH comes from `$SHELL -l` (not `.zshrc`), is captured synchronously at startup (≤ 3 s), and always replaces the caller's PATH.
 - **Test gaps:**
-  - WebSocket 409, exited-on-attach and lag-close paths.
+  - WebSocket exited-on-attach and lag-close paths.
   - Restart failure and 404 branches.
   - The panel's New shell button.
   - The lifecycle test can't tell graceful marking from the startup sweep.

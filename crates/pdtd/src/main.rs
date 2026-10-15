@@ -4,7 +4,7 @@ mod logging;
 mod shutdown;
 
 use anyhow::Context;
-use pdt_api::{AppState, router, with_host_guard};
+use pdt_api::{AppState, resume_interrupted, router, with_host_guard};
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
 
@@ -39,6 +39,10 @@ async fn run() -> anyhow::Result<()> {
         tracing::info!(sessions = interrupted, "sessions from the previous run are now interrupted");
     }
     let state = AppState::new(store.clone());
+    let resumed = resume_interrupted(&state).await;
+    if resumed > 0 {
+        tracing::info!(sessions = resumed, "resumed sessions from the previous run");
+    }
     let app = with_host_guard(router(state.clone(), cfg.web_dir.clone()), cfg.allowed_hosts.clone());
     tracing::info!(
         profile = ?cfg.profile, port = cfg.port, data_dir = %cfg.data_dir.display(),

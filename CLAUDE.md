@@ -30,6 +30,9 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>` and `localhost:<port>` (DNS-rebinding guard).
 - Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.
 - Agent restart: Claude runs with `--session-id <session id>` and restarts with `--resume <session id>`. Codex has no such option and restarts with `codex resume --last` (the newest conversation in the folder), so only one Codex session per working folder resumes reliably.
+- Auto-resume: at startup pdtd restarts every session left `interrupted` (resume mode, 120x30; clients resize on attach) before serving; a session that fails to start stays `interrupted`. Stopped (`finished`) sessions are never auto-resumed. Among interrupted Codex sessions sharing a working folder only the newest is resumed (the rest wait for a manual Restart).
+- Claude resume fallback: Claude saves `<claude config dir>/projects/*/<session id>.jsonl` only after its first turn. If that file is missing, restart/auto-resume launches `--session-id <id>` (fresh conversation, same id) instead of `--resume`. Config dir is `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
+- Terminal reconnect: the WebSocket for an existing session with no PTY upgrades, sends `{"type":"not_running"}` and closes; the browser then shows "Session ended." and reattaches when the session list shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s).
 - Logs: <data dir>/logs/pdtd.<date>.log; the desktop app writes a spawned daemon's startup output to <data dir>/logs/pdtd-launch.log.
 - Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).
 - The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.

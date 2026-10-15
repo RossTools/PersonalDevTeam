@@ -150,3 +150,31 @@ async fn websocket_rejects_foreign_origin_and_unknown_sessions() {
     assert_eq!((status, body["code"].as_str().unwrap()), (400, "websocket_required"));
     state.ptys.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_without_a_terminal_reports_not_running_then_closes() {
+    use pdt_core::session::SessionStatus;
+    let tmp = tempfile::tempdir().unwrap();
+    let (port, state) = serve(tmp.path()).await;
+    let id = shell_session(tmp.path(), port).await;
+    // A session left interrupted by a daemon restart has no terminal at all.
+    let mut orphan = state.store.get_session(&id).await.unwrap().unwrap();
+    orphan.id = "orphan".into();
+    orphan.status = SessionStatus::Interrupted;
+    state.store.insert_session(&orphan).await.unwrap();
+
+    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{port}/api/sessions/orphan/pty")).await.unwrap();
+    let (replay, text) = until_first_text(&mut ws).await;
+    assert_eq!((replay.as_str(), text.as_str()), ("", r#"{"type":"not_running"}"#));
+    let end = tokio::time::timeout(WAIT, async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                _ => {}
+            }
+        }
+    })
+    .await;
+    assert!(end.is_ok(), "the server closes after not_running");
+    state.ptys.shutdown().await;
+}

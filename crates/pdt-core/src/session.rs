@@ -169,6 +169,9 @@ pub struct Platform {
     /// The user's login-shell PATH, when pdtd's own PATH is not it (a macOS app started by launchd gets only
     /// /usr/bin:/bin:/usr/sbin:/sbin). Programs are looked up on it and sessions run with it.
     pub login_path: Option<String>,
+    /// Claude's config directory (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), where it saves conversations. None when
+    /// it cannot be determined.
+    pub claude_config_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -274,6 +277,9 @@ pub enum PtyServerMessage {
     Exit {
         code: i32,
     },
+    /// The session exists but has no running process (stopped, finished or interrupted). Sent instead of `ready`;
+    /// the server then closes. The client should stop reconnecting until the session is restarted.
+    NotRunning,
 }
 
 #[cfg(test)]
@@ -288,6 +294,7 @@ mod tests {
             claude_program: "claude".into(),
             codex_program: "codex".into(),
             login_path: None,
+            claude_config_dir: None,
         }
     }
 
@@ -413,6 +420,7 @@ mod tests {
     fn pty_messages_wire_format() {
         assert_eq!(serde_json::to_string(&PtyServerMessage::Exit { code: 3 }).unwrap(), r#"{"type":"exit","code":3}"#);
         assert_eq!(serde_json::to_string(&PtyServerMessage::Ready).unwrap(), r#"{"type":"ready"}"#);
+        assert_eq!(serde_json::to_string(&PtyServerMessage::NotRunning).unwrap(), r#"{"type":"not_running"}"#);
         let m: PtyClientMessage = serde_json::from_str(r#"{"type":"resize","cols":100,"rows":30}"#).unwrap();
         assert_eq!(m, PtyClientMessage::Resize { cols: 100, rows: 30 });
     }

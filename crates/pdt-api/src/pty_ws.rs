@@ -24,12 +24,13 @@ pub(crate) async fn connect(
     let ws = ws.map_err(|_| {
         ApiError::new(StatusCode::BAD_REQUEST, "websocket_required", "this endpoint needs a WebSocket upgrade")
     })?;
-    let attachment = st
-        .ptys
-        .attach(&id)
-        .map_err(|_| ApiError::new(StatusCode::CONFLICT, "not_running", "this session has no terminal; restart it"))?;
     let ptys = st.ptys.clone();
-    Ok(ws.on_upgrade(move |socket| pump(socket, ptys, id, attachment)))
+    // A session with no terminal (stopped, or interrupted by a daemon restart) still gets the upgrade, so the
+    // browser can tell "not running" from "daemon unreachable" and stop retrying.
+    Ok(match st.ptys.attach(&id) {
+        Ok(attachment) => ws.on_upgrade(move |socket| pump(socket, ptys, id, attachment)),
+        Err(_) => ws.on_upgrade(not_running),
+    })
 }
 
 fn control(msg: &PtyServerMessage) -> Message {
@@ -38,6 +39,11 @@ fn control(msg: &PtyServerMessage) -> Message {
 
 fn exit_message(code: i32) -> Message {
     control(&PtyServerMessage::Exit { code })
+}
+
+async fn not_running(mut socket: WebSocket) {
+    let _ = socket.send(control(&PtyServerMessage::NotRunning)).await;
+    let _ = socket.close().await;
 }
 
 async fn pump(socket: WebSocket, ptys: PtyManager, id: String, att: Attachment) {

@@ -267,3 +267,158 @@ async fn rename_session() {
 fn same_dir(a: &Path, b: &Path) -> bool {
     std::fs::canonicalize(a).unwrap() == std::fs::canonicalize(b).unwrap()
 }
+
+/// A stand-in agent program that records its arguments to `<dir>/<name>.args` and then waits for input.
+fn fake_agent(dir: &Path, name: &str) -> std::path::PathBuf {
+    let args_file = dir.join(format!("{name}.args"));
+    let (file, body) = if cfg!(windows) {
+        (format!("{name}.cmd"), format!("@echo off\r\necho %* > \"{}\"\r\nset /p x=\r\n", args_file.display()))
+    } else {
+        (name.to_string(), format!("#!/bin/sh\necho \"$@\" > \"{}\"\nread x\n", args_file.display()))
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+async fn recorded_args(dir: &Path, name: &str) -> String {
+    let file = dir.join(format!("{name}.args"));
+    for _ in 0..100 {
+        if let Ok(text) = std::fs::read_to_string(&file)
+            && !text.trim().is_empty()
+        {
+            return text.trim().to_string();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("{name} never recorded its arguments");
+}
+
+/// Inserts a session row directly, as a previous daemon run would have left it.
+async fn seed(
+    state: &AppState,
+    pid: &str,
+    id: &str,
+    agent: Option<pdt_core::session::AgentKind>,
+    cwd: &Path,
+    status: pdt_core::session::SessionStatus,
+    created_at: i64,
+) {
+    use pdt_core::session::{Session, SessionKind, SessionStatus};
+    let session = Session {
+        id: id.into(),
+        project_id: pid.into(),
+        worktree_id: None,
+        kind: if agent.is_some() { SessionKind::AgentTui } else { SessionKind::Shell },
+        agent,
+        title: id.into(),
+        cwd: cwd.to_string_lossy().into_owned(),
+        status: SessionStatus::Running,
+        exit_code: None,
+        created_at,
+        ended_at: None,
+    };
+    state.store.insert_session(&session).await.unwrap();
+    match status {
+        SessionStatus::Running => {}
+        SessionStatus::Finished => {
+            state.store.end_session(id, status, Some(0), 1).await.unwrap();
+        }
+        SessionStatus::Interrupted => {
+            state.store.end_session(id, status, None, 1).await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn resume_interrupted_restarts_only_interrupted_sessions() {
+    use pdt_core::session::SessionStatus::{Finished, Interrupted};
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo) = setup(tmp.path()).await;
+    seed(&state, &pid, "int-a", None, &repo, Interrupted, 1).await;
+    seed(&state, &pid, "int-b", None, &repo, Interrupted, 2).await;
+    seed(&state, &pid, "done", None, &repo, Finished, 3).await;
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 2);
+    for id in ["int-a", "int-b"] {
+        assert_eq!(wait_status(&app, id, "running").await["exitCode"], Value::Null);
+        assert!(state.ptys.is_running(id));
+    }
+    let (_, done) = call(&app, "GET", "/api/sessions/done", None).await;
+    assert_eq!(done["status"], "finished");
+    assert!(!state.ptys.is_running("done"));
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 0, "nothing left to resume");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn resume_interrupted_skips_a_session_that_cannot_start() {
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo) = setup(tmp.path()).await;
+    let gone = tmp.path().join("deleted worktree");
+    seed(&state, &pid, "bad", None, &gone, Interrupted, 1).await;
+    seed(&state, &pid, "good", None, &repo, Interrupted, 2).await;
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
+    wait_status(&app, "good", "running").await;
+    let (_, bad) = call(&app, "GET", "/api/sessions/bad", None).await;
+    assert_eq!(bad["status"], "interrupted");
+    assert!(!state.ptys.is_running("bad"));
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn resume_interrupted_resumes_one_codex_session_per_folder() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, mut state, pid, repo) = setup(tmp.path()).await;
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let other = tmp.path().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
+    seed(&state, &pid, "old", Some(Codex), &repo, Interrupted, 1).await;
+    seed(&state, &pid, "new", Some(Codex), &repo, Interrupted, 3).await;
+    seed(&state, &pid, "elsewhere", Some(Codex), &other, Interrupted, 2).await;
+    seed(&state, &pid, "shell", None, &repo, Interrupted, 0).await;
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 3);
+    for id in ["new", "elsewhere", "shell"] {
+        wait_status(&app, id, "running").await;
+    }
+    let (_, old) = call(&app, "GET", "/api/sessions/old", None).await;
+    assert_eq!(old["status"], "interrupted", "an older Codex session in the same folder is left alone");
+    assert!(!state.ptys.is_running("old"));
+    assert!(recorded_args(&bin, "fakecodex").await.starts_with("resume --last"));
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn claude_resume_falls_back_to_a_fresh_conversation_when_none_was_saved() {
+    use pdt_core::session::AgentKind::Claude;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_app, mut state, pid, repo) = setup(tmp.path()).await;
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let config = tmp.path().join("claude-config");
+    std::fs::create_dir_all(config.join("projects").join("some-folder")).unwrap();
+    std::fs::write(config.join("projects").join("some-folder").join("saved.jsonl"), "{}\n").unwrap();
+    state.platform.claude_program = fake_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
+    state.platform.claude_config_dir = Some(config);
+
+    seed(&state, &pid, "unsaved", Some(Claude), &repo, Interrupted, 1).await;
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
+    assert_eq!(recorded_args(&bin, "fakeclaude").await, "--session-id unsaved");
+    state.ptys.shutdown().await;
+
+    std::fs::remove_file(bin.join("fakeclaude.args")).unwrap();
+    seed(&state, &pid, "saved", Some(Claude), &repo, Interrupted, 2).await;
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
+    assert_eq!(recorded_args(&bin, "fakeclaude").await, "--resume saved");
+    state.ptys.shutdown().await;
+}

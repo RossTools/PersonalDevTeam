@@ -3,7 +3,7 @@
 use crate::pty::PtyError;
 use pdt_core::session::Platform;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -32,7 +32,30 @@ pub fn detect_platform() -> Platform {
         claude_program: "claude".into(),
         codex_program: "codex".into(),
         login_path,
+        claude_config_dir: claude_config_dir(),
     }
+}
+
+/// `$CLAUDE_CONFIG_DIR` if set and non-empty, else `<home>/.claude`.
+fn claude_config_dir() -> Option<PathBuf> {
+    claude_config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::home_dir())
+}
+
+fn claude_config_dir_from(env: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    match env.filter(|v| !v.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => home.map(|h| h.join(".claude")),
+    }
+}
+
+/// Whether Claude has saved a conversation for `session_id`. It writes `projects/<encoded cwd>/<id>.jsonl` only
+/// after the first turn; the folder name is Claude's own encoding, so every project folder is checked.
+pub fn claude_conversation_exists(config_dir: &Path, session_id: &str) -> bool {
+    let Ok(projects) = std::fs::read_dir(config_dir.join("projects")) else {
+        return false;
+    };
+    let file = format!("{session_id}.jsonl");
+    projects.flatten().any(|d| d.path().join(&file).is_file())
 }
 
 /// Runs `shell args` and returns the last line of its stdout, or None if it fails, prints nothing or outlives `timeout`.
@@ -125,6 +148,35 @@ mod tests {
         assert_eq!(path.as_deref(), std::env::var("PATH").ok().as_deref());
         assert_eq!(login_path_from("/bin/sh", &["-c", "sleep 5"], Duration::from_millis(200)), None, "times out");
         assert_eq!(login_path_from("/pdt/no/such/shell", &["-c", PRINT_PATH], Duration::from_secs(3)), None);
+    }
+
+    #[test]
+    fn claude_conversation_is_found_in_any_project_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!claude_conversation_exists(dir.path(), "abc"), "no projects dir");
+        std::fs::create_dir_all(dir.path().join("projects").join("C--some-repo")).unwrap();
+        std::fs::create_dir_all(dir.path().join("projects").join("C--other")).unwrap();
+        assert!(!claude_conversation_exists(dir.path(), "abc"), "no file yet");
+        std::fs::write(
+            dir.path().join("projects").join("C--other").join("abc.jsonl"),
+            "{}
+",
+        )
+        .unwrap();
+        assert!(claude_conversation_exists(dir.path(), "abc"));
+        assert!(!claude_conversation_exists(dir.path(), "abcd"), "a different id");
+        // A directory with the right name is not a conversation.
+        std::fs::create_dir_all(dir.path().join("projects").join("C--some-repo").join("xyz.jsonl")).unwrap();
+        assert!(!claude_conversation_exists(dir.path(), "xyz"));
+    }
+
+    #[test]
+    fn claude_config_dir_prefers_the_env_var() {
+        let home = Some(PathBuf::from("/home/u"));
+        assert_eq!(claude_config_dir_from(Some("/cfg".into()), home.clone()), Some(PathBuf::from("/cfg")));
+        assert_eq!(claude_config_dir_from(Some("".into()), home.clone()), Some(PathBuf::from("/home/u/.claude")));
+        assert_eq!(claude_config_dir_from(None, home), Some(PathBuf::from("/home/u/.claude")));
+        assert_eq!(claude_config_dir_from(None, None), None);
     }
 
     #[test]

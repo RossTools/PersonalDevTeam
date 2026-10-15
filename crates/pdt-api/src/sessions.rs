@@ -6,7 +6,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::{PtyError, SpawnSpec};
 use pdt_core::session::{
-    NewSession, Session, SessionStatus, TerminalSize, clean_title, default_title, is_scrubbed, launch,
+    AgentKind, NewSession, Session, SessionKind, SessionStatus, TerminalSize, clean_title, default_title, is_scrubbed,
+    launch,
 };
 use std::path::PathBuf;
 
@@ -62,6 +63,16 @@ pub(crate) async fn create(
 
 /// Spawns the session's process and records its exit when it ends.
 fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: bool) -> Result<(), PtyError> {
+    // Claude saves its conversation only after the first turn; resuming one that was never saved fails, so
+    // start a fresh conversation under the same id instead.
+    let resume = resume
+        && !(s.kind == SessionKind::AgentTui
+            && s.agent != Some(AgentKind::Codex)
+            && st
+                .platform
+                .claude_config_dir
+                .as_deref()
+                .is_some_and(|dir| !pdt_agents::launch::claude_conversation_exists(dir, &s.id)));
     let l = launch(s.kind, s.agent, &st.platform, resume, &s.id);
     let login_path = st.platform.login_path.as_deref();
     let (program, args) = pdt_agents::launch::resolve(&l.program, &l.args, login_path)?;
@@ -142,18 +153,64 @@ pub(crate) async fn restart(
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
     }
-    settle_exit(&st, &id).await;
-    st.ptys.remove(&id);
+    restart_locked(&st, &session, size).await?;
+    Ok(Json(load(&st, &id).await?))
+}
+
+/// Starts a session that has no running process, resuming its agent conversation. The caller holds the session lock.
+async fn restart_locked(st: &AppState, session: &Session, size: TerminalSize) -> Result<(), ApiError> {
+    let id = &session.id;
+    settle_exit(st, id).await;
+    st.ptys.remove(id);
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
-    st.store.set_session_running(&id).await?;
-    if let Err(e) = start_pty(&st, &session, size, true) {
+    st.store.set_session_running(id).await?;
+    if let Err(e) = start_pty(st, session, size, true) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
-            st.store.end_session(&id, SessionStatus::Interrupted, None, now_ms()).await?;
+            st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;
         }
         return Err(e.into());
     }
-    Ok(Json(load(&st, &id).await?))
+    Ok(())
+}
+
+/// Restarts the sessions a previous pdtd run left `interrupted`, so they come back by themselves. Returns how many
+/// started. A session that fails to start stays interrupted (logged); it never stops the others.
+///
+/// Codex resumes the newest conversation in its folder (`resume --last`), so among interrupted Codex sessions
+/// sharing a folder only the most recently created one is resumed; the rest stay interrupted for a manual restart.
+pub async fn resume_interrupted(st: &AppState) -> usize {
+    let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not list interrupted sessions to resume");
+            return 0;
+        }
+    };
+    let is_codex = |s: &Session| s.kind == SessionKind::AgentTui && s.agent == Some(AgentKind::Codex);
+    // The list is oldest first, so the last Codex session seen for a folder is the newest.
+    let mut newest_codex: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for s in sessions.iter().filter(|s| is_codex(s)) {
+        newest_codex.insert(&s.cwd, &s.id);
+    }
+    let size = TerminalSize { cols: 120, rows: 30 };
+    let mut resumed = 0;
+    for s in &sessions {
+        if is_codex(s) && newest_codex.get(s.cwd.as_str()) != Some(&s.id.as_str()) {
+            continue;
+        }
+        let _guard = st.lock_session(&s.id).await;
+        // Re-read under the lock: the user may have restarted or removed it already.
+        let current = match st.store.get_session(&s.id).await {
+            Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => c,
+            _ => continue,
+        };
+        match restart_locked(st, &current, size).await {
+            Ok(()) => resumed += 1,
+            Err(e) => tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted"),
+        }
+    }
+    resumed
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

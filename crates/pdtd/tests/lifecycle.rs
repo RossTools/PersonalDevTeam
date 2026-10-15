@@ -77,7 +77,7 @@ fn wait_exit(d: &mut Daemon, within: Duration) -> std::process::ExitStatus {
 }
 
 #[test]
-fn shutdown_marks_running_sessions_interrupted() {
+fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
     let repo = tmp.path().join("repo");
@@ -93,6 +93,16 @@ fn shutdown_marks_running_sessions_interrupted() {
     let (status, session) = http(port, "POST", "/api/sessions", Some(&body));
     assert_eq!(status, 201, "{session}");
     let id = session["id"].as_str().unwrap().to_string();
+    // A session the user stopped must stay stopped across the restart.
+    let (status, stopped) = http(port, "POST", "/api/sessions", Some(&body));
+    assert_eq!(status, 201, "{stopped}");
+    let stopped_id = stopped["id"].as_str().unwrap().to_string();
+    assert_eq!(http(port, "POST", &format!("/api/sessions/{stopped_id}/kill"), None).0, 204);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while http(port, "GET", &format!("/api/sessions/{stopped_id}"), None).1["status"] != "finished" {
+        assert!(Instant::now() < deadline, "stopped session never finished");
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     assert_eq!(http(port, "POST", "/api/shutdown", None).0, 202);
     let status = wait_exit(&mut d, Duration::from_secs(20));
@@ -103,6 +113,7 @@ fn shutdown_marks_running_sessions_interrupted() {
 
     let _d = start(port, &data);
     let (_, s) = http(port, "GET", &format!("/api/sessions/{id}"), None);
-    assert_eq!(s["status"], "interrupted");
-    assert!(s["endedAt"].is_number());
+    assert_eq!((s["status"].as_str(), &s["exitCode"]), (Some("running"), &serde_json::Value::Null), "auto-resumed");
+    let (_, s) = http(port, "GET", &format!("/api/sessions/{stopped_id}"), None);
+    assert_eq!(s["status"], "finished", "a stopped session is not resumed");
 }
