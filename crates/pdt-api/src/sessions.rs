@@ -301,44 +301,74 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
     Ok(())
 }
 
-/// Restarts the sessions a previous pdtd run left `interrupted`, so they come back by themselves. Returns how many
-/// started. A session that fails to start stays interrupted (logged); it never stops the others.
-///
-/// Each session resumes its own conversation (see `plan_resume`), so sessions sharing a folder do not interfere.
-pub async fn resume_interrupted(st: &AppState) -> usize {
+/// The sessions a previous pdtd run left `interrupted`, each with how to resume it. Made by
+/// `plan_resume_interrupted`, started by `ResumePlan::start`.
+pub struct ResumePlan(Vec<(Session, Resume)>);
+
+impl ResumePlan {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Restarts the planned sessions so they come back by themselves. Returns how many started. A session that
+    /// fails to start stays interrupted (logged); it never stops the others. A session that is no longer
+    /// interrupted when its turn comes (the user restarted or removed it meanwhile) is skipped.
+    ///
+    /// This can take a while (fresh Codex launches in one folder are spaced out), so pdtd runs it in the
+    /// background once it is serving.
+    pub async fn start(self, st: &AppState) -> usize {
+        let size = TerminalSize { cols: 120, rows: 30 };
+        // Concurrently, so sessions in different folders do not wait for each other.
+        let results = futures_util::future::join_all(self.0.into_iter().map(|(s, plan)| async move {
+            let _guard = st.lock_session(&s.id).await;
+            if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                return false;
+            }
+            // Re-read under the lock: a manual Restart may have won it, or the user removed the session.
+            match st.store.get_session(&s.id).await {
+                Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => {}
+                _ => return false,
+            }
+            match restart_locked(st, &s.id, size, Some(plan)).await {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted");
+                    false
+                }
+            }
+        }))
+        .await;
+        results.into_iter().filter(|ok| *ok).count()
+    }
+}
+
+/// Decides how to resume each interrupted session; for Codex this binds each session to its own conversation.
+/// All of it is decided before any session restarts: a Codex session that relaunches fresh gets a new launch time,
+/// which must not change how its neighbours' conversations are matched. Each session resumes its own conversation
+/// (see `plan_resume`), so sessions sharing a folder do not interfere.
+pub async fn plan_resume_interrupted(st: &AppState) -> ResumePlan {
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(error = %e, "could not list interrupted sessions to resume");
-            return 0;
+            return ResumePlan(Vec::new());
         }
     };
-    let size = TerminalSize { cols: 120, rows: 30 };
-    // Decide every session's resume first: a Codex session that relaunches fresh gets a new launch time, which
-    // must not change how its neighbours' conversations are matched.
-    let mut plans = Vec::new();
-    for s in &sessions {
-        plans.push(plan_resume(st, s).await);
+    let mut plan = Vec::new();
+    for s in sessions {
+        let resume = plan_resume(st, &s).await;
+        plan.push((s, resume));
     }
-    // Concurrently, so sessions in different folders do not wait for each other (fresh Codex launches within one
-    // folder still queue behind the spawn spacing).
-    let results = futures_util::future::join_all(sessions.iter().zip(plans).map(|(s, plan)| async move {
-        let _guard = st.lock_session(&s.id).await;
-        // Re-read under the lock: the user may have restarted or removed it already.
-        match st.store.get_session(&s.id).await {
-            Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => {}
-            _ => return false,
-        }
-        match restart_locked(st, &s.id, size, Some(plan)).await {
-            Ok(()) => true,
-            Err(e) => {
-                tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted");
-                false
-            }
-        }
-    }))
-    .await;
-    results.into_iter().filter(|ok| *ok).count()
+    ResumePlan(plan)
+}
+
+/// Plans and starts the resume of every interrupted session. Returns how many started.
+pub async fn resume_interrupted(st: &AppState) -> usize {
+    plan_resume_interrupted(st).await.start(st).await
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

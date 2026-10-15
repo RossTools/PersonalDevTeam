@@ -112,7 +112,15 @@ fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
     assert!(logs.iter().any(|e| e.file_name().to_string_lossy().starts_with("pdtd")), "log file written");
 
     let _d = start(port, &data);
-    let (_, s) = http(port, "GET", &format!("/api/sessions/{id}"), None);
+    // Sessions restart in the background after the daemon starts answering, so poll.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let s = loop {
+        let (_, s) = http(port, "GET", &format!("/api/sessions/{id}"), None);
+        if s["status"] == "running" || Instant::now() > deadline {
+            break s;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
     assert_eq!((s["status"].as_str(), &s["exitCode"]), (Some("running"), &serde_json::Value::Null), "auto-resumed");
     let (_, s) = http(port, "GET", &format!("/api/sessions/{stopped_id}"), None);
     assert_eq!(s["status"], "finished", "a stopped session is not resumed");

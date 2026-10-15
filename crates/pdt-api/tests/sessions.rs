@@ -682,6 +682,38 @@ async fn startup_spaces_fresh_codex_launches_in_one_folder() {
 }
 
 #[tokio::test]
+async fn a_manual_restart_racing_auto_resume_starts_exactly_one_process() {
+    use pdt_core::session::AgentKind::Claude;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state, pid, repo) = setup(tmp.path()).await;
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    state.platform.claude_program = fake_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
+    let app = router(state.clone(), None);
+    let size = json!({"cols": 80, "rows": 24});
+    // Several rounds, since the interleaving varies: either the restart wins (auto-resume then skips the session)
+    // or auto-resume wins (the restart gets "already running").
+    for round in 0..6 {
+        let id = format!("race-{round}");
+        seed(&state, &pid, &id, Some(Claude), &repo, Interrupted, 1 + round).await;
+        let plan = pdt_api::plan_resume_interrupted(&state).await;
+        let uri = format!("/api/sessions/{id}/restart");
+        let (resumed, (status, body)) = tokio::join!(plan.start(&state), call(&app, "POST", &uri, Some(size.clone())));
+        match (status, resumed) {
+            (StatusCode::OK, 0) | (StatusCode::CONFLICT, 1) => {}
+            other => panic!("round {round}: {other:?} {body}"),
+        }
+        assert!(state.ptys.is_running(&id), "round {round}");
+        wait_status(&app, &id, "running").await;
+    }
+    // One recorded launch per round, nothing started twice.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(launches(&bin, "fakeclaude", 6).await.len(), 6);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
 async fn claude_resume_falls_back_to_a_fresh_conversation_when_none_was_saved() {
     use pdt_core::session::AgentKind::Claude;
     use pdt_core::session::SessionStatus::Interrupted;
