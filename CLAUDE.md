@@ -29,6 +29,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - Data lives in `<local data dir>/pdt` or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir.
 - `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>` and `localhost:<port>` (DNS-rebinding guard).
 - Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.
+- Agent restart: Claude runs with `--session-id <session id>` and restarts with `--resume <session id>`. Codex has no such option and restarts with `codex resume --last` (the newest conversation in the folder), so only one Codex session per working folder resumes reliably.
 - Logs: <data dir>/logs/pdtd.<date>.log; the desktop app writes a spawned daemon's startup output to <data dir>/logs/pdtd-launch.log.
 - Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).
 - The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.
@@ -38,7 +39,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - TDD for core logic. Tests must pass on Windows and macOS.
 - Never run or restart the *stable* pdtd (port 7420) from a dev build — it hosts the agents building this repo. Use PDT_PROFILE=dev.
 - Never run scripts/release-stable.* without -BuildOnly/--build-only, never run the built installer, and never POST /api/shutdown on port 7420. Only the user updates the stable app.
-- Names (product, slug, daemon, ports) live only in crates/pdt-core/src/brand.rs (+ tauri.conf.json).
+- Names (product, slug, daemon, ports) live only in crates/pdt-core/src/brand.rs (+ desktop/src-tauri/tauri.conf.json, desktop/src-tauri/tauri.bundle.conf.json and scripts/release-stable.*).
 - Never edit an applied migration (sqlx checksums them); add a new one.
 - On Windows, run cargo from PowerShell, not Git Bash: Git Bash's `link` shadows MSVC `link.exe`.
 - The `codex` on PATH may be the Codex desktop app (an old version) shadowing the npm CLI; check `codex --version`.

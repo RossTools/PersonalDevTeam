@@ -166,6 +166,9 @@ pub struct Platform {
     pub unix_shell: Option<String>,
     pub claude_program: String,
     pub codex_program: String,
+    /// The user's login-shell PATH, when pdtd's own PATH is not it (a macOS app started by launchd gets only
+    /// /usr/bin:/bin:/usr/sbin:/sbin). Programs are looked up on it and sessions run with it.
+    pub login_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,8 +177,17 @@ pub struct Launch {
     pub args: Vec<String>,
 }
 
-/// What to run for a session. `resume` continues the agent's last conversation in the working directory.
-pub fn launch(kind: SessionKind, agent: Option<AgentKind>, platform: &Platform, resume: bool) -> Launch {
+/// What to run for a session. `resume` continues the agent's conversation: Claude's conversation id is the
+/// session id, so each session resumes its own conversation. Codex cannot be given an id up front, so it resumes
+/// the most recent conversation in the working folder (`resume --last`): only one Codex session per folder
+/// resumes reliably.
+pub fn launch(
+    kind: SessionKind,
+    agent: Option<AgentKind>,
+    platform: &Platform,
+    resume: bool,
+    session_id: &str,
+) -> Launch {
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     match (kind, agent) {
         (SessionKind::Shell, _) if platform.windows => Launch {
@@ -192,7 +204,7 @@ pub fn launch(kind: SessionKind, agent: Option<AgentKind>, platform: &Platform, 
         },
         (SessionKind::AgentTui, _) => Launch {
             program: platform.claude_program.clone(),
-            args: if resume { args(&["--continue"]) } else { vec![] },
+            args: args(&[if resume { "--resume" } else { "--session-id" }, session_id]),
         },
     }
 }
@@ -251,8 +263,11 @@ mod tests {
             unix_shell: unix_shell.map(Into::into),
             claude_program: "claude".into(),
             codex_program: "codex".into(),
+            login_path: None,
         }
     }
+
+    const SID: &str = "0199e5a8-7c2e-7d4b-9a51-3f0e8c6b2d10";
 
     fn launch_of(l: Launch) -> (String, Vec<String>) {
         (l.program, l.args)
@@ -279,19 +294,19 @@ mod tests {
     #[test]
     fn shell_launch_per_platform() {
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), false)),
+            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), false, SID)),
             ("pwsh".into(), vec!["-NoLogo".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), false)),
+            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), false, SID)),
             ("powershell.exe".into(), vec!["-NoLogo".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("/bin/bash")), false)),
+            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("/bin/bash")), false, SID)),
             ("/bin/bash".into(), vec!["-l".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("  ")), false)),
+            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("  ")), false, SID)),
             ("/bin/zsh".into(), vec!["-l".into()])
         );
     }
@@ -300,24 +315,24 @@ mod tests {
     fn agent_launch_and_resume() {
         let p = platform(false, false, None);
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, false)),
-            ("claude".into(), vec![])
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, false, SID)),
+            ("claude".into(), vec!["--session-id".into(), SID.into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, true)),
-            ("claude".into(), vec!["--continue".into()])
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, true, SID)),
+            ("claude".into(), vec!["--resume".into(), SID.into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, false)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, false, SID)),
             ("codex".into(), vec![])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, true)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, true, SID)),
             ("codex".into(), vec!["resume".into(), "--last".into()])
         );
         let mut custom = p.clone();
         custom.codex_program = "/opt/codex".into();
-        assert_eq!(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, false).program, "/opt/codex");
+        assert_eq!(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, false, SID).program, "/opt/codex");
     }
 
     #[test]

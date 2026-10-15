@@ -60,15 +60,21 @@ pub(crate) async fn create(
 
 /// Spawns the session's process and records its exit when it ends.
 fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: bool) -> Result<(), PtyError> {
-    let l = launch(s.kind, s.agent, &st.platform, resume);
-    let (program, args) = pdt_agents::launch::resolve(&l.program, &l.args)?;
+    let l = launch(s.kind, s.agent, &st.platform, resume, &s.id);
+    let login_path = st.platform.login_path.as_deref();
+    let (program, args) = pdt_agents::launch::resolve(&l.program, &l.args, login_path)?;
+    let mut env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
+    if let Some(path) = login_path {
+        // So `#!/usr/bin/env node` shebangs and the agents' own child processes find the user's tools.
+        env.push(("PATH".into(), path.into()));
+    }
     let spec = SpawnSpec {
         id: s.id.clone(),
         program,
         args,
         cwd: PathBuf::from(&s.cwd),
         env_remove: scrubbed_env(s.kind).into_iter().map(String::from).collect(),
-        env: vec![("TERM".into(), "xterm-256color".into()), ("COLORTERM".into(), "truecolor".into())],
+        env,
         cols: size.cols,
         rows: size.rows,
     };
