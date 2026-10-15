@@ -16,3 +16,14 @@
   stop pdtd; Quit in the tray does.
 - **Long actions don't overlap.** While startup, Restart daemon, an update download or Quit is running, Restart and
   Quit clicks are ignored.
+- **Skipped release numbers.** A running main CI run is never cancelled. A main run still queued when a newer push
+  arrives is superseded by it, so that commit gets no release and its number is skipped.
+- **Deferred from review:**
+  - `release-stable.sh` passes all tray pids to one `kill -0` loop, which ends as soon as any one of them has exited.
+  - gh is looked up only on PATH plus Homebrew's two folders (macOS). Other installs, such as MacPorts or a custom
+    prefix, show "gh not installed".
+  - The macOS release asset is built on `macos-latest`, which is arm64 only. Intel Macs get no working update.
+- **Single-instance race (Windows, in tauri-plugin-single-instance).** If a second launch comes before the first
+  instance has created its message window (the first few hundred ms), the plugin finds the mutex but no window, and
+  the second instance keeps running. The result is two tray icons sharing one pdtd. This was seen when two launches
+  started at the same moment.

@@ -6,7 +6,8 @@ on:
   pull_request: {}
   workflow_dispatch: {}
 
-# A newer commit on the same PR cancels the older run; runs on main always finish.
+# A newer commit on the same PR cancels the older run. A running main run is never cancelled, but a main run still
+# queued when a newer push arrives is superseded by it (that only skips a release number).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -128,4 +129,9 @@ jobs:
           tag="v0.1.${{ github.run_number }}"
           subject="$(printf '%s\n' "$HEAD_MESSAGE" | head -n 1)"
           ls -l assets
-          gh release create "$tag" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes "${subject:-$tag}"
+          # A re-run of this job finds the release already there: replace its assets instead of failing.
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes "${subject:-$tag}"
+          fi

@@ -27,6 +27,8 @@ struct Tray {
     status: Mutex<Status>,
     /// Set while a startup, restart, update or quit runs, so they never overlap.
     busy: AtomicBool,
+    /// Set once the first `ensure_daemon` succeeded. Opens requested before then are covered by the startup open.
+    ready: AtomicBool,
 }
 
 impl Tray {
@@ -56,7 +58,7 @@ impl Tray {
 }
 
 fn main() {
-    let profile = Profile::from_env_value(std::env::var("PDT_PROFILE").ok().as_deref());
+    let profile = daemon::desktop_profile(std::env::var("PDT_PROFILE").ok().as_deref(), cfg!(debug_assertions));
     let mut context = tauri::generate_context!();
     if profile == Profile::Dev {
         // A separate identifier gives the dev app its own single-instance lock, so it runs beside the stable app.
@@ -89,7 +91,16 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
 
     let port = profile.port();
     let version = app.package_info().version.to_string();
-    let initial = if profile == Profile::Dev { Status::Disabled } else { Status::Checking };
+    let initial = if profile == Profile::Dev {
+        Status::Disabled("Updates apply to the stable app".into())
+    } else {
+        let exe = std::env::current_exe().unwrap_or_default();
+        let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+        match update::install_check(browser::Os::current(), &exe, local_app_data.as_deref()) {
+            Ok(()) => Status::Checking,
+            Err(why) => Status::Disabled(why),
+        }
+    };
     let (update_text, update_enabled) = update::menu_label(&initial);
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
     let restart_item = MenuItem::with_id(app, "restart", "Restart daemon", false, None::<&str>)?;
@@ -135,6 +146,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         update_item,
         status: Mutex::new(initial.clone()),
         busy: AtomicBool::new(true),
+        ready: AtomicBool::new(false),
     });
 
     let handle = app.handle().clone();
@@ -143,6 +155,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         match daemon::ensure_daemon(port, daemon::probe, || daemon::spawn_pdtd(profile), STARTUP_TIMEOUT) {
             Ok(()) => {
                 let _ = tray.restart_item.set_enabled(true);
+                tray.ready.store(true, Ordering::SeqCst);
                 tray.end();
                 open_ui(&handle);
             }
@@ -178,6 +191,10 @@ fn open_ui(app: &AppHandle) {
     let Some(tray) = app.try_state::<Tray>() else {
         return;
     };
+    if !tray.ready.load(Ordering::SeqCst) {
+        // Still starting: the UI opens once pdtd answers, which covers this request.
+        return;
+    }
     let url = tray.url();
     if browser::open_app_window(&url) {
         return;
@@ -197,7 +214,8 @@ fn restart_daemon(app: &AppHandle) {
     std::thread::spawn(move || {
         let tray = app.state::<Tray>();
         let (port, profile) = (tray.port, tray.profile);
-        let result = daemon::stop_daemon(port, daemon::probe, daemon::request_shutdown, STOP_TIMEOUT)
+        let exited = || daemon::daemon_exited(profile);
+        let result = daemon::stop_daemon(port, daemon::probe, daemon::request_shutdown, exited, STOP_TIMEOUT)
             .and_then(|()| daemon::ensure_daemon(port, daemon::probe, || daemon::spawn_pdtd(profile), STARTUP_TIMEOUT));
         if let Err(e) = result {
             error_dialog(&app, format!("Could not restart {DAEMON_BIN}: {}", daemon::with_log_tail(e, profile)))
@@ -218,7 +236,9 @@ fn quit(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let tray = app.state::<Tray>();
-        match daemon::stop_daemon(tray.port, daemon::probe, daemon::request_shutdown, STOP_TIMEOUT) {
+        let profile = tray.profile;
+        let exited = || daemon::daemon_exited(profile);
+        match daemon::stop_daemon(tray.port, daemon::probe, daemon::request_shutdown, exited, STOP_TIMEOUT) {
             Ok(()) => app.exit(0),
             Err(e) => {
                 let quit_anyway = error_dialog(&app, format!("Could not stop {DAEMON_BIN}: {e}\n\nQuit anyway?"))
@@ -248,7 +268,7 @@ fn update_clicked(app: &AppHandle) {
     std::thread::spawn(move || {
         let tray = app.state::<Tray>();
         let status = match tray.status() {
-            Status::Disabled | Status::Checking => return,
+            Status::Disabled(_) | Status::Checking => return,
             Status::Available(r) => Status::Available(r),
             Status::UpToDate | Status::Failed(_) => run_check(&app),
         };
@@ -267,7 +287,7 @@ fn update_clicked(app: &AppHandle) {
                     .title(PRODUCT_NAME)
                     .blocking_show();
             }
-            Status::Disabled | Status::Checking => {}
+            Status::Disabled(_) | Status::Checking => {}
         }
     });
 }
@@ -280,7 +300,14 @@ fn confirm_and_update(app: &AppHandle, release: update::Release) {
         .title(PRODUCT_NAME)
         .buttons(MessageDialogButtons::OkCancelCustom("Update".into(), "Cancel".into()))
         .blocking_show();
-    if !go || !tray.begin() {
+    if !go {
+        return;
+    }
+    if !tray.begin() {
+        app.dialog()
+            .message("Another action is in progress; try again in a moment.")
+            .title(PRODUCT_NAME)
+            .blocking_show();
         return;
     }
     let _ = tray.update_item.set_text(format!("Downloading v{}…", release.version));
@@ -289,7 +316,7 @@ fn confirm_and_update(app: &AppHandle, release: update::Release) {
     let log = daemon::launch_log_path(tray.profile)
         .and_then(|p| p.parent().map(|d| d.join("update.log")))
         .filter(|p| p.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok()))
-        .unwrap_or_else(|| dir.join("update.log"));
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("{SLUG}-update.log")));
     let result =
         update::download(&release, &dir).and_then(|asset| update::launch_helper(&asset, &dir, tray.port, &log));
     match result {
