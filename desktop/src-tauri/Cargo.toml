@@ -1,0 +1,13 @@
+[package]
+name = "pdt-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = "2.7.3"
+
+[dependencies]
+tauri = "2.12.4"
+pdt-core.workspace = true

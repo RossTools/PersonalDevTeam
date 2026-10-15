@@ -1,0 +1,28 @@
+@import 'tailwindcss';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '../ui/tokens.css';
+
+@theme inline {
+  --color-bg: var(--pdt-bg);
+  --color-surface: var(--pdt-surface);
+  --color-surface-2: var(--pdt-surface-2);
+  --color-border: var(--pdt-border);
+  --color-fg: var(--pdt-fg);
+  --color-muted: var(--pdt-muted);
+  --color-accent: var(--pdt-accent);
+  --color-on-accent: var(--pdt-on-accent);
+  --color-accent-soft: var(--pdt-accent-soft);
+  --color-ring: var(--pdt-ring);
+  --color-running: var(--pdt-running);
+  --color-waiting: var(--pdt-waiting);
+  --color-failed: var(--pdt-failed);
+  --color-idle: var(--pdt-idle);
+  --radius-pdt: var(--pdt-radius);
+  --font-sans: var(--pdt-font-sans);
+  --font-mono: var(--pdt-font-mono);
+}
+
+html, body, #root { height: 100%; margin: 0; }

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["@testing-library/jest-dom", "node", "vite/client"],
+    "paths": { "@ui": ["./ui/index.ts"], "@ui/*": ["./ui/*"] }
+  },
+  "include": ["src", "ui", "vite.config.ts"]
+}

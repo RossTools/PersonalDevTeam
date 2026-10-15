@@ -1,0 +1,20 @@
+[package]
+name = "pdtd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+pdt-core.workspace = true
+pdt-store.workspace = true
+pdt-api.workspace = true
+tokio.workspace = true
+axum.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dirs = "7.0.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
