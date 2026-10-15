@@ -11,3 +11,9 @@ tauri-build = "2.7.3"
 [dependencies]
 tauri = "2.12.4"
 pdt-core.workspace = true
+tauri-plugin-dialog = "2"
+serde_json.workspace = true
+dirs = "7.0.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
