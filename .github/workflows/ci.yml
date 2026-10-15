@@ -39,7 +39,8 @@ jobs:
       - run: cargo test -p pdt-desktop
 
   bundle:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # Required status checks on main: must run for pull requests too.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
