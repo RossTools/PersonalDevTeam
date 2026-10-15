@@ -1,7 +1,9 @@
 use axum::Json;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use pdt_core::project::ValidationError;
+use pdt_core::worktree::WorktreeValidationError;
 use pdt_git::GitError;
 use pdt_store::StoreError;
 use serde::Serialize;
@@ -48,6 +50,18 @@ impl From<ValidationError> for ApiError {
     }
 }
 
+impl From<WorktreeValidationError> for ApiError {
+    fn from(e: WorktreeValidationError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<JsonRejection> for ApiError {
+    fn from(rej: JsonRejection) -> Self {
+        Self::new(rej.status(), "invalid_input", rej.body_text())
+    }
+}
+
 impl From<GitError> for ApiError {
     fn from(e: GitError) -> Self {
         match e {
@@ -65,9 +79,7 @@ impl From<GitError> for ApiError {
 impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
         match e {
-            StoreError::Conflict(_) => {
-                Self::new(StatusCode::CONFLICT, "conflict", "a project for this repository already exists")
-            }
+            StoreError::Conflict(_) => Self::new(StatusCode::CONFLICT, "conflict", "this record already exists"),
             other => Self::internal(other),
         }
     }

@@ -38,7 +38,7 @@ async fn run() -> anyhow::Result<()> {
         profile = ?cfg.profile, port = cfg.port, data_dir = %cfg.data_dir.display(),
         web_dir = ?cfg.web_dir, "{PRODUCT_NAME} daemon listening on http://127.0.0.1:{}", cfg.port
     );
-    let app = with_host_guard(router(AppState { store }, cfg.web_dir), cfg.allowed_hosts);
+    let app = with_host_guard(router(AppState::new(store), cfg.web_dir), cfg.allowed_hosts);
     axum::serve(listener, app).await?;
     Ok(())
 }

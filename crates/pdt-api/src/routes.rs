@@ -1,4 +1,5 @@
 use crate::error::ApiError;
+use crate::worktrees;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -17,6 +18,16 @@ pub struct AppState {
     pub store: Store,
 }
 
+impl AppState {
+    pub fn new(store: Store) -> Self {
+        Self { store }
+    }
+}
+
+pub(crate) fn now_ms() -> i64 {
+    jiff::Timestamp::now().as_millisecond()
+}
+
 #[derive(Debug, Serialize, TS)]
 #[ts(export)]
 pub struct Health {
@@ -30,6 +41,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/health", get(health))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
+        .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")
@@ -61,7 +73,7 @@ async fn create_project(
     State(st): State<AppState>,
     payload: Result<Json<NewProject>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Project>), ApiError> {
-    let Json(input) = payload.map_err(|rej| ApiError::new(rej.status(), "invalid_input", rej.body_text()))?;
+    let Json(input) = payload?;
     let valid = input.validate()?;
     let path = PathBuf::from(&valid.repo_path);
     let info =
@@ -71,8 +83,13 @@ async fn create_project(
         name: valid.name,
         repo_path: info.root.to_string_lossy().into_owned(),
         base_branch: valid.base_branch.or(info.current_branch).unwrap_or_else(|| "main".into()),
-        created_at: jiff::Timestamp::now().as_millisecond(),
+        created_at: now_ms(),
     };
-    st.store.insert_project(&project).await?;
+    st.store.insert_project(&project).await.map_err(|e| match e {
+        pdt_store::StoreError::Conflict(_) => {
+            ApiError::new(StatusCode::CONFLICT, "conflict", "a project for this repository already exists")
+        }
+        other => other.into(),
+    })?;
     Ok((StatusCode::CREATED, Json(project)))
 }
