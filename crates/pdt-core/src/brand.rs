@@ -1,5 +1,6 @@
 //! The single source of product naming. A rename touches this file, desktop/src-tauri/tauri.conf.json
-//! (productName, identifier) and scripts/release-stable.* (product name, slug, port) only.
+//! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (daemon sidecar) and
+//! scripts/release-stable.* (product name, slug, port) only.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";

@@ -7,7 +7,7 @@
 **Architecture:**
 - **`pdt-agents` (new crate):** holds the PTY manager (`portable-pty` plus threads), with a scrollback ring buffer and a broadcast channel per session.
 - **`pdt-core`:** gains pure session and worktree types and the launch-command rules.
-- **`pdt-git`:** gains worktree add, remove and dirty-check.
+- **`pdt-git`:** gains worktree add and an exclude helper (removal comes with merge in Phase 4).
 - **`pdt-store`:** gains tables for worktrees and sessions.
 - **`pdt-api`:** gains REST routes plus a WebSocket byte stream per session, guarded by the existing Host allowlist and a new Origin check.
 - **`pdtd`:**
