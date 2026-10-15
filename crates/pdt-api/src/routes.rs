@@ -21,6 +21,8 @@ pub struct AppState {
     /// Exit-recorder task per session, so a restart can wait for the previous run's exit write to land first.
     pub(crate) exit_tasks:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    /// Notified by POST /api/shutdown; pdtd's serve loop waits on it.
+    pub shutdown: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl AppState {
@@ -30,6 +32,7 @@ impl AppState {
             ptys: pdt_agents::PtyManager::new(),
             platform: pdt_agents::launch::detect_platform(),
             exit_tasks: Default::default(),
+            shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }
 }
@@ -46,9 +49,17 @@ pub struct Health {
     pub version: String,
 }
 
+/// Asks pdtd to stop gracefully (running sessions become `interrupted`). Guarded by the Host/Origin checks.
+async fn request_shutdown(State(st): State<AppState>) -> StatusCode {
+    tracing::info!("shutdown requested over the API");
+    st.shutdown.notify_one();
+    StatusCode::ACCEPTED
+}
+
 pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
