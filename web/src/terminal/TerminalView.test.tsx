@@ -1,11 +1,11 @@
-import { render } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   term: null as null | {
     written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
   },
-  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean },
+  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean; retries: number },
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -36,6 +36,7 @@ vi.mock('./ptySocket', () => ({
     sent: string[] = [];
     disposed = false;
     connected = false;
+    retries = 0;
     constructor(_url: string, handlers: Record<string, (...a: unknown[]) => void>) {
       this.handlers = handlers;
       h.sock = this;
@@ -43,7 +44,7 @@ vi.mock('./ptySocket', () => ({
     connect() { this.connected = true; }
     send(d: string) { this.sent.push(d); }
     resize() {}
-    retry() {}
+    retry() { this.retries++; }
     dispose() { this.disposed = true; }
   },
 }));
@@ -81,5 +82,30 @@ describe('TerminalView', () => {
     h.sock!.handlers.onData(new TextEncoder().encode('\x1b[6n'), false);
     h.term!.dataCb!('\x1b[3;1R'); // a live query is answered
     expect(h.sock!.sent).toEqual(['ls\r', '\x1b[3;1R']);
+  });
+
+  it('shows a quiet indicator while reconnecting and when the session ended', () => {
+    render(<TerminalView sessionId="s1" sessionStatus="running" />);
+    expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
+    act(() => (h.sock!.handlers.onStatus as (s: string) => void)('reconnecting'));
+    expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    act(() => (h.sock!.handlers.onStatus as (s: string) => void)('ended'));
+    expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
+    expect(screen.getByText('Session ended.')).toBeInTheDocument();
+  });
+
+  it('reattaches when the session becomes running again after it ended', () => {
+    const status = (s: string) => act(() => (h.sock!.handlers.onStatus as (s: string) => void)(s));
+    const { rerender } = render(<TerminalView sessionId="s1" sessionStatus="finished" />);
+    status('open');
+    rerender(<TerminalView sessionId="s1" sessionStatus="running" />);
+    expect(h.sock!.retries).toBe(0);
+    status('ended');
+    rerender(<TerminalView sessionId="s1" sessionStatus="running" />);
+    expect(h.sock!.retries).toBe(0); // a socket change alone never retries
+    rerender(<TerminalView sessionId="s1" sessionStatus="interrupted" />);
+    rerender(<TerminalView sessionId="s1" sessionStatus="running" />);
+    expect(h.sock!.retries).toBe(1);
   });
 });

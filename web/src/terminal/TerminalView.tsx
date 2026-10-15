@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { Button } from '@ui';
+import type { SessionStatus } from '../api/gen/SessionStatus';
 import { PtySocket, ptyUrl, type PtyStatus } from './ptySocket';
 import { cssVar, terminalTheme } from './theme';
 
-export function TerminalView({ sessionId }: { sessionId: string }) {
+/**
+ * `sessionStatus` is the daemon's view of the session (from the polled list). When it turns `running` while this
+ * view is detached from a finished process, the view reattaches by itself (e.g. after Restart or an auto-resume).
+ */
+export function TerminalView({ sessionId, sessionStatus }: { sessionId: string; sessionStatus?: SessionStatus }) {
   const host = useRef<HTMLDivElement>(null);
   const sockRef = useRef<PtySocket | null>(null);
   const [status, setStatus] = useState<PtyStatus>('connecting');
@@ -73,16 +77,21 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
+  // Only a change of the session's status triggers this (not the socket's): a stale `running` in the list must
+  // not make a just-ended terminal reconnect in a loop.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  useEffect(() => {
+    if (sessionStatus === 'running' && (statusRef.current === 'ended' || statusRef.current === 'exited')) {
+      sockRef.current?.retry();
+    }
+  }, [sessionStatus]);
+
   return (
     <div className="relative flex-1 min-h-0 bg-bg">
       <div ref={host} data-testid="terminal" className="absolute inset-0 p-1" />
       {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
-      {status === 'failed' && (
-        <div role="alert" className="absolute inset-x-2 top-2 flex items-center gap-2 rounded-pdt border border-border bg-surface p-2 text-xs">
-          <span className="flex-1">Could not connect to this terminal.</span>
-          <Button onClick={() => sockRef.current?.retry()}>Reconnect</Button>
-        </div>
-      )}
+      {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted">Session ended.</p>}
     </div>
   );
 }

@@ -44,8 +44,7 @@ export function SessionView({ session, onRemoved }: { session: Session; onRemove
           {session.kind === 'agent_tui' ? '; the agent resumes its last conversation' : ''}.
         </p>
       ) : (
-        // Remount on status change so a restarted session gets a fresh socket.
-        <TerminalView key={`${session.id}-${session.status}`} sessionId={session.id} />
+        <TerminalView key={session.id} sessionId={session.id} sessionStatus={session.status} />
       )}
     </div>
   );
