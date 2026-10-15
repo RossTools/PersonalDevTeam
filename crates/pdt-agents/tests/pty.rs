@@ -142,3 +142,17 @@ async fn missing_working_directory_is_a_spawn_error() {
     assert!(matches!(m.spawn(s), Err(PtyError::Spawn(_))));
     assert!(matches!(m.attach("a"), Err(PtyError::NotFound(_))));
 }
+
+#[tokio::test]
+async fn spawn_after_shutdown_is_refused_and_starts_no_process() {
+    let m = PtyManager::new();
+    tokio::time::timeout(WAIT, m.shutdown()).await.unwrap();
+    let marker = std::env::temp_dir().join(format!("pdt-no-spawn-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let (win, unix) = (format!("echo x> \"{}\"", marker.display()), format!("echo x > '{}'", marker.display()));
+    let r = m.spawn(oneshot_cmd("late", &win, &unix));
+    assert!(matches!(r, Err(PtyError::ShuttingDown)), "{r:?}");
+    assert!(matches!(m.attach("late"), Err(PtyError::NotFound(_))), "nothing was registered");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!marker.exists(), "the command must not have run");
+}

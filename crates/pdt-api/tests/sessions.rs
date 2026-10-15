@@ -730,7 +730,6 @@ async fn claude_resume_falls_back_to_a_fresh_conversation_when_none_was_saved() 
     seed(&state, &pid, "unsaved", Some(Claude), &repo, Interrupted, 1).await;
     assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
     assert_eq!(recorded_args(&bin, "fakeclaude").await, "--session-id unsaved");
-    state.ptys.shutdown().await;
 
     forget_launches(&bin, "fakeclaude");
     seed(&state, &pid, "saved", Some(Claude), &repo, Interrupted, 2).await;

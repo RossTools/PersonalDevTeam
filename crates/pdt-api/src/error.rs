@@ -73,6 +73,9 @@ impl From<PtyError> for ApiError {
                 Self::new(StatusCode::CONFLICT, "not_running", "this session is not running")
             }
             PtyError::AlreadyExists(_) => Self::new(StatusCode::CONFLICT, "already_running", e.to_string()),
+            PtyError::ShuttingDown => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, "shutting_down", "the daemon is shutting down")
+            }
             PtyError::Io(_) => Self::internal(e),
         }
     }

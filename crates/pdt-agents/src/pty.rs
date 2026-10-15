@@ -52,6 +52,8 @@ pub enum PtyError {
     AlreadyExists(String),
     #[error("terminal session {0} is not running")]
     NotRunning(String),
+    #[error("the terminal manager is shutting down")]
+    ShuttingDown,
     #[error("terminal I/O failed: {0}")]
     Io(String),
 }
@@ -124,6 +126,8 @@ impl Handle {
 #[derive(Clone, Default)]
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Handle>>>>,
+    /// Set by `shutdown`, under the `sessions` lock, so no process can start after the snapshot it kills.
+    shut_down: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PtyManager {
@@ -134,6 +138,9 @@ impl PtyManager {
     /// Starts the process. The receiver resolves with the exit code once it has ended.
     pub fn spawn(&self, spec: SpawnSpec) -> Result<oneshot::Receiver<i32>, PtyError> {
         let mut sessions = self.sessions.lock().unwrap();
+        if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(PtyError::ShuttingDown);
+        }
         if sessions.contains_key(&spec.id) {
             return Err(PtyError::AlreadyExists(spec.id));
         }
@@ -276,9 +283,14 @@ impl PtyManager {
         }
     }
 
-    /// Kills every running session and waits (up to 5 s) for them to report their exit.
+    /// Kills every running session and waits (up to 5 s) for them to report their exit. Afterwards `spawn` refuses
+    /// to start anything.
     pub async fn shutdown(&self) {
-        let handles: Vec<Arc<Handle>> = self.sessions.lock().unwrap().values().cloned().collect();
+        let handles: Vec<Arc<Handle>> = {
+            let sessions = self.sessions.lock().unwrap();
+            self.shut_down.store(true, std::sync::atomic::Ordering::SeqCst);
+            sessions.values().cloned().collect()
+        };
         for h in &handles {
             if !h.exited() {
                 let _ = h.kill();
