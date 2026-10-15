@@ -74,14 +74,23 @@ fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: bool) -> Re
     };
     let exit = st.ptys.spawn(spec)?;
     let (store, id) = (st.store.clone(), s.id.clone());
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         if let Ok(code) = exit.await
             && let Err(e) = store.end_session(&id, SessionStatus::Finished, Some(code), now_ms()).await
         {
             tracing::warn!(session = %id, error = %e, "failed to record session exit");
         }
     });
+    st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).insert(s.id.clone(), handle);
     Ok(())
+}
+
+/// Waits for the previous run's exit write (the process has already exited, so this is prompt).
+async fn settle_exit(st: &AppState, id: &str) {
+    let handle = st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    if let Some(h) = handle {
+        let _ = h.await;
+    }
 }
 
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -101,6 +110,7 @@ pub(crate) async fn restart(
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
     }
+    settle_exit(&st, &id).await;
     st.ptys.remove(&id);
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(&id).await?;
@@ -116,6 +126,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "stop the session before removing it"));
     }
+    settle_exit(&st, &id).await;
     st.ptys.remove(&id);
     st.store.delete_session(&id).await?;
     Ok(StatusCode::NO_CONTENT)

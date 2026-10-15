@@ -18,11 +18,19 @@ pub struct AppState {
     pub store: Store,
     pub ptys: pdt_agents::PtyManager,
     pub platform: pdt_core::session::Platform,
+    /// Exit-recorder task per session, so a restart can wait for the previous run's exit write to land first.
+    pub(crate) exit_tasks:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
 
 impl AppState {
     pub fn new(store: Store) -> Self {
-        Self { store, ptys: pdt_agents::PtyManager::new(), platform: pdt_agents::launch::detect_platform() }
+        Self {
+            store,
+            ptys: pdt_agents::PtyManager::new(),
+            platform: pdt_agents::launch::detect_platform(),
+            exit_tasks: Default::default(),
+        }
     }
 }
 

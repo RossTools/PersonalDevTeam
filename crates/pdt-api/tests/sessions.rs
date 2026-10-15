@@ -115,6 +115,34 @@ async fn restart_finished_session() {
 }
 
 #[tokio::test]
+async fn restart_right_after_kill_is_not_overwritten_by_old_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, _) = setup(tmp.path()).await;
+    let (_, sess) =
+        call(&app, "POST", "/api/sessions", Some(json!({"projectId": pid, "kind": "shell", "cols": 80, "rows": 24})))
+            .await;
+    let id = sess["id"].as_str().unwrap().to_string();
+    call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    let uri = format!("/api/sessions/{id}/restart");
+    let mut restarted = false;
+    for _ in 0..100 {
+        let (s, v) = call(&app, "POST", &uri, Some(json!({"cols": 80, "rows": 24}))).await;
+        if s == StatusCode::OK {
+            restarted = true;
+            break;
+        }
+        assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "already_running"));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(restarted);
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (_, now) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
+    assert_eq!(now["status"], "running");
+    assert!(state.ptys.is_running(&id));
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
 async fn missing_program_is_400_and_leaves_no_row() {
     let tmp = tempfile::tempdir().unwrap();
     let (_, mut state, pid, _) = setup(tmp.path()).await;
