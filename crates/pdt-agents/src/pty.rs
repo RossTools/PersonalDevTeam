@@ -104,16 +104,38 @@ struct Handle {
     input: std_mpsc::Sender<Vec<u8>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pid: Option<u32>,
 }
+
+/// How long a process gets to act on SIGHUP before it is killed outright.
+#[cfg(unix)]
+const HANGUP_GRACE: Duration = Duration::from_millis(1500);
 
 impl Handle {
     fn exited(&self) -> bool {
         self.state.lock().unwrap().exited.is_some()
     }
 
-    /// Asks the OS to end the process; the waiter thread reports the exit.
-    fn kill(&self) -> std::io::Result<()> {
+    /// Asks the OS to end the process; the waiter thread reports the exit. On unix the request is SIGHUP, which a
+    /// shell can sit on (macOS's /bin/sh handles it only once its read returns), so a process still alive after
+    /// `HANGUP_GRACE` is killed with SIGKILL, together with its process group.
+    fn kill(self: &Arc<Self>) -> std::io::Result<()> {
         let result = self.killer.lock().unwrap().kill();
+        #[cfg(unix)]
+        if let Some(pid) = self.pid.and_then(|p| i32::try_from(p).ok()) {
+            let h = self.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(HANGUP_GRACE);
+                if !h.exited() {
+                    // The child is a session leader, so its pid is also its process group id.
+                    unsafe {
+                        libc::kill(-pid, libc::SIGKILL);
+                        libc::kill(pid, libc::SIGKILL);
+                    }
+                }
+            });
+        }
         if cfg!(windows) {
             // portable-pty 0.9.0's Windows killer inverts TerminateProcess's result (Err on success, Ok on
             // failure), so the result says nothing. Killing our own child only fails if it already exited.
@@ -162,6 +184,7 @@ impl PtyManager {
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| spawn_err(&e))?;
         drop(pair.slave);
         let killer = child.clone_killer();
+        let pid = child.process_id();
         let io = pair.master.try_clone_reader().and_then(|r| Ok((r, pair.master.take_writer()?)));
         let (mut reader, mut writer) = match io {
             Ok(rw) => rw,
@@ -179,6 +202,7 @@ impl PtyManager {
             input: input_tx,
             master: Mutex::new(Some(pair.master)),
             killer: Mutex::new(killer),
+            pid,
         });
 
         let h = handle.clone();

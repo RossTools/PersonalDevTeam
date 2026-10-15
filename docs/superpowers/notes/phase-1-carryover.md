@@ -5,7 +5,6 @@ Items that Phase 1 reviews deferred. Plan the ones tagged with a phase into that
 ## Phase 3 (structured agents)
 - **Child-process cleanup:**
   - Put session processes in a Windows Job Object, so `cmd.exe`-wrapped shims and their grandchildren die with the session or with pdtd.
-  - On macOS, Stop sends only SIGHUP; escalate to SIGKILL after a grace period.
 - **Scrollback is memory-only;** it is lost when pdtd restarts.
 
 ## Phase 4 (review/merge)

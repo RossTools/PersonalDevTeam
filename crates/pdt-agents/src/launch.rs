@@ -62,6 +62,15 @@ pub fn folder_key(cwd: &str) -> String {
     if cfg!(windows) { trimmed.to_lowercase() } else { trimmed.to_string() }
 }
 
+/// `folder_key` of the folder as the OS names it: symlinks and 8.3 short names resolved, verbatim `\?\` prefix dropped. Codex
+/// records its working folder in its own spelling (macOS temp dirs are symlinks, Windows runners use short names), so
+/// folders are compared this way. Falls back to the text as given when the folder cannot be resolved.
+pub fn canonical_folder_key(cwd: &str) -> String {
+    let resolved = std::fs::canonicalize(cwd).ok().map(|p| p.to_string_lossy().into_owned());
+    let s = resolved.as_deref().unwrap_or(cwd);
+    folder_key(s.strip_prefix("\\\\?\\").unwrap_or(s))
+}
+
 /// How long before the session's fresh launch a conversation file may have been touched and still be its own.
 const ROLLOUT_MTIME_SLACK_MS: i64 = 60_000;
 /// Codex stamps a conversation with its process start time, which is just after PDT's own `fresh_started_at`.
@@ -84,7 +93,7 @@ pub fn find_codex_conversation(
     peers_fresh_started_at_ms: &[i64],
     claimed: &HashSet<String>,
 ) -> Option<String> {
-    let want_cwd = folder_key(&cwd.to_string_lossy());
+    let want_cwd = canonical_folder_key(&cwd.to_string_lossy());
     let oldest_day = oldest_rollout_day(fresh_started_at_ms);
     let root = codex_home.join("sessions");
     let mut best: Option<(i64, String)> = None;
@@ -120,10 +129,10 @@ pub fn find_codex_conversation(
             let later_peer = peers_fresh_started_at_ms
                 .iter()
                 .any(|&p| p > fresh_started_at_ms && p <= began + ROLLOUT_START_BEFORE_MS);
-            if folder_key(&folder) != want_cwd
-                || !(-ROLLOUT_START_BEFORE_MS..=ROLLOUT_START_AFTER_MS).contains(&off)
+            if !(-ROLLOUT_START_BEFORE_MS..=ROLLOUT_START_AFTER_MS).contains(&off)
                 || later_peer
                 || claimed.contains(&id)
+                || canonical_folder_key(&folder) != want_cwd
             {
                 continue;
             }
@@ -344,6 +353,21 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(find(dir.path(), b, &[], &cwd().to_uppercase(), &[]).as_deref(), Some("conv-1"));
         }
+    }
+
+    #[test]
+    fn the_folder_may_be_spelled_differently_by_codex() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = t0();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // Codex records the resolved path (macOS /private/var, Windows long names and the verbatim prefix).
+        let resolved = std::fs::canonicalize(&work).unwrap();
+        rollout(dir.path(), "conv", &resolved.to_string_lossy(), at(b, 1.0));
+        assert_eq!(find(dir.path(), b, &[], &work.to_string_lossy(), &[]).as_deref(), Some("conv"));
+        let dotted = work.join("..").join("work");
+        assert_eq!(find(dir.path(), b, &[], &dotted.to_string_lossy(), &[]).as_deref(), Some("conv"));
+        assert_eq!(find(dir.path(), b, &[], &dir.path().to_string_lossy(), &[]), None, "another folder");
     }
 
     #[test]

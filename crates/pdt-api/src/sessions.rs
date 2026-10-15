@@ -97,7 +97,7 @@ async fn plan_resume(st: &AppState, s: &Session) -> Resume {
 /// Waits until no other fresh Codex launch in this folder happened within the spacing, then claims the slot and
 /// returns its time (ms), which becomes the session's `fresh_started_at`. Nothing is held while waiting.
 async fn wait_for_fresh_codex_slot(st: &AppState, cwd: &str) -> i64 {
-    let key = pdt_agents::launch::folder_key(cwd);
+    let key = pdt_agents::launch::canonical_folder_key(cwd);
     let gap = i64::try_from(st.codex_spawn_spacing.as_millis()).unwrap_or(i64::MAX);
     loop {
         let wait = {
@@ -138,13 +138,13 @@ async fn bind_codex_with(
     }
     let fresh = s.fresh_started_at?;
     let home = codex_home?.to_path_buf();
-    let folder = pdt_agents::launch::folder_key(&s.cwd);
+    let folder = pdt_agents::launch::canonical_folder_key(&s.cwd);
     let peers: Vec<i64> = store
         .list_codex_sessions()
         .await
         .ok()?
         .iter()
-        .filter(|p| p.id != s.id && pdt_agents::launch::folder_key(&p.cwd) == folder)
+        .filter(|p| p.id != s.id && pdt_agents::launch::canonical_folder_key(&p.cwd) == folder)
         .filter_map(|p| p.fresh_started_at)
         .collect();
     let gap = i64::try_from(spacing.as_millis()).unwrap_or(i64::MAX);
