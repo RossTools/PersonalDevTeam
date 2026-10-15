@@ -232,7 +232,12 @@ pub enum PtyClientMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum PtyServerMessage {
-    Exit { code: i32 },
+    /// Sent once per connection after the scrollback replay (even an empty one). Binary frames before it are
+    /// replay: the client must not answer terminal queries in them again.
+    Ready,
+    Exit {
+        code: i32,
+    },
 }
 
 #[cfg(test)]
@@ -356,6 +361,7 @@ mod tests {
     #[test]
     fn pty_messages_wire_format() {
         assert_eq!(serde_json::to_string(&PtyServerMessage::Exit { code: 3 }).unwrap(), r#"{"type":"exit","code":3}"#);
+        assert_eq!(serde_json::to_string(&PtyServerMessage::Ready).unwrap(), r#"{"type":"ready"}"#);
         let m: PtyClientMessage = serde_json::from_str(r#"{"type":"resize","cols":100,"rows":30}"#).unwrap();
         assert_eq!(m, PtyClientMessage::Resize { cols: 100, rows: 30 });
     }

@@ -83,6 +83,26 @@ where
     out
 }
 
+/// Reads binary frames up to the first text frame. Returns (binary bytes as text, the text frame).
+async fn until_first_text<S>(ws: &mut S) -> (String, String)
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    let mut out = String::new();
+    tokio::time::timeout(WAIT, async {
+        while let Some(Ok(msg)) = ws.next().await {
+            match msg {
+                Message::Binary(b) => out.push_str(&String::from_utf8_lossy(&b)),
+                Message::Text(t) => return (out, t.as_str().to_string()),
+                _ => {}
+            }
+        }
+        panic!("socket closed before a text frame; got {out:?}");
+    })
+    .await
+    .expect("timed out waiting for a text frame")
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn shell_streams_input_output_and_exit() {
     let tmp = tempfile::tempdir().unwrap();
@@ -95,9 +115,11 @@ async fn shell_streams_input_output_and_exit() {
     ws.send(Message::Binary(PROBE.as_bytes().to_vec().into())).await.unwrap();
     read_until(&mut ws, "6021").await;
 
-    // second_client_gets_scrollback: a late client sees earlier output immediately.
+    // second_client_gets_scrollback: a late client sees earlier output immediately, then the ready marker.
     let (mut ws2, _) = connect_async(&url).await.unwrap();
-    read_until(&mut ws2, "6021").await;
+    let (replay, first_text) = until_first_text(&mut ws2).await;
+    assert!(replay.contains("6021"), "{replay:?}");
+    assert_eq!(first_text, r#"{"type":"ready"}"#);
 
     let (status, _) = http(port, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     assert_eq!(status, 204);

@@ -21,8 +21,9 @@ function setup() {
   const sockets: FakeSocket[] = [];
   const events: string[] = [];
   const h = {
-    onData: (b: Uint8Array) => events.push(`data:${new TextDecoder().decode(b)}`),
+    onData: (b: Uint8Array, replay: boolean) => events.push(`${replay ? 'replay' : 'data'}:${new TextDecoder().decode(b)}`),
     onReset: () => events.push('reset'),
+    onReady: () => events.push('ready'),
     onExit: (c: number) => events.push(`exit:${c}`),
     onStatus: (s: string) => events.push(`status:${s}`),
   };
@@ -52,10 +53,11 @@ describe('PtySocket', () => {
     sockets[0].open();
     expect(sockets[0].binaryType).toBe('arraybuffer');
     expect(sockets[0].sent).toEqual([JSON.stringify({ type: 'resize', cols: 100, rows: 30 })]);
+    sockets[0].text(JSON.stringify({ type: 'ready' }));
     sockets[0].data('hello');
     sock.send('ls\r');
     expect(new TextDecoder().decode(sockets[0].sent[1] as Uint8Array)).toBe('ls\r');
-    expect(events).toEqual(['status:connecting', 'reset', 'status:open', 'data:hello']);
+    expect(events).toEqual(['status:connecting', 'reset', 'status:open', 'ready', 'data:hello']);
   });
 
   it('resets_before_replay_on_reconnect', () => {
@@ -68,7 +70,25 @@ describe('PtySocket', () => {
     expect(sockets).toHaveLength(2);
     sockets[1].open();
     sockets[1].data('one-replayed');
-    expect(events.slice(-4)).toEqual(['status:reconnecting', 'reset', 'status:open', 'data:one-replayed']);
+    expect(events.slice(-4)).toEqual(['status:reconnecting', 'reset', 'status:open', 'replay:one-replayed']);
+  });
+
+  it('flags frames before ready as replay, per connection', () => {
+    const { sock, sockets, events } = setup();
+    sock.connect();
+    sockets[0].open();
+    sockets[0].data('old');
+    sockets[0].text(JSON.stringify({ type: 'ready' }));
+    sockets[0].data('new');
+    sockets[0].drop();
+    vi.advanceTimersByTime(100);
+    sockets[1].open();
+    sockets[1].data('old-again');
+    sockets[1].text(JSON.stringify({ type: 'ready' }));
+    sockets[1].data('newer');
+    expect(events.filter((e) => !e.startsWith('status:'))).toEqual([
+      'reset', 'replay:old', 'ready', 'data:new', 'reset', 'replay:old-again', 'ready', 'data:newer',
+    ]);
   });
 
   it('stops after exit and does not reconnect', () => {

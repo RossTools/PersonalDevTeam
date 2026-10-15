@@ -3,4 +3,4 @@
 /**
  * Server → client control messages on the PTY WebSocket (sent as text frames).
  */
-export type PtyServerMessage = { "type": "exit", code: number, };
+export type PtyServerMessage = { "type": "ready" } | { "type": "exit", code: number, };

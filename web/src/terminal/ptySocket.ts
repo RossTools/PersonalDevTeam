@@ -15,9 +15,12 @@ export interface SocketLike {
 export type PtyStatus = 'connecting' | 'open' | 'reconnecting' | 'exited' | 'failed';
 
 export interface PtyHandlers {
-  onData(bytes: Uint8Array): void;
+  /** `replay` is true for scrollback the server replays on connect (frames before its `ready` message). */
+  onData(bytes: Uint8Array, replay: boolean): void;
   /** Called when each connection opens, before the server replays the scrollback. Clear the screen here. */
   onReset(): void;
+  /** Called when the server has finished replaying the scrollback; later output is live. */
+  onReady?(): void;
   onExit(code: number): void;
   onStatus?(status: PtyStatus): void;
 }
@@ -64,6 +67,7 @@ export class PtySocket {
     const s = this.factory(this.url);
     s.binaryType = 'arraybuffer';
     let opened = false;
+    let ready = false;
     s.onopen = () => {
       opened = true;
       this.attempt = 0;
@@ -75,14 +79,17 @@ export class PtySocket {
     s.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
         const msg = JSON.parse(ev.data) as PtyServerMessage;
-        if (msg.type === 'exit') {
+        if (msg.type === 'ready') {
+          ready = true;
+          this.h.onReady?.();
+        } else if (msg.type === 'exit') {
           this.exited = true;
           this.h.onStatus?.('exited');
           this.h.onExit(msg.code);
         }
         return;
       }
-      this.h.onData(new Uint8Array(ev.data as ArrayBuffer));
+      this.h.onData(new Uint8Array(ev.data as ArrayBuffer), !ready);
     };
     s.onclose = () => {
       if (this.sock === s) this.sock = null;

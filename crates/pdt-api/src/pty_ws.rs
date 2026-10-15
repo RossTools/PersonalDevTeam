@@ -32,14 +32,21 @@ pub(crate) async fn connect(
     Ok(ws.on_upgrade(move |socket| pump(socket, ptys, id, attachment)))
 }
 
+fn control(msg: &PtyServerMessage) -> Message {
+    Message::Text(serde_json::to_string(msg).expect("serializable").into())
+}
+
 fn exit_message(code: i32) -> Message {
-    Message::Text(serde_json::to_string(&PtyServerMessage::Exit { code }).expect("serializable").into())
+    control(&PtyServerMessage::Exit { code })
 }
 
 async fn pump(socket: WebSocket, ptys: PtyManager, id: String, att: Attachment) {
     let (mut tx, mut rx) = socket.split();
     let Attachment { scrollback, exited, mut events } = att;
     if !scrollback.is_empty() && tx.send(Message::Binary(scrollback.into())).await.is_err() {
+        return;
+    }
+    if tx.send(control(&PtyServerMessage::Ready)).await.is_err() {
         return;
     }
     if let Some(code) = exited {

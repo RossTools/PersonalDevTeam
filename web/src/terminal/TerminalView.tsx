@@ -23,9 +23,28 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+    // The scrollback replayed on each connect contains terminal queries (cursor position, device attributes,
+    // colours) that xterm answers through onData. Those answers were already given once, so they must not reach
+    // the PTY again: input is held back until the server says the replay is over and xterm has parsed all of it.
+    let replay = { ready: true, pending: 0 };
+    const replaying = () => !replay.ready || replay.pending > 0;
     const sock = new PtySocket(ptyUrl(sessionId), {
-      onData: (bytes) => term.write(bytes),
-      onReset: () => term.reset(),
+      onData: (bytes, isReplay) => {
+        if (!isReplay) {
+          term.write(bytes);
+          return;
+        }
+        const r = replay;
+        r.pending++;
+        term.write(bytes, () => r.pending--);
+      },
+      onReset: () => {
+        term.reset();
+        replay = { ready: false, pending: 0 };
+      },
+      onReady: () => {
+        replay.ready = true;
+      },
       onExit: (code) => term.write(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m\r\n`),
       onStatus: setStatus,
     });
@@ -39,7 +58,9 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
       sock.resize(term.cols, term.rows);
     };
     refit();
-    const input = term.onData((d) => sock.send(d));
+    const input = term.onData((d) => {
+      if (!replaying()) sock.send(d);
+    });
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refit);
     observer?.observe(el);
     sock.connect();

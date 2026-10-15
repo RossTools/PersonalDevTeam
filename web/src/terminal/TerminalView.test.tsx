@@ -2,7 +2,9 @@ import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  term: null as null | { written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number },
+  term: null as null | {
+    written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
+  },
   sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean },
 }));
 
@@ -17,7 +19,10 @@ vi.mock('@xterm/xterm', () => ({
     constructor() { h.term = this; }
     loadAddon() {}
     open() {}
-    write(d: unknown) { this.written.push(d); }
+    callbacks: (() => void)[] = [];
+    write(d: unknown, cb?: () => void) { this.written.push(d); if (cb) this.callbacks.push(cb); }
+    /** Simulates xterm finishing parsing everything written so far. */
+    flush() { this.callbacks.splice(0).forEach((cb) => cb()); }
     reset() { this.resetCount++; }
     onData(cb: (d: string) => void) { this.dataCb = cb; return { dispose() {} }; }
     dispose() { this.disposed = true; }
@@ -50,7 +55,8 @@ describe('TerminalView', () => {
     const { unmount } = render(<TerminalView sessionId="s1" />);
     expect(h.sock!.connected).toBe(true);
     h.sock!.handlers.onReset();
-    h.sock!.handlers.onData(new Uint8Array([104, 105]));
+    h.sock!.handlers.onReady();
+    h.sock!.handlers.onData(new Uint8Array([104, 105]), false);
     expect(h.term!.resetCount).toBe(1);
     expect(h.term!.written).toHaveLength(1);
     h.term!.dataCb!('ls\r');
@@ -60,5 +66,20 @@ describe('TerminalView', () => {
     unmount();
     expect(h.sock!.disposed).toBe(true);
     expect(h.term!.disposed).toBe(true);
+  });
+
+  it('does not send answers to replayed terminal queries', () => {
+    render(<TerminalView sessionId="s1" />);
+    h.sock!.handlers.onReset();
+    h.sock!.handlers.onData(new TextEncoder().encode('\x1b[6n'), true);
+    h.term!.dataCb!('\x1b[12;1R'); // xterm answering the replayed query
+    h.sock!.handlers.onReady();
+    h.term!.dataCb!('\x1b[12;1R'); // xterm has not finished parsing the replay yet
+    expect(h.sock!.sent).toEqual([]);
+    h.term!.flush();
+    h.term!.dataCb!('ls\r');
+    h.sock!.handlers.onData(new TextEncoder().encode('\x1b[6n'), false);
+    h.term!.dataCb!('\x1b[3;1R'); // a live query is answered
+    expect(h.sock!.sent).toEqual(['ls\r', '\x1b[3;1R']);
   });
 });
