@@ -272,9 +272,9 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 fn fake_agent(dir: &Path, name: &str) -> std::path::PathBuf {
     let args_file = dir.join(format!("{name}.args"));
     let (file, body) = if cfg!(windows) {
-        (format!("{name}.cmd"), format!("@echo off\r\necho %* > \"{}\"\r\nset /p x=\r\n", args_file.display()))
+        (format!("{name}.cmd"), format!("@echo off\r\necho %* >> \"{}\"\r\nset /p x=\r\n", args_file.display()))
     } else {
-        (name.to_string(), format!("#!/bin/sh\necho \"$@\" > \"{}\"\nread x\n", args_file.display()))
+        (name.to_string(), format!("#!/bin/sh\necho \"$@\" >> \"{}\"\nread x\n", args_file.display()))
     };
     let path = dir.join(file);
     std::fs::write(&path, body).unwrap();
@@ -374,26 +374,46 @@ async fn resume_interrupted_skips_a_session_that_cannot_start() {
 #[tokio::test]
 async fn resume_interrupted_resumes_one_codex_session_per_folder() {
     use pdt_core::session::AgentKind::Codex;
-    use pdt_core::session::SessionStatus::Interrupted;
+    use pdt_core::session::SessionStatus::{Finished, Interrupted};
     let tmp = tempfile::tempdir().unwrap();
     let (app, mut state, pid, repo) = setup(tmp.path()).await;
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let other = tmp.path().join("other");
     std::fs::create_dir_all(&other).unwrap();
+    let behind = tmp.path().join("behind");
+    std::fs::create_dir_all(&behind).unwrap();
     state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
     seed(&state, &pid, "old", Some(Codex), &repo, Interrupted, 1).await;
-    seed(&state, &pid, "new", Some(Codex), &repo, Interrupted, 3).await;
+    // Same folder written with a trailing separator: still the same folder.
+    let repo_slash = format!("{}{}", repo.display(), std::path::MAIN_SEPARATOR);
+    seed(&state, &pid, "new", Some(Codex), Path::new(&repo_slash), Interrupted, 3).await;
     seed(&state, &pid, "elsewhere", Some(Codex), &other, Interrupted, 2).await;
     seed(&state, &pid, "shell", None, &repo, Interrupted, 0).await;
+    // An older interrupted Codex session behind a newer one that finished: `--last` would pick the finished one's
+    // conversation, so the interrupted session must not be resumed.
+    seed(&state, &pid, "behind-old", Some(Codex), &behind, Interrupted, 4).await;
+    seed(&state, &pid, "behind-new", Some(Codex), &behind, Finished, 5).await;
     assert_eq!(pdt_api::resume_interrupted(&state).await, 3);
     for id in ["new", "elsewhere", "shell"] {
         wait_status(&app, id, "running").await;
+        assert!(state.ptys.is_running(id), "{id}");
     }
-    let (_, old) = call(&app, "GET", "/api/sessions/old", None).await;
-    assert_eq!(old["status"], "interrupted", "an older Codex session in the same folder is left alone");
-    assert!(!state.ptys.is_running("old"));
-    assert!(recorded_args(&bin, "fakecodex").await.starts_with("resume --last"));
+    for id in ["old", "behind-old", "behind-new"] {
+        let (_, s) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
+        assert_eq!(s["status"], if id == "behind-new" { "finished" } else { "interrupted" }, "{id}");
+        assert!(!state.ptys.is_running(id), "{id}");
+    }
+    // Exactly two Codex launches (new, elsewhere), each a resume.
+    let mut text = String::new();
+    for _ in 0..100 {
+        text = std::fs::read_to_string(bin.join("fakecodex.args")).unwrap_or_default();
+        if text.lines().count() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(text.lines().map(str::trim).collect::<Vec<_>>(), ["resume --last", "resume --last"], "{text}");
     state.ptys.shutdown().await;
 }
 

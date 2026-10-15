@@ -70,7 +70,7 @@ export class PtySocket {
 
   connect(): void {
     if (this.disposed || this.exited || this.ended) return;
-    this.h.onStatus?.(this.started ? 'reconnecting' : 'connecting');
+    if (!this.started) this.h.onStatus?.('connecting');
     this.started = true;
     const s = this.factory(this.url);
     s.binaryType = 'arraybuffer';
@@ -107,6 +107,8 @@ export class PtySocket {
       // Not the current socket: it was replaced (retry) or ended on purpose.
       if (this.sock !== s) return;
       this.sock = null;
+      if (this.disposed || this.exited || this.ended) return;
+      this.h.onStatus?.('reconnecting');
       if (openedAt !== null && Date.now() - openedAt >= this.opts.stableMs) this.attempt = 0;
       this.scheduleReconnect();
     };
@@ -131,6 +133,7 @@ export class PtySocket {
     this.exited = false;
     this.ended = false;
     this.attempt = 0;
+    this.h.onStatus?.('reconnecting');
     this.connect();
   }
 

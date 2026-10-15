@@ -190,6 +190,18 @@ describe('PtySocket', () => {
     expect(sockets).toHaveLength(4);
   });
 
+  it('reports reconnecting as soon as the socket closes, not when the retry timer fires', () => {
+    const { sock, sockets, events } = setup();
+    sock.connect();
+    sockets[0].open();
+    sockets[0].drop();
+    expect(events.at(-1)).toBe('status:reconnecting');
+    expect(sockets).toHaveLength(1);
+    vi.advanceTimersByTime(100);
+    expect(sockets).toHaveLength(2);
+    expect(events.filter((e) => e === 'status:reconnecting')).toHaveLength(1);
+  });
+
   it('dispose closes and cancels reconnects', () => {
     const { sock, sockets } = setup();
     sock.connect();

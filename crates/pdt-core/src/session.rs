@@ -277,8 +277,9 @@ pub enum PtyServerMessage {
     Exit {
         code: i32,
     },
-    /// The session exists but has no running process (stopped, finished or interrupted). Sent instead of `ready`;
-    /// the server then closes. The client should stop reconnecting until the session is restarted.
+    /// The session has no terminal in this daemon run (e.g. it was interrupted by a pdtd restart and not resumed).
+    /// Sent instead of `ready`, then the server closes; the client should stop reconnecting until the session is
+    /// restarted. A session that exited during this run still gets `ready` and `exit`.
     NotRunning,
 }
 

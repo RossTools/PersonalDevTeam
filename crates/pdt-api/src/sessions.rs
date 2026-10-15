@@ -174,11 +174,19 @@ async fn restart_locked(st: &AppState, session: &Session, size: TerminalSize) ->
     Ok(())
 }
 
+/// A working folder as a comparison key: no trailing separators, and case-insensitive on Windows.
+fn folder_key(cwd: &str) -> String {
+    let trimmed = cwd.trim_end_matches(['/', '\\']);
+    let trimmed = if trimmed.is_empty() { cwd } else { trimmed };
+    if cfg!(windows) { trimmed.to_lowercase() } else { trimmed.to_string() }
+}
+
 /// Restarts the sessions a previous pdtd run left `interrupted`, so they come back by themselves. Returns how many
 /// started. A session that fails to start stays interrupted (logged); it never stops the others.
 ///
-/// Codex resumes the newest conversation in its folder (`resume --last`), so among interrupted Codex sessions
-/// sharing a folder only the most recently created one is resumed; the rest stay interrupted for a manual restart.
+/// Codex resumes the newest conversation in its folder (`resume --last`), so a Codex session is resumed only if it
+/// is the most recently created Codex session (of any status) in its folder; the rest stay interrupted for a manual
+/// restart.
 pub async fn resume_interrupted(st: &AppState) -> usize {
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
         Ok(v) => v,
@@ -188,15 +196,30 @@ pub async fn resume_interrupted(st: &AppState) -> usize {
         }
     };
     let is_codex = |s: &Session| s.kind == SessionKind::AgentTui && s.agent == Some(AgentKind::Codex);
-    // The list is oldest first, so the last Codex session seen for a folder is the newest.
-    let mut newest_codex: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    for s in sessions.iter().filter(|s| is_codex(s)) {
-        newest_codex.insert(&s.cwd, &s.id);
+    // `codex resume --last` takes the newest conversation in the folder whatever PDT thinks of the session, so a
+    // Codex session resumes only if it is the newest Codex session of any status there (by created_at, then id).
+    let mut newest_codex: std::collections::HashMap<String, (i64, String)> = std::collections::HashMap::new();
+    for status in [SessionStatus::Running, SessionStatus::Finished, SessionStatus::Interrupted] {
+        let all = match st.store.list_sessions_by_status(status).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not list sessions to find the newest Codex session per folder");
+                return 0;
+            }
+        };
+        for s in all.iter().filter(|s| is_codex(s)) {
+            let key = (s.created_at, s.id.clone());
+            let slot = newest_codex.entry(folder_key(&s.cwd)).or_insert_with(|| key.clone());
+            if key > *slot {
+                *slot = key;
+            }
+        }
     }
     let size = TerminalSize { cols: 120, rows: 30 };
     let mut resumed = 0;
     for s in &sessions {
-        if is_codex(s) && newest_codex.get(s.cwd.as_str()) != Some(&s.id.as_str()) {
+        if is_codex(s) && newest_codex.get(&folder_key(&s.cwd)).map(|n| n.1.as_str()) != Some(s.id.as_str()) {
+            tracing::info!(session = %s.id, cwd = %s.cwd, "not resuming: a newer Codex session exists in this folder");
             continue;
         }
         let _guard = st.lock_session(&s.id).await;
