@@ -66,7 +66,66 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Pushes to main are released as 0.1.<run number>; other builds keep the checked-in version.
+      - name: Release version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          version="0.1.${{ github.run_number }}"
+          echo "PDT_BUILD_VERSION=$version" >> "$GITHUB_ENV"
+          printf '{"version":"%s"}' "$version" > "$RUNNER_TEMP/release.conf.json"
+          echo "Building release $version"
       - run: pnpm --dir web build
       - run: cargo build --release -p pdtd
       - run: node scripts/stage-pdtd.mjs
-      - run: pnpm --dir desktop exec tauri build --config ${{ github.workspace }}/desktop/src-tauri/tauri.bundle.conf.json --bundles ${{ matrix.bundles }}
+      - name: Build the bundle
+        shell: bash
+        run: |
+          args=(--config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" --bundles "${{ matrix.bundles }}")
+          if [ -n "${PDT_BUILD_VERSION:-}" ]; then args+=(--config "$RUNNER_TEMP/release.conf.json"); fi
+          pnpm --dir desktop exec tauri build "${args[@]}"
+      # Asset names must match the desktop app's update patterns: *-setup.exe and *.app.tar.gz.
+      - name: Collect the release asset
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          if [ "${{ matrix.bundles }}" = nsis ]; then
+            # Only this version's installer (a cached target dir can hold older ones).
+            cp target/release/bundle/nsis/*_"$PDT_BUILD_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
+          else
+            cd target/release/bundle/macos
+            app="$(ls -d *.app | head -n 1)"
+            # tar keeps the bundle's symlinks and permissions.
+            tar -czf "$RUNNER_TEMP/release/$app.tar.gz" "$app"
+          fi
+          ls -l "$RUNNER_TEMP/release"
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.bundles }}
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+
+  release:
+    # Every push to main becomes a GitHub release v0.1.<run number>, which the desktop app updates from.
+    needs: [build, bundle]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: assets
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          tag="v0.1.${{ github.run_number }}"
+          subject="$(printf '%s\n' "$HEAD_MESSAGE" | head -n 1)"
+          ls -l assets
+          gh release create "$tag" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes "${subject:-$tag}"

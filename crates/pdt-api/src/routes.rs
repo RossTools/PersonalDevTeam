@@ -112,7 +112,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
 }
 
 async fn health() -> Json<Health> {
-    Json(Health { status: "ok".into(), name: PRODUCT_NAME.into(), version: env!("CARGO_PKG_VERSION").into() })
+    Json(Health { status: "ok".into(), name: PRODUCT_NAME.into(), version: pdt_core::BUILD_VERSION.into() })
 }
 
 async fn list_projects(State(st): State<AppState>) -> Result<Json<Vec<Project>>, ApiError> {

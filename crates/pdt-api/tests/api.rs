@@ -232,7 +232,7 @@ async fn health_reports_version_and_wrong_content_type_is_json() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path(), None).await;
     let (_, body) = call(&app, "GET", "/api/health", None).await;
-    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["version"], pdt_core::BUILD_VERSION);
     let req = Request::builder()
         .method("POST")
         .uri("/api/projects")
