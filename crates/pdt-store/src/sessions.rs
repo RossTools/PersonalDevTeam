@@ -4,7 +4,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
-                       external_session_id, started_at";
+                       external_session_id, fresh_started_at";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
@@ -27,7 +27,7 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
         external_session_id: r.try_get("external_session_id")?,
-        started_at: r.try_get("started_at")?,
+        fresh_started_at: r.try_get("fresh_started_at")?,
     })
 }
 
@@ -35,7 +35,7 @@ impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
-             external_session_id, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             external_session_id, fresh_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -49,7 +49,7 @@ impl Store {
         .bind(s.created_at)
         .bind(s.ended_at)
         .bind(&s.external_session_id)
-        .bind(s.started_at)
+        .bind(s.fresh_started_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -94,16 +94,29 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Marks a session running again for a new spawn at `started_at`.
-    pub async fn set_session_running(&self, id: &str, started_at: i64) -> Result<bool, StoreError> {
-        let r = sqlx::query(
-            "UPDATE sessions SET status = 'running', exit_code = NULL, ended_at = NULL, started_at = ? WHERE id = ?",
-        )
-        .bind(started_at)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+    pub async fn set_session_running(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET status = 'running', exit_code = NULL, ended_at = NULL WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// Records that a Codex session was launched fresh at `at` (ms).
+    pub async fn set_fresh_started_at(&self, id: &str, at: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET fresh_started_at = ? WHERE id = ?")
+            .bind(at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Every Codex session, whatever its status.
+    pub async fn list_codex_sessions(&self) -> Result<Vec<Session>, StoreError> {
+        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE agent = 'codex' ORDER BY created_at, id");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
+        rows.iter().map(to_session).collect()
     }
 
     /// The agent conversation ids already bound to sessions other than `except`.
@@ -128,8 +141,13 @@ impl Store {
         .bind(id)
         .bind(external_id)
         .execute(&self.pool)
-        .await?;
-        Ok(r.rows_affected() > 0)
+        .await;
+        match r {
+            Ok(r) => Ok(r.rows_affected() > 0),
+            // Lost a race with a concurrent bind of the same conversation (the unique index backs the check above).
+            Err(sqlx::Error::Database(e)) if e.is_unique_violation() => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<bool, StoreError> {
@@ -167,13 +185,13 @@ mod tests {
             kind: SessionKind::AgentTui,
             agent: Some(AgentKind::Codex),
             title: "Codex".into(),
-            cwd: "C:\\r Ã©".into(),
+            cwd: "C:\\r é".into(),
             status: SessionStatus::Running,
             exit_code: None,
             created_at,
             ended_at: None,
             external_session_id: None,
-            started_at: Some(created_at),
+            fresh_started_at: Some(created_at),
         }
     }
 
@@ -198,7 +216,7 @@ mod tests {
         let s = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((s.status, s.exit_code, s.ended_at), (SessionStatus::Finished, Some(3), Some(99)));
         assert!(!store.end_session("a", SessionStatus::Interrupted, None, 100).await.unwrap(), "already ended");
-        assert!(store.set_session_running("a", 7).await.unwrap());
+        assert!(store.set_session_running("a").await.unwrap());
         let s = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((s.status, s.exit_code, s.ended_at), (SessionStatus::Running, None, None));
     }
@@ -242,14 +260,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_session_running_records_the_spawn_time() {
+    async fn fresh_start_time_is_recorded_separately_from_running() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         store.insert_session(&session("a", 1)).await.unwrap();
         store.end_session("a", SessionStatus::Finished, Some(0), 5).await.unwrap();
-        assert!(store.set_session_running("a", 99).await.unwrap());
+        assert!(store.set_session_running("a").await.unwrap());
         let s = store.get_session("a").await.unwrap().unwrap();
-        assert_eq!((s.status, s.started_at, s.ended_at), (SessionStatus::Running, Some(99), None));
+        assert_eq!((s.status, s.fresh_started_at, s.ended_at), (SessionStatus::Running, Some(1), None));
+        assert!(store.set_fresh_started_at("a", 99).await.unwrap());
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().fresh_started_at, Some(99));
+        assert_eq!(store.list_codex_sessions().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_unique_index_rejects_a_conversation_owned_twice() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        let mut b = session("b", 2);
+        b.external_session_id = Some("conv".into());
+        store.insert_session(&b).await.unwrap();
+        let mut c = session("c", 3);
+        c.external_session_id = Some("conv".into());
+        assert!(store.insert_session(&c).await.is_err());
+        assert!(!store.bind_external_session_id("a", "conv").await.unwrap());
     }
 
     #[tokio::test]

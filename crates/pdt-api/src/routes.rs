@@ -24,6 +24,11 @@ pub struct AppState {
     /// Per-session lock serializing kill, restart and remove, so concurrent requests cannot interleave.
     pub(crate) session_locks:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>>,
+    /// Minimum gap between two fresh Codex launches in one folder. Codex's conversations are matched to sessions by
+    /// start time, so launches this close together would be ambiguous.
+    pub codex_spawn_spacing: std::time::Duration,
+    /// When the last fresh Codex launch in each folder (see `folder_key`) happened, in ms.
+    pub(crate) codex_spawns: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
     /// Notified by POST /api/shutdown; pdtd's serve loop waits on it.
     pub shutdown: std::sync::Arc<tokio::sync::Notify>,
 }
@@ -36,6 +41,8 @@ impl AppState {
             platform: pdt_agents::launch::detect_platform(),
             exit_tasks: Default::default(),
             session_locks: Default::default(),
+            codex_spawn_spacing: std::time::Duration::from_secs(5),
+            codex_spawns: Default::default(),
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }

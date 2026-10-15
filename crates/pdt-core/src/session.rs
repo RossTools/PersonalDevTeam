@@ -91,10 +91,11 @@ pub struct Session {
     /// The agent's own conversation id. Only Codex needs it (Claude's conversation id is `id`); it is found in
     /// Codex's rollout files once a turn has been taken, and None until then.
     pub external_session_id: Option<String>,
-    /// When the session's process was last spawned (create, restart or auto-resume). None for rows from before it
-    /// was recorded.
+    /// Codex only: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
+    /// resume), in ms. Matches the session to its conversation's start time. Resuming a bound conversation leaves it
+    /// alone. None for rows from before it was recorded.
     #[ts(type = "number | null")]
-    pub started_at: Option<i64>,
+    pub fresh_started_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

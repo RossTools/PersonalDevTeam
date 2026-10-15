@@ -268,13 +268,33 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     std::fs::canonicalize(a).unwrap() == std::fs::canonicalize(b).unwrap()
 }
 
-/// A stand-in agent program that records its arguments to `<dir>/<name>.args` and then waits for input.
+/// A stand-in agent program that appends its arguments, one line per launch, to `<dir>/<name>.args` and then waits
+/// for input. On Windows, a launch retries while another one holds the file open.
 fn fake_agent(dir: &Path, name: &str) -> std::path::PathBuf {
     let args_file = dir.join(format!("{name}.args"));
     let (file, body) = if cfg!(windows) {
-        (format!("{name}.cmd"), format!("@echo off\r\necho(%* >> \"{}\"\r\nset /p x=\r\n", args_file.display()))
+        (
+            format!("{name}.cmd"),
+            format!(
+                "@echo off
+:again
+(echo(%* >> \"{}\") 2>nul || goto again
+set /p x=
+",
+                args_file.display()
+            ),
+        )
     } else {
-        (name.to_string(), format!("#!/bin/sh\necho \"$@\" >> \"{}\"\nread x\n", args_file.display()))
+        (
+            name.to_string(),
+            format!(
+                "#!/bin/sh
+echo \"$@\" >> \"{}\"
+read x
+",
+                args_file.display()
+            ),
+        )
     };
     let path = dir.join(file);
     std::fs::write(&path, body).unwrap();
@@ -286,20 +306,33 @@ fn fake_agent(dir: &Path, name: &str) -> std::path::PathBuf {
     path
 }
 
-async fn recorded_args(dir: &Path, name: &str) -> String {
-    let file = dir.join(format!("{name}.args"));
+fn forget_launches(dir: &Path, name: &str) {
+    let _ = std::fs::remove_file(dir.join(format!("{name}.args")));
+}
+
+/// The fake agent's recorded launches, sorted, one trimmed entry each (empty for a launch without arguments).
+/// Waits for `want` of them.
+async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
+    let mut found = Vec::new();
     for _ in 0..100 {
-        if let Ok(text) = std::fs::read_to_string(&file)
-            && !text.trim().is_empty()
-        {
-            return text.trim().to_string();
+        let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
+        found = text.lines().map(|l| l.trim().to_string()).collect();
+        if found.len() >= want {
+            break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    panic!("{name} never recorded its arguments");
+    found.sort();
+    found
 }
 
-/// Inserts a session row directly, as a previous daemon run would have left it.
+/// The arguments of the first launch.
+async fn recorded_args(dir: &Path, name: &str) -> String {
+    launches(dir, name, 1).await.into_iter().next().unwrap_or_default()
+}
+
+/// Inserts a session row directly, as a previous daemon run would have left it. A Codex session was launched fresh
+/// when it was created.
 async fn seed(
     state: &AppState,
     pid: &str,
@@ -308,6 +341,21 @@ async fn seed(
     cwd: &Path,
     status: pdt_core::session::SessionStatus,
     created_at: i64,
+) {
+    let fresh = (agent == Some(pdt_core::session::AgentKind::Codex)).then_some(created_at);
+    seed_with(state, pid, id, agent, cwd, status, created_at, fresh).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_with(
+    state: &AppState,
+    pid: &str,
+    id: &str,
+    agent: Option<pdt_core::session::AgentKind>,
+    cwd: &Path,
+    status: pdt_core::session::SessionStatus,
+    created_at: i64,
+    fresh_started_at: Option<i64>,
 ) {
     use pdt_core::session::{Session, SessionKind, SessionStatus};
     let session = Session {
@@ -323,7 +371,7 @@ async fn seed(
         created_at,
         ended_at: None,
         external_session_id: None,
-        started_at: Some(created_at),
+        fresh_started_at,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {
@@ -379,30 +427,39 @@ fn now_ms() -> i64 {
 
 /// Writes a Codex rollout file for a conversation that began `offset_ms` after `base`, as Codex does after a turn.
 fn rollout(codex_home: &Path, id: &str, cwd: &Path, base: i64, offset_ms: i64) {
-    let dir = codex_home.join("sessions").join("2026").join("10").join("15");
+    let began = jiff::Timestamp::from_millisecond(base + offset_ms).unwrap();
+    let day = began.to_zoned(jiff::tz::TimeZone::UTC).strftime("%Y/%m/%d").to_string();
+    let dir = codex_home.join("sessions").join(day);
     std::fs::create_dir_all(&dir).unwrap();
-    let began = jiff::Timestamp::from_millisecond(base + offset_ms).unwrap().to_string();
+    let began = began.to_string();
     let meta = json!({"timestamp": began, "type": "session_meta",
         "payload": {"id": id, "timestamp": began, "cwd": cwd.to_string_lossy(), "instructions": "x".repeat(20_000)}});
     std::fs::write(dir.join(format!("rollout-2026-10-15T00-00-00-{id}.jsonl")), format!("{meta}\n{{}}\n")).unwrap();
 }
 
-/// The fake agent's recorded launches, one trimmed line each (empty for a launch without arguments).
-async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for _ in 0..100 {
-        let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
-        lines = text.lines().map(|l| l.trim().to_string()).collect();
-        if lines.len() >= want {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    lines
-}
-
 async fn external_id(state: &AppState, id: &str) -> Option<String> {
     state.store.get_session(id).await.unwrap().unwrap().external_session_id
+}
+
+async fn fresh_at(state: &AppState, id: &str) -> Option<i64> {
+    state.store.get_session(id).await.unwrap().unwrap().fresh_started_at
+}
+
+/// Router state with a fake `codex` that records its launches, and an empty Codex home.
+async fn codex_setup(
+    tmp: &Path,
+    spacing_ms: u64,
+) -> (axum::Router, AppState, String, std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let (_, mut state, pid, repo) = setup(tmp).await;
+    let (bin, home) = (tmp.join("bin"), tmp.join("codex-home"));
+    for d in [&bin, &home] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
+    state.platform.codex_home = Some(home.clone());
+    state.codex_spawn_spacing = std::time::Duration::from_millis(spacing_ms);
+    let app = router(state.clone(), None);
+    (app, state, pid, repo, bin, home)
 }
 
 #[tokio::test]
@@ -410,14 +467,9 @@ async fn auto_resume_gives_each_codex_session_its_own_conversation() {
     use pdt_core::session::AgentKind::Codex;
     use pdt_core::session::SessionStatus::Interrupted;
     let tmp = tempfile::tempdir().unwrap();
-    let (app, mut state, pid, repo) = setup(tmp.path()).await;
-    let (bin, home) = (tmp.path().join("bin"), tmp.path().join("codex-home"));
+    let (app, state, pid, repo, bin, home) = codex_setup(tmp.path(), 5_000).await;
     let other = tmp.path().join("other");
-    for d in [&bin, &home, &other] {
-        std::fs::create_dir_all(d).unwrap();
-    }
-    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
-    state.platform.codex_home = Some(home.clone());
+    std::fs::create_dir_all(&other).unwrap();
     let now = now_ms();
     // Two sessions in the same folder (the second written with a trailing separator), each with its own saved
     // conversation, plus one in another folder that never took a turn (no rollout file) and a shell.
@@ -438,8 +490,10 @@ async fn auto_resume_gives_each_codex_session_its_own_conversation() {
     assert_eq!(external_id(&state, "a").await.as_deref(), Some("conv-a"));
     assert_eq!(external_id(&state, "b").await.as_deref(), Some("conv-b"));
     assert_eq!(external_id(&state, "c").await, None);
-    // Launches happen in creation order: a, c (fresh, nothing to resume), b.
-    assert_eq!(launches(&bin, "fakecodex", 3).await, ["resume conv-a", "", "resume conv-b"]);
+    // c never had a turn: it starts fresh. Resuming a bound conversation does not touch the launch time.
+    assert_eq!(launches(&bin, "fakecodex", 3).await, ["", "resume conv-a", "resume conv-b"]);
+    assert_eq!((fresh_at(&state, "a").await, fresh_at(&state, "b").await), (Some(t_a), Some(t_b)));
+    assert!(fresh_at(&state, "c").await.unwrap() >= now, "a fresh launch records its time");
     state.ptys.shutdown().await;
 }
 
@@ -448,14 +502,7 @@ async fn restarting_an_exited_codex_session_resumes_its_own_conversation() {
     use pdt_core::session::AgentKind::Codex;
     use pdt_core::session::SessionStatus::Finished;
     let tmp = tempfile::tempdir().unwrap();
-    let (_, mut state, pid, repo) = setup(tmp.path()).await;
-    let (bin, home) = (tmp.path().join("bin"), tmp.path().join("codex-home"));
-    for d in [&bin, &home] {
-        std::fs::create_dir_all(d).unwrap();
-    }
-    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
-    state.platform.codex_home = Some(home.clone());
-    let app = router(state.clone(), None);
+    let (app, state, pid, repo, bin, home) = codex_setup(tmp.path(), 5_000).await;
     let now = now_ms();
     let (t_a, t_b) = (now - 30_000, now - 10_000);
     seed(&state, &pid, "a", Some(Codex), &repo, Finished, t_a).await;
@@ -469,46 +516,168 @@ async fn restarting_an_exited_codex_session_resumes_its_own_conversation() {
     assert_eq!(s, StatusCode::OK, "{v}");
     let (s, v) = call(&app, "POST", "/api/sessions/a/restart", Some(size)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(launches(&bin, "fakecodex", 2).await, ["resume conv-b", "resume conv-a"]);
+    assert_eq!(launches(&bin, "fakecodex", 2).await, ["resume conv-a", "resume conv-b"]);
     assert_eq!(external_id(&state, "a").await.as_deref(), Some("conv-a"));
     assert_eq!(external_id(&state, "b").await.as_deref(), Some("conv-b"));
-    let (_, a) = call(&app, "GET", "/api/sessions/a", None).await;
-    assert!(a["startedAt"].as_i64().unwrap() >= now, "restart records a new start time");
+    assert_eq!(fresh_at(&state, "a").await, Some(t_a));
     state.ptys.shutdown().await;
 }
 
-#[tokio::test]
-async fn codex_conversation_is_captured_when_the_process_exits() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (_, mut state, pid, repo) = setup(tmp.path()).await;
-    let (bin, home) = (tmp.path().join("bin"), tmp.path().join("codex-home"));
-    for d in [&bin, &home] {
-        std::fs::create_dir_all(d).unwrap();
-    }
-    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
-    state.platform.codex_home = Some(home.clone());
-    let app2 = router(state.clone(), None);
+async fn create_codex(app: &axum::Router, pid: &str) -> Value {
     let (s, sess) = call(
-        &app2,
+        app,
         "POST",
         "/api/sessions",
         Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24})),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{sess}");
-    let id = sess["id"].as_str().unwrap().to_string();
-    assert!(sess["startedAt"].is_number());
-    // The first turn is taken, then the user stops the session.
-    rollout(&home, "conv-live", &repo, sess["startedAt"].as_i64().unwrap(), 500);
-    call(&app2, "POST", &format!("/api/sessions/{id}/kill"), None).await;
-    wait_status(&app2, &id, "finished").await;
-    for _ in 0..100 {
-        if external_id(&state, &id).await.is_some() {
+    sess
+}
+
+async fn stop(app: &axum::Router, id: &str) {
+    call(app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    wait_status(app, id, "finished").await;
+}
+
+/// Waits for the exit recorder to finish its binding attempt (it runs just after the status write).
+async fn settle_binding(state: &AppState, id: &str, expect_bound: bool) {
+    for _ in 0..30 {
+        if external_id(state, id).await.is_some() == expect_bound {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    assert_eq!(external_id(&state, &id).await.as_deref(), Some("conv-live"));
+    if !expect_bound {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+}
+
+#[tokio::test]
+async fn codex_conversation_is_captured_when_the_process_exits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, _, home) = codex_setup(tmp.path(), 5_000).await;
+    let sess = create_codex(&app, &pid).await;
+    let id = sess["id"].as_str().unwrap();
+    let fresh = sess["freshStartedAt"].as_i64().unwrap();
+    rollout(&home, "conv-live", &repo, fresh, 500);
+    stop(&app, id).await;
+    settle_binding(&state, id, true).await;
+    assert_eq!(external_id(&state, id).await.as_deref(), Some("conv-live"));
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_codex_started_by_hand_later_is_not_claimed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, _, home) = codex_setup(tmp.path(), 5_000).await;
+    let sess = create_codex(&app, &pid).await;
+    let id = sess["id"].as_str().unwrap();
+    // The session itself never took a turn; the user ran codex in a shell a minute later.
+    rollout(&home, "by-hand", &repo, sess["freshStartedAt"].as_i64().unwrap(), 60_000);
+    stop(&app, id).await;
+    settle_binding(&state, id, false).await;
+    assert_eq!(external_id(&state, id).await, None);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_unbound_session_does_not_take_a_later_neighbours_conversation() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, bin, home) = codex_setup(tmp.path(), 100).await;
+    let now = now_ms();
+    let (t_a, t_b) = (now - 120_000, now - 60_000);
+    seed(&state, &pid, "a", Some(Codex), &repo, Interrupted, t_a).await;
+    seed(&state, &pid, "b", Some(Codex), &repo, Interrupted, t_b).await;
+    rollout(&home, "conv-b", &repo, t_b, 1_000);
+
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 2);
+    wait_status(&app, "a", "running").await;
+    wait_status(&app, "b", "running").await;
+    assert_eq!(external_id(&state, "a").await, None, "A never took a turn");
+    assert_eq!(external_id(&state, "b").await.as_deref(), Some("conv-b"));
+    assert_eq!(launches(&bin, "fakecodex", 2).await, ["", "resume conv-b"]);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn fresh_codex_launches_in_one_folder_are_spaced_and_attributed_by_start_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, _, home) = codex_setup(tmp.path(), 2_000).await;
+    // Two created at once: the second waits out the spacing instead of launching alongside the first.
+    let (a, b) = tokio::join!(create_codex(&app, &pid), create_codex(&app, &pid));
+    let (ida, idb) = (a["id"].as_str().unwrap(), b["id"].as_str().unwrap());
+    let (fa, fb) = (a["freshStartedAt"].as_i64().unwrap(), b["freshStartedAt"].as_i64().unwrap());
+    assert!((fa - fb).abs() >= 2_000, "launches {fa} and {fb} are too close");
+    rollout(&home, "conv-a", &repo, fa, 200);
+    rollout(&home, "conv-b", &repo, fb, 200);
+    stop(&app, ida).await;
+    stop(&app, idb).await;
+    settle_binding(&state, ida, true).await;
+    settle_binding(&state, idb, true).await;
+    assert_eq!(external_id(&state, ida).await.as_deref(), Some("conv-a"));
+    assert_eq!(external_id(&state, idb).await.as_deref(), Some("conv-b"));
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn launches_too_close_together_are_ambiguous_and_never_bound() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, bin, home) = codex_setup(tmp.path(), 3_000).await;
+    let now = now_ms();
+    // Injected directly: two launches 2 s apart, which the spacing would normally prevent.
+    let (t_a, t_b) = (now - 60_000, now - 58_000);
+    seed(&state, &pid, "a", Some(Codex), &repo, Interrupted, t_a).await;
+    seed(&state, &pid, "b", Some(Codex), &repo, Interrupted, t_b).await;
+    rollout(&home, "conv-a", &repo, t_a, 500);
+    rollout(&home, "conv-b", &repo, t_b, 500);
+
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 2);
+    wait_status(&app, "a", "running").await;
+    wait_status(&app, "b", "running").await;
+    assert_eq!((external_id(&state, "a").await, external_id(&state, "b").await), (None, None));
+    assert_eq!(launches(&bin, "fakecodex", 2).await, ["", ""], "both start fresh");
+    // Starting them fresh spaces their new launches.
+    let (fa, fb) = (fresh_at(&state, "a").await.unwrap(), fresh_at(&state, "b").await.unwrap());
+    assert!((fa - fb).abs() >= 3_000, "{fa} {fb}");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_codex_session_with_no_recorded_launch_resumes_fresh() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, bin, home) = codex_setup(tmp.path(), 100).await;
+    let now = now_ms();
+    seed_with(&state, &pid, "old-row", Some(Codex), &repo, Interrupted, now - 30_000, None).await;
+    rollout(&home, "conv-x", &repo, now - 30_000, 1_000);
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
+    wait_status(&app, "old-row", "running").await;
+    assert_eq!(external_id(&state, "old-row").await, None);
+    assert_eq!(launches(&bin, "fakecodex", 1).await, [""]);
+    assert!(fresh_at(&state, "old-row").await.unwrap() >= now, "now it has a launch time to be matched by");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn startup_spaces_fresh_codex_launches_in_one_folder() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, repo, _, _) = codex_setup(tmp.path(), 1_000).await;
+    let now = now_ms();
+    seed(&state, &pid, "a", Some(Codex), &repo, Interrupted, now - 60_000).await;
+    seed(&state, &pid, "b", Some(Codex), &repo, Interrupted, now - 30_000).await;
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 2);
+    wait_status(&app, "a", "running").await;
+    wait_status(&app, "b", "running").await;
+    let (fa, fb) = (fresh_at(&state, "a").await.unwrap(), fresh_at(&state, "b").await.unwrap());
+    assert!((fa - fb).abs() >= 1_000, "{fa} {fb}");
     state.ptys.shutdown().await;
 }
 
@@ -531,7 +700,7 @@ async fn claude_resume_falls_back_to_a_fresh_conversation_when_none_was_saved() 
     assert_eq!(recorded_args(&bin, "fakeclaude").await, "--session-id unsaved");
     state.ptys.shutdown().await;
 
-    std::fs::remove_file(bin.join("fakeclaude.args")).unwrap();
+    forget_launches(&bin, "fakeclaude");
     seed(&state, &pid, "saved", Some(Claude), &repo, Interrupted, 2).await;
     assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
     assert_eq!(recorded_args(&bin, "fakeclaude").await, "--resume saved");

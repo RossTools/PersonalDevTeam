@@ -17,7 +17,7 @@ const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'ma
 const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,
-  externalSessionId: null, startedAt: 1, ...over,
+  externalSessionId: null, freshStartedAt: 1, ...over,
 });
 const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1 };
 

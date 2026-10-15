@@ -42,6 +42,9 @@ pub(crate) async fn create(
         }
         None => (None, project.repo_path.clone(), project.name.clone()),
     };
+    // A fresh Codex launch is matched to its conversation by start time, so launches in a folder are spaced out.
+    let codex = valid.kind == SessionKind::AgentTui && valid.agent == Some(AgentKind::Codex);
+    let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(&st, &cwd).await) } else { None };
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),
         project_id: project.id,
@@ -55,7 +58,7 @@ pub(crate) async fn create(
         created_at: now_ms(),
         ended_at: None,
         external_session_id: None,
-        started_at: Some(now_ms()),
+        fresh_started_at,
     };
     st.store.insert_session(&session).await?;
     if let Err(e) = start_pty(&st, &session, valid.size, &Resume::Fresh) {
@@ -73,7 +76,7 @@ fn is_codex(s: &Session) -> bool {
 /// fresh one. Neither agent saves a conversation before its first turn, so a session that never had one starts over.
 async fn plan_resume(st: &AppState, s: &Session) -> Resume {
     if is_codex(s) {
-        return match bind_codex(&st.store, st.platform.codex_home.as_deref(), &s.id).await {
+        return match bind_codex(st, &s.id).await {
             Some(conversation) => Resume::Codex(conversation),
             None => Resume::Fresh,
         };
@@ -91,10 +94,41 @@ async fn plan_resume(st: &AppState, s: &Session) -> Resume {
     if saved { Resume::Claude } else { Resume::Fresh }
 }
 
+/// Waits until no other fresh Codex launch in this folder happened within the spacing, then claims the slot and
+/// returns its time (ms), which becomes the session's `fresh_started_at`. Nothing is held while waiting.
+async fn wait_for_fresh_codex_slot(st: &AppState, cwd: &str) -> i64 {
+    let key = pdt_agents::launch::folder_key(cwd);
+    let gap = i64::try_from(st.codex_spawn_spacing.as_millis()).unwrap_or(i64::MAX);
+    loop {
+        let wait = {
+            let mut last = st.codex_spawns.lock().unwrap_or_else(|e| e.into_inner());
+            let now = now_ms();
+            match last.get(&key) {
+                Some(&l) if now < l.saturating_add(gap) => l.saturating_add(gap) - now,
+                _ => {
+                    last.insert(key, now);
+                    return now;
+                }
+            }
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(wait as u64)).await;
+    }
+}
+
 /// Finds and records the Codex conversation a session created (see `find_codex_conversation`). Returns the
-/// session's conversation id, whether just found or bound earlier; None if there is none yet (no turn was taken, or
-/// the rollout file was not found). Codex's own files are scanned on a blocking thread.
-async fn bind_codex(store: &Store, codex_home: Option<&FsPath>, id: &str) -> Option<String> {
+/// session's conversation id, whether just found or bound earlier; None if there is none (no turn was taken, the
+/// rollout file was not found, the launch time is unknown, or another session was launched too close to tell the
+/// two apart). Codex's own files are scanned on a blocking thread.
+async fn bind_codex(st: &AppState, id: &str) -> Option<String> {
+    bind_codex_with(&st.store, st.platform.codex_home.as_deref(), st.codex_spawn_spacing, id).await
+}
+
+async fn bind_codex_with(
+    store: &Store,
+    codex_home: Option<&FsPath>,
+    spacing: std::time::Duration,
+    id: &str,
+) -> Option<String> {
     let s = store.get_session(id).await.ok()??;
     if !is_codex(&s) {
         return None;
@@ -102,26 +136,48 @@ async fn bind_codex(store: &Store, codex_home: Option<&FsPath>, id: &str) -> Opt
     if s.external_session_id.is_some() {
         return s.external_session_id;
     }
+    let fresh = s.fresh_started_at?;
     let home = codex_home?.to_path_buf();
-    let claimed: HashSet<String> = store.claimed_external_session_ids(id).await.ok()?.into_iter().collect();
-    let (cwd, started_at) = (PathBuf::from(&s.cwd), s.started_at.unwrap_or(s.created_at));
-    let found = tokio::task::spawn_blocking(move || {
-        pdt_agents::launch::find_codex_conversation(&home, &cwd, started_at, &claimed)
-    })
-    .await
-    .ok()??;
-    match store.bind_external_session_id(id, &found).await {
-        Ok(true) => {
-            tracing::info!(session = %id, conversation = %found, "bound the session to its Codex conversation");
-            Some(found)
-        }
-        // Lost a race with another binding; use whatever won.
-        Ok(false) => store.get_session(id).await.ok()??.external_session_id,
-        Err(e) => {
-            tracing::warn!(session = %id, error = %e, "could not record the Codex conversation id");
-            None
+    let folder = pdt_agents::launch::folder_key(&s.cwd);
+    let peers: Vec<i64> = store
+        .list_codex_sessions()
+        .await
+        .ok()?
+        .iter()
+        .filter(|p| p.id != s.id && pdt_agents::launch::folder_key(&p.cwd) == folder)
+        .filter_map(|p| p.fresh_started_at)
+        .collect();
+    let gap = i64::try_from(spacing.as_millis()).unwrap_or(i64::MAX);
+    if peers.iter().any(|p| (p - fresh).abs() < gap) {
+        tracing::warn!(session = %id, "another Codex session in this folder was launched too close in time; not binding");
+        return None;
+    }
+    // A second pass covers losing a race to bind the conversation we found.
+    for _ in 0..2 {
+        let claimed: HashSet<String> = store.claimed_external_session_ids(id).await.ok()?.into_iter().collect();
+        let (home, cwd, peers) = (home.clone(), PathBuf::from(&s.cwd), peers.clone());
+        let found = tokio::task::spawn_blocking(move || {
+            pdt_agents::launch::find_codex_conversation(&home, &cwd, fresh, &peers, &claimed)
+        })
+        .await
+        .ok()??;
+        match store.bind_external_session_id(id, &found).await {
+            Ok(true) => {
+                tracing::info!(session = %id, conversation = %found, "bound the session to its Codex conversation");
+                return Some(found);
+            }
+            Ok(false) => {
+                if let Some(bound) = store.get_session(id).await.ok()??.external_session_id {
+                    return Some(bound);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(session = %id, error = %e, "could not record the Codex conversation id");
+                return None;
+            }
         }
     }
+    None
 }
 
 /// Spawns the session's process and records its exit when it ends.
@@ -150,6 +206,7 @@ fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: &Resume) ->
     let exit = st.ptys.spawn(spec)?;
     let (store, id) = (st.store.clone(), s.id.clone());
     let codex_home = is_codex(s).then(|| st.platform.codex_home.clone()).flatten();
+    let spacing = st.codex_spawn_spacing;
     let handle = tokio::spawn(async move {
         if let Ok(code) = exit.await {
             if let Err(e) = store.end_session(&id, SessionStatus::Finished, Some(code), now_ms()).await {
@@ -157,7 +214,7 @@ fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: &Resume) ->
             }
             // Remember which Codex conversation this was while its start time is still fresh.
             if codex_home.is_some() {
-                bind_codex(&store, codex_home.as_deref(), &id).await;
+                bind_codex_with(&store, codex_home.as_deref(), spacing, &id).await;
             }
         }
     });
@@ -211,21 +268,29 @@ pub(crate) async fn restart(
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
     }
-    restart_locked(&st, &id, size).await?;
+    restart_locked(&st, &id, size, None).await?;
     Ok(Json(load(&st, &id).await?))
 }
 
 /// Starts a session that has no running process, resuming its agent conversation. The caller holds the session lock.
-async fn restart_locked(st: &AppState, id: &str, size: TerminalSize) -> Result<(), ApiError> {
+async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Option<Resume>) -> Result<(), ApiError> {
     settle_exit(st, id).await;
     st.ptys.remove(id);
     // After the previous run's exit task, which may have just bound its Codex conversation.
     let session = load(st, id).await?;
-    let resume = plan_resume(st, &session).await;
+    let resume = match planned {
+        Some(r) => r,
+        None => plan_resume(st, &session).await,
+    };
+    let mut session = session;
+    if is_codex(&session) && resume == Resume::Fresh {
+        // Launched without a conversation: its new conversation will be matched by this launch time.
+        let at = wait_for_fresh_codex_slot(st, &session.cwd).await;
+        st.store.set_fresh_started_at(id, at).await?;
+        session.fresh_started_at = Some(at);
+    }
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
-    let started_at = now_ms();
-    st.store.set_session_running(id, started_at).await?;
-    let session = Session { started_at: Some(started_at), ..session };
+    st.store.set_session_running(id).await?;
     if let Err(e) = start_pty(st, &session, size, &resume) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
@@ -249,20 +314,31 @@ pub async fn resume_interrupted(st: &AppState) -> usize {
         }
     };
     let size = TerminalSize { cols: 120, rows: 30 };
-    let mut resumed = 0;
+    // Decide every session's resume first: a Codex session that relaunches fresh gets a new launch time, which
+    // must not change how its neighbours' conversations are matched.
+    let mut plans = Vec::new();
     for s in &sessions {
+        plans.push(plan_resume(st, s).await);
+    }
+    // Concurrently, so sessions in different folders do not wait for each other (fresh Codex launches within one
+    // folder still queue behind the spawn spacing).
+    let results = futures_util::future::join_all(sessions.iter().zip(plans).map(|(s, plan)| async move {
         let _guard = st.lock_session(&s.id).await;
         // Re-read under the lock: the user may have restarted or removed it already.
-        let current = match st.store.get_session(&s.id).await {
-            Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => c,
-            _ => continue,
-        };
-        match restart_locked(st, &current.id, size).await {
-            Ok(()) => resumed += 1,
-            Err(e) => tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted"),
+        match st.store.get_session(&s.id).await {
+            Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => {}
+            _ => return false,
         }
-    }
-    resumed
+        match restart_locked(st, &s.id, size, Some(plan)).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted");
+                false
+            }
+        }
+    }))
+    .await;
+    results.into_iter().filter(|ok| *ok).count()
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

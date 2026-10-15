@@ -11,7 +11,7 @@ vi.mock('../terminal/TerminalView', () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1 };
-const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, startedAt: 1 };
+const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1 };
 
 function stubAlpha() {
   stubApi({

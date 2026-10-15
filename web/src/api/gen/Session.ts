@@ -18,7 +18,8 @@ cwd: string, status: SessionStatus, exitCode: number | null, createdAt: number, 
  */
 externalSessionId: string | null, 
 /**
- * When the session's process was last spawned (create, restart or auto-resume). None for rows from before it
- * was recorded.
+ * Codex only: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
+ * resume), in ms. Matches the session to its conversation's start time. Resuming a bound conversation leaves it
+ * alone. None for rows from before it was recorded.
  */
-startedAt: number | null, };
+freshStartedAt: number | null, };
