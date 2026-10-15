@@ -1,5 +1,7 @@
 mod error;
 mod migrate;
+mod sessions;
+mod worktrees;
 
 pub use error::StoreError;
 

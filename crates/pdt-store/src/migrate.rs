@@ -28,9 +28,17 @@ pub async fn backup_if_pending(pool: &SqlitePool, migrator: &Migrator, backup_di
         return Ok(());
     }
     std::fs::create_dir_all(backup_dir)?;
-    let file = backup_dir.join(format!("pdt-{}.db", jiff::Timestamp::now().as_millisecond()));
+    let file = backup_file(backup_dir, jiff::Timestamp::now().as_millisecond());
     sqlx::query("VACUUM INTO ?").bind(file.to_string_lossy().into_owned()).execute(pool).await?;
     Ok(())
+}
+
+/// `pdt-<ms>.db`, or `pdt-<ms>-<n>.db` when that name is taken.
+pub(crate) fn backup_file(dir: &Path, stamp: i64) -> std::path::PathBuf {
+    (0u32..)
+        .map(|n| dir.join(if n == 0 { format!("pdt-{stamp}.db") } else { format!("pdt-{stamp}-{n}.db") }))
+        .find(|p| !p.exists())
+        .expect("an unused backup name exists")
 }
 
 #[cfg(test)]
@@ -78,5 +86,15 @@ mod tests {
         let s = Store::open_with(&db, &Migrator::new(m2.as_path()).await.unwrap(), &backup_dir).await.unwrap();
         s.close().await;
         assert_eq!(backups(&backup_dir), 1, "one backup before applying 0002");
+    }
+
+    #[test]
+    fn backup_names_never_collide() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = super::backup_file(tmp.path(), 42);
+        assert_eq!(first, tmp.path().join("pdt-42.db"));
+        std::fs::write(&first, "").unwrap();
+        let second = super::backup_file(tmp.path(), 42);
+        assert_eq!(second, tmp.path().join("pdt-42-1.db"));
     }
 }
