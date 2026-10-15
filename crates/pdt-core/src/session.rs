@@ -233,15 +233,25 @@ const PDT_ENV_VARS: [&str; 5] = ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT
 /// Removed for agents so they bill the user's subscription, not an API key (spec §5.5).
 const API_KEY_ENV_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
 /// Inherited from the shell that started pdtd (often Claude Code itself): they disable color or make `claude`
-/// believe it is nested. Never passed to any child.
-const LEAKED_ENV_VARS: [&str; 4] = ["NO_COLOR", "FORCE_COLOR", "CLAUDECODE", "CLAUDE_PID"];
-const LEAKED_ENV_PREFIX: &str = "CLAUDE_CODE_";
+/// believe it is nested. Never passed to any child. Only a running session's own `CLAUDE_CODE_*` variables are
+/// listed: user settings such as `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_USE_BEDROCK` must pass through.
+const LEAKED_ENV_VARS: [&str; 10] = [
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+];
 
 /// Whether the environment variable `name` must be removed from a child of this kind.
 pub fn is_scrubbed(kind: SessionKind, name: &str) -> bool {
     PDT_ENV_VARS.contains(&name)
         || LEAKED_ENV_VARS.contains(&name)
-        || name.starts_with(LEAKED_ENV_PREFIX)
         || (kind == SessionKind::AgentTui && API_KEY_ENV_VARS.contains(&name))
 }
 
@@ -355,11 +365,17 @@ mod tests {
             for v in ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"] {
                 assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
             }
-            for v in ["NO_COLOR", "FORCE_COLOR", "CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_X"]
-            {
+            for v in [
+                "NO_COLOR",
+                "FORCE_COLOR",
+                "CLAUDECODE",
+                "CLAUDE_PID",
+                "CLAUDE_CODE_ENTRYPOINT",
+                "CLAUDE_CODE_SESSION_ID",
+            ] {
                 assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
             }
-            for v in ["PATH", "CLAUDE_CODE", "CLAUDE_CONFIG_DIR", "MY_CLAUDE_CODE_X", "TERM"] {
+            for v in ["PATH", "TERM", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"] {
                 assert!(!is_scrubbed(kind, v), "{kind:?} drops {v}");
             }
         }
