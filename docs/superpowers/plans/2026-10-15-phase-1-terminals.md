@@ -31,8 +31,8 @@
 The spec leaves these open. Each one is recorded here so it can be reviewed and reversed.
 
 1. **Worktrees are first-class records** (`worktrees` table) owned by a project. In Phase 2, an Attempt will point at a worktree instead of owning the path itself.
-2. **Worktree location:** `<repo parent>/<repo name>.worktrees/<branch with / → ->`. Worktrees sit next to the repo, on the same drive, and are visible to the user.
-3. **Removing a worktree** never deletes its branch. Removal is refused (409) when the worktree is dirty (including untracked files) or has a running session. Ended sessions in it are deleted along with it.
+2. **Worktree location:** `<repo>/.worktrees/<branch with / → ->`, inside the repo directory. `add_worktree` also adds `/.worktrees/` to the repo's `.git/info/exclude`, a local file that is never committed. That keeps worktrees out of the main checkout's `git status` and out of searches in the main checkout (`rg` and agents respect the exclude file), for any repo.
+3. **Worktrees are removed only after their branch is merged.** Merging arrives with review (Phase 4, spec §7.3: Merge removes the worktree). Phase 1 therefore has no remove route, button or git function. When removal arrives, it must still refuse a dirty worktree (spec §8). Abandoned worktrees get their cleanup with Attempts (Phase 2 or 4).
 4. **Session owner in Phase 1:** a `project_id` plus an optional `worktree_id`. Phase 2 adds the attempt.
 5. **Session statuses used in Phase 1:** `running`, `finished` (the process exited; `exit_code` recorded) and `interrupted` (`pdtd` stopped while it was running). The other spec statuses arrive with structured agents.
 6. **Restart** reuses the same session id and working folder. For agent terminals it resumes the previous conversation: `claude --continue`, or `codex resume --last`.
@@ -50,7 +50,16 @@ The spec leaves these open. Each one is recorded here so it can be reviewed and 
 10. **Live status in the UI** comes from polling the session list every 2 s. The push event stream arrives with structured agents (Phase 3).
 11. **Origin check:** a request carrying an `Origin` header must have that origin's `host[:port]` in the Host allowlist. A missing Origin is allowed; `null` and foreign origins get 403 `forbidden_origin`. The dev profile also allows the Vite dev server (`localhost:5173`, `127.0.0.1:5173`). `[::1]:<port>` joins the default list.
 12. **Shutdown endpoint:** `POST /api/shutdown` triggers a graceful stop. It is the only reliable way to stop a windowless `pdtd` gracefully on Windows. It sits behind the Host and Origin guards; device tokens come in Phase 2.
-13. **Stable install** is a pair of scripts (`scripts/install-stable.ps1` and `.sh`) that copy release binaries and `web/` into `<local data dir>/pdt/app/`. There's no Tauri installer bundle yet. The scripts repeat the slug and port, an accepted exception to "names only in `brand.rs`", like `tauri.conf.json`.
+13. **Stable install is a real installer.** Tauri builds an NSIS installer (Windows, per-user, no admin) and a `.app` (macOS).
+    - **What's bundled:** `pdtd` as a Tauri `externalBin` sidecar, which lands next to the desktop exe, and `web/dist` as a bundled resource.
+    - **Where the bundle settings live:** in `desktop/src-tauri/tauri.bundle.conf.json`, merged only by `tauri build --config …`. Ordinary `cargo build`, dev runs and CI never need the sidecar staged.
+    - **Release scripts** (`scripts/release-stable.ps1` and `.sh`):
+      1. Build the installer.
+      2. Stop the stable `pdtd` through `POST /api/shutdown` (an installer can't replace a running exe).
+      3. Install silently: NSIS `/S` on Windows, or copy the `.app` into `~/Applications` on macOS.
+      4. Launch the app.
+    - **Signing:** the installer is unsigned. Locally built files carry no download mark, so SmartScreen and Gatekeeper don't block them. Signing and the Tauri updater come with public distribution.
+    - **Naming exception:** the scripts repeat the slug, port and binary names, an accepted exception to "names only in `brand.rs`", like `tauri.conf.json`.
 14. **No Playwright yet.** End-to-end coverage comes from a real-socket WebSocket test (Task 7) and a `pdtd` process lifecycle test (Task 8). Playwright arrives with `fake-agent` in Phase 3.
 
 ## Global Constraints
@@ -61,7 +70,7 @@ The spec leaves these open. Each one is recorded here so it can be reviewed and 
 - **Errors:** library crates use `thiserror`; only `pdtd` uses `anyhow`. API errors are always `{ "code": string, "message": string }` JSON.
 - **Listening and names:**
   - `pdtd` listens only on `127.0.0.1`.
-  - Names live in `crates/pdt-core/src/brand.rs`. The only exceptions are `tauri.conf.json` and `scripts/install-stable.*`.
+  - Names live in `crates/pdt-core/src/brand.rs`. The only exceptions are the Tauri config files (`tauri.conf.json`, `tauri.bundle.conf.json`) and `scripts/release-stable.*`.
 - **Tests must never touch port 7420 or the real data folders.** Use port 0 or a free port, plus temporary folders. Any test that starts `pdtd` removes every inherited `PDT_*` variable.
 - **Colors** come only from `web/ui/tokens.css`; xterm's theme reads those tokens at runtime.
 - **Timestamps** are `i64` Unix milliseconds, exported to TypeScript as `number`.
@@ -75,7 +84,7 @@ The spec leaves these open. Each one is recorded here so it can be reviewed and 
 2. **Reconnecting after a dropped connection or a lag** must not duplicate or corrupt the screen. The client resets the terminal on each new connection before the scrollback replays. Pinned in Task 9 (`resets_before_replay_on_reconnect`) and Task 7 (`second_client_gets_scrollback`).
 3. **Starting an agent that isn't installed** (for example `codex` missing on CI) returns 400 `program_not_found` with a readable message and leaves no orphan session row. Pinned in Task 6 (`missing_program_is_400_and_leaves_no_row`).
 4. **`pdtd` stopping while sessions run** leaves them `interrupted` after the next start, and they can be restarted. Pinned in Task 8 (`shutdown_marks_running_sessions_interrupted`) and Task 6 (`restart_finished_session`).
-5. **Removing a worktree with uncommitted or untracked changes, or with a running session,** is refused with 409, and nothing is deleted. Pinned in Task 2 (`dirty_worktree_is_not_removed`) and Tasks 5 and 6 (`worktree_dirty`, `worktree_busy`).
+5. **A worktree inside the repo** must not appear as untracked in the main checkout's `git status`, even on the first worktree of a fresh repo. Creating a second worktree must not add a second exclude line. Pinned in Task 2 (`worktrees_are_excluded_from_the_main_checkout`).
 
 ---
 
@@ -94,7 +103,7 @@ The spec leaves these open. Each one is recorded here so it can be reviewed and 
   - `Platform { windows, has_pwsh, unix_shell, claude_program, codex_program }` and `Launch { program, args }`.
   - Functions: `launch(kind, agent, &Platform, resume) -> Launch`, `default_title(kind, agent) -> &'static str`, `scrubbed_env(kind) -> Vec<&'static str>`.
   - Messages: `PtyClientMessage::Resize { cols, rows }` and `PtyServerMessage::Exit { code }`.
-- Produces (`pdt_core::worktree`): `Worktree`, `NewWorktree`, `ValidWorktree`, `WorktreeValidationError`, and `worktree_path(repo_root: &Path, branch: &str) -> PathBuf`.
+- Produces (`pdt_core::worktree`): `Worktree`, `NewWorktree`, `ValidWorktree`, `WorktreeValidationError`, `WORKTREES_DIR = ".worktrees"`, and `worktree_path(repo_root: &Path, branch: &str) -> PathBuf`.
 
 - [ ] **Step 1: Add the dev-dependency and module declarations**
 
@@ -565,11 +574,12 @@ impl NewWorktree {
     }
 }
 
-/// `<repo parent>/<repo name>.worktrees/<branch, with '/' replaced by '-'>`.
+/// Directory (relative to the repo root) that holds a project's worktrees. pdt-git keeps it in `.git/info/exclude`.
+pub const WORKTREES_DIR: &str = ".worktrees";
+
+/// `<repo>/.worktrees/<branch, with '/' replaced by '-'>`.
 pub fn worktree_path(repo_root: &Path, branch: &str) -> PathBuf {
-    let name = repo_root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "repo".into());
-    let parent = repo_root.parent().unwrap_or(repo_root);
-    parent.join(format!("{name}.worktrees")).join(branch.replace('/', "-"))
+    repo_root.join(WORKTREES_DIR).join(branch.replace('/', "-"))
 }
 
 #[cfg(test)]
@@ -598,9 +608,9 @@ mod tests {
     }
 
     #[test]
-    fn path_is_sibling_of_repo() {
+    fn path_is_inside_the_repo() {
         let repo = Path::new("work").join("my repo");
-        assert_eq!(worktree_path(&repo, "feature/x"), Path::new("work").join("my repo.worktrees").join("feature-x"));
+        assert_eq!(worktree_path(&repo, "feature/x"), repo.join(".worktrees").join("feature-x"));
     }
 }
 ```
@@ -631,9 +641,8 @@ git commit -m "feat(core): session, worktree and launch types"
 - Produces:
   - `pdt_git::check_branch_name(repo: &Path, branch: &str) -> Result<(), GitError>`
   - `pdt_git::add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Result<String /* base commit sha */, GitError>`
-  - `pdt_git::is_dirty(worktree: &Path) -> Result<bool, GitError>`
-  - `pdt_git::remove_worktree(repo: &Path, path: &Path) -> Result<(), GitError>`
-  - New `GitError` variants: `InvalidBranch(String)`, `BranchExists(String)`, `UnknownRef(String)`, `Dirty(PathBuf)`.
+  - `pdt_git::ensure_excluded(repo: &Path, pattern: &str) -> Result<(), GitError>`: adds a line to the repository's shared `info/exclude` once.
+  - New `GitError` variants: `InvalidBranch(String)`, `BranchExists(String)`, `UnknownRef(String)`.
   - API mapping:
 
     | Variant | Status | Code |
@@ -641,7 +650,8 @@ git commit -m "feat(core): session, worktree and launch types"
     | `InvalidBranch` | 400 | `invalid_branch` |
     | `BranchExists` | 409 | `branch_exists` |
     | `UnknownRef` | 400 | `unknown_ref` |
-    | `Dirty` | 409 | `worktree_dirty` |
+
+  - Not in this phase: removing worktrees (decision 3).
 
 - [ ] **Step 1: Write the failing tests** (append to `mod tests` in `crates/pdt-git/src/lib.rs`)
 
@@ -670,7 +680,7 @@ git commit -m "feat(core): session, worktree and launch types"
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         let head = repo_with_commit(&repo);
-        let wt = tmp.path().join("repo.worktrees").join("feature-x");
+        let wt = repo.join(".worktrees").join("feature-x");
         let sha = add_worktree(&repo, &wt, "feature/x", "main").unwrap();
         assert_eq!(sha, head);
         let info = resolve_repo(&wt).unwrap();
@@ -690,34 +700,29 @@ git commit -m "feat(core): session, worktree and launch types"
     }
 
     #[test]
-    fn dirty_worktree_is_not_removed() {
+    fn worktrees_are_excluded_from_the_main_checkout() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         repo_with_commit(&repo);
-        let wt = tmp.path().join("wt");
-        add_worktree(&repo, &wt, "w", "main").unwrap();
-        assert!(!is_dirty(&wt).unwrap());
-        std::fs::write(wt.join("untracked.txt"), "x").unwrap();
-        assert!(is_dirty(&wt).unwrap());
-        assert!(matches!(remove_worktree(&repo, &wt), Err(GitError::Dirty(_))));
-        assert!(wt.join("untracked.txt").exists(), "nothing deleted");
-        std::fs::remove_file(wt.join("untracked.txt")).unwrap();
-        remove_worktree(&repo, &wt).unwrap();
-        assert!(!wt.exists());
-        // The branch survives removal.
-        git_ok(&repo, &["rev-parse", "--verify", "w"]);
+        ensure_excluded(&repo, "/.worktrees/").unwrap();
+        ensure_excluded(&repo, "/.worktrees/").unwrap();
+        add_worktree(&repo, &repo.join(".worktrees").join("a"), "a", "main").unwrap();
+        add_worktree(&repo, &repo.join(".worktrees").join("b"), "b", "main").unwrap();
+        assert_eq!(git_ok(&repo, &["status", "--porcelain"]), "", "main checkout stays clean");
+        let exclude = std::fs::read_to_string(repo.join(".git").join("info").join("exclude")).unwrap();
+        assert_eq!(exclude.lines().filter(|l| l.trim() == "/.worktrees/").count(), 1);
     }
 
     #[test]
-    fn removing_an_already_deleted_worktree_prunes_it() {
+    fn ensure_excluded_keeps_existing_lines() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         repo_with_commit(&repo);
-        let wt = tmp.path().join("wt");
-        add_worktree(&repo, &wt, "w", "main").unwrap();
-        std::fs::remove_dir_all(&wt).unwrap();
-        remove_worktree(&repo, &wt).unwrap();
-        assert!(!git_ok(&repo, &["worktree", "list"]).contains("wt"));
+        let file = repo.join(".git").join("info").join("exclude");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "*.log").unwrap(); // no trailing newline
+        ensure_excluded(&repo, "/.worktrees/").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "*.log\n/.worktrees/\n");
     }
 ```
 
@@ -737,8 +742,6 @@ Add these variants to `GitError`:
     BranchExists(String),
     #[error("unknown base branch or commit: {0}")]
     UnknownRef(String),
-    #[error("worktree has uncommitted or untracked changes: {0}")]
-    Dirty(PathBuf),
 ```
 
 Add these functions (after `classify_failure`):
@@ -777,29 +780,33 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Resul
     }
 }
 
-/// True when the worktree has modified, staged or untracked (non-ignored) files.
-pub fn is_dirty(worktree: &Path) -> Result<bool, GitError> {
-    match git_with_env(worktree, &["status", "--porcelain"], &[])? {
-        Ok(s) => Ok(!s.is_empty()),
-        Err(f) => Err(GitError::Command(f.stderr)),
+/// Adds `pattern` as a line to the repository's `info/exclude` (shared by all its worktrees) unless it is
+/// already there. This is a local ignore file that is never committed.
+pub fn ensure_excluded(repo: &Path, pattern: &str) -> Result<(), GitError> {
+    let common = match git_with_env(repo, &["rev-parse", "--git-common-dir"], &[])? {
+        Ok(s) => PathBuf::from(native_separators(s)),
+        Err(f) => return Err(classify_failure(repo, f)),
+    };
+    let common = if common.is_absolute() { common } else { repo.join(common) };
+    let file = common.join("info").join("exclude");
+    let io = |e: std::io::Error| GitError::Command(format!("updating {}: {e}", file.display()));
+    let mut text = match std::fs::read_to_string(&file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(io(e)),
+    };
+    if text.lines().any(|l| l.trim() == pattern) {
+        return Ok(());
     }
-}
-
-/// Removes a clean worktree (never forced; the branch is kept). A worktree already deleted by hand is pruned.
-pub fn remove_worktree(repo: &Path, path: &Path) -> Result<(), GitError> {
-    if !path.exists() {
-        return match git_with_env(repo, &["worktree", "prune"], &[])? {
-            Ok(_) => Ok(()),
-            Err(f) => Err(GitError::Command(f.stderr)),
-        };
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
     }
-    if is_dirty(path)? {
-        return Err(GitError::Dirty(path.to_path_buf()));
+    text.push_str(pattern);
+    text.push('\n');
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
     }
-    match git_with_env(repo, &["worktree", "remove", &path.to_string_lossy()], &[])? {
-        Ok(_) => Ok(()),
-        Err(f) => Err(GitError::Command(f.stderr)),
-    }
+    std::fs::write(&file, text).map_err(io)
 }
 ```
 
@@ -809,7 +816,6 @@ In `crates/pdt-api/src/error.rs`, extend the `From<GitError>` match:
             GitError::InvalidBranch(_) => Self::new(StatusCode::BAD_REQUEST, "invalid_branch", e.to_string()),
             GitError::BranchExists(_) => Self::new(StatusCode::CONFLICT, "branch_exists", e.to_string()),
             GitError::UnknownRef(_) => Self::new(StatusCode::BAD_REQUEST, "unknown_ref", e.to_string()),
-            GitError::Dirty(_) => Self::new(StatusCode::CONFLICT, "worktree_dirty", e.to_string()),
 ```
 
 - [ ] **Step 4: Run the tests and confirm they pass**
@@ -821,7 +827,7 @@ Expected: all pass.
 
 ```bash
 git add crates/pdt-git crates/pdt-api/src/error.rs
-git commit -m "feat(git): create, check and remove worktrees"
+git commit -m "feat(git): create worktrees and keep them out of the main checkout"
 ```
 
 ---
@@ -835,7 +841,7 @@ git commit -m "feat(git): create, check and remove worktrees"
 **Interfaces:**
 - Consumes: `Worktree`, `Session`, `SessionKind`, `AgentKind` and `SessionStatus` from Task 1.
 - Produces (all on `Store`, all `async`, all returning `Result<_, StoreError>`):
-  - `insert_worktree(&Worktree)`, `list_worktrees(project_id) -> Vec<Worktree>`, `get_worktree(id) -> Option<Worktree>`, `delete_worktree(id) -> bool`
+  - `insert_worktree(&Worktree)`, `list_worktrees(project_id) -> Vec<Worktree>`, `get_worktree(id) -> Option<Worktree>` (no delete; removal comes with merge in Phase 4)
   - `insert_session(&Session)`, `list_sessions(project_id) -> Vec<Session>` (oldest first), `get_session(id) -> Option<Session>`
   - `end_session(id, status: SessionStatus, exit_code: Option<i32>, ended_at: i64) -> bool`: updates only a row that is currently `running`.
   - `set_session_running(id) -> bool`: clears `exit_code` and `ended_at`.
@@ -901,22 +907,21 @@ mod tests {
             id: id.into(),
             project_id: "p".into(),
             branch: branch.into(),
-            path: format!("/r.worktrees/{branch}"),
+            path: format!("/r/.worktrees/{branch}"),
             base_commit: "abc".into(),
             created_at: 2,
         }
     }
 
     #[tokio::test]
-    async fn worktree_roundtrip_and_delete() {
+    async fn worktree_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         store.insert_worktree(&wt("w1", "a")).await.unwrap();
         assert_eq!(store.list_worktrees("p").await.unwrap(), vec![wt("w1", "a")]);
         assert_eq!(store.get_worktree("w1").await.unwrap(), Some(wt("w1", "a")));
-        assert!(store.delete_worktree("w1").await.unwrap());
-        assert!(!store.delete_worktree("w1").await.unwrap());
-        assert_eq!(store.get_worktree("w1").await.unwrap(), None);
+        assert_eq!(store.get_worktree("nope").await.unwrap(), None);
+        assert!(store.list_worktrees("other").await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1013,7 +1018,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_worktree_deletes_its_sessions() {
+    async fn session_in_a_worktree_roundtrips_and_needs_a_real_worktree() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         let w = pdt_core::worktree::Worktree {
@@ -1028,8 +1033,10 @@ mod tests {
         let mut s = session("a", 1);
         s.worktree_id = Some("w".into());
         store.insert_session(&s).await.unwrap();
-        store.delete_worktree("w").await.unwrap();
-        assert_eq!(store.get_session("a").await.unwrap(), None);
+        assert_eq!(store.get_session("a").await.unwrap(), Some(s));
+        let mut orphan = session("b", 2);
+        orphan.worktree_id = Some("missing".into());
+        assert!(store.insert_session(&orphan).await.is_err(), "foreign key enforced");
     }
 }
 ```
@@ -1118,11 +1125,6 @@ impl Store {
         let row: Option<WorktreeRow> =
             sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
         Ok(row.map(to_worktree))
-    }
-
-    pub async fn delete_worktree(&self, id: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("DELETE FROM worktrees WHERE id = ?").bind(id).execute(&self.pool).await?;
-        Ok(r.rows_affected() > 0)
     }
 }
 ```
@@ -1856,8 +1858,8 @@ git commit -m "feat(agents): PTY manager with scrollback and broadcast"
   - `AppState::new(store: Store) -> AppState`. Fields stay `pub`; Tasks 6 and 8 add `ptys`, `platform` and `shutdown` inside `new`, so callers never change again.
   - Routes:
     - `GET /api/projects/{id}/worktrees` returns `Worktree[]` (404 if the project is unknown).
-    - `POST /api/projects/{id}/worktrees` takes a `NewWorktree` body and returns 201 with a `Worktree`.
-    - `DELETE /api/worktrees/{id}` returns 204, or 409 `worktree_dirty` / `worktree_busy` (`worktree_busy` arrives in Task 6).
+    - `POST /api/projects/{id}/worktrees` takes a `NewWorktree` body and returns 201 with a `Worktree`. It first makes sure `/.worktrees/` is in the repo's `info/exclude`.
+    - No delete route: worktrees are removed after merge (Phase 4).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1913,27 +1915,25 @@ async fn setup(tmp: &Path) -> (axum::Router, String, std::path::PathBuf) {
 }
 
 #[tokio::test]
-async fn create_list_and_remove_worktree() {
+async fn create_and_list_worktrees_inside_the_repo() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, pid, repo) = setup(tmp.path()).await;
     let (s, wt) = call(&app, "POST", &format!("/api/projects/{pid}/worktrees"), Some(json!({"branch": "feature/x"}))).await;
     assert_eq!(s, StatusCode::CREATED, "{wt}");
     let path = std::path::PathBuf::from(wt["path"].as_str().unwrap());
     assert!(path.is_dir());
-    assert!(path.ends_with(Path::new("my repo.worktrees").join("feature-x")));
+    assert!(path.ends_with(Path::new(".worktrees").join("feature-x")));
+    assert_eq!(std::fs::canonicalize(path.parent().unwrap().parent().unwrap()).unwrap(), std::fs::canonicalize(&repo).unwrap());
     assert_eq!(wt["branch"], "feature/x");
     assert_eq!(wt["baseCommit"].as_str().unwrap().len(), 40);
-    assert!(path.starts_with(repo.parent().unwrap()));
+
+    let status = std::process::Command::new("git").current_dir(&repo).args(["status", "--porcelain"]).output().unwrap();
+    assert!(status.stdout.is_empty(), "main checkout stays clean: {}", String::from_utf8_lossy(&status.stdout));
 
     let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/worktrees"), None).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
-
-    let id = wt["id"].as_str().unwrap();
-    let (s, _) = call(&app, "DELETE", &format!("/api/worktrees/{id}"), None).await;
-    assert_eq!(s, StatusCode::NO_CONTENT);
-    assert!(!path.exists());
-    let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/worktrees"), None).await;
-    assert!(list.as_array().unwrap().is_empty());
+    let (s, _) = call(&app, "DELETE", &format!("/api/worktrees/{}", wt["id"].as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "no removal before merge");
 }
 
 #[tokio::test]
@@ -1952,22 +1952,6 @@ async fn worktree_errors_have_codes() {
     }
     let (s, v) = call(&app, "GET", "/api/projects/nope/worktrees", None).await;
     assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::NOT_FOUND, "not_found"));
-    let (s, _) = call(&app, "DELETE", "/api/worktrees/nope", None).await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn dirty_worktree_is_kept() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (app, pid, _) = setup(tmp.path()).await;
-    let (_, wt) = call(&app, "POST", &format!("/api/projects/{pid}/worktrees"), Some(json!({"branch": "w"}))).await;
-    let path = std::path::PathBuf::from(wt["path"].as_str().unwrap());
-    std::fs::write(path.join("new.txt"), "x").unwrap();
-    let (s, v) = call(&app, "DELETE", &format!("/api/worktrees/{}", wt["id"].as_str().unwrap()), None).await;
-    assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "worktree_dirty"));
-    assert!(path.join("new.txt").exists());
-    let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/worktrees"), None).await;
-    assert_eq!(list.as_array().unwrap().len(), 1, "record kept");
 }
 ```
 
@@ -2024,7 +2008,6 @@ impl AppState {
 
 ```rust
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
-        .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
 ```
 
 Add `mod worktrees;` to `lib.rs`. Add a shared helper in `routes.rs`: `pub(crate) fn now_ms() -> i64 { jiff::Timestamp::now().as_millisecond() }`, and use it in `create_project` too.
@@ -2038,7 +2021,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::worktree::{NewWorktree, Worktree, worktree_path};
+use pdt_core::worktree::{NewWorktree, WORKTREES_DIR, Worktree, worktree_path};
 use std::path::PathBuf;
 
 pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Worktree>>, ApiError> {
@@ -2058,9 +2041,12 @@ pub(crate) async fn create(
     let path = worktree_path(&repo, &valid.branch);
     let base = valid.base.unwrap_or_else(|| project.base_branch.clone());
     let (branch, target) = (valid.branch.clone(), path.clone());
-    let base_commit = tokio::task::spawn_blocking(move || pdt_git::add_worktree(&repo, &target, &branch, &base))
-        .await
-        .map_err(ApiError::internal)??;
+    let base_commit = tokio::task::spawn_blocking(move || {
+        pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
+        pdt_git::add_worktree(&repo, &target, &branch, &base)
+    })
+    .await
+    .map_err(ApiError::internal)??;
     let wt = Worktree {
         id: uuid::Uuid::now_v7().to_string(),
         project_id: project.id,
@@ -2071,15 +2057,6 @@ pub(crate) async fn create(
     };
     st.store.insert_worktree(&wt).await?;
     Ok((StatusCode::CREATED, Json(wt)))
-}
-
-pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    let wt = st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
-    let project = st.store.get_project(&wt.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let (repo, path) = (PathBuf::from(&project.repo_path), PathBuf::from(&wt.path));
-    tokio::task::spawn_blocking(move || pdt_git::remove_worktree(&repo, &path)).await.map_err(ApiError::internal)??;
-    st.store.delete_worktree(&id).await?;
-    Ok(StatusCode::NO_CONTENT)
 }
 ```
 
@@ -2107,7 +2084,6 @@ git commit -m "feat(api): worktree routes"
   - `crates/pdt-api/Cargo.toml` (add `pdt-agents`)
   - `routes.rs` (`AppState` gains `ptys` and `platform`; register routes)
   - `error.rs` (`From<PtyError>`, `From<SessionValidationError>`)
-  - `worktrees.rs` (busy check, and delete the worktree's ended sessions from the PTY manager)
 
 **Interfaces:**
 - Consumes: `PtyManager`, `SpawnSpec`, `launch::{detect_platform, resolve}` (Task 4), the Task 1 types, and the Task 3 store methods.
@@ -2240,7 +2216,7 @@ async fn invalid_session_requests() {
 }
 
 #[tokio::test]
-async fn session_in_worktree_blocks_its_removal() {
+async fn session_runs_in_its_worktree() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, pid, _) = setup(tmp.path()).await;
     let (_, wt) = call(&app, "POST", &format!("/api/projects/{pid}/worktrees"), Some(json!({"branch": "w"}))).await;
@@ -2253,16 +2229,8 @@ async fn session_in_worktree_blocks_its_removal() {
     )
     .await;
     assert_eq!(s, StatusCode::CREATED);
+    assert_eq!(sess["worktreeId"], wid);
     assert!(same_dir(Path::new(sess["cwd"].as_str().unwrap()), Path::new(wt["path"].as_str().unwrap())));
-    let (s, v) = call(&app, "DELETE", &format!("/api/worktrees/{wid}"), None).await;
-    assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "worktree_busy"));
-    let id = sess["id"].as_str().unwrap();
-    call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
-    wait_status(&app, id, "finished").await;
-    let (s, _) = call(&app, "DELETE", &format!("/api/worktrees/{wid}"), None).await;
-    assert_eq!(s, StatusCode::NO_CONTENT);
-    let (s, _) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "ended sessions go with their worktree");
     state.ptys.shutdown().await;
 }
 
@@ -2464,18 +2432,6 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     Ok(StatusCode::NO_CONTENT)
 }
 ```
-
-In `worktrees::remove`, insert this after loading the project:
-
-```rust
-    let sessions: Vec<_> =
-        st.store.list_sessions(&project.id).await?.into_iter().filter(|s| s.worktree_id.as_deref() == Some(&id)).collect();
-    if sessions.iter().any(|s| st.ptys.is_running(&s.id)) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "worktree_busy", "stop this worktree's sessions first"));
-    }
-```
-
-After `delete_worktree` (whose cascade removes the session rows), add `for s in &sessions { st.ptys.remove(&s.id); }`.
 
 Add `mod sessions;` to `lib.rs`.
 
@@ -3263,7 +3219,7 @@ git commit -m "feat(pdtd): file logs, graceful shutdown, interrupted sessions"
 **Interfaces:**
 - Consumes: the generated types `Session`, `NewSession`, `Worktree`, `NewWorktree`, `TerminalSize`, `PtyClientMessage` and `PtyServerMessage`.
 - Produces:
-  - `api.listWorktrees(projectId)`, `api.createWorktree(projectId, NewWorktree)`, `api.deleteWorktree(id)`
+  - `api.listWorktrees(projectId)`, `api.createWorktree(projectId, NewWorktree)`
   - `api.listSessions(projectId)`, `api.createSession(NewSession)`, `api.killSession(id)`, `api.restartSession(id, TerminalSize)`, `api.deleteSession(id)`
   - `ptyUrl(sessionId, loc?)`
   - `class PtySocket(url, handlers, factory?, opts?)` with `connect()`, `send(text)`, `resize(cols, rows)`, `retry()` and `dispose()`. `PtyStatus` is `'connecting' | 'open' | 'reconnecting' | 'exited' | 'failed'`.
@@ -3501,7 +3457,6 @@ export const api = {
   listWorktrees: (projectId: string) => request<Worktree[]>(`/api/projects/${enc(projectId)}/worktrees`),
   createWorktree: (projectId: string, w: NewWorktree) =>
     request<Worktree>(`/api/projects/${enc(projectId)}/worktrees`, { method: 'POST', body: JSON.stringify(w) }),
-  deleteWorktree: (id: string) => request<void>(`/api/worktrees/${enc(id)}`, { method: 'DELETE' }),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${enc(projectId)}/sessions`),
   createSession: (s: NewSession) => request<Session>('/api/sessions', { method: 'POST', body: JSON.stringify(s) }),
   killSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/kill`, { method: 'POST' }),
@@ -3840,7 +3795,7 @@ const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null, ...over,
 });
-const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r.worktrees/feature-x', baseCommit: 'c', createdAt: 1 };
+const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1 };
 
 describe('SessionList', () => {
   it('groups sessions under the repository and worktrees', async () => {
@@ -4022,7 +3977,6 @@ export function toDot(status: SessionStatus): Status {
 
 ```tsx
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2 } from 'lucide-react';
 import { StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { NewSession } from '../api/gen/NewSession';
@@ -4054,18 +4008,13 @@ export function SessionList({ project, selectedId, onSelect }: {
     queryFn: () => api.listSessions(project.id),
     refetchInterval: 2000,
   });
-  const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
-    void qc.invalidateQueries({ queryKey: ['worktrees', project.id] });
-  };
   const create = useMutation({
     mutationFn: api.createSession,
     onSuccess: (s) => {
-      refresh();
+      void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
       onSelect(s.id);
     },
   });
-  const removeWorktree = useMutation({ mutationFn: api.deleteWorktree, onSuccess: refresh });
 
   if (worktrees.isPending || sessions.isPending) return <p className="px-2 text-xs text-muted">Loading…</p>;
   if (worktrees.isError || sessions.isError) {
@@ -4075,7 +4024,7 @@ export function SessionList({ project, selectedId, onSelect }: {
     { id: null as string | null, label: 'Repository' },
     ...worktrees.data.map((w) => ({ id: w.id as string | null, label: w.branch })),
   ];
-  const error = create.error ?? removeWorktree.error;
+  const error = create.error;
 
   return (
     <div className="flex flex-col gap-2 py-2">
@@ -4095,11 +4044,6 @@ export function SessionList({ project, selectedId, onSelect }: {
                 {c}
               </button>
             ))}
-            {g.id && (
-              <button type="button" aria-label={`Remove worktree ${g.label}`} onClick={() => removeWorktree.mutate(g.id!)} className={small}>
-                <Trash2 size={12} aria-hidden />
-              </button>
-            )}
           </div>
           <ul className="flex flex-col gap-0.5">
             {sessions.data.filter((s) => s.worktreeId === g.id).map((s) => (
@@ -4721,11 +4665,16 @@ git commit -m "feat(desktop): health-checked attach, launch log, error dialog"
 
 ---
 
-### Task 12: Stable install, docs, CI and carry-over close-out
+### Task 12: Stable installer, release scripts, docs, CI and carry-over close-out
 
 **Files:**
-- Create: `scripts/install-stable.ps1`, `scripts/install-stable.sh`
+- Create:
+  - `desktop/src-tauri/tauri.bundle.conf.json`
+  - `scripts/stage-pdtd.mjs`
+  - `scripts/release-stable.ps1`, `scripts/release-stable.sh`
 - Modify:
+  - `crates/pdtd/src/config.rs` (find `web/` inside a macOS app bundle)
+  - `.gitignore` (`desktop/src-tauri/binaries/`)
   - `CLAUDE.md`
   - `crates/pdt-core/src/brand.rs` (doc comment)
   - `.github/workflows/ci.yml`
@@ -4733,24 +4682,100 @@ git commit -m "feat(desktop): health-checked attach, launch log, error dialog"
   - `web/ui/components.test.tsx`
 
 **Interfaces:**
-- Consumes: `POST /api/shutdown` (Task 8), the binary-location rules already in `pdtd` (a `web/` folder next to the exe) and in the desktop app (`pdtd` next to the exe).
-- Produces: a documented, repeatable way to update the stable install (spec §11).
+- Consumes: `POST /api/shutdown` (Task 8), and the desktop app's rule that `pdtd` sits next to its exe.
+- Produces:
+  - A per-user installer: NSIS on Windows, a `.app` on macOS.
+    - It bundles `pdtd` as a Tauri sidecar (`externalBin`) and `web/dist` as the `web` resource.
+    - `<install>/web` (Windows) and `Contents/Resources/web` (macOS) are both found by `pdtd`.
+  - `scripts/release-stable.*` builds the installer, stops the stable `pdtd`, installs silently and launches the app. The `-BuildOnly` / `--build-only` flag stops after building.
 
-- [ ] **Step 1: Write the Windows script**
+**Why a separate bundle config:**
+- `tauri-build` checks at compile time that every `externalBin` file exists.
+- If the sidecar were in `tauri.conf.json`, every `cargo build -p pdt-desktop` (dev runs, CI clippy and tests) would need a staged release `pdtd` first.
+- `tauri build --config src-tauri/tauri.bundle.conf.json` merges the bundling settings only when an installer is built.
 
-`scripts/install-stable.ps1`:
+- [ ] **Step 1: Write the failing `pdtd` config test**
+
+Add to `crates/pdtd/src/config.rs` tests:
+
+```rust
+    #[test]
+    fn web_dir_inside_a_macos_app_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let macos = tmp.path().join("Contents").join("MacOS");
+        let resources_web = tmp.path().join("Contents").join("Resources").join("web");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::create_dir_all(&resources_web).unwrap();
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), Some(macos)).unwrap();
+        assert_eq!(c.web_dir.map(|d| std::fs::canonicalize(d).unwrap()), Some(std::fs::canonicalize(resources_web).unwrap()));
+    }
+```
+
+Run: `cargo test -p pdtd web_dir` and confirm it **fails**.
+
+- [ ] **Step 2: Implement the lookup**
+
+In `from_lookup`, replace the `web_dir` expression with:
+
+```rust
+        // Next to the exe (Windows installer, dev layouts), or in a macOS bundle's Contents/Resources.
+        let bundled_web = |d: PathBuf| [d.join("web"), d.join("..").join("Resources").join("web")].into_iter().find(|w| w.is_dir());
+        let web_dir = lookup("PDT_WEB_DIR").map(PathBuf::from).or_else(|| exe_dir.and_then(bundled_web));
+```
+
+Run: `cargo test -p pdtd` and confirm it passes, including `web_dir_next_to_exe_when_present`.
+
+- [ ] **Step 3: Add the bundle config and the sidecar staging script**
+
+`desktop/src-tauri/tauri.bundle.conf.json` (merged over `tauri.conf.json` by `tauri build --config`):
+
+```json
+{
+  "bundle": {
+    "externalBin": ["binaries/pdtd"],
+    "resources": { "../../web/dist/": "web/" },
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
+}
+```
+
+`scripts/stage-pdtd.mjs`:
+
+```js
+// Copies target/release/pdtd to desktop/src-tauri/binaries/pdtd-<host triple>, the name Tauri's externalBin expects.
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const host = execFileSync('rustc', ['-vV'], { cwd: root, encoding: 'utf8' }).match(/^host: (.+)$/m)?.[1]?.trim();
+if (!host) throw new Error('could not read the host triple from `rustc -vV`');
+const ext = process.platform === 'win32' ? '.exe' : '';
+const out = join(root, 'desktop', 'src-tauri', 'binaries');
+mkdirSync(out, { recursive: true });
+copyFileSync(join(root, 'target', 'release', `pdtd${ext}`), join(out, `pdtd-${host}${ext}`));
+console.log(`staged pdtd for ${host}`);
+```
+
+Add `desktop/src-tauri/binaries/` to `.gitignore`.
+
+- [ ] **Step 4: Write the Windows release script**
+
+`scripts/release-stable.ps1`:
 
 ```powershell
 #Requires -Version 5.1
 <#
-Builds release binaries and installs them as the *stable* Personal Dev Team in %LOCALAPPDATA%\pdt\app.
-Run this yourself from a normal terminal. Agents must never run it: it stops the stable pdtd that hosts them.
-Running sessions become 'interrupted' and can be restarted from the UI (agents resume their conversation).
+Builds the Personal Dev Team installer and installs it as the *stable* app (per user, no admin).
+Run this yourself from a normal terminal. Agents must never run it without -BuildOnly: it stops the stable pdtd
+that hosts them. Running sessions become 'interrupted' and can be restarted from the UI (agents resume).
 #>
+param([switch]$BuildOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$app = Join-Path $env:LOCALAPPDATA 'pdt\app'
 $port = 7420
+$product = 'Personal Dev Team'
 
 function Invoke-Native([string]$what, [scriptblock]$cmd) {
     & $cmd
@@ -4764,10 +4789,20 @@ Push-Location $root
 try {
     Invoke-Native 'pnpm install' { pnpm install --frozen-lockfile }
     Invoke-Native 'web build' { pnpm --dir web build }
-    Invoke-Native 'cargo build' { cargo build --release -p pdtd -p pdt-desktop }
+    Invoke-Native 'pdtd build' { cargo build --release -p pdtd }
+    Invoke-Native 'stage pdtd' { node scripts/stage-pdtd.mjs }
+    $bundleConf = Join-Path $root 'desktop\src-tauri\tauri.bundle.conf.json'
+    Invoke-Native 'installer build' { pnpm --dir desktop exec tauri build --config $bundleConf --bundles nsis }
 } finally { Pop-Location }
 
-$window = Get-Process pdt-desktop -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$app*" }
+$setup = Get-ChildItem (Join-Path $root 'target\release\bundle\nsis') -Filter '*-setup.exe' |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $setup) { throw 'no NSIS installer was produced' }
+Write-Host "Built $($setup.FullName)"
+if ($BuildOnly) { return }
+
+$installDir = Join-Path $env:LOCALAPPDATA $product
+$window = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" -and $_.ProcessName -ne 'pdtd' }
 if ($window) { throw 'Close the stable desktop window first (its sessions keep running in pdtd).' }
 
 if (Test-Port $port) {
@@ -4777,40 +4812,52 @@ if (Test-Port $port) {
     while ((Test-Port $port) -and ((Get-Date) -lt $deadline)) { Start-Sleep -Milliseconds 250 }
     if (Test-Port $port) { throw "pdtd on port $port did not stop within 20 seconds" }
 }
-Get-Process pdtd -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$app*" } | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+Get-Process pdtd -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" } |
+    Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
 
-New-Item -ItemType Directory -Force $app | Out-Null
-Copy-Item (Join-Path $root 'target\release\pdtd.exe'), (Join-Path $root 'target\release\pdt-desktop.exe') $app -Force
-$web = Join-Path $app 'web'
-if (Test-Path $web) { Remove-Item -Recurse -Force $web }
-Copy-Item -Recurse (Join-Path $root 'web\dist') $web
+Write-Host 'Installing...'
+$p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw "installer failed (exit $($p.ExitCode))" }
 
-Write-Host "Installed to $app. Starting the desktop app (it starts pdtd)."
-Start-Process (Join-Path $app 'pdt-desktop.exe')
+$app = Get-ChildItem $installDir -Filter '*.exe' | Where-Object { $_.BaseName -notin @('pdtd', 'uninstall') } | Select-Object -First 1
+if (-not $app) { throw "installed, but no app exe was found in $installDir" }
+Write-Host "Installed to $installDir. Starting $($app.Name) (it starts pdtd)."
+Start-Process $app.FullName
 ```
 
-- [ ] **Step 2: Write the macOS script**
+- [ ] **Step 5: Write the macOS release script**
 
-`scripts/install-stable.sh`:
+`scripts/release-stable.sh`:
 
 ```bash
 #!/usr/bin/env bash
-# Builds release binaries and installs them as the *stable* Personal Dev Team in
-# ~/Library/Application Support/pdt/app. Run this yourself; agents must never run it (it stops the stable pdtd
-# that hosts them). Running sessions become 'interrupted' and can be restarted from the UI.
+# Builds the Personal Dev Team app bundle and installs it into ~/Applications as the *stable* app.
+# Run this yourself. Agents must never run it without --build-only: it stops the stable pdtd that hosts them.
+# Running sessions become 'interrupted' and can be restarted from the UI (agents resume).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-app="$HOME/Library/Application Support/pdt/app"
 port=7420
+product="Personal Dev Team"
+build_only=false
+[[ "${1:-}" == "--build-only" ]] && build_only=true
 
 up() { curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/api/health"; }
 
 cd "$root"
 pnpm install --frozen-lockfile
 pnpm --dir web build
-cargo build --release -p pdtd -p pdt-desktop
+cargo build --release -p pdtd
+node scripts/stage-pdtd.mjs
+pnpm --dir desktop exec tauri build --config "$root/desktop/src-tauri/tauri.bundle.conf.json" --bundles app
 
-if pgrep -f "$app/pdt-desktop" >/dev/null; then
+bundle="$root/target/release/bundle/macos/$product.app"
+[[ -d "$bundle" ]] || { echo "no app bundle was produced at $bundle" >&2; exit 1; }
+echo "Built $bundle"
+$build_only && exit 0
+
+dest="$HOME/Applications/$product.app"
+# Any process from the installed bundle other than pdtd means the window is still open.
+if pgrep -fl "$dest/Contents/MacOS/" | grep -v "/Contents/MacOS/pdtd" | grep -q .; then
   echo "Close the stable desktop window first (its sessions keep running in pdtd)." >&2
   exit 1
 fi
@@ -4822,30 +4869,73 @@ if up; then
   if up; then echo "pdtd did not stop within 20 seconds" >&2; exit 1; fi
 fi
 
-mkdir -p "$app"
-cp target/release/pdtd target/release/pdt-desktop "$app/"
-rm -rf "$app/web"
-cp -R web/dist "$app/web"
-echo "Installed to $app. Starting the desktop app (it starts pdtd)."
-nohup "$app/pdt-desktop" >/dev/null 2>&1 &
+mkdir -p "$HOME/Applications"
+rm -rf "$dest"
+cp -R "$bundle" "$dest"
+echo "Installed to $dest. Starting it (it starts pdtd)."
+open "$dest"
 ```
 
-Run: `git update-index --chmod=+x scripts/install-stable.sh` after `git add`.
+Run: `git update-index --chmod=+x scripts/release-stable.sh` after `git add`.
 
-- [ ] **Step 3: Update docs, brand note, CI and carry-over**
+- [ ] **Step 6: Build the installer (build only, never install) and inspect it**
 
-- `crates/pdt-core/src/brand.rs`: extend the module doc to: `A rename touches this file, desktop/src-tauri/tauri.conf.json (productName, identifier) and scripts/install-stable.* (slug, port, binary names) only.`
-- `CLAUDE.md`:
+Run (PowerShell): `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-stable.ps1 -BuildOnly`
+Expected: a `*-setup.exe` under `target\release\bundle\nsis\`.
+
+Then check what the installer will lay down. Expand it with 7-Zip if available; otherwise read the generated NSIS script under `target\release\nsis\`. In your report, give:
+- the install directory;
+- the app exe name;
+- confirmation that `pdtd.exe` and `web\index.html` sit next to the app exe.
+
+If the install directory or exe name differs from what the script assumes (`%LOCALAPPDATA%\Personal Dev Team`, any exe that isn't `pdtd` or `uninstall`), fix the script. **Do not run the installer and do not run the script without `-BuildOnly`.** Both touch the stable instance.
+
+`cargo build -p pdt-desktop` and `cargo test -p pdt-desktop` must still work without the staged sidecar. Delete `desktop/src-tauri/binaries/` and run both to prove it.
+
+- [ ] **Step 7: Update the docs, brand note, CI and carry-over**
+
+- **`crates/pdt-core/src/brand.rs`:** extend the module doc to: `A rename touches this file, desktop/src-tauri/tauri.conf.json (productName, identifier) and scripts/release-stable.* (product name, slug, port) only.`
+- **`CLAUDE.md`:**
   - **Layout:** add `crates/pdt-agents — PTY terminals (later: structured agent adapters)`.
   - **Running:** add these bullets:
     - `Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.`
     - `Logs: <data dir>/logs/pdtd.<date>.log; the desktop app writes a spawned daemon's startup output to <data dir>/logs/pdtd-launch.log.`
-    - `Worktrees live next to the repo: <repo>.worktrees/<branch>.`
+    - `Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).`
     - `The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.`
-    - `Stable install/update: scripts/install-stable.ps1 (Windows) / scripts/install-stable.sh (macOS) → <local data dir>/pdt/app.`
-  - **Rules:** add `- Never run scripts/install-stable.* or POST /api/shutdown on port 7420. Only the user updates the stable install.`
-- `.github/workflows/ci.yml`: rename the step `Rust toolchain (from rust-toolchain.toml)` to `Show Rust toolchain`, with `run: rustup show`. Cargo installs the pinned toolchain on first use.
-- `docs/superpowers/notes/phase-0-carryover.md`: under each item, note `Done in Phase 1 (Task N)` or `Still open`. Still open: `GitMissing` test and environment notes.
+    - `Stable app: scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd is a sidecar via src-tauri/tauri.bundle.conf.json), stop the stable pdtd, install and launch. -BuildOnly / --build-only only builds.`
+  - **Rules:** add `- Never run scripts/release-stable.* without -BuildOnly/--build-only, never run the built installer, and never POST /api/shutdown on port 7420. Only the user updates the stable app.`
+- **`.github/workflows/ci.yml`:**
+  - Rename the step `Rust toolchain (from rust-toolchain.toml)` to `Show Rust toolchain`, with `run: rustup show`.
+  - Add a second job `bundle` that only runs on `main` and on manual runs, so the installer config can't silently break:
+
+```yaml
+  bundle:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+          - os: macos-latest
+            bundles: app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir web build
+      - run: cargo build --release -p pdtd
+      - run: node scripts/stage-pdtd.mjs
+      - run: pnpm --dir desktop exec tauri build --config ${{ github.workspace }}/desktop/src-tauri/tauri.bundle.conf.json --bundles ${{ matrix.bundles }}
+```
+
+- **`docs/superpowers/notes/phase-0-carryover.md`:** under each item, note `Done in Phase 1 (Task N)` or `Still open`. Still open: the `GitMissing` test and the environment notes. Add a "Phase 4" line: `Worktree removal happens on merge and must refuse dirty worktrees (Phase 1 decision 3).`
 
 Append to `web/ui/components.test.tsx` (carry-over tests):
 
@@ -4866,19 +4956,17 @@ Append to `web/ui/components.test.tsx` (carry-over tests):
 
 Adjust the imports to match the file's existing ones.
 
-- [ ] **Step 4: Run the full check**
+- [ ] **Step 8: Run the full check**
 
 Run: `cargo fmt --all -- --check; cargo clippy --all-targets -- -D warnings; cargo test; pnpm --dir web typecheck; pnpm --dir web test; pnpm --dir web build; cargo clippy -p pdt-desktop --all-targets -- -D warnings; cargo test -p pdt-desktop`
 Expected: all green. `git status --porcelain -- web/src/api/gen` is empty after `cargo test`.
 
-Do **not** run the install script (it targets the stable port). Check the PowerShell script parses: `powershell -NoProfile -Command "[void][scriptblock]::Create((Get-Content -Raw scripts/install-stable.ps1))"`.
-
-- [ ] **Step 5: Commit and push the branch**
+- [ ] **Step 9: Commit and push the branch**
 
 ```bash
-git add scripts CLAUDE.md crates/pdt-core/src/brand.rs .github/workflows/ci.yml docs web/ui
-git commit -m "docs: stable install scripts, Phase 1 notes, CI polish"
+git add scripts desktop/src-tauri/tauri.bundle.conf.json .gitignore CLAUDE.md crates .github/workflows/ci.yml docs web/ui
+git commit -m "feat: stable installer with pdtd sidecar, release scripts, Phase 1 notes"
 git push -u origin phase-1-terminals
 ```
 
-Then check that CI is green on both operating systems (`gh run list --branch phase-1-terminals`).
+Then check that CI is green on both operating systems (`gh run list --branch phase-1-terminals`). Start the `bundle` job once by hand (`gh workflow run ci --ref phase-1-terminals`) and report its result.
