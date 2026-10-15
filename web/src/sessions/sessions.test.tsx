@@ -84,6 +84,21 @@ describe('SessionView', () => {
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/restart')?.body).toEqual({ cols: 120, rows: 32 }));
   });
 
+  it('disables the session actions while one is in flight', async () => {
+    let respond!: (v: Session) => void;
+    stubApi({
+      'POST /api/sessions/s1/restart': () => new Promise<Session>((r) => { respond = r; }),
+      'GET /api/projects/p/sessions': [],
+    });
+    renderWithQuery(<SessionView session={session({ status: 'finished', exitCode: 0 })} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restart' })).toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+    respond(session({}));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restart' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
+  });
+
   it('removes an ended session', async () => {
     stubApi({ 'DELETE /api/sessions/s1': undefined, 'GET /api/projects/p/sessions': [] });
     const onRemoved = vi.fn();

@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_agents::SpawnSpec;
+use pdt_agents::{PtyError, SpawnSpec};
 use pdt_core::session::{NewSession, Session, SessionStatus, TerminalSize, default_title, launch, scrubbed_env};
 use std::path::PathBuf;
 
@@ -53,13 +53,13 @@ pub(crate) async fn create(
     st.store.insert_session(&session).await?;
     if let Err(e) = start_pty(&st, &session, valid.size, false) {
         st.store.delete_session(&session.id).await?;
-        return Err(e);
+        return Err(e.into());
     }
     Ok((StatusCode::CREATED, Json(session)))
 }
 
 /// Spawns the session's process and records its exit when it ends.
-fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: bool) -> Result<(), ApiError> {
+fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: bool) -> Result<(), PtyError> {
     let l = launch(s.kind, s.agent, &st.platform, resume);
     let (program, args) = pdt_agents::launch::resolve(&l.program, &l.args)?;
     let spec = SpawnSpec {
@@ -94,6 +94,7 @@ async fn settle_exit(st: &AppState, id: &str) {
 }
 
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let _guard = st.lock_session(&id).await;
     load(&st, &id).await?;
     st.ptys.kill(&id)?;
     Ok(StatusCode::NO_CONTENT)
@@ -106,6 +107,7 @@ pub(crate) async fn restart(
 ) -> Result<Json<Session>, ApiError> {
     let Json(size) = payload?;
     let size = size.validate()?;
+    let _guard = st.lock_session(&id).await;
     let session = load(&st, &id).await?;
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
@@ -115,13 +117,17 @@ pub(crate) async fn restart(
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(&id).await?;
     if let Err(e) = start_pty(&st, &session, size, true) {
-        st.store.end_session(&id, SessionStatus::Interrupted, None, now_ms()).await?;
-        return Err(e);
+        // AlreadyExists means another run owns the session (it is running), so leave its status alone.
+        if !matches!(e, PtyError::AlreadyExists(_)) {
+            st.store.end_session(&id, SessionStatus::Interrupted, None, now_ms()).await?;
+        }
+        return Err(e.into());
     }
     Ok(Json(load(&st, &id).await?))
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let _guard = st.lock_session(&id).await;
     load(&st, &id).await?;
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "stop the session before removing it"));
@@ -129,5 +135,6 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     settle_exit(&st, &id).await;
     st.ptys.remove(&id);
     st.store.delete_session(&id).await?;
+    st.forget_session_lock(&id);
     Ok(StatusCode::NO_CONTENT)
 }

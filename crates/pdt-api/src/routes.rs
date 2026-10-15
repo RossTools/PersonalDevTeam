@@ -21,6 +21,9 @@ pub struct AppState {
     /// Exit-recorder task per session, so a restart can wait for the previous run's exit write to land first.
     pub(crate) exit_tasks:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    /// Per-session lock serializing kill, restart and remove, so concurrent requests cannot interleave.
+    pub(crate) session_locks:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>>,
     /// Notified by POST /api/shutdown; pdtd's serve loop waits on it.
     pub shutdown: std::sync::Arc<tokio::sync::Notify>,
 }
@@ -32,8 +35,22 @@ impl AppState {
             ptys: pdt_agents::PtyManager::new(),
             platform: pdt_agents::launch::detect_platform(),
             exit_tasks: Default::default(),
+            session_locks: Default::default(),
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
+    }
+}
+
+impl AppState {
+    /// Takes the session's lock. The map's std mutex is only held to look the lock up, never across an await.
+    pub(crate) async fn lock_session(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock =
+            self.session_locks.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone();
+        lock.lock_owned().await
+    }
+
+    pub(crate) fn forget_session_lock(&self, id: &str) {
+        self.session_locks.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
 }
 

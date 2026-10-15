@@ -19,6 +19,8 @@ export function SessionView({ session, onRemoved }: { session: Session; onRemove
   });
   const running = session.status === 'running';
   const error = kill.error ?? restart.error ?? remove.error;
+  // One action at a time: the daemon serializes them anyway, and a second click would only fail.
+  const busy = kill.isPending || restart.isPending || remove.isPending;
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
@@ -27,11 +29,11 @@ export function SessionView({ session, onRemoved }: { session: Session; onRemove
         <span className="font-medium">{session.title}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-muted" title={session.cwd}>{session.cwd}</span>
         {running ? (
-          <Button variant="ghost" onClick={() => kill.mutate()}>Stop</Button>
+          <Button variant="ghost" disabled={busy} onClick={() => kill.mutate()}>Stop</Button>
         ) : (
           <>
-            <Button variant="ghost" onClick={() => restart.mutate()}>Restart</Button>
-            <Button variant="ghost" onClick={() => remove.mutate()}>Remove</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => restart.mutate()}>Restart</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => remove.mutate()}>Remove</Button>
           </>
         )}
       </header>

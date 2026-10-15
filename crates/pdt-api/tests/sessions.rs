@@ -143,6 +143,35 @@ async fn restart_right_after_kill_is_not_overwritten_by_old_exit() {
 }
 
 #[tokio::test]
+async fn concurrent_restarts_start_exactly_one_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, _) = setup(tmp.path()).await;
+    let (_, sess) =
+        call(&app, "POST", "/api/sessions", Some(json!({"projectId": pid, "kind": "shell", "cols": 80, "rows": 24})))
+            .await;
+    let id = sess["id"].as_str().unwrap().to_string();
+    let uri = format!("/api/sessions/{id}/restart");
+    let size = json!({"cols": 80, "rows": 24});
+    // Several rounds, since the interleaving of the two requests varies.
+    for round in 0..5 {
+        call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+        wait_status(&app, &id, "finished").await;
+        let ((s1, v1), (s2, v2)) =
+            tokio::join!(call(&app, "POST", &uri, Some(size.clone())), call(&app, "POST", &uri, Some(size.clone())));
+        let mut statuses = [s1, s2];
+        statuses.sort();
+        assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT], "round {round}: {v1} {v2}");
+        let loser = if s1 == StatusCode::CONFLICT { &v1 } else { &v2 };
+        assert_eq!(loser["code"], "already_running", "round {round}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let (_, now) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
+        assert_eq!(now["status"], "running", "round {round}");
+        assert!(state.ptys.is_running(&id), "round {round}");
+    }
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
 async fn missing_program_is_400_and_leaves_no_row() {
     let tmp = tempfile::tempdir().unwrap();
     let (_, mut state, pid, _) = setup(tmp.path()).await;

@@ -24,7 +24,8 @@ export function stubApi(routes: Record<string, Route>): Call[] {
     const key = `${call.method} ${call.path}`;
     if (!(key in routes)) return new Response(JSON.stringify({ code: 'not_found', message: key }), { status: 404 });
     const route = routes[key];
-    const value = typeof route === 'function' ? (route as (c: Call) => unknown)(call) : route;
+    // A function route may return a promise, to hold the response until the test resolves it.
+    const value = await (typeof route === 'function' ? (route as (c: Call) => unknown)(call) : route);
     return value === undefined ? new Response(null, { status: 204 }) : new Response(JSON.stringify(value), { status: 200 });
   }));
   return calls;
