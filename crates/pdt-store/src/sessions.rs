@@ -3,7 +3,8 @@ use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at";
+const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
+                       external_session_id, started_at";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
@@ -25,14 +26,16 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         exit_code: r.try_get("exit_code")?,
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
+        external_session_id: r.try_get("external_session_id")?,
+        started_at: r.try_get("started_at")?,
     })
 }
 
 impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
+             external_session_id, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -45,6 +48,8 @@ impl Store {
         .bind(s.exit_code)
         .bind(s.created_at)
         .bind(s.ended_at)
+        .bind(&s.external_session_id)
+        .bind(s.started_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -89,11 +94,41 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    pub async fn set_session_running(&self, id: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE sessions SET status = 'running', exit_code = NULL, ended_at = NULL WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+    /// Marks a session running again for a new spawn at `started_at`.
+    pub async fn set_session_running(&self, id: &str, started_at: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE sessions SET status = 'running', exit_code = NULL, ended_at = NULL, started_at = ? WHERE id = ?",
+        )
+        .bind(started_at)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// The agent conversation ids already bound to sessions other than `except`.
+    pub async fn claimed_external_session_ids(&self, except: &str) -> Result<Vec<String>, StoreError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT external_session_id FROM sessions WHERE external_session_id IS NOT NULL AND id != ?",
+        )
+        .bind(except)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
+    /// Binds an agent conversation id to a session that has none. Returns false when the session already has one,
+    /// does not exist, or another session owns that conversation.
+    pub async fn bind_external_session_id(&self, id: &str, external_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE sessions SET external_session_id = ? WHERE id = ? AND external_session_id IS NULL \
+             AND NOT EXISTS (SELECT 1 FROM sessions WHERE external_session_id = ?)",
+        )
+        .bind(external_id)
+        .bind(id)
+        .bind(external_id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -132,11 +167,13 @@ mod tests {
             kind: SessionKind::AgentTui,
             agent: Some(AgentKind::Codex),
             title: "Codex".into(),
-            cwd: "C:\\r é".into(),
+            cwd: "C:\\r Ã©".into(),
             status: SessionStatus::Running,
             exit_code: None,
             created_at,
             ended_at: None,
+            external_session_id: None,
+            started_at: Some(created_at),
         }
     }
 
@@ -161,7 +198,7 @@ mod tests {
         let s = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((s.status, s.exit_code, s.ended_at), (SessionStatus::Finished, Some(3), Some(99)));
         assert!(!store.end_session("a", SessionStatus::Interrupted, None, 100).await.unwrap(), "already ended");
-        assert!(store.set_session_running("a").await.unwrap());
+        assert!(store.set_session_running("a", 7).await.unwrap());
         let s = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((s.status, s.exit_code, s.ended_at), (SessionStatus::Running, None, None));
     }
@@ -187,6 +224,32 @@ mod tests {
         let a = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((a.status, a.ended_at), (SessionStatus::Interrupted, Some(7)));
         assert_eq!(store.get_session("b").await.unwrap().unwrap().status, SessionStatus::Finished);
+    }
+
+    #[tokio::test]
+    async fn external_ids_bind_once_and_are_unique() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for (id, at) in [("a", 1), ("b", 2)] {
+            store.insert_session(&session(id, at)).await.unwrap();
+        }
+        assert!(store.bind_external_session_id("a", "conv-1").await.unwrap());
+        assert!(!store.bind_external_session_id("a", "conv-2").await.unwrap(), "already bound");
+        assert!(!store.bind_external_session_id("b", "conv-1").await.unwrap(), "owned by another session");
+        assert!(store.bind_external_session_id("b", "conv-3").await.unwrap());
+        assert_eq!(store.claimed_external_session_ids("a").await.unwrap(), ["conv-3"]);
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().external_session_id.as_deref(), Some("conv-1"));
+    }
+
+    #[tokio::test]
+    async fn set_session_running_records_the_spawn_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        store.end_session("a", SessionStatus::Finished, Some(0), 5).await.unwrap();
+        assert!(store.set_session_running("a", 99).await.unwrap());
+        let s = store.get_session("a").await.unwrap().unwrap();
+        assert_eq!((s.status, s.started_at, s.ended_at), (SessionStatus::Running, Some(99), None));
     }
 
     #[tokio::test]

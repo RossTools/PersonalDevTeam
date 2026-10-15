@@ -272,7 +272,7 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 fn fake_agent(dir: &Path, name: &str) -> std::path::PathBuf {
     let args_file = dir.join(format!("{name}.args"));
     let (file, body) = if cfg!(windows) {
-        (format!("{name}.cmd"), format!("@echo off\r\necho %* >> \"{}\"\r\nset /p x=\r\n", args_file.display()))
+        (format!("{name}.cmd"), format!("@echo off\r\necho(%* >> \"{}\"\r\nset /p x=\r\n", args_file.display()))
     } else {
         (name.to_string(), format!("#!/bin/sh\necho \"$@\" >> \"{}\"\nread x\n", args_file.display()))
     };
@@ -322,6 +322,8 @@ async fn seed(
         exit_code: None,
         created_at,
         ended_at: None,
+        external_session_id: None,
+        started_at: Some(created_at),
     };
     state.store.insert_session(&session).await.unwrap();
     match status {
@@ -371,49 +373,142 @@ async fn resume_interrupted_skips_a_session_that_cannot_start() {
     state.ptys.shutdown().await;
 }
 
-#[tokio::test]
-async fn resume_interrupted_resumes_one_codex_session_per_folder() {
-    use pdt_core::session::AgentKind::Codex;
-    use pdt_core::session::SessionStatus::{Finished, Interrupted};
-    let tmp = tempfile::tempdir().unwrap();
-    let (app, mut state, pid, repo) = setup(tmp.path()).await;
-    let bin = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let other = tmp.path().join("other");
-    std::fs::create_dir_all(&other).unwrap();
-    let behind = tmp.path().join("behind");
-    std::fs::create_dir_all(&behind).unwrap();
-    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
-    seed(&state, &pid, "old", Some(Codex), &repo, Interrupted, 1).await;
-    // Same folder written with a trailing separator: still the same folder.
-    let repo_slash = format!("{}{}", repo.display(), std::path::MAIN_SEPARATOR);
-    seed(&state, &pid, "new", Some(Codex), Path::new(&repo_slash), Interrupted, 3).await;
-    seed(&state, &pid, "elsewhere", Some(Codex), &other, Interrupted, 2).await;
-    seed(&state, &pid, "shell", None, &repo, Interrupted, 0).await;
-    // An older interrupted Codex session behind a newer one that finished: `--last` would pick the finished one's
-    // conversation, so the interrupted session must not be resumed.
-    seed(&state, &pid, "behind-old", Some(Codex), &behind, Interrupted, 4).await;
-    seed(&state, &pid, "behind-new", Some(Codex), &behind, Finished, 5).await;
-    assert_eq!(pdt_api::resume_interrupted(&state).await, 3);
-    for id in ["new", "elsewhere", "shell"] {
-        wait_status(&app, id, "running").await;
-        assert!(state.ptys.is_running(id), "{id}");
-    }
-    for id in ["old", "behind-old", "behind-new"] {
-        let (_, s) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
-        assert_eq!(s["status"], if id == "behind-new" { "finished" } else { "interrupted" }, "{id}");
-        assert!(!state.ptys.is_running(id), "{id}");
-    }
-    // Exactly two Codex launches (new, elsewhere), each a resume.
-    let mut text = String::new();
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+}
+
+/// Writes a Codex rollout file for a conversation that began `offset_ms` after `base`, as Codex does after a turn.
+fn rollout(codex_home: &Path, id: &str, cwd: &Path, base: i64, offset_ms: i64) {
+    let dir = codex_home.join("sessions").join("2026").join("10").join("15");
+    std::fs::create_dir_all(&dir).unwrap();
+    let began = jiff::Timestamp::from_millisecond(base + offset_ms).unwrap().to_string();
+    let meta = json!({"timestamp": began, "type": "session_meta",
+        "payload": {"id": id, "timestamp": began, "cwd": cwd.to_string_lossy(), "instructions": "x".repeat(20_000)}});
+    std::fs::write(dir.join(format!("rollout-2026-10-15T00-00-00-{id}.jsonl")), format!("{meta}\n{{}}\n")).unwrap();
+}
+
+/// The fake agent's recorded launches, one trimmed line each (empty for a launch without arguments).
+async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
+    let mut lines = Vec::new();
     for _ in 0..100 {
-        text = std::fs::read_to_string(bin.join("fakecodex.args")).unwrap_or_default();
-        if text.lines().count() >= 2 {
+        let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
+        lines = text.lines().map(|l| l.trim().to_string()).collect();
+        if lines.len() >= want {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    assert_eq!(text.lines().map(str::trim).collect::<Vec<_>>(), ["resume --last", "resume --last"], "{text}");
+    lines
+}
+
+async fn external_id(state: &AppState, id: &str) -> Option<String> {
+    state.store.get_session(id).await.unwrap().unwrap().external_session_id
+}
+
+#[tokio::test]
+async fn auto_resume_gives_each_codex_session_its_own_conversation() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Interrupted;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, mut state, pid, repo) = setup(tmp.path()).await;
+    let (bin, home) = (tmp.path().join("bin"), tmp.path().join("codex-home"));
+    let other = tmp.path().join("other");
+    for d in [&bin, &home, &other] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
+    state.platform.codex_home = Some(home.clone());
+    let now = now_ms();
+    // Two sessions in the same folder (the second written with a trailing separator), each with its own saved
+    // conversation, plus one in another folder that never took a turn (no rollout file) and a shell.
+    let (t_a, t_b, t_c) = (now - 30_000, now - 10_000, now - 20_000);
+    let repo_slash = format!("{}{}", repo.display(), std::path::MAIN_SEPARATOR);
+    seed(&state, &pid, "a", Some(Codex), &repo, Interrupted, t_a).await;
+    seed(&state, &pid, "b", Some(Codex), Path::new(&repo_slash), Interrupted, t_b).await;
+    seed(&state, &pid, "c", Some(Codex), &other, Interrupted, t_c).await;
+    seed(&state, &pid, "shell", None, &repo, Interrupted, now - 40_000).await;
+    rollout(&home, "conv-a", &repo, t_a, 1_000);
+    rollout(&home, "conv-b", &repo, t_b, 1_000);
+
+    assert_eq!(pdt_api::resume_interrupted(&state).await, 4);
+    for id in ["a", "b", "c", "shell"] {
+        wait_status(&app, id, "running").await;
+        assert!(state.ptys.is_running(id), "{id}");
+    }
+    assert_eq!(external_id(&state, "a").await.as_deref(), Some("conv-a"));
+    assert_eq!(external_id(&state, "b").await.as_deref(), Some("conv-b"));
+    assert_eq!(external_id(&state, "c").await, None);
+    // Launches happen in creation order: a, c (fresh, nothing to resume), b.
+    assert_eq!(launches(&bin, "fakecodex", 3).await, ["resume conv-a", "", "resume conv-b"]);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn restarting_an_exited_codex_session_resumes_its_own_conversation() {
+    use pdt_core::session::AgentKind::Codex;
+    use pdt_core::session::SessionStatus::Finished;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state, pid, repo) = setup(tmp.path()).await;
+    let (bin, home) = (tmp.path().join("bin"), tmp.path().join("codex-home"));
+    for d in [&bin, &home] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
+    state.platform.codex_home = Some(home.clone());
+    let app = router(state.clone(), None);
+    let now = now_ms();
+    let (t_a, t_b) = (now - 30_000, now - 10_000);
+    seed(&state, &pid, "a", Some(Codex), &repo, Finished, t_a).await;
+    seed(&state, &pid, "b", Some(Codex), &repo, Finished, t_b).await;
+    rollout(&home, "conv-a", &repo, t_a, 1_000);
+    rollout(&home, "conv-b", &repo, t_b, 1_000);
+
+    // The newer session is restarted first, then the older one: neither takes the other's conversation.
+    let size = json!({"cols": 80, "rows": 24});
+    let (s, v) = call(&app, "POST", "/api/sessions/b/restart", Some(size.clone())).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = call(&app, "POST", "/api/sessions/a/restart", Some(size)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(launches(&bin, "fakecodex", 2).await, ["resume conv-b", "resume conv-a"]);
+    assert_eq!(external_id(&state, "a").await.as_deref(), Some("conv-a"));
+    assert_eq!(external_id(&state, "b").await.as_deref(), Some("conv-b"));
+    let (_, a) = call(&app, "GET", "/api/sessions/a", None).await;
+    assert!(a["startedAt"].as_i64().unwrap() >= now, "restart records a new start time");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn codex_conversation_is_captured_when_the_process_exits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state, pid, repo) = setup(tmp.path()).await;
+    let (bin, home) = (tmp.path().join("bin"), tmp.path().join("codex-home"));
+    for d in [&bin, &home] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    state.platform.codex_program = fake_agent(&bin, "fakecodex").to_string_lossy().into_owned();
+    state.platform.codex_home = Some(home.clone());
+    let app2 = router(state.clone(), None);
+    let (s, sess) = call(
+        &app2,
+        "POST",
+        "/api/sessions",
+        Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{sess}");
+    let id = sess["id"].as_str().unwrap().to_string();
+    assert!(sess["startedAt"].is_number());
+    // The first turn is taken, then the user stops the session.
+    rollout(&home, "conv-live", &repo, sess["startedAt"].as_i64().unwrap(), 500);
+    call(&app2, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    wait_status(&app2, &id, "finished").await;
+    for _ in 0..100 {
+        if external_id(&state, &id).await.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(external_id(&state, &id).await.as_deref(), Some("conv-live"));
     state.ptys.shutdown().await;
 }
 

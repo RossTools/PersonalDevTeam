@@ -11,4 +11,14 @@ worktreeId: string | null, kind: SessionKind, agent: AgentKind | null, title: st
 /**
  * Working directory, native separators.
  */
-cwd: string, status: SessionStatus, exitCode: number | null, createdAt: number, endedAt: number | null, };
+cwd: string, status: SessionStatus, exitCode: number | null, createdAt: number, endedAt: number | null, 
+/**
+ * The agent's own conversation id. Only Codex needs it (Claude's conversation id is `id`); it is found in
+ * Codex's rollout files once a turn has been taken, and None until then.
+ */
+externalSessionId: string | null, 
+/**
+ * When the session's process was last spawned (create, restart or auto-resume). None for rows from before it
+ * was recorded.
+ */
+startedAt: number | null, };

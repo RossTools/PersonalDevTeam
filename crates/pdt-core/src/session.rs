@@ -88,6 +88,13 @@ pub struct Session {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub ended_at: Option<i64>,
+    /// The agent's own conversation id. Only Codex needs it (Claude's conversation id is `id`); it is found in
+    /// Codex's rollout files once a turn has been taken, and None until then.
+    pub external_session_id: Option<String>,
+    /// When the session's process was last spawned (create, restart or auto-resume). None for rows from before it
+    /// was recorded.
+    #[ts(type = "number | null")]
+    pub started_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -169,6 +176,9 @@ pub struct Platform {
     /// The user's login-shell PATH, when pdtd's own PATH is not it (a macOS app started by launchd gets only
     /// /usr/bin:/bin:/usr/sbin:/sbin). Programs are looked up on it and sessions run with it.
     pub login_path: Option<String>,
+    /// Codex's home directory (`$CODEX_HOME`, else `~/.codex`), where it saves conversations. None when it cannot be
+    /// determined.
+    pub codex_home: Option<std::path::PathBuf>,
     /// Claude's config directory (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), where it saves conversations. None when
     /// it cannot be determined.
     pub claude_config_dir: Option<std::path::PathBuf>,
@@ -180,15 +190,22 @@ pub struct Launch {
     pub args: Vec<String>,
 }
 
-/// What to run for a session. `resume` continues the agent's conversation: Claude's conversation id is the
-/// session id, so each session resumes its own conversation. Codex cannot be given an id up front, so it resumes
-/// the most recent conversation in the working folder (`resume --last`): only one Codex session per folder
-/// resumes reliably.
+/// How to start an agent session: a new conversation, or continue one that was saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    Fresh,
+    /// Claude's conversation id is the session id, so each session resumes its own conversation.
+    Claude,
+    /// Codex's own id for this session's conversation (found in its rollout files).
+    Codex(String),
+}
+
+/// What to run for a session. Shells ignore `resume`. A resume that does not match the agent starts fresh.
 pub fn launch(
     kind: SessionKind,
     agent: Option<AgentKind>,
     platform: &Platform,
-    resume: bool,
+    resume: &Resume,
     session_id: &str,
 ) -> Launch {
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -203,11 +220,14 @@ pub fn launch(
         },
         (SessionKind::AgentTui, Some(AgentKind::Codex)) => Launch {
             program: platform.codex_program.clone(),
-            args: if resume { args(&["resume", "--last"]) } else { vec![] },
+            args: match resume {
+                Resume::Codex(id) => args(&["resume", id]),
+                _ => vec![],
+            },
         },
         (SessionKind::AgentTui, _) => Launch {
             program: platform.claude_program.clone(),
-            args: args(&[if resume { "--resume" } else { "--session-id" }, session_id]),
+            args: args(&[if *resume == Resume::Claude { "--resume" } else { "--session-id" }, session_id]),
         },
     }
 }
@@ -295,6 +315,7 @@ mod tests {
             claude_program: "claude".into(),
             codex_program: "codex".into(),
             login_path: None,
+            codex_home: None,
             claude_config_dir: None,
         }
     }
@@ -326,19 +347,25 @@ mod tests {
     #[test]
     fn shell_launch_per_platform() {
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), false, SID)),
+            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), &Resume::Fresh, SID)),
             ("pwsh".into(), vec!["-NoLogo".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), false, SID)),
+            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), &Resume::Fresh, SID)),
             ("powershell.exe".into(), vec!["-NoLogo".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("/bin/bash")), false, SID)),
+            launch_of(launch(
+                SessionKind::Shell,
+                None,
+                &platform(false, false, Some("/bin/bash")),
+                &Resume::Fresh,
+                SID
+            )),
             ("/bin/bash".into(), vec!["-l".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("  ")), false, SID)),
+            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("  ")), &Resume::Fresh, SID)),
             ("/bin/zsh".into(), vec!["-l".into()])
         );
     }
@@ -347,24 +374,36 @@ mod tests {
     fn agent_launch_and_resume() {
         let p = platform(false, false, None);
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, false, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Fresh, SID)),
             ("claude".into(), vec!["--session-id".into(), SID.into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, true, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Claude, SID)),
             ("claude".into(), vec!["--resume".into(), SID.into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, false, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Fresh, SID)),
             ("codex".into(), vec![])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, true, SID)),
-            ("codex".into(), vec!["resume".into(), "--last".into()])
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Codex("019-abc".into()), SID)),
+            ("codex".into(), vec!["resume".into(), "019-abc".into()])
+        );
+        // A resume for the wrong agent starts fresh, and a Claude session never gets Codex's id.
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Claude, SID)),
+            ("codex".into(), vec![])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Codex("x".into()), SID)),
+            ("claude".into(), vec!["--session-id".into(), SID.into()])
         );
         let mut custom = p.clone();
         custom.codex_program = "/opt/codex".into();
-        assert_eq!(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, false, SID).program, "/opt/codex");
+        assert_eq!(
+            launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, &Resume::Fresh, SID).program,
+            "/opt/codex"
+        );
     }
 
     #[test]

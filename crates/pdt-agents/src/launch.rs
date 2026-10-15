@@ -2,7 +2,8 @@
 
 use crate::pty::PtyError;
 use pdt_core::session::Platform;
-use std::io::Read;
+use std::collections::HashSet;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -32,20 +33,104 @@ pub fn detect_platform() -> Platform {
         claude_program: "claude".into(),
         codex_program: "codex".into(),
         login_path,
+        codex_home: codex_home(),
         claude_config_dir: claude_config_dir(),
     }
 }
 
-/// `$CLAUDE_CONFIG_DIR` if set and non-empty, else `<home>/.claude`.
-fn claude_config_dir() -> Option<PathBuf> {
-    claude_config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::home_dir())
+/// `$CODEX_HOME` if set and non-empty, else `<home>/.codex`.
+fn codex_home() -> Option<PathBuf> {
+    config_dir_from(std::env::var_os("CODEX_HOME"), std::env::home_dir(), ".codex")
 }
 
-fn claude_config_dir_from(env: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+/// `$CLAUDE_CONFIG_DIR` if set and non-empty, else `<home>/.claude`.
+fn claude_config_dir() -> Option<PathBuf> {
+    config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::home_dir(), ".claude")
+}
+
+fn config_dir_from(env: Option<std::ffi::OsString>, home: Option<PathBuf>, dot_dir: &str) -> Option<PathBuf> {
     match env.filter(|v| !v.is_empty()) {
         Some(dir) => Some(PathBuf::from(dir)),
-        None => home.map(|h| h.join(".claude")),
+        None => home.map(|h| h.join(dot_dir)),
     }
+}
+
+/// A working folder as a comparison key: no trailing separators, and case-insensitive on Windows.
+pub fn folder_key(cwd: &str) -> String {
+    let trimmed = cwd.trim_end_matches(['/', '\\']);
+    let trimmed = if trimmed.is_empty() { cwd } else { trimmed };
+    if cfg!(windows) { trimmed.to_lowercase() } else { trimmed.to_string() }
+}
+
+/// How long before the session's spawn a conversation file may have been touched and still be the one we want.
+const ROLLOUT_MTIME_SLACK_MS: i64 = 60_000;
+/// The conversation's start time must fall within [spawn - BEFORE, spawn + AFTER].
+const ROLLOUT_START_BEFORE_MS: i64 = 5_000;
+const ROLLOUT_START_AFTER_MS: i64 = 120_000;
+
+/// Finds the Codex conversation that the process spawned at `started_at_ms` in `cwd` created. Codex cannot be given
+/// a conversation id, but writes `sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl` after the first turn, whose first
+/// line records the id, working folder and start time. Conversations in `claimed` belong to other sessions. Returns
+/// the id of the matching conversation that started closest to `started_at_ms`.
+pub fn find_codex_conversation(
+    codex_home: &Path,
+    cwd: &Path,
+    started_at_ms: i64,
+    claimed: &HashSet<String>,
+) -> Option<String> {
+    let want_cwd = folder_key(&cwd.to_string_lossy());
+    let mut best: Option<(i64, String)> = None;
+    let mut dirs = vec![codex_home.join("sessions")];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
+                continue;
+            }
+            let modified_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64);
+            if modified_ms.is_none_or(|m| m < started_at_ms - ROLLOUT_MTIME_SLACK_MS) {
+                continue;
+            }
+            let Some((id, folder, began)) = read_rollout_meta(&path) else { continue };
+            let off = began - started_at_ms;
+            if folder_key(&folder) != want_cwd
+                || !(-ROLLOUT_START_BEFORE_MS..=ROLLOUT_START_AFTER_MS).contains(&off)
+                || claimed.contains(&id)
+            {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(b, _)| off.abs() < *b) {
+                best = Some((off.abs(), id));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+/// (conversation id, working folder, start time in ms) from a rollout file's `session_meta` first line.
+fn read_rollout_meta(path: &Path) -> Option<(String, String, i64)> {
+    // The first line embeds the agent's instructions and can be long, but nothing past it is needed.
+    let mut line = String::new();
+    std::io::BufReader::new(std::fs::File::open(path).ok()?.take(4 << 20)).read_line(&mut line).ok()?;
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if v.get("type")?.as_str()? != "session_meta" {
+        return None;
+    }
+    let p = v.get("payload")?;
+    let began = p.get("timestamp")?.as_str()?.parse::<jiff::Timestamp>().ok()?.as_millisecond();
+    Some((p.get("id")?.as_str()?.to_string(), p.get("cwd")?.as_str()?.to_string(), began))
 }
 
 /// Whether Claude has saved a conversation for `session_id`. It writes `projects/<encoded cwd>/<id>.jsonl` only
@@ -173,10 +258,91 @@ mod tests {
     #[test]
     fn claude_config_dir_prefers_the_env_var() {
         let home = Some(PathBuf::from("/home/u"));
-        assert_eq!(claude_config_dir_from(Some("/cfg".into()), home.clone()), Some(PathBuf::from("/cfg")));
-        assert_eq!(claude_config_dir_from(Some("".into()), home.clone()), Some(PathBuf::from("/home/u/.claude")));
-        assert_eq!(claude_config_dir_from(None, home), Some(PathBuf::from("/home/u/.claude")));
-        assert_eq!(claude_config_dir_from(None, None), None);
+        assert_eq!(config_dir_from(Some("/cfg".into()), home.clone(), ".claude"), Some(PathBuf::from("/cfg")));
+        assert_eq!(config_dir_from(Some("".into()), home.clone(), ".claude"), Some(PathBuf::from("/home/u/.claude")));
+        assert_eq!(config_dir_from(None, home, ".claude"), Some(PathBuf::from("/home/u/.claude")));
+        assert_eq!(config_dir_from(None, None, ".codex"), None);
+    }
+
+    /// The spawn time used by the tests: now, so freshly written files pass the modified-time filter.
+    fn t0() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+    }
+
+    /// An ISO timestamp `secs` seconds after `base`.
+    fn at(base: i64, secs: f64) -> String {
+        jiff::Timestamp::from_millisecond(base + (secs * 1000.0) as i64).unwrap().to_string()
+    }
+
+    /// Writes a rollout file the way Codex does: a long `session_meta` first line, then more lines.
+    fn rollout(home: &Path, day: &str, id: &str, cwd: &str, timestamp: &str) -> PathBuf {
+        let dir = home.join("sessions").join(day);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("rollout-2026-10-15T21-45-42-{id}.jsonl"));
+        let meta = serde_json::json!({
+            "timestamp": timestamp, "type": "session_meta",
+            "payload": {"id": id, "timestamp": timestamp, "cwd": cwd, "instructions": "x".repeat(50_000)},
+        });
+        std::fs::write(&path, format!("{meta}\n{{\"type\":\"event_msg\"}}\n")).unwrap();
+        path
+    }
+
+    fn find(home: &Path, base: i64, cwd: &str, claimed: &[&str]) -> Option<String> {
+        let claimed = claimed.iter().map(|s| s.to_string()).collect();
+        find_codex_conversation(home, Path::new(cwd), base, &claimed)
+    }
+
+    #[test]
+    fn finds_the_conversation_started_in_this_folder_at_this_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = if cfg!(windows) { "C:\\work\\repo" } else { "/work/repo" };
+        let b = t0();
+        rollout(dir.path(), "2026/10/15", "conv-1", cwd, &at(b, 2.5));
+        assert_eq!(find(dir.path(), b, cwd, &[]).as_deref(), Some("conv-1"));
+        // The same folder written with a trailing separator (and another case on Windows).
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(find(dir.path(), b, &format!("{cwd}{sep}"), &[]).as_deref(), Some("conv-1"));
+        if cfg!(windows) {
+            assert_eq!(find(dir.path(), b, &cwd.to_uppercase(), &[]).as_deref(), Some("conv-1"));
+        }
+    }
+
+    #[test]
+    fn ignores_other_folders_times_claimed_and_malformed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = if cfg!(windows) { "C:\\work\\repo" } else { "/work/repo" };
+        let b = t0();
+        assert_eq!(find(&dir.path().join("missing"), b, cwd, &[]), None, "no codex home");
+        assert_eq!(find(dir.path(), b, cwd, &[]), None, "no sessions dir");
+        rollout(dir.path(), "2026/10/15", "other-folder", "/somewhere/else", &at(b, 1.0));
+        rollout(dir.path(), "2026/10/15", "too-early", cwd, &at(b, -12.0));
+        rollout(dir.path(), "2026/10/15", "too-late", cwd, &at(b, 138.0));
+        let bad = dir.path().join("sessions/2026/10/15");
+        std::fs::write(bad.join("rollout-garbage.jsonl"), "not json\n").unwrap();
+        std::fs::write(bad.join("rollout-empty.jsonl"), "").unwrap();
+        std::fs::write(bad.join("rollout-wrong-type.jsonl"), "{\"type\":\"event_msg\",\"payload\":{}}\n").unwrap();
+        std::fs::write(bad.join("notes.txt"), "{}").unwrap();
+        assert_eq!(find(dir.path(), b, cwd, &[]), None);
+        rollout(dir.path(), "2026/10/15", "claimed", cwd, &at(b, 1.0));
+        assert_eq!(find(dir.path(), b, cwd, &["claimed"]), None);
+        assert_eq!(find(dir.path(), b, cwd, &[]).as_deref(), Some("claimed"));
+    }
+
+    #[test]
+    fn the_closest_start_time_wins_and_old_files_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = if cfg!(windows) { "C:\\work\\repo" } else { "/work/repo" };
+        let b = t0();
+        rollout(dir.path(), "2026/10/15", "far", cwd, &at(b, 48.0));
+        rollout(dir.path(), "2026/10/15", "near", cwd, &at(b, 3.0));
+        rollout(dir.path(), "2026/10/16", "nearer", cwd, &at(b, 1.0));
+        assert_eq!(find(dir.path(), b, cwd, &[]).as_deref(), Some("nearer"));
+        assert_eq!(find(dir.path(), b, cwd, &["nearer"]).as_deref(), Some("near"));
+        // A file not touched since long before the spawn is never read.
+        let stale = rollout(dir.path(), "2026/10/15", "stale", cwd, &at(b, 0.0));
+        let old = std::time::UNIX_EPOCH + Duration::from_millis((b - 3_600_000) as u64);
+        std::fs::File::options().write(true).open(&stale).unwrap().set_modified(old).unwrap();
+        assert_eq!(find(dir.path(), b, cwd, &["nearer", "near", "far"]), None);
     }
 
     #[test]

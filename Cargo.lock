@@ -2551,8 +2551,10 @@ dependencies = [
 name = "pdt-agents"
 version = "0.1.0"
 dependencies = [
+ "jiff",
  "pdt-core",
  "portable-pty",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
