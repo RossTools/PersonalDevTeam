@@ -18,9 +18,11 @@ ts-rs.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 jiff.workspace = true
+serde_json.workspace = true
+futures-util = "0.3.34"
 
 [dev-dependencies]
 tower.workspace = true
-serde_json.workspace = true
 tempfile = "3.27.0"
 http-body-util = "0.1.5"
+tokio-tungstenite = "0.30.0"

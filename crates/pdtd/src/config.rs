@@ -3,6 +3,8 @@ use pdt_core::brand::{DAEMON_BIN, Profile};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
 
+const VITE_DEV_PORT: u16 = 5173;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub profile: Profile,
@@ -35,7 +37,11 @@ impl Config {
         };
         let web_dir =
             lookup("PDT_WEB_DIR").map(PathBuf::from).or_else(|| exe_dir.map(|d| d.join("web")).filter(|d| d.is_dir()));
-        let mut allowed_hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+        let mut allowed_hosts = vec![format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}")];
+        if profile == Profile::Dev {
+            // `pnpm --dir web dev` serves the UI on 5173 and proxies /api here with its own Host and Origin.
+            allowed_hosts.extend([format!("localhost:{VITE_DEV_PORT}"), format!("127.0.0.1:{VITE_DEV_PORT}")]);
+        }
         if let Some(extra) = lookup("PDT_ALLOWED_HOSTS") {
             allowed_hosts.extend(extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from));
         }
@@ -106,20 +112,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!((c.port, c.data_dir, c.web_dir), (7420, PathBuf::from("/data").join("pdt"), None));
-        assert_eq!(c.allowed_hosts.len(), 2);
+        assert_eq!(c.allowed_hosts.len(), 3);
     }
 
     #[test]
     fn allowed_hosts_default_and_extra() {
         let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
-        assert_eq!(c.allowed_hosts, ["127.0.0.1:7420", "localhost:7420"]);
+        assert_eq!(c.allowed_hosts, ["127.0.0.1:7420", "localhost:7420", "[::1]:7420"]);
         let c = Config::from_lookup(
             lookup(&[("PDT_PORT", "9000"), ("PDT_ALLOWED_HOSTS", " box.tail.ts.net:9000 ,, other:1 ,")]),
             Some("/d".into()),
             None,
         )
         .unwrap();
-        assert_eq!(c.allowed_hosts, ["127.0.0.1:9000", "localhost:9000", "box.tail.ts.net:9000", "other:1"]);
+        assert_eq!(
+            c.allowed_hosts,
+            ["127.0.0.1:9000", "localhost:9000", "[::1]:9000", "box.tail.ts.net:9000", "other:1"]
+        );
+    }
+
+    #[test]
+    fn dev_profile_allows_the_vite_dev_server() {
+        let c = Config::from_lookup(lookup(&[("PDT_PROFILE", "dev")]), Some("/d".into()), None).unwrap();
+        assert!(c.allowed_hosts.contains(&"localhost:5173".to_string()));
+        assert!(c.allowed_hosts.contains(&"127.0.0.1:5173".to_string()));
+        let stable = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert!(!stable.allowed_hosts.iter().any(|h| h.ends_with(":5173")));
     }
 
     #[test]

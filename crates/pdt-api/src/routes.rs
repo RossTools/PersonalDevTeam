@@ -1,5 +1,5 @@
 use crate::error::ApiError;
-use crate::{sessions, worktrees};
+use crate::{pty_ws, sessions, worktrees};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -57,6 +57,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}", get(sessions::get_one).delete(sessions::remove))
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
         .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
+        .route("/sessions/{id}/pty", get(pty_ws::connect))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")

@@ -195,3 +195,52 @@ async fn wrong_method_is_json_405() {
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["code"], "method_not_allowed");
 }
+
+async fn call_origin(app: &axum::Router, method: &str, origin: Option<&str>) -> (StatusCode, String) {
+    let mut req = Request::builder().method(method).uri("/api/health").header("host", "127.0.0.1:7420");
+    if let Some(o) = origin {
+        req = req.header("origin", o);
+    }
+    let res = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tokio::test]
+async fn origin_must_match_an_allowed_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_host_guard(
+        app(tmp.path(), None).await,
+        vec!["127.0.0.1:7420".into(), "localhost:7420".into(), "box.tail.ts.net".into()],
+    );
+    assert_eq!(call_origin(&app, "GET", None).await.0, StatusCode::OK);
+    assert_eq!(call_origin(&app, "GET", Some("http://127.0.0.1:7420")).await.0, StatusCode::OK);
+    assert_eq!(call_origin(&app, "GET", Some("http://LOCALHOST:7420")).await.0, StatusCode::OK);
+    assert_eq!(call_origin(&app, "GET", Some("https://box.tail.ts.net")).await.0, StatusCode::OK);
+    for bad in ["http://evil.example", "null", "http://127.0.0.1:9999", "file://", "chrome-extension://abc"] {
+        let (status, body) = call_origin(&app, "GET", Some(bad)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{bad}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["code"], "forbidden_origin");
+        assert_eq!(v["message"], format!("origin {bad} is not allowed"));
+    }
+}
+
+#[tokio::test]
+async fn health_reports_version_and_wrong_content_type_is_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path(), None).await;
+    let (_, body) = call(&app, "GET", "/api/health", None).await;
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["version"], env!("CARGO_PKG_VERSION"));
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/projects")
+        .header("content-type", "text/plain")
+        .body(Body::from("{}"))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["code"], "invalid_input");
+}

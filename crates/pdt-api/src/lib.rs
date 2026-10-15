@@ -1,5 +1,6 @@
 mod error;
 mod host_guard;
+mod pty_ws;
 mod routes;
 mod sessions;
 mod worktrees;
