@@ -82,7 +82,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
         .route("/projects/{id}/sessions", get(sessions::list))
         .route("/sessions", axum::routing::post(sessions::create))
-        .route("/sessions/{id}", get(sessions::get_one).delete(sessions::remove))
+        .route("/sessions/{id}", get(sessions::get_one).patch(sessions::rename).delete(sessions::remove))
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
         .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
         .route("/sessions/{id}/pty", get(pty_ws::connect))

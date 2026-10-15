@@ -90,6 +90,12 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    pub async fn rename_session(&self, id: &str, title: &str) -> Result<bool, StoreError> {
+        let r =
+            sqlx::query("UPDATE sessions SET title = ? WHERE id = ?").bind(title).bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn delete_session(&self, id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM sessions WHERE id = ?").bind(id).execute(&self.pool).await?;
         Ok(r.rows_affected() > 0)
@@ -151,6 +157,16 @@ mod tests {
         assert!(store.set_session_running("a").await.unwrap());
         let s = store.get_session("a").await.unwrap().unwrap();
         assert_eq!((s.status, s.exit_code, s.ended_at), (SessionStatus::Running, None, None));
+    }
+
+    #[tokio::test]
+    async fn rename_session_updates_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        assert!(store.rename_session("a", "New name").await.unwrap());
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "New name");
+        assert!(!store.rename_session("zz", "x").await.unwrap());
     }
 
     #[tokio::test]

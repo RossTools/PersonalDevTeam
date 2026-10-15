@@ -68,7 +68,7 @@ async fn shell_session_lifecycle() {
             .await;
     assert_eq!(s, StatusCode::CREATED, "{sess}");
     assert_eq!(sess["status"], "running");
-    assert_eq!(sess["title"], "Shell");
+    assert_eq!(sess["title"], "Shell · P");
     assert_eq!(sess["worktreeId"], Value::Null);
     assert!(same_dir(Path::new(sess["cwd"].as_str().unwrap()), &repo));
     let id = sess["id"].as_str().unwrap().to_string();
@@ -238,7 +238,29 @@ async fn session_runs_in_its_worktree() {
     .await;
     assert_eq!(s, StatusCode::CREATED);
     assert_eq!(sess["worktreeId"], wid);
+    assert_eq!(sess["title"], "Shell · w");
     assert!(same_dir(Path::new(sess["cwd"].as_str().unwrap()), Path::new(wt["path"].as_str().unwrap())));
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn rename_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, _) = setup(tmp.path()).await;
+    let (_, sess) =
+        call(&app, "POST", "/api/sessions", Some(json!({"projectId": pid, "kind": "shell", "cols": 80, "rows": 24})))
+            .await;
+    let uri = format!("/api/sessions/{}", sess["id"].as_str().unwrap());
+    let (s, v) = call(&app, "PATCH", &uri, Some(json!({"title": "  Build server  "}))).await;
+    assert_eq!((s, v["title"].as_str().unwrap()), (StatusCode::OK, "Build server"), "{v}");
+    let (_, got) = call(&app, "GET", &uri, None).await;
+    assert_eq!(got["title"], "Build server");
+    for bad in ["", "   ", &"x".repeat(101)] {
+        let (s, v) = call(&app, "PATCH", &uri, Some(json!({"title": bad}))).await;
+        assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::BAD_REQUEST, "invalid_title"));
+    }
+    let (s, _) = call(&app, "PATCH", "/api/sessions/nope", Some(json!({"title": "x"}))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
     state.ptys.shutdown().await;
 }
 

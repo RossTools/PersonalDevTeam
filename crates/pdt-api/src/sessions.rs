@@ -5,7 +5,9 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::{PtyError, SpawnSpec};
-use pdt_core::session::{NewSession, Session, SessionStatus, TerminalSize, default_title, launch, scrubbed_env};
+use pdt_core::session::{
+    NewSession, Session, SessionStatus, TerminalSize, clean_title, default_title, is_scrubbed, launch,
+};
 use std::path::PathBuf;
 
 pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Session>>, ApiError> {
@@ -28,14 +30,14 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let valid = input.validate()?;
     let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let (worktree_id, cwd) = match &valid.worktree_id {
+    let (worktree_id, cwd, place) = match &valid.worktree_id {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
                 ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "worktree does not belong to this project")
             })?;
-            (Some(wt.id), wt.path)
+            (Some(wt.id), wt.path, wt.branch)
         }
-        None => (None, project.repo_path.clone()),
+        None => (None, project.repo_path.clone(), project.name.clone()),
     };
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),
@@ -43,7 +45,7 @@ pub(crate) async fn create(
         worktree_id,
         kind: valid.kind,
         agent: valid.agent,
-        title: default_title(valid.kind, valid.agent).into(),
+        title: default_title(valid.kind, valid.agent, &place),
         cwd,
         status: SessionStatus::Running,
         exit_code: None,
@@ -73,7 +75,10 @@ fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: bool) -> Re
         program,
         args,
         cwd: PathBuf::from(&s.cwd),
-        env_remove: scrubbed_env(s.kind).into_iter().map(String::from).collect(),
+        env_remove: std::env::vars_os()
+            .filter_map(|(k, _)| k.into_string().ok())
+            .filter(|k| is_scrubbed(s.kind, k))
+            .collect(),
         env,
         cols: size.cols,
         rows: size.rows,
@@ -97,6 +102,25 @@ async fn settle_exit(st: &AppState, id: &str) {
     if let Some(h) = handle {
         let _ = h.await;
     }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Rename {
+    title: String,
+}
+
+pub(crate) async fn rename(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<Rename>, JsonRejection>,
+) -> Result<Json<Session>, ApiError> {
+    let Json(body) = payload?;
+    let title = clean_title(&body.title)
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_title", "title must be 1 to 100 characters"))?;
+    if !st.store.rename_session(&id, &title).await? {
+        return Err(ApiError::not_found("session"));
+    }
+    Ok(Json(load(&st, &id).await?))
 }
 
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

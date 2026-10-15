@@ -49,7 +49,7 @@ Items that Phase 1 reviews deferred. Plan the ones tagged with a phase into that
 - **Test gaps:**
   - WebSocket 409, exited-on-attach and lag-close paths.
   - Restart failure and 404 branches.
-  - WorktreeForm and the panel's New shell button.
+  - The panel's New shell button.
   - The lifecycle test can't tell graceful marking from the startup sweep.
 - **Not yet verified by hand:**
   - The UI in a real browser (xterm rendering and focus, panel tabs, reload redraw).

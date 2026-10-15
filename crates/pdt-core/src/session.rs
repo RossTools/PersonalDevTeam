@@ -209,12 +209,22 @@ pub fn launch(
     }
 }
 
-pub fn default_title(kind: SessionKind, agent: Option<AgentKind>) -> &'static str {
-    match (kind, agent) {
+/// `<Kind> · <where>`: where is the worktree's branch, or the project name for the main checkout.
+pub fn default_title(kind: SessionKind, agent: Option<AgentKind>, place: &str) -> String {
+    let label = match (kind, agent) {
         (SessionKind::Shell, _) => "Shell",
         (SessionKind::AgentTui, Some(AgentKind::Codex)) => "Codex",
         (SessionKind::AgentTui, _) => "Claude",
-    }
+    };
+    format!("{label} · {place}")
+}
+
+pub const MAX_TITLE_CHARS: usize = 100;
+
+/// Trims a user-supplied session title; None when empty or longer than `MAX_TITLE_CHARS`.
+pub fn clean_title(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    (!t.is_empty() && t.chars().count() <= MAX_TITLE_CHARS).then(|| t.to_string())
 }
 
 /// pdtd's own configuration variables (keep in sync with crates/pdtd/src/config.rs). Never passed to children:
@@ -222,13 +232,17 @@ pub fn default_title(kind: SessionKind, agent: Option<AgentKind>) -> &'static st
 const PDT_ENV_VARS: [&str; 5] = ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"];
 /// Removed for agents so they bill the user's subscription, not an API key (spec §5.5).
 const API_KEY_ENV_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
+/// Inherited from the shell that started pdtd (often Claude Code itself): they disable color or make `claude`
+/// believe it is nested. Never passed to any child.
+const LEAKED_ENV_VARS: [&str; 4] = ["NO_COLOR", "FORCE_COLOR", "CLAUDECODE", "CLAUDE_PID"];
+const LEAKED_ENV_PREFIX: &str = "CLAUDE_CODE_";
 
-pub fn scrubbed_env(kind: SessionKind) -> Vec<&'static str> {
-    let mut vars = PDT_ENV_VARS.to_vec();
-    if kind == SessionKind::AgentTui {
-        vars.extend(API_KEY_ENV_VARS);
-    }
-    vars
+/// Whether the environment variable `name` must be removed from a child of this kind.
+pub fn is_scrubbed(kind: SessionKind, name: &str) -> bool {
+    PDT_ENV_VARS.contains(&name)
+        || LEAKED_ENV_VARS.contains(&name)
+        || name.starts_with(LEAKED_ENV_PREFIX)
+        || (kind == SessionKind::AgentTui && API_KEY_ENV_VARS.contains(&name))
 }
 
 /// Client → server control messages on the PTY WebSocket (sent as text frames).
@@ -336,16 +350,22 @@ mod tests {
     }
 
     #[test]
-    fn scrubbed_env_always_removes_pdt_vars() {
+    fn scrub_rules() {
         for kind in [SessionKind::Shell, SessionKind::AgentTui] {
-            let vars = scrubbed_env(kind);
             for v in ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"] {
-                assert!(vars.contains(&v), "{kind:?} keeps {v}");
+                assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
+            }
+            for v in ["NO_COLOR", "FORCE_COLOR", "CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_X"]
+            {
+                assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
+            }
+            for v in ["PATH", "CLAUDE_CODE", "CLAUDE_CONFIG_DIR", "MY_CLAUDE_CODE_X", "TERM"] {
+                assert!(!is_scrubbed(kind, v), "{kind:?} drops {v}");
             }
         }
-        assert!(scrubbed_env(SessionKind::AgentTui).contains(&"ANTHROPIC_API_KEY"));
-        assert!(scrubbed_env(SessionKind::AgentTui).contains(&"OPENAI_API_KEY"));
-        assert!(!scrubbed_env(SessionKind::Shell).contains(&"ANTHROPIC_API_KEY"));
+        assert!(is_scrubbed(SessionKind::AgentTui, "ANTHROPIC_API_KEY"));
+        assert!(is_scrubbed(SessionKind::AgentTui, "OPENAI_API_KEY"));
+        assert!(!is_scrubbed(SessionKind::Shell, "ANTHROPIC_API_KEY"));
     }
 
     fn new(kind: SessionKind, agent: Option<AgentKind>, cols: u16, rows: u16) -> NewSession {
@@ -383,8 +403,17 @@ mod tests {
 
     #[test]
     fn titles() {
-        assert_eq!(default_title(SessionKind::Shell, None), "Shell");
-        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Claude)), "Claude");
-        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Codex)), "Codex");
+        assert_eq!(default_title(SessionKind::Shell, None, "ai-dev-shop"), "Shell · ai-dev-shop");
+        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Claude), "feature-x"), "Claude · feature-x");
+        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Codex), "p"), "Codex · p");
+    }
+
+    #[test]
+    fn title_cleaning() {
+        assert_eq!(clean_title("  hi  ").as_deref(), Some("hi"));
+        assert_eq!(clean_title("   "), None);
+        assert_eq!(clean_title(&"x".repeat(100)).map(|t| t.len()), Some(100));
+        assert_eq!(clean_title(&"x".repeat(101)), None);
+        assert_eq!(clean_title(&"é".repeat(100)).map(|t| t.chars().count()), Some(100));
     }
 }

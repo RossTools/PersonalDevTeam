@@ -52,6 +52,27 @@ describe('SessionList', () => {
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('new'));
   });
 
+  it('renames a session in place on Enter and cancels on Escape', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/sessions': [session({ title: 'Shell · PDT' })],
+      'PATCH /api/sessions/s1': (c) => session({ title: (c.body as { title: string }).title }),
+    });
+    renderWithQuery(<SessionList project={project} selectedId={null} onSelect={() => {}} />);
+    await userEvent.dblClick(await screen.findByText('Shell · PDT'));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+
+    await userEvent.dblClick(screen.getByText('Shell · PDT'));
+    const input = screen.getByRole('textbox', { name: 'Session name' });
+    expect(input).toHaveValue('Shell · PDT');
+    await userEvent.clear(input);
+    await userEvent.type(input, ' Build server {Enter}');
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ title: 'Build server' }));
+    await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
+  });
+
   it('shows server errors', async () => {
     stubApi({
       'GET /api/projects/p/worktrees': [],

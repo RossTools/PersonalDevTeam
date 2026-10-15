@@ -1,10 +1,10 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { NewSession } from '../api/gen/NewSession';
 import type { Project } from '../api/gen/Project';
 import { INITIAL_SIZE, toDot } from './status';
-import { WorktreeForm } from './WorktreeForm';
 
 type Choice = 'Shell' | 'Claude' | 'Codex';
 const CHOICES: Choice[] = ['Shell', 'Claude', 'Codex'];
@@ -14,6 +14,38 @@ function newSession(projectId: string, worktreeId: string | null, choice: Choice
   return choice === 'Shell'
     ? { ...base, kind: 'shell', ...INITIAL_SIZE }
     : { ...base, kind: 'agent_tui', agent: choice === 'Claude' ? 'claude' : 'codex', ...INITIAL_SIZE };
+}
+
+function RenameInput({ initial, onSave, onCancel }: {
+  initial: string;
+  onSave: (title: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const [done, setDone] = useState(false);
+  const finish = (save: boolean) => {
+    if (done) return;
+    setDone(true);
+    const t = value.trim();
+    if (save && t && t !== initial) onSave(t);
+    else onCancel();
+  };
+  return (
+    <input
+      autoFocus
+      aria-label="Session name"
+      value={value}
+      maxLength={100}
+      onChange={(e) => setValue(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') finish(true);
+        else if (e.key === 'Escape') finish(false);
+      }}
+      className="w-full px-3 py-1 rounded-pdt text-sm bg-surface text-fg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    />
+  );
 }
 
 const small = 'rounded-pdt px-1.5 py-0.5 text-[11px] text-muted hover:text-fg hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -38,6 +70,12 @@ export function SessionList({ project, selectedId, onSelect }: {
     },
   });
 
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const rename = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) => api.renameSession(id, title),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['sessions', project.id] }),
+  });
+
   if (worktrees.isPending || sessions.isPending) return <p className="px-2 text-xs text-muted">Loading…</p>;
   if (worktrees.isError || sessions.isError) {
     return <p role="alert" className="px-2 text-xs text-failed">{(worktrees.error ?? sessions.error)?.message}</p>;
@@ -46,7 +84,7 @@ export function SessionList({ project, selectedId, onSelect }: {
     { id: null as string | null, label: 'Repository' },
     ...worktrees.data.map((w) => ({ id: w.id as string | null, label: w.branch })),
   ];
-  const error = create.error;
+  const error = create.error ?? rename.error;
 
   return (
     <div className="flex flex-col gap-2 py-2">
@@ -70,22 +108,35 @@ export function SessionList({ project, selectedId, onSelect }: {
           <ul className="flex flex-col gap-0.5">
             {sessions.data.filter((s) => s.worktreeId === g.id).map((s) => (
               <li key={s.id}>
-                <button
-                  type="button"
-                  aria-current={s.id === selectedId ? 'true' : undefined}
-                  onClick={() => onSelect(s.id)}
-                  className={`w-full flex items-center gap-2 text-left px-3 py-1 rounded-pdt text-sm ${s.id === selectedId ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
-                >
-                  <StatusDot status={toDot(s.status)} />
-                  <span className="truncate">{s.title}</span>
-                </button>
+                {renamingId === s.id ? (
+                  <RenameInput
+                    initial={s.title}
+                    onSave={(title) => {
+                      setRenamingId(null);
+                      rename.mutate({ id: s.id, title });
+                    }}
+                    onCancel={() => setRenamingId(null)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    aria-current={s.id === selectedId ? 'true' : undefined}
+                    title="Double-click to rename"
+                    onClick={() => onSelect(s.id)}
+                    onDoubleClick={() => setRenamingId(s.id)}
+                    onKeyDown={(e) => { if (e.key === 'F2') setRenamingId(s.id); }}
+                    className={`w-full flex items-center gap-2 text-left px-3 py-1 rounded-pdt text-sm ${s.id === selectedId ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
+                  >
+                    <StatusDot status={toDot(s.status)} />
+                    <span className="truncate">{s.title}</span>
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         </section>
       ))}
       {error && <p role="alert" className="px-2 text-xs text-failed">{error.message}</p>}
-      <WorktreeForm projectId={project.id} />
     </div>
   );
 }
