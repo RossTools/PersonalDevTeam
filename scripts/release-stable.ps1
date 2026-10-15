@@ -55,4 +55,9 @@ if ($p.ExitCode -ne 0) { throw "installer failed (exit $($p.ExitCode))" }
 $app = Get-ChildItem $installDir -Filter '*.exe' | Where-Object { $_.BaseName -notin @('pdtd', 'uninstall') } | Select-Object -First 1
 if (-not $app) { throw "installed, but no app exe was found in $installDir" }
 Write-Host "Installed to $installDir. Starting $($app.Name) (it starts pdtd)."
-Start-Process $app.FullName
+# Launch with no PDT_* variables so the stable app never inherits a dev setup (e.g. PDT_PROFILE=dev).
+$psi = New-Object Diagnostics.ProcessStartInfo $app.FullName
+$psi.UseShellExecute = $false
+$psi.WorkingDirectory = $installDir
+foreach ($k in @($psi.EnvironmentVariables.Keys)) { if ($k -like 'PDT_*') { $psi.EnvironmentVariables.Remove($k) } }
+[Diagnostics.Process]::Start($psi) | Out-Null

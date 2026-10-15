@@ -6,8 +6,13 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 port=7420
 product="Personal Dev Team"
+usage() { echo "usage: $0 [--build-only]" >&2; exit 2; }
 build_only=false
-[[ "${1:-}" == "--build-only" ]] && build_only=true
+case $# in
+  0) ;;
+  1) [[ "$1" == "--build-only" ]] || usage; build_only=true ;;
+  *) usage ;;
+esac
 
 up() { curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/api/health"; }
 
@@ -25,7 +30,10 @@ $build_only && exit 0
 
 dest="$HOME/Applications/$product.app"
 # Any process from the installed bundle other than pdtd means the window is still open.
-if pgrep -fl "$dest/Contents/MacOS/" | grep -v "/Contents/MacOS/pdtd" | grep -q .; then
+# No pipelines here: under pipefail a SIGPIPE in a pipeline would skip this guard.
+procs="$(pgrep -fl "$dest/Contents/MacOS/" || true)"
+window="$(grep -v "/Contents/MacOS/pdtd" <<<"$procs" || true)"
+if [[ -n "$window" ]]; then
   echo "Close the stable desktop window first (its sessions keep running in pdtd)." >&2
   exit 1
 fi
@@ -41,4 +49,8 @@ mkdir -p "$HOME/Applications"
 rm -rf "$dest"
 cp -R "$bundle" "$dest"
 echo "Installed to $dest. Starting it (it starts pdtd)."
+# The stable app must not inherit a dev setup (PDT_PROFILE=dev etc.); open passes our env to the app.
+for v in $(compgen -e); do
+  if [[ "$v" == PDT_* ]]; then unset "$v"; fi
+done
 open "$dest"
