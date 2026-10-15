@@ -35,8 +35,13 @@ Write-Host "Built $($setup.FullName)"
 if ($BuildOnly) { return }
 
 $installDir = Join-Path $env:LOCALAPPDATA $product
-$window = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" -and $_.ProcessName -ne 'pdtd' }
-if ($window) { throw 'Close the stable desktop window first (its sessions keep running in pdtd).' }
+# The stable tray app holds no state: stop it so the installer can replace it (pdtd is stopped gracefully below).
+$tray = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" -and $_.ProcessName -ne 'pdtd' }
+if ($tray) {
+    Write-Host 'Stopping the stable tray app...'
+    $tray | Stop-Process -Force
+    $tray | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+}
 
 if (Test-Port $port) {
     Write-Host "Stopping the stable pdtd on port $port..."

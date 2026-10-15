@@ -26,6 +26,9 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - `pnpm --dir web dev` proxies `/api` to 7421 (the dev daemon).
 - `cargo test -p pdt-desktop` and the desktop build need `pnpm --dir web build` first; plain `cargo test` skips the desktop crate.
 - Desktop app in dev: `cargo build -p pdtd`, then `cargo run -p pdt-desktop` with `PDT_PROFILE=dev` and `PDT_WEB_DIR` set.
+- The desktop app is tray-only (no window; no Dock icon on macOS; single instance per profile, and a second launch just opens the UI). At startup it attaches to or spawns pdtd, then opens the UI. Open (also left-click on Windows) shows `http://127.0.0.1:<port>/` as an Edge/Chrome `--app` window, or in the default browser. The menu also has Restart daemon, Check for updates / Update to v0.1.N…, the version, and Quit, which stops pdtd gracefully (sessions resume on the next launch).
+- Releases: every push to main publishes GitHub release `v0.1.<run number>` of ross-game-tools/PersonalDevTeam (`*-setup.exe`, `*.app.tar.gz`), built with that version (pdtd reports it via `PDT_BUILD_VERSION`). PR builds keep the checked-in 0.1.0.
+- Update: the tray checks with `gh release view` (the repo is internal; the user's `gh auth login` grants access) at startup and on click. Update downloads the asset with `gh`, then a detached helper (PowerShell / sh, log in `<data dir>/logs/update.log`) waits for the tray to exit, stops pdtd, installs and relaunches. Only the stable profile updates; dev shows the item disabled.
 - Data lives in `<local data dir>/pdt` or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir.
 - `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>` and `localhost:<port>` (DNS-rebinding guard).
 - Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.
@@ -36,13 +39,13 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - Logs: <data dir>/logs/pdtd.<date>.log; the desktop app writes a spawned daemon's startup output to <data dir>/logs/pdtd-launch.log.
 - Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).
 - The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.
-- Stable app: scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd is a sidecar via src-tauri/tauri.bundle.conf.json), stop the stable pdtd, install and launch. -BuildOnly / --build-only only builds.
+- Stable app: scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd is a sidecar via src-tauri/tauri.bundle.conf.json), stop the stable tray app and pdtd, install and launch. -BuildOnly / --build-only only builds.
 
 ## Rules
 - TDD for core logic. Tests must pass on Windows and macOS.
 - Never run or restart the *stable* pdtd (port 7420) from a dev build — it hosts the agents building this repo. Use PDT_PROFILE=dev.
 - Never run scripts/release-stable.* without -BuildOnly/--build-only, never run the built installer, and never POST /api/shutdown on port 7420. Only the user updates the stable app.
-- Names (product, slug, daemon, ports) live only in crates/pdt-core/src/brand.rs (+ desktop/src-tauri/tauri.conf.json, desktop/src-tauri/tauri.bundle.conf.json and scripts/release-stable.*).
+- Names (product, slug, daemon, ports, release repo) live only in crates/pdt-core/src/brand.rs (+ desktop/src-tauri/tauri.conf.json, desktop/src-tauri/tauri.bundle.conf.json and scripts/release-stable.*).
 - Never edit an applied migration (sqlx checksums them); add a new one.
 - On Windows, run cargo from PowerShell, not Git Bash: Git Bash's `link` shadows MSVC `link.exe`.
 - The `codex` on PATH may be the Codex desktop app (an old version) shadowing the npm CLI; check `codex --version`.
