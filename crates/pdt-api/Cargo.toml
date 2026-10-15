@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 pdt-core.workspace = true
 pdt-git.workspace = true
+pdt-agents.workspace = true
 pdt-store.workspace = true
 axum.workspace = true
 tower-http.workspace = true

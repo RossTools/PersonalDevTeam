@@ -2549,6 +2549,7 @@ dependencies = [
  "axum",
  "http-body-util",
  "jiff",
+ "pdt-agents",
  "pdt-core",
  "pdt-git",
  "pdt-store",

@@ -1,6 +1,7 @@
 mod error;
 mod host_guard;
 mod routes;
+mod sessions;
 mod worktrees;
 
 pub use error::ApiErrorBody;

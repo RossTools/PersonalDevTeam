@@ -2,7 +2,9 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use pdt_agents::PtyError;
 use pdt_core::project::ValidationError;
+use pdt_core::session::SessionValidationError;
 use pdt_core::worktree::WorktreeValidationError;
 use pdt_git::GitError;
 use pdt_store::StoreError;
@@ -53,6 +55,26 @@ impl From<ValidationError> for ApiError {
 impl From<WorktreeValidationError> for ApiError {
     fn from(e: WorktreeValidationError) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<SessionValidationError> for ApiError {
+    fn from(e: SessionValidationError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<PtyError> for ApiError {
+    fn from(e: PtyError) -> Self {
+        match e {
+            PtyError::ProgramNotFound(_) => Self::new(StatusCode::BAD_REQUEST, "program_not_found", e.to_string()),
+            PtyError::Spawn(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, "spawn_failed", e.to_string()),
+            PtyError::NotFound(_) | PtyError::NotRunning(_) => {
+                Self::new(StatusCode::CONFLICT, "not_running", "this session is not running")
+            }
+            PtyError::AlreadyExists(_) => Self::new(StatusCode::CONFLICT, "already_running", e.to_string()),
+            PtyError::Io(_) => Self::internal(e),
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::error::ApiError;
-use crate::worktrees;
+use crate::{sessions, worktrees};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -16,11 +16,13 @@ use ts_rs::TS;
 #[derive(Clone)]
 pub struct AppState {
     pub store: Store,
+    pub ptys: pdt_agents::PtyManager,
+    pub platform: pdt_core::session::Platform,
 }
 
 impl AppState {
     pub fn new(store: Store) -> Self {
-        Self { store }
+        Self { store, ptys: pdt_agents::PtyManager::new(), platform: pdt_agents::launch::detect_platform() }
     }
 }
 
@@ -42,6 +44,11 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
+        .route("/projects/{id}/sessions", get(sessions::list))
+        .route("/sessions", axum::routing::post(sessions::create))
+        .route("/sessions/{id}", get(sessions::get_one).delete(sessions::remove))
+        .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
+        .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")
