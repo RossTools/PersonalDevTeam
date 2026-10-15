@@ -76,6 +76,57 @@ pub fn ensure_daemon(
     })
 }
 
+/// Asks the daemon on `port` to stop gracefully (POST /api/shutdown). Callers check it is ours first.
+pub fn request_shutdown(port: u16) -> Result<(), String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).map_err(|e| e.to_string())?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+    let req = format!(
+        "POST /api/shutdown HTTP/1.0
+Host: 127.0.0.1:{port}
+Content-Length: 0
+
+"
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    s.take(64 * 1024).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&buf);
+    let status = text.lines().next().unwrap_or("");
+    match status.split_whitespace().nth(1) {
+        Some(code) if code.starts_with('2') => Ok(()),
+        _ => Err(format!("its shutdown request answered {status:?}")),
+    }
+}
+
+/// Stops our daemon on `port` and waits until the port is free. A free port is already stopped; a port held by
+/// something else is an error (we never shut down a process we don't own).
+pub fn stop_daemon(
+    port: u16,
+    probe: impl Fn(u16) -> Probe,
+    shutdown: impl FnOnce(u16) -> Result<(), String>,
+    timeout: Duration,
+) -> Result<(), String> {
+    match probe(port) {
+        Probe::Free => return Ok(()),
+        Probe::Foreign(why) => {
+            return Err(format!("port {port} is held by something that is not {PRODUCT_NAME} ({why})"));
+        }
+        Probe::Ours => shutdown(port).map_err(|e| format!("could not ask {DAEMON_BIN} to stop: {e}"))?,
+    }
+    let deadline = Instant::now() + timeout;
+    loop {
+        if probe(port) == Probe::Free {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("{DAEMON_BIN} on port {port} did not stop within {timeout:?}"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Where the desktop app sends a spawned daemon's stdout/stderr (startup errors land here before pdtd's own log).
 pub fn launch_log_path(profile: Profile) -> Option<PathBuf> {
     let data_dir = match std::env::var("PDT_DATA_DIR") {
@@ -110,7 +161,7 @@ fn pdtd_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(file))
 }
 
-/// Starts pdtd detached from this window; it keeps running after the window closes.
+/// Starts pdtd detached from the desktop app; it keeps running if the app exits.
 pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
     let mut cmd = Command::new(pdtd_path());
     let log = launch_log_path(profile).and_then(|p| {
@@ -121,7 +172,7 @@ pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
         Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
         None => (Stdio::null(), Stdio::null()),
     };
-    // Pass the port explicitly so an inherited PDT_PORT can't make the window and the daemon disagree.
+    // Pass the port explicitly so an inherited PDT_PORT can't make the app and the daemon disagree.
     cmd.env("PDT_PROFILE", if profile == Profile::Dev { "dev" } else { "stable" })
         .env("PDT_PORT", profile.port().to_string())
         .stdin(Stdio::null())
@@ -259,5 +310,60 @@ mod tests {
         assert!(msg.starts_with("boom"));
         assert!(msg.contains("line 30") && msg.contains("line 11") && !msg.contains("line 10\n"));
         assert_eq!(append_tail("boom".into(), &tmp.path().join("missing.log"), 20), "boom");
+    }
+
+    #[test]
+    fn stop_daemon_shuts_down_ours_and_waits_for_the_port() {
+        let calls = Cell::new(0);
+        let probe = |_| {
+            calls.set(calls.get() + 1);
+            if calls.get() < 4 { Probe::Ours } else { Probe::Free }
+        };
+        let asked = Cell::new(false);
+        stop_daemon(
+            5,
+            probe,
+            |p| {
+                assert_eq!(p, 5);
+                asked.set(true);
+                Ok(())
+            },
+            Duration::from_secs(3),
+        )
+        .unwrap();
+        assert!(asked.get());
+    }
+
+    #[test]
+    fn stop_daemon_leaves_free_and_foreign_ports_alone() {
+        stop_daemon(5, |_| Probe::Free, |_| panic!("must not shut down"), Duration::from_millis(100)).unwrap();
+        let err = stop_daemon(5, |_| Probe::Foreign("x".into()), |_| panic!("must not shut down"), Duration::ZERO)
+            .unwrap_err();
+        assert!(err.contains("not Personal Dev Team"), "{err}");
+    }
+
+    #[test]
+    fn stop_daemon_reports_timeout_and_shutdown_errors() {
+        let err = stop_daemon(5, |_| Probe::Ours, |_| Ok(()), Duration::from_millis(300)).unwrap_err();
+        assert!(err.contains("did not stop"), "{err}");
+        let err = stop_daemon(5, |_| Probe::Ours, |_| Err("refused".into()), Duration::from_millis(300)).unwrap_err();
+        assert!(err.contains("could not ask pdtd to stop: refused"), "{err}");
+    }
+
+    #[test]
+    fn request_shutdown_posts_and_checks_status() {
+        let ok = fake_server(
+            "HTTP/1.0 202 Accepted
+
+",
+        );
+        request_shutdown(ok).unwrap();
+        let bad = fake_server(
+            "HTTP/1.0 403 Forbidden
+
+",
+        );
+        assert!(request_shutdown(bad).unwrap_err().contains("403"));
+        assert!(request_shutdown(free_port()).is_err());
     }
 }
