@@ -1,5 +1,8 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
 import type { Health } from './gen/Health';
+import type { HostChecks } from './gen/HostChecks';
+import type { HostSettingsPatch } from './gen/HostSettingsPatch';
+import type { HostSettingsView } from './gen/HostSettingsView';
 import type { Branch } from './gen/Branch';
 import type { NewProject } from './gen/NewProject';
 import type { NewRun } from './gen/NewRun';
@@ -8,10 +11,13 @@ import type { NewWorktree } from './gen/NewWorktree';
 import type { Project } from './gen/Project';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
+import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
 import type { RunConfigView } from './gen/RunConfigView';
 import type { Session } from './gen/Session';
 import type { TerminalSize } from './gen/TerminalSize';
+import type { UpdateStatus } from './gen/UpdateStatus';
+import type { WhoAmI } from './gen/WhoAmI';
 import type { Worktree } from './gen/Worktree';
 
 export class ApiError extends Error {
@@ -71,4 +77,18 @@ export const api = {
   projectSettings: (projectId: string) => request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`),
   saveProjectSettings: (projectId: string, s: ProjectSettingsInput) =>
     request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
+  hostSettings: () => request<HostSettingsView>('/api/host/settings'),
+  saveHostSettings: (p: HostSettingsPatch) =>
+    request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),
+  refreshRemote: () => request<RemoteStatus>('/api/host/remote/refresh', { method: 'POST' }),
+  whoami: () => request<WhoAmI>('/api/host/whoami'),
+  updateStatus: () => request<UpdateStatus>('/api/host/update'),
+  checkUpdate: () => request<UpdateStatus>('/api/host/update/check', { method: 'POST' }),
+  installUpdate: (force: boolean) =>
+    request<UpdateStatus>('/api/host/update/install', { method: 'POST', body: JSON.stringify({ force }) }),
+  dismissUpdateResult: () => request<void>('/api/host/update/dismiss', { method: 'POST' }),
+  saveToken: (token: string) => request<UpdateStatus>('/api/host/token', { method: 'PUT', body: JSON.stringify({ token }) }),
+  deleteToken: () => request<void>('/api/host/token', { method: 'DELETE' }),
+  hostChecks: () => request<HostChecks>('/api/host/checks'),
+  refreshChecks: () => request<HostChecks>('/api/host/checks/refresh', { method: 'POST' }),
 };

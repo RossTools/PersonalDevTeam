@@ -1,4 +1,5 @@
 mod activity;
+mod checks;
 mod error;
 mod host;
 mod host_guard;
@@ -16,6 +17,7 @@ pub mod update;
 mod worktrees;
 
 pub use activity::run_activity_ticker;
+pub use checks::{HostChecks, run_host_checks};
 pub use error::ApiErrorBody;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use remote::{RemoteStatus, apply_remote_access};

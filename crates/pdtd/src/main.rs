@@ -129,6 +129,18 @@ async fn run() -> anyhow::Result<()> {
     }
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
+    // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let c = pdt_api::run_host_checks(&st).await;
+            for (name, check) in [("claude", &c.claude), ("codex", &c.codex)] {
+                if !check.ok {
+                    tracing::warn!(tool = name, detail = %check.detail, "agent CLI is missing or not logged in for this user");
+                }
+            }
+        });
+    }
     // Hourly update checks (and the auto-when-idle install); returns at once unless pdt-host supervises this pdtd.
     tokio::spawn(pdt_api::run_update_loop(state.clone()));
     shutdown::serve(listener, app, state).await?;

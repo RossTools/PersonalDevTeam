@@ -9,11 +9,14 @@ import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { RunView } from '../runs/RunView';
 import { SessionList } from '../sessions/SessionList';
 import { SessionView } from '../sessions/SessionView';
+import { FirstRunChecklist } from '../host/FirstRunChecklist';
+import { HostSettingsPage } from '../host/HostSettingsPage';
+import { UpdateBanner } from '../host/UpdateBanner';
 import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
 import { VIEWS, type ViewId } from './views';
 
-const PHASE_NOTE: Record<Exclude<ViewId, 'sessions'>, string> = {
+const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings'>, string> = {
   inbox: 'The inbox arrives with the pipeline (Phase 5).',
   board: 'The board arrives with tickets (Phase 2).',
   personas: 'Personas arrive with the pipeline (Phase 5).',
@@ -72,6 +75,7 @@ export function AppShell() {
         <div className="flex-1 overflow-auto px-1">
           {view === 'sessions' ? (
             <>
+              <FirstRunChecklist onOpenSettings={() => setView('settings')} />
               <ProjectsList selectedId={projectId} onSelect={selectProject} />
               {project && (
                 <SessionList
@@ -85,12 +89,15 @@ export function AppShell() {
               )}
               <AddProjectForm />
             </>
+          ) : view === 'settings' ? (
+            <FirstRunChecklist />
           ) : (
             <p className="px-2 text-xs text-muted">{PHASE_NOTE[view]}</p>
           )}
         </div>
       </aside>
       <main className="flex-1 flex flex-col min-w-0 min-h-0">
+        <UpdateBanner />
         <div className="flex items-center gap-2 border-b border-border px-3 py-1 text-sm">
           <span className="flex-1 truncate text-muted">{project ? `Project ${project.name}` : 'Select a project to get started.'}</span>
           <Button variant="ghost" aria-label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
@@ -99,7 +106,9 @@ export function AppShell() {
         </div>
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {run ? (
+            {view === 'settings' ? (
+              <HostSettingsPage />
+            ) : run ? (
               <RunView key={run.id} run={run} polledAt={runs.dataUpdatedAt} onRemoved={() => setSelection(null)} />
             ) : selection?.kind === 'settings' && project ? (
               <ProjectSettingsPanel project={project} />

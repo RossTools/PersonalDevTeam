@@ -90,6 +90,8 @@ pub struct AppState {
     /// The keychain account of this instance's update token (see `secrets::update_token_account`). `new` derives it
     /// from `data_dir` alone, so it is never the stable instance's account; pdtd sets the real one.
     pub update_token_account: String,
+    /// The last host checks (tool and login checks); the first `GET /host/checks` runs them.
+    pub(crate) checks: std::sync::Arc<std::sync::Mutex<Option<crate::checks::HostChecks>>>,
 }
 
 impl AppState {
@@ -134,6 +136,7 @@ impl AppState {
                 pdt_core::BUILD_VERSION,
             )),
             update_token_account,
+            checks: Default::default(),
         }
     }
 }
@@ -216,6 +219,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/host/whoami", get(crate::identity_guard::whoami))
+        .route("/host/checks", get(crate::checks::get_checks))
+        .route("/host/checks/refresh", axum::routing::post(crate::checks::refresh_checks))
         .route("/host/remote", get(crate::remote::get_remote))
         .route("/host/remote/refresh", axum::routing::post(crate::remote::refresh))
         .route("/host/update", get(crate::update::get_status))
