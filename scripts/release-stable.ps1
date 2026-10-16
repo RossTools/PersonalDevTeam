@@ -22,8 +22,8 @@ Push-Location $root
 try {
     Invoke-Native 'pnpm install' { pnpm install --frozen-lockfile }
     Invoke-Native 'web build' { pnpm --dir web build }
-    Invoke-Native 'pdtd build' { cargo build --release -p pdtd }
-    Invoke-Native 'stage pdtd' { node scripts/stage-pdtd.mjs }
+    Invoke-Native 'pdtd and pdt-host build' { cargo build --release -p pdtd -p pdt-host }
+    Invoke-Native 'stage sidecars' { node scripts/stage-sidecars.mjs }
     $bundleConf = Join-Path $root 'desktop\src-tauri\tauri.bundle.conf.json'
     Invoke-Native 'installer build' { pnpm --dir desktop exec tauri build --config $bundleConf --bundles nsis }
 } finally { Pop-Location }
@@ -34,11 +34,34 @@ if (-not $setup) { throw 'no NSIS installer was produced' }
 Write-Host "Built $($setup.FullName)"
 if ($BuildOnly) { return }
 
+$dataDir = Join-Path $env:LOCALAPPDATA 'pdt'
+$status = $null
+try { $status = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/host/update" -TimeoutSec 5 } catch {}
+if ($status -and $status.state -ne 'disabled') {
+    # pdt-host supervises the stable pdtd: hand the installer over like a GitHub release (with health check and rollback).
+    $drop = Join-Path $dataDir 'update\downloads\local'
+    New-Item -ItemType Directory -Force $drop | Out-Null
+    Copy-Item $setup.FullName (Join-Path $drop $setup.Name) -Force
+    # A local build reports 0.1.0-local (BUILD_VERSION); pdt-host's health check expects exactly that.
+    $request = @{ version = '0.1.0-local'; tag = 'local'; asset = (Join-Path $drop $setup.Name);
+        fromVersion = $status.current; requestedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json
+    # Written whole, then renamed: pdt-host acts as soon as request.json appears.
+    $requestPath = Join-Path $dataDir 'update\request.json'
+    [IO.File]::WriteAllText("$requestPath.tmp", $request)
+    Move-Item "$requestPath.tmp" $requestPath -Force
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/api/shutdown" | Out-Null
+    Write-Host "Handed the installer to pdt-host; see $dataDir\logs\pdt-host.log and $dataDir\update\result.json."
+    return
+}
+
 $installDir = Join-Path $env:LOCALAPPDATA $product
-# The stable tray app holds no state: stop it so the installer can replace it (pdtd is stopped gracefully below).
-$tray = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" -and $_.ProcessName -ne 'pdtd' }
+# First install (no pdt-host takes updates yet). The stable tray app, and a pdt-host that cannot take the update, hold
+# no state: stop them so the installer can replace them and nothing starts pdtd again (pdtd is stopped gracefully
+# below). The installer's hook registers and starts pdt-host.
+$tray = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    ($_.Path -like "$installDir\*" -and $_.ProcessName -ne 'pdtd') -or $_.Path -like "$dataDir\host\*" }
 if ($tray) {
-    Write-Host 'Stopping the stable tray app...'
+    Write-Host 'Stopping the stable tray app and pdt-host...'
     $tray | Stop-Process -Force
     $tray | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
 }
@@ -54,12 +77,14 @@ Get-Process pdtd -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$
     Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
 
 Write-Host 'Installing...'
+# The installer's hook starts pdt-host with the installer's environment: no dev setup (e.g. PDT_PROFILE=dev) may leak in.
+Get-ChildItem env: | Where-Object { $_.Name -like 'PDT_*' } | ForEach-Object { Remove-Item "env:$($_.Name)" }
 $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw "installer failed (exit $($p.ExitCode))" }
 
-$app = Get-ChildItem $installDir -Filter '*.exe' | Where-Object { $_.BaseName -notin @('pdtd', 'uninstall') } | Select-Object -First 1
+$app = Get-ChildItem $installDir -Filter '*.exe' | Where-Object { $_.BaseName -notin @('pdtd', 'pdt-host', 'uninstall') } | Select-Object -First 1
 if (-not $app) { throw "installed, but no app exe was found in $installDir" }
-Write-Host "Installed to $installDir. Starting $($app.Name) (it starts pdtd)."
+Write-Host "Installed to $installDir; the installer started pdt-host (it starts pdtd). Starting $($app.Name)."
 # Launch with no PDT_* variables so the stable app never inherits a dev setup (e.g. PDT_PROFILE=dev).
 $psi = New-Object Diagnostics.ProcessStartInfo $app.FullName
 $psi.UseShellExecute = $false

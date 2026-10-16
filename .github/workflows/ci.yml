@@ -77,8 +77,8 @@ jobs:
           printf '{"version":"%s"}' "$version" > "$RUNNER_TEMP/release.conf.json"
           echo "Building release $version"
       - run: pnpm --dir web build
-      - run: cargo build --release -p pdtd
-      - run: node scripts/stage-pdtd.mjs
+      - run: cargo build --release -p pdtd -p pdt-host
+      - run: node scripts/stage-sidecars.mjs
       - name: Build the bundle
         shell: bash
         run: |

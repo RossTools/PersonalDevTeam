@@ -19,14 +19,32 @@ up() { curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/api/health"; }
 cd "$root"
 pnpm install --frozen-lockfile
 pnpm --dir web build
-cargo build --release -p pdtd
-node scripts/stage-pdtd.mjs
+cargo build --release -p pdtd -p pdt-host
+node scripts/stage-sidecars.mjs
 pnpm --dir desktop exec tauri build --config "$root/desktop/src-tauri/tauri.bundle.conf.json" --bundles app
 
 bundle="$root/target/release/bundle/macos/$product.app"
 [[ -d "$bundle" ]] || { echo "no app bundle was produced at $bundle" >&2; exit 1; }
 echo "Built $bundle"
 $build_only && exit 0
+
+data_dir="$HOME/Library/Application Support/pdt"
+# -f: an older pdtd without the update API answers 404, which is not a hand-over.
+status="$(curl -fs --max-time 5 "http://127.0.0.1:$port/api/host/update" || true)"
+if [[ -n "$status" && "$status" != *'"state":"disabled"'* ]]; then
+  # pdt-host supervises the stable pdtd: hand the bundle over like a GitHub release (health check, rollback).
+  drop="$data_dir/update/downloads/local"
+  mkdir -p "$drop"
+  (cd "$(dirname "$bundle")" && tar -czf "$drop/$product.app.tar.gz" "$product.app")
+  now="$(($(date +%s) * 1000))"
+  # Written whole, then renamed: pdt-host acts as soon as request.json appears.
+  printf '{"version":"0.1.0-local","tag":"local","asset":"%s","fromVersion":"local","requestedAt":%s}\n' \
+    "$drop/$product.app.tar.gz" "$now" > "$data_dir/update/request.json.tmp"
+  mv -f "$data_dir/update/request.json.tmp" "$data_dir/update/request.json"
+  curl -fsS -X POST "http://127.0.0.1:$port/api/shutdown" >/dev/null
+  echo "Handed the bundle to pdt-host; see $data_dir/logs/pdt-host.log and $data_dir/update/result.json."
+  exit 0
+fi
 
 dest="$HOME/Applications/$product.app"
 # The stable tray app (any process from the installed bundle other than pdtd) holds no state: stop it so the bundle
@@ -57,7 +75,7 @@ fi
 mkdir -p "$HOME/Applications"
 rm -rf "$dest"
 cp -R "$bundle" "$dest"
-echo "Installed to $dest. Starting it (it starts pdtd)."
+echo "Installed to $dest. Starting it (it registers and starts pdt-host, which starts pdtd)."
 # The stable app must not inherit a dev setup (PDT_PROFILE=dev etc.); open passes our env to the app.
 for v in $(compgen -e); do
   if [[ "$v" == PDT_* ]]; then unset "$v"; fi

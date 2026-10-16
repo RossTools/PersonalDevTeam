@@ -5,5 +5,6 @@ pub mod config;
 pub mod health;
 pub mod install;
 pub mod log;
+pub mod register;
 pub mod selfupdate;
 pub mod supervise;

@@ -1,3 +1,5 @@
+// Release builds have no console window: the Windows Run key starts pdt-host at login, and a console would stay open.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use anyhow::Context;
 use pdt_host::config::HostConfig;
 use pdt_host::install::{Installer, Unsupported, installer_for};
@@ -10,7 +12,10 @@ use std::time::Duration;
 const LOCK_WAIT: Duration = Duration::from_secs(10);
 
 fn usage() -> ! {
-    eprintln!("usage: {} run [--install-dir <dir>]", pdt_core::brand::HOST_BIN);
+    let bin = pdt_core::brand::HOST_BIN;
+    eprintln!("usage: {bin} run [--install-dir <dir>]");
+    eprintln!("       {bin} install [--install-dir <dir>]");
+    eprintln!("       {bin} uninstall");
     std::process::exit(2);
 }
 
@@ -54,6 +59,16 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Copies pdt-host into the data folder and registers it to start at login.
+fn install(args: &[String]) -> anyhow::Result<()> {
+    let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
+    pdt_host::register::install(&cfg).map_err(|e| {
+        // Also logged: the installer's hook runs this without a console.
+        log(&cfg, &format!("registering pdt-host failed: {e}"));
+        anyhow::Error::msg(e)
+    })
+}
+
 /// Starts the replaced pdt-host and exits. Under launchd, exiting is enough: KeepAlive starts the new copy. pdtd keeps
 /// running; the new pdt-host adopts it. Returns (and this copy keeps supervising) only when the new copy cannot start.
 fn relaunch(cfg: &HostConfig, exe: &std::path::Path, args: &[String]) {
@@ -78,6 +93,8 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("run") => run(&args[1..]),
+        Some("install") => install(&args[1..]),
+        Some("uninstall") => pdt_host::register::uninstall().map_err(anyhow::Error::msg),
         _ => usage(),
     };
     if let Err(e) = result {

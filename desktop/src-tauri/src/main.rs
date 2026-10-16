@@ -1,11 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! The desktop app: a tray icon that keeps pdtd running and opens the web UI. It has no windows of its own.
+//! The desktop app: an optional tray view of the host (remote-host spec §3.1). pdt-host keeps pdtd running; the tray
+//! starts pdt-host when nothing answers, opens the web UI, shows the version and drives pdtd's update API.
+mod api;
 mod daemon;
-mod platform;
-mod update;
 
-use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME, Profile, SLUG};
-use std::sync::Mutex;
+use pdt_core::brand::{PRODUCT_NAME, Profile};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -13,19 +12,18 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, RunEvent, Wry};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
-use update::Status;
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
-const STOP_TIMEOUT: Duration = Duration::from_secs(20);
+/// pdt-host gives a first start up to 60 s; leave a margin.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(70);
+const REFRESH_EVERY: Duration = Duration::from_secs(60);
 
 struct Tray {
     profile: Profile,
     port: u16,
-    version: String,
     restart_item: MenuItem<Wry>,
     update_item: MenuItem<Wry>,
-    status: Mutex<Status>,
-    /// Set while a startup, restart, update or quit runs, so they never overlap.
+    version_item: MenuItem<Wry>,
+    /// Set while startup or a restart runs, so they never overlap.
     busy: AtomicBool,
     /// Set once the first `ensure_daemon` succeeded. Opens requested before then are covered by the startup open.
     ready: AtomicBool,
@@ -36,18 +34,7 @@ impl Tray {
         format!("http://127.0.0.1:{}/", self.port)
     }
 
-    fn status(&self) -> Status {
-        self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    fn set_status(&self, status: Status) {
-        let (text, enabled) = update::menu_label(&status);
-        let _ = self.update_item.set_text(text);
-        let _ = self.update_item.set_enabled(enabled);
-        *self.status.lock().unwrap_or_else(|e| e.into_inner()) = status;
-    }
-
-    /// Claims the busy flag; false when another long action is running.
+    /// Claims the busy flag; false when startup or a restart is running.
     fn begin(&self) -> bool {
         self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
     }
@@ -78,7 +65,6 @@ fn main() {
     app.run(|_app, event| match event {
         // There are no windows; only Quit (an explicit exit code) ends the app.
         RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
-        // macOS activates the running app instead of starting a second one when it is launched again.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => open_ui(_app),
         _ => {}
@@ -88,33 +74,20 @@ fn main() {
 fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
     let port = profile.port();
-    let version = app.package_info().version.to_string();
-    let initial = if profile == Profile::Dev {
-        Status::Disabled("Updates apply to the stable app".into())
-    } else {
-        let exe = std::env::current_exe().unwrap_or_default();
-        let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
-        match update::install_check(platform::Os::current(), &exe, local_app_data.as_deref()) {
-            Ok(()) => Status::Checking,
-            Err(why) => Status::Disabled(why),
-        }
-    };
-    let (update_text, update_enabled) = update::menu_label(&initial);
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
+    let update_item = MenuItem::with_id(app, "update", "Checking for updates…", false, None::<&str>)?;
     let restart_item = MenuItem::with_id(app, "restart", "Restart daemon", false, None::<&str>)?;
-    let update_item = MenuItem::with_id(app, "update", update_text, update_enabled, None::<&str>)?;
-    let info = MenuItem::with_id(app, "version", format!("Version {version}"), false, None::<&str>)?;
+    let version_item = MenuItem::with_id(app, "version", "Version …", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &open,
-            &restart_item,
             &update_item,
+            &restart_item,
             &PredefinedMenuItem::separator(app)?,
-            &info,
+            &version_item,
             &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
@@ -125,7 +98,6 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         .icon(icon)
         .tooltip(format!("{PRODUCT_NAME}{suffix} — port {port}"))
         .menu(&menu)
-        // Windows: left click opens the UI, right click shows the menu. macOS: any click shows the menu.
         .show_menu_on_left_click(!cfg!(windows))
         .on_menu_event(on_menu_event)
         .on_tray_icon_event(|tray, event| {
@@ -137,14 +109,12 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
             }
         })
         .build(app)?;
-
     app.manage(Tray {
         profile,
         port,
-        version,
         restart_item,
         update_item,
-        status: Mutex::new(initial.clone()),
+        version_item,
         busy: AtomicBool::new(true),
         ready: AtomicBool::new(false),
     });
@@ -152,12 +122,17 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     let handle = app.handle().clone();
     std::thread::spawn(move || {
         let tray = handle.state::<Tray>();
-        match daemon::ensure_daemon(port, daemon::probe, || daemon::spawn_pdtd(profile), STARTUP_TIMEOUT) {
+        daemon::ensure_registered(profile);
+        match daemon::ensure_daemon(port, pdt_host::health::probe, || daemon::spawn_host(profile), STARTUP_TIMEOUT) {
             Ok(()) => {
                 let _ = tray.restart_item.set_enabled(true);
                 tray.ready.store(true, Ordering::SeqCst);
                 tray.end();
                 open_ui(&handle);
+                loop {
+                    refresh(&handle);
+                    std::thread::sleep(REFRESH_EVERY);
+                }
             }
             Err(e) => {
                 let h = handle.clone();
@@ -165,19 +140,29 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
             }
         }
     });
-    if initial == Status::Checking {
-        let handle = app.handle().clone();
-        std::thread::spawn(move || run_check(&handle));
-    }
     Ok(())
+}
+
+/// Updates the Update and Version items from pdtd.
+fn refresh(app: &AppHandle) {
+    let tray = app.state::<Tray>();
+    if let Ok((200, s)) = api::call(tray.port, "GET", "/api/host/update", None) {
+        let (text, enabled) = api::update_label(&s);
+        let _ = tray.update_item.set_text(text);
+        let _ = tray.update_item.set_enabled(enabled);
+    }
+    if let Ok((200, h)) = api::call(tray.port, "GET", "/api/health", None) {
+        let _ = tray.version_item.set_text(format!("Version {}", h["version"].as_str().unwrap_or("?")));
+    }
 }
 
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         "open" => open_ui(app),
-        "restart" => restart_daemon(app),
         "update" => update_clicked(app),
-        "quit" => quit(app),
+        "restart" => restart_daemon(app),
+        // Only the tray exits (decision 16): pdt-host keeps pdtd running.
+        "quit" => app.exit(0),
         _ => {}
     }
 }
@@ -186,13 +171,17 @@ fn error_dialog(app: &AppHandle, message: String) -> tauri_plugin_dialog::Messag
     app.dialog().message(message).kind(MessageDialogKind::Error).title(PRODUCT_NAME)
 }
 
-/// Opens the web UI in the default browser.
+fn ask(app: &AppHandle, message: &str, ok: &str) -> bool {
+    app.dialog()
+        .message(message)
+        .title(PRODUCT_NAME)
+        .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), "Cancel".into()))
+        .blocking_show()
+}
+
 fn open_ui(app: &AppHandle) {
-    let Some(tray) = app.try_state::<Tray>() else {
-        return;
-    };
+    let Some(tray) = app.try_state::<Tray>() else { return };
     if !tray.ready.load(Ordering::SeqCst) {
-        // Still starting: the UI opens once pdtd answers, which covers this request.
         return;
     }
     let url = tray.url();
@@ -201,6 +190,7 @@ fn open_ui(app: &AppHandle) {
     }
 }
 
+/// Asks pdtd to stop; pdt-host starts it again (the tray starts pdt-host if none is running). Waits until it answers.
 fn restart_daemon(app: &AppHandle) {
     let tray = app.state::<Tray>();
     if !tray.begin() {
@@ -210,12 +200,13 @@ fn restart_daemon(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let tray = app.state::<Tray>();
-        let (port, profile) = (tray.port, tray.profile);
-        let exited = || daemon::daemon_exited(profile);
-        let result = daemon::stop_daemon(port, daemon::probe, daemon::request_shutdown, exited, STOP_TIMEOUT)
-            .and_then(|()| daemon::ensure_daemon(port, daemon::probe, || daemon::spawn_pdtd(profile), STARTUP_TIMEOUT));
+        let profile = tray.profile;
+        let result = pdt_host::health::request_shutdown(tray.port).and_then(|()| {
+            std::thread::sleep(Duration::from_secs(2));
+            daemon::ensure_daemon(tray.port, pdt_host::health::probe, || daemon::spawn_host(profile), STARTUP_TIMEOUT)
+        });
         if let Err(e) = result {
-            error_dialog(&app, format!("Could not restart {DAEMON_BIN}: {}", daemon::with_log_tail(e, profile)))
+            error_dialog(&app, format!("The daemon did not come back: {}", daemon::with_log_tail(e, profile)))
                 .show(|_| {});
         }
         let _ = tray.restart_item.set_enabled(true);
@@ -223,106 +214,46 @@ fn restart_daemon(app: &AppHandle) {
     });
 }
 
-/// Stops pdtd (sessions resume on the next launch) and exits.
-fn quit(app: &AppHandle) {
-    let tray = app.state::<Tray>();
-    if !tray.begin() {
-        // A startup, restart or update is running; quitting under it could orphan or kill a half-started daemon.
-        return;
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let tray = app.state::<Tray>();
-        let profile = tray.profile;
-        let exited = || daemon::daemon_exited(profile);
-        match daemon::stop_daemon(tray.port, daemon::probe, daemon::request_shutdown, exited, STOP_TIMEOUT) {
-            Ok(()) => app.exit(0),
-            Err(e) => {
-                let quit_anyway = error_dialog(&app, format!("Could not stop {DAEMON_BIN}: {e}\n\nQuit anyway?"))
-                    .buttons(MessageDialogButtons::OkCancelCustom("Quit".into(), "Cancel".into()))
-                    .blocking_show();
-                if quit_anyway {
-                    app.exit(0);
-                } else {
-                    tray.end();
-                }
-            }
-        }
-    });
-}
-
-/// Runs a check and updates the menu label. Returns the new status.
-fn run_check(app: &AppHandle) -> Status {
-    let tray = app.state::<Tray>();
-    tray.set_status(Status::Checking);
-    let status = update::check(&tray.version);
-    tray.set_status(status.clone());
-    status
-}
-
+/// Update: install the available release (asking first, and again if the host is busy), or check for one.
 fn update_clicked(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let tray = app.state::<Tray>();
-        let status = match tray.status() {
-            Status::Disabled(_) | Status::Checking => return,
-            Status::Available(r) => Status::Available(r),
-            Status::UpToDate | Status::Failed(_) => run_check(&app),
-        };
-        match status {
-            Status::Available(release) => confirm_and_update(&app, release),
-            Status::UpToDate => {
-                app.dialog()
-                    .message(format!("{PRODUCT_NAME} v{} is the latest version.", tray.version))
-                    .title(PRODUCT_NAME)
-                    .blocking_show();
-            }
-            Status::Failed(f) => {
-                app.dialog()
-                    .message(format!("The update check failed.\n\n{}", f.detail))
-                    .kind(MessageDialogKind::Warning)
-                    .title(PRODUCT_NAME)
-                    .blocking_show();
-            }
-            Status::Disabled(_) | Status::Checking => {}
+        let port = app.state::<Tray>().port;
+        let status = api::call(port, "GET", "/api/host/update", None).map(|(_, v)| v).unwrap_or_default();
+        if status["state"] != "available" {
+            let _ = api::call(port, "POST", "/api/host/update/check", None);
+            refresh(&app);
+            return;
         }
+        let version = status["latest"]["version"].as_str().unwrap_or("?").to_string();
+        if !ask(&app, &format!("Update to v{version}? Sessions resume afterwards."), "Update") {
+            return;
+        }
+        let mut force = false;
+        loop {
+            let body = serde_json::json!({ "force": force }).to_string();
+            match api::call(port, "POST", "/api/host/update/install", Some(&body)) {
+                Ok((200, _)) => break,
+                Ok((409, v)) if v["code"] == "host_busy" && !force => {
+                    if !ask(&app, v["message"].as_str().unwrap_or("The host is busy. Update anyway?"), "Update") {
+                        return;
+                    }
+                    force = true;
+                }
+                Ok((_, v)) => {
+                    error_dialog(
+                        &app,
+                        format!("The update failed: {}", v["message"].as_str().unwrap_or("unknown error")),
+                    )
+                    .show(|_| {});
+                    break;
+                }
+                Err(e) => {
+                    error_dialog(&app, format!("The update failed: {e}")).show(|_| {});
+                    break;
+                }
+            }
+        }
+        refresh(&app);
     });
-}
-
-fn confirm_and_update(app: &AppHandle, release: update::Release) {
-    let tray = app.state::<Tray>();
-    let go = app
-        .dialog()
-        .message(format!("Update to v{}? Running sessions will restart.", release.version))
-        .title(PRODUCT_NAME)
-        .buttons(MessageDialogButtons::OkCancelCustom("Update".into(), "Cancel".into()))
-        .blocking_show();
-    if !go {
-        return;
-    }
-    if !tray.begin() {
-        app.dialog()
-            .message("Another action is in progress; try again in a moment.")
-            .title(PRODUCT_NAME)
-            .blocking_show();
-        return;
-    }
-    let _ = tray.update_item.set_text(format!("Downloading v{}…", release.version));
-    let _ = tray.update_item.set_enabled(false);
-    let dir = std::env::temp_dir().join(format!("{SLUG}-update")).join(&release.tag);
-    let log = daemon::launch_log_path(tray.profile)
-        .and_then(|p| p.parent().map(|d| d.join("update.log")))
-        .filter(|p| p.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok()))
-        .unwrap_or_else(|| std::env::temp_dir().join(format!("{SLUG}-update.log")));
-    let result =
-        update::download(&release, &dir).and_then(|asset| update::launch_helper(&asset, &dir, tray.port, &log));
-    match result {
-        // The helper waits for this process to exit, then stops pdtd, installs and starts the new app.
-        Ok(()) => app.exit(0),
-        Err(e) => {
-            tray.set_status(Status::Available(release));
-            tray.end();
-            error_dialog(app, format!("The update failed: {e}")).show(|_| {});
-        }
-    }
 }
