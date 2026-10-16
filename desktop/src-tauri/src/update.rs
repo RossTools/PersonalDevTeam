@@ -2,7 +2,7 @@
 //! is what grants access). Checking and asset selection are pure; installing hands off to a detached helper script
 //! that runs after this app exits.
 
-use crate::browser::Os;
+use crate::platform::Os;
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME, RELEASE_REPO};
 use std::fmt;
 use std::path::{Path, PathBuf};

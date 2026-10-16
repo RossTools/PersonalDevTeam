@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! The desktop app: a tray icon that keeps pdtd running and opens the web UI. It has no windows of its own.
-mod browser;
 mod daemon;
+mod platform;
 mod update;
 
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME, Profile, SLUG};
@@ -96,7 +96,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     } else {
         let exe = std::env::current_exe().unwrap_or_default();
         let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
-        match update::install_check(browser::Os::current(), &exe, local_app_data.as_deref()) {
+        match update::install_check(platform::Os::current(), &exe, local_app_data.as_deref()) {
             Ok(()) => Status::Checking,
             Err(why) => Status::Disabled(why),
         }
@@ -186,7 +186,7 @@ fn error_dialog(app: &AppHandle, message: String) -> tauri_plugin_dialog::Messag
     app.dialog().message(message).kind(MessageDialogKind::Error).title(PRODUCT_NAME)
 }
 
-/// Opens the web UI as an Edge/Chrome app window, or in the default browser.
+/// Opens the web UI in the default browser.
 fn open_ui(app: &AppHandle) {
     let Some(tray) = app.try_state::<Tray>() else {
         return;
@@ -196,9 +196,6 @@ fn open_ui(app: &AppHandle) {
         return;
     }
     let url = tray.url();
-    if browser::open_app_window(&url) {
-        return;
-    }
     if let Err(e) = app.opener().open_url(url.clone(), None::<&str>) {
         error_dialog(app, format!("Could not open {url}: {e}")).show(|_| {});
     }
