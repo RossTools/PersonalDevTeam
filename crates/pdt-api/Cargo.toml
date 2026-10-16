@@ -23,9 +23,12 @@ futures-util = "0.3.34"
 keyring = "4.2.0"
 thiserror.workspace = true
 pdt-tailscale.workspace = true
+pdt-update.workspace = true
 
 [dev-dependencies]
 tower.workspace = true
 tempfile = "3.27.0"
 http-body-util = "0.1.5"
 tokio-tungstenite = "0.30.0"
+sha2 = "0.11.1"
+hex = "0.4.3"

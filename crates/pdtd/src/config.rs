@@ -28,6 +28,8 @@ pub struct Config {
     /// unusual installs).
     pub claude_program: Option<String>,
     pub codex_program: Option<String>,
+    /// `PDT_SUPERVISED=1`: pdt-host started this pdtd, so it may offer and hand off updates. Dev instances never do.
+    pub supervised: bool,
 }
 
 impl Config {
@@ -68,6 +70,7 @@ impl Config {
         let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
+        let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
         Ok(Config {
             profile,
             port,
@@ -80,6 +83,7 @@ impl Config {
             remote_https_port,
             claude_program,
             codex_program,
+            supervised,
         })
     }
 
@@ -186,6 +190,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!((c.owner_login.as_deref(), c.memory_secrets), (Some("me@example.com"), true));
+    }
+
+    #[test]
+    fn supervised_only_when_pdt_host_says_so() {
+        let sup = |v: &[(&str, &str)]| Config::from_lookup(lookup(v), Some("/d".into()), None).unwrap().supervised;
+        assert!(!sup(&[]));
+        assert!(!sup(&[("PDT_SUPERVISED", "0")]));
+        assert!(!sup(&[("PDT_SUPERVISED", "yes")]));
+        assert!(sup(&[("PDT_SUPERVISED", "1")]));
     }
 
     #[test]

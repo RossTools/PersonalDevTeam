@@ -121,6 +121,13 @@ jobs:
           pattern: release-*
           path: assets
           merge-multiple: true
+      # GitHub renames uploaded assets with spaces; rename first so SHA256SUMS lists the names hosts will see.
+      - name: Checksums
+        run: |
+          cd assets
+          for f in *; do n="${f// /.}"; if [ "$f" != "$n" ]; then mv "$f" "$n"; fi; done
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

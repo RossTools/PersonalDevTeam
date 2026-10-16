@@ -73,6 +73,18 @@ async fn run() -> anyhow::Result<()> {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
         None => std::sync::Arc::new(pdt_tailscale::TailscaleCli::detect(state.platform.login_path.as_deref())),
     };
+    state.update = std::sync::Arc::new(pdt_api::UpdateService::new(
+        pdt_update::GITHUB_API,
+        pdt_core::brand::RELEASE_REPO,
+        cfg.supervised,
+        pdt_core::BUILD_VERSION,
+    ));
+    if let Ok(bytes) = std::fs::read(pdt_core::handoff::result_path(&cfg.data_dir))
+        && let Ok(r) = serde_json::from_slice::<pdt_core::handoff::UpdateResult>(&bytes)
+    {
+        tracing::info!(outcome = ?r.outcome, to = %r.to_version, "last update result");
+        state.update.set_last_result(Some(r));
+    }
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;
@@ -111,6 +123,8 @@ async fn run() -> anyhow::Result<()> {
     }
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
+    // Hourly update checks (and the auto-when-idle install); returns at once unless pdt-host supervises this pdtd.
+    tokio::spawn(pdt_api::run_update_loop(state.clone()));
     shutdown::serve(listener, app, state).await?;
     store.close().await;
     tracing::info!("stopped");

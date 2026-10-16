@@ -85,6 +85,8 @@ pub struct AppState {
     pub activity_timing: pdt_core::activity::Timing,
     /// How often `run_activity_ticker` checks them.
     pub activity_tick: std::time::Duration,
+    /// Update checks and installs. `new` installs a disabled (unsupervised) service; pdtd replaces it.
+    pub update: std::sync::Arc<crate::update::UpdateService>,
 }
 
 impl AppState {
@@ -121,6 +123,12 @@ impl AppState {
             activity_order: Default::default(),
             activity_timing: Default::default(),
             activity_tick: std::time::Duration::from_secs(5),
+            update: std::sync::Arc::new(crate::update::UpdateService::new(
+                pdt_update::GITHUB_API,
+                pdt_core::brand::RELEASE_REPO,
+                false,
+                pdt_core::BUILD_VERSION,
+            )),
         }
     }
 }
@@ -205,6 +213,11 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/whoami", get(crate::identity_guard::whoami))
         .route("/host/remote", get(crate::remote::get_remote))
         .route("/host/remote/refresh", axum::routing::post(crate::remote::refresh))
+        .route("/host/update", get(crate::update::get_status))
+        .route("/host/update/check", axum::routing::post(crate::update::post_check))
+        .route("/host/update/install", axum::routing::post(crate::update::post_install))
+        .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
+        .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
         .route(

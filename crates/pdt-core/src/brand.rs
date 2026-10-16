@@ -7,7 +7,7 @@ pub const SLUG: &str = "pdt";
 pub const DAEMON_BIN: &str = "pdtd";
 pub const STABLE_PORT: u16 = 7420;
 pub const DEV_PORT: u16 = 7421;
-/// GitHub repository (owner/name) whose releases the desktop app updates from, through the `gh` CLI.
+/// GitHub repository (owner/name) whose releases hosts update from, through the GitHub REST API and a token.
 pub const RELEASE_REPO: &str = "ross-game-tools/PersonalDevTeam";
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
 pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
