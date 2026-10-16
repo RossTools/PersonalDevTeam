@@ -73,8 +73,6 @@ fn effective(file: Option<&str>, overrides: Option<&str>) -> Result<RunConfig, R
 }
 
 /// The effective configuration for a run in `checkout`.
-// Consumed by run starts (a later task); until then only tests exercise it.
-#[allow(dead_code)]
 pub(crate) async fn load_effective(st: &AppState, project_id: &str, checkout: &FsPath) -> Result<RunConfig, ApiError> {
     let overrides = st.store.get_project_settings(project_id).await?.run_overrides;
     Ok(effective(read_file(checkout)?.as_deref(), overrides.as_deref())?)

@@ -104,7 +104,6 @@ struct Handle {
     input: std_mpsc::Sender<Vec<u8>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    #[cfg_attr(not(unix), allow(dead_code))]
     pid: Option<u32>,
 }
 
@@ -117,20 +116,32 @@ impl Handle {
         self.state.lock().unwrap().exited.is_some()
     }
 
-    /// Asks the OS to end the process; the waiter thread reports the exit. On unix the request is SIGHUP, which a
-    /// shell can sit on (macOS's /bin/sh handles it only once its read returns), so a process still alive after
-    /// `HANGUP_GRACE` is killed with SIGKILL, together with its process group.
+    /// Asks the OS to end the process and everything it started; the waiter thread reports the exit.
+    ///
+    /// - Windows: `taskkill /T /F` ends the whole tree first, while the root is still alive (taskkill finds the tree
+    ///   through it), then portable-pty's killer ends the root if it is somehow still there. A run's
+    ///   `cmd.exe /c script.cmd` (or an npm shim) otherwise leaves its server running, holding ports and files.
+    /// - unix: SIGHUP to the child's process group, which a shell can sit on (macOS's /bin/sh handles it only once
+    ///   its read returns), so after `HANGUP_GRACE` the group (and the child) get SIGKILL. The group is killed even
+    ///   when the shell has already exited, since its children may still be in it.
     fn kill(self: &Arc<Self>) -> std::io::Result<()> {
+        #[cfg(windows)]
+        if let Some(pid) = self.pid {
+            kill_tree(pid);
+        }
         let result = self.killer.lock().unwrap().kill();
         #[cfg(unix)]
         if let Some(pid) = self.pid.and_then(|p| i32::try_from(p).ok()) {
+            // The child is a session leader, so its pid is also its process group id.
+            unsafe {
+                libc::kill(-pid, libc::SIGHUP);
+            }
             let h = self.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(HANGUP_GRACE);
-                if !h.exited() {
-                    // The child is a session leader, so its pid is also its process group id.
-                    unsafe {
-                        libc::kill(-pid, libc::SIGKILL);
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                    if !h.exited() {
                         libc::kill(pid, libc::SIGKILL);
                     }
                 }
@@ -138,10 +149,32 @@ impl Handle {
         }
         if cfg!(windows) {
             // portable-pty 0.9.0's Windows killer inverts TerminateProcess's result (Err on success, Ok on
-            // failure), so the result says nothing. Killing our own child only fails if it already exited.
+            // failure), so the result says nothing (and after the tree kill the root is usually gone already).
             return Ok(());
         }
         result
+    }
+}
+
+/// Ends `pid` and every process it started (`taskkill /T /F`), waiting for taskkill to finish.
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // The system copy, not whatever `taskkill` the PATH would find first.
+    let program = std::env::var_os("SystemRoot")
+        .map(|root| PathBuf::from(root).join("System32").join("taskkill.exe"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+    let status = std::process::Command::new(program)
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    if let Err(e) = status {
+        tracing::warn!(pid, error = %e, "could not run taskkill");
     }
 }
 

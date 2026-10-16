@@ -21,10 +21,20 @@ pub(crate) async fn connect(
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    upgrade(st, id, ws)
+}
+
+/// Upgrades to the PTY protocol for terminal `pty_id` (a session id, or a run step's id).
+pub(crate) fn upgrade(
+    st: AppState,
+    pty_id: String,
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Result<Response, ApiError> {
     let ws = ws.map_err(|_| {
         ApiError::new(StatusCode::BAD_REQUEST, "websocket_required", "this endpoint needs a WebSocket upgrade")
     })?;
     let ptys = st.ptys.clone();
+    let id = pty_id;
     // A session with no terminal (stopped, or interrupted by a daemon restart) still gets the upgrade, so the
     // browser can tell "not running" from "daemon unreachable" and stop retrying.
     Ok(match classify(&st, &id) {

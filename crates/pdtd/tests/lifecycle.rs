@@ -128,3 +128,84 @@ fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
     let (_, s) = http(port, "GET", &format!("/api/sessions/{stopped_id}"), None);
     assert_eq!(s["status"], "finished", "a stopped session is not resumed");
 }
+
+const RUN_CONFIG: &str = r#"
+[[run]]
+name = "web"
+command = "node -e \"require('http').createServer((q, s) => s.end('ok')).listen(Number(process.env.PORT), '127.0.0.1')\""
+web = true
+"#;
+
+fn wait_run(port: u16, id: &str, want: &str) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (_, r) = http(port, "GET", &format!("/api/runs/{id}"), None);
+        if r["state"] == want {
+            return r;
+        }
+        assert!(Instant::now() < deadline, "run never became {want}: {r}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// A project whose repo has RUN_CONFIG, a run port range starting at a free port, and a started web run.
+fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
+    let repo = tmp.join("repo");
+    std::fs::create_dir_all(repo.join(".pdt")).unwrap();
+    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    std::fs::write(repo.join(".pdt").join("project.toml"), RUN_CONFIG).unwrap();
+    let base = free_port().min(65000);
+    let body = serde_json::json!({"runPorts": {"start": base, "end": base + 39}}).to_string();
+    assert_eq!(http(port, "PUT", "/api/host/settings", Some(&body)).0, 200);
+    let body = serde_json::json!({"name": "P", "repoPath": repo.to_string_lossy()}).to_string();
+    let (_, p) = http(port, "POST", "/api/projects", Some(&body));
+    let body = serde_json::json!({"name": "web", "kind": "run"}).to_string();
+    let (s, r) = http(port, "POST", &format!("/api/projects/{}/runs", p["id"].as_str().unwrap()), Some(&body));
+    assert_eq!(s, 201, "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    let r = wait_run(port, &id, "ready");
+    (id, r["port"].as_u64().unwrap() as u16)
+}
+
+/// Shuts the daemon down gracefully, which also ends the runs' servers.
+fn shut_down(port: u16, d: &mut Daemon) {
+    assert_eq!(http(port, "POST", "/api/shutdown", None).0, 202);
+    wait_exit(d, Duration::from_secs(20));
+}
+
+#[test]
+fn active_runs_resume_on_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let mut d = start(port, &data);
+    let (id, run_port) = project_with_web_run(port, tmp.path());
+    shut_down(port, &mut d);
+    let mut d = start(port, &data);
+    let r = wait_run(port, &id, "ready");
+    assert_eq!(r["port"].as_u64(), Some(run_port as u64), "same port when it is still free");
+    shut_down(port, &mut d);
+}
+
+#[test]
+fn resume_moves_to_a_free_port_when_the_old_one_is_taken() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let mut d = start(port, &data);
+    let (id, run_port) = project_with_web_run(port, tmp.path());
+    shut_down(port, &mut d);
+    let mut squatter = None;
+    for _ in 0..100 {
+        if let Ok(l) = std::net::TcpListener::bind(("127.0.0.1", run_port)) {
+            squatter = Some(l);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _squatter = squatter.expect("the old run's port was freed by the shutdown");
+    let mut d = start(port, &data);
+    let r = wait_run(port, &id, "ready");
+    assert_ne!(r["port"].as_u64(), Some(run_port as u64));
+    shut_down(port, &mut d);
+}

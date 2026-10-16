@@ -55,9 +55,36 @@ async fn blocking<T: Send + 'static>(
     }
 }
 
-/// Ports of other things to map alongside pdtd (web runs, Task 7).
-pub(crate) async fn extra_ports(_st: &AppState) -> Vec<u16> {
-    Vec::new()
+/// Web runs' ports, mapped alongside pdtd while remote access is active.
+pub(crate) async fn extra_ports(st: &AppState) -> Vec<u16> {
+    st.store.list_active_runs().await.map(|v| v.into_iter().filter_map(|r| r.port).collect()).unwrap_or_default()
+}
+
+/// Maps a web run's port to itself while remote access is active, recording it as this process's mapping (so
+/// turning remote access off removes it). With remote access inactive it runs no tailscale command.
+pub(crate) async fn map_run_port(st: &AppState, port: u16) {
+    let _guard = st.settings_lock.lock().await;
+    if !st.remote.lock().unwrap_or_else(|e| e.into_inner()).active {
+        return;
+    }
+    if let Err(e) = serve(st, port, port).await {
+        tracing::warn!(port, error = %e, "could not map a run port");
+    }
+}
+
+/// Removes a run port's mapping, but only one this process made (ruling F1); pdtd's own HTTPS port is never touched.
+pub(crate) async fn unmap_run_port(st: &AppState, port: u16) {
+    let _guard = st.settings_lock.lock().await;
+    if port == st.remote_https_port || !applied(st).served.contains(&port) {
+        return;
+    }
+    match blocking(st, move |t| t.unserve(port)).await {
+        Ok(()) => {
+            applied(st).served.remove(&port);
+        }
+        // Still recorded, so turning remote access off retries it.
+        Err(e) => tracing::warn!(port, error = %e, "could not remove a run port's mapping"),
+    }
 }
 
 fn applied(st: &AppState) -> std::sync::MutexGuard<'_, Applied> {

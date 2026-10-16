@@ -4,7 +4,9 @@ mod logging;
 mod shutdown;
 
 use anyhow::Context;
-use pdt_api::{AppState, apply_remote_access, plan_resume_interrupted, router, with_host_guard};
+use pdt_api::{
+    AppState, apply_remote_access, plan_resume_interrupted, resume_runs, router, sweep_gone_runs, with_host_guard,
+};
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
 
@@ -62,17 +64,31 @@ async fn run() -> anyhow::Result<()> {
         profile = ?cfg.profile, port = cfg.port, data_dir = %cfg.data_dir.display(),
         web_dir = ?cfg.web_dir, "{PRODUCT_NAME} daemon listening on http://127.0.0.1:{}", cfg.port
     );
-    // One background task, in order: remote access first (so later steps see its outcome), then the session
-    // resume. With remote access off this runs no tailscale command; `serve --bg` mappings persist across restarts,
-    // so with it on this re-adds the allowlist entry and reports the state.
+    // One background task, in order (ruling F4): remote access first, so resumed runs get tailnet links and their
+    // ports' mappings are this process's (an old port can then be unmapped when a run moves); then the runs and
+    // sessions the previous pdtd left; then the sweep for runs whose branch or worktree is gone, every 60 s.
+    // With remote access off this runs no tailscale command; `serve --bg` mappings persist across restarts, so with
+    // it on this re-adds the allowlist entry and reports the state.
     {
         let st = state.clone();
         tokio::spawn(async move {
             let r = apply_remote_access(&st).await;
             tracing::info!(enabled = r.enabled, active = r.active, error = ?r.error, "remote access applied");
+            let runs = resume_runs(&st).await;
+            if runs > 0 {
+                tracing::info!(runs, "resumed runs from the previous daemon");
+            }
             if !plan.is_empty() {
                 let resumed = plan.start(&st).await;
                 tracing::info!(sessions = resumed, "resumed sessions from the previous run");
+            }
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                sweep_gone_runs(&st).await;
             }
         });
     }

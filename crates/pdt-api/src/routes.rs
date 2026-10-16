@@ -65,6 +65,10 @@ pub struct AppState {
     /// What remote access changed in this process (mapped ports, the allowlist entry). Turning it off undoes only
     /// these, never mappings another instance (e.g. the stable one) made.
     pub(crate) remote_applied: std::sync::Arc<std::sync::Mutex<crate::remote::Applied>>,
+    /// The driver of each active run in this daemon run (stop requests, completion).
+    pub(crate) run_controls: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::run_manager::RunControl>>>,
+    >,
 }
 
 impl AppState {
@@ -93,6 +97,7 @@ impl AppState {
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
             remote_applied: Default::default(),
+            run_controls: Default::default(),
         }
     }
 }
@@ -172,6 +177,14 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/projects/{id}/run-config", get(crate::runconfig::get_config))
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
         .route("/projects/{id}/sessions", get(sessions::list))
+        .route("/projects/{id}/runs", get(crate::runs::list).post(crate::runs::create))
+        .route("/projects/{id}/branches", get(crate::runs::branches))
+        .route("/runs", get(crate::runs::list_active))
+        .route("/runs/{id}", get(crate::runs::get_one).delete(crate::runs::remove))
+        .route("/runs/{id}/stop", axum::routing::post(crate::runs::stop))
+        .route("/runs/{id}/restart", axum::routing::post(crate::runs::restart))
+        .route("/runs/{id}/reset-data", axum::routing::post(crate::runs::reset_data))
+        .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
         .route("/sessions", axum::routing::post(sessions::create))
         .route("/sessions/{id}", get(sessions::get_one).patch(sessions::rename).delete(sessions::remove))
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))

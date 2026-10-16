@@ -138,6 +138,73 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Resul
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchInfo {
+    pub name: String,
+    /// False when the branch exists only as `origin/<name>`.
+    pub local: bool,
+}
+
+/// Local branches, then `origin` branches that have no local branch of the same name.
+pub fn list_branches(repo: &Path) -> Result<Vec<BranchInfo>, GitError> {
+    let out =
+        match git_with_env(repo, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"], &[])? {
+            Ok(s) => s,
+            Err(f) => return Err(classify_failure(repo, f)),
+        };
+    let mut local = Vec::new();
+    let mut remote = Vec::new();
+    for line in out.lines() {
+        if let Some(n) = line.strip_prefix("refs/heads/") {
+            local.push(n.to_string());
+        } else if let Some(n) = line.strip_prefix("refs/remotes/origin/")
+            && n != "HEAD"
+        {
+            remote.push(n.to_string());
+        }
+    }
+    let mut v: Vec<BranchInfo> = local.iter().map(|n| BranchInfo { name: n.clone(), local: true }).collect();
+    v.extend(remote.into_iter().filter(|n| !local.contains(n)).map(|name| BranchInfo { name, local: false }));
+    Ok(v)
+}
+
+/// Whether `refs/heads/<branch>` exists.
+pub fn branch_exists(repo: &Path, branch: &str) -> bool {
+    let r = format!("refs/heads/{branch}");
+    matches!(git_with_env(repo, &["rev-parse", "--verify", "--quiet", &r], &[]), Ok(Ok(s)) if !s.is_empty())
+}
+
+/// Checks out an existing branch in a new worktree at `path`. A branch that exists only on `origin` becomes a local
+/// branch tracking it. Returns the branch's head commit.
+pub fn add_worktree_for_branch(repo: &Path, path: &Path, branch: &str) -> Result<String, GitError> {
+    check_branch_name(repo, branch)?;
+    if path.exists() {
+        return Err(GitError::Command(format!("worktree path already exists: {}", path.display())));
+    }
+    let path_str = path.to_string_lossy();
+    let remote = format!("origin/{branch}");
+    let args: Vec<&str> = if branch_exists(repo, branch) {
+        vec!["worktree", "add", &path_str, branch]
+    } else {
+        let r = format!("refs/remotes/{remote}");
+        if !matches!(git_with_env(repo, &["rev-parse", "--verify", "--quiet", &r], &[])?, Ok(s) if !s.is_empty()) {
+            return Err(GitError::UnknownRef(branch.to_string()));
+        }
+        vec!["worktree", "add", "--track", "-b", branch, &path_str, &remote]
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
+    }
+    if let Err(f) = git_with_env(repo, &args, &[])? {
+        return Err(GitError::Command(f.stderr));
+    }
+    match git_with_env(path, &["rev-parse", "HEAD"], &[])? {
+        Ok(sha) => Ok(sha),
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
 /// Adds `pattern` as a line to the repository's `info/exclude` (shared by all its worktrees) unless it is
 /// already there. This is a local ignore file that is never committed.
 pub fn ensure_excluded(repo: &Path, pattern: &str) -> Result<(), GitError> {
@@ -338,5 +405,46 @@ mod tests {
         std::fs::write(&file, "*.log").unwrap(); // no trailing newline
         ensure_excluded(&repo, "/.worktrees/").unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "*.log\n/.worktrees/\n");
+    }
+
+    #[test]
+    fn branches_local_and_remote_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        repo_with_commit(&origin);
+        git_ok(&origin, &["branch", "feature/remote"]);
+        let clone = tmp.path().join("clone");
+        let ok = Command::new("git").args(["clone", "-q"]).arg(&origin).arg(&clone).status().unwrap().success();
+        assert!(ok);
+        git_ok(&clone, &["branch", "local-only"]);
+        let b = list_branches(&clone).unwrap();
+        let find = |n: &str| b.iter().find(|x| x.name == n).cloned();
+        assert_eq!(find("main").map(|x| x.local), Some(true));
+        assert_eq!(find("local-only").map(|x| x.local), Some(true));
+        assert_eq!(find("feature/remote").map(|x| x.local), Some(false));
+        assert!(find("HEAD").is_none(), "origin/HEAD is not a branch");
+        assert!(branch_exists(&clone, "local-only"));
+        assert!(!branch_exists(&clone, "feature/remote"), "remote-only is not local");
+    }
+
+    #[test]
+    fn worktree_for_an_existing_or_remote_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        repo_with_commit(&origin);
+        git_ok(&origin, &["branch", "feature/remote"]);
+        let clone = tmp.path().join("clone");
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&origin).arg(&clone).status().unwrap().success());
+        git_ok(&clone, &["branch", "existing"]);
+        let a = clone.join(".worktrees").join("existing");
+        let sha = add_worktree_for_branch(&clone, &a, "existing").unwrap();
+        assert_eq!(sha, git_ok(&clone, &["rev-parse", "existing"]));
+        assert_eq!(resolve_repo(&a).unwrap().current_branch.as_deref(), Some("existing"));
+        let b = clone.join(".worktrees").join("feature-remote");
+        add_worktree_for_branch(&clone, &b, "feature/remote").unwrap();
+        assert_eq!(resolve_repo(&b).unwrap().current_branch.as_deref(), Some("feature/remote"));
+        assert!(branch_exists(&clone, "feature/remote"), "now a local tracking branch");
+        let c = clone.join(".worktrees").join("nope");
+        assert!(matches!(add_worktree_for_branch(&clone, &c, "nope"), Err(GitError::UnknownRef(_))));
     }
 }
