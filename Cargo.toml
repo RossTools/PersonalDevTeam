@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "desktop/src-tauri"]
-default-members = ["crates/pdt-core", "crates/pdt-git", "crates/pdt-store", "crates/pdt-api", "crates/pdt-agents", "crates/pdtd"]
+default-members = ["crates/pdt-core", "crates/pdt-git", "crates/pdt-store", "crates/pdt-api", "crates/pdt-agents", "crates/pdtd", "crates/pdt-tailscale"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,7 @@ pdt-git = { path = "crates/pdt-git" }
 pdt-store = { path = "crates/pdt-store" }
 pdt-api = { path = "crates/pdt-api" }
 pdt-agents = { path = "crates/pdt-agents" }
+pdt-tailscale = { path = "crates/pdt-tailscale" }
 
 tokio = { version = "1.53.3", features = ["full"] }
 axum = { version = "0.8.9", features = ["ws"] }

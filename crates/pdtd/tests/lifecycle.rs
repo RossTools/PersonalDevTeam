@@ -31,6 +31,8 @@ fn start(port: u16, data: &Path) -> Daemon {
         .env("PDT_PORT", port.to_string())
         .env("PDT_DATA_DIR", data)
         .env("PDT_SECRET_STORE", "memory")
+        // Never the machine's Tailscale (it serves the stable instance): any call would find no CLI.
+        .env("PDT_TAILSCALE_BIN", data.join("no-such-tailscale"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

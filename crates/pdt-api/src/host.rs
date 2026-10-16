@@ -17,6 +17,8 @@ pub struct HostSettingsView {
     /// `PDT_OWNER_LOGIN`, which overrides `settings.ownerLogin` when set.
     pub owner_from_env: Option<String>,
     pub token_present: bool,
+    /// The last result of applying the remote-access setting.
+    pub remote: crate::remote::RemoteStatus,
 }
 
 impl From<HostSettingsError> for ApiError {
@@ -39,6 +41,7 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
         settings: st.store.get_host_settings().await?,
         owner_from_env: st.owner_from_env.clone(),
         token_present: token_present(st).await?,
+        remote: st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     })
 }
 
@@ -53,7 +56,18 @@ pub(crate) async fn put_settings(
     let Json(patch) = payload?;
     let guard = st.settings_lock.lock().await;
     let next = st.store.get_host_settings().await?.apply(&patch)?;
+    let effective_owner = st.owner_from_env.clone().or(next.owner_login.clone());
+    if next.remote_access && effective_owner.is_none() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "owner_required",
+            "set the owner (a Tailscale login) before turning on remote access",
+        ));
+    }
     st.store.put_host_settings(&next).await?;
+    if patch.remote_access.is_some() {
+        crate::remote::apply_remote_access(&st).await;
+    }
     drop(guard);
     Ok(Json(view(&st).await?))
 }

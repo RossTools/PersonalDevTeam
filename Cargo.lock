@@ -2975,6 +2975,7 @@ dependencies = [
  "pdt-core",
  "pdt-git",
  "pdt-store",
+ "pdt-tailscale",
  "serde",
  "serde_json",
  "tempfile",
@@ -3035,6 +3036,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdt-tailscale"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "which",
+]
+
+[[package]]
 name = "pdtd"
 version = "0.1.0"
 dependencies = [
@@ -3045,6 +3056,7 @@ dependencies = [
  "pdt-api",
  "pdt-core",
  "pdt-store",
+ "pdt-tailscale",
  "serde_json",
  "tempfile",
  "tokio",

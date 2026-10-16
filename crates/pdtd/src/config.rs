@@ -17,6 +17,9 @@ pub struct Config {
     pub owner_login: Option<String>,
     /// `PDT_SECRET_STORE=memory`: keep secrets in memory (tests); otherwise the OS keychain.
     pub memory_secrets: bool,
+    /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
+    /// nothing, so they never reach the machine's Tailscale).
+    pub tailscale_bin: Option<PathBuf>,
 }
 
 impl Config {
@@ -53,7 +56,8 @@ impl Config {
         }
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
         let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
-        Ok(Config { profile, port, data_dir, web_dir, allowed_hosts, owner_login, memory_secrets })
+        let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
+        Ok(Config { profile, port, data_dir, web_dir, allowed_hosts, owner_login, memory_secrets, tailscale_bin })
     }
 
     pub fn from_env() -> anyhow::Result<Config> {
@@ -159,6 +163,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!((c.owner_login.as_deref(), c.memory_secrets), (Some("me@example.com"), true));
+    }
+
+    #[test]
+    fn tailscale_bin_from_env() {
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert_eq!(c.tailscale_bin, None);
+        let c = Config::from_lookup(lookup(&[("PDT_TAILSCALE_BIN", "/x/fake-tailscale")]), Some("/d".into()), None)
+            .unwrap();
+        assert_eq!(c.tailscale_bin, Some(PathBuf::from("/x/fake-tailscale")));
     }
 
     #[test]

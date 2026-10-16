@@ -46,6 +46,18 @@ pub struct AppState {
     pub owner_from_env: Option<String>,
     /// Serializes read-modify-write of host settings and the side effects applied with them.
     pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The port pdtd listens on (0 in tests that do not serve). Tailscale maps 443 to it.
+    pub listen_port: u16,
+    /// The live Host/Origin allowlist (the guard and remote access share it).
+    pub allowed_hosts: crate::host_guard::AllowedHosts,
+    /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
+    /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
+    pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
+    /// The last result of applying the remote-access setting.
+    pub remote: std::sync::Arc<std::sync::Mutex<crate::remote::RemoteStatus>>,
+    /// What remote access changed in this process (mapped ports, the allowlist entry). Turning it off undoes only
+    /// these, never mappings another instance (e.g. the stable one) made.
+    pub(crate) remote_applied: std::sync::Arc<std::sync::Mutex<crate::remote::Applied>>,
 }
 
 impl AppState {
@@ -66,6 +78,11 @@ impl AppState {
             secrets: std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
             owner_from_env: None,
             settings_lock: Default::default(),
+            listen_port: 0,
+            allowed_hosts: Default::default(),
+            tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
+            remote: Default::default(),
+            remote_applied: Default::default(),
         }
     }
 }
@@ -122,6 +139,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/health", get(health))
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
+        .route("/host/remote", get(crate::remote::get_remote))
+        .route("/host/remote/refresh", axum::routing::post(crate::remote::refresh))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
         .route(
