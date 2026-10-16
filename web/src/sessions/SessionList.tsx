@@ -6,6 +6,7 @@ import type { NewSession } from '../api/gen/NewSession';
 import type { Project } from '../api/gen/Project';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { RunsSection } from '../runs/RunsSection';
+import { ActivityBadge } from './ActivityBadge';
 import { INITIAL_SIZE, toDot } from './status';
 
 type Choice = 'Shell' | 'Claude' | 'Codex';
@@ -136,7 +137,8 @@ export function SessionList({ project, selectedId, onSelect, selectedRunId, onSe
                     className={`w-full flex items-center gap-2 text-left px-3 py-1 rounded-pdt text-sm ${s.id === selectedId ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
                   >
                     <StatusDot status={toDot(s.status)} />
-                    <span className="truncate">{s.title}</span>
+                    <span className={`truncate ${s.unseen ? 'font-semibold' : ''}`}>{s.title}</span>
+                    <ActivityBadge activity={s.activity} unseen={s.unseen} />
                   </button>
                 )}
               </li>
