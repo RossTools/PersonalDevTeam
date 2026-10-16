@@ -1,6 +1,7 @@
 mod error;
 mod host;
 mod host_guard;
+mod project_settings;
 mod pty_ws;
 mod routes;
 pub mod secrets;

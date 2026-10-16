@@ -19,7 +19,7 @@ Items that Phase 1 reviews deferred. Plan the ones tagged with a phase into that
   - `HEAD` and `@{-1}` pass the pre-check and then give a 500.
   - A base starting with `-` is not guarded with `--end-of-options`.
 - **Duplicated lists and lock entries:**
-  - `PDT_ENV_VARS` (pdt-core) duplicates pdtd's config variable list with no sync test.
+  - Done in Phase 2 (Task 3): every PDT_* variable is scrubbed by prefix.
   - `session_locks` entries leak when a session is deleted other than through `remove`.
 - **PTY edge cases:**
   - The ConPTY cursor query is answered only if it starts the first read.

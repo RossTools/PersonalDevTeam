@@ -144,6 +144,11 @@ impl HostSettings {
     }
 }
 
+/// The project's own choice when it has one, else the host's.
+pub fn effective_credentials(host: CredentialPolicy, project: Option<CredentialPolicy>) -> CredentialPolicy {
+    project.unwrap_or(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +216,13 @@ mod tests {
         let owner = |o: &str| HostSettingsPatch { owner_login: Some(o.into()), ..patch() };
         assert_eq!(s.apply(&owner("two words")), Err(HostSettingsError::BadOwner));
         assert_eq!(s.apply(&owner("a\u{7}b")), Err(HostSettingsError::BadOwner));
+    }
+
+    #[test]
+    fn project_override_wins() {
+        use CredentialPolicy::*;
+        assert_eq!(effective_credentials(Subscription, None), Subscription);
+        assert_eq!(effective_credentials(Subscription, Some(PassThrough)), PassThrough);
+        assert_eq!(effective_credentials(PassThrough, Some(Subscription)), Subscription);
     }
 }

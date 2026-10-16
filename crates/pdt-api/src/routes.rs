@@ -124,6 +124,10 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
+        .route(
+            "/projects/{id}/settings",
+            get(crate::project_settings::get_settings).put(crate::project_settings::put_settings),
+        )
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
         .route("/projects/{id}/sessions", get(sessions::list))
         .route("/sessions", axum::routing::post(sessions::create))

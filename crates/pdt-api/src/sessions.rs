@@ -60,12 +60,24 @@ pub(crate) async fn create(
         external_session_id: None,
         fresh_started_at,
     };
+    // Before the row exists, so a lookup failure leaves no half-created session.
+    let creds = credentials_for(&st, &session.project_id).await?;
     st.store.insert_session(&session).await?;
-    if let Err(e) = start_pty(&st, &session, valid.size, &Resume::Fresh) {
+    if let Err(e) = start_pty(&st, &session, valid.size, &Resume::Fresh, creds) {
         st.store.delete_session(&session.id).await?;
         return Err(e.into());
     }
     Ok((StatusCode::CREATED, Json(session)))
+}
+
+/// The credential policy for agents in this project (project override, else host setting).
+pub(crate) async fn credentials_for(
+    st: &AppState,
+    project_id: &str,
+) -> Result<pdt_core::host::CredentialPolicy, ApiError> {
+    let host = st.store.get_host_settings().await?.agent_credentials;
+    let project = st.store.get_project_settings(project_id).await?.agent_credentials;
+    Ok(pdt_core::host::effective_credentials(host, project))
 }
 
 fn is_codex(s: &Session) -> bool {
@@ -181,7 +193,13 @@ async fn bind_codex_with(
 }
 
 /// Spawns the session's process and records its exit when it ends.
-fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: &Resume) -> Result<(), PtyError> {
+fn start_pty(
+    st: &AppState,
+    s: &Session,
+    size: TerminalSize,
+    resume: &Resume,
+    creds: pdt_core::host::CredentialPolicy,
+) -> Result<(), PtyError> {
     let l = launch(s.kind, s.agent, &st.platform, resume, &s.id);
     let login_path = st.platform.login_path.as_deref();
     let (program, args) = pdt_agents::launch::resolve(&l.program, &l.args, login_path)?;
@@ -197,7 +215,7 @@ fn start_pty(st: &AppState, s: &Session, size: TerminalSize, resume: &Resume) ->
         cwd: PathBuf::from(&s.cwd),
         env_remove: std::env::vars_os()
             .filter_map(|(k, _)| k.into_string().ok())
-            .filter(|k| is_scrubbed(s.kind, k))
+            .filter(|k| is_scrubbed(s.kind, k, creds))
             .collect(),
         env,
         cols: size.cols,
@@ -282,6 +300,7 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
         Some(r) => r,
         None => plan_resume(st, &session).await,
     };
+    let creds = credentials_for(st, &session.project_id).await?;
     let mut session = session;
     if is_codex(&session) && resume == Resume::Fresh {
         // Launched without a conversation: its new conversation will be matched by this launch time.
@@ -291,7 +310,7 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
     }
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
-    if let Err(e) = start_pty(st, &session, size, &resume) {
+    if let Err(e) = start_pty(st, &session, size, &resume, creds) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
             st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;
