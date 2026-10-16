@@ -1,7 +1,7 @@
 # Personal Dev Team (PDT)
 
 Personal command center for agentic development: tickets + pipeline board, Claude Code / Codex sessions, review, terminals.
-Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs/superpowers/plans/.
+Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs/superpowers/plans/. Roadmap (what comes next, until PDT has tickets): docs/ROADMAP.md — keep it current.
 
 ## Layout
 - crates/pdt-core — pure domain types + brand constants (no I/O)
