@@ -40,6 +40,7 @@ async fn run() -> anyhow::Result<()> {
     }
     let mut state = AppState::new(store.clone(), cfg.data_dir.clone());
     state.owner_from_env = cfg.owner_login.clone();
+    state.refresh_owner().await;
     state.secrets = if cfg.memory_secrets {
         std::sync::Arc::new(pdt_api::secrets::MemorySecretStore::default())
     } else {

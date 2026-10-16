@@ -2,6 +2,7 @@
 
 pub mod brand;
 pub mod host;
+pub mod identity;
 pub mod project;
 pub mod session;
 pub mod worktree;

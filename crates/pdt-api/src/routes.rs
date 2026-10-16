@@ -46,6 +46,8 @@ pub struct AppState {
     pub owner_from_env: Option<String>,
     /// Serializes read-modify-write of host settings and the side effects applied with them.
     pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The effective owner (`PDT_OWNER_LOGIN`, else the stored setting) the identity guard checks; see `refresh_owner`.
+    pub(crate) owner_cache: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// The port pdtd listens on (0 in tests that do not serve). Tailscale maps 443 to it.
     pub listen_port: u16,
     /// The live Host/Origin allowlist (the guard and remote access share it).
@@ -83,6 +85,7 @@ impl AppState {
             secrets: std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
             owner_from_env: None,
             settings_lock: Default::default(),
+            owner_cache: Default::default(),
             listen_port: 0,
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
@@ -95,6 +98,16 @@ impl AppState {
 }
 
 impl AppState {
+    /// Reloads the effective owner (`PDT_OWNER_LOGIN`, else the stored setting) used by the identity guard.
+    pub async fn refresh_owner(&self) {
+        let stored = self.store.get_host_settings().await.ok().and_then(|s| s.owner_login);
+        *self.owner_cache.write().unwrap_or_else(|e| e.into_inner()) = self.owner_from_env.clone().or(stored);
+    }
+
+    pub(crate) fn owner(&self) -> Option<String> {
+        self.owner_cache.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Takes the session's lock. The map's std mutex is only held to look the lock up, never across an await.
     pub(crate) async fn lock_session(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let lock =
@@ -142,10 +155,12 @@ async fn request_shutdown(State(st): State<AppState>) -> StatusCode {
 }
 
 pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
+    let guard_state = state.clone();
     let api = Router::new()
         .route("/health", get(health))
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
+        .route("/host/whoami", get(crate::identity_guard::whoami))
         .route("/host/remote", get(crate::remote::get_remote))
         .route("/host/remote/refresh", axum::routing::post(crate::remote::refresh))
         .route("/projects", get(list_projects).post(create_project))
@@ -167,13 +182,14 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         })
         .with_state(state);
     let app = Router::new().nest("/api", api);
-    match web_dir {
+    let app = match web_dir {
         Some(dir) => {
             let index = dir.join("index.html");
             app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
         }
         None => app,
-    }
+    };
+    app.layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
 }
 
 async fn health() -> Json<Health> {
