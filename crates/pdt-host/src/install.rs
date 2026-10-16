@@ -50,9 +50,15 @@ pub fn replace_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     copy_dir(src, dst)
 }
 
-/// Runs `cmd` to completion, killing it after `timeout`.
+/// Runs `cmd` to completion; after `timeout` it is stopped together with every process it started.
 pub fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<ExitStatus, String> {
     let program = cmd.get_program().to_string_lossy().into_owned();
+    #[cfg(unix)]
+    {
+        // Its own process group, so the whole tree can be killed.
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.stdin(Stdio::null()).spawn().map_err(|e| format!("could not start {program}: {e}"))?;
     let end = Instant::now() + timeout;
     loop {
@@ -60,17 +66,30 @@ pub fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<ExitStat
             Ok(Some(status)) => return Ok(status),
             Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(100)),
             Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_tree(&mut child);
                 return Err(format!("{program} timed out after {timeout:?} and was stopped"));
             }
             Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_tree(&mut child);
                 return Err(format!("waiting for {program}: {e}"));
             }
         }
     }
+}
+
+/// Kills `child` and everything it started (`taskkill /T` on Windows, its process group on unix).
+fn kill_tree(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    let quiet = |c: &mut Command| {
+        let _ = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    };
+    if cfg!(windows) {
+        quiet(Command::new("taskkill").args(["/PID", &pid, "/T", "/F"]));
+    } else {
+        quiet(Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Tests (and the basis of the Windows backup): the asset is a folder whose contents are copied over `target`.

@@ -5,7 +5,9 @@ use crate::config::HostConfig;
 use crate::health::{Probe, probe, request_shutdown};
 use crate::install::Installer;
 use crate::log::{log, log_path};
-use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, request_path, result_path, update_dir};
+use pdt_core::handoff::{
+    UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path, update_dir,
+};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -163,11 +165,15 @@ fn wait_healthy(cfg: &HostConfig, child: &mut Option<Child>, version: Option<&st
     false
 }
 
-/// False when the child exits before `until`.
+/// False when the child crashes before `until`. A clean exit (pdtd exits 0 after a requested shutdown, for example
+/// to hand over the next update) is not the new version failing.
 fn stays_up(child: &mut Option<Child>, until: Instant, stop: &AtomicBool) -> bool {
     while Instant::now() < until && !stopped(stop) {
-        if reap(child) {
-            return false;
+        if let Some(c) = child
+            && let Ok(Some(status)) = c.try_wait()
+        {
+            *child = None;
+            return status.success();
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -227,9 +233,24 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(tmp, path)
 }
 
+/// Writes the result pdtd shows, and keeps `skip.json` in step (ruling B): a failed or rolled-back version is skipped
+/// by automatic updates, a successful update lifts the skip. A result without a version (a malformed request) leaves
+/// it alone.
 fn write_result(cfg: &HostConfig, r: &UpdateResult) {
     if let Err(e) = write_atomic(&result_path(&cfg.data_dir), &serde_json::to_vec_pretty(r).expect("json")) {
         log(cfg, &format!("could not write the update result: {e}"));
+    }
+    if r.to_version.is_empty() {
+        return;
+    }
+    let skip = skip_path(&cfg.data_dir);
+    if r.outcome == UpdateOutcome::Installed {
+        let _ = std::fs::remove_file(&skip);
+    } else {
+        let s = UpdateSkip { version: r.to_version.clone(), reason: r.message.clone(), at: r.at };
+        if let Err(e) = write_atomic(&skip, &serde_json::to_vec_pretty(&s).expect("json")) {
+            log(cfg, &format!("could not record v{} as skipped: {e}", r.to_version));
+        }
     }
 }
 
@@ -268,6 +289,11 @@ fn handle_update(
         write_result(cfg, &update_result(cfg, outcome, &req.from_version, v, message));
         let _ = std::fs::remove_file(marker_path(&cfg.data_dir));
         outcome
+    };
+    // Success: the provisional result already says so and may have been dismissed since; it is not written again.
+    let succeeded = || {
+        let _ = std::fs::remove_file(marker_path(&cfg.data_dir));
+        UpdateOutcome::Installed
     };
     // pdtd shuts itself down after writing the request; nothing is touched until it is gone.
     if !wait_gone(cfg, child, cfg.stop_timeout, stop) && !stopped(stop) {
@@ -323,14 +349,31 @@ fn handle_update(
         return finish(outcome, message);
     }
     log(cfg, &format!("v{v} is healthy"));
-    finish(UpdateOutcome::Installed, format!("Updated to v{v}"))
+    succeeded()
 }
 
-/// At startup: rolls back an install that pdt-host died in the middle of, and restores the previous version when
-/// pdtd is missing.
-fn recover(cfg: &HostConfig, installer: &dyn Installer) {
+/// Makes sure no pdtd of ours is running before files are restored: asks it to stop and waits. False when it keeps
+/// running.
+fn quiesce(cfg: &HostConfig, stop: &AtomicBool) -> bool {
+    if !matches!(probe(cfg.port), Probe::Ours { .. }) {
+        return true;
+    }
+    log(cfg, "pdtd is running; asking it to stop before restoring the previous version");
+    if let Err(e) = request_shutdown(cfg.port) {
+        log(cfg, &format!("the shutdown request failed: {e}"));
+    }
+    wait_gone(cfg, &mut None, cfg.stop_timeout, stop) || !matches!(probe(cfg.port), Probe::Ours { .. })
+}
+
+/// Rolls back an install pdt-host died in the middle of, and restores the previous version when pdtd is missing.
+/// Never restores under a running pdtd: returns false (the marker is kept) to be retried once it has gone.
+fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bool {
     let marker = marker_path(&cfg.data_dir);
     if let Ok(bytes) = std::fs::read(&marker) {
+        if !quiesce(cfg, stop) {
+            log(cfg, "pdtd did not stop; the interrupted update is rolled back once it exits");
+            return false;
+        }
         let req = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
             .and_then(|v| serde_json::from_value::<UpdateRequest>(v["request"].clone()).ok());
@@ -349,6 +392,9 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer) {
     if !cfg.pdtd_path().is_file() {
         match installer.backup_path() {
             Some(b) if b.exists() => {
+                if !quiesce(cfg, stop) {
+                    return false;
+                }
                 log(cfg, &format!("{} is missing; restoring the previous version", cfg.pdtd_path().display()));
                 if let Err(e) = installer.rollback() {
                     log(cfg, &format!("restoring the previous version failed: {e}"));
@@ -357,17 +403,22 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer) {
             _ => log(cfg, &format!("{} is missing; retrying until it appears", cfg.pdtd_path().display())),
         }
     }
+    true
 }
 
 /// Runs until `stop` is set (tests); in production it runs for the life of the process. `after_install` is called
 /// after a successful install (pdt-host's main uses it to replace itself last).
 pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after_install: &dyn Fn()) {
-    recover(cfg, installer);
     let mut failures = 0u32;
     let mut child: Option<Child> = None;
     // Set when a request file cannot be removed: it is then left alone until pdt-host restarts.
     let mut ignore_requests = false;
+    let mut recovered = false;
     while !stopped(stop) {
+        // Retried after each pdtd exit while a running pdtd blocks it.
+        if !recovered {
+            recovered = recover(cfg, installer, stop);
+        }
         let taken = if ignore_requests { TakenRequest::None } else { take_request(&cfg.data_dir) };
         match taken {
             TakenRequest::Request(req) => {

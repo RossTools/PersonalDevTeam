@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use pdt_core::activity::Activity;
-use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, downloads_dir, request_path, result_path};
+use pdt_core::handoff::{UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path};
 use pdt_core::host::UpdatePolicy;
 use pdt_core::release::{HostOs, TokenState, Version, parse_version, token_state};
 use pdt_core::run::RunState;
@@ -414,10 +414,13 @@ async fn download_and_hand_off(
     Ok(status)
 }
 
-/// The last update result is a rolled-back or failed attempt at `version` (ruling B): that version is never installed
-/// automatically again; a manual update may retry it, and `last_result` shows the failure.
-fn failed_before(s: &UpdateStatus, version: &str) -> bool {
-    s.last_result.as_ref().is_some_and(|r| r.outcome != UpdateOutcome::Installed && r.to_version == version)
+/// pdt-host recorded a failed or rolled-back update to `version` (ruling B): it is never installed automatically
+/// again; a manual update may retry it. Read from disk each time, so dismissing the result does not lift it.
+fn skipped(data_dir: &Path, version: &str) -> bool {
+    std::fs::read(skip_path(data_dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<UpdateSkip>(&b).ok())
+        .is_some_and(|skip| skip.version == version)
 }
 
 /// Checks every `check_interval` (unless the policy is manual), and installs when idle under auto-when-idle (spec
@@ -434,7 +437,7 @@ pub async fn run_update_loop(st: AppState) {
         let policy = refresh_policy(&st).await;
         if policy != UpdatePolicy::Manual {
             let s = check(&st).await;
-            let failed_before = s.latest.as_ref().is_some_and(|l| failed_before(&s, &l.version));
+            let failed_before = s.latest.as_ref().is_some_and(|l| skipped(&st.data_dir, &l.version));
             if failed_before {
                 tracing::info!("not installing automatically: the last attempt at this version failed");
             }
@@ -472,7 +475,10 @@ pub(crate) async fn post_install(
     payload: Result<Json<InstallBody>, JsonRejection>,
 ) -> Result<Json<UpdateStatus>, ApiError> {
     let Json(b) = payload?;
-    Ok(Json(install(&st, b.force).await?))
+    let status = install(&st, b.force).await?;
+    // A manual update of a skipped version is the retry ruling B allows; the skip is lifted.
+    let _ = std::fs::remove_file(skip_path(&st.data_dir));
+    Ok(Json(status))
 }
 
 pub(crate) async fn post_dismiss(State(st): State<AppState>) -> StatusCode {

@@ -1,16 +1,28 @@
 //! A stand-in pdtd (and installer) for pdt-host's tests. Reads `fake.json` next to its own exe:
 //! {"version": "...", "mode": "healthy" | "crash" | "crash_once" | "unhealthy" | "stubborn" | "die_soon",
-//!  "installer": "hang" | "fail_partial"}.
+//!  "installer": "hang" | "hang_tree" | "fail_partial"}.
 //! As pdtd: serves /api/health on $PDT_PORT and exits on POST /api/shutdown ("stubborn" answers but keeps running;
 //! "die_soon" exits a second after starting). Beside itself it records $PDT_SUPERVISED in `env.txt`, every `PDT_*`
 //! variable in `env.json`, and the outcome in `<PDT_DATA_DIR>/update/result.json` at startup in `seen-result.txt`.
-//! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "fail_partial" breaks `<dir>/fake.json` and
-//! fails.
+//! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "hang_tree" also starts a child that never
+//! finishes (its pid in `grandchild.pid` beside the installer); "fail_partial" breaks `<dir>/fake.json` and fails.
 use std::io::{Read, Write};
 
 fn installer(cfg: &serde_json::Value, args: &[String]) -> ! {
     let dest = args.iter().find_map(|a| a.strip_prefix("/D=")).expect("/D=<dir>");
+    if std::env::var_os("FAKE_GRANDCHILD").is_some() {
+        let exe = std::env::current_exe().expect("exe");
+        let _ = std::fs::write(exe.with_file_name("grandchild.pid"), std::process::id().to_string());
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+        std::process::exit(0)
+    }
     match cfg["installer"].as_str().unwrap_or("") {
+        "hang_tree" => {
+            let exe = std::env::current_exe().expect("exe");
+            let _ = std::process::Command::new(exe).args(args).env("FAKE_GRANDCHILD", "1").spawn();
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+            std::process::exit(0)
+        }
         "hang" => {
             std::thread::sleep(std::time::Duration::from_secs(3600));
             std::process::exit(0)

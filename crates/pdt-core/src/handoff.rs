@@ -15,6 +15,11 @@ pub fn request_path(data_dir: &Path) -> PathBuf {
 pub fn result_path(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("result.json")
 }
+/// Written by pdt-host whenever an update to a version fails or is rolled back; pdtd never installs that version
+/// automatically (ruling B). Dismissing the result leaves it; a manual update or a later successful one clears it.
+pub fn skip_path(data_dir: &Path) -> PathBuf {
+    update_dir(data_dir).join("skip.json")
+}
 pub fn downloads_dir(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("downloads")
 }
@@ -53,6 +58,15 @@ pub struct UpdateResult {
     pub at: i64,
 }
 
+/// The version automatic updates skip (see `skip_path`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSkip {
+    pub version: String,
+    pub reason: String,
+    pub at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +77,7 @@ mod tests {
         assert_eq!(request_path(d), d.join("update").join("request.json"));
         assert_eq!(result_path(d), d.join("update").join("result.json"));
         assert_eq!(downloads_dir(d), d.join("update").join("downloads"));
+        assert_eq!(skip_path(d), d.join("update").join("skip.json"));
     }
 
     #[test]
