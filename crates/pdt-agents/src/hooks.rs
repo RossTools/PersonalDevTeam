@@ -4,8 +4,9 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-pub const CLAUDE_HOOK_EVENTS: [&str; 5] =
-    ["UserPromptSubmit", "PreToolUse", "PermissionRequest", "Notification", "Stop"];
+/// SessionStart changes nothing by itself; it shows early that the session's hooks work (see `Watch::hook_seen`).
+pub const CLAUDE_HOOK_EVENTS: [&str; 7] =
+    ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop"];
 pub const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
 
 /// Exec-form command hooks (no shell, verified in Task 1) running `<pdtd> hook claude <Event>`.
@@ -85,6 +86,9 @@ mod tests {
             "/Applications/P D T.app/Contents/MacOS/pdtd"
         });
         let v = claude_settings(exe);
+        for ev in ["SessionStart", "PostToolUse", "PreToolUse", "Stop"] {
+            assert!(CLAUDE_HOOK_EVENTS.contains(&ev), "{ev} is subscribed");
+        }
         for ev in CLAUDE_HOOK_EVENTS {
             let h = &v["hooks"][ev][0]["hooks"][0];
             assert_eq!(h["type"], "command");

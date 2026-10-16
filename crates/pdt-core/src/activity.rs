@@ -62,7 +62,7 @@ impl HookReport {
     pub fn signal(&self) -> Option<Signal> {
         match self {
             HookReport::Claude { event, notification_type } => match event.as_str() {
-                "UserPromptSubmit" | "PreToolUse" => Some(Signal::Busy),
+                "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => Some(Signal::Busy),
                 "PermissionRequest" => Some(Signal::NeedsYou),
                 "Stop" => Some(Signal::TurnEnded),
                 "Notification" => match notification_type.as_deref() {
@@ -100,27 +100,47 @@ pub fn is_unseen(attention_at: Option<i64>, last_viewed_at: Option<i64>) -> bool
 pub const QUIET_AFTER_MS: i64 = 120_000;
 pub const HOOK_GRACE_MS: i64 = 20_000;
 
+/// The thresholds `tick` uses (tests shorten them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    pub quiet_after_ms: i64,
+    pub hook_grace_ms: i64,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Timing { quiet_after_ms: QUIET_AFTER_MS, hook_grace_ms: HOOK_GRACE_MS }
+    }
+}
+
 /// Per-session timing facts the heuristics need.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Watch {
     pub last_output_ms: i64,
-    /// When the user last pressed Enter (Claude only), until a hook arrives.
+    /// When the user last pressed Enter (Claude only, while no hook has arrived yet).
     pub enter_at_ms: Option<i64>,
-    pub hook_since_enter: bool,
+    /// Whether any hook has arrived since this terminal started: once one has, hooks work, and an Enter that sends
+    /// none (an empty line, a slash command) is not a sign that they broke.
+    pub hook_seen: bool,
     pub output_since_enter: bool,
 }
 
 /// The time-based signal due now, if any. `expects_hooks` is true for Claude.
 pub fn tick(activity: Activity, w: &Watch, expects_hooks: bool, now: i64) -> Option<Signal> {
+    tick_with(activity, w, expects_hooks, now, &Timing::default())
+}
+
+/// `tick` with the given thresholds.
+pub fn tick_with(activity: Activity, w: &Watch, expects_hooks: bool, now: i64, t: &Timing) -> Option<Signal> {
     if expects_hooks
+        && !w.hook_seen
         && let Some(at) = w.enter_at_ms
-        && !w.hook_since_enter
         && w.output_since_enter
-        && now - at >= HOOK_GRACE_MS
+        && now - at >= t.hook_grace_ms
     {
         return Some(Signal::HookMissing);
     }
-    (activity == Activity::Working && now - w.last_output_ms >= QUIET_AFTER_MS).then_some(Signal::Quiet)
+    (activity == Activity::Working && now - w.last_output_ms >= t.quiet_after_ms).then_some(Signal::Quiet)
 }
 
 /// Lines of Codex's approval prompt, as verified in Task 1 (docs/superpowers/notes/phase-2-agent-signals.md).
@@ -192,6 +212,59 @@ pub fn screen_shows(squashed: &str, markers: &[&str]) -> bool {
     markers.iter().any(|m| squashed.contains(&squash(m)))
 }
 
+/// `CODEX_APPROVAL_MARKERS`, squashed once.
+static SQUASHED_CODEX_MARKERS: std::sync::LazyLock<Vec<String>> =
+    std::sync::LazyLock::new(|| CODEX_APPROVAL_MARKERS.iter().map(|m| squash(m)).collect());
+
+/// How many distinct Codex approval markers squashed screen text contains.
+pub fn codex_markers_shown(squashed: &str) -> usize {
+    SQUASHED_CODEX_MARKERS.iter().filter(|m| squashed.contains(m.as_str())).count()
+}
+
+/// While Codex waits for an approval its window title says this (Task 1: `[ ! ] Action Required | <thread> | …`).
+pub const CODEX_ACTION_TITLE: &str = "Action Required";
+
+/// Whether Codex is showing its approval prompt: its window title says so, or the screen shows at least two distinct
+/// prompt lines (one alone could be ordinary output).
+pub fn codex_approval_shown(title_says_action: bool, squashed: &str) -> bool {
+    title_says_action || codex_markers_shown(squashed) >= 2
+}
+
+/// Whether any of these window titles is Codex's "Action Required".
+pub fn titles_say_action_required(titles: &[String]) -> bool {
+    titles.iter().any(|t| t.contains(CODEX_ACTION_TITLE))
+}
+
+/// Window titles (OSC 0 and 2) set by complete sequences in `bytes`, and the unfinished sequence at its end (empty
+/// if none), to be prepended to the next chunk.
+pub fn osc_titles(bytes: &[u8]) -> (Vec<String>, &[u8]) {
+    let mut titles = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !(bytes[i] == 0x1b && bytes.get(i + 1) == Some(&b']')) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i + 2;
+        let end = loop {
+            match bytes.get(j) {
+                None => return (titles, &bytes[start..]),
+                Some(0x07) => break (j, j + 1),
+                Some(0x1b) if bytes.get(j + 1) == Some(&b'\\') => break (j, j + 2),
+                Some(0x1b) if j + 1 == bytes.len() => return (titles, &bytes[start..]),
+                Some(_) => j += 1,
+            }
+        };
+        let body = String::from_utf8_lossy(&bytes[start + 2..end.0]);
+        if let Some(("0" | "2", title)) = body.split_once(';') {
+            titles.push(title.to_string());
+        }
+        i = end.1;
+    }
+    (titles, &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +293,7 @@ mod tests {
     fn claude_events_map_to_signals() {
         assert_eq!(claude("UserPromptSubmit", None).signal(), Some(Signal::Busy));
         assert_eq!(claude("PreToolUse", None).signal(), Some(Signal::Busy));
+        assert_eq!(claude("PostToolUse", None).signal(), Some(Signal::Busy));
         assert_eq!(claude("PermissionRequest", None).signal(), Some(Signal::NeedsYou));
         for nt in ["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"] {
             assert_eq!(claude("Notification", Some(nt)).signal(), Some(Signal::NeedsYou), "{nt}");
@@ -260,22 +334,38 @@ mod tests {
         assert!(!is_unseen(Some(10), Some(11)));
     }
 
+    fn w(last_output_ms: i64, enter_at_ms: Option<i64>, hook_seen: bool, output_since_enter: bool) -> Watch {
+        Watch { last_output_ms, enter_at_ms, hook_seen, output_since_enter }
+    }
+
     #[test]
     fn ticks() {
-        let w = |last_output_ms, enter_at_ms, hook_since_enter, output_since_enter| Watch {
-            last_output_ms,
-            enter_at_ms,
-            hook_since_enter,
-            output_since_enter,
-        };
         assert_eq!(tick(Working, &w(0, None, false, false), true, QUIET_AFTER_MS), Some(Signal::Quiet));
         assert_eq!(tick(Working, &w(1, None, false, false), true, QUIET_AFTER_MS), None);
         assert_eq!(tick(Idle, &w(0, None, false, false), true, QUIET_AFTER_MS * 10), None);
         let missing = w(HOOK_GRACE_MS, Some(0), false, true);
-        assert_eq!(tick(Idle, &missing, true, HOOK_GRACE_MS), Some(Signal::HookMissing));
+        assert_eq!(tick(Idle, &missing, true, HOOK_GRACE_MS), Some(Signal::HookMissing), "hooks never fired");
+        assert_eq!(tick(Idle, &missing, true, HOOK_GRACE_MS - 1), None, "still within the grace period");
         assert_eq!(tick(Idle, &missing, false, HOOK_GRACE_MS), None, "Codex has no per-prompt hook");
-        assert_eq!(tick(Idle, &w(HOOK_GRACE_MS, Some(0), true, true), true, HOOK_GRACE_MS), None, "a hook came");
         assert_eq!(tick(Idle, &w(0, Some(0), false, false), true, HOOK_GRACE_MS), None, "no output: nothing happened");
+        let timing = Timing { quiet_after_ms: 10, hook_grace_ms: 5 };
+        assert_eq!(tick_with(Working, &w(0, None, true, false), true, 10, &timing), Some(Signal::Quiet));
+        assert_eq!(tick_with(Idle, &w(0, Some(0), false, true), true, 5, &timing), Some(Signal::HookMissing));
+    }
+
+    #[test]
+    fn working_hooks_mean_enter_never_makes_a_session_unknown() {
+        // An empty Enter or a slash command prints but sends no hook; hooks have fired before, so they work.
+        let enter_without_hook = w(HOOK_GRACE_MS * 10, Some(0), true, true);
+        for a in [Idle, Working, NeedsYou] {
+            assert_eq!(tick(a, &enter_without_hook, true, HOOK_GRACE_MS * 10), None, "{a:?}");
+        }
+        // Approving a permission prompt (a keypress) resumes the turn; a long command that keeps printing stays
+        // working.
+        let after_answer = next(NeedsYou, Signal::Busy);
+        assert_eq!(after_answer, Working);
+        let busy = w(QUIET_AFTER_MS * 3, Some(QUIET_AFTER_MS), true, true);
+        assert_eq!(tick(after_answer, &busy, true, QUIET_AFTER_MS * 3 + 1_000), None);
     }
 
     #[test]
@@ -290,5 +380,33 @@ mod tests {
         assert!(screen_shows(&squash(&text), CODEX_APPROVAL_MARKERS));
         assert!(!screen_shows(&squash("nothing here"), CODEX_APPROVAL_MARKERS));
         assert_eq!(squash(" A b\tC\n"), "abc");
+    }
+
+    #[test]
+    fn codex_approval_needs_the_title_or_two_markers() {
+        let one = squash("The docs say: Yes, proceed (y) when asked.");
+        assert_eq!(codex_markers_shown(&one), 1);
+        assert!(!codex_approval_shown(false, &one), "a single marker in ordinary output is not the prompt");
+        let same_twice = squash("Yes, proceed. Yes, proceed.");
+        assert!(!codex_approval_shown(false, &same_twice), "markers must be distinct");
+        let two = squash("to run the following command? ... 1. Yes, proceed (y)");
+        assert!(codex_approval_shown(false, &two));
+        assert!(codex_approval_shown(true, ""), "the Action Required title alone is enough");
+    }
+
+    #[test]
+    fn window_titles_are_read_from_complete_osc_sequences() {
+        let (titles, rest) =
+            osc_titles(b"a\x1b]0;[ ! ] Action Required | t | f\x07b\x1b]2;two\x1b\\c\x1b]8;;http://x\x07");
+        assert_eq!(titles, ["[ ! ] Action Required | t | f", "two"], "OSC 0 and 2 only (not hyperlinks)");
+        assert!(rest.is_empty());
+        assert!(titles_say_action_required(&titles));
+        let (titles, rest) = osc_titles(b"x\x1b]0;[ ! ] Act");
+        assert!(titles.is_empty());
+        assert_eq!(rest, b"\x1b]0;[ ! ] Act", "an unfinished sequence is carried to the next chunk");
+        let mut joined = rest.to_vec();
+        joined.extend_from_slice(b"ion Required\x07");
+        assert!(titles_say_action_required(&osc_titles(&joined).0));
+        assert!(!titles_say_action_required(&["codex | t".to_string()]));
     }
 }

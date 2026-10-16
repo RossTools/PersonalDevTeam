@@ -78,6 +78,13 @@ pub struct AppState {
     pub hook_program: std::path::PathBuf,
     /// The activity tracker of each agent session running in this daemon run.
     pub(crate) activity: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, crate::activity::Tracker>>>,
+    /// Per-session ordering point for activity transitions and their store writes.
+    pub(crate) activity_order:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>>,
+    /// The thresholds of the time-based activity signals (tests shorten them).
+    pub activity_timing: pdt_core::activity::Timing,
+    /// How often `run_activity_ticker` checks them.
+    pub activity_tick: std::time::Duration,
 }
 
 impl AppState {
@@ -111,6 +118,9 @@ impl AppState {
             run_stop_wait: std::time::Duration::from_secs(20),
             hook_program: std::env::current_exe().unwrap_or_default(),
             activity: Default::default(),
+            activity_order: Default::default(),
+            activity_timing: Default::default(),
+            activity_tick: std::time::Duration::from_secs(5),
         }
     }
 }

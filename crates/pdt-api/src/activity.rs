@@ -9,30 +9,82 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::PtyEvent;
 use pdt_core::activity::{
-    Activity, CODEX_APPROVAL_MARKERS, HookReport, Signal, Watch, needs_attention, next, screen_shows, squash,
-    strip_ansi, tick,
+    Activity, HookReport, Signal, Watch, codex_approval_shown, needs_attention, next, osc_titles, squash, strip_ansi,
+    tick_with, titles_say_action_required,
 };
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast::error::RecvError;
 
 /// How much squashed Codex output is kept to look for the approval prompt (it arrives in pieces).
 const SCREEN_TAIL: usize = 16 * 1024;
+/// The longest unfinished window-title sequence carried from one output chunk to the next.
+const TITLE_CARRY: usize = 1024;
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct Tracker {
     agent: AgentKind,
     activity: Activity,
     watch: Watch,
-    /// Squashed recent output (Codex), searched for the approval prompt.
-    screen: String,
+    /// Set by input that resumed Codex: the output task forgets the screen it has scanned so far.
+    clear_screen: bool,
     /// Tells this terminal run's tracker from a later one for the same session (restart).
     generation: u64,
+}
+
+/// Recent Codex output, owned by the session's output task (scanned outside any shared lock).
+#[derive(Default)]
+struct Screen {
+    /// Squashed text, searched for the approval prompt.
+    text: String,
+    /// An unfinished window-title sequence from the previous chunk.
+    title_carry: Vec<u8>,
+}
+
+impl Screen {
+    fn clear(&mut self) {
+        self.text.clear();
+        self.title_carry.clear();
+    }
+
+    /// Adds a chunk of output; true when it now shows Codex's approval prompt.
+    fn shows_approval(&mut self, bytes: &[u8]) -> bool {
+        let mut raw = std::mem::take(&mut self.title_carry);
+        raw.extend_from_slice(bytes);
+        let (titles, rest) = osc_titles(&raw);
+        let title = titles_say_action_required(&titles);
+        if rest.len() <= TITLE_CARRY {
+            self.title_carry = rest.to_vec();
+        }
+        self.text.push_str(&squash(&strip_ansi(bytes)));
+        if self.text.len() > SCREEN_TAIL {
+            let mut cut = self.text.len() - SCREEN_TAIL;
+            while !self.text.is_char_boundary(cut) {
+                cut += 1;
+            }
+            self.text.drain(..cut);
+        }
+        codex_approval_shown(title, &self.text)
+    }
+}
+
+/// The session's activity ordering point: transitions and their store writes happen one at a time, in order, so the
+/// row always ends with the latest state.
+fn order_lock(st: &AppState, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    st.activity_order.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone()
+}
+
+/// Forgets a removed session's ordering point.
+pub(crate) fn forget(st: &AppState, id: &str) {
+    st.activity_order.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
 }
 
 /// Applies a signal to a session: to its tracker when it has one (running in this daemon), else to the stored row
 /// of a running agent session. Records attention when it becomes idle or needs the user.
 pub(crate) async fn apply(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiError> {
+    let order = order_lock(st, id);
+    let _in_order = order.lock().await;
     let tracked = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         map.get_mut(id).map(|t| {
@@ -67,31 +119,38 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
         return;
     }
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst);
-    st.activity.lock().unwrap_or_else(|e| e.into_inner()).insert(
-        s.id.clone(),
-        Tracker {
-            agent,
-            activity: Activity::Idle,
-            watch: Watch { last_output_ms: now_ms(), ..Default::default() },
-            screen: String::new(),
-            generation,
-        },
-    );
-    let _ = st.store.update_activity(&s.id, Some(Activity::Idle), None).await;
+    {
+        let order = order_lock(st, &s.id);
+        let _in_order = order.lock().await;
+        st.activity.lock().unwrap_or_else(|e| e.into_inner()).insert(
+            s.id.clone(),
+            Tracker {
+                agent,
+                activity: Activity::Idle,
+                watch: Watch { last_output_ms: now_ms(), ..Default::default() },
+                clear_screen: false,
+                generation,
+            },
+        );
+        let _ = st.store.update_activity(&s.id, Some(Activity::Idle), None).await;
+    }
     let (st, id) = (st.clone(), s.id.clone());
     tokio::spawn(async move {
+        let mut screen = Screen::default();
         // What it printed before the tracker attached.
         if !att.scrollback.is_empty() {
-            on_output(&st, &id, &att.scrollback).await;
+            on_output(&st, &id, &att.scrollback, &mut screen).await;
         }
         let mut events = att.events;
         loop {
             match events.recv().await {
-                Ok(PtyEvent::Output(bytes)) => on_output(&st, &id, &bytes).await,
+                Ok(PtyEvent::Output(bytes)) => on_output(&st, &id, &bytes, &mut screen).await,
                 Ok(PtyEvent::Exit(_)) | Err(RecvError::Closed) => break,
                 Err(RecvError::Lagged(_)) => continue,
             }
         }
+        let order = order_lock(&st, &id);
+        let _in_order = order.lock().await;
         let mine = {
             let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
             let mine = map.get(&id).is_some_and(|t| t.generation == generation);
@@ -106,32 +165,24 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
     });
 }
 
-async fn on_output(st: &AppState, id: &str, bytes: &[u8]) {
-    let sig = {
+async fn on_output(st: &AppState, id: &str, bytes: &[u8], screen: &mut Screen) {
+    let (agent, activity, clear) = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
         t.watch.last_output_ms = now_ms();
         if t.watch.enter_at_ms.is_some() {
             t.watch.output_since_enter = true;
         }
-        if t.agent != AgentKind::Codex || t.activity == Activity::NeedsYou {
-            return;
-        }
-        t.screen.push_str(&squash(&strip_ansi(bytes)));
-        if t.screen.len() > SCREEN_TAIL {
-            let mut cut = t.screen.len() - SCREEN_TAIL;
-            while !t.screen.is_char_boundary(cut) {
-                cut += 1;
-            }
-            t.screen.drain(..cut);
-        }
-        if !screen_shows(&t.screen, CODEX_APPROVAL_MARKERS) {
-            return;
-        }
-        t.screen.clear();
-        Signal::NeedsYou
+        (t.agent, t.activity, std::mem::take(&mut t.clear_screen))
     };
-    let _ = apply(st, id, sig).await;
+    if clear {
+        screen.clear();
+    }
+    if agent != AgentKind::Codex || activity == Activity::NeedsYou || !screen.shows_approval(bytes) {
+        return;
+    }
+    screen.clear();
+    let _ = apply(st, id, Signal::NeedsYou).await;
 }
 
 /// Whether terminal input is the user pressing a key, rather than something the terminal sent by itself (focus
@@ -146,19 +197,21 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
     let sig = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
+        let answered = t.activity == Activity::NeedsYou && is_answer(bytes);
+        if t.agent == AgentKind::Claude && enter && !t.watch.hook_seen {
+            // Until a hook has arrived, an Enter that prints but brings no hook within the grace period means the
+            // session's hooks are broken (see `tick`).
+            t.watch.enter_at_ms = Some(now_ms());
+            t.watch.output_since_enter = false;
+        }
         match t.agent {
             // Codex has no per-prompt hook: Enter starts a turn, and answering its approval prompt resumes it.
-            AgentKind::Codex if enter || (t.activity == Activity::NeedsYou && is_answer(bytes)) => {
-                t.screen.clear();
+            AgentKind::Codex if enter || answered => {
+                t.clear_screen = true;
                 Some(Signal::Busy)
             }
-            // Claude reports its own turns; Enter only starts the wait for that hook (see `tick`).
-            AgentKind::Claude if enter => {
-                t.watch.enter_at_ms = Some(now_ms());
-                t.watch.hook_since_enter = false;
-                t.watch.output_since_enter = false;
-                None
-            }
+            // Claude reports its own turns, but answering a permission prompt sends no hook until its next tool.
+            AgentKind::Claude if answered => Some(Signal::Busy),
             _ => None,
         }
     };
@@ -170,9 +223,9 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
     }
 }
 
-/// Applies time-based signals (`tick`) to every tracked session every 5 s, until shutdown.
+/// Applies time-based signals (`tick`) to every tracked session every `activity_tick`, until shutdown.
 pub async fn run_activity_ticker(st: AppState) {
-    let mut every = tokio::time::interval(std::time::Duration::from_secs(5));
+    let mut every = tokio::time::interval(st.activity_tick);
     loop {
         every.tick().await;
         if st.shutting_down.load(Ordering::SeqCst) {
@@ -183,7 +236,7 @@ pub async fn run_activity_ticker(st: AppState) {
             let now = now_ms();
             map.iter_mut()
                 .filter_map(|(id, t)| {
-                    let sig = tick(t.activity, &t.watch, t.agent == AgentKind::Claude, now)?;
+                    let sig = tick_with(t.activity, &t.watch, t.agent == AgentKind::Claude, now, &st.activity_timing)?;
                     if sig == Signal::HookMissing {
                         t.watch.enter_at_ms = None;
                     }
@@ -208,7 +261,7 @@ pub(crate) async fn post_report(
         return Err(ApiError::new(StatusCode::CONFLICT, "not_an_agent", "only agent sessions report activity"));
     }
     if let Some(t) = st.activity.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id) {
-        t.watch.hook_since_enter = true;
+        t.watch.hook_seen = true;
         t.watch.enter_at_ms = None;
     }
     if let Some(sig) = report.signal() {
@@ -226,7 +279,7 @@ pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>
 
 #[cfg(test)]
 mod tests {
-    use super::is_answer;
+    use super::{Screen, is_answer};
 
     #[test]
     fn answers_are_keys_the_user_pressed() {
@@ -236,5 +289,16 @@ mod tests {
         for sent in [&b"\x1b[I"[..], b"\x1b[O", b"\x1b[B", b"\x1b[?1;2c", b"\x1b]11;rgb:0000/0000/0000\x1b\\"] {
             assert!(!is_answer(sent), "{sent:?}");
         }
+    }
+
+    #[test]
+    fn the_approval_prompt_is_found_across_chunks() {
+        let mut s = Screen::default();
+        assert!(!s.shows_approval(b"Here is the plan. Yes, proceed when ready.\r\n"), "one marker is not enough");
+        assert!(!s.shows_approval(b"\x1b]0;[ ! ] Action Req"));
+        assert!(s.shows_approval(b"uired | t | f\x07"), "the title split over two chunks");
+        s.clear();
+        assert!(!s.shows_approval(b"Would you like to run the following "));
+        assert!(s.shows_approval(b"command?\r\n  1. Yes, proceed (y)"), "two markers, the first split");
     }
 }

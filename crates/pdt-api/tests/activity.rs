@@ -104,22 +104,24 @@ async fn an_ended_session_keeps_no_activity() {
     assert_eq!(session(&app, "c1").await["activity"], Value::Null, "a late hook does not bring it back");
 }
 
-/// A stand-in for `codex` that records its arguments, shows the approval prompt, then: waits for an answer, waits
-/// for another line, and shows the prompt again.
+/// A stand-in for `codex` that records its arguments, shows the approval prompt (two of its lines), then: waits for
+/// an answer, prints one prompt line alone (ordinary output), waits for another line, and asks for approval again,
+/// this time only through its window title (as Codex does: `[ ! ] Action Required`).
 fn fake_codex(dir: &Path) -> std::path::PathBuf {
     let (file, body) = if cfg!(windows) {
         (
             "codex.cmd",
             "@echo off\r\necho(%*> \"%~dp0codex-args.txt\"\r\necho Would you like to run the following command?\r\n\
-             echo   1. Yes, proceed (y)\r\nset /p x=\r\nset /p x=\r\necho Would you like to run the following command?\r\n\
-             echo   1. Yes, proceed (y)\r\nset /p x=\r\n",
+             echo   1. Yes, proceed (y)\r\nset /p x=\r\necho The docs say: Yes, proceed\r\nset /p x=\r\n\
+             title [ ! ] Action Required - t\r\necho waiting\r\nset /p x=\r\n",
         )
     } else {
         (
             "codex",
             "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/codex-args.txt\"\n\
-             printf 'Would you like to run the following command?\\n  1. Yes, proceed (y)\\n'\nread x\nread x\n\
-             printf 'Would you like to run the following command?\\n  1. Yes, proceed (y)\\n'\nread x\n",
+             printf 'Would you like to run the following command?\\n  1. Yes, proceed (y)\\n'\nread x\n\
+             printf 'The docs say: Yes, proceed\\n'\nread x\n\
+             printf '\\033]0;[ ! ] Action Required - t\\007waiting\\n'\nread x\n",
         )
     };
     let path = dir.join(file);
@@ -177,6 +179,8 @@ async fn codex_activity_follows_its_approval_screen_and_input() {
         tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/sessions/{id}/pty")).await.unwrap();
     ws.send(Message::Binary(b"y\r".to_vec().into())).await.unwrap();
     wait_for_activity(&app, &id, json!("working")).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "one prompt line in ordinary output is not the prompt");
     ws.send(Message::Binary(b"\r".to_vec().into())).await.unwrap();
     wait_for_activity(&app, &id, json!("needs_you")).await;
 
@@ -189,5 +193,123 @@ async fn codex_activity_follows_its_approval_screen_and_input() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     wait_for_activity(&app, &id, Value::Null).await;
+    state.ptys.shutdown().await;
+}
+
+/// A stand-in for `claude` that answers every line it reads with `got <line>` (and sends no hooks: tests post them).
+fn fake_claude(dir: &Path) -> std::path::PathBuf {
+    let (file, body) = if cfg!(windows) {
+        ("claude.cmd", "@echo off\r\n:loop\r\nset \"x=\"\r\nset /p x=\r\necho got %x%\r\ngoto loop\r\n")
+    } else {
+        ("claude", "#!/bin/sh\nwhile read x; do echo \"got $x\"; done\n")
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+/// Serves a router whose Claude is the fake, with short activity thresholds and the ticker running.
+/// Returns (app, state, port, project id).
+async fn serve_claude(tmp: &Path) -> (axum::Router, pdt_api::AppState, u16, String) {
+    let (_, mut state) = setup(tmp).await;
+    let bin = tmp.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    state.platform.claude_program = fake_claude(&bin).to_string_lossy().into_owned();
+    state.activity_timing = pdt_core::activity::Timing { quiet_after_ms: 2_000, hook_grace_ms: 400 };
+    state.activity_tick = Duration::from_millis(50);
+    tokio::spawn(pdt_api::run_activity_ticker(state.clone()));
+    let app = pdt_api::router(state.clone(), None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let served = app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
+    let (_, projects) = call(&app, "GET", "/api/projects", None).await;
+    (app, state, port, projects[0]["id"].as_str().unwrap().to_string())
+}
+
+async fn create_claude(app: &axum::Router, pid: &str) -> String {
+    let body = json!({"projectId": pid, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24});
+    let (s, created) = call(app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{created}");
+    created["id"].as_str().unwrap().to_string()
+}
+
+type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn terminal(port: u16, id: &str) -> Ws {
+    tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/sessions/{id}/pty")).await.unwrap().0
+}
+
+async fn type_in(ws: &mut Ws, text: &str) {
+    ws.send(Message::Binary(text.as_bytes().to_vec().into())).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_hooks_that_never_fire_make_the_session_unknown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, port, pid) = serve_claude(tmp.path()).await;
+    let id = create_claude(&app, &pid).await;
+    assert_eq!(session(&app, &id).await["activity"], "idle");
+    let mut ws = terminal(port, &id).await;
+    type_in(&mut ws, "hello\r").await;
+    // The fake answers (output) but no hook ever comes: after the grace period the session is unknown.
+    wait_for_activity(&app, &id, json!("unknown")).await;
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, port, pid) = serve_claude(tmp.path()).await;
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    // SessionStart changes nothing, but shows the hooks work.
+    assert_eq!(report(&app, &id, json!({"source": "claude", "event": "SessionStart"})).await, StatusCode::NO_CONTENT);
+    assert_eq!(session(&app, &id).await["activity"], "idle");
+    // An empty Enter (or a slash command) prints but sends no hook: not a sign of broken hooks.
+    type_in(&mut ws, "\r").await;
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "idle", "an Enter without a hook keeps it idle");
+
+    // A permission prompt, answered with a keypress: working again, and it stays so while output flows.
+    report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "needs_you");
+    type_in(&mut ws, "1").await;
+    wait_for_activity(&app, &id, json!("working")).await;
+    for _ in 0..3 {
+        type_in(&mut ws, "\r").await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(session(&app, &id).await["activity"], "working", "a long command that keeps printing");
+    }
+    // No output for longer than the quiet threshold while working: unknown.
+    wait_for_activity(&app, &id, json!("unknown")).await;
+    report(&app, &id, json!({"source": "claude", "event": "Stop"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "idle");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_session_deletes_its_hook_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _, pid) = serve_claude(tmp.path()).await;
+    let id = create_claude(&app, &pid).await;
+    let dir = tmp.path().join("data").join("sessions").join(&id);
+    assert!(dir.join("claude-settings.json").is_file());
+    assert_eq!(call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await.0, StatusCode::NO_CONTENT);
+    let mut removed = StatusCode::CONFLICT;
+    for _ in 0..100 {
+        removed = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await.0;
+        if removed != StatusCode::CONFLICT {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(removed, StatusCode::NO_CONTENT);
+    assert!(!dir.exists(), "the session's data folder is removed with it");
     state.ptys.shutdown().await;
 }

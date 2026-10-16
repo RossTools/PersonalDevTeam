@@ -254,7 +254,8 @@ fn start_pty(
 
 /// The agent's launch arguments plus its activity hooks (remote-host spec §5.1): Claude gets a per-session
 /// `--settings` file in PDT's data folder, Codex a `-c notify=[…]` that chains to the user's own notify. The user's
-/// own agent settings are never written.
+/// own agent settings are never written. Limit: with a Windows `.cmd` shim (npm installs) the arguments pass through
+/// `cmd.exe`, so a hook program path containing `&`, `|`, `^` or `%` would be mangled.
 fn with_hook_args(st: &AppState, s: &Session, args: Vec<String>) -> Result<Vec<String>, PtyError> {
     if s.kind != SessionKind::AgentTui {
         return Ok(args);
@@ -466,6 +467,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     st.store.delete_session(&id).await?;
     // Best-effort: the session's hook settings.
     let _ = std::fs::remove_dir_all(session_data_dir(&st, &id));
+    crate::activity::forget(&st, &id);
     st.forget_session_lock(&id);
     Ok(StatusCode::NO_CONTENT)
 }
