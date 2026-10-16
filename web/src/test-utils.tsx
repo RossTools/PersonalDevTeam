@@ -5,7 +5,9 @@ import { vi } from 'vitest';
 
 export function renderWithQuery(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  const wrap = (node: ReactNode) => <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+  const result = render(wrap(ui));
+  return { ...result, rerender: (node: ReactNode) => result.rerender(wrap(node)) };
 }
 
 /** A stub route value that answers with a specific status and JSON body. */

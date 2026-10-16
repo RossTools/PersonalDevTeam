@@ -100,7 +100,7 @@ export function AppShell() {
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             {run ? (
-              <RunView run={run} polledAt={runs.dataUpdatedAt} onRemoved={() => setSelection(null)} />
+              <RunView key={run.id} run={run} polledAt={runs.dataUpdatedAt} onRemoved={() => setSelection(null)} />
             ) : selection?.kind === 'settings' && project ? (
               <ProjectSettingsPanel project={project} />
             ) : session ? (

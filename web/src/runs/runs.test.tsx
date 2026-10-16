@@ -10,7 +10,9 @@ import { RunsSection } from './RunsSection';
 import { RunView } from './RunView';
 
 vi.mock('../terminal/TerminalView', () => ({
-  TerminalView: ({ url }: { url?: string }) => <div data-testid="terminal-view">{url}</div>,
+  TerminalView: ({ url, sessionStatus }: { url?: string; sessionStatus?: string }) => (
+    <div data-testid="terminal-view" data-status={sessionStatus}>{url}</div>
+  ),
 }));
 
 afterEach(() => {
@@ -113,7 +115,7 @@ describe('RunView', () => {
     renderWithQuery(<RunView run={run({})} onRemoved={() => {}} />);
     expect(screen.getByRole('link', { name: 'https://box.t.ts.net:8401/' })).toHaveAttribute('target', '_blank');
     expect(screen.getByTestId('terminal-view')).toHaveTextContent('/api/runs/r1/pty/command');
-    await userEvent.click(screen.getByRole('tab', { name: 'Setup' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }));
     expect(screen.getByTestId('terminal-view')).toHaveTextContent('/api/runs/r1/pty/setup');
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await waitFor(() => expect(calls.some((c) => c.path === '/api/runs/r1/stop')).toBe(true));
@@ -154,6 +156,31 @@ describe('RunView', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/runs/r1/restart')).toHaveLength(2));
     expect(confirm).toHaveBeenCalledWith('Stop "api · b1" to start this one?');
     expect(calls.filter((c) => c.path === '/api/runs/r1/restart').map((c) => c.body)).toEqual([{}, { stopRunId: 'oldest' }]);
+  });
+
+  it('follows the run state with its tab, and marks a finished step finished', async () => {
+    const { rerender } = renderWithQuery(<RunView run={run({ state: 'setting_up' })} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toHaveTextContent('/pty/setup');
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-status', 'running');
+    rerender(<RunView run={run({ state: 'ready' })} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toHaveTextContent('/pty/command');
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-status', 'running');
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }));
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-status', 'finished');
+    rerender(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toHaveTextContent('/pty/command');
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-status', 'finished');
+  });
+
+  it('starts clean for another run when keyed by run id', async () => {
+    stubApi({ 'GET /api/projects/p/runs': [], 'POST /api/runs/r1/stop': new Reply(409, { code: 'run_stopping', message: 'still stopping' }) });
+    const { rerender } = renderWithQuery(<RunView key="r1" run={run({})} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Setup' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('still stopping');
+    rerender(<RunView key="r2" run={run({ id: 'r2' })} onRemoved={() => {}} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByTestId('terminal-view')).toHaveTextContent('/api/runs/r2/pty/command');
   });
 
   it('shows a stop that timed out so the user can retry', async () => {
