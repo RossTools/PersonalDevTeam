@@ -1,6 +1,5 @@
 use crate::error::ApiError;
 use crate::routes::AppState;
-use crate::secrets::UPDATE_TOKEN;
 use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
@@ -28,12 +27,7 @@ impl From<HostSettingsError> for ApiError {
 }
 
 pub(crate) async fn token_present(st: &AppState) -> Result<bool, ApiError> {
-    let secrets = st.secrets.clone();
-    tokio::task::spawn_blocking(move || secrets.get(UPDATE_TOKEN))
-        .await
-        .map_err(ApiError::internal)?
-        .map(|t| t.is_some())
-        .map_err(ApiError::internal)
+    Ok(crate::update::read_token(st).await?.is_some())
 }
 
 pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {

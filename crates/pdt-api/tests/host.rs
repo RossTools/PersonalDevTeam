@@ -54,7 +54,7 @@ async fn settings_patch_persists_and_validates() {
 async fn token_presence_comes_from_the_secret_store() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state) = setup(tmp.path()).await;
-    state.secrets.set(pdt_api::secrets::UPDATE_TOKEN, "github_pat_x").unwrap();
+    state.secrets.set(&state.update_token_account, "github_pat_x").unwrap();
     let (_, v) = call(&app, "GET", "/api/host/settings", None).await;
     assert_eq!(v["tokenPresent"], true);
     assert!(!v.to_string().contains("github_pat_x"), "the token itself is never returned");

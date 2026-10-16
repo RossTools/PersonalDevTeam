@@ -85,6 +85,12 @@ async fn run() -> anyhow::Result<()> {
         tracing::info!(outcome = ?r.outcome, to = %r.to_version, "last update result");
         state.update.set_last_result(Some(r));
     }
+    // The stable instance's default data dir keeps the plain keychain account; any other data dir (dev instances,
+    // tests, explicit PDT_DATA_DIR) gets its own, so it never reads or deletes the stable instance's token.
+    let stable_data_dir =
+        dirs::data_local_dir().map(|root| root.join(pdt_core::brand::Profile::Stable.data_dir_name()));
+    state.update_token_account = pdt_api::secrets::update_token_account(&cfg.data_dir, stable_data_dir.as_deref());
+    pdt_api::update::sync_token_state(&state).await;
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;

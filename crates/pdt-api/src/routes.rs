@@ -87,10 +87,14 @@ pub struct AppState {
     pub activity_tick: std::time::Duration,
     /// Update checks and installs. `new` installs a disabled (unsupervised) service; pdtd replaces it.
     pub update: std::sync::Arc<crate::update::UpdateService>,
+    /// The keychain account of this instance's update token (see `secrets::update_token_account`). `new` derives it
+    /// from `data_dir` alone, so it is never the stable instance's account; pdtd sets the real one.
+    pub update_token_account: String,
 }
 
 impl AppState {
     pub fn new(store: Store, data_dir: std::path::PathBuf) -> Self {
+        let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -129,6 +133,7 @@ impl AppState {
                 false,
                 pdt_core::BUILD_VERSION,
             )),
+            update_token_account,
         }
     }
 }

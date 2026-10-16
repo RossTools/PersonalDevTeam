@@ -4,8 +4,25 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// The keychain account holding the GitHub update token.
+/// The keychain account holding the stable instance's GitHub update token. See [`update_token_account`].
 pub const UPDATE_TOKEN: &str = "update-token";
+
+/// The keychain account for the update token of the pdtd using `data_dir`: [`UPDATE_TOKEN`] for the stable instance's
+/// default data dir (`stable_data_dir`), else `update-token:<12 hex digits of the canonical data dir>`, so a dev
+/// instance or a test never reads, replaces or deletes the stable instance's token.
+pub fn update_token_account(data_dir: &std::path::Path, stable_data_dir: Option<&std::path::Path>) -> String {
+    let canonical = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let dir = canonical(data_dir);
+    if stable_data_dir.is_some_and(|s| canonical(s) == dir) {
+        return UPDATE_TOKEN.to_string();
+    }
+    // FNV-1a (64-bit): stable across builds and platforms, unlike `DefaultHasher`.
+    let hash = dir
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
+    format!("{UPDATE_TOKEN}:{:012x}", hash >> 16)
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("the OS keychain failed: {0}")]
@@ -74,6 +91,18 @@ impl SecretStore for KeyringStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_accounts_are_per_data_dir() {
+        let tmp = std::env::temp_dir();
+        let stable = tmp.join("pdt-acct-stable");
+        assert_eq!(update_token_account(&stable, Some(&stable)), UPDATE_TOKEN);
+        let other = update_token_account(&tmp.join("pdt-acct-other"), Some(&stable));
+        assert!(other.starts_with("update-token:") && other.len() == "update-token:".len() + 12, "{other}");
+        assert_eq!(other, update_token_account(&tmp.join("pdt-acct-other"), Some(&stable)), "stable across calls");
+        assert_ne!(other, update_token_account(&tmp.join("pdt-acct-third"), Some(&stable)));
+        assert_ne!(update_token_account(&stable, None), UPDATE_TOKEN, "no stable dir known: never the shared account");
+    }
 
     #[test]
     fn memory_store_roundtrip() {

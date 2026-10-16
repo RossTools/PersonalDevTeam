@@ -6,12 +6,14 @@ use pdt_core::release::{HostOs, SUMS_ASSET, Version, parse_sums, parse_version, 
 use reqwest::header::{ACCEPT, LOCATION};
 use serde::Deserialize;
 use sha2::Digest;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 pub const GITHUB_API: &str = "https://api.github.com";
 const MAX_REDIRECTS: usize = 5;
+/// SHA256SUMS lists a handful of assets; anything bigger is not ours.
+const SUMS_MAX_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Asset {
@@ -55,6 +57,8 @@ pub enum UpdateError {
     NoChecksums,
     #[error("the checksum of {0} does not match SHA256SUMS")]
     Checksum(String),
+    #[error("{0} is larger than the release says")]
+    TooLarge(String),
     #[error("{0}")]
     Io(String),
 }
@@ -85,8 +89,14 @@ pub fn parse_expiry(header: &str) -> Option<i64> {
     jiff::Timestamp::strptime("%Y-%m-%d %H:%M:%S %z", &h).ok().map(|t| t.as_millisecond())
 }
 
+/// Without the URL: a redirect hop's URL is a signed storage link, which must not reach statuses, API errors or logs.
 fn net(e: reqwest::Error) -> UpdateError {
-    UpdateError::Network(e.to_string())
+    UpdateError::Network(e.without_url().to_string())
+}
+
+#[derive(Deserialize)]
+struct ApiMessage {
+    message: String,
 }
 
 async fn check(res: reqwest::Response) -> Result<reqwest::Response, UpdateError> {
@@ -94,7 +104,12 @@ async fn check(res: reqwest::Response) -> Result<reqwest::Response, UpdateError>
         200..=299 => Ok(res),
         401 => Err(UpdateError::Unauthorized),
         404 => Err(UpdateError::NotFound),
-        code => Err(UpdateError::Http(code, res.text().await.unwrap_or_default().chars().take(200).collect())),
+        // Only GitHub's own JSON `message` is kept: a storage host's error body can echo the signed URL.
+        code => {
+            let text = res.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiMessage>(&text).map(|m| m.message).unwrap_or_default();
+            Err(UpdateError::Http(code, message.chars().take(200).collect()))
+        }
     }
 }
 
@@ -148,8 +163,21 @@ impl GitHubClient {
         })
     }
 
-    /// Streams an asset to `dest`. The API answers 200 or a redirect (fact 6); redirects are followed without the token.
+    /// Streams an asset to `dest`, refusing more than its announced size. The API answers 200 or a redirect (fact 6);
+    /// redirects are followed without the token. On failure `dest` is removed.
     pub async fn download(&self, token: &str, asset: &Asset, dest: &Path) -> Result<(), UpdateError> {
+        self.download_capped(token, asset, dest, asset.size).await
+    }
+
+    async fn download_capped(&self, token: &str, asset: &Asset, dest: &Path, max: u64) -> Result<(), UpdateError> {
+        let result = self.stream_to(token, asset, dest, max).await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(dest).await;
+        }
+        result
+    }
+
+    async fn stream_to(&self, token: &str, asset: &Asset, dest: &Path, max: u64) -> Result<(), UpdateError> {
         let mut res = self
             .api_get(&format!("releases/assets/{}", asset.id), token, "application/octet-stream")
             .send()
@@ -168,11 +196,21 @@ impl GitHubClient {
             res = self.http.get(next).header(ACCEPT, "application/octet-stream").send().await.map_err(net)?;
         }
         let res = check(res).await?;
+        let too_large = || UpdateError::TooLarge(asset.name.clone());
+        if res.content_length().is_some_and(|n| n > max) {
+            return Err(too_large());
+        }
         let io = |e: std::io::Error| UpdateError::Io(format!("writing {}: {e}", dest.display()));
         let mut file = tokio::fs::File::create(dest).await.map_err(io)?;
         let mut body = res.bytes_stream();
+        let mut written: u64 = 0;
         while let Some(chunk) = body.next().await {
-            file.write_all(&chunk.map_err(net)?).await.map_err(io)?;
+            let chunk = chunk.map_err(net)?;
+            written += chunk.len() as u64;
+            if written > max {
+                return Err(too_large());
+            }
+            file.write_all(&chunk).await.map_err(io)?;
         }
         file.flush().await.map_err(io)?;
         Ok(())
@@ -193,8 +231,25 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(hex::encode(h.finalize()))
 }
 
+/// One plain file name: a single normal path component, no separators, drive prefixes or leading dot.
+fn is_plain_file_name(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!((parts.next(), parts.next()), (Some(Component::Normal(_)), None))
+        && !name.contains(['/', '\\', ':'])
+        && !name.starts_with('.')
+}
+
+async fn sha256_of(path: &Path) -> Result<String, UpdateError> {
+    let p = path.to_path_buf();
+    tokio::task::spawn_blocking(move || sha256_file(&p))
+        .await
+        .map_err(|e| UpdateError::Io(e.to_string()))?
+        .map_err(|e| UpdateError::Io(e.to_string()))
+}
+
 /// Downloads this platform's asset of `release` into `dir` and checks it against the release's SHA256SUMS. Returns
-/// the verified file; on any failure nothing is left under the asset's name.
+/// the verified file; on any failure nothing is left under the asset's name. A file already there that matches
+/// SHA256SUMS is reused instead of downloaded again.
 pub async fn fetch_verified(
     client: &GitHubClient,
     token: &str,
@@ -204,25 +259,30 @@ pub async fn fetch_verified(
 ) -> Result<PathBuf, UpdateError> {
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
     let name = select_asset(&names, os).ok_or(UpdateError::NoAsset)?;
-    if name.contains(['/', '\\']) || name.starts_with('.') {
+    if !is_plain_file_name(name) {
         return Err(UpdateError::BadRelease(format!("asset name {name:?} is not a plain file name")));
     }
     let asset = release.assets.iter().find(|a| a.name == name).expect("selected from the list");
     let sums_asset = release.assets.iter().find(|a| a.name == SUMS_ASSET).ok_or(UpdateError::NoChecksums)?;
     tokio::fs::create_dir_all(dir).await.map_err(|e| UpdateError::Io(e.to_string()))?;
     let sums_file = dir.join(SUMS_ASSET);
-    client.download(token, sums_asset, &sums_file).await?;
+    client.download_capped(token, sums_asset, &sums_file, SUMS_MAX_BYTES).await?;
     let sums = parse_sums(&tokio::fs::read_to_string(&sums_file).await.map_err(|e| UpdateError::Io(e.to_string()))?);
     let expected = sums.get(name).cloned().ok_or_else(|| UpdateError::Checksum(name.to_string()))?;
-    let part = dir.join(format!("{name}.part"));
     let fin = dir.join(name);
+    if tokio::fs::try_exists(&fin).await.unwrap_or(false) && sha256_of(&fin).await.is_ok_and(|h| h == expected) {
+        return Ok(fin);
+    }
     let _ = tokio::fs::remove_file(&fin).await;
+    let part = dir.join(format!("{name}.part"));
     client.download(token, asset, &part).await?;
-    let p = part.clone();
-    let actual = tokio::task::spawn_blocking(move || sha256_file(&p))
-        .await
-        .map_err(|e| UpdateError::Io(e.to_string()))?
-        .map_err(|e| UpdateError::Io(e.to_string()))?;
+    let actual = match sha256_of(&part).await {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&part).await;
+            return Err(e);
+        }
+    };
     if actual != expected {
         let _ = tokio::fs::remove_file(&part).await;
         return Err(UpdateError::Checksum(name.to_string()));
