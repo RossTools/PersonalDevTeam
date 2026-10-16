@@ -22,3 +22,15 @@ pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Valu
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
+
+/// Runs `git` in `dir` (with a throwaway identity) and asserts it succeeds.
+pub fn git(dir: &std::path::Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(args)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git {args:?}");
+}

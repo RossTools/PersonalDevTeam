@@ -6,6 +6,7 @@ mod project_settings;
 mod pty_ws;
 pub mod remote;
 mod routes;
+mod runconfig;
 pub mod secrets;
 mod sessions;
 mod worktrees;

@@ -54,6 +54,9 @@ pub(crate) async fn put_settings(
     let Json(input) = payload?;
     st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let run_overrides = input.run_overrides.filter(|t| !t.trim().is_empty());
+    if let Some(t) = &run_overrides {
+        crate::runconfig::validate_overrides(t)?;
+    }
     st.store
         .put_project_settings(&id, &ProjectSettings { run_overrides, agent_credentials: input.agent_credentials })
         .await?;
