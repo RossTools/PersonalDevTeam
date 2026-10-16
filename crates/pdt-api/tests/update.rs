@@ -326,6 +326,49 @@ async fn a_dropped_install_request_still_finishes() {
     assert!(request_path(&data(tmp.path())).exists());
 }
 
+fn write_result(tmp: &std::path::Path, outcome: pdt_core::handoff::UpdateOutcome, at: i64) {
+    let r = pdt_core::handoff::UpdateResult {
+        outcome,
+        from_version: "0.1.0-local".into(),
+        to_version: "0.1.7".into(),
+        message: "Update to v0.1.7 was not installed: the running version did not stop".into(),
+        log: None,
+        at,
+    };
+    let p = pdt_core::handoff::result_path(&data(tmp));
+    std::fs::write(p, serde_json::to_vec(&r).unwrap()).unwrap();
+}
+
+/// Final review #10: pdt-host took the request and recorded a failure while this pdtd kept running (it did not
+/// stop): the next status read leaves `installing` and shows the result.
+#[tokio::test]
+async fn a_failed_hand_off_while_pdtd_keeps_running_does_not_stay_installing() {
+    use pdt_core::handoff::UpdateOutcome;
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    store_token(&state);
+    call(&app, "POST", "/api/host/update/check", None).await;
+    let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
+    assert_eq!((s, v["state"].as_str()), (StatusCode::OK, Some("installing")), "{v}");
+    let requested_at: i64 = serde_json::from_slice::<Value>(&std::fs::read(request_path(&data(tmp.path()))).unwrap())
+        .unwrap()["requestedAt"]
+        .as_i64()
+        .unwrap();
+
+    // A result from before this hand-off, with the request still waiting: still installing.
+    write_result(tmp.path(), UpdateOutcome::Failed, requested_at - 1);
+    assert_eq!(call(&app, "GET", "/api/host/update", None).await.1["state"], "installing");
+    // pdt-host took the request but has not decided yet: still installing.
+    std::fs::remove_file(request_path(&data(tmp.path()))).unwrap();
+    assert_eq!(call(&app, "GET", "/api/host/update", None).await.1["state"], "installing");
+    // pdt-host recorded the failure.
+    write_result(tmp.path(), UpdateOutcome::Failed, requested_at + 1);
+    let (_, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert_eq!(v["state"], "available", "{v}");
+    assert_eq!(v["lastResult"]["outcome"], "failed", "{v}");
+    assert!(v["lastResult"]["message"].as_str().unwrap().contains("did not stop"), "{v}");
+}
+
 #[tokio::test]
 async fn a_host_that_got_busy_during_the_download_is_asked_again() {
     let tmp = tempfile::tempdir().unwrap();

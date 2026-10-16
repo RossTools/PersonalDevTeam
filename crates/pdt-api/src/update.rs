@@ -73,6 +73,8 @@ pub struct UpdateService {
     pub(crate) release: Mutex<Option<Release>>,
     /// Held by the install task from the busy check until the hand-off (or failure).
     running: Arc<tokio::sync::Mutex<()>>,
+    /// `requested_at` of the request this pdtd handed to pdt-host, while it shows `installing`.
+    handed_off_at: Mutex<Option<i64>>,
     /// `run_update_loop`: the wait before its first check, and between checks.
     pub first_check_delay: Duration,
     pub check_interval: Duration,
@@ -105,6 +107,7 @@ impl UpdateService {
             }),
             release: Mutex::new(None),
             running: Default::default(),
+            handed_off_at: Mutex::new(None),
             first_check_delay: Duration::from_secs(30),
             check_interval: Duration::from_secs(3600),
         }
@@ -419,6 +422,7 @@ async fn download_and_hand_off(
     })?;
     prune_downloads(&downloads, &req.version);
     tracing::info!(version = %req.version, "update downloaded and verified; handing over to pdt-host");
+    *svc.handed_off_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(req.requested_at);
     let status = svc.edit(|s| s.state = UpdateState::Installing);
     reset.done = true;
     st.shutdown.notify_one();
@@ -465,7 +469,33 @@ pub async fn run_update_loop(st: AppState) {
     }
 }
 
+/// Leaves `installing` when pdt-host has taken this pdtd's request and recorded its result while this pdtd kept
+/// running (it did not stop, or the host cannot install): the result is shown and the state goes back to resting.
+/// Until then (request still waiting, or taken but not decided) nothing changes.
+fn settle_handed_off(st: &AppState) {
+    let svc = &st.update;
+    let Some(handed_off_at) = *svc.handed_off_at.lock().unwrap_or_else(|e| e.into_inner()) else { return };
+    if svc.snapshot().state != UpdateState::Installing || request_path(&st.data_dir).exists() {
+        return;
+    }
+    let Some(result) = std::fs::read(result_path(&st.data_dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<UpdateResult>(&b).ok())
+        .filter(|r| r.at >= handed_off_at)
+    else {
+        return;
+    };
+    *svc.handed_off_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    svc.edit(|s| {
+        if s.state == UpdateState::Installing {
+            s.state = resting(s);
+            s.last_result = Some(result);
+        }
+    });
+}
+
 pub(crate) async fn get_status(State(st): State<AppState>) -> Json<UpdateStatus> {
+    settle_handed_off(&st);
     refresh_policy(&st).await;
     sync_token_state(&st).await;
     Json(st.update.snapshot())
