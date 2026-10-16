@@ -41,12 +41,18 @@ pub(crate) struct Applied {
     pub(crate) added_host: Option<String>,
 }
 
+/// Runs one tailscale call on the blocking pool, bounded by `st.tailscale_timeout` so a hung CLI cannot stall
+/// startup or hold `settings_lock` (the real CLI also kills its process at its own timeout).
 async fn blocking<T: Send + 'static>(
     st: &AppState,
     f: impl FnOnce(&dyn pdt_tailscale::TailscaleApi) -> Result<T, TsError> + Send + 'static,
 ) -> Result<T, TsError> {
     let ts = st.tailscale.clone();
-    tokio::task::spawn_blocking(move || f(ts.as_ref())).await.unwrap_or_else(|e| Err(TsError::Command(e.to_string())))
+    let call = tokio::task::spawn_blocking(move || f(ts.as_ref()));
+    match tokio::time::timeout(st.tailscale_timeout, call).await {
+        Ok(joined) => joined.unwrap_or_else(|e| Err(TsError::Command(e.to_string()))),
+        Err(_) => Err(TsError::TimedOut),
+    }
 }
 
 /// Ports of other things to map alongside pdtd (web runs, Task 7).
@@ -58,9 +64,20 @@ fn applied(st: &AppState) -> std::sync::MutexGuard<'_, Applied> {
     st.remote_applied.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Applies the stored setting: serve or unserve, update the allowlist, and record the outcome. Callers that can race
-/// a settings change hold `settings_lock`; pdtd awaits it once at startup.
+/// The Host value browsers send for `https://<dns_name>:<port>/` (no port for 443).
+fn tailnet_host(dns_name: &str, https_port: u16) -> String {
+    if https_port == HOST_HTTPS_PORT { dns_name.to_string() } else { format!("{dns_name}:{https_port}") }
+}
+
+/// Applies the stored setting: serve or unserve, update the allowlist, and record the outcome. Takes
+/// `settings_lock`, so it cannot interleave with a settings change (pdtd awaits it at startup).
 pub async fn apply_remote_access(st: &AppState) -> RemoteStatus {
+    let _guard = st.settings_lock.lock().await;
+    apply_locked(st).await
+}
+
+/// [`apply_remote_access`] for callers that already hold `settings_lock`.
+pub(crate) async fn apply_locked(st: &AppState) -> RemoteStatus {
     let previous = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let out = match st.store.get_host_settings().await {
         // Without the setting, change nothing.
@@ -72,6 +89,8 @@ pub async fn apply_remote_access(st: &AppState) -> RemoteStatus {
     out
 }
 
+/// Maps the HTTPS port to pdtd and allows the tailnet name. On failure the name is withdrawn from the allowlist, so
+/// `active` and the allowlist always agree; mappings stay recorded so turning off still removes them.
 async fn enable(st: &AppState) -> RemoteStatus {
     let status = blocking(st, |t| t.status()).await;
     let mut out = RemoteStatus {
@@ -79,45 +98,56 @@ async fn enable(st: &AppState) -> RemoteStatus {
         tailscale_login: status.as_ref().ok().and_then(|s| s.self_login.clone()),
         ..Default::default()
     };
-    let s = match status {
+    let failure = match status {
+        Err(e) => Err(e),
+        Ok(s) if !s.https_enabled => Err(TsError::HttpsDisabled),
+        Ok(s) => {
+            let (https_port, target) = (st.remote_https_port, st.listen_port);
+            match serve(st, https_port, target).await {
+                Err(e) => Err(e),
+                Ok(()) => Ok((s, https_port)),
+            }
+        }
+    };
+    let (s, https_port) = match failure {
+        Ok(ok) => ok,
         Err(e) => {
+            if let Some(host) = applied(st).added_host.take() {
+                st.allowed_hosts.remove(&host);
+            }
             out.error = Some(e.to_string());
             return out;
         }
-        Ok(s) if !s.https_enabled => {
-            out.error = Some(TsError::HttpsDisabled.to_string());
-            return out;
-        }
-        Ok(s) => s,
     };
-    let port = st.listen_port;
-    if let Err(e) = blocking(st, move |t| t.serve(HOST_HTTPS_PORT, port)).await {
-        out.error = Some(e.to_string());
-        return out;
-    }
-    applied(st).served.insert(HOST_HTTPS_PORT);
     for p in extra_ports(st).await {
-        match blocking(st, move |t| t.serve(p, p)).await {
-            Ok(()) => {
-                applied(st).served.insert(p);
-            }
-            Err(e) => tracing::warn!(port = p, error = %e, "could not map a run port"),
+        if let Err(e) = serve(st, p, p).await {
+            tracing::warn!(port = p, error = %e, "could not map a run port");
         }
     }
+    let host = tailnet_host(&s.dns_name, https_port);
     {
         let mut a = applied(st);
-        if let Some(old) = a.added_host.take_if(|h| *h != s.dns_name) {
+        if let Some(old) = a.added_host.take_if(|h| *h != host) {
             st.allowed_hosts.remove(&old);
         }
-        if a.added_host.is_none() && !st.allowed_hosts.contains(&s.dns_name) {
-            st.allowed_hosts.add(&s.dns_name);
-            a.added_host = Some(s.dns_name.clone());
+        if a.added_host.is_none() && !st.allowed_hosts.contains(&host) {
+            st.allowed_hosts.add(&host);
+            a.added_host = Some(host.clone());
         }
     }
     out.active = true;
-    out.url = Some(format!("https://{}/", s.dns_name));
+    out.url = Some(format!("https://{host}/"));
     out.dns_name = Some(s.dns_name);
     out
+}
+
+/// One `tailscale serve`, recorded as this process's mapping when it succeeded or timed out (it may still land).
+async fn serve(st: &AppState, https_port: u16, target_port: u16) -> Result<(), TsError> {
+    let r = blocking(st, move |t| t.serve(https_port, target_port)).await;
+    if matches!(r, Ok(()) | Err(TsError::TimedOut)) {
+        applied(st).served.insert(https_port);
+    }
+    r
 }
 
 /// Undoes what this process did, and nothing else: no tailscale command runs when it mapped nothing.
@@ -147,6 +177,5 @@ pub(crate) async fn get_remote(State(st): State<AppState>) -> Json<RemoteStatus>
 }
 
 pub(crate) async fn refresh(State(st): State<AppState>) -> Result<Json<RemoteStatus>, ApiError> {
-    let _guard = st.settings_lock.lock().await;
     Ok(Json(apply_remote_access(&st).await))
 }

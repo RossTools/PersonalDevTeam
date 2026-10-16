@@ -66,7 +66,7 @@ pub(crate) async fn put_settings(
     }
     st.store.put_host_settings(&next).await?;
     if patch.remote_access.is_some() {
-        crate::remote::apply_remote_access(&st).await;
+        crate::remote::apply_locked(&st).await;
     }
     drop(guard);
     Ok(Json(view(&st).await?))

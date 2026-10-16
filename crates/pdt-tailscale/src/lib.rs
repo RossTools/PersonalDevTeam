@@ -1,7 +1,12 @@
 //! Thin wrapper over the `tailscale` CLI (verified fact 5). Blocking; call from `spawn_blocking` in async code.
 
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// How long one tailscale command may take before it counts as hung.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TsStatus {
@@ -25,6 +30,8 @@ pub enum TsError {
     Command(String),
     #[error("unexpected tailscale status output: {0}")]
     BadStatus(String),
+    #[error("tailscale did not answer in time")]
+    TimedOut,
 }
 
 pub trait TailscaleApi: Send + Sync {
@@ -79,11 +86,12 @@ fn classify_failure(stderr: &str) -> TsError {
 pub struct TailscaleCli {
     program: Option<PathBuf>,
     env: Vec<(String, String)>,
+    timeout: Duration,
 }
 
 impl TailscaleCli {
     pub fn new(program: PathBuf) -> Self {
-        Self { program: Some(program), env: Vec::new() }
+        Self { program: Some(program), env: Vec::new(), timeout: DEFAULT_TIMEOUT }
     }
 
     /// Finds the CLI on `login_path` (or pdtd's PATH), then in the standard install locations.
@@ -91,7 +99,7 @@ impl TailscaleCli {
         let paths = login_path.map(std::ffi::OsString::from).or_else(|| std::env::var_os("PATH"));
         let on_path = std::env::current_dir().ok().and_then(|cwd| which::which_in("tailscale", paths, cwd).ok());
         let program = on_path.or_else(|| candidates().into_iter().find(|p| p.is_file()));
-        Self { program, env: Vec::new() }
+        Self { program, env: Vec::new(), timeout: DEFAULT_TIMEOUT }
     }
 
     /// Sets a variable for every invocation (tests point the fake CLI at its files this way).
@@ -100,28 +108,66 @@ impl TailscaleCli {
         self
     }
 
+    /// Kills a command that runs longer than `timeout` ([`DEFAULT_TIMEOUT`] unless set) and reports `TimedOut`.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     fn run(&self, args: &[String]) -> Result<String, TsError> {
         let program = self.program.as_ref().ok_or(TsError::NotInstalled)?;
         let mut cmd = Command::new(program);
-        cmd.args(args).envs(self.env.iter().map(|(k, v)| (k, v)));
+        cmd.args(args)
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         no_window(&mut cmd);
-        let out = cmd.output().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 TsError::NotInstalled
             } else {
                 TsError::Command(e.to_string())
             }
         })?;
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        // Drain both pipes on their own threads so a chatty command cannot stall on a full pipe while we wait.
+        let stdout = drain(child.stdout.take());
+        let stderr = drain(child.stderr.take());
+        let deadline = Instant::now() + self.timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(TsError::TimedOut);
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(e) => return Err(TsError::Command(e.to_string())),
+            }
+        };
+        let stdout = stdout.join().unwrap_or_default();
+        let stderr = stderr.join().unwrap_or_default();
+        if status.success() {
+            Ok(String::from_utf8_lossy(&stdout).into_owned())
         } else {
-            let mut err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let mut err = String::from_utf8_lossy(&stderr).trim().to_string();
             if err.is_empty() {
-                err = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                err = String::from_utf8_lossy(&stdout).trim().to_string();
             }
             Err(classify_failure(&err))
         }
     }
+}
+
+fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut p) = pipe {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    })
 }
 
 fn candidates() -> Vec<PathBuf> {
@@ -178,17 +224,39 @@ pub mod testing {
     use super::*;
     use std::sync::Mutex;
 
-    /// An in-memory TailscaleApi that records `serve` calls as command lines and counts `status` calls, for other
-    /// crates' tests.
+    /// An in-memory TailscaleApi that records `serve` calls (failed ones too) as command lines and counts `status`
+    /// calls, for other crates' tests. It can be made slow, and `unserve` can be made to fail.
     pub struct RecordingTailscale {
         status: Mutex<Result<TsStatus, TsError>>,
         calls: Mutex<Vec<String>>,
         status_calls: Mutex<usize>,
+        delay: Mutex<Duration>,
+        unserve_error: Mutex<Option<TsError>>,
     }
 
     impl RecordingTailscale {
         pub fn new(status: Result<TsStatus, TsError>) -> Self {
-            Self { status: Mutex::new(status), calls: Mutex::new(Vec::new()), status_calls: Mutex::new(0) }
+            Self {
+                status: Mutex::new(status),
+                calls: Mutex::new(Vec::new()),
+                status_calls: Mutex::new(0),
+                delay: Mutex::new(Duration::ZERO),
+                unserve_error: Mutex::new(None),
+            }
+        }
+        /// Every later call blocks this long before answering (a slow or hung CLI).
+        pub fn set_delay(&self, delay: Duration) {
+            *self.delay.lock().unwrap() = delay;
+        }
+        /// Later `unserve` calls fail with this error (`None`: succeed again).
+        pub fn fail_unserve(&self, error: Option<TsError>) {
+            *self.unserve_error.lock().unwrap() = error;
+        }
+        fn wait(&self) {
+            let delay = *self.delay.lock().unwrap();
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
         }
         pub fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
@@ -205,15 +273,21 @@ pub mod testing {
     impl TailscaleApi for RecordingTailscale {
         fn status(&self) -> Result<TsStatus, TsError> {
             *self.status_calls.lock().unwrap() += 1;
+            self.wait();
             self.status.lock().unwrap().clone()
         }
         fn serve(&self, https_port: u16, target_port: u16) -> Result<(), TsError> {
+            self.wait();
             self.calls.lock().unwrap().push(serve_args(https_port, target_port).join(" "));
             Ok(())
         }
         fn unserve(&self, https_port: u16) -> Result<(), TsError> {
+            self.wait();
             self.calls.lock().unwrap().push(unserve_args(https_port).join(" "));
-            Ok(())
+            match self.unserve_error.lock().unwrap().clone() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
         }
     }
 }
@@ -287,6 +361,20 @@ mod tests {
         f.set_status(Err(TsError::NotInstalled));
         assert!(matches!(f.status(), Err(TsError::NotInstalled)));
         assert_eq!(f.status_calls(), 1);
+    }
+
+    #[test]
+    fn recording_fake_can_be_slow_and_fail_unserve() {
+        let f = testing::RecordingTailscale::new(Ok(parse_status(STATUS).unwrap()));
+        f.fail_unserve(Some(TsError::Command("busy".into())));
+        assert!(matches!(f.unserve(443), Err(TsError::Command(s)) if s == "busy"));
+        f.fail_unserve(None);
+        f.unserve(443).unwrap();
+        assert_eq!(f.calls(), ["serve --https=443 off", "serve --https=443 off"], "failed attempts are recorded too");
+        f.set_delay(std::time::Duration::from_millis(150));
+        let started = std::time::Instant::now();
+        f.status().unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(150));
     }
 
     #[test]

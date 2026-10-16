@@ -1,5 +1,6 @@
 use pdt_tailscale::{TailscaleApi, TailscaleCli, TsError};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 fn fake(tmp: &std::path::Path) -> (TailscaleCli, PathBuf) {
     let status = tmp.join("status.json");
@@ -39,4 +40,14 @@ fn a_stopped_daemon_and_a_missing_cli_are_typed() {
     assert!(matches!(down.status(), Err(TsError::NotRunning(_))));
     let missing = TailscaleCli::new(tmp.path().join("no-such-tailscale"));
     assert!(matches!(missing.status(), Err(TsError::NotInstalled)));
+}
+
+#[test]
+fn a_hung_cli_is_killed_after_the_timeout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (cli, _) = fake(tmp.path());
+    let slow = cli.with_env("FAKE_TAILSCALE_SLEEP_MS", "10000").with_timeout(Duration::from_millis(300));
+    let started = Instant::now();
+    assert!(matches!(slow.status(), Err(TsError::TimedOut)));
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
 }

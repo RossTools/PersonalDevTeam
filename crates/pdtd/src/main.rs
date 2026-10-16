@@ -46,6 +46,7 @@ async fn run() -> anyhow::Result<()> {
         std::sync::Arc::new(pdt_api::secrets::KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE))
     };
     state.listen_port = cfg.port;
+    state.remote_https_port = cfg.remote_https_port;
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
     // The real CLI is installed only here; `AppState::new` runs no tailscale command at all.
     state.tailscale = match &cfg.tailscale_bin {

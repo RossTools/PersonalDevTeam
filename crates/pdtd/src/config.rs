@@ -1,4 +1,5 @@
 use anyhow::{Context, bail};
+use pdt_api::remote::HOST_HTTPS_PORT;
 use pdt_core::brand::{DAEMON_BIN, Profile};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
@@ -20,6 +21,9 @@ pub struct Config {
     /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
     /// nothing, so they never reach the machine's Tailscale).
     pub tailscale_bin: Option<PathBuf>,
+    /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
+    /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
+    pub remote_https_port: u16,
 }
 
 impl Config {
@@ -57,7 +61,18 @@ impl Config {
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
         let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
-        Ok(Config { profile, port, data_dir, web_dir, allowed_hosts, owner_login, memory_secrets, tailscale_bin })
+        let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
+        Ok(Config {
+            profile,
+            port,
+            data_dir,
+            web_dir,
+            allowed_hosts,
+            owner_login,
+            memory_secrets,
+            tailscale_bin,
+            remote_https_port,
+        })
     }
 
     pub fn from_env() -> anyhow::Result<Config> {
@@ -172,6 +187,17 @@ mod tests {
         let c = Config::from_lookup(lookup(&[("PDT_TAILSCALE_BIN", "/x/fake-tailscale")]), Some("/d".into()), None)
             .unwrap();
         assert_eq!(c.tailscale_bin, Some(PathBuf::from("/x/fake-tailscale")));
+    }
+
+    #[test]
+    fn only_the_stable_port_claims_https_443() {
+        let port_of = |pairs: &[(&str, &str)]| {
+            Config::from_lookup(lookup(pairs), Some("/d".into()), None).unwrap().remote_https_port
+        };
+        assert_eq!(port_of(&[]), 443);
+        assert_eq!(port_of(&[("PDT_PROFILE", "dev")]), 7421);
+        assert_eq!(port_of(&[("PDT_PORT", "9000")]), 9000);
+        assert_eq!(port_of(&[("PDT_PROFILE", "dev"), ("PDT_PORT", "9001")]), 9001);
     }
 
     #[test]

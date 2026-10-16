@@ -53,6 +53,11 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
+    /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
+    /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
+    pub remote_https_port: u16,
+    /// The longest one tailscale command may take; a hung CLI then counts as an error.
+    pub tailscale_timeout: std::time::Duration,
     /// The last result of applying the remote-access setting.
     pub remote: std::sync::Arc<std::sync::Mutex<crate::remote::RemoteStatus>>,
     /// What remote access changed in this process (mapped ports, the allowlist entry). Turning it off undoes only
@@ -81,6 +86,8 @@ impl AppState {
             listen_port: 0,
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
+            remote_https_port: crate::remote::HOST_HTTPS_PORT,
+            tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
             remote_applied: Default::default(),
         }
