@@ -194,7 +194,8 @@ Shells have no activity.
   - **How:** PDT launches each session with `--settings <per-session file>` that adds hooks for that session only.
     The user's own settings files are never touched.
   - **Reporting:** the hooks run `pdtd hook <event>`, which reads `PDT_SESSION_ID` and `PDT_HOOK_PORT` and reports
-    over loopback.
+    over loopback. `pdtd` sets these two after it removes inherited `PDT_*` variables, so a session always reports to
+    the `pdtd` that owns it.
   - **Mapping:** `UserPromptSubmit` and `PreToolUse` mean `working`; `Notification` means `needs_you`; `Stop` means
     `idle`.
 - **Codex:**
