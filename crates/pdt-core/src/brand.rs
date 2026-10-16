@@ -1,12 +1,14 @@
 //! The single source of product naming. A rename touches this file, desktop/src-tauri/tauri.conf.json
 //! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (daemon sidecar) and
-//! scripts/release-stable.* (product name, slug, port) only.
+//! scripts/release-stable.* (product name, slug, port) only. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";
 pub const DAEMON_BIN: &str = "pdtd";
 pub const STABLE_PORT: u16 = 7420;
 pub const DEV_PORT: u16 = 7421;
+/// GitHub repository (owner/name) whose releases the desktop app updates from, through the `gh` CLI.
+pub const RELEASE_REPO: &str = "ross-game-tools/PersonalDevTeam";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {

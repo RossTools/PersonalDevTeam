@@ -305,6 +305,18 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
 /// `plan_resume_interrupted`, started by `ResumePlan::start`.
 pub struct ResumePlan(Vec<(Session, Resume)>);
 
+/// Marks a session's auto-resume attempt as over when dropped.
+struct ResumeDone<'a> {
+    st: &'a AppState,
+    id: &'a str,
+}
+
+impl Drop for ResumeDone<'_> {
+    fn drop(&mut self) {
+        self.st.finish_resume(self.id);
+    }
+}
+
 impl ResumePlan {
     pub fn len(&self) -> usize {
         self.0.len()
@@ -324,6 +336,9 @@ impl ResumePlan {
         let size = TerminalSize { cols: 120, rows: 30 };
         // Concurrently, so sessions in different folders do not wait for each other.
         let results = futures_util::future::join_all(self.0.into_iter().map(|(s, plan)| async move {
+            // Declared before the lock, so it drops after it: terminals waiting on this session are released once
+            // the attempt is over, however it ends (even a panic or a cancelled future).
+            let _done = ResumeDone { st, id: &s.id };
             let _guard = st.lock_session(&s.id).await;
             if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
                 return false;
@@ -358,6 +373,8 @@ pub async fn plan_resume_interrupted(st: &AppState) -> ResumePlan {
             return ResumePlan(Vec::new());
         }
     };
+    // Marked before pdtd serves, so a terminal reconnecting right after a restart waits for the outcome.
+    st.pending_resume.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions.iter().map(|s| s.id.clone()));
     let mut plan = Vec::new();
     for s in sessions {
         let resume = plan_resume(st, &s).await;

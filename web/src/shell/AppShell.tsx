@@ -78,7 +78,7 @@ export function AppShell() {
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             {session ? (
-              <SessionView session={session} onRemoved={() => setSessionId(null)} />
+              <SessionView session={session} polledAt={sessions.dataUpdatedAt} onRemoved={() => setSessionId(null)} />
             ) : (
               project && <p className="p-4 text-sm text-muted">Start a shell or an agent from the list.</p>
             )}

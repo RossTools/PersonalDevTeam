@@ -57,8 +57,19 @@ describe('PtySocket', () => {
     sockets[0].text(JSON.stringify({ type: 'ready' }));
     sockets[0].data('hello');
     sock.send('ls\r');
-    expect(new TextDecoder().decode(sockets[0].sent[1] as Uint8Array)).toBe('ls\r');
+    expect(sockets[0].sent[1]).toBe(JSON.stringify({ type: 'resize', cols: 100, rows: 30 })); // resent on ready
+    expect(new TextDecoder().decode(sockets[0].sent[2] as Uint8Array)).toBe('ls\r');
     expect(events).toEqual(['status:connecting', 'reset', 'status:open', 'ready', 'data:hello']);
+  });
+
+  it('sends its size again when the server says ready', () => {
+    const { sock, sockets } = setup();
+    sock.resize(100, 30);
+    sock.connect();
+    sockets[0].open();
+    sockets[0].sent.length = 0; // the size sent on open may have been swallowed by a waiting server
+    sockets[0].text(JSON.stringify({ type: 'ready' }));
+    expect(sockets[0].sent).toEqual([JSON.stringify({ type: 'resize', cols: 100, rows: 30 })]);
   });
 
   it('resets_before_replay_on_reconnect', () => {

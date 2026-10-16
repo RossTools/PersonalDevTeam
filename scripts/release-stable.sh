@@ -29,13 +29,22 @@ echo "Built $bundle"
 $build_only && exit 0
 
 dest="$HOME/Applications/$product.app"
-# Any process from the installed bundle other than pdtd means the window is still open.
-# No pipelines here: under pipefail a SIGPIPE in a pipeline would skip this guard.
+# The stable tray app (any process from the installed bundle other than pdtd) holds no state: stop it so the bundle
+# can be replaced. pdtd is stopped gracefully below. No pipelines here: under pipefail a SIGPIPE would skip this.
 procs="$(pgrep -fl "$dest/Contents/MacOS/" || true)"
-window="$(grep -v "/Contents/MacOS/pdtd" <<<"$procs" || true)"
-if [[ -n "$window" ]]; then
-  echo "Close the stable desktop window first (its sessions keep running in pdtd)." >&2
-  exit 1
+tray_pids=""
+while read -r pid cmd; do
+  if [[ -n "$pid" && "$cmd" != *"/Contents/MacOS/pdtd"* ]]; then tray_pids="$tray_pids $pid"; fi
+done <<<"$procs"
+if [[ -n "$tray_pids" ]]; then
+  echo "Stopping the stable tray app..."
+  # shellcheck disable=SC2086 # word splitting is intended: one argument per pid
+  kill $tray_pids 2>/dev/null || true
+  for _ in $(seq 1 40); do
+    # shellcheck disable=SC2086
+    kill -0 $tray_pids 2>/dev/null || break
+    sleep 0.25
+  done
 fi
 
 if up; then

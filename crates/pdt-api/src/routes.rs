@@ -31,6 +31,11 @@ pub struct AppState {
     pub(crate) codex_spawns: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
     /// Set when pdtd starts shutting down, so a background auto-resume stops launching sessions.
     pub shutting_down: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Sessions the startup auto-resume has yet to finish with (restarted, skipped or failed). A terminal that
+    /// connects to one of them waits for the outcome instead of being told it is not running.
+    pub(crate) pending_resume: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Bumped whenever `pending_resume` shrinks or shutdown starts, to wake those terminals.
+    pub(crate) resume_changed: std::sync::Arc<tokio::sync::watch::Sender<u64>>,
     /// Notified by POST /api/shutdown; pdtd's serve loop waits on it.
     pub shutdown: std::sync::Arc<tokio::sync::Notify>,
 }
@@ -46,6 +51,8 @@ impl AppState {
             codex_spawn_spacing: std::time::Duration::from_secs(5),
             codex_spawns: Default::default(),
             shutting_down: Default::default(),
+            pending_resume: Default::default(),
+            resume_changed: std::sync::Arc::new(tokio::sync::watch::channel(0).0),
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
         }
     }
@@ -57,6 +64,21 @@ impl AppState {
         let lock =
             self.session_locks.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone();
         lock.lock_owned().await
+    }
+
+    pub(crate) fn resume_pending(&self, id: &str) -> bool {
+        self.pending_resume.lock().unwrap_or_else(|e| e.into_inner()).contains(id)
+    }
+
+    /// The auto-resume is done with this session, whatever the outcome.
+    pub(crate) fn finish_resume(&self, id: &str) {
+        self.pending_resume.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        self.wake_resume_waiters();
+    }
+
+    /// Wakes terminals waiting for an auto-resume to re-check (also used when shutdown starts).
+    pub fn wake_resume_waiters(&self) {
+        self.resume_changed.send_modify(|v| *v += 1);
     }
 
     pub(crate) fn forget_session_lock(&self, id: &str) {
@@ -112,7 +134,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
 }
 
 async fn health() -> Json<Health> {
-    Json(Health { status: "ok".into(), name: PRODUCT_NAME.into(), version: env!("CARGO_PKG_VERSION").into() })
+    Json(Health { status: "ok".into(), name: PRODUCT_NAME.into(), version: pdt_core::BUILD_VERSION.into() })
 }
 
 async fn list_projects(State(st): State<AppState>) -> Result<Json<Vec<Project>>, ApiError> {

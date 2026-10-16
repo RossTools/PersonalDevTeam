@@ -76,13 +76,104 @@ pub fn ensure_daemon(
     })
 }
 
+/// The desktop app's profile. `PDT_PROFILE=dev` selects Dev; an unset (or empty) `PDT_PROFILE` selects Dev in debug
+/// builds, so a stray `cargo run` never stops, restarts or updates the stable app.
+pub fn desktop_profile(env: Option<&str>, debug_build: bool) -> Profile {
+    match env {
+        None | Some("") if debug_build => Profile::Dev,
+        v => Profile::from_env_value(v),
+    }
+}
+
+/// Asks the daemon on `port` to stop gracefully (POST /api/shutdown). Callers check it is ours first.
+pub fn request_shutdown(port: u16) -> Result<(), String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).map_err(|e| e.to_string())?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+    let req = format!(
+        "POST /api/shutdown HTTP/1.0
+Host: 127.0.0.1:{port}
+Content-Length: 0
+
+"
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    s.take(64 * 1024).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&buf);
+    let status = text.lines().next().unwrap_or("");
+    match status.split_whitespace().nth(1) {
+        Some(code) if code.starts_with('2') => Ok(()),
+        _ => Err(format!("its shutdown request answered {status:?}")),
+    }
+}
+
+/// Stops our daemon on `port` and waits until its process has exited: first the port frees, then (pdtd drains
+/// connections and closes its store before exiting) `released` reports its data-dir lock is gone, all within `timeout`.
+/// A free port is already stopped; a port held by something else is an error (we never shut down a process we don't
+/// own).
+pub fn stop_daemon(
+    port: u16,
+    probe: impl Fn(u16) -> Probe,
+    shutdown: impl FnOnce(u16) -> Result<(), String>,
+    released: impl Fn() -> bool,
+    timeout: Duration,
+) -> Result<(), String> {
+    match probe(port) {
+        Probe::Free => {}
+        Probe::Foreign(why) => {
+            return Err(format!("port {port} is held by something that is not {PRODUCT_NAME} ({why})"));
+        }
+        Probe::Ours => shutdown(port).map_err(|e| format!("could not ask {DAEMON_BIN} to stop: {e}"))?,
+    }
+    let deadline = Instant::now() + timeout;
+    let wait = |done: &dyn Fn() -> bool, what: &str| loop {
+        if done() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("{DAEMON_BIN} on port {port} did not {what} within {timeout:?}"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    wait(&|| probe(port) == Probe::Free, "stop")?;
+    wait(&released, "exit")
+}
+
+/// The data dir pdtd uses for `profile` (same rules as pdtd's config: `PDT_DATA_DIR`, else the local data dir).
+pub fn data_dir(profile: Profile) -> Option<PathBuf> {
+    match std::env::var("PDT_DATA_DIR") {
+        Ok(d) if !d.trim().is_empty() => Some(PathBuf::from(d)),
+        _ => Some(dirs::data_local_dir()?.join(profile.data_dir_name())),
+    }
+}
+
+/// True when no pdtd holds `<data_dir>/pdtd.lock`. pdtd holds that lock for its whole life, so this turns true only
+/// once the process has exited; a missing lock file or an unexpected error counts as released.
+pub fn lock_released(data_dir: &Path) -> bool {
+    let path = data_dir.join(format!("{DAEMON_BIN}.lock"));
+    let Ok(file) = std::fs::File::options().write(true).open(&path) else {
+        return true;
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            true
+        }
+        Err(std::fs::TryLockError::WouldBlock) => false,
+        Err(std::fs::TryLockError::Error(_)) => true,
+    }
+}
+
+/// `lock_released` for `profile`'s data dir.
+pub fn daemon_exited(profile: Profile) -> bool {
+    data_dir(profile).is_none_or(|d| lock_released(&d))
+}
+
 /// Where the desktop app sends a spawned daemon's stdout/stderr (startup errors land here before pdtd's own log).
 pub fn launch_log_path(profile: Profile) -> Option<PathBuf> {
-    let data_dir = match std::env::var("PDT_DATA_DIR") {
-        Ok(d) if !d.trim().is_empty() => PathBuf::from(d),
-        _ => dirs::data_local_dir()?.join(profile.data_dir_name()),
-    };
-    Some(data_dir.join("logs").join(format!("{DAEMON_BIN}-launch.log")))
+    Some(data_dir(profile)?.join("logs").join(format!("{DAEMON_BIN}-launch.log")))
 }
 
 pub fn with_log_tail(msg: String, profile: Profile) -> String {
@@ -110,7 +201,7 @@ fn pdtd_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(file))
 }
 
-/// Starts pdtd detached from this window; it keeps running after the window closes.
+/// Starts pdtd detached from the desktop app; it keeps running if the app exits.
 pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
     let mut cmd = Command::new(pdtd_path());
     let log = launch_log_path(profile).and_then(|p| {
@@ -121,7 +212,7 @@ pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
         Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
         None => (Stdio::null(), Stdio::null()),
     };
-    // Pass the port explicitly so an inherited PDT_PORT can't make the window and the daemon disagree.
+    // Pass the port explicitly so an inherited PDT_PORT can't make the app and the daemon disagree.
     cmd.env("PDT_PROFILE", if profile == Profile::Dev { "dev" } else { "stable" })
         .env("PDT_PORT", profile.port().to_string())
         .stdin(Stdio::null())
@@ -259,5 +350,96 @@ mod tests {
         assert!(msg.starts_with("boom"));
         assert!(msg.contains("line 30") && msg.contains("line 11") && !msg.contains("line 10\n"));
         assert_eq!(append_tail("boom".into(), &tmp.path().join("missing.log"), 20), "boom");
+    }
+
+    #[test]
+    fn stop_daemon_shuts_down_ours_and_waits_for_the_port_then_the_process() {
+        let calls = Cell::new(0);
+        let probe = |_| {
+            calls.set(calls.get() + 1);
+            if calls.get() < 4 { Probe::Ours } else { Probe::Free }
+        };
+        let asked = Cell::new(false);
+        let lock_checks = Cell::new(0);
+        let released = || {
+            // The port must be free before the lock is looked at.
+            assert!(calls.get() >= 4);
+            lock_checks.set(lock_checks.get() + 1);
+            lock_checks.get() >= 3
+        };
+        stop_daemon(
+            5,
+            probe,
+            |p| {
+                assert_eq!(p, 5);
+                asked.set(true);
+                Ok(())
+            },
+            released,
+            Duration::from_secs(3),
+        )
+        .unwrap();
+        assert!(asked.get());
+        assert_eq!(lock_checks.get(), 3);
+    }
+
+    #[test]
+    fn stop_daemon_leaves_free_and_foreign_ports_alone() {
+        stop_daemon(5, |_| Probe::Free, |_| panic!("must not shut down"), || true, Duration::from_millis(100)).unwrap();
+        let err =
+            stop_daemon(5, |_| Probe::Foreign("x".into()), |_| panic!("must not shut down"), || true, Duration::ZERO)
+                .unwrap_err();
+        assert!(err.contains("not Personal Dev Team"), "{err}");
+    }
+
+    #[test]
+    fn stop_daemon_reports_timeout_and_shutdown_errors() {
+        let err = stop_daemon(5, |_| Probe::Ours, |_| Ok(()), || true, Duration::from_millis(300)).unwrap_err();
+        assert!(err.contains("did not stop"), "{err}");
+        let err = stop_daemon(5, |_| Probe::Free, |_| Ok(()), || false, Duration::from_millis(300)).unwrap_err();
+        assert!(err.contains("did not exit"), "{err}");
+        let err = stop_daemon(5, |_| Probe::Ours, |_| Err("refused".into()), || true, Duration::from_millis(300))
+            .unwrap_err();
+        assert!(err.contains("could not ask pdtd to stop: refused"), "{err}");
+    }
+
+    #[test]
+    fn debug_builds_default_to_dev() {
+        assert_eq!(desktop_profile(None, true), Profile::Dev);
+        assert_eq!(desktop_profile(Some(""), true), Profile::Dev);
+        assert_eq!(desktop_profile(Some("stable"), true), Profile::Stable);
+        assert_eq!(desktop_profile(Some("dev"), true), Profile::Dev);
+        assert_eq!(desktop_profile(None, false), Profile::Stable);
+        assert_eq!(desktop_profile(Some("dev"), false), Profile::Dev);
+    }
+
+    #[test]
+    fn lock_is_released_only_when_nobody_holds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(lock_released(tmp.path()), "no lock file");
+        let path = tmp.path().join("pdtd.lock");
+        let held = std::fs::File::options().create(true).truncate(false).write(true).open(&path).unwrap();
+        held.try_lock().unwrap();
+        assert!(!lock_released(tmp.path()));
+        drop(held);
+        assert!(lock_released(tmp.path()));
+        assert!(lock_released(&tmp.path().join("missing-dir")));
+    }
+
+    #[test]
+    fn request_shutdown_posts_and_checks_status() {
+        let ok = fake_server(
+            "HTTP/1.0 202 Accepted
+
+",
+        );
+        request_shutdown(ok).unwrap();
+        let bad = fake_server(
+            "HTTP/1.0 403 Forbidden
+
+",
+        );
+        assert!(request_shutdown(bad).unwrap_err().contains("403"));
+        assert!(request_shutdown(free_port()).is_err());
     }
 }

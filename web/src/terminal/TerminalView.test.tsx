@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   term: null as null | {
@@ -107,5 +107,39 @@ describe('TerminalView', () => {
     rerender(<TerminalView sessionId="s1" sessionStatus="interrupted" />);
     rerender(<TerminalView sessionId="s1" sessionStatus="running" />);
     expect(h.sock!.retries).toBe(1);
+  });
+
+  describe('reattach safety net', () => {
+    const status = (s: string) => act(() => (h.sock!.handlers.onStatus as (s: string) => void)(s));
+    afterEach(() => vi.useRealTimers());
+
+    it('retries on a later poll even though the status never visibly changed, at most once per 5 s', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(100_000);
+      const { rerender } = render(<TerminalView sessionId="s1" sessionStatus="running" polledAt={1} />);
+      status('ended'); // the daemon restarted and the terminal connected before the session resumed
+      expect(h.sock!.retries).toBe(0);
+      rerender(<TerminalView sessionId="s1" sessionStatus="running" polledAt={2} />);
+      expect(h.sock!.retries).toBe(1);
+      status('ended'); // still not attachable
+      vi.setSystemTime(102_000);
+      rerender(<TerminalView sessionId="s1" sessionStatus="running" polledAt={3} />);
+      expect(h.sock!.retries).toBe(1); // throttled
+      vi.setSystemTime(105_500);
+      rerender(<TerminalView sessionId="s1" sessionStatus="running" polledAt={4} />);
+      expect(h.sock!.retries).toBe(2);
+    });
+
+    it('does not retry on polls while the terminal is attached or the session is not running', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(100_000);
+      const { rerender } = render(<TerminalView sessionId="s1" sessionStatus="running" polledAt={1} />);
+      status('open');
+      rerender(<TerminalView sessionId="s1" sessionStatus="running" polledAt={2} />);
+      status('ended');
+      vi.setSystemTime(110_000);
+      rerender(<TerminalView sessionId="s1" sessionStatus="finished" polledAt={3} />);
+      expect(h.sock!.retries).toBe(0);
+    });
   });
 });
