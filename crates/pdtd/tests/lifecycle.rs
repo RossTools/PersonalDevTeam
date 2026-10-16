@@ -179,3 +179,16 @@ fn a_dev_pdtd_never_updates_even_when_supervised() {
     let (status, v) = http(port, "POST", "/api/host/update/install", Some(r#"{"force":true}"#));
     assert_eq!((status, v["code"].as_str()), (409, Some("updates_disabled")), "{v}");
 }
+
+/// Final review #11: SIGHUP shuts pdtd down gracefully, like SIGTERM: it exits 0 rather than dying of the signal.
+#[cfg(unix)]
+#[test]
+fn sighup_shuts_down_gracefully() {
+    let tmp = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let mut d = start(port, &tmp.path().join("data"));
+    let status = Command::new("kill").args(["-HUP", &d.0.id().to_string()]).status().unwrap();
+    assert!(status.success());
+    let exit = wait_exit(&mut d, Duration::from_secs(20));
+    assert!(exit.success(), "a graceful shutdown exits 0, not by the signal: {exit:?}");
+}
