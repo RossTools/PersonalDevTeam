@@ -178,3 +178,75 @@ async fn session_without_a_terminal_reports_not_running_then_closes() {
     assert!(end.is_ok(), "the server closes after not_running");
     state.ptys.shutdown().await;
 }
+
+/// An interrupted session (no terminal) that the startup plan will restart, plus the held plan.
+async fn pending_session(tmp: &Path, port: u16, state: &AppState, id: &str, cwd: Option<&Path>) -> pdt_api::ResumePlan {
+    use pdt_core::session::SessionStatus;
+    let template = shell_session(tmp, port).await;
+    let mut s = state.store.get_session(&template).await.unwrap().unwrap();
+    s.id = id.into();
+    s.status = SessionStatus::Interrupted;
+    if let Some(c) = cwd {
+        s.cwd = c.to_string_lossy().into_owned();
+    }
+    state.store.insert_session(&s).await.unwrap();
+    pdt_api::plan_resume_interrupted(state).await
+}
+
+async fn next_message<S>(ws: &mut S, within: Duration) -> Option<Message>
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    match tokio::time::timeout(within, ws.next()).await {
+        Ok(Some(Ok(m))) => Some(m),
+        _ => None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_connecting_during_auto_resume_attaches_once_the_session_starts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (port, state) = serve(tmp.path()).await;
+    let plan = pending_session(tmp.path(), port, &state, "pending", None).await;
+
+    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{port}/api/sessions/pending/pty")).await.unwrap();
+    assert!(next_message(&mut ws, Duration::from_millis(500)).await.is_none(), "it waits, saying nothing");
+    assert!(!state.ptys.is_running("pending"));
+
+    assert_eq!(plan.start(&state).await, 1);
+    let (_, text) = until_first_text(&mut ws).await;
+    assert_eq!(text, r#"{"type":"ready"}"#, "attached to the resumed terminal, not told it is not running");
+    ws.send(Message::Binary(PROBE.as_bytes().to_vec().into())).await.unwrap();
+    read_until(&mut ws, "6021").await;
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_waiting_for_a_resume_that_fails_is_told_not_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (port, state) = serve(tmp.path()).await;
+    let gone = tmp.path().join("deleted folder");
+    let plan = pending_session(tmp.path(), port, &state, "doomed", Some(&gone)).await;
+
+    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{port}/api/sessions/doomed/pty")).await.unwrap();
+    assert!(next_message(&mut ws, Duration::from_millis(300)).await.is_none());
+    assert_eq!(plan.start(&state).await, 0);
+    let (_, text) = until_first_text(&mut ws).await;
+    assert_eq!(text, r#"{"type":"not_running"}"#);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_releases_terminals_waiting_for_a_resume() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (port, state) = serve(tmp.path()).await;
+    let _plan = pending_session(tmp.path(), port, &state, "held", None).await;
+
+    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{port}/api/sessions/held/pty")).await.unwrap();
+    assert!(next_message(&mut ws, Duration::from_millis(300)).await.is_none());
+    state.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+    state.wake_resume_waiters();
+    let (_, text) = until_first_text(&mut ws).await;
+    assert_eq!(text, r#"{"type":"not_running"}"#);
+    state.ptys.shutdown().await;
+}

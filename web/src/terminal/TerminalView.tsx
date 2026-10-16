@@ -6,11 +6,19 @@ import type { SessionStatus } from '../api/gen/SessionStatus';
 import { PtySocket, ptyUrl, type PtyStatus } from './ptySocket';
 import { cssVar, terminalTheme } from './theme';
 
+/** The least time between two automatic reattach attempts of one terminal. */
+const RETRY_EVERY_MS = 5000;
+
 /**
  * `sessionStatus` is the daemon's view of the session (from the polled list). When it turns `running` while this
  * view is detached from a finished process, the view reattaches by itself (e.g. after Restart or an auto-resume).
  */
-export function TerminalView({ sessionId, sessionStatus }: { sessionId: string; sessionStatus?: SessionStatus }) {
+export function TerminalView({ sessionId, sessionStatus, polledAt }: {
+  sessionId: string;
+  sessionStatus?: SessionStatus;
+  /** Changes with every poll of the session list (e.g. the query's `dataUpdatedAt`), so the status is re-checked. */
+  polledAt?: number;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const sockRef = useRef<PtySocket | null>(null);
   const [status, setStatus] = useState<PtyStatus>('connecting');
@@ -77,15 +85,19 @@ export function TerminalView({ sessionId, sessionStatus }: { sessionId: string; 
     };
   }, [sessionId]);
 
-  // Only a change of the session's status triggers this (not the socket's): a stale `running` in the list must
-  // not make a just-ended terminal reconnect in a loop.
+  // Safety net: if the terminal is ended or exited but the latest poll says the session is running, reattach. It is
+  // evaluated on every poll (the status may have flipped between two polls and never been seen to change), at most
+  // once per RETRY_EVERY_MS so a session that is not really attachable cannot make this loop.
   const statusRef = useRef(status);
   statusRef.current = status;
+  const lastRetry = useRef(0);
   useEffect(() => {
-    if (sessionStatus === 'running' && (statusRef.current === 'ended' || statusRef.current === 'exited')) {
-      sockRef.current?.retry();
-    }
-  }, [sessionStatus]);
+    if (sessionStatus !== 'running' || (statusRef.current !== 'ended' && statusRef.current !== 'exited')) return;
+    const now = Date.now();
+    if (now - lastRetry.current < RETRY_EVERY_MS) return;
+    lastRetry.current = now;
+    sockRef.current?.retry();
+  }, [sessionStatus, polledAt]);
 
   return (
     <div className="relative flex-1 min-h-0 bg-bg">

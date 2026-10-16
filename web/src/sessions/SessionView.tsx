@@ -5,7 +5,7 @@ import type { Session } from '../api/gen/Session';
 import { TerminalView } from '../terminal/TerminalView';
 import { INITIAL_SIZE, toDot } from './status';
 
-export function SessionView({ session, onRemoved }: { session: Session; onRemoved: () => void }) {
+export function SessionView({ session, polledAt, onRemoved }: { session: Session; polledAt?: number; onRemoved: () => void }) {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const kill = useMutation({ mutationFn: () => api.killSession(session.id), onSuccess: refresh });
@@ -44,7 +44,7 @@ export function SessionView({ session, onRemoved }: { session: Session; onRemove
           {session.kind === 'agent_tui' ? '; the agent resumes its last conversation' : ''}.
         </p>
       ) : (
-        <TerminalView key={session.id} sessionId={session.id} sessionStatus={session.status} />
+        <TerminalView key={session.id} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
       )}
     </div>
   );

@@ -58,7 +58,7 @@ export function BottomPanel({ project, maximized, onToggleMaximize }: {
       {!project ? (
         <p className="p-3 text-xs text-muted">Select a project to open a terminal.</p>
       ) : active ? (
-        <TerminalView key={active.id} sessionId={active.id} />
+        <TerminalView key={active.id} sessionId={active.id} sessionStatus={active.status} polledAt={sessions.dataUpdatedAt} />
       ) : (
         <p className="p-3 text-xs text-muted">No shells running. Press + to start one.</p>
       )}

@@ -39,6 +39,7 @@ pub async fn serve(listener: TcpListener, app: axum::Router, state: AppState) ->
         wait_for_signal(&st).await;
         tracing::info!("shutting down");
         st.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+        st.wake_resume_waiters();
         match st.store.mark_running_interrupted(jiff::Timestamp::now().as_millisecond()).await {
             Ok(n) => tracing::info!(sessions = n, "marked running sessions interrupted"),
             Err(e) => tracing::error!(error = %e, "failed to mark sessions interrupted"),

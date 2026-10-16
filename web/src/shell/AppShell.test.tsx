@@ -5,7 +5,9 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import { AppShell } from './AppShell';
 
 vi.mock('../terminal/TerminalView', () => ({
-  TerminalView: ({ sessionId }: { sessionId: string }) => <div data-testid="terminal-view">{sessionId}</div>,
+  TerminalView: ({ sessionId, sessionStatus, polledAt }: { sessionId: string; sessionStatus?: string; polledAt?: number }) => (
+    <div data-testid="terminal-view" data-status={sessionStatus} data-polled={polledAt}>{sessionId}</div>
+  ),
 }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -69,5 +71,19 @@ describe('AppShell', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Maximize terminal panel' }));
     expect(screen.getByRole('button', { name: 'Restore terminal panel' })).toBeInTheDocument();
     expect(screen.getAllByTestId('terminal-view')).toHaveLength(1);
+  });
+
+  it('tells both terminals the session status and when the list was last polled', async () => {
+    stubAlpha();
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Alpha' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^running\s*Shell$/ }));
+    const inWork = screen.getByRole('main').querySelector('[data-testid="terminal-view"]')!;
+    expect(inWork).toHaveAttribute('data-status', 'running');
+    expect(Number(inWork.getAttribute('data-polled'))).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Toggle terminal panel' }));
+    const panel = (await screen.findByRole('region', { name: 'Terminal panel' })).querySelector('[data-testid="terminal-view"]')!;
+    expect(panel).toHaveAttribute('data-status', 'running');
+    expect(Number(panel.getAttribute('data-polled'))).toBeGreaterThan(0);
   });
 });

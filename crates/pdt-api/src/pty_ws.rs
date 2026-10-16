@@ -29,8 +29,38 @@ pub(crate) async fn connect(
     // browser can tell "not running" from "daemon unreachable" and stop retrying.
     Ok(match st.ptys.attach(&id) {
         Ok(attachment) => ws.on_upgrade(move |socket| pump(socket, ptys, id, attachment)),
+        // The startup auto-resume has not got to this session yet: wait for it rather than report "not running".
+        Err(_) if st.resume_pending(&id) => ws.on_upgrade(move |socket| wait_for_resume(socket, st, id)),
         Err(_) => ws.on_upgrade(not_running),
     })
+}
+
+/// How long a terminal waits for the startup auto-resume to start (or give up on) its session.
+const RESUME_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Holds the connection while the session is pending auto-resume (no session lock is taken), then attaches as
+/// usual, or reports `not_running` if the resume skipped or failed it, shutdown began, or the wait ran out.
+async fn wait_for_resume(mut socket: WebSocket, st: AppState, id: String) {
+    // Subscribed before the first check, so a change in between is not missed.
+    let mut changed = st.resume_changed.subscribe();
+    let deadline = tokio::time::Instant::now() + RESUME_WAIT;
+    loop {
+        if let Ok(att) = st.ptys.attach(&id) {
+            return pump(socket, st.ptys.clone(), id, att).await;
+        }
+        if !st.resume_pending(&id) || st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return not_running(socket).await;
+        }
+        tokio::select! {
+            _ = changed.changed() => {}
+            _ = tokio::time::sleep_until(deadline) => return not_running(socket).await,
+            msg = socket.next() => match msg {
+                // The browser went away (or sent something before `ready`, which is ignored).
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => {}
+            },
+        }
+    }
 }
 
 fn control(msg: &PtyServerMessage) -> Message {

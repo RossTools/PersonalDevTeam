@@ -324,22 +324,28 @@ impl ResumePlan {
         let size = TerminalSize { cols: 120, rows: 30 };
         // Concurrently, so sessions in different folders do not wait for each other.
         let results = futures_util::future::join_all(self.0.into_iter().map(|(s, plan)| async move {
-            let _guard = st.lock_session(&s.id).await;
-            if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-                return false;
-            }
-            // Re-read under the lock: a manual Restart may have won it, or the user removed the session.
-            match st.store.get_session(&s.id).await {
-                Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => {}
-                _ => return false,
-            }
-            match restart_locked(st, &s.id, size, Some(plan)).await {
-                Ok(()) => true,
-                Err(e) => {
-                    tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted");
-                    false
+            let started = async {
+                let _guard = st.lock_session(&s.id).await;
+                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                    return false;
+                }
+                // Re-read under the lock: a manual Restart may have won it, or the user removed the session.
+                match st.store.get_session(&s.id).await {
+                    Ok(Some(c)) if c.status == SessionStatus::Interrupted && !st.ptys.is_running(&c.id) => {}
+                    _ => return false,
+                }
+                match restart_locked(st, &s.id, size, Some(plan)).await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        tracing::warn!(session = %s.id, error = ?e, "could not resume session; it stays interrupted");
+                        false
+                    }
                 }
             }
+            .await;
+            // Done (the lock is released): terminals waiting on this session can attach or give up.
+            st.finish_resume(&s.id);
+            started
         }))
         .await;
         results.into_iter().filter(|ok| *ok).count()
@@ -358,6 +364,8 @@ pub async fn plan_resume_interrupted(st: &AppState) -> ResumePlan {
             return ResumePlan(Vec::new());
         }
     };
+    // Marked before pdtd serves, so a terminal reconnecting right after a restart waits for the outcome.
+    st.pending_resume.lock().unwrap_or_else(|e| e.into_inner()).extend(sessions.iter().map(|s| s.id.clone()));
     let mut plan = Vec::new();
     for s in sessions {
         let resume = plan_resume(st, &s).await;
