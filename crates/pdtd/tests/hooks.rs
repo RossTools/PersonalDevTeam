@@ -140,7 +140,7 @@ fn hook_events_change_a_sessions_activity() {
     assert_eq!(activity()["activity"], "working");
     hook(&["claude", "Stop"], &env, "{}");
     let s = activity();
-    assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)));
+    assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)), "{s}");
     assert_eq!(http(port, "POST", &format!("/api/sessions/{id}/view"), None).0, 204);
     assert_eq!(activity()["unseen"], false);
     hook(&["claude", "Notification"], &env, r#"{"notification_type":"permission_prompt","message":"m"}"#);
