@@ -3178,6 +3178,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdt-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "hex",
+ "jiff",
+ "pdt-core",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+]
+
+[[package]]
 name = "pdt-store"
 version = "0.1.0"
 dependencies = [
