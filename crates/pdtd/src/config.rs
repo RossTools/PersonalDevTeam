@@ -13,6 +13,10 @@ pub struct Config {
     pub web_dir: Option<PathBuf>,
     /// Host header values accepted by the API (DNS-rebinding guard).
     pub allowed_hosts: Vec<String>,
+    /// `PDT_OWNER_LOGIN`: the Tailscale login allowed in (dev instances get it from their run configuration).
+    pub owner_login: Option<String>,
+    /// `PDT_SECRET_STORE=memory`: keep secrets in memory (tests); otherwise the OS keychain.
+    pub memory_secrets: bool,
 }
 
 impl Config {
@@ -47,7 +51,9 @@ impl Config {
         if let Some(extra) = lookup("PDT_ALLOWED_HOSTS") {
             allowed_hosts.extend(extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from));
         }
-        Ok(Config { profile, port, data_dir, web_dir, allowed_hosts })
+        let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
+        let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
+        Ok(Config { profile, port, data_dir, web_dir, allowed_hosts, owner_login, memory_secrets })
     }
 
     pub fn from_env() -> anyhow::Result<Config> {
@@ -140,6 +146,19 @@ mod tests {
         assert!(c.allowed_hosts.contains(&"127.0.0.1:5173".to_string()));
         let stable = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
         assert!(!stable.allowed_hosts.iter().any(|h| h.ends_with(":5173")));
+    }
+
+    #[test]
+    fn owner_and_secret_store_from_env() {
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert_eq!((c.owner_login, c.memory_secrets), (None, false));
+        let c = Config::from_lookup(
+            lookup(&[("PDT_OWNER_LOGIN", " me@example.com "), ("PDT_SECRET_STORE", "memory")]),
+            Some("/d".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!((c.owner_login.as_deref(), c.memory_secrets), (Some("me@example.com"), true));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use tower::ServiceExt;
 
 async fn app(tmp: &Path, web_dir: Option<std::path::PathBuf>) -> axum::Router {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    router(AppState::new(store), web_dir)
+    router(AppState::new(store, tmp.join("data")), web_dir)
 }
 
 async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, String) {

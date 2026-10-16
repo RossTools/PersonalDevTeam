@@ -1,7 +1,9 @@
 mod error;
+mod host;
 mod host_guard;
 mod pty_ws;
 mod routes;
+pub mod secrets;
 mod sessions;
 mod worktrees;
 

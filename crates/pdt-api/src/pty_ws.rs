@@ -174,7 +174,7 @@ mod tests {
 
     async fn state() -> (AppState, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
-        (AppState::new(Store::open(&tmp.path().join("pdt.db")).await.unwrap()), tmp)
+        (AppState::new(Store::open(&tmp.path().join("pdt.db")).await.unwrap(), tmp.path().join("data")), tmp)
     }
 
     fn spec(id: &str) -> pdt_agents::SpawnSpec {

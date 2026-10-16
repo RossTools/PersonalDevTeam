@@ -38,10 +38,18 @@ pub struct AppState {
     pub(crate) resume_changed: std::sync::Arc<tokio::sync::watch::Sender<u64>>,
     /// Notified by POST /api/shutdown; pdtd's serve loop waits on it.
     pub shutdown: std::sync::Arc<tokio::sync::Notify>,
+    /// pdtd's data directory (runs, per-session agent settings, update downloads).
+    pub data_dir: std::path::PathBuf,
+    /// Where secrets live. pdtd sets the keychain store; `new` uses an in-memory one (tests).
+    pub secrets: std::sync::Arc<dyn crate::secrets::SecretStore>,
+    /// `PDT_OWNER_LOGIN`: when set, it is the owner and Settings shows it read-only.
+    pub owner_from_env: Option<String>,
+    /// Serializes read-modify-write of host settings and the side effects applied with them.
+    pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: Store, data_dir: std::path::PathBuf) -> Self {
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -54,6 +62,10 @@ impl AppState {
             pending_resume: Default::default(),
             resume_changed: std::sync::Arc::new(tokio::sync::watch::channel(0).0),
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
+            data_dir,
+            secrets: std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
+            owner_from_env: None,
+            settings_lock: Default::default(),
         }
     }
 }
@@ -109,6 +121,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .route("/shutdown", axum::routing::post(request_shutdown))
+        .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))

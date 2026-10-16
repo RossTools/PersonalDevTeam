@@ -1,9 +1,11 @@
 mod error;
+mod host;
 mod migrate;
 mod sessions;
 mod worktrees;
 
 pub use error::StoreError;
+pub use host::ProjectSettings;
 
 use pdt_core::project::Project;
 use sqlx::migrate::Migrator;

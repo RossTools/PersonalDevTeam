@@ -38,7 +38,13 @@ async fn run() -> anyhow::Result<()> {
     if interrupted > 0 {
         tracing::info!(sessions = interrupted, "sessions from the previous run are now interrupted");
     }
-    let state = AppState::new(store.clone());
+    let mut state = AppState::new(store.clone(), cfg.data_dir.clone());
+    state.owner_from_env = cfg.owner_login.clone();
+    state.secrets = if cfg.memory_secrets {
+        std::sync::Arc::new(pdt_api::secrets::MemorySecretStore::default())
+    } else {
+        std::sync::Arc::new(pdt_api::secrets::KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE))
+    };
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;

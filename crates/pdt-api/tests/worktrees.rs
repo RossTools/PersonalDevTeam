@@ -40,7 +40,7 @@ async fn setup(tmp: &Path) -> (axum::Router, String, std::path::PathBuf) {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let app = router(AppState::new(store), None);
+    let app = router(AppState::new(store, tmp.join("data")), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED);
