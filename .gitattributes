@@ -2,3 +2,4 @@
 *.png binary
 *.ico binary
 *.icns binary
+crates/pdt-agents/tests/fixtures/*.txt -text
