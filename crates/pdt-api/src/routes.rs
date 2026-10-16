@@ -69,6 +69,11 @@ pub struct AppState {
     pub(crate) run_controls: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::run_manager::RunControl>>>,
     >,
+    /// Serializes run starts (limit check, port choice, worktree and row creation), so concurrent starts can neither
+    /// exceed the run limit nor pick the same port.
+    pub(crate) run_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
+    pub run_stop_wait: std::time::Duration,
 }
 
 impl AppState {
@@ -98,6 +103,8 @@ impl AppState {
             remote: Default::default(),
             remote_applied: Default::default(),
             run_controls: Default::default(),
+            run_start_lock: Default::default(),
+            run_stop_wait: std::time::Duration::from_secs(20),
         }
     }
 }
@@ -133,6 +140,20 @@ impl AppState {
     /// Wakes terminals waiting for an auto-resume to re-check (also used when shutdown starts).
     pub fn wake_resume_waiters(&self) {
         self.resume_changed.send_modify(|v| *v += 1);
+    }
+
+    /// Kills a terminal off the async runtime: on Windows this waits for `taskkill` to end the process tree.
+    pub(crate) async fn kill_pty(&self, id: &str) -> Result<(), pdt_agents::PtyError> {
+        let (ptys, id) = (self.ptys.clone(), id.to_string());
+        tokio::task::spawn_blocking(move || ptys.kill(&id))
+            .await
+            .unwrap_or_else(|e| Err(pdt_agents::PtyError::Io(e.to_string())))
+    }
+
+    /// Forgets a terminal (killing it if it still runs) off the async runtime, like [`AppState::kill_pty`].
+    pub(crate) async fn remove_pty(&self, id: &str) {
+        let (ptys, id) = (self.ptys.clone(), id.to_string());
+        let _ = tokio::task::spawn_blocking(move || ptys.remove(&id)).await;
     }
 
     pub(crate) fn forget_session_lock(&self, id: &str) {

@@ -154,6 +154,8 @@ fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
     std::fs::create_dir_all(repo.join(".pdt")).unwrap();
     assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
     std::fs::write(repo.join(".pdt").join("project.toml"), RUN_CONFIG).unwrap();
+    let (_, settings) = http(port, "GET", "/api/host/settings", None);
+    assert_eq!(settings["settings"]["runPorts"], serde_json::json!({"start": 8500, "end": 8599}), "dev defaults");
     let base = free_port().min(65000);
     let body = serde_json::json!({"runPorts": {"start": base, "end": base + 39}}).to_string();
     assert_eq!(http(port, "PUT", "/api/host/settings", Some(&body)).0, 200);

@@ -35,7 +35,11 @@ async fn run() -> anyhow::Result<()> {
         tracing::warn!("the web UI is not served (no web dir found); set PDT_WEB_DIR to the built web/dist directory");
     }
     let db_path = cfg.data_dir.join("pdt.db");
-    let store = Store::open(&db_path).await.with_context(|| format!("opening database {}", db_path.display()))?;
+    let store = Store::open(&db_path)
+        .await
+        .with_context(|| format!("opening database {}", db_path.display()))?
+        // The dev profile's runs default to their own port range, apart from the stable instance's.
+        .with_host_defaults(pdt_core::host::HostSettings::for_profile(cfg.profile));
     let interrupted = store.mark_running_interrupted(jiff::Timestamp::now().as_millisecond()).await?;
     if interrupted > 0 {
         tracing::info!(sessions = interrupted, "sessions from the previous run are now interrupted");

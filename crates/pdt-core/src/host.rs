@@ -1,5 +1,6 @@
 //! Per-host settings (spec §6). Pure: pdt-store stores them, pdt-api edits them.
 
+use crate::brand::Profile;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -43,6 +44,8 @@ pub struct PortRange {
 }
 
 pub const DEFAULT_RUN_PORTS: PortRange = PortRange { start: 8400, end: 8499 };
+/// The dev instance's default, apart from the stable one's so their runs never compete for ports or mappings.
+pub const DEV_RUN_PORTS: PortRange = PortRange { start: 8500, end: 8599 };
 pub const DEFAULT_MAX_RUNS: u32 = 4;
 const MAX_RUNS_LIMIT: u32 = 32;
 const MAX_PORTS_IN_RANGE: u32 = 1000;
@@ -109,6 +112,15 @@ pub enum HostSettingsError {
 }
 
 impl HostSettings {
+    /// The settings a host starts with before anything is stored: the defaults, with the dev profile's own run
+    /// port range.
+    pub fn for_profile(profile: Profile) -> Self {
+        match profile {
+            Profile::Stable => Self::default(),
+            Profile::Dev => Self { run_ports: DEV_RUN_PORTS, ..Self::default() },
+        }
+    }
+
     pub fn apply(&self, p: &HostSettingsPatch) -> Result<HostSettings, HostSettingsError> {
         let mut s = self.clone();
         if let Some(v) = p.remote_access {
@@ -166,6 +178,16 @@ mod tests {
         assert_eq!(s.run_ports, PortRange { start: 8400, end: 8499 });
         assert_eq!(s.max_concurrent_runs, 4);
         assert_eq!(s.agent_credentials, CredentialPolicy::Subscription);
+    }
+
+    /// The dev instance's runs default to their own port range, so they never collide with (or take over the
+    /// Tailscale mappings of) the stable instance's runs on the same machine.
+    #[test]
+    fn dev_defaults_use_their_own_run_ports() {
+        assert_eq!(HostSettings::for_profile(Profile::Stable), HostSettings::default());
+        let dev = HostSettings::for_profile(Profile::Dev);
+        assert_eq!(dev.run_ports, PortRange { start: 8500, end: 8599 });
+        assert_eq!(HostSettings { run_ports: DEFAULT_RUN_PORTS, ..dev }, HostSettings::default(), "only the ports");
     }
 
     #[test]

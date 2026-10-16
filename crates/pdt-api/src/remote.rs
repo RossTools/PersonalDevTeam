@@ -55,9 +55,11 @@ async fn blocking<T: Send + 'static>(
     }
 }
 
-/// Web runs' ports, mapped alongside pdtd while remote access is active.
-pub(crate) async fn extra_ports(st: &AppState) -> Vec<u16> {
-    st.store.list_active_runs().await.map(|v| v.into_iter().filter_map(|r| r.port).collect()).unwrap_or_default()
+/// The ports of the web runs this process is driving, mapped alongside pdtd while remote access is active. Rows a
+/// previous pdtd left are not included until they are resumed: their old ports may now belong to the machine's
+/// other instance.
+fn extra_ports(st: &AppState) -> Vec<u16> {
+    crate::run_manager::driven_web_runs(st).into_iter().map(|(_, p)| p).collect()
 }
 
 /// Maps a web run's port to itself while remote access is active, recording it as this process's mapping (so
@@ -112,6 +114,9 @@ pub(crate) async fn apply_locked(st: &AppState) -> RemoteStatus {
         Ok(s) if s.remote_access => enable(st).await,
         Ok(_) => disable(st, previous).await,
     };
+    // Running web runs' links follow the outcome (their ports were mapped or unmapped above).
+    let tailnet = out.active.then_some(out.dns_name.as_deref()).flatten();
+    crate::run_manager::relink_runs(st, tailnet).await;
     *st.remote.lock().unwrap_or_else(|e| e.into_inner()) = out.clone();
     out
 }
@@ -146,7 +151,7 @@ async fn enable(st: &AppState) -> RemoteStatus {
             return out;
         }
     };
-    for p in extra_ports(st).await {
+    for p in extra_ports(st) {
         if let Err(e) = serve(st, p, p).await {
             tracing::warn!(port = p, error = %e, "could not map a run port");
         }

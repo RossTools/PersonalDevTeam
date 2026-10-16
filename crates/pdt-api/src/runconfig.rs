@@ -74,8 +74,17 @@ fn effective(file: Option<&str>, overrides: Option<&str>) -> Result<RunConfig, R
 
 /// The effective configuration for a run in `checkout`.
 pub(crate) async fn load_effective(st: &AppState, project_id: &str, checkout: &FsPath) -> Result<RunConfig, ApiError> {
+    effective_for_file(st, project_id, read_file(checkout)?.as_deref()).await
+}
+
+/// The effective configuration for a checkout whose file text is `file` (e.g. read from a branch with git).
+pub(crate) async fn effective_for_file(
+    st: &AppState,
+    project_id: &str,
+    file: Option<&str>,
+) -> Result<RunConfig, ApiError> {
     let overrides = st.store.get_project_settings(project_id).await?.run_overrides;
-    Ok(effective(read_file(checkout)?.as_deref(), overrides.as_deref())?)
+    Ok(effective(file, overrides.as_deref())?)
 }
 
 /// Checks override text before it is stored.

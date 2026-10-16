@@ -174,6 +174,34 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     matches!(git_with_env(repo, &["rev-parse", "--verify", "--quiet", &r], &[]), Ok(Ok(s)) if !s.is_empty())
 }
 
+fn ref_exists(repo: &Path, full_ref: &str) -> Result<bool, GitError> {
+    Ok(matches!(git_with_env(repo, &["rev-parse", "--verify", "--quiet", full_ref], &[])?, Ok(s) if !s.is_empty()))
+}
+
+/// The text of `path` (relative, `/`-separated) at the tip of `branch` (the local branch, else `origin/<branch>`),
+/// without checking it out. None when the branch has no such file.
+pub fn branch_file(repo: &Path, branch: &str, path: &str) -> Result<Option<String>, GitError> {
+    check_branch_name(repo, branch)?;
+    let local = format!("refs/heads/{branch}");
+    let tip = if ref_exists(repo, &local)? {
+        local
+    } else {
+        let remote = format!("refs/remotes/origin/{branch}");
+        if !ref_exists(repo, &remote)? {
+            return Err(GitError::UnknownRef(branch.to_string()));
+        }
+        remote
+    };
+    let object = format!("{tip}:{path}");
+    if !ref_exists(repo, &object)? {
+        return Ok(None);
+    }
+    match git_with_env(repo, &["cat-file", "blob", &object], &[])? {
+        Ok(text) => Ok(Some(text)),
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
 /// Checks out an existing branch in a new worktree at `path`. A branch that exists only on `origin` becomes a local
 /// branch tracking it. Returns the branch's head commit.
 pub fn add_worktree_for_branch(repo: &Path, path: &Path, branch: &str) -> Result<String, GitError> {
@@ -425,6 +453,26 @@ mod tests {
         assert!(find("HEAD").is_none(), "origin/HEAD is not a branch");
         assert!(branch_exists(&clone, "local-only"));
         assert!(!branch_exists(&clone, "feature/remote"), "remote-only is not local");
+    }
+
+    #[test]
+    fn a_file_on_a_branch_without_checking_it_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        repo_with_commit(&origin);
+        git_ok(&origin, &["checkout", "-q", "-b", "feature/remote"]);
+        std::fs::create_dir_all(origin.join(".pdt")).unwrap();
+        std::fs::write(origin.join(".pdt").join("project.toml"), "remote = 1\n").unwrap();
+        git_ok(&origin, &["add", "."]);
+        git_ok(&origin, &["commit", "-q", "-m", "config"]);
+        git_ok(&origin, &["checkout", "-q", "main"]);
+        let clone = tmp.path().join("clone");
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&origin).arg(&clone).status().unwrap().success());
+        git_ok(&clone, &["branch", "local"]);
+        let file = ".pdt/project.toml";
+        assert_eq!(branch_file(&clone, "feature/remote", file).unwrap().as_deref(), Some("remote = 1"));
+        assert_eq!(branch_file(&clone, "local", file).unwrap(), None, "no such file on the branch");
+        assert!(matches!(branch_file(&clone, "nope", file), Err(GitError::UnknownRef(_))));
     }
 
     #[test]

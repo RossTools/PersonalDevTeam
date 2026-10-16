@@ -69,6 +69,11 @@ pub enum RunConfigError {
     MissingCommand(String),
     #[error("every run and test needs a name")]
     EmptyName,
+    #[error(
+        "\"{0}\" cannot be a run or test name: it is also a folder name, so it cannot be `.` or `..` or contain \
+         `/ \\ : < > | \" ? *` or control characters"
+    )]
+    BadName(String),
     #[error("the name \"{0}\" is used twice")]
     DuplicateName(String),
     #[error("\"{0}\" is not a valid environment variable name")]
@@ -118,10 +123,18 @@ fn valid_env_name(n: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// A name is also a folder name (the run's data folder), so it must be one on every OS and stay where it is put.
+fn valid_name(n: &str) -> bool {
+    n != "." && n != ".." && !n.chars().any(|c| c.is_control() || "/\\:<>|\"?*".contains(c))
+}
+
 fn finish(e: EntryFile, test: bool) -> Result<RunDef, RunConfigError> {
     let name = e.name.trim().to_string();
     if name.is_empty() {
         return Err(RunConfigError::EmptyName);
+    }
+    if !valid_name(&name) {
+        return Err(RunConfigError::BadName(name));
     }
     let command =
         e.command.filter(|c| !c.trim().is_empty()).ok_or_else(|| RunConfigError::MissingCommand(name.clone()))?;
@@ -312,6 +325,34 @@ command = "cargo run"
         assert_eq!(merge(Some(bad_env), None), Err(RunConfigError::BadEnvName("A=B".into())));
         let web_test = parse("[[test]]\nname = \"t\"\ncommand = \"x\"\nweb = true\n", Source::File).unwrap();
         assert_eq!(merge(Some(web_test), None), Err(RunConfigError::WebTest("t".into())));
+    }
+
+    /// A name becomes a folder under the run data dir: it must not climb out of it or be unusable on any OS.
+    #[test]
+    fn names_that_are_not_safe_folder_names_are_rejected() {
+        for bad in [".", "..", "a/b", "a\\b", "c:", "a<b", "a>b", "a|b", "a\"b", "a?b", "a*b", "a\u{1}b", "a\tb"] {
+            let text = format!("[[run]]\nname = {}\ncommand = \"x\"\n", toml_string(bad));
+            let cfg = parse(&text, Source::File).unwrap();
+            assert_eq!(merge(Some(cfg), None), Err(RunConfigError::BadName(bad.into())), "{bad:?}");
+        }
+        for good in ["web", "web 2", "api.v1", "my-test_1", "é"] {
+            let text = format!("[[test]]\nname = {}\ncommand = \"x\"\n", toml_string(good));
+            assert!(merge(Some(parse(&text, Source::File).unwrap()), None).is_ok(), "{good:?}");
+        }
+    }
+
+    fn toml_string(s: &str) -> String {
+        let mut out = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
     }
 
     fn vars() -> RunVars {

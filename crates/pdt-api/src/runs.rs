@@ -9,8 +9,10 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
+use pdt_core::brand::PROJECT_CONFIG_FILE;
+use pdt_core::project::Project;
 use pdt_core::run::{NewRun, Run, RunKind, RunState, RunStep, pty_id, run_data_dir};
-use pdt_core::runconfig::RunDef;
+use pdt_core::runconfig::{RunConfig, RunDef};
 use pdt_core::worktree::{WORKTREES_DIR, Worktree, worktree_path};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -69,25 +71,63 @@ pub(crate) async fn branches(
     Ok(Json(list.into_iter().map(|b| Branch { name: b.name, local: b.local }).collect()))
 }
 
-/// Resolves where a new run goes: an existing worktree, a branch (creating its worktree), or the main checkout.
-async fn place(
-    st: &AppState,
-    project: &pdt_core::project::Project,
-    input: &NewRun,
-) -> Result<Option<String>, ApiError> {
+/// Where a new run goes.
+enum Place {
+    Worktree(String),
+    Main,
+    /// A branch with no worktree yet: one is created once the start is allowed.
+    NewBranch(String),
+}
+
+/// Resolves where a new run goes without changing anything.
+async fn place(st: &AppState, project: &Project, input: &NewRun) -> Result<Place, ApiError> {
     if let Some(w) = &input.worktree_id {
-        return Ok(Some(w.clone()));
+        return Ok(Place::Worktree(w.clone()));
     }
-    let Some(branch) = input.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) else { return Ok(None) };
+    let Some(branch) = input.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) else { return Ok(Place::Main) };
     if let Some(wt) = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch) {
-        return Ok(Some(wt.id));
+        return Ok(Place::Worktree(wt.id));
     }
     let (_, main_branch) = crate::runconfig::checkout_dir(st, project, None).await?;
     if main_branch == branch {
-        return Ok(None);
+        return Ok(Place::Main);
+    }
+    Ok(Place::NewBranch(branch.to_string()))
+}
+
+/// The effective configuration where the run goes; for a branch without a worktree, read from the branch with git.
+async fn config_for(st: &AppState, project: &Project, place: &Place) -> Result<RunConfig, ApiError> {
+    let worktree_id = match place {
+        Place::Worktree(id) => Some(id.as_str()),
+        Place::Main => None,
+        Place::NewBranch(branch) => {
+            let (repo, b) = (PathBuf::from(&project.repo_path), branch.clone());
+            let file = tokio::task::spawn_blocking(move || pdt_git::branch_file(&repo, &b, PROJECT_CONFIG_FILE))
+                .await
+                .map_err(ApiError::internal)??;
+            return crate::runconfig::effective_for_file(st, &project.id, file.as_deref()).await;
+        }
+    };
+    let (cwd, _) = crate::runconfig::checkout_dir(st, project, worktree_id).await?;
+    crate::runconfig::load_effective(st, &project.id, &cwd).await
+}
+
+/// The worktree for `branch`: an existing one, else a new one at `.worktrees/<branch>`. Callers hold
+/// `run_start_lock`.
+async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<String, ApiError> {
+    let existing = st.store.list_worktrees(&project.id).await?;
+    if let Some(wt) = existing.iter().find(|w| w.branch == branch) {
+        return Ok(wt.id.clone());
     }
     let repo = PathBuf::from(&project.repo_path);
     let path = worktree_path(&repo, branch);
+    let path_str = path.to_string_lossy().into_owned();
+    if path.exists() || existing.iter().any(|w| w.path == path_str) {
+        return Err(conflict(
+            "worktree_path_taken",
+            format!("the worktree folder {path_str} is already in use (by another branch with a similar name)"),
+        ));
+    }
     let (b, target) = (branch.to_string(), path.clone());
     let base_commit = tokio::task::spawn_blocking(move || {
         pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
@@ -99,12 +139,43 @@ async fn place(
         id: uuid::Uuid::now_v7().to_string(),
         project_id: project.id.clone(),
         branch: branch.to_string(),
-        path: path.to_string_lossy().into_owned(),
+        path: path_str,
         base_commit,
         created_at: now_ms(),
     };
     st.store.insert_worktree(&wt).await?;
-    Ok(Some(wt.id))
+    Ok(wt.id)
+}
+
+fn still_stopping() -> ApiError {
+    conflict("run_stopping", "the run has not stopped yet; try again in a moment")
+}
+
+/// Makes room for one more run under the host's maximum, stopping `stop_run_id` when the user confirmed that.
+/// Callers hold `run_start_lock`.
+async fn check_run_limit(st: &AppState, stop_run_id: Option<&str>) -> Result<(), ApiError> {
+    let settings = st.store.get_host_settings().await?;
+    let active: Vec<Run> = st.store.list_active_runs().await?.into_iter().filter(|r| r.kind == RunKind::Run).collect();
+    if (active.len() as u32) < settings.max_concurrent_runs {
+        return Ok(());
+    }
+    match stop_run_id.filter(|id| active.iter().any(|r| r.id == *id)) {
+        Some(id) if run_manager::stop(st, id, None).await => Ok(()),
+        Some(_) => Err(still_stopping()),
+        None => {
+            let oldest = &active[0];
+            Err(conflict(
+                "too_many_runs",
+                format!(
+                    "{} runs are active (the maximum is {}). Stop \"{} · {}\" to start this one?",
+                    active.len(),
+                    settings.max_concurrent_runs,
+                    oldest.name,
+                    oldest.branch
+                ),
+            ))
+        }
+    }
 }
 
 pub(crate) async fn create(
@@ -114,36 +185,23 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Run>), ApiError> {
     let Json(input) = payload?;
     let project = st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let worktree_id = place(&st, &project, &input).await?;
-    let (cwd, branch) = crate::runconfig::checkout_dir(&st, &project, worktree_id.as_deref()).await?;
-    let cfg = crate::runconfig::load_effective(&st, &project.id, &cwd).await?;
+    // Everything that can refuse the start comes before anything is created.
+    let place = place(&st, &project, &input).await?;
+    let cfg = config_for(&st, &project, &place).await?;
     let list = if input.kind == RunKind::Test { &cfg.tests } else { &cfg.runs };
     let def = list.iter().find(|d| d.name == input.name).cloned().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, "unknown_run", format!("the configuration has no \"{}\"", input.name))
     })?;
+    let _start = st.run_start_lock.lock().await;
     if input.kind == RunKind::Run {
-        let settings = st.store.get_host_settings().await?;
-        let active: Vec<Run> =
-            st.store.list_active_runs().await?.into_iter().filter(|r| r.kind == RunKind::Run).collect();
-        if active.len() as u32 >= settings.max_concurrent_runs {
-            match input.stop_run_id.as_deref().filter(|id| active.iter().any(|r| r.id == *id)) {
-                Some(id) => run_manager::stop(&st, id, None).await,
-                None => {
-                    let oldest = &active[0];
-                    return Err(conflict(
-                        "too_many_runs",
-                        format!(
-                            "{} runs are active (the maximum is {}). Stop \"{} · {}\" to start this one?",
-                            active.len(),
-                            settings.max_concurrent_runs,
-                            oldest.name,
-                            oldest.branch
-                        ),
-                    ));
-                }
-            }
-        }
+        check_run_limit(&st, input.stop_run_id.as_deref()).await?;
     }
+    let worktree_id = match &place {
+        Place::Worktree(id) => Some(id.clone()),
+        Place::Main => None,
+        Place::NewBranch(branch) => Some(worktree_for(&st, &project, branch).await?),
+    };
+    let (cwd, branch) = crate::runconfig::checkout_dir(&st, &project, worktree_id.as_deref()).await?;
     let port =
         if def.web { Some(run_manager::allocate_port(&st, None, None).await.ok_or_else(no_free_port)?) } else { None };
     let data_dir =
@@ -173,18 +231,24 @@ pub(crate) async fn create(
 
 pub(crate) async fn stop(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     load(&st, &id).await?;
-    run_manager::stop(&st, &id, None).await;
+    if !run_manager::stop(&st, &id, None).await {
+        return Err(still_stopping());
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub(crate) async fn restart(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Run>, ApiError> {
     let run = load(&st, &id).await?;
-    if run.state.is_active() {
-        run_manager::stop(&st, &id, None).await;
+    if run.state.is_active() && !run_manager::stop(&st, &id, None).await {
+        return Err(still_stopping());
     }
     let def =
         definition_for(&st, &run).await.map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", m))?;
+    let _start = st.run_start_lock.lock().await;
     let mut run = load(&st, &id).await?;
+    if run.state.is_active() {
+        return Err(conflict("run_active", "the run was started again meanwhile"));
+    }
     if def.web {
         let p = run_manager::allocate_port(&st, run.port, Some(&id)).await.ok_or_else(no_free_port)?;
         let url = run_manager::run_url(&st, p);
@@ -228,7 +292,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
         return Err(conflict("run_active", "stop the run before removing it"));
     }
     for step in [RunStep::Setup, RunStep::Command] {
-        st.ptys.remove(&pty_id(&id, step));
+        st.remove_pty(&pty_id(&id, step)).await;
     }
     let _ = std::fs::remove_dir_all(run_manager::scripts_dir(&st, &id));
     st.store.delete_run(&id).await?;

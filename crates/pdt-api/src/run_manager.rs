@@ -1,4 +1,8 @@
 //! Drives run instances (spec §4.2): setup, command, readiness, Tailscale mapping, stop, resume after a restart.
+//!
+//! Tailscale (controller ruling on Task 7): a pdtd maps a run's port only once it has (re)started that run on that
+//! port itself, and it never unmaps a port it did not map. The machine's other instance (stable or dev) may own any
+//! port a stored row mentions.
 
 use crate::routes::{AppState, now_ms};
 use pdt_agents::SpawnSpec;
@@ -7,15 +11,15 @@ use pdt_core::run::{Run, RunKind, RunState, RunStep, pick_port, pty_id, step_lau
 use pdt_core::runconfig::{RunDef, RunVars, expand, run_env};
 use pdt_core::session::{SessionKind, is_scrubbed};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
 const PROBE_EVERY: Duration = Duration::from_millis(300);
-/// How long a stop waits for the run's driver to record the outcome.
-const STOP_WAIT: Duration = Duration::from_secs(20);
+/// The longest one readiness probe may take (a refused connection on Windows loopback can take seconds).
+const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Default)]
 pub(crate) struct RunControl {
@@ -24,6 +28,8 @@ pub(crate) struct RunControl {
     reason: std::sync::Mutex<Option<String>>,
     finished: AtomicBool,
     done: tokio::sync::Notify,
+    /// The port of a web run this process is driving: the only run ports it maps.
+    web_port: Option<u16>,
 }
 
 impl RunControl {
@@ -41,11 +47,32 @@ fn remote_host(st: &AppState) -> Option<String> {
     r.active.then(|| r.dns_name.clone()).flatten()
 }
 
-/// The link for a web run on `port`: the tailnet when remote access is active, else loopback.
-pub(crate) fn run_url(st: &AppState, port: u16) -> String {
-    match remote_host(st) {
+fn url_for(tailnet_host: Option<&str>, port: u16) -> String {
+    match tailnet_host {
         Some(h) => format!("https://{h}:{port}/"),
         None => format!("http://127.0.0.1:{port}/"),
+    }
+}
+
+/// The link for a web run on `port`: the tailnet when remote access is active, else loopback.
+pub(crate) fn run_url(st: &AppState, port: u16) -> String {
+    url_for(remote_host(st).as_deref(), port)
+}
+
+/// (run id, port) of every web run this process is driving.
+pub(crate) fn driven_web_runs(st: &AppState) -> Vec<(String, u16)> {
+    let controls = st.run_controls.lock().unwrap_or_else(|e| e.into_inner());
+    controls.iter().filter_map(|(id, c)| c.web_port.map(|p| (id.clone(), p))).collect()
+}
+
+/// Points the links of the web runs this process drives at the tailnet (`Some(dns name)`) or at loopback, after
+/// remote access was turned on or off. Their mappings are made or removed by the caller.
+pub(crate) async fn relink_runs(st: &AppState, tailnet_host: Option<&str>) {
+    for (id, port) in driven_web_runs(st) {
+        let url = url_for(tailnet_host, port);
+        if let Err(e) = st.store.set_run_port(&id, Some(port), Some(&url)).await {
+            tracing::warn!(run = %id, error = %e, "could not update a run's link");
+        }
     }
 }
 
@@ -60,7 +87,8 @@ fn vars(st: &AppState, run: &Run) -> RunVars {
     }
 }
 
-/// A free port for a new or resumed web run, avoiding every other active run's port.
+/// A free port for a new or resumed web run, avoiding every other active run's port. Callers hold
+/// `run_start_lock` (or run before anything can start, at resume) so two runs cannot pick the same port.
 pub(crate) async fn allocate_port(st: &AppState, prefer: Option<u16>, except_run: Option<&str>) -> Option<u16> {
     let range = st.store.get_host_settings().await.ok()?.run_ports;
     let taken: BTreeSet<u16> = st
@@ -80,6 +108,7 @@ pub(crate) fn scripts_dir(st: &AppState, run_id: &str) -> PathBuf {
     st.data_dir.join("runs").join("scripts").join(run_id)
 }
 
+/// Blocking (it may kill a previous terminal with taskkill): run it on the blocking pool.
 fn spawn_step(
     st: &AppState,
     run: &Run,
@@ -114,24 +143,39 @@ fn spawn_step(
 
 /// Starts a step, then honours a stop that arrived while it was starting: `stop` sets the flag before killing, so
 /// either it sees this step's terminal or this check sees the flag.
-fn start_step(
+async fn start_step(
     st: &AppState,
-    ctl: &RunControl,
+    ctl: &Arc<RunControl>,
     run: &Run,
     step: RunStep,
-    command: &str,
+    command: String,
     env: &[(String, String)],
 ) -> Result<oneshot::Receiver<i32>, String> {
-    let rx = spawn_step(st, run, step, command, env)?;
-    if ctl.stopping() {
-        let _ = st.ptys.kill(&pty_id(&run.id, step));
-    }
-    Ok(rx)
+    let (st, ctl, run, env) = (st.clone(), ctl.clone(), run.clone(), env.to_vec());
+    tokio::task::spawn_blocking(move || {
+        let rx = spawn_step(&st, &run, step, &command, &env)?;
+        if ctl.stopping() {
+            let _ = st.ptys.kill(&pty_id(&run.id, step));
+        }
+        Ok(rx)
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Whether something accepts connections on `port`, on IPv4 or IPv6 loopback.
+async fn answers(port: u16) -> bool {
+    let probe = |addr: std::net::IpAddr| async move {
+        matches!(tokio::time::timeout(PROBE_TIMEOUT, tokio::net::TcpStream::connect((addr, port))).await, Ok(Ok(_)))
+    };
+    let (v4, v6) =
+        tokio::join!(probe(std::net::Ipv4Addr::LOCALHOST.into()), probe(std::net::Ipv6Addr::LOCALHOST.into()));
+    v4 || v6
 }
 
 type Outcome = (RunState, Option<i32>, Option<String>);
 
-async fn drive(st: &AppState, ctl: &RunControl, run: &Run, def: &RunDef) -> Outcome {
+async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) -> Outcome {
     let v = vars(st, run);
     let pairs = v.pairs();
     let mut env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
@@ -146,7 +190,7 @@ async fn drive(st: &AppState, ctl: &RunControl, run: &Run, def: &RunDef) -> Outc
     }
     if let Some(setup) = &def.setup {
         let _ = st.store.set_run_state(&run.id, RunState::SettingUp, now_ms()).await;
-        let rx = match start_step(st, ctl, run, RunStep::Setup, &expand(setup, &pairs), &env) {
+        let rx = match start_step(st, ctl, run, RunStep::Setup, expand(setup, &pairs), &env).await {
             Ok(rx) => rx,
             Err(e) => return (RunState::Failed, None, Some(format!("setup could not start: {e}"))),
         };
@@ -163,12 +207,11 @@ async fn drive(st: &AppState, ctl: &RunControl, run: &Run, def: &RunDef) -> Outc
     }
     let first = if run.kind == RunKind::Test { RunState::Running } else { RunState::Starting };
     let _ = st.store.set_run_state(&run.id, first, now_ms()).await;
-    let mut exit = match start_step(st, ctl, run, RunStep::Command, &expand(&def.command, &pairs), &env) {
+    let mut exit = match start_step(st, ctl, run, RunStep::Command, expand(&def.command, &pairs), &env).await {
         Ok(rx) => rx,
         Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
     };
-    let web_port = run.port.filter(|_| def.web);
-    if let Some(p) = web_port {
+    if let Some(p) = ctl.web_port {
         // Only while remote access is active; otherwise this runs no tailscale command (ruling F1).
         crate::remote::map_run_port(st, p).await;
     }
@@ -182,7 +225,7 @@ async fn drive(st: &AppState, ctl: &RunControl, run: &Run, def: &RunDef) -> Outc
             c = &mut exit => break c.unwrap_or(-1),
             _ = tokio::time::sleep(PROBE_EVERY), if !ready => {
                 if let Some(p) = run.port
-                    && tokio::net::TcpStream::connect(("127.0.0.1", p)).await.is_ok()
+                    && answers(p).await
                 {
                     ready = true;
                     let _ = st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await;
@@ -191,7 +234,7 @@ async fn drive(st: &AppState, ctl: &RunControl, run: &Run, def: &RunDef) -> Outc
         }
     };
     // During shutdown the mapping stays: the row stays active and the next pdtd takes the run over.
-    if let Some(p) = web_port
+    if let Some(p) = ctl.web_port
         && !st.shutting_down.load(Ordering::SeqCst)
     {
         crate::remote::unmap_run_port(st, p).await;
@@ -212,7 +255,7 @@ fn stop_reason(ctl: &RunControl) -> Option<String> {
 
 /// Starts driving `run` in the background. The row must already be stored.
 pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
-    let ctl = Arc::new(RunControl::default());
+    let ctl = Arc::new(RunControl { web_port: run.port.filter(|_| def.web), ..Default::default() });
     st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).insert(run.id.clone(), ctl.clone());
     let st = st.clone();
     tokio::spawn(async move {
@@ -232,22 +275,18 @@ pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
     });
 }
 
-/// Asks a run to stop and waits (up to 20 s) for its driver to finish. A run with no driver (left active by a
-/// previous daemon and not resumed yet) is marked stopped directly.
-pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) {
+/// Asks a run to stop and waits (up to `st.run_stop_wait`) for its driver to finish. A run with no driver (left
+/// active by a previous daemon and not resumed yet) is marked stopped directly. False when the driver did not finish
+/// in time: the run may still be running, so nothing must be started in its place.
+pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) -> bool {
     let ctl = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned();
     match ctl {
         Some(ctl) => {
             *ctl.reason.lock().unwrap_or_else(|e| e.into_inner()) = reason;
             ctl.stop.store(true, Ordering::SeqCst);
-            // The tree kill waits for taskkill on Windows.
-            let (ptys, run_id) = (st.ptys.clone(), id.to_string());
-            let _ = tokio::task::spawn_blocking(move || {
-                for step in [RunStep::Setup, RunStep::Command] {
-                    let _ = ptys.kill(&pty_id(&run_id, step));
-                }
-            })
-            .await;
+            for step in [RunStep::Setup, RunStep::Command] {
+                let _ = st.kill_pty(&pty_id(id, step)).await;
+            }
             let wait = async {
                 while !ctl.finished.load(Ordering::SeqCst) {
                     // Registered before the check, so a notification in between is not missed.
@@ -258,9 +297,11 @@ pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) {
                     notified.await;
                 }
             };
-            if tokio::time::timeout(STOP_WAIT, wait).await.is_err() {
-                tracing::warn!(run = %id, "the run did not stop within {STOP_WAIT:?}");
+            let done = tokio::time::timeout(st.run_stop_wait, wait).await.is_ok();
+            if !done {
+                tracing::warn!(run = %id, "the run did not stop within {:?}", st.run_stop_wait);
             }
+            done
         }
         None => {
             if let Ok(Some(r)) = st.store.get_run(id).await
@@ -268,14 +309,16 @@ pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) {
             {
                 let _ = st.store.finish_run(id, RunState::Stopped, None, reason.as_deref(), now_ms()).await;
             }
+            true
         }
     }
 }
 
 /// Restarts the runs a previous pdtd left active (spec §4.2 "Restarts"). Returns how many started. pdtd calls it
-/// after applying remote access (ruling F4), so links use the tailnet name and an old port's mapping (made by that
-/// apply) can be removed when the run moves.
+/// after applying remote access (ruling F4), so links use the tailnet name; each run maps its port as it starts. A
+/// run that moves to another port leaves the old port's mapping alone: this process never made it.
 pub async fn resume_runs(st: &AppState) -> usize {
+    let _start = st.run_start_lock.lock().await;
     let Ok(active) = st.store.list_active_runs().await else { return 0 };
     let mut started = 0;
     for mut run in active {
@@ -297,9 +340,6 @@ pub async fn resume_runs(st: &AppState) -> usize {
                     continue;
                 }
                 Some(p) => {
-                    if let Some(old) = run.port.filter(|o| *o != p) {
-                        crate::remote::unmap_run_port(st, old).await;
-                    }
                     let url = run_url(st, p);
                     let _ = st.store.set_run_port(&run.id, Some(p), Some(&url)).await;
                     run.port = Some(p);
@@ -313,21 +353,39 @@ pub async fn resume_runs(st: &AppState) -> usize {
     started
 }
 
-/// Stops active runs whose worktree folder or branch has gone (spec §4.2: merged or deleted branches).
+/// Whether a run's checkout has gone: its folder is missing, or (outside the project's main checkout) its branch
+/// no longer exists. Decided from the run itself, since its worktree record may have been deleted.
+fn checkout_gone(repo: &Path, cwd: &Path, branch: &str) -> bool {
+    !cwd.is_dir() || (cwd != repo && !pdt_git::branch_exists(repo, branch))
+}
+
+/// Stops active runs whose worktree folder or branch has gone (spec §4.2: merged or deleted branches). A run whose
+/// project cannot be read is left alone (and logged): a failed lookup is not a gone branch.
 pub async fn sweep_gone_runs(st: &AppState) {
-    let Ok(active) = st.store.list_active_runs().await else { return };
+    let active = match st.store.list_active_runs().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "the run sweep could not list active runs");
+            return;
+        }
+    };
     for run in active {
-        let Some(wid) = &run.worktree_id else { continue };
-        let wt = st.store.get_worktree(wid).await.ok().flatten();
-        let project = st.store.get_project(&run.project_id).await.ok().flatten();
-        let gone = match (wt, project) {
-            (Some(wt), Some(p)) => {
-                let (repo, branch, path) = (PathBuf::from(p.repo_path), run.branch.clone(), PathBuf::from(wt.path));
-                tokio::task::spawn_blocking(move || !path.is_dir() || !pdt_git::branch_exists(&repo, &branch))
-                    .await
-                    .unwrap_or(false)
+        let project = match st.store.get_project(&run.project_id).await {
+            Ok(Some(p)) => p,
+            // Deleting a project deletes its runs; a row without one is not this sweep's business.
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::warn!(run = %run.id, error = %e, "the run sweep could not read the project; skipping");
+                continue;
             }
-            _ => true,
+        };
+        let (repo, cwd, branch) = (PathBuf::from(project.repo_path), PathBuf::from(&run.cwd), run.branch.clone());
+        let gone = match tokio::task::spawn_blocking(move || checkout_gone(&repo, &cwd, &branch)).await {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(run = %run.id, error = %e, "the run sweep check failed; skipping");
+                continue;
+            }
         };
         if gone {
             tracing::info!(run = %run.id, branch = %run.branch, "stopping a run whose branch or worktree is gone");

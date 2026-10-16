@@ -141,9 +141,25 @@ pub fn pty_id(run_id: &str, step: RunStep) -> String {
     format!("run:{run_id}:{}", step.as_str())
 }
 
-/// Kept per project, branch and run name (spec §4.2 "Data").
+/// Kept per project, branch and run name (spec §4.2 "Data"): `<data>/runs/<project>/<branch>-<hash>/<name>`. The
+/// hash of the full branch name keeps branches that flatten to the same folder (`feature/x`, `feature-x`) apart.
+/// Each part is made a single plain folder name, whatever the input (names are also validated with the run
+/// configuration).
 pub fn run_data_dir(data_root: &Path, project_id: &str, branch: &str, name: &str) -> PathBuf {
-    data_root.join("runs").join(project_id).join(branch.replace('/', "-")).join(name.replace(['/', '\\'], "-"))
+    let branch_dir = format!("{}-{:08x}", folder_name(branch), fnv1a(branch.as_bytes()));
+    data_root.join("runs").join(project_id).join(branch_dir).join(folder_name(name))
+}
+
+/// `s` as one folder name on every OS: separators, `:<>|"?*` and control characters become `-`, and a result of
+/// ``, `.` or `..` gets a `_` in front.
+fn folder_name(s: &str) -> String {
+    let out: String = s.chars().map(|c| if c.is_control() || "/\\:<>|\"?*".contains(c) { '-' } else { c }).collect();
+    if matches!(out.as_str(), "" | "." | "..") { format!("_{out}") } else { out }
+}
+
+/// 32-bit FNV-1a: small, and stable across Rust versions (unlike `DefaultHasher`), since it names folders on disk.
+fn fnv1a(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811c_9dc5, |h, b| (h ^ u32::from(*b)).wrapping_mul(0x0100_0193))
 }
 
 /// A port in `range` that no active run holds and `is_free` accepts; `prefer` first when it qualifies.
@@ -226,7 +242,28 @@ mod tests {
         assert_eq!(pty_id("r1", RunStep::Setup), "run:r1:setup");
         assert_eq!(pty_id("r1", RunStep::Command), "run:r1:command");
         let d = run_data_dir(Path::new("data"), "p", "feature/x", "web");
-        assert_eq!(d, Path::new("data").join("runs").join("p").join("feature-x").join("web"));
+        assert_eq!(d, Path::new("data").join("runs").join("p").join("feature-x-1573876a").join("web"));
+        assert_ne!(
+            run_data_dir(Path::new("data"), "p", "feature-x", "web"),
+            d,
+            "branches that flatten to the same folder name keep separate data"
+        );
+    }
+
+    /// Whatever the names, the folder stays under `<data>/runs/<project>/` (configuration validation rejects such
+    /// names too; this is the second line of defence).
+    #[test]
+    fn data_dirs_never_leave_the_runs_folder() {
+        let root = Path::new("data").join("runs").join("p");
+        for (branch, name) in
+            [("main", ".."), ("main", "."), ("..", "web"), ("main", "a/../../b"), ("main", "c:\\x"), ("main", "")]
+        {
+            let d = run_data_dir(Path::new("data"), "p", branch, name);
+            let rel = d.strip_prefix(&root).unwrap_or_else(|_| panic!("{d:?}"));
+            let parts: Vec<_> = rel.components().collect();
+            assert_eq!(parts.len(), 2, "{branch:?}/{name:?} -> {d:?}");
+            assert!(parts.iter().all(|c| matches!(c, std::path::Component::Normal(_))), "{d:?}");
+        }
     }
 
     #[test]

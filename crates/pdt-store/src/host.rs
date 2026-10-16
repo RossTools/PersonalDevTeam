@@ -19,7 +19,7 @@ impl Store {
             .fetch_optional(&self.pool)
             .await?;
         match row {
-            None => Ok(HostSettings::default()),
+            None => Ok((*self.host_defaults).clone()),
             Some((v,)) => serde_json::from_str(&v).map_err(|e| StoreError::Corrupt(format!("host settings: {e}"))),
         }
     }
@@ -86,6 +86,14 @@ mod tests {
         store.put_host_settings(&s).await.unwrap();
         store.put_host_settings(&s).await.unwrap(); // upsert
         assert_eq!(store.get_host_settings().await.unwrap(), s);
+    }
+
+    #[tokio::test]
+    async fn unset_host_settings_use_the_given_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dev = HostSettings::for_profile(pdt_core::brand::Profile::Dev);
+        let store = store_with_project(tmp.path()).await.with_host_defaults(dev.clone());
+        assert_eq!(store.get_host_settings().await.unwrap(), dev);
     }
 
     #[tokio::test]

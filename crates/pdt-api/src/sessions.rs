@@ -270,7 +270,7 @@ pub(crate) async fn rename(
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let _guard = st.lock_session(&id).await;
     load(&st, &id).await?;
-    st.ptys.kill(&id)?;
+    st.kill_pty(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -293,7 +293,7 @@ pub(crate) async fn restart(
 /// Starts a session that has no running process, resuming its agent conversation. The caller holds the session lock.
 async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Option<Resume>) -> Result<(), ApiError> {
     settle_exit(st, id).await;
-    st.ptys.remove(id);
+    st.remove_pty(id).await;
     // After the previous run's exit task, which may have just bound its Codex conversation.
     let session = load(st, id).await?;
     let resume = match planned {
@@ -414,7 +414,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
         return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "stop the session before removing it"));
     }
     settle_exit(&st, &id).await;
-    st.ptys.remove(&id);
+    st.remove_pty(&id).await;
     st.store.delete_session(&id).await?;
     st.forget_session_lock(&id);
     Ok(StatusCode::NO_CONTENT)

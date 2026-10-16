@@ -24,6 +24,11 @@ setup = "node -e \"process.exit(3)\""
 command = "node -e \"setTimeout(() => {}, 60000)\""
 
 [[run]]
+name = "web6"
+command = "node -e \"require('http').createServer((q, s) => s.end('six')).listen(Number(process.env.PORT), '::1')\""
+web = true
+
+[[run]]
 name = "idle"
 command = "node -e \"setTimeout(() => {}, 120000)\""
 
@@ -239,10 +244,11 @@ async fn remote_runs_get_https_links_and_mappings() {
     env.state.ptys.shutdown().await;
 }
 
-/// Review Focus 5: a run the previous pdtd left on a port that is now taken moves to a free one, and the old
-/// port's mapping (re-made by applying remote access at startup, ruling F4) is removed.
+/// Review Focus 5, with the controller's ruling: a run the previous pdtd left on a port that is now taken moves to a
+/// free one. Applying remote access at startup maps nothing for it (the old port may now be another instance's),
+/// the resumed run maps its new port, and the old port is never unserved.
 #[tokio::test]
-async fn a_resumed_run_that_moves_port_drops_its_old_mapping() {
+async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
     let mut env = setup().await;
     let fake = recording();
     env.state.tailscale = fake.clone();
@@ -278,7 +284,7 @@ async fn a_resumed_run_that_moves_port_drops_its_old_mapping() {
     assert_eq!(s, StatusCode::OK, "{v}");
     // pdtd's startup order: apply remote access, then resume.
     pdt_api::apply_remote_access(&env.state).await;
-    assert!(fake.calls().contains(&format!("serve --bg --https={old} http://127.0.0.1:{old}")), "{:?}", fake.calls());
+    assert!(fake.calls().iter().all(|c| !c.contains(&format!("--https={old}"))), "{:?}", fake.calls());
     assert_eq!(pdt_api::resume_runs(&env.state).await, 1);
     // The row still says "ready" from the previous daemon, so wait for the new server itself.
     let (_, r) = call(&env.app, "GET", "/api/runs/left-behind", None).await;
@@ -293,10 +299,94 @@ async fn a_resumed_run_that_moves_port_drops_its_old_mapping() {
     }
     wait_state(&env.app, "left-behind", &["ready"]).await;
     let calls = fake.calls();
-    assert!(calls.contains(&format!("serve --https={old} off")), "{calls:?}");
+    assert!(calls.iter().all(|c| !c.contains(&format!("--https={old}"))), "the old port is left alone: {calls:?}");
     assert!(calls.contains(&format!("serve --bg --https={new} http://127.0.0.1:{new}")), "{calls:?}");
     call(&env.app, "POST", "/api/runs/left-behind/stop", None).await;
     wait_state(&env.app, "left-behind", &["stopped"]).await;
+    env.state.ptys.shutdown().await;
+}
+
+/// Turning remote access on maps the running web runs and gives them tailnet links; turning it off removes those
+/// mappings and gives back loopback links.
+#[tokio::test]
+async fn toggling_remote_access_updates_running_web_runs() {
+    let mut env = setup().await;
+    let fake = recording();
+    env.state.tailscale = fake.clone();
+    env.app = router(env.state.clone(), None);
+    let (_, r) = start(&env, json!({"name": "web", "kind": "run"})).await;
+    let id = r["id"].as_str().unwrap().to_string();
+    let r = wait_state(&env.app, &id, &["ready"]).await;
+    let port = r["port"].as_u64().unwrap();
+    assert_eq!(r["url"], format!("http://127.0.0.1:{port}/"));
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(fake.calls().contains(&format!("serve --bg --https={port} http://127.0.0.1:{port}")), "{:?}", fake.calls());
+    let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+    assert_eq!(r["url"], format!("https://box.t.ts.net:{port}/"));
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(fake.calls().contains(&format!("serve --https={port} off")), "{:?}", fake.calls());
+    let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+    assert_eq!(r["url"], format!("http://127.0.0.1:{port}/"));
+    call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+    wait_state(&env.app, &id, &["stopped"]).await;
+    env.state.ptys.shutdown().await;
+}
+
+/// Starts are serialized: two at once, with room for one more run, start exactly one; and two web runs started
+/// at once never get the same port.
+#[tokio::test]
+async fn concurrent_starts_respect_the_limit_and_never_share_a_port() {
+    let env = setup().await;
+    call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxConcurrentRuns": 2}))).await;
+    let (s, v) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let web = json!({"name": "web", "kind": "run"});
+    let ((s1, a), (s2, b)) = tokio::join!(start(&env, web.clone()), start(&env, web.clone()));
+    let mut codes = [s1, s2];
+    codes.sort();
+    assert_eq!(codes, [StatusCode::CREATED, StatusCode::CONFLICT], "{a} {b}");
+    call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxConcurrentRuns": 8}))).await;
+    let ((s3, c), (s4, d)) = tokio::join!(start(&env, web.clone()), start(&env, web.clone()));
+    assert_eq!((s3, s4), (StatusCode::CREATED, StatusCode::CREATED), "{c} {d}");
+    let ports: std::collections::BTreeSet<_> = [&a, &b, &c, &d].iter().filter_map(|r| r["port"].as_u64()).collect();
+    assert_eq!(ports.len(), 3, "three web runs, three ports: {a} {b} {c} {d}");
+    env.state.ptys.shutdown().await;
+}
+
+/// A stop that does not finish in time leaves the run alone instead of starting another over it.
+#[tokio::test]
+async fn a_stop_that_times_out_blocks_the_restart() {
+    let mut env = setup().await;
+    env.state.run_stop_wait = Duration::ZERO;
+    env.app = router(env.state.clone(), None);
+    call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxConcurrentRuns": 2}))).await;
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let (_, r) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+        ids.push(r["id"].as_str().unwrap().to_string());
+    }
+    for id in &ids {
+        wait_state(&env.app, id, &["ready"]).await;
+    }
+    let (s, v) = start(&env, json!({"name": "idle", "kind": "run", "stopRunId": ids[0]})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("run_stopping")), "{v}");
+    let (s, v) = call(&env.app, "POST", &format!("/api/runs/{}/restart", ids[1]), None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("run_stopping")), "{v}");
+    let (_, runs) = call(&env.app, "GET", &format!("/api/projects/{}/runs", env.pid), None).await;
+    assert_eq!(runs.as_array().unwrap().len(), 2, "nothing new was started: {runs}");
+    env.state.ptys.shutdown().await;
+}
+
+/// A web server that listens only on IPv6 loopback still counts as ready.
+#[tokio::test]
+async fn readiness_also_probes_ipv6_loopback() {
+    let env = setup().await;
+    let (_, r) = start(&env, json!({"name": "web6", "kind": "run"})).await;
+    let r = wait_state(&env.app, r["id"].as_str().unwrap(), &["ready", "failed"]).await;
+    assert_eq!(r["state"], "ready", "{r}");
     env.state.ptys.shutdown().await;
 }
 
@@ -333,6 +423,72 @@ async fn a_branch_without_a_worktree_gets_one() {
     assert_eq!((s, &r2["worktreeId"]), (StatusCode::CREATED, &r["worktreeId"]), "reuses the worktree");
     let (s, r3) = start(&env, json!({"branch": "main", "name": "ok", "kind": "test"})).await;
     assert_eq!((s, &r3["worktreeId"]), (StatusCode::CREATED, &Value::Null), "the main checkout's branch");
+}
+
+/// A start that is refused creates no worktree; a branch whose worktree folder another branch already has is a
+/// conflict, not a server error.
+#[tokio::test]
+async fn refused_starts_leave_no_worktree_behind() {
+    let env = setup().await;
+    for b in ["feature/z", "feature/x", "feature-x"] {
+        git(&env.repo, &["branch", b]);
+    }
+    let worktrees = || async {
+        let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
+        wts.as_array().unwrap().len()
+    };
+    let (s, v) = start(&env, json!({"branch": "feature/z", "name": "nope", "kind": "run"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::NOT_FOUND, Some("unknown_run")), "{v}");
+    let (s, v) = start(&env, json!({"branch": "no-such-branch", "name": "idle", "kind": "run"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("unknown_ref")), "{v}");
+    call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxConcurrentRuns": 1}))).await;
+    let (_, first) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    let (s, v) = start(&env, json!({"branch": "feature/z", "name": "idle", "kind": "run"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("too_many_runs")), "{v}");
+    assert_eq!(worktrees().await, 0);
+    assert!(!env.repo.join(".worktrees").join("feature-z").exists());
+    call(&env.app, "POST", &format!("/api/runs/{}/stop", first["id"].as_str().unwrap()), None).await;
+    let (s, v) = start(&env, json!({"branch": "feature-x", "name": "ok", "kind": "test"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let (s, v) = start(&env, json!({"branch": "feature/x", "name": "ok", "kind": "test"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("worktree_path_taken")), "{v}");
+    assert_eq!(worktrees().await, 1);
+    env.state.ptys.shutdown().await;
+}
+
+/// The sweep goes by the run's folder and branch, so it also stops a run whose worktree record is gone.
+#[tokio::test]
+async fn the_sweep_needs_no_worktree_record() {
+    let env = setup().await;
+    let elsewhere = env._tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let mut run = pdt_core::run::Run {
+        id: "orphan".into(),
+        project_id: env.pid.clone(),
+        worktree_id: None,
+        branch: "deleted-branch".into(),
+        name: "idle".into(),
+        kind: pdt_core::run::RunKind::Run,
+        state: pdt_core::run::RunState::Ready,
+        port: None,
+        url: None,
+        data_dir: None,
+        cwd: elsewhere.to_string_lossy().into_owned(),
+        exit_code: None,
+        error: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    env.state.store.insert_run(&run).await.unwrap();
+    run.id = "missing-folder".into();
+    run.branch = "main".into();
+    run.cwd = env._tmp.path().join("no-such-folder").to_string_lossy().into_owned();
+    env.state.store.insert_run(&run).await.unwrap();
+    pdt_api::sweep_gone_runs(&env.state).await;
+    for id in ["orphan", "missing-folder"] {
+        let r = wait_state(&env.app, id, &["stopped"]).await;
+        assert!(r["error"].as_str().unwrap_or("").contains("gone"), "{r}");
+    }
 }
 
 #[tokio::test]
