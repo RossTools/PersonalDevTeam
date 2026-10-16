@@ -1,0 +1,25 @@
+# PDT's own run configuration (remote-host spec §4.3): a dev instance of PDT on its own port and data folder, reachable
+# at the run's link.
+#
+# - PDT sets PDT_OWNER_LOGIN itself when the host has an owner, so the dev instance admits the host's owner. It is not
+#   repeated in `env`: an unset variable would be passed on as the literal text "$PDT_OWNER_LOGIN".
+# - The command is `cargo run -q -p pdtd`, not `target/debug/pdtd`: Windows runs each step through a generated .cmd
+#   where `target/debug/pdtd` is not a command (forward slashes), and `target\debug\pdtd` would not work under sh.
+#   Setup has already built it, so cargo only starts it.
+# - PDT_WEB_DIR is relative to the checkout, which is the working folder of every step.
+# - PDT_SECRET_STORE=memory keeps dev instances out of the keychain. They are not supervised, so they never update.
+[[run]]
+name    = "pdt"
+setup   = "pnpm install --frozen-lockfile && pnpm --dir web build && cargo build -p pdtd"
+command = "cargo run -q -p pdtd"
+web     = true
+data    = true
+env     = { PDT_PROFILE = "dev", PDT_PORT = "$PORT", PDT_DATA_DIR = "$PDT_RUN_DATA", PDT_WEB_DIR = "web/dist", PDT_ALLOWED_HOSTS = "$PDT_RUN_HOST:$PORT", PDT_SECRET_STORE = "memory" }
+
+[[test]]
+name    = "rust"
+command = "cargo test"
+
+[[test]]
+name    = "web"
+command = "pnpm --dir web test"

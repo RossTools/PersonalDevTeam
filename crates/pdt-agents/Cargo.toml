@@ -12,6 +12,7 @@ portable-pty = "0.9.0"
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+toml = "1.1.8"
 tracing.workspace = true
 which = "8.0.6"
 

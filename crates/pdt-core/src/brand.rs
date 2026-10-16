@@ -1,14 +1,25 @@
 //! The single source of product naming. A rename touches this file, desktop/src-tauri/tauri.conf.json
-//! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (daemon sidecar) and
-//! scripts/release-stable.* (product name, slug, port) only. The release repository is RELEASE_REPO below.
+//! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (sidecars),
+//! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe) and scripts/release-stable.* (product name, slug, port) only,
+//! and HOST_* below. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";
 pub const DAEMON_BIN: &str = "pdtd";
 pub const STABLE_PORT: u16 = 7420;
 pub const DEV_PORT: u16 = 7421;
-/// GitHub repository (owner/name) whose releases the desktop app updates from, through the `gh` CLI.
+/// The supervisor that runs on each host: starts pdtd, installs updates, rolls back (remote-host spec §3.1).
+pub const HOST_BIN: &str = "pdt-host";
+/// launchd label of the per-user LaunchAgent that runs pdt-host (macOS).
+pub const HOST_LABEL: &str = "dev.personaldevteam.host";
+/// Name of the per-user autostart entry for pdt-host (Windows `HKCU\…\Run` value).
+pub const HOST_AUTOSTART_NAME: &str = "Personal Dev Team host";
+/// GitHub repository (owner/name) whose releases hosts update from, through the GitHub REST API and a token.
 pub const RELEASE_REPO: &str = "ross-game-tools/PersonalDevTeam";
+/// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
+pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
+/// The optional run configuration file inside a project's repository (remote-host spec §4.1).
+pub const PROJECT_CONFIG_FILE: &str = ".pdt/project.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {

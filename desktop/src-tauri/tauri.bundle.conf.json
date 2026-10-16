@@ -1,7 +1,7 @@
 {
   "bundle": {
-    "externalBin": ["binaries/pdtd"],
+    "externalBin": ["binaries/pdtd", "binaries/pdt-host"],
     "resources": { "../../web/dist/": "web/" },
-    "windows": { "nsis": { "installMode": "currentUser" } }
+    "windows": { "nsis": { "installMode": "currentUser", "installerHooks": "./windows/hooks.nsh" } }
   }
 }

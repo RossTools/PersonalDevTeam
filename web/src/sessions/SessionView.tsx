@@ -3,9 +3,12 @@ import { Button, StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { TerminalView } from '../terminal/TerminalView';
+import { ActivityBadge } from './ActivityBadge';
 import { INITIAL_SIZE, toDot } from './status';
+import { useViewTracking } from './useViewTracking';
 
 export function SessionView({ session, polledAt, onRemoved }: { session: Session; polledAt?: number; onRemoved: () => void }) {
+  useViewTracking(session.id, polledAt);
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const kill = useMutation({ mutationFn: () => api.killSession(session.id), onSuccess: refresh });
@@ -28,6 +31,7 @@ export function SessionView({ session, polledAt, onRemoved }: { session: Session
         <StatusDot status={toDot(session.status)} />
         <span className="font-medium">{session.title}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-muted" title={session.cwd}>{session.cwd}</span>
+        <ActivityBadge activity={session.activity} unseen={session.unseen} />
         {running ? (
           <Button variant="ghost" disabled={busy} onClick={() => kill.mutate()}>Stop</Button>
         ) : (

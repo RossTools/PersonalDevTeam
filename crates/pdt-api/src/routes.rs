@@ -38,10 +38,65 @@ pub struct AppState {
     pub(crate) resume_changed: std::sync::Arc<tokio::sync::watch::Sender<u64>>,
     /// Notified by POST /api/shutdown; pdtd's serve loop waits on it.
     pub shutdown: std::sync::Arc<tokio::sync::Notify>,
+    /// pdtd's data directory (runs, per-session agent settings, update downloads).
+    pub data_dir: std::path::PathBuf,
+    /// Where secrets live. pdtd sets the keychain store; `new` uses an in-memory one (tests).
+    pub secrets: std::sync::Arc<dyn crate::secrets::SecretStore>,
+    /// `PDT_OWNER_LOGIN`: when set, it is the owner and Settings shows it read-only.
+    pub owner_from_env: Option<String>,
+    /// Serializes read-modify-write of host settings and the side effects applied with them.
+    pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The effective owner (`PDT_OWNER_LOGIN`, else the stored setting) the identity guard checks; see `refresh_owner`.
+    pub(crate) owner_cache: std::sync::Arc<std::sync::RwLock<Option<String>>>,
+    /// The port pdtd listens on (0 in tests that do not serve). Tailscale maps 443 to it.
+    pub listen_port: u16,
+    /// The live Host/Origin allowlist (the guard and remote access share it).
+    pub allowed_hosts: crate::host_guard::AllowedHosts,
+    /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
+    /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
+    pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
+    /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
+    /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
+    pub remote_https_port: u16,
+    /// The longest one tailscale command may take; a hung CLI then counts as an error.
+    pub tailscale_timeout: std::time::Duration,
+    /// The last result of applying the remote-access setting.
+    pub remote: std::sync::Arc<std::sync::Mutex<crate::remote::RemoteStatus>>,
+    /// What remote access changed in this process (mapped ports, the allowlist entry). Turning it off undoes only
+    /// these, never mappings another instance (e.g. the stable one) made.
+    pub(crate) remote_applied: std::sync::Arc<std::sync::Mutex<crate::remote::Applied>>,
+    /// The driver of each active run in this daemon run (stop requests, completion).
+    pub(crate) run_controls: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::run_manager::RunControl>>>,
+    >,
+    /// Serializes run starts (limit check, port choice, worktree and row creation), so concurrent starts can neither
+    /// exceed the run limit nor pick the same port.
+    pub(crate) run_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
+    pub run_stop_wait: std::time::Duration,
+    /// The program agent hooks run (`<this pdtd> hook …`).
+    pub hook_program: std::path::PathBuf,
+    /// The activity tracker of each agent session running in this daemon run.
+    pub(crate) activity: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, crate::activity::Tracker>>>,
+    /// Per-session ordering point for activity transitions and their store writes.
+    pub(crate) activity_order:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>>,
+    /// The thresholds of the time-based activity signals (tests shorten them).
+    pub activity_timing: pdt_core::activity::Timing,
+    /// How often `run_activity_ticker` checks them.
+    pub activity_tick: std::time::Duration,
+    /// Update checks and installs. `new` installs a disabled (unsupervised) service; pdtd replaces it.
+    pub update: std::sync::Arc<crate::update::UpdateService>,
+    /// The keychain account of this instance's update token (see `secrets::update_token_account`). `new` derives it
+    /// from `data_dir` alone, so it is never the stable instance's account; pdtd sets the real one.
+    pub update_token_account: String,
+    /// The last host checks (tool and login checks); the first `GET /host/checks` runs them.
+    pub(crate) checks: std::sync::Arc<std::sync::Mutex<Option<crate::checks::HostChecks>>>,
 }
 
 impl AppState {
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: Store, data_dir: std::path::PathBuf) -> Self {
+        let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -54,11 +109,49 @@ impl AppState {
             pending_resume: Default::default(),
             resume_changed: std::sync::Arc::new(tokio::sync::watch::channel(0).0),
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
+            data_dir,
+            secrets: std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
+            owner_from_env: None,
+            settings_lock: Default::default(),
+            owner_cache: Default::default(),
+            listen_port: 0,
+            allowed_hosts: Default::default(),
+            tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
+            remote_https_port: crate::remote::HOST_HTTPS_PORT,
+            tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
+            remote: Default::default(),
+            remote_applied: Default::default(),
+            run_controls: Default::default(),
+            run_start_lock: Default::default(),
+            run_stop_wait: std::time::Duration::from_secs(20),
+            hook_program: std::env::current_exe().unwrap_or_default(),
+            activity: Default::default(),
+            activity_order: Default::default(),
+            activity_timing: Default::default(),
+            activity_tick: std::time::Duration::from_secs(5),
+            update: std::sync::Arc::new(crate::update::UpdateService::new(
+                pdt_update::GITHUB_API,
+                pdt_core::brand::RELEASE_REPO,
+                false,
+                pdt_core::BUILD_VERSION,
+            )),
+            update_token_account,
+            checks: Default::default(),
         }
     }
 }
 
 impl AppState {
+    /// Reloads the effective owner (`PDT_OWNER_LOGIN`, else the stored setting) used by the identity guard.
+    pub async fn refresh_owner(&self) {
+        let stored = self.store.get_host_settings().await.ok().and_then(|s| s.owner_login);
+        *self.owner_cache.write().unwrap_or_else(|e| e.into_inner()) = self.owner_from_env.clone().or(stored);
+    }
+
+    pub(crate) fn owner(&self) -> Option<String> {
+        self.owner_cache.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Takes the session's lock. The map's std mutex is only held to look the lock up, never across an await.
     pub(crate) async fn lock_session(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
         let lock =
@@ -79,6 +172,20 @@ impl AppState {
     /// Wakes terminals waiting for an auto-resume to re-check (also used when shutdown starts).
     pub fn wake_resume_waiters(&self) {
         self.resume_changed.send_modify(|v| *v += 1);
+    }
+
+    /// Kills a terminal off the async runtime: on Windows this waits for `taskkill` to end the process tree.
+    pub(crate) async fn kill_pty(&self, id: &str) -> Result<(), pdt_agents::PtyError> {
+        let (ptys, id) = (self.ptys.clone(), id.to_string());
+        tokio::task::spawn_blocking(move || ptys.kill(&id))
+            .await
+            .unwrap_or_else(|e| Err(pdt_agents::PtyError::Io(e.to_string())))
+    }
+
+    /// Forgets a terminal (killing it if it still runs) off the async runtime, like [`AppState::kill_pty`].
+    pub(crate) async fn remove_pty(&self, id: &str) {
+        let (ptys, id) = (self.ptys.clone(), id.to_string());
+        let _ = tokio::task::spawn_blocking(move || ptys.remove(&id)).await;
     }
 
     pub(crate) fn forget_session_lock(&self, id: &str) {
@@ -106,31 +213,59 @@ async fn request_shutdown(State(st): State<AppState>) -> StatusCode {
 }
 
 pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
+    let guard_state = state.clone();
     let api = Router::new()
         .route("/health", get(health))
         .route("/shutdown", axum::routing::post(request_shutdown))
+        .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
+        .route("/host/whoami", get(crate::identity_guard::whoami))
+        .route("/host/checks", get(crate::checks::get_checks))
+        .route("/host/checks/refresh", axum::routing::post(crate::checks::refresh_checks))
+        .route("/host/remote", get(crate::remote::get_remote))
+        .route("/host/remote/refresh", axum::routing::post(crate::remote::refresh))
+        .route("/host/update", get(crate::update::get_status))
+        .route("/host/update/check", axum::routing::post(crate::update::post_check))
+        .route("/host/update/install", axum::routing::post(crate::update::post_install))
+        .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
+        .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project))
+        .route(
+            "/projects/{id}/settings",
+            get(crate::project_settings::get_settings).put(crate::project_settings::put_settings),
+        )
+        .route("/projects/{id}/run-config", get(crate::runconfig::get_config))
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
         .route("/projects/{id}/sessions", get(sessions::list))
+        .route("/projects/{id}/runs", get(crate::runs::list).post(crate::runs::create))
+        .route("/projects/{id}/branches", get(crate::runs::branches))
+        .route("/runs", get(crate::runs::list_active))
+        .route("/runs/{id}", get(crate::runs::get_one).delete(crate::runs::remove))
+        .route("/runs/{id}/stop", axum::routing::post(crate::runs::stop))
+        .route("/runs/{id}/restart", axum::routing::post(crate::runs::restart))
+        .route("/runs/{id}/reset-data", axum::routing::post(crate::runs::reset_data))
+        .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
         .route("/sessions", axum::routing::post(sessions::create))
         .route("/sessions/{id}", get(sessions::get_one).patch(sessions::rename).delete(sessions::remove))
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
         .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
         .route("/sessions/{id}/pty", get(pty_ws::connect))
+        .route("/sessions/{id}/activity", axum::routing::post(crate::activity::post_report))
+        .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")
         })
         .with_state(state);
     let app = Router::new().nest("/api", api);
-    match web_dir {
+    let app = match web_dir {
         Some(dir) => {
             let index = dir.join("index.html");
             app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
         }
         None => app,
-    }
+    };
+    app.layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
 }
 
 async fn health() -> Json<Health> {

@@ -1,55 +1,10 @@
-use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME, Profile};
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use pdt_core::brand::{DAEMON_BIN, HOST_BIN, PRODUCT_NAME, Profile};
+use pdt_host::health::Probe;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, PartialEq)]
-pub enum Probe {
-    /// Nothing is listening.
-    Free,
-    /// A Personal Dev Team daemon answered /api/health.
-    Ours,
-    /// Something else (or a daemon still starting up) holds the port.
-    Foreign(String),
-}
-
-pub fn probe(port: u16) -> Probe {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(200)) else {
-        return Probe::Free;
-    };
-    let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
-    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-    let req = format!("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n");
-    if let Err(e) = s.write_all(req.as_bytes()) {
-        return Probe::Foreign(e.to_string());
-    }
-    let mut buf = Vec::new();
-    if let Err(e) = s.take(64 * 1024).read_to_end(&mut buf) {
-        return Probe::Foreign(e.to_string());
-    }
-    classify_health(&buf)
-}
-
-pub fn classify_health(raw: &[u8]) -> Probe {
-    let text = String::from_utf8_lossy(raw);
-    let Some((head, body)) = text.split_once("\r\n\r\n") else {
-        return Probe::Foreign("it did not answer like a web server".into());
-    };
-    let status_line = head.lines().next().unwrap_or("");
-    if !status_line.starts_with("HTTP/1.") || status_line.split_whitespace().nth(1) != Some("200") {
-        return Probe::Foreign(format!("its health check answered {status_line:?}"));
-    }
-    match serde_json::from_str::<serde_json::Value>(body) {
-        Ok(v) if v["name"] == PRODUCT_NAME => Probe::Ours,
-        Ok(v) => Probe::Foreign(format!("it identifies as {}", v["name"])),
-        Err(_) => Probe::Foreign("its health check is not JSON".into()),
-    }
-}
-
-/// Attaches to a running daemon, or spawns one and waits until it answers its health check.
+/// Attaches to a running daemon, or starts pdt-host (which starts pdtd) and waits until pdtd answers its health check.
 pub fn ensure_daemon(
     port: u16,
     probe: impl Fn(u16) -> Probe,
@@ -58,15 +13,15 @@ pub fn ensure_daemon(
 ) -> Result<(), String> {
     let mut last = probe(port);
     match last {
-        Probe::Ours => return Ok(()),
-        Probe::Free => spawn().map_err(|e| format!("failed to start {DAEMON_BIN}: {e}"))?,
+        Probe::Ours { .. } => return Ok(()),
+        Probe::Free => spawn().map_err(|e| format!("failed to start {HOST_BIN}: {e}"))?,
         Probe::Foreign(_) => {}
     }
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
         last = probe(port);
-        if last == Probe::Ours {
+        if matches!(last, Probe::Ours { .. }) {
             return Ok(());
         }
     }
@@ -85,93 +40,37 @@ pub fn desktop_profile(env: Option<&str>, debug_build: bool) -> Profile {
     }
 }
 
-/// Asks the daemon on `port` to stop gracefully (POST /api/shutdown). Callers check it is ours first.
-pub fn request_shutdown(port: u16) -> Result<(), String> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).map_err(|e| e.to_string())?;
-    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
-    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-    let req = format!(
-        "POST /api/shutdown HTTP/1.0
-Host: 127.0.0.1:{port}
-Content-Length: 0
+/// The extras a stable pdt-host gets from the tray. The test-only knobs (`PDT_SECRET_STORE`, `PDT_TAILSCALE_BIN`)
+/// reach only a dev one.
+const STABLE_EXTRAS: [&str; 3] = ["PDT_WEB_DIR", "PDT_ALLOWED_HOSTS", "PDT_OWNER_LOGIN"];
 
-"
-    );
-    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    let mut buf = Vec::new();
-    s.take(64 * 1024).read_to_end(&mut buf).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&buf);
-    let status = text.lines().next().unwrap_or("");
-    match status.split_whitespace().nth(1) {
-        Some(code) if code.starts_with('2') => Ok(()),
-        _ => Err(format!("its shutdown request answered {status:?}")),
-    }
+/// The `PDT_*` variables the tray starts pdt-host with: the profile, and the extras pdt-host passes on to pdtd (e.g.
+/// `PDT_WEB_DIR` in development). Port and data dir follow from the profile, the same for tray, pdt-host and pdtd.
+fn host_env(profile: Profile, lookup: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    let extras: &[&str] = if profile == Profile::Dev { &pdt_host::config::FORWARDED_ENV } else { &STABLE_EXTRAS };
+    let profile = (profile == Profile::Dev).then(|| ("PDT_PROFILE".to_string(), "dev".to_string()));
+    let extras = extras.iter().filter_map(|k| lookup(k).filter(|v| !v.trim().is_empty()).map(|v| (k.to_string(), v)));
+    profile.into_iter().chain(extras).collect()
 }
 
-/// Stops our daemon on `port` and waits until its process has exited: first the port frees, then (pdtd drains
-/// connections and closes its store before exiting) `released` reports its data-dir lock is gone, all within `timeout`.
-/// A free port is already stopped; a port held by something else is an error (we never shut down a process we don't
-/// own).
-pub fn stop_daemon(
-    port: u16,
-    probe: impl Fn(u16) -> Probe,
-    shutdown: impl FnOnce(u16) -> Result<(), String>,
-    released: impl Fn() -> bool,
-    timeout: Duration,
-) -> Result<(), String> {
-    match probe(port) {
-        Probe::Free => {}
-        Probe::Foreign(why) => {
-            return Err(format!("port {port} is held by something that is not {PRODUCT_NAME} ({why})"));
+/// A pdt-host command with exactly `host_env`'s `PDT_*` variables.
+fn host_command(program: &Path, profile: Profile) -> Command {
+    let mut cmd = Command::new(program);
+    for (k, _) in std::env::vars_os() {
+        if k.to_string_lossy().starts_with("PDT_") {
+            cmd.env_remove(k);
         }
-        Probe::Ours => shutdown(port).map_err(|e| format!("could not ask {DAEMON_BIN} to stop: {e}"))?,
     }
-    let deadline = Instant::now() + timeout;
-    let wait = |done: &dyn Fn() -> bool, what: &str| loop {
-        if done() {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!("{DAEMON_BIN} on port {port} did not {what} within {timeout:?}"));
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    wait(&|| probe(port) == Probe::Free, "stop")?;
-    wait(&released, "exit")
+    cmd.envs(host_env(profile, |k| std::env::var(k).ok()));
+    cmd
 }
 
-/// The data dir pdtd uses for `profile` (same rules as pdtd's config: `PDT_DATA_DIR`, else the local data dir).
+/// The data dir pdt-host and pdtd use for `profile` (the tray never passes `PDT_DATA_DIR` on).
 pub fn data_dir(profile: Profile) -> Option<PathBuf> {
-    match std::env::var("PDT_DATA_DIR") {
-        Ok(d) if !d.trim().is_empty() => Some(PathBuf::from(d)),
-        _ => Some(dirs::data_local_dir()?.join(profile.data_dir_name())),
-    }
+    Some(dirs::data_local_dir()?.join(profile.data_dir_name()))
 }
 
-/// True when no pdtd holds `<data_dir>/pdtd.lock`. pdtd holds that lock for its whole life, so this turns true only
-/// once the process has exited; a missing lock file or an unexpected error counts as released.
-pub fn lock_released(data_dir: &Path) -> bool {
-    let path = data_dir.join(format!("{DAEMON_BIN}.lock"));
-    let Ok(file) = std::fs::File::options().write(true).open(&path) else {
-        return true;
-    };
-    match file.try_lock() {
-        Ok(()) => {
-            let _ = file.unlock();
-            true
-        }
-        Err(std::fs::TryLockError::WouldBlock) => false,
-        Err(std::fs::TryLockError::Error(_)) => true,
-    }
-}
-
-/// `lock_released` for `profile`'s data dir.
-pub fn daemon_exited(profile: Profile) -> bool {
-    data_dir(profile).is_none_or(|d| lock_released(&d))
-}
-
-/// Where the desktop app sends a spawned daemon's stdout/stderr (startup errors land here before pdtd's own log).
+/// Where the desktop app sends a spawned pdt-host's stdout/stderr (startup errors land here before the logs).
 pub fn launch_log_path(profile: Profile) -> Option<PathBuf> {
     Some(data_dir(profile)?.join("logs").join(format!("{DAEMON_BIN}-launch.log")))
 }
@@ -192,18 +91,34 @@ fn append_tail(msg: String, log: &Path, lines: usize) -> String {
     if tail.trim().is_empty() { msg } else { format!("{msg}\n\nLast lines of {}:\n{tail}", log.display()) }
 }
 
-fn pdtd_path() -> PathBuf {
-    let file = format!("{DAEMON_BIN}{}", std::env::consts::EXE_SUFFIX);
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.join(&file)))
-        .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from(file))
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from))
 }
 
-/// Starts pdtd detached from the desktop app; it keeps running if the app exits.
-pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
-    let mut cmd = Command::new(pdtd_path());
+/// The pdt-host beside this exe (the installed sidecar, or target/<profile> in development), else whatever is on PATH.
+fn bundled_host(exe_dir: Option<&Path>) -> PathBuf {
+    let file = format!("{HOST_BIN}{}", std::env::consts::EXE_SUFFIX);
+    exe_dir.map(|d| d.join(&file)).filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(file))
+}
+
+/// The pdt-host to run: the data folder's copy when there is one (installers must be able to replace the install
+/// folder, decision 14), else the one beside this exe (first run, development).
+fn host_to_run(data_dir: Option<&Path>, exe_dir: Option<&Path>) -> PathBuf {
+    data_dir
+        .map(pdt_host::register::installed_host_path)
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| bundled_host(exe_dir))
+}
+
+/// Starts pdt-host (which starts and supervises pdtd), detached; it keeps running if the app exits. A pdt-host that is
+/// already running (login item) makes this one exit at once.
+pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
+    let exe_dir = exe_dir();
+    let mut cmd = host_command(&host_to_run(data_dir(profile).as_deref(), exe_dir.as_deref()), profile);
+    cmd.arg("run");
+    if let Some(dir) = exe_dir {
+        cmd.arg("--install-dir").arg(dir);
+    }
     let log = launch_log_path(profile).and_then(|p| {
         std::fs::create_dir_all(p.parent()?).ok()?;
         std::fs::File::options().create(true).append(true).open(p).ok()
@@ -212,12 +127,7 @@ pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
         Some((a, b)) => (Stdio::from(a), Stdio::from(b)),
         None => (Stdio::null(), Stdio::null()),
     };
-    // Pass the port explicitly so an inherited PDT_PORT can't make the app and the daemon disagree.
-    cmd.env("PDT_PROFILE", if profile == Profile::Dev { "dev" } else { "stable" })
-        .env("PDT_PORT", profile.port().to_string())
-        .stdin(Stdio::null())
-        .stdout(out)
-        .stderr(err);
+    cmd.stdin(Stdio::null()).stdout(out).stderr(err);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -227,55 +137,49 @@ pub fn spawn_pdtd(profile: Profile) -> std::io::Result<()> {
     }
     #[cfg(unix)]
     {
-        // Own process group, so Ctrl-C in the launching terminal doesn't kill pdtd.
+        // Own process group, so Ctrl-C in the launching terminal doesn't kill pdt-host.
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
     cmd.spawn().map(|_| ())
 }
+
+/// macOS: the installed stable app registers pdt-host's LaunchAgent once (there is no installer to do it). True when
+/// it did: `pdt-host install` has then started pdt-host through launchd (or one was already running), so the tray must
+/// not start another and only waits for pdtd.
+pub fn ensure_registered(profile: Profile) -> bool {
+    let os = pdt_host::register::Os::current();
+    let home = std::env::home_dir();
+    ensure_registered_with(os, profile, exe_dir().as_deref(), home.as_deref(), &mut pdt_host::register::System)
+}
+
+fn ensure_registered_with(
+    os: pdt_host::register::Os,
+    profile: Profile,
+    exe_dir: Option<&Path>,
+    home: Option<&Path>,
+    runner: &mut dyn pdt_host::register::Runner,
+) -> bool {
+    if os != pdt_host::register::Os::Mac || profile != Profile::Stable {
+        return false;
+    }
+    let (Some(home), Some(exe_dir)) = (home, exe_dir) else { return false };
+    if pdt_host::install::bundle_of(exe_dir).is_none() || pdt_host::register::launch_agent_path(home).exists() {
+        return false;
+    }
+    let mut cmd = host_command(&bundled_host(Some(exe_dir)), profile);
+    cmd.arg("install").arg("--install-dir").arg(exe_dir);
+    runner.status(cmd).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::collections::HashMap;
 
-    fn free_port() -> u16 {
-        TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-    }
-
-    /// Serves `response` to every connection on a background thread; returns the port.
-    fn fake_server(response: &'static str) -> u16 {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = l.local_addr().unwrap().port();
-        std::thread::spawn(move || {
-            for mut s in l.incoming().flatten() {
-                let mut buf = [0u8; 1024];
-                let _ = s.read(&mut buf);
-                let _ = s.write_all(response.as_bytes());
-            }
-        });
-        port
-    }
-
-    #[test]
-    fn classifies_health_responses() {
-        let ok = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{\"status\":\"ok\",\"name\":\"Personal Dev Team\",\"version\":\"0.1.0\"}";
-        assert_eq!(classify_health(ok), Probe::Ours);
-        assert!(
-            matches!(classify_health(b"HTTP/1.1 200 OK\r\n\r\n{\"name\":\"other\"}"), Probe::Foreign(w) if w.contains("other"))
-        );
-        assert!(matches!(classify_health(b"HTTP/1.1 404 Not Found\r\n\r\n"), Probe::Foreign(_)));
-        assert!(matches!(classify_health(b"SSH-2.0-OpenSSH"), Probe::Foreign(_)));
-    }
-
-    #[test]
-    fn probes_real_sockets() {
-        assert_eq!(probe(free_port()), Probe::Free);
-        let ours = fake_server("HTTP/1.0 200 OK\r\n\r\n{\"name\":\"Personal Dev Team\"}");
-        assert_eq!(probe(ours), Probe::Ours);
-        let foreign = fake_server("HTTP/1.0 200 OK\r\n\r\n<html>hi</html>");
-        assert!(matches!(probe(foreign), Probe::Foreign(_)));
+    fn ours() -> Probe {
+        Probe::Ours { version: "x".into() }
     }
 
     #[test]
@@ -283,7 +187,7 @@ mod tests {
         let spawned = Cell::new(false);
         ensure_daemon(
             1,
-            |_| Probe::Ours,
+            |_| ours(),
             || {
                 spawned.set(true);
                 Ok(())
@@ -299,7 +203,7 @@ mod tests {
         let calls = Cell::new(0);
         let probe = |_| {
             calls.set(calls.get() + 1);
-            if calls.get() < 4 { Probe::Free } else { Probe::Ours }
+            if calls.get() < 4 { Probe::Free } else { ours() }
         };
         let spawned = Cell::new(false);
         ensure_daemon(
@@ -338,7 +242,7 @@ mod tests {
         assert!(err.contains("did not start"), "{err}");
         let err = ensure_daemon(9, |_| Probe::Free, || Err(std::io::Error::other("nope")), Duration::from_millis(300))
             .unwrap_err();
-        assert!(err.contains("failed to start pdtd"), "{err}");
+        assert!(err.contains("failed to start pdt-host"), "{err}");
     }
 
     #[test]
@@ -353,57 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn stop_daemon_shuts_down_ours_and_waits_for_the_port_then_the_process() {
-        let calls = Cell::new(0);
-        let probe = |_| {
-            calls.set(calls.get() + 1);
-            if calls.get() < 4 { Probe::Ours } else { Probe::Free }
-        };
-        let asked = Cell::new(false);
-        let lock_checks = Cell::new(0);
-        let released = || {
-            // The port must be free before the lock is looked at.
-            assert!(calls.get() >= 4);
-            lock_checks.set(lock_checks.get() + 1);
-            lock_checks.get() >= 3
-        };
-        stop_daemon(
-            5,
-            probe,
-            |p| {
-                assert_eq!(p, 5);
-                asked.set(true);
-                Ok(())
-            },
-            released,
-            Duration::from_secs(3),
-        )
-        .unwrap();
-        assert!(asked.get());
-        assert_eq!(lock_checks.get(), 3);
-    }
-
-    #[test]
-    fn stop_daemon_leaves_free_and_foreign_ports_alone() {
-        stop_daemon(5, |_| Probe::Free, |_| panic!("must not shut down"), || true, Duration::from_millis(100)).unwrap();
-        let err =
-            stop_daemon(5, |_| Probe::Foreign("x".into()), |_| panic!("must not shut down"), || true, Duration::ZERO)
-                .unwrap_err();
-        assert!(err.contains("not Personal Dev Team"), "{err}");
-    }
-
-    #[test]
-    fn stop_daemon_reports_timeout_and_shutdown_errors() {
-        let err = stop_daemon(5, |_| Probe::Ours, |_| Ok(()), || true, Duration::from_millis(300)).unwrap_err();
-        assert!(err.contains("did not stop"), "{err}");
-        let err = stop_daemon(5, |_| Probe::Free, |_| Ok(()), || false, Duration::from_millis(300)).unwrap_err();
-        assert!(err.contains("did not exit"), "{err}");
-        let err = stop_daemon(5, |_| Probe::Ours, |_| Err("refused".into()), || true, Duration::from_millis(300))
-            .unwrap_err();
-        assert!(err.contains("could not ask pdtd to stop: refused"), "{err}");
-    }
-
-    #[test]
     fn debug_builds_default_to_dev() {
         assert_eq!(desktop_profile(None, true), Profile::Dev);
         assert_eq!(desktop_profile(Some(""), true), Profile::Dev);
@@ -414,32 +267,90 @@ mod tests {
     }
 
     #[test]
-    fn lock_is_released_only_when_nobody_holds_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(lock_released(tmp.path()), "no lock file");
-        let path = tmp.path().join("pdtd.lock");
-        let held = std::fs::File::options().create(true).truncate(false).write(true).open(&path).unwrap();
-        held.try_lock().unwrap();
-        assert!(!lock_released(tmp.path()));
-        drop(held);
-        assert!(lock_released(tmp.path()));
-        assert!(lock_released(&tmp.path().join("missing-dir")));
+    fn pdt_host_gets_the_profile_and_only_the_forwarded_extras() {
+        let env: HashMap<&str, &str> = [
+            ("PDT_WEB_DIR", "/web"),
+            ("PDT_DATA_DIR", "/elsewhere"),
+            ("PDT_PORT", "7420"),
+            ("PDT_OWNER_LOGIN", ""),
+            ("PDT_SECRET_STORE", "memory"),
+            ("PDT_TAILSCALE_BIN", "/fake"),
+        ]
+        .into();
+        let lookup = |k: &str| env.get(k).map(|v| v.to_string());
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(
+            host_env(Profile::Dev, lookup),
+            [
+                pair("PDT_PROFILE", "dev"),
+                pair("PDT_WEB_DIR", "/web"),
+                pair("PDT_SECRET_STORE", "memory"),
+                pair("PDT_TAILSCALE_BIN", "/fake")
+            ]
+        );
+        // Test-only knobs never reach a stable pdtd from the tray.
+        assert_eq!(host_env(Profile::Stable, lookup), [pair("PDT_WEB_DIR", "/web")]);
+    }
+
+    /// Records `status` commands and answers each with `ok`.
+    struct Recorder {
+        ran: Vec<String>,
+        ok: bool,
+    }
+
+    impl pdt_host::register::Runner for Recorder {
+        fn status(&mut self, cmd: Command) -> Result<bool, String> {
+            let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+            self.ran.push(args.join(" "));
+            Ok(self.ok)
+        }
+        fn stdout(&mut self, _: Command) -> Result<String, String> {
+            unreachable!()
+        }
+        fn spawn(&mut self, _: Command) -> Result<(), String> {
+            unreachable!()
+        }
     }
 
     #[test]
-    fn request_shutdown_posts_and_checks_status() {
-        let ok = fake_server(
-            "HTTP/1.0 202 Accepted
+    fn a_first_mac_launch_registers_pdt_host_and_then_does_not_start_one() {
+        use pdt_host::register::Os;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp.path().join("Personal Dev Team.app").join("Contents").join("MacOS");
+        let mut r = Recorder { ran: vec![], ok: true };
+        assert!(ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+        assert_eq!(r.ran, [format!("install --install-dir {}", exe_dir.display())]);
 
-",
-        );
-        request_shutdown(ok).unwrap();
-        let bad = fake_server(
-            "HTTP/1.0 403 Forbidden
+        // A failed registration leaves starting pdt-host to the tray.
+        let mut r = Recorder { ran: vec![], ok: false };
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
 
-",
-        );
-        assert!(request_shutdown(bad).unwrap_err().contains("403"));
-        assert!(request_shutdown(free_port()).is_err());
+        // Already registered, a dev tray, outside a bundle, or not macOS: nothing runs.
+        let plist = pdt_host::register::launch_agent_path(&home);
+        std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
+        std::fs::write(&plist, "").unwrap();
+        let mut r = Recorder { ran: vec![], ok: true };
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+        std::fs::remove_file(&plist).unwrap();
+        assert!(!ensure_registered_with(Os::Mac, Profile::Dev, Some(&exe_dir), Some(&home), &mut r));
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(tmp.path()), Some(&home), &mut r));
+        assert!(!ensure_registered_with(Os::Windows, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+        assert!(r.ran.is_empty(), "{:?}", r.ran);
+    }
+
+    #[test]
+    fn the_data_folder_copy_of_pdt_host_wins_over_the_bundled_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (data, app) = (tmp.path().join("data"), tmp.path().join("app"));
+        let file = format!("pdt-host{}", std::env::consts::EXE_SUFFIX);
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join(&file), "").unwrap();
+        assert_eq!(host_to_run(Some(&data), Some(&app)), app.join(&file), "no copy yet: the bundled one");
+        let copy = pdt_host::register::installed_host_path(&data);
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::write(&copy, "").unwrap();
+        assert_eq!(host_to_run(Some(&data), Some(&app)), copy);
+        assert_eq!(host_to_run(None, None), PathBuf::from(&file), "else whatever is on PATH");
     }
 }

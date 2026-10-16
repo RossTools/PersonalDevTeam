@@ -5,25 +5,34 @@ import { Button } from '@ui';
 import { api } from '../api/client';
 import { ProjectsList } from '../projects/ProjectsList';
 import { AddProjectForm } from '../projects/AddProjectForm';
+import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
+import { RunView } from '../runs/RunView';
 import { SessionList } from '../sessions/SessionList';
 import { SessionView } from '../sessions/SessionView';
+import { FirstRunChecklist } from '../host/FirstRunChecklist';
+import { HostSettingsPage } from '../host/HostSettingsPage';
+import { UpdateBanner } from '../host/UpdateBanner';
 import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
 import { VIEWS, type ViewId } from './views';
 
-const PHASE_NOTE: Record<Exclude<ViewId, 'sessions'>, string> = {
+const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings'>, string> = {
   inbox: 'The inbox arrives with the pipeline (Phase 5).',
   board: 'The board arrives with tickets (Phase 2).',
   personas: 'Personas arrive with the pipeline (Phase 5).',
   files: 'The file view arrives with review (Phase 4).',
 };
 
+type Selection = { kind: 'session'; id: string } | { kind: 'run'; id: string } | { kind: 'settings' } | null;
+
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection>(null);
+  const sessionId = selection?.kind === 'session' ? selection.id : null;
+  const runId = selection?.kind === 'run' ? selection.id : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -45,9 +54,16 @@ export function AppShell() {
     refetchInterval: 2000,
   });
   const session = sessions.data?.find((s) => s.id === sessionId) ?? null;
+  const runs = useQuery({
+    queryKey: ['runs', projectId],
+    queryFn: () => api.listRuns(projectId!),
+    enabled: projectId !== null,
+    refetchInterval: 2000,
+  });
+  const run = runs.data?.find((r) => r.id === runId) ?? null;
   const selectProject = (id: string) => {
     setProjectId(id);
-    setSessionId(null);
+    setSelection(null);
   };
   const label = VIEWS.find((v) => v.id === view)!.label;
 
@@ -59,16 +75,29 @@ export function AppShell() {
         <div className="flex-1 overflow-auto px-1">
           {view === 'sessions' ? (
             <>
+              <FirstRunChecklist onOpenSettings={() => setView('settings')} />
               <ProjectsList selectedId={projectId} onSelect={selectProject} />
-              {project && <SessionList project={project} selectedId={sessionId} onSelect={setSessionId} />}
+              {project && (
+                <SessionList
+                  project={project}
+                  selectedId={sessionId}
+                  onSelect={(id) => setSelection({ kind: 'session', id })}
+                  selectedRunId={runId}
+                  onSelectRun={(id) => setSelection({ kind: 'run', id })}
+                  onOpenSettings={() => setSelection({ kind: 'settings' })}
+                />
+              )}
               <AddProjectForm />
             </>
+          ) : view === 'settings' ? (
+            <FirstRunChecklist />
           ) : (
             <p className="px-2 text-xs text-muted">{PHASE_NOTE[view]}</p>
           )}
         </div>
       </aside>
       <main className="flex-1 flex flex-col min-w-0 min-h-0">
+        <UpdateBanner />
         <div className="flex items-center gap-2 border-b border-border px-3 py-1 text-sm">
           <span className="flex-1 truncate text-muted">{project ? `Project ${project.name}` : 'Select a project to get started.'}</span>
           <Button variant="ghost" aria-label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
@@ -77,8 +106,14 @@ export function AppShell() {
         </div>
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {session ? (
-              <SessionView session={session} polledAt={sessions.dataUpdatedAt} onRemoved={() => setSessionId(null)} />
+            {view === 'settings' ? (
+              <HostSettingsPage />
+            ) : run ? (
+              <RunView key={run.id} run={run} polledAt={runs.dataUpdatedAt} onRemoved={() => setSelection(null)} />
+            ) : selection?.kind === 'settings' && project ? (
+              <ProjectSettingsPanel project={project} />
+            ) : session ? (
+              <SessionView session={session} polledAt={sessions.dataUpdatedAt} onRemoved={() => setSelection(null)} />
             ) : (
               project && <p className="p-4 text-sm text-muted">Start a shell or an agent from the list.</p>
             )}

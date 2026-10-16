@@ -1,11 +1,27 @@
+mod activity;
+mod checks;
 mod error;
+mod host;
 mod host_guard;
+mod identity_guard;
+mod project_settings;
 mod pty_ws;
+pub mod remote;
 mod routes;
+mod run_manager;
+mod runconfig;
+mod runs;
+pub mod secrets;
 mod sessions;
+pub mod update;
 mod worktrees;
 
+pub use activity::run_activity_ticker;
+pub use checks::{HostChecks, run_host_checks};
 pub use error::ApiErrorBody;
-pub use host_guard::with_host_guard;
+pub use host_guard::{AllowedHosts, with_host_guard};
+pub use remote::{RemoteStatus, apply_remote_access};
 pub use routes::{AppState, Health, router};
+pub use run_manager::{resume_runs, sweep_gone_runs};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};
+pub use update::{UpdateService, run_update_loop};

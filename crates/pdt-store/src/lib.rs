@@ -1,9 +1,12 @@
 mod error;
+mod host;
 mod migrate;
+mod runs;
 mod sessions;
 mod worktrees;
 
 pub use error::StoreError;
+pub use host::ProjectSettings;
 
 use pdt_core::project::Project;
 use sqlx::migrate::Migrator;
@@ -13,6 +16,8 @@ use std::path::Path;
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
+    /// What `get_host_settings` returns while none are stored (the profile's defaults; see `with_host_defaults`).
+    host_defaults: std::sync::Arc<pdt_core::host::HostSettings>,
 }
 
 type ProjectRow = (String, String, String, String, i64);
@@ -38,7 +43,13 @@ impl Store {
         let pool = SqlitePoolOptions::new().max_connections(8).connect_with(options).await?;
         migrate::backup_if_pending(&pool, migrator, backup_dir).await?;
         migrator.run(&pool).await?;
-        Ok(Store { pool })
+        Ok(Store { pool, host_defaults: Default::default() })
+    }
+
+    /// Host settings to report until some are stored (e.g. `HostSettings::for_profile`).
+    pub fn with_host_defaults(mut self, defaults: pdt_core::host::HostSettings) -> Store {
+        self.host_defaults = std::sync::Arc::new(defaults);
+        self
     }
 
     pub async fn close(self) {

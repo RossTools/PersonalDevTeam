@@ -13,8 +13,10 @@ const RETRY_EVERY_MS = 5000;
  * `sessionStatus` is the daemon's view of the session (from the polled list). When it turns `running` while this
  * view is detached from a finished process, the view reattaches by itself (e.g. after Restart or an auto-resume).
  */
-export function TerminalView({ sessionId, sessionStatus, polledAt }: {
+export function TerminalView({ sessionId, url, sessionStatus, polledAt }: {
   sessionId: string;
+  /** WebSocket URL; defaults to the session's PTY URL. */
+  url?: string;
   sessionStatus?: SessionStatus;
   /** Changes with every poll of the session list (e.g. the query's `dataUpdatedAt`), so the status is re-checked. */
   polledAt?: number;
@@ -40,7 +42,7 @@ export function TerminalView({ sessionId, sessionStatus, polledAt }: {
     // the PTY again: input is held back until the server says the replay is over and xterm has parsed all of it.
     let replay = { ready: true, pending: 0 };
     const replaying = () => !replay.ready || replay.pending > 0;
-    const sock = new PtySocket(ptyUrl(sessionId), {
+    const sock = new PtySocket(url ?? ptyUrl(sessionId), {
       onData: (bytes, isReplay) => {
         if (!isReplay) {
           term.write(bytes);
@@ -83,7 +85,7 @@ export function TerminalView({ sessionId, sessionStatus, polledAt }: {
       term.dispose();
       sockRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, url]);
 
   // Safety net: if the terminal is ended or exited but the latest poll says the session is running, reattach. It is
   // evaluated on every poll (the status may have flipped between two polls and never been seen to change), at most

@@ -12,25 +12,32 @@ async fn wait_for_signal(st: &AppState) {
             std::future::pending::<()>().await;
         }
     };
+    // SIGHUP (the terminal that started pdtd closed) shuts down as gracefully as SIGTERM.
     #[cfg(unix)]
-    let term = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+    let unix_signal = |kind: tokio::signal::unix::SignalKind| async move {
+        match tokio::signal::unix::signal(kind) {
             Ok(mut s) => {
                 s.recv().await;
             }
             Err(_) => std::future::pending::<()>().await,
         }
     };
+    #[cfg(unix)]
+    let (term, hup) = (
+        unix_signal(tokio::signal::unix::SignalKind::terminate()),
+        unix_signal(tokio::signal::unix::SignalKind::hangup()),
+    );
     #[cfg(not(unix))]
-    let term = std::future::pending::<()>();
+    let (term, hup) = (std::future::pending::<()>(), std::future::pending::<()>());
     tokio::select! {
         _ = ctrl_c => {}
         _ = term => {}
+        _ = hup => {}
         _ = st.shutdown.notified() => {}
     }
 }
 
-/// Serves until Ctrl-C, SIGTERM or `POST /api/shutdown`. Running sessions are marked `interrupted` and their
+/// Serves until Ctrl-C, SIGTERM, SIGHUP or `POST /api/shutdown`. Running sessions are marked `interrupted` and their
 /// processes killed (which also ends their WebSockets) before connections drain.
 pub async fn serve(listener: TcpListener, app: axum::Router, state: AppState) -> anyhow::Result<()> {
     let (cleaned_tx, cleaned_rx) = tokio::sync::oneshot::channel::<()>();

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { StatusDot } from '@ui';
+import { Button, StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { NewSession } from '../api/gen/NewSession';
 import type { Project } from '../api/gen/Project';
+import { RunBranchForm } from '../runs/RunBranchForm';
+import { RunsSection } from '../runs/RunsSection';
+import { ActivityBadge } from './ActivityBadge';
 import { INITIAL_SIZE, toDot } from './status';
 
 type Choice = 'Shell' | 'Claude' | 'Codex';
@@ -50,10 +53,13 @@ function RenameInput({ initial, onSave, onCancel }: {
 
 const small = 'rounded-pdt px-1.5 py-0.5 text-[11px] text-muted hover:text-fg hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export function SessionList({ project, selectedId, onSelect }: {
+export function SessionList({ project, selectedId, onSelect, selectedRunId, onSelectRun, onOpenSettings }: {
   project: Project;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  selectedRunId?: string | null;
+  onSelectRun?: (id: string) => void;
+  onOpenSettings?: () => void;
 }) {
   const qc = useQueryClient();
   const worktrees = useQuery({ queryKey: ['worktrees', project.id], queryFn: () => api.listWorktrees(project.id) });
@@ -88,6 +94,9 @@ export function SessionList({ project, selectedId, onSelect }: {
 
   return (
     <div className="flex flex-col gap-2 py-2">
+      {onOpenSettings && (
+        <Button variant="ghost" className="self-start mx-2" onClick={onOpenSettings}>Project settings</Button>
+      )}
       {groups.map((g) => (
         <section key={g.id ?? 'repo'} aria-label={g.label}>
           <div className="flex items-center gap-0.5 px-2 text-xs text-muted">
@@ -128,14 +137,25 @@ export function SessionList({ project, selectedId, onSelect }: {
                     className={`w-full flex items-center gap-2 text-left px-3 py-1 rounded-pdt text-sm ${s.id === selectedId ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
                   >
                     <StatusDot status={toDot(s.status)} />
-                    <span className="truncate">{s.title}</span>
+                    <span className={`truncate ${s.unseen ? 'font-semibold' : ''}`}>{s.title}</span>
+                    <ActivityBadge activity={s.activity} unseen={s.unseen} />
                   </button>
                 )}
               </li>
             ))}
           </ul>
+          {onSelectRun && (
+            <RunsSection
+              project={project}
+              worktreeId={g.id}
+              label={g.label}
+              selectedRunId={selectedRunId ?? null}
+              onSelectRun={onSelectRun}
+            />
+          )}
         </section>
       ))}
+      {onSelectRun && <RunBranchForm project={project} onSelectRun={onSelectRun} />}
       {error && <p role="alert" className="px-2 text-xs text-failed">{error.message}</p>}
     </div>
   );

@@ -13,10 +13,28 @@ vi.mock('../terminal/TerminalView', () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1 };
-const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1 };
+const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false };
+
+// The shell always renders the update banner and the first-run checklist; a fully set-up host shows neither.
+const hostTool = { found: true, ok: true, detail: 'ok' };
+const hostRoutes = {
+  'GET /api/host/settings': {
+    settings: { remoteAccess: true, ownerLogin: 'me@example.com', updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 }, maxConcurrentRuns: 4, agentCredentials: 'subscription' },
+    ownerFromEnv: null,
+    tokenPresent: true,
+    remote: { enabled: true, active: true, url: 'https://box.ts.net', dnsName: 'box.ts.net', error: null, tailscaleLogin: 'me@example.com' },
+  },
+  'GET /api/host/update': {
+    current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null,
+    error: null, token: { state: 'valid', expiresAt: null }, lastResult: null,
+  },
+  'GET /api/host/checks': { claude: hostTool, codex: hostTool, git: hostTool, tailscale: hostTool, checkedAt: 1 },
+  'GET /api/host/whoami': { caller: 'local', login: null },
+};
 
 function stubAlpha() {
   stubApi({
+    ...hostRoutes,
     'GET /api/projects': [project],
     [`GET /api/projects/${project.id}/worktrees`]: [],
     [`GET /api/projects/${project.id}/sessions`]: [shell],
@@ -24,18 +42,26 @@ function stubAlpha() {
 }
 
 describe('AppShell', () => {
-  it('renders the five rail views and marks the active one', async () => {
-    stubApi({ 'GET /api/projects': [] });
+  it('renders the six rail views and marks the active one', async () => {
+    stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
-    for (const name of ['Inbox', 'Board', 'Sessions', 'Personas', 'Files']) {
+    for (const name of ['Inbox', 'Board', 'Sessions', 'Personas', 'Files', 'Settings']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
     await userEvent.click(screen.getByRole('button', { name: 'Board' }));
     expect(screen.getByRole('button', { name: 'Board' })).toHaveAttribute('aria-current', 'page');
   });
 
+  it('shows the host settings in the Settings view', async () => {
+    stubApi({ 'GET /api/projects': [], ...hostRoutes });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByRole('heading', { name: 'This host' })).toBeInTheDocument();
+    expect(await screen.findByRole('checkbox', { name: 'Remote access' })).toBeChecked();
+  });
+
   it('toggles the bottom panel with Ctrl+` and with the on-screen button', async () => {
-    stubApi({ 'GET /api/projects': [] });
+    stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     expect(screen.queryByRole('region', { name: 'Terminal panel' })).not.toBeInTheDocument();
     await userEvent.keyboard('{Control>}`{/Control}');

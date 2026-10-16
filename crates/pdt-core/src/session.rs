@@ -96,6 +96,16 @@ pub struct Session {
     /// alone. None for rows from before it was recorded.
     #[ts(type = "number | null")]
     pub fresh_started_at: Option<i64>,
+    /// Agents only; None for shells and ended sessions.
+    pub activity: Option<crate::activity::Activity>,
+    /// When the session last became idle or needs_you (ms).
+    #[ts(type = "number | null")]
+    pub attention_at: Option<i64>,
+    /// When the user last viewed the session, on any device (ms).
+    #[ts(type = "number | null")]
+    pub last_viewed_at: Option<i64>,
+    /// Computed: became idle or needs_you after the user last viewed it (on any device).
+    pub unseen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -251,10 +261,10 @@ pub fn clean_title(raw: &str) -> Option<String> {
     (!t.is_empty() && t.chars().count() <= MAX_TITLE_CHARS).then(|| t.to_string())
 }
 
-/// pdtd's own configuration variables (keep in sync with crates/pdtd/src/config.rs). Never passed to children:
-/// a dev pdtd started inside a stable-hosted terminal must not inherit the stable port or data dir.
-const PDT_ENV_VARS: [&str; 5] = ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"];
-/// Removed for agents so they bill the user's subscription, not an API key (spec §5.5).
+/// pdtd's own configuration lives in `PDT_*` variables; none is ever passed to a child, so a dev pdtd started inside a
+/// stable-hosted terminal cannot inherit the stable port, data dir or owner. PDT sets its own variables afterwards.
+const PDT_ENV_PREFIX: &str = "PDT_";
+/// Removed for agents under the subscription policy, so they bill the user's subscription (spec §5.5; remote-host §6).
 const API_KEY_ENV_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
 /// Inherited from the shell that started pdtd (often Claude Code itself): they disable color or make `claude`
 /// believe it is nested. Never passed to any child. Only a running session's own `CLAUDE_CODE_*` variables are
@@ -272,11 +282,13 @@ const LEAKED_ENV_VARS: [&str; 10] = [
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 
-/// Whether the environment variable `name` must be removed from a child of this kind.
-pub fn is_scrubbed(kind: SessionKind, name: &str) -> bool {
-    PDT_ENV_VARS.contains(&name)
+/// Whether the inherited environment variable `name` must be removed from a child of this kind.
+pub fn is_scrubbed(kind: SessionKind, name: &str, creds: crate::host::CredentialPolicy) -> bool {
+    name.starts_with(PDT_ENV_PREFIX)
         || LEAKED_ENV_VARS.contains(&name)
-        || (kind == SessionKind::AgentTui && API_KEY_ENV_VARS.contains(&name))
+        || (kind == SessionKind::AgentTui
+            && creds == crate::host::CredentialPolicy::Subscription
+            && API_KEY_ENV_VARS.contains(&name))
 }
 
 /// Client → server control messages on the PTY WebSocket (sent as text frames).
@@ -409,27 +421,57 @@ mod tests {
 
     #[test]
     fn scrub_rules() {
+        use crate::host::CredentialPolicy::{PassThrough, Subscription};
         for kind in [SessionKind::Shell, SessionKind::AgentTui] {
-            for v in ["PDT_PROFILE", "PDT_PORT", "PDT_DATA_DIR", "PDT_WEB_DIR", "PDT_ALLOWED_HOSTS"] {
-                assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
-            }
-            for v in [
-                "NO_COLOR",
-                "FORCE_COLOR",
-                "CLAUDECODE",
-                "CLAUDE_PID",
-                "CLAUDE_CODE_ENTRYPOINT",
-                "CLAUDE_CODE_SESSION_ID",
-            ] {
-                assert!(is_scrubbed(kind, v), "{kind:?} keeps {v}");
-            }
-            for v in ["PATH", "TERM", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"] {
-                assert!(!is_scrubbed(kind, v), "{kind:?} drops {v}");
+            for creds in [Subscription, PassThrough] {
+                for v in [
+                    "PDT_PROFILE",
+                    "PDT_PORT",
+                    "PDT_DATA_DIR",
+                    "PDT_WEB_DIR",
+                    "PDT_ALLOWED_HOSTS",
+                    "PDT_OWNER_LOGIN",
+                    "PDT_SESSION_ID",
+                    "PDT_HOOK_PORT",
+                    "PDT_RUN_DATA",
+                    "PDT_ANYTHING_NEW",
+                ] {
+                    assert!(is_scrubbed(kind, v, creds), "{kind:?}/{creds:?} keeps {v}");
+                }
+                for v in [
+                    "NO_COLOR",
+                    "FORCE_COLOR",
+                    "CLAUDECODE",
+                    "CLAUDE_PID",
+                    // A running Claude Code session's own variables (pdtd started from inside one).
+                    "CLAUDE_CODE_ENTRYPOINT",
+                    "CLAUDE_CODE_SESSION_ID",
+                    "CLAUDE_CODE_CHILD_SESSION",
+                    "CLAUDE_CODE_SESSION_ATTENDED",
+                    "CLAUDE_CODE_MESSAGING_SOCKET",
+                    "CLAUDE_CODE_MESSAGING_TOKEN",
+                ] {
+                    assert!(is_scrubbed(kind, v, creds), "{kind:?}/{creds:?} keeps {v}");
+                }
+                // User settings, not session state: they must reach the agent.
+                for v in [
+                    "PATH",
+                    "TERM",
+                    "PDT",
+                    "XPDT_PORT",
+                    "CLAUDE_CONFIG_DIR",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "CLAUDE_CODE_USE_BEDROCK",
+                ] {
+                    assert!(!is_scrubbed(kind, v, creds), "{kind:?} drops {v}");
+                }
             }
         }
-        assert!(is_scrubbed(SessionKind::AgentTui, "ANTHROPIC_API_KEY"));
-        assert!(is_scrubbed(SessionKind::AgentTui, "OPENAI_API_KEY"));
-        assert!(!is_scrubbed(SessionKind::Shell, "ANTHROPIC_API_KEY"));
+        assert!(is_scrubbed(SessionKind::AgentTui, "ANTHROPIC_API_KEY", Subscription));
+        assert!(is_scrubbed(SessionKind::AgentTui, "OPENAI_API_KEY", Subscription));
+        assert!(!is_scrubbed(SessionKind::AgentTui, "ANTHROPIC_API_KEY", PassThrough));
+        assert!(!is_scrubbed(SessionKind::AgentTui, "OPENAI_API_KEY", PassThrough));
+        assert!(!is_scrubbed(SessionKind::Shell, "ANTHROPIC_API_KEY", Subscription));
     }
 
     fn new(kind: SessionKind, agent: Option<AgentKind>, cols: u16, rows: u16) -> NewSession {

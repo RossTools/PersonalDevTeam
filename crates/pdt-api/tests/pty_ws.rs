@@ -13,7 +13,7 @@ const WAIT: Duration = Duration::from_secs(30);
 /// Serves the guarded router on a random port. Returns (port, state).
 async fn serve(tmp: &Path) -> (u16, AppState) {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let state = AppState::new(store);
+    let state = AppState::new(store, tmp.join("data"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let app = with_host_guard(router(state.clone(), None), vec![format!("127.0.0.1:{port}")]);

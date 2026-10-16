@@ -1,6 +1,6 @@
-import { Bot, Files, Inbox, KanbanSquare, TerminalSquare, type LucideIcon } from 'lucide-react';
+import { Bot, Files, Inbox, KanbanSquare, Settings, TerminalSquare, type LucideIcon } from 'lucide-react';
 
-export type ViewId = 'inbox' | 'board' | 'sessions' | 'personas' | 'files';
+export type ViewId = 'inbox' | 'board' | 'sessions' | 'personas' | 'files' | 'settings';
 
 export const VIEWS: { id: ViewId; label: string; icon: LucideIcon }[] = [
   { id: 'inbox', label: 'Inbox', icon: Inbox },
@@ -8,4 +8,5 @@ export const VIEWS: { id: ViewId; label: string; icon: LucideIcon }[] = [
   { id: 'sessions', label: 'Sessions', icon: TerminalSquare },
   { id: 'personas', label: 'Personas', icon: Bot },
   { id: 'files', label: 'Files', icon: Files },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ];

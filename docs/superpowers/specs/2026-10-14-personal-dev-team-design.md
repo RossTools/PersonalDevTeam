@@ -59,8 +59,8 @@ The full product is split into sub-projects, and each one gets its own spec, pla
 - **`pdtd`:** the background service, a single Rust program built on tokio and axum. It owns the database, git worktrees, every child process (agents and terminals) and the event stream.
   - It listens only on `127.0.0.1` by default.
   - It runs whether or not any window is open.
-- **Desktop app:** a Tauri v2 window. On launch it starts `pdtd` if it isn't running, connects to it, and loads the web interface. Closing the window never stops sessions.
-- **Remote access:** the user runs `tailscale serve` to expose `pdtd` over HTTPS on their tailnet. Every client must also present a device token (see §9). Access to the network alone is not enough.
+- **Desktop app:** a Tauri v2 tray app (no window since PR #2). It opens the web interface in the default browser. From Phase 2, `pdt-host` starts and supervises `pdtd` (see `2026-10-15-remote-host-design.md` §3).
+- **Remote access:** per host, `pdtd` exposes itself with `tailscale serve`, and remote requests must carry the owner's Tailscale identity (see `2026-10-15-remote-host-design.md` §2).
 
 ### 3.2 Repository layout
 
@@ -181,7 +181,7 @@ trait AgentAdapter {
 ### 5.5 Billing and credentials
 
 - Both adapters use the tools' existing local logins, so usage goes against the user's subscription.
-- `pdtd` **removes `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`** from the agent environment unless a project is explicitly set to API billing.
+- `pdtd` **removes `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`** from the agent environment unless the host or project is set to pass credentials through (`2026-10-15-remote-host-design.md` §6).
 - `pdtd` never stores or handles agent credentials. This keeps a future product version within Anthropic's and OpenAI's terms, because each user's own installed tools and logins are used.
 
 ### 5.6 Normalization and drift
@@ -290,8 +290,8 @@ Transitions are therefore **explicit, typed tool calls**, never guessed from the
 
 ## 9. Security
 
-- `pdtd` listens only on loopback by default. Remote access goes through `tailscale serve` (which provides HTTPS and identity on the tailnet).
-- Clients must present a device token. Tokens are created and revoked from Settings, and the desktop app gets its token automatically.
+- `pdtd` listens only on loopback. Remote access goes through `tailscale serve` (which provides HTTPS and identity on the tailnet).
+- Remote requests must carry the host owner's Tailscale identity; local requests are trusted. This replaces device tokens (`2026-10-15-remote-host-design.md` §2).
 - No agent credentials are stored (see §5.5).
 - Terminal and agent sessions have the same access to the machine as the user. That's acceptable for a single-user tool. Isolating sessions further is deferred to the product version.
 
@@ -312,15 +312,18 @@ Transitions are therefore **explicit, typed tool calls**, never guessed from the
 |---|---|---|
 | 0. Foundation | Install the toolchain (Rust, pnpm, updated Codex); Cargo workspace; `pdtd` with SQLite and migrations; ts-rs; `web/ui` tokens and core components; Tauri window; the app frame; CI | — |
 | 1. Terminals | PTY sessions (shell, interactive agent terminal), xterm view, projects, worktrees, sessions surviving closed windows | **PDT is developed inside PDT,** Herd-style |
-| 2. Tickets and board | Tickets, the board, Start (attempt, worktree, session), web access with device tokens | PDT's own backlog lives in PDT; remote access |
-| 3. Structured agents | Claude and Codex adapters, event log, conversation view, approvals, scratch chats | Rich, machine-readable agent sessions |
-| 4. Review | Diff view, line comments, sending feedback, merge | A review loop driven by the user |
-| 5. Pipeline | Personas, workflow engine, `pdt-mcp`, Refine/Review/QA stages, inbox, loop limit, stalled handling | The full agent team |
+| 2. Remote host | Remote access over Tailscale identity, `pdt-host` supervisor, token-based updates with rollback, run configurations with HTTPS previews, agent activity state, per-host settings (`2026-10-15-remote-host-design.md`) | **PDT moves to the Mac mini** and is developed there from any device |
+| 3. Workspaces | herdr-style workspaces, tabs and split panes; project keys; git integration (own brainstorm) | Day-to-day agent work without herdr |
+| 4. Tickets and board | Tickets, the board, Start (attempt, worktree, session) | PDT's own backlog lives in PDT |
+| 5. Structured agents | Claude and Codex adapters, event log, conversation view, approvals, scratch chats | Rich, machine-readable agent sessions |
+| 6. Review | Diff view, line comments, sending feedback, merge | A review loop driven by the user |
+| 7. Pipeline | Personas, workflow engine, `pdt-mcp`, Refine/Review/QA stages, inbox, loop limit, stalled handling | The full agent team |
 
 **Stable versus dev installs:**
 - The stable `pdtd` (a released build, default port, data folder `…/pdt/`) runs the real sessions that work on PDT.
 - Dev builds run on a different port with a separate data folder (`…/pdt-dev/`). This way, rebuilding PDT never kills the agents doing the rebuilding.
 - Updating the stable install is a deliberate step (build, stop, swap, start). Interrupted sessions resume afterwards.
+- From Phase 2, dev instances are run configurations with their own port and data, and stable updates from GitHub releases through `pdt-host` (`2026-10-15-remote-host-design.md` §3, §4, §7).
 
 ## 12. Naming
 
@@ -330,4 +333,5 @@ Transitions are therefore **explicit, typed tool calls**, never guessed from the
 
 - The final product name, and the trademark, domain and crate-name checks that go with it.
 - Exactly what Codex's `app-server` approval events and MCP configuration look like. This must be confirmed against the 0.162 documentation during Phase 3; the adapter design does not depend on the details.
-- The device-token format and how tokens are rotated (Phase 2 detail).
+- Device tokens, for remote access without Tailscale (deferred; Phase 2 uses Tailscale identity).
+- The deferred items in `2026-10-15-remote-host-design.md` §9: phone UI, notifications, a multi-host UI, replacing hermes-agent, Devin support.

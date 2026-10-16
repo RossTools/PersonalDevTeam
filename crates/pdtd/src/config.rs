@@ -1,4 +1,5 @@
 use anyhow::{Context, bail};
+use pdt_api::remote::HOST_HTTPS_PORT;
 use pdt_core::brand::{DAEMON_BIN, Profile};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
@@ -13,7 +14,27 @@ pub struct Config {
     pub web_dir: Option<PathBuf>,
     /// Host header values accepted by the API (DNS-rebinding guard).
     pub allowed_hosts: Vec<String>,
+    /// `PDT_OWNER_LOGIN`: the Tailscale login allowed in (dev instances get it from their run configuration).
+    pub owner_login: Option<String>,
+    /// `PDT_SECRET_STORE=memory`: keep secrets in memory (tests); otherwise the OS keychain.
+    pub memory_secrets: bool,
+    /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
+    /// nothing, so they never reach the machine's Tailscale).
+    pub tailscale_bin: Option<PathBuf>,
+    /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
+    /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
+    pub remote_https_port: u16,
+    /// `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM`: the agent programs to launch instead of the detected ones (tests,
+    /// unusual installs).
+    pub claude_program: Option<String>,
+    pub codex_program: Option<String>,
+    /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
+    /// (`update_disabled_reason`).
+    pub supervised: bool,
 }
+
+/// Why a dev instance never updates.
+pub const DEV_UPDATE_REASON: &str = "updates apply to the installed stable app";
 
 impl Config {
     pub fn from_lookup(
@@ -47,7 +68,39 @@ impl Config {
         if let Some(extra) = lookup("PDT_ALLOWED_HOSTS") {
             allowed_hosts.extend(extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from));
         }
-        Ok(Config { profile, port, data_dir, web_dir, allowed_hosts })
+        let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
+        let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
+        let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
+        let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
+        let claude_program = lookup("PDT_CLAUDE_PROGRAM");
+        let codex_program = lookup("PDT_CODEX_PROGRAM");
+        let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
+        Ok(Config {
+            profile,
+            port,
+            data_dir,
+            web_dir,
+            allowed_hosts,
+            owner_login,
+            memory_secrets,
+            tailscale_bin,
+            remote_https_port,
+            claude_program,
+            codex_program,
+            supervised,
+        })
+    }
+
+    /// Why this pdtd never updates, or `None` when it may: only a stable instance under pdt-host updates. A dev
+    /// instance never does, even when supervised and holding a token (final review #1).
+    pub fn update_disabled_reason(&self) -> Option<String> {
+        if self.profile == Profile::Dev {
+            Some(DEV_UPDATE_REASON.into())
+        } else if !self.supervised {
+            Some(pdt_api::update::UNSUPERVISED_REASON.into())
+        } else {
+            None
+        }
     }
 
     pub fn from_env() -> anyhow::Result<Config> {
@@ -140,6 +193,73 @@ mod tests {
         assert!(c.allowed_hosts.contains(&"127.0.0.1:5173".to_string()));
         let stable = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
         assert!(!stable.allowed_hosts.iter().any(|h| h.ends_with(":5173")));
+    }
+
+    #[test]
+    fn owner_and_secret_store_from_env() {
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert_eq!((c.owner_login, c.memory_secrets), (None, false));
+        let c = Config::from_lookup(
+            lookup(&[("PDT_OWNER_LOGIN", " me@example.com "), ("PDT_SECRET_STORE", "memory")]),
+            Some("/d".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!((c.owner_login.as_deref(), c.memory_secrets), (Some("me@example.com"), true));
+    }
+
+    #[test]
+    fn supervised_only_when_pdt_host_says_so() {
+        let sup = |v: &[(&str, &str)]| Config::from_lookup(lookup(v), Some("/d".into()), None).unwrap().supervised;
+        assert!(!sup(&[]));
+        assert!(!sup(&[("PDT_SUPERVISED", "0")]));
+        assert!(!sup(&[("PDT_SUPERVISED", "yes")]));
+        assert!(sup(&[("PDT_SUPERVISED", "1")]));
+    }
+
+    #[test]
+    fn only_a_supervised_stable_instance_updates() {
+        let reason = |v: &[(&str, &str)]| {
+            Config::from_lookup(lookup(v), Some("/d".into()), None).unwrap().update_disabled_reason()
+        };
+        assert_eq!(reason(&[("PDT_SUPERVISED", "1")]), None);
+        assert_eq!(reason(&[]).as_deref(), Some(pdt_api::update::UNSUPERVISED_REASON));
+        let dev = Some(DEV_UPDATE_REASON);
+        assert_eq!(reason(&[("PDT_PROFILE", "dev"), ("PDT_SUPERVISED", "1")]).as_deref(), dev);
+        assert_eq!(reason(&[("PDT_PROFILE", "dev")]).as_deref(), dev);
+    }
+
+    #[test]
+    fn tailscale_bin_from_env() {
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert_eq!(c.tailscale_bin, None);
+        let c = Config::from_lookup(lookup(&[("PDT_TAILSCALE_BIN", "/x/fake-tailscale")]), Some("/d".into()), None)
+            .unwrap();
+        assert_eq!(c.tailscale_bin, Some(PathBuf::from("/x/fake-tailscale")));
+    }
+
+    #[test]
+    fn agent_programs_from_env() {
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert_eq!((c.claude_program, c.codex_program), (None, None));
+        let c = Config::from_lookup(
+            lookup(&[("PDT_CLAUDE_PROGRAM", "/x/claude"), ("PDT_CODEX_PROGRAM", "/x/codex")]),
+            Some("/d".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!((c.claude_program.as_deref(), c.codex_program.as_deref()), (Some("/x/claude"), Some("/x/codex")));
+    }
+
+    #[test]
+    fn only_the_stable_port_claims_https_443() {
+        let port_of = |pairs: &[(&str, &str)]| {
+            Config::from_lookup(lookup(pairs), Some("/d".into()), None).unwrap().remote_https_port
+        };
+        assert_eq!(port_of(&[]), 443);
+        assert_eq!(port_of(&[("PDT_PROFILE", "dev")]), 7421);
+        assert_eq!(port_of(&[("PDT_PORT", "9000")]), 9000);
+        assert_eq!(port_of(&[("PDT_PROFILE", "dev"), ("PDT_PORT", "9001")]), 9001);
     }
 
     #[test]

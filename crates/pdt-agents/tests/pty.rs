@@ -112,6 +112,45 @@ async fn kill_ends_the_process() {
     assert!(matches!(m.kill("a"), Err(PtyError::NotRunning(_))));
 }
 
+/// A run's server is a grandchild (`cmd.exe` → node, `sh` → node): killing the terminal must end it too, or it keeps
+/// its port (Review Focus 2).
+#[tokio::test]
+async fn kill_ends_the_whole_process_tree() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    // node starts the server as its own child, like dev servers do. On Windows that child is detached from the
+    // console, so closing the pseudo console does not end it: only a tree kill does.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("server.js"),
+        "if (process.argv[2] === 'child') {\n\
+         require('net').createServer().listen(Number(process.env.P), '127.0.0.1');\n\
+         } else {\n\
+         require('child_process').spawn(process.execPath, [__filename, 'child'], \
+         { detached: process.platform === 'win32', stdio: 'ignore', windowsHide: true });\n\
+         setInterval(() => {}, 1000);\n\
+         }\n",
+    )
+    .unwrap();
+    let m = PtyManager::new();
+    // The trailing echo keeps the shell from exec'ing node in its place.
+    let mut s = oneshot_cmd("a", "node server.js & echo after", "node server.js; echo after");
+    s.cwd = dir.path().to_path_buf();
+    s.env.push(("P".into(), port.to_string()));
+    let exit = m.spawn(s).unwrap();
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+        assert!(tokio::time::Instant::now() < deadline, "the server never listened");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    m.kill("a").unwrap();
+    tokio::time::timeout(WAIT, exit).await.expect("exit after kill").unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+        assert!(tokio::time::Instant::now() < deadline, "the grandchild server still holds port {port}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[tokio::test]
 async fn ids_are_checked() {
     let m = PtyManager::new();

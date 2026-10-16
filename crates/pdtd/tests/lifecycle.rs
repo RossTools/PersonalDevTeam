@@ -1,80 +1,11 @@
 //! Starts the real pdtd binary on a free port with a temp data dir. Never touches the stable instance.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
-struct Daemon(Child);
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
-fn start(port: u16, data: &Path) -> Daemon {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pdtd"));
-    for (k, _) in std::env::vars() {
-        if k.starts_with("PDT_") {
-            cmd.env_remove(k);
-        }
-    }
-    let child = cmd
-        .env("PDT_PROFILE", "dev")
-        .env("PDT_PORT", port.to_string())
-        .env("PDT_DATA_DIR", data)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let d = Daemon(child);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < deadline {
-        if http(port, "GET", "/api/health", None).0 == 200 {
-            return d;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    panic!("pdtd did not become healthy");
-}
-
-fn http(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, serde_json::Value) {
-    let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else { return (0, serde_json::Value::Null) };
-    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-    let body = body.unwrap_or("");
-    let req = format!(
-        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
-    );
-    if s.write_all(req.as_bytes()).is_err() {
-        return (0, serde_json::Value::Null);
-    }
-    let mut buf = Vec::new();
-    let _ = s.read_to_end(&mut buf);
-    let text = String::from_utf8_lossy(&buf);
-    let Some((head, body)) = text.split_once("\r\n\r\n") else { return (0, serde_json::Value::Null) };
-    let status = head.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
-    (status, serde_json::from_str(body).unwrap_or(serde_json::Value::Null))
-}
-
-fn wait_exit(d: &mut Daemon, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    loop {
-        if let Some(status) = d.0.try_wait().unwrap() {
-            return status;
-        }
-        assert!(Instant::now() < deadline, "pdtd did not exit");
-        std::thread::sleep(Duration::from_millis(100));
-    }
-}
+mod common;
+use common::*;
 
 #[test]
 fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
@@ -124,4 +55,140 @@ fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
     assert_eq!((s["status"].as_str(), &s["exitCode"]), (Some("running"), &serde_json::Value::Null), "auto-resumed");
     let (_, s) = http(port, "GET", &format!("/api/sessions/{stopped_id}"), None);
     assert_eq!(s["status"], "finished", "a stopped session is not resumed");
+}
+
+const RUN_CONFIG: &str = r#"
+[[run]]
+name = "web"
+command = "node -e \"require('http').createServer((q, s) => s.end('ok')).listen(Number(process.env.PORT), '127.0.0.1')\""
+web = true
+"#;
+
+fn wait_run(port: u16, id: &str, want: &str) -> serde_json::Value {
+    wait_run_since(port, id, want, 0)
+}
+
+/// Waits until the run is `want` with `updatedAt` at or after `since` (Unix ms): a row read back after a restart is
+/// `ready` from before the shutdown until the resume changes it.
+fn wait_run_since(port: u16, id: &str, want: &str, since: i64) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (_, r) = http(port, "GET", &format!("/api/runs/{id}"), None);
+        if r["state"] == want && r["updatedAt"].as_i64().is_some_and(|t| t >= since) {
+            return r;
+        }
+        assert!(Instant::now() < deadline, "run never became {want} after {since}: {r}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+}
+
+/// A block of 40 run ports in 20000–29999, below the OS ephemeral ranges (Windows and macOS start at 49152), so a
+/// port another test's connection was just handed by the OS never lands in it. Calls in one process never share a
+/// block.
+fn run_port_base() -> u16 {
+    // A random first block per test process, then consecutive ones: two tests in one process never share a block.
+    static FIRST: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let first = *FIRST.get_or_init(|| {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
+        std::process::id() ^ nanos
+    });
+    let block = first.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) % 250;
+    20000 + block as u16 * 40
+}
+
+/// A project whose repo has RUN_CONFIG, its own run port range (`run_port_base`), and a started web run.
+fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
+    let repo = tmp.join("repo");
+    std::fs::create_dir_all(repo.join(".pdt")).unwrap();
+    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    std::fs::write(repo.join(".pdt").join("project.toml"), RUN_CONFIG).unwrap();
+    let (_, settings) = http(port, "GET", "/api/host/settings", None);
+    assert_eq!(settings["settings"]["runPorts"], serde_json::json!({"start": 8500, "end": 8599}), "dev defaults");
+    let base = run_port_base();
+    let body = serde_json::json!({"runPorts": {"start": base, "end": base + 39}}).to_string();
+    assert_eq!(http(port, "PUT", "/api/host/settings", Some(&body)).0, 200);
+    let body = serde_json::json!({"name": "P", "repoPath": repo.to_string_lossy()}).to_string();
+    let (_, p) = http(port, "POST", "/api/projects", Some(&body));
+    let body = serde_json::json!({"name": "web", "kind": "run"}).to_string();
+    let (s, r) = http(port, "POST", &format!("/api/projects/{}/runs", p["id"].as_str().unwrap()), Some(&body));
+    assert_eq!(s, 201, "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    let r = wait_run(port, &id, "ready");
+    (id, r["port"].as_u64().unwrap() as u16)
+}
+
+/// Shuts the daemon down gracefully, which also ends the runs' servers.
+fn shut_down(port: u16, d: &mut Daemon) {
+    assert_eq!(http(port, "POST", "/api/shutdown", None).0, 202);
+    wait_exit(d, Duration::from_secs(20));
+}
+
+#[test]
+fn active_runs_resume_on_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let mut d = start(port, &data);
+    let (id, run_port) = project_with_web_run(port, tmp.path());
+    shut_down(port, &mut d);
+    let restarted_at = now_ms();
+    let mut d = start(port, &data);
+    let r = wait_run_since(port, &id, "ready", restarted_at);
+    assert_eq!(r["port"].as_u64(), Some(run_port as u64), "same port when it is still free");
+    shut_down(port, &mut d);
+}
+
+#[test]
+fn resume_moves_to_a_free_port_when_the_old_one_is_taken() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let mut d = start(port, &data);
+    let (id, run_port) = project_with_web_run(port, tmp.path());
+    shut_down(port, &mut d);
+    let mut squatter = None;
+    for _ in 0..100 {
+        if let Ok(l) = std::net::TcpListener::bind(("127.0.0.1", run_port)) {
+            squatter = Some(l);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _squatter = squatter.expect("the old run's port was freed by the shutdown");
+    let restarted_at = now_ms();
+    let mut d = start(port, &data);
+    let r = wait_run_since(port, &id, "ready", restarted_at);
+    assert_ne!(r["port"].as_u64(), Some(run_port as u64));
+    shut_down(port, &mut d);
+}
+
+/// Final review #1: a dev instance never updates, even under pdt-host (PDT_SUPERVISED=1).
+#[test]
+fn a_dev_pdtd_never_updates_even_when_supervised() {
+    let tmp = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let _d = start_with(port, &tmp.path().join("data"), &[("PDT_SUPERVISED", "1")]);
+    let (_, v) = http(port, "GET", "/api/host/update", None);
+    assert_eq!(v["state"], "disabled", "{v}");
+    assert_eq!(v["disabledReason"], "updates apply to the installed stable app", "{v}");
+    let (status, v) = http(port, "POST", "/api/host/update/install", Some(r#"{"force":true}"#));
+    assert_eq!((status, v["code"].as_str()), (409, Some("updates_disabled")), "{v}");
+}
+
+/// Final review #11: SIGHUP shuts pdtd down gracefully, like SIGTERM: it exits 0 rather than dying of the signal.
+#[cfg(unix)]
+#[test]
+fn sighup_shuts_down_gracefully() {
+    let tmp = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let mut d = start(port, &tmp.path().join("data"));
+    let status = Command::new("kill").args(["-HUP", &d.0.id().to_string()]).status().unwrap();
+    assert!(status.success());
+    let exit = wait_exit(&mut d, Duration::from_secs(20));
+    assert!(exit.success(), "a graceful shutdown exits 0, not by the signal: {exit:?}");
 }

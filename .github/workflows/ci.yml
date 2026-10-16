@@ -77,15 +77,15 @@ jobs:
           printf '{"version":"%s"}' "$version" > "$RUNNER_TEMP/release.conf.json"
           echo "Building release $version"
       - run: pnpm --dir web build
-      - run: cargo build --release -p pdtd
-      - run: node scripts/stage-pdtd.mjs
+      - run: cargo build --release -p pdtd -p pdt-host
+      - run: node scripts/stage-sidecars.mjs
       - name: Build the bundle
         shell: bash
         run: |
           args=(--config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" --bundles "${{ matrix.bundles }}")
           if [ -n "${PDT_BUILD_VERSION:-}" ]; then args+=(--config "$RUNNER_TEMP/release.conf.json"); fi
           pnpm --dir desktop exec tauri build "${args[@]}"
-      # Asset names must match the desktop app's update patterns: *-setup.exe and *.app.tar.gz.
+      # Asset names must match what hosts install (pdt_core::release::asset_suffix): *-setup.exe and *.app.tar.gz.
       - name: Collect the release asset
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
@@ -109,7 +109,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    # Every push to main becomes a GitHub release v0.1.<run number>, which the desktop app updates from.
+    # Every push to main becomes a GitHub release v0.1.<run number>, with SHA256SUMS; hosts' pdtd checks for it
+    # through the GitHub REST API and pdt-host installs it.
     needs: [build, bundle]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -121,6 +122,13 @@ jobs:
           pattern: release-*
           path: assets
           merge-multiple: true
+      # GitHub renames uploaded assets with spaces; rename first so SHA256SUMS lists the names hosts will see.
+      - name: Checksums
+        run: |
+          cd assets
+          for f in *; do n="${f// /.}"; if [ "$f" != "$n" ]; then mv "$f" "$n"; fi; done
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

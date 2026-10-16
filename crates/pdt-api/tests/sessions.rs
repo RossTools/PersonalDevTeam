@@ -40,7 +40,9 @@ async fn setup(tmp: &Path) -> (axum::Router, AppState, String, std::path::PathBu
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let state = AppState::new(store);
+    let mut state = AppState::new(store, tmp.join("data"));
+    // Codex launches read `<codex_home>/config.toml` for the user's notify: never the real ~/.codex.
+    state.platform.codex_home = Some(tmp.join("codex-home"));
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
@@ -316,7 +318,7 @@ async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
     let mut found = Vec::new();
     for _ in 0..100 {
         let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
-        found = text.lines().map(|l| l.trim().to_string()).collect();
+        found = text.lines().map(without_hook_args).collect();
         if found.len() >= want {
             break;
         }
@@ -324,6 +326,22 @@ async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
     }
     found.sort();
     found
+}
+
+/// A recorded launch without PDT's activity-hook arguments (tests/activity.rs covers those): Codex's leading
+/// `-c notify=[…]` and Claude's trailing `--settings <file>`.
+fn without_hook_args(line: &str) -> String {
+    let mut rest = line.trim();
+    if rest.starts_with("-c ")
+        && let Some(at) = rest.find("codex-notify")
+        && let Some(end) = rest[at..].find(']')
+    {
+        rest = rest[at + end + 1..].trim_start_matches('"').trim();
+    }
+    if let Some(at) = rest.find("--settings") {
+        rest = rest[..at].trim();
+    }
+    rest.to_string()
 }
 
 /// The arguments of the first launch.
@@ -372,6 +390,10 @@ async fn seed_with(
         ended_at: None,
         external_session_id: None,
         fresh_started_at,
+        activity: None,
+        attention_at: None,
+        last_viewed_at: None,
+        unseen: false,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {

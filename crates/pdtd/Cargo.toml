@@ -17,7 +17,9 @@ tracing-subscriber.workspace = true
 dirs = "7.0.0"
 tracing-appender = "0.2.5"
 jiff.workspace = true
+pdt-tailscale.workspace = true
+serde_json.workspace = true
+pdt-update.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile = "3.27.0"
