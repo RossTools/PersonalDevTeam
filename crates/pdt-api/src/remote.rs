@@ -108,6 +108,7 @@ pub async fn apply_remote_access(st: &AppState) -> RemoteStatus {
 /// [`apply_remote_access`] for callers that already hold `settings_lock`.
 pub(crate) async fn apply_locked(st: &AppState) -> RemoteStatus {
     let previous = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let before = previous.active.then(|| previous.dns_name.clone()).flatten();
     let out = match st.store.get_host_settings().await {
         // Without the setting, change nothing.
         Err(e) => RemoteStatus { error: Some(format!("could not read the host settings: {e}")), ..previous },
@@ -117,7 +118,12 @@ pub(crate) async fn apply_locked(st: &AppState) -> RemoteStatus {
     // Running web runs' links follow the outcome (their ports were mapped or unmapped above).
     let tailnet = out.active.then_some(out.dns_name.as_deref()).flatten();
     crate::run_manager::relink_runs(st, tailnet).await;
+    let host_changed = before.as_deref() != tailnet;
     *st.remote.lock().unwrap_or_else(|e| e.into_inner()) = out.clone();
+    // Runs that baked the old host into their processes restart with the new one (final review #9).
+    if host_changed {
+        crate::run_manager::restart_host_dependent_runs(st);
+    }
     out
 }
 

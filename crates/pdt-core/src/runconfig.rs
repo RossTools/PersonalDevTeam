@@ -237,9 +237,36 @@ pub fn run_env(def: &RunDef, vars: &RunVars) -> Vec<(String, String)> {
     env
 }
 
+/// Whether a run's processes get the run's host or link baked in (`$PDT_RUN_HOST` / `$PDT_RUN_URL` in its setup,
+/// command or env), so they must restart when remote access changes it (final review #9).
+pub fn uses_run_host(def: &RunDef) -> bool {
+    // Any replacement differs from the `$NAME` it replaces, so a changed text means a reference.
+    let probe = [("PDT_RUN_HOST", "#".to_string()), ("PDT_RUN_URL", "#".to_string())];
+    let refers = |text: &str| expand(text, &probe) != text;
+    def.setup.as_deref().is_some_and(refers) || refers(&def.command) || def.env.values().any(|v| refers(v))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn which_runs_use_the_run_host() {
+        let def = |setup: Option<&str>, command: &str, env: &[(&str, &str)]| RunDef {
+            name: "r".into(),
+            setup: setup.map(String::from),
+            command: command.into(),
+            web: true,
+            data: false,
+            env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        };
+        assert!(uses_run_host(&def(None, "x", &[("PDT_ALLOWED_HOSTS", "$PDT_RUN_HOST:$PORT")])));
+        assert!(uses_run_host(&def(None, "x", &[("PUBLIC", "${PDT_RUN_URL}")])));
+        assert!(uses_run_host(&def(None, "serve --host $PDT_RUN_HOST", &[])));
+        assert!(uses_run_host(&def(Some("echo $PDT_RUN_URL > url.txt"), "x", &[])));
+        let env = [("A", "$PDT_RUN_DATA"), ("B", "$PDT_RUN_HOSTS")];
+        assert!(!uses_run_host(&def(Some("pnpm i"), "serve --port $PORT", &env)));
+    }
 
     const FILE: &str = r#"
 [[run]]

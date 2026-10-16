@@ -19,6 +19,12 @@ web = true
 data = true
 
 [[run]]
+name = "webhost"
+command = "node -e \"require('http').createServer((q, s) => s.end(process.env.SEEN_HOST)).listen(Number(process.env.PORT), '127.0.0.1')\""
+web = true
+env = { SEEN_HOST = "$PDT_RUN_HOST" }
+
+[[run]]
 name = "broken-setup"
 setup = "node -e \"process.exit(3)\""
 command = "node -e \"setTimeout(() => {}, 60000)\""
@@ -53,10 +59,20 @@ struct Env {
     _tmp: tempfile::TempDir,
 }
 
-/// A free range of 40 ports starting at a port the OS just handed out.
+/// A block of 40 run ports in 30000–39999, below the OS ephemeral ranges (Windows and macOS start at 49152) and apart
+/// from pdtd's lifecycle tests (20000–29999), so a port the OS hands to some connection never lands in it. Each call
+/// in one process gets a different block.
 fn free_range() -> (u16, u16) {
-    let p = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port().min(65000);
-    (p, p + 39)
+    // A random first block per test process, then consecutive ones: two tests in one process never share a block.
+    static FIRST: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let first = *FIRST.get_or_init(|| {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
+        std::process::id() ^ nanos
+    });
+    let block = first.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) % 250;
+    let start = 30000 + block as u16 * 40;
+    (start, start + 39)
 }
 
 async fn setup() -> Env {
@@ -356,6 +372,71 @@ async fn toggling_remote_access_updates_running_web_runs() {
     assert_eq!(r["url"], format!("http://127.0.0.1:{port}/"));
     call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
     wait_state(&env.app, &id, &["stopped"]).await;
+    env.state.ptys.shutdown().await;
+}
+
+/// Waits until the web server on `port` answers with a body ending in `want`.
+async fn wait_body(port: u16, want: &str) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let get = async || -> std::io::Result<String> {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+        s.write_all(b"GET / HTTP/1.0\r\nHost: x\r\n\r\n").await?;
+        let mut buf = String::new();
+        s.read_to_string(&mut buf).await?;
+        Ok(buf)
+    };
+    for _ in 0..600 {
+        if let Ok(Ok(body)) = tokio::time::timeout(Duration::from_secs(2), get()).await
+            && body.ends_with(want)
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("port {port} never answered {want}: {:?}", get().await);
+}
+
+/// Final review #9: a web run whose definition uses `$PDT_RUN_HOST` (a dev PDT's allowlist) restarts on its port when
+/// remote access changes the host; a run that does not use it keeps running untouched.
+#[tokio::test]
+async fn runs_that_use_the_run_host_restart_when_remote_access_changes_it() {
+    let mut env = setup().await;
+    env.state.tailscale = recording();
+    env.app = router(env.state.clone(), None);
+    let (_, r) = start(&env, json!({"name": "webhost", "kind": "run"})).await;
+    let host_run = r["id"].as_str().unwrap().to_string();
+    let (_, r) = start(&env, json!({"name": "web", "kind": "run"})).await;
+    let plain_run = r["id"].as_str().unwrap().to_string();
+    let r = wait_state(&env.app, &host_run, &["ready"]).await;
+    let port = r["port"].as_u64().unwrap() as u16;
+    let plain = wait_state(&env.app, &plain_run, &["ready"]).await;
+    wait_body(port, "127.0.0.1").await;
+    let setup_txt = PathBuf::from(plain["dataDir"].as_str().unwrap()).join("setup.txt");
+    std::fs::remove_file(&setup_txt).unwrap();
+
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    wait_body(port, "box.t.ts.net").await;
+    let r = wait_state(&env.app, &host_run, &["ready"]).await;
+    assert_eq!(
+        (r["port"].as_u64(), r["url"].as_str()),
+        (Some(port as u64), Some(format!("https://box.t.ts.net:{port}/").as_str()))
+    );
+
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    wait_body(port, "127.0.0.1").await;
+    let r = wait_state(&env.app, &host_run, &["ready"]).await;
+    assert_eq!(r["url"], format!("http://127.0.0.1:{port}/"));
+
+    let (_, p) = call(&env.app, "GET", &format!("/api/runs/{plain_run}"), None).await;
+    assert_eq!(p["state"], "ready", "{p}");
+    assert!(!setup_txt.exists(), "the run that does not use the host was not restarted");
+    for id in [&host_run, &plain_run] {
+        call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+        wait_state(&env.app, id, &["stopped"]).await;
+    }
     env.state.ptys.shutdown().await;
 }
 

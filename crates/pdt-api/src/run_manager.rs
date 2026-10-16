@@ -4,11 +4,13 @@
 //! port itself, and it never unmaps a port it did not map. The machine's other instance (stable or dev) may own any
 //! port a stored row mentions.
 
+use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
+use axum::http::StatusCode;
 use pdt_agents::SpawnSpec;
 use pdt_core::host::CredentialPolicy;
 use pdt_core::run::{Run, RunKind, RunState, RunStep, pick_port, pty_id, step_launch};
-use pdt_core::runconfig::{RunDef, RunVars, expand, run_env};
+use pdt_core::runconfig::{RunDef, RunVars, expand, run_env, uses_run_host};
 use pdt_core::session::{SessionKind, is_scrubbed};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -30,6 +32,8 @@ pub(crate) struct RunControl {
     done: tokio::sync::Notify,
     /// The port of a web run this process is driving: the only run ports it maps.
     web_port: Option<u16>,
+    /// The run's definition uses `$PDT_RUN_HOST` / `$PDT_RUN_URL`: it restarts when remote access changes the host.
+    uses_host: bool,
 }
 
 impl RunControl {
@@ -74,6 +78,64 @@ pub(crate) async fn relink_runs(st: &AppState, tailnet_host: Option<&str>) {
             tracing::warn!(run = %id, error = %e, "could not update a run's link");
         }
     }
+}
+
+/// Restarts, in the background, the runs this process drives whose definition uses the run's host or link: their
+/// processes keep the old value otherwise (a dev PDT's allowlist would refuse the new link). Called after remote
+/// access changed the host; each run keeps its port when it can.
+pub(crate) fn restart_host_dependent_runs(st: &AppState) {
+    let ids: Vec<String> = {
+        let controls = st.run_controls.lock().unwrap_or_else(|e| e.into_inner());
+        controls.iter().filter(|(_, c)| c.uses_host && !c.stopping()).map(|(id, _)| id.clone()).collect()
+    };
+    for id in ids {
+        let st = st.clone();
+        tokio::spawn(async move {
+            tracing::info!(run = %id, "remote access changed the run's host; restarting it");
+            if let Err(e) = restart_in_place(&st, &id).await {
+                tracing::warn!(run = %id, error = %e, "could not restart a run for its new host");
+            }
+        });
+    }
+}
+
+/// Stops an active run and starts it again (no run-limit check: it replaces itself).
+async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
+    if !stop(st, id, None).await {
+        return Err("the run did not stop in time".into());
+    }
+    let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
+    let def = crate::runs::definition_for(st, &run).await?;
+    let _start = st.run_start_lock.lock().await;
+    let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
+    if run.state.is_active() || st.shutting_down.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    relaunch(st, run, def).await.map(|_| ()).map_err(|e| e.message().to_string())
+}
+
+/// Starts a stopped run again: a port (its old one when free) and link for a web run, the first state, then the
+/// driver. The caller holds `run_start_lock` and has checked the run is not active.
+pub(crate) async fn relaunch(st: &AppState, mut run: Run, def: RunDef) -> Result<Run, ApiError> {
+    let id = run.id.clone();
+    if def.web {
+        let p = allocate_port(st, run.port, Some(&id)).await.ok_or_else(no_free_port)?;
+        let url = run_url(st, p);
+        st.store.set_run_port(&id, Some(p), Some(&url)).await?;
+        run.port = Some(p);
+        run.url = Some(url);
+    }
+    let first = if def.setup.is_some() { RunState::SettingUp } else { RunState::Starting };
+    st.store.set_run_state(&id, first, now_ms()).await?;
+    run.state = first;
+    run.exit_code = None;
+    run.error = None;
+    start(st, run.clone(), def);
+    Ok(run)
+}
+
+pub(crate) fn no_free_port() -> ApiError {
+    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "no_free_port", "no free port in the host's run port range")
 }
 
 fn vars(st: &AppState, run: &Run) -> RunVars {
@@ -255,7 +317,11 @@ fn stop_reason(ctl: &RunControl) -> Option<String> {
 
 /// Starts driving `run` in the background. The row must already be stored.
 pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
-    let ctl = Arc::new(RunControl { web_port: run.port.filter(|_| def.web), ..Default::default() });
+    let ctl = Arc::new(RunControl {
+        web_port: run.port.filter(|_| def.web),
+        uses_host: uses_run_host(&def),
+        ..Default::default()
+    });
     st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).insert(run.id.clone(), ctl.clone());
     let st = st.clone();
     tokio::spawn(async move {

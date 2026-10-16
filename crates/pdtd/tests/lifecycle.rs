@@ -87,12 +87,17 @@ fn now_ms() -> i64 {
 }
 
 /// A block of 40 run ports in 20000–29999, below the OS ephemeral ranges (Windows and macOS start at 49152), so a
-/// port another test's connection was just handed by the OS never lands in it. Each call gets a different block.
+/// port another test's connection was just handed by the OS never lands in it. Calls in one process never share a
+/// block.
 fn run_port_base() -> u16 {
+    // A random first block per test process, then consecutive ones: two tests in one process never share a block.
+    static FIRST: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let seed =
-        std::process::id() ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
-    let block = (seed.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst))) % 250;
+    let first = *FIRST.get_or_init(|| {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
+        std::process::id() ^ nanos
+    });
+    let block = first.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) % 250;
     20000 + block as u16 * 40
 }
 

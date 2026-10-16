@@ -11,6 +11,10 @@
   per https port per machine. A dev pdtd (a run of PDT itself) with remote access on maps its own runs' ports too, so
   turning remote access off in one instance unmaps the port the other instance's link uses (the run keeps running;
   toggling remote access on again, or restarting the run, maps it again).
+- **Toggling remote access restarts web runs that use `$PDT_RUN_HOST` or `$PDT_RUN_URL`** (in setup, command or
+  `env`, e.g. PDT's own run with `PDT_ALLOWED_HOSTS`), on the same port when free, so they pick up the new host.
+  Other runs keep running and only their link changes; a program that reads `PDT_RUN_HOST` from its environment
+  without the config naming it is not detected (restart it by hand).
 - **Windows run steps** go through a generated `.cmd`. The command is split on ` && ` (also inside quotes, so avoid it
   in quoted arguments) into one `call <part>` line per part, each followed by a check that ends the script with the
   failing exit code: shims (pnpm.cmd) after a `&&` work and the exit code is kept. Limits: no `if`/`for` at the start

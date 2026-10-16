@@ -35,10 +35,6 @@ fn conflict(code: &'static str, msg: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, msg)
 }
 
-fn no_free_port() -> ApiError {
-    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "no_free_port", "no free port in the host's run port range")
-}
-
 /// The definition named by `run` in the configuration of its own checkout. Err is a message for the run's error.
 pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, String> {
     let cfg = crate::runconfig::load_effective(st, &run.project_id, std::path::Path::new(&run.cwd))
@@ -203,8 +199,11 @@ pub(crate) async fn create(
         Place::NewBranch(branch) => Some(worktree_for(&st, &project, branch).await?),
     };
     let (cwd, branch) = crate::runconfig::checkout_dir(&st, &project, worktree_id.as_deref()).await?;
-    let port =
-        if def.web { Some(run_manager::allocate_port(&st, None, None).await.ok_or_else(no_free_port)?) } else { None };
+    let port = if def.web {
+        Some(run_manager::allocate_port(&st, None, None).await.ok_or_else(run_manager::no_free_port)?)
+    } else {
+        None
+    };
     let data_dir =
         def.data.then(|| run_data_dir(&st.data_dir, &project.id, &branch, &def.name).to_string_lossy().into_owned());
     let now = now_ms();
@@ -257,7 +256,7 @@ pub(crate) async fn restart(
     let def =
         definition_for(&st, &run).await.map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", m))?;
     let _start = st.run_start_lock.lock().await;
-    let mut run = load(&st, &id).await?;
+    let run = load(&st, &id).await?;
     if run.state.is_active() {
         return Err(conflict("run_active", "the run was started again meanwhile"));
     }
@@ -265,20 +264,7 @@ pub(crate) async fn restart(
     if run.kind == RunKind::Run {
         check_run_limit(&st, input.stop_run_id.as_deref()).await?;
     }
-    if def.web {
-        let p = run_manager::allocate_port(&st, run.port, Some(&id)).await.ok_or_else(no_free_port)?;
-        let url = run_manager::run_url(&st, p);
-        st.store.set_run_port(&id, Some(p), Some(&url)).await?;
-        run.port = Some(p);
-        run.url = Some(url);
-    }
-    let first = if def.setup.is_some() { RunState::SettingUp } else { RunState::Starting };
-    st.store.set_run_state(&id, first, now_ms()).await?;
-    run.state = first;
-    run.exit_code = None;
-    run.error = None;
-    run_manager::start(&st, run.clone(), def);
-    Ok(Json(run))
+    Ok(Json(run_manager::relaunch(&st, run, def).await?))
 }
 
 pub(crate) async fn reset_data(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
