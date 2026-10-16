@@ -316,8 +316,8 @@ mod tests {
         assert_eq!(u.script, None);
     }
 
-    /// Runs `command` through the generated script with `a`, `b` and `c` shims (batch files, like pnpm.cmd) in the
-    /// folder; returns (exit code, output).
+    /// Runs `command` through the generated script with `shima`, `shimb` (exit 0) and `shimfail` (exit 3) shims
+    /// (batch files, like pnpm.cmd) in the folder; returns (exit code, output).
     #[cfg(windows)]
     fn run_chain(tag: &str, command: &str) -> (i32, String) {
         let dir = std::env::temp_dir().join(format!("pdt-step-{}-{tag}", std::process::id()));

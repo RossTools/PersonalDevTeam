@@ -215,12 +215,13 @@ fn fake_claude(dir: &Path) -> std::path::PathBuf {
 
 /// Serves a router whose Claude is the fake, with short activity thresholds and the ticker running.
 /// Returns (app, state, port, project id).
-async fn serve_claude(tmp: &Path) -> (axum::Router, pdt_api::AppState, u16, String) {
+/// Serves a fake Claude whose output goes quiet (working → unknown) after `quiet_after_ms` without output.
+async fn serve_claude(tmp: &Path, quiet_after_ms: i64) -> (axum::Router, pdt_api::AppState, u16, String) {
     let (_, mut state) = setup(tmp).await;
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     state.platform.claude_program = fake_claude(&bin).to_string_lossy().into_owned();
-    state.activity_timing = pdt_core::activity::Timing { quiet_after_ms: 2_000, hook_grace_ms: 400 };
+    state.activity_timing = pdt_core::activity::Timing { quiet_after_ms, hook_grace_ms: 400 };
     state.activity_tick = Duration::from_millis(50);
     tokio::spawn(pdt_api::run_activity_ticker(state.clone()));
     let app = pdt_api::router(state.clone(), None);
@@ -252,7 +253,7 @@ async fn type_in(ws: &mut Ws, text: &str) {
 #[tokio::test(flavor = "multi_thread")]
 async fn claude_hooks_that_never_fire_make_the_session_unknown() {
     let tmp = tempfile::tempdir().unwrap();
-    let (app, state, port, pid) = serve_claude(tmp.path()).await;
+    let (app, state, port, pid) = serve_claude(tmp.path(), 2_000).await;
     let id = create_claude(&app, &pid).await;
     assert_eq!(session(&app, &id).await["activity"], "idle");
     let mut ws = terminal(port, &id).await;
@@ -265,7 +266,9 @@ async fn claude_hooks_that_never_fire_make_the_session_unknown() {
 #[tokio::test(flavor = "multi_thread")]
 async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
     let tmp = tempfile::tempdir().unwrap();
-    let (app, state, port, pid) = serve_claude(tmp.path()).await;
+    // Output every 500 ms must keep it working: a quiet threshold well above that leaves room for a slow CI machine
+    // (final review #5), and `wait_for_activity` (20 s) still sees it go quiet.
+    let (app, state, port, pid) = serve_claude(tmp.path(), 6_000).await;
     let id = create_claude(&app, &pid).await;
     let mut ws = terminal(port, &id).await;
     // SessionStart changes nothing, but shows the hooks work.
@@ -296,7 +299,7 @@ async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
 #[tokio::test(flavor = "multi_thread")]
 async fn removing_a_session_deletes_its_hook_settings() {
     let tmp = tempfile::tempdir().unwrap();
-    let (app, state, _, pid) = serve_claude(tmp.path()).await;
+    let (app, state, _, pid) = serve_claude(tmp.path(), 2_000).await;
     let id = create_claude(&app, &pid).await;
     let dir = tmp.path().join("data").join("sessions").join(&id);
     assert!(dir.join("claude-settings.json").is_file());

@@ -438,10 +438,31 @@ mod tests {
                 ] {
                     assert!(is_scrubbed(kind, v, creds), "{kind:?}/{creds:?} keeps {v}");
                 }
-                for v in ["NO_COLOR", "FORCE_COLOR", "CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_ENTRYPOINT"] {
-                    assert!(is_scrubbed(kind, v, creds), "{kind:?} keeps {v}");
+                for v in [
+                    "NO_COLOR",
+                    "FORCE_COLOR",
+                    "CLAUDECODE",
+                    "CLAUDE_PID",
+                    // A running Claude Code session's own variables (pdtd started from inside one).
+                    "CLAUDE_CODE_ENTRYPOINT",
+                    "CLAUDE_CODE_SESSION_ID",
+                    "CLAUDE_CODE_CHILD_SESSION",
+                    "CLAUDE_CODE_SESSION_ATTENDED",
+                    "CLAUDE_CODE_MESSAGING_SOCKET",
+                    "CLAUDE_CODE_MESSAGING_TOKEN",
+                ] {
+                    assert!(is_scrubbed(kind, v, creds), "{kind:?}/{creds:?} keeps {v}");
                 }
-                for v in ["PATH", "TERM", "PDT", "XPDT_PORT", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_BEDROCK"] {
+                // User settings, not session state: they must reach the agent.
+                for v in [
+                    "PATH",
+                    "TERM",
+                    "PDT",
+                    "XPDT_PORT",
+                    "CLAUDE_CONFIG_DIR",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "CLAUDE_CODE_USE_BEDROCK",
+                ] {
                     assert!(!is_scrubbed(kind, v, creds), "{kind:?} drops {v}");
                 }
             }

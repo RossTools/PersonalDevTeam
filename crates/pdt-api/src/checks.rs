@@ -4,6 +4,8 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
+use pdt_core::host::{CredentialPolicy, HostSettings};
+use pdt_core::session::{SessionKind, is_scrubbed};
 use serde::Serialize;
 use std::time::Duration;
 use ts_rs::TS;
@@ -28,8 +30,16 @@ pub struct HostChecks {
     pub checked_at: i64,
 }
 
-/// Runs `program args` (resolved like a session's program) with a 15 s limit: Err = not found / not runnable.
-async fn run(st: &AppState, program: &str, args: &[&str]) -> Result<(bool, String), String> {
+/// Runs `program args` (resolved like a session's program) with a 15 s limit: Err = not found / not runnable. The
+/// inherited environment is scrubbed as for a session of `kind` under `creds`, so a check sees what sessions see
+/// (an API key a Subscription session never gets must not make the check report logged in).
+async fn run(
+    st: &AppState,
+    program: &str,
+    args: &[&str],
+    kind: SessionKind,
+    creds: CredentialPolicy,
+) -> Result<(bool, String), String> {
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (exe, args) =
         pdt_agents::launch::resolve(program, &args, st.platform.login_path.as_deref()).map_err(|e| e.to_string())?;
@@ -38,8 +48,10 @@ async fn run(st: &AppState, program: &str, args: &[&str]) -> Result<(bool, Strin
     if let Some(p) = &st.platform.login_path {
         cmd.env("PATH", p);
     }
-    for (k, _) in std::env::vars() {
-        if k.starts_with("PDT_") || k == "CLAUDECODE" {
+    for (k, _) in std::env::vars_os() {
+        if let Some(k) = k.to_str()
+            && is_scrubbed(kind, k, creds)
+        {
             cmd.env_remove(k);
         }
     }
@@ -58,7 +70,19 @@ pub(crate) fn claude_logged_in(stdout: &str) -> Option<bool> {
 }
 
 pub async fn run_host_checks(st: &AppState) -> HostChecks {
-    let claude = match run(st, &st.platform.claude_program, &["auth", "status"]).await {
+    // The host's policy: the one agent sessions get unless their project overrides it.
+    let creds = match st.store.get_host_settings().await {
+        Ok(h) => h.agent_credentials,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the host settings; checking under the default credential policy");
+            HostSettings::default().agent_credentials
+        }
+    };
+    let agent = |program: &str, args: &'static [&'static str]| {
+        let program = program.to_string();
+        async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
+    };
+    let claude = match agent(&st.platform.claude_program, &["auth", "status"]).await {
         Err(e) => ToolCheck { found: false, ok: false, detail: e },
         Ok((_, out)) => match claude_logged_in(&out) {
             Some(true) => ToolCheck { found: true, ok: true, detail: "logged in".into() },
@@ -68,14 +92,14 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             None => ToolCheck { found: true, ok: false, detail: format!("could not read `claude auth status`: {out}") },
         },
     };
-    let codex = match run(st, &st.platform.codex_program, &["login", "status"]).await {
+    let codex = match agent(&st.platform.codex_program, &["login", "status"]).await {
         Err(e) => ToolCheck { found: false, ok: false, detail: e },
         Ok((true, out)) => ToolCheck { found: true, ok: true, detail: out },
         Ok((false, out)) => {
             ToolCheck { found: true, ok: false, detail: format!("not logged in: run `codex login` ({out})") }
         }
     };
-    let git = match run(st, "git", &["--version"]).await {
+    let git = match run(st, "git", &["--version"], SessionKind::Shell, creds).await {
         Err(e) => ToolCheck { found: false, ok: false, detail: e },
         Ok((ok, out)) => ToolCheck { found: true, ok, detail: out },
     };
