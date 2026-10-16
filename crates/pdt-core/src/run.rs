@@ -137,6 +137,17 @@ pub struct NewRun {
     pub stop_run_id: Option<String>,
 }
 
+/// Optional body of a restart.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RestartRun {
+    /// Confirmed by the user: stop this run to stay within the host's maximum.
+    #[serde(default)]
+    #[ts(optional)]
+    pub stop_run_id: Option<String>,
+}
+
 pub fn pty_id(run_id: &str, step: RunStep) -> String {
     format!("run:{run_id}:{}", step.as_str())
 }

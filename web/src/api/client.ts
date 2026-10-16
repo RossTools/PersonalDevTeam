@@ -1,9 +1,15 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
 import type { Health } from './gen/Health';
+import type { Branch } from './gen/Branch';
 import type { NewProject } from './gen/NewProject';
+import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
 import type { NewWorktree } from './gen/NewWorktree';
 import type { Project } from './gen/Project';
+import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
+import type { ProjectSettingsView } from './gen/ProjectSettingsView';
+import type { Run } from './gen/Run';
+import type { RunConfigView } from './gen/RunConfigView';
 import type { Session } from './gen/Session';
 import type { TerminalSize } from './gen/TerminalSize';
 import type { Worktree } from './gen/Worktree';
@@ -47,4 +53,21 @@ export const api = {
   renameSession: (id: string, title: string) =>
     request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteSession: (id: string) => request<void>(`/api/sessions/${enc(id)}`, { method: 'DELETE' }),
+  listRuns: (projectId: string) => request<Run[]>(`/api/projects/${enc(projectId)}/runs`),
+  listActiveRuns: () => request<Run[]>('/api/runs'),
+  startRun: (projectId: string, r: NewRun) =>
+    request<Run>(`/api/projects/${enc(projectId)}/runs`, { method: 'POST', body: JSON.stringify(r) }),
+  stopRun: (id: string) => request<void>(`/api/runs/${enc(id)}/stop`, { method: 'POST' }),
+  restartRun: (id: string, stopRunId?: string) =>
+    request<Run>(`/api/runs/${enc(id)}/restart`, { method: 'POST', body: JSON.stringify(stopRunId ? { stopRunId } : {}) }),
+  resetRunData: (id: string) => request<void>(`/api/runs/${enc(id)}/reset-data`, { method: 'POST' }),
+  deleteRun: (id: string) => request<void>(`/api/runs/${enc(id)}`, { method: 'DELETE' }),
+  runConfig: (projectId: string, worktreeId: string | null) =>
+    request<RunConfigView>(
+      `/api/projects/${enc(projectId)}/run-config${worktreeId ? `?worktreeId=${enc(worktreeId)}` : ''}`,
+    ),
+  listBranches: (projectId: string) => request<Branch[]>(`/api/projects/${enc(projectId)}/branches`),
+  projectSettings: (projectId: string) => request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`),
+  saveProjectSettings: (projectId: string, s: ProjectSettingsInput) =>
+    request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
 };

@@ -212,6 +212,30 @@ async fn the_run_limit_asks_before_stopping_another_run() {
     env.state.ptys.shutdown().await;
 }
 
+#[tokio::test]
+async fn restarting_a_run_counts_toward_the_limit() {
+    let env = setup().await;
+    call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxConcurrentRuns": 1}))).await;
+    let (_, a) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    let a = a["id"].as_str().unwrap().to_string();
+    call(&env.app, "POST", &format!("/api/runs/{a}/stop"), None).await;
+    wait_state(&env.app, &a, &["stopped"]).await;
+    let (_, b) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    let b = b["id"].as_str().unwrap().to_string();
+    let restart = format!("/api/runs/{a}/restart");
+    let (s, v) = call(&env.app, "POST", &restart, None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("too_many_runs")), "{v}");
+    let (s, v) = call(&env.app, "POST", &restart, Some(json!({"stopRunId": "not-active"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("too_many_runs")), "{v}");
+    let (s, v) = call(&env.app, "POST", &restart, Some(json!({"stopRunId": b}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    wait_state(&env.app, &b, &["stopped"]).await;
+    let r = wait_state(&env.app, &a, &["starting", "ready", "running"]).await;
+    assert!(r["error"].is_null(), "{r}");
+    call(&env.app, "POST", &format!("/api/runs/{a}/stop"), None).await;
+    env.state.ptys.shutdown().await;
+}
+
 fn recording() -> Arc<RecordingTailscale> {
     Arc::new(RecordingTailscale::new(Ok(pdt_tailscale::TsStatus {
         dns_name: "box.t.ts.net".into(),

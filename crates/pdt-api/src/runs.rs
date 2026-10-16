@@ -4,6 +4,7 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use crate::run_manager;
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
@@ -11,7 +12,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::project::Project;
-use pdt_core::run::{NewRun, Run, RunKind, RunState, RunStep, pty_id, run_data_dir};
+use pdt_core::run::{NewRun, RestartRun, Run, RunKind, RunState, RunStep, pty_id, run_data_dir};
 use pdt_core::runconfig::{RunConfig, RunDef};
 use pdt_core::worktree::{WORKTREES_DIR, Worktree, worktree_path};
 use serde::Serialize;
@@ -237,7 +238,18 @@ pub(crate) async fn stop(State(st): State<AppState>, Path(id): Path<String>) -> 
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(crate) async fn restart(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Run>, ApiError> {
+pub(crate) async fn restart(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<Run>, ApiError> {
+    // The body is optional: empty means no stopRunId.
+    let input: RestartRun = if body.iter().all(u8::is_ascii_whitespace) {
+        RestartRun::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
+    };
     let run = load(&st, &id).await?;
     if run.state.is_active() && !run_manager::stop(&st, &id, None).await {
         return Err(still_stopping());
@@ -248,6 +260,10 @@ pub(crate) async fn restart(State(st): State<AppState>, Path(id): Path<String>) 
     let mut run = load(&st, &id).await?;
     if run.state.is_active() {
         return Err(conflict("run_active", "the run was started again meanwhile"));
+    }
+    // A restarted run counts toward the limit like a new one.
+    if run.kind == RunKind::Run {
+        check_run_limit(&st, input.stop_run_id.as_deref()).await?;
     }
     if def.web {
         let p = run_manager::allocate_port(&st, run.port, Some(&id)).await.ok_or_else(no_free_port)?;

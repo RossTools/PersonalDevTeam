@@ -43,6 +43,15 @@ export function ptyUrl(sessionId: string, loc: Pick<Location, 'protocol' | 'host
   return `${scheme}://${loc.host}/api/sessions/${encodeURIComponent(sessionId)}/pty`;
 }
 
+export function runPtyUrl(
+  runId: string,
+  step: 'setup' | 'command',
+  loc: Pick<Location, 'protocol' | 'host'> = window.location,
+): string {
+  const scheme = loc.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${loc.host}/api/runs/${encodeURIComponent(runId)}/pty/${step}`;
+}
+
 /**
  * A PTY WebSocket that reconnects with backoff, forever, until the process exits, the server reports the session
  * is not running, or the owner disposes it.

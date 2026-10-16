@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PtySocket, ptyUrl, type SocketLike } from './ptySocket';
+import { PtySocket, ptyUrl, runPtyUrl, type SocketLike } from './ptySocket';
 
 class FakeSocket implements SocketLike {
   binaryType: BinaryType = 'blob';
@@ -38,6 +38,15 @@ function setup() {
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+describe('runPtyUrl', () => {
+  it('builds ws and wss URLs for a run step', () => {
+    expect(runPtyUrl('r 1', 'setup', { protocol: 'http:', host: 'h:1' })).toBe('ws://h:1/api/runs/r%201/pty/setup');
+    expect(runPtyUrl('r', 'command', { protocol: 'https:', host: 'box.t.ts.net' })).toBe(
+      'wss://box.t.ts.net/api/runs/r/pty/command',
+    );
+  });
+});
 
 describe('ptyUrl', () => {
   it('uses ws or wss to match the page', () => {
