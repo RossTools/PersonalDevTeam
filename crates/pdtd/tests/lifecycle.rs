@@ -65,18 +65,38 @@ web = true
 "#;
 
 fn wait_run(port: u16, id: &str, want: &str) -> serde_json::Value {
+    wait_run_since(port, id, want, 0)
+}
+
+/// Waits until the run is `want` with `updatedAt` at or after `since` (Unix ms): a row read back after a restart is
+/// `ready` from before the shutdown until the resume changes it.
+fn wait_run_since(port: u16, id: &str, want: &str, since: i64) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let (_, r) = http(port, "GET", &format!("/api/runs/{id}"), None);
-        if r["state"] == want {
+        if r["state"] == want && r["updatedAt"].as_i64().is_some_and(|t| t >= since) {
             return r;
         }
-        assert!(Instant::now() < deadline, "run never became {want}: {r}");
+        assert!(Instant::now() < deadline, "run never became {want} after {since}: {r}");
         std::thread::sleep(Duration::from_millis(200));
     }
 }
 
-/// A project whose repo has RUN_CONFIG, a run port range starting at a free port, and a started web run.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+}
+
+/// A block of 40 run ports in 20000–29999, below the OS ephemeral ranges (Windows and macOS start at 49152), so a
+/// port another test's connection was just handed by the OS never lands in it. Each call gets a different block.
+fn run_port_base() -> u16 {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let seed =
+        std::process::id() ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
+    let block = (seed.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst))) % 250;
+    20000 + block as u16 * 40
+}
+
+/// A project whose repo has RUN_CONFIG, its own run port range (`run_port_base`), and a started web run.
 fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(repo.join(".pdt")).unwrap();
@@ -84,7 +104,7 @@ fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
     std::fs::write(repo.join(".pdt").join("project.toml"), RUN_CONFIG).unwrap();
     let (_, settings) = http(port, "GET", "/api/host/settings", None);
     assert_eq!(settings["settings"]["runPorts"], serde_json::json!({"start": 8500, "end": 8599}), "dev defaults");
-    let base = free_port().min(65000);
+    let base = run_port_base();
     let body = serde_json::json!({"runPorts": {"start": base, "end": base + 39}}).to_string();
     assert_eq!(http(port, "PUT", "/api/host/settings", Some(&body)).0, 200);
     let body = serde_json::json!({"name": "P", "repoPath": repo.to_string_lossy()}).to_string();
@@ -111,8 +131,9 @@ fn active_runs_resume_on_restart() {
     let mut d = start(port, &data);
     let (id, run_port) = project_with_web_run(port, tmp.path());
     shut_down(port, &mut d);
+    let restarted_at = now_ms();
     let mut d = start(port, &data);
-    let r = wait_run(port, &id, "ready");
+    let r = wait_run_since(port, &id, "ready", restarted_at);
     assert_eq!(r["port"].as_u64(), Some(run_port as u64), "same port when it is still free");
     shut_down(port, &mut d);
 }
@@ -134,8 +155,9 @@ fn resume_moves_to_a_free_port_when_the_old_one_is_taken() {
         std::thread::sleep(Duration::from_millis(100));
     }
     let _squatter = squatter.expect("the old run's port was freed by the shutdown");
+    let restarted_at = now_ms();
     let mut d = start(port, &data);
-    let r = wait_run(port, &id, "ready");
+    let r = wait_run_since(port, &id, "ready", restarted_at);
     assert_ne!(r["port"].as_u64(), Some(run_port as u64));
     shut_down(port, &mut d);
 }
