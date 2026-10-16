@@ -1,7 +1,7 @@
 use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path};
 use pdt_host::config::HostConfig;
 use pdt_host::health::{Probe, probe, request_shutdown};
-use pdt_host::install::{CopyDirInstaller, Installer, NsisInstaller, Unsupported};
+use pdt_host::install::{CopyDirInstaller, Installer, NsisInstaller, Unsupported, host_installer};
 use pdt_host::supervise::{Backoff, marker_path, run};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -341,6 +341,29 @@ fn refuses_updates_it_cannot_install_and_keeps_supervising() {
     assert_eq!(r.outcome, UpdateOutcome::Failed, "{}", r.message);
     assert!(r.message.contains("0.1.6") && r.message.contains(".app bundle"), "{}", r.message);
     wait_version(port, "0.1.5", Duration::from_secs(30));
+}
+
+/// Final review #1: a dev pdt-host never installs anything, whatever the OS or bundle: the request fails untouched.
+#[test]
+fn a_dev_host_never_runs_an_installer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let setup = fake_installer(&tmp.path().join("release"), "fail_partial");
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let cfg = config(&install, &data, port, Duration::from_secs(10));
+    assert!(cfg.dev);
+    let installer = host_installer(&cfg);
+    assert_eq!(installer.backup_path(), None, "a dev host keeps no backup: it never installs");
+    let _h = supervise_with(cfg, installer);
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    request(&data, "0.1.6", &setup);
+    request_shutdown(port).unwrap();
+    let r = read_result(&data);
+    assert_eq!(r.outcome, UpdateOutcome::Failed, "{}", r.message);
+    assert!(r.message.contains("dev profile never installs updates"), "{}", r.message);
+    wait_version(port, "0.1.5", Duration::from_secs(30));
+    assert!(read(&install.join("fake.json")).contains("0.1.5"), "the installer never ran");
 }
 
 /// Review issue 9: a request that cannot be parsed gets a failed result, and pdtd comes back.

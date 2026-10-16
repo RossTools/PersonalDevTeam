@@ -271,9 +271,21 @@ impl Installer for BundleInstaller {
     }
 }
 
-/// The installer for this platform, or why updates cannot be installed here (pdt-host then uses `Unsupported`).
-pub fn installer_for(cfg: &HostConfig) -> Result<Box<dyn Installer>, String> {
-    if cfg!(windows) {
+/// The installer pdt-host uses: the platform's, or `Unsupported` (with the reason logged) when updates cannot be
+/// installed here (ruling F9) or the host runs the dev profile.
+pub fn host_installer(cfg: &HostConfig) -> Box<dyn Installer + Send> {
+    installer_for(cfg).unwrap_or_else(|reason| {
+        crate::log::log(cfg, &format!("updates cannot be installed here: {reason}"));
+        Box::new(Unsupported { reason })
+    })
+}
+
+/// The installer for this platform, or why updates cannot be installed here. A dev host never installs: it may run
+/// next to the stable app, and the stable installer must never land in a dev build's folder.
+pub fn installer_for(cfg: &HostConfig) -> Result<Box<dyn Installer + Send>, String> {
+    if cfg.dev {
+        Err("the dev profile never installs updates".into())
+    } else if cfg!(windows) {
         Ok(Box::new(NsisInstaller {
             install_dir: cfg.install_dir.clone(),
             backup: pdt_core::handoff::update_dir(&cfg.data_dir).join("previous"),

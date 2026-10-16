@@ -139,3 +139,16 @@ fn resume_moves_to_a_free_port_when_the_old_one_is_taken() {
     assert_ne!(r["port"].as_u64(), Some(run_port as u64));
     shut_down(port, &mut d);
 }
+
+/// Final review #1: a dev instance never updates, even under pdt-host (PDT_SUPERVISED=1).
+#[test]
+fn a_dev_pdtd_never_updates_even_when_supervised() {
+    let tmp = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let _d = start_with(port, &tmp.path().join("data"), &[("PDT_SUPERVISED", "1")]);
+    let (_, v) = http(port, "GET", "/api/host/update", None);
+    assert_eq!(v["state"], "disabled", "{v}");
+    assert_eq!(v["disabledReason"], "updates apply to the installed stable app", "{v}");
+    let (status, v) = http(port, "POST", "/api/host/update/install", Some(r#"{"force":true}"#));
+    assert_eq!((status, v["code"].as_str()), (409, Some("updates_disabled")), "{v}");
+}

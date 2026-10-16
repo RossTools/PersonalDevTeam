@@ -73,10 +73,10 @@ async fn run() -> anyhow::Result<()> {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
         None => std::sync::Arc::new(pdt_tailscale::TailscaleCli::detect(state.platform.login_path.as_deref())),
     };
-    state.update = std::sync::Arc::new(pdt_api::UpdateService::new(
+    state.update = std::sync::Arc::new(pdt_api::UpdateService::with_disabled_reason(
         pdt_update::GITHUB_API,
         pdt_core::brand::RELEASE_REPO,
-        cfg.supervised,
+        cfg.update_disabled_reason(),
         pdt_core::BUILD_VERSION,
     ));
     if let Ok(bytes) = std::fs::read(pdt_core::handoff::result_path(&cfg.data_dir))

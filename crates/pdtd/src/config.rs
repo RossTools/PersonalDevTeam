@@ -28,9 +28,13 @@ pub struct Config {
     /// unusual installs).
     pub claude_program: Option<String>,
     pub codex_program: Option<String>,
-    /// `PDT_SUPERVISED=1`: pdt-host started this pdtd, so it may offer and hand off updates. Dev instances never do.
+    /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
+    /// (`update_disabled_reason`).
     pub supervised: bool,
 }
+
+/// Why a dev instance never updates.
+pub const DEV_UPDATE_REASON: &str = "updates apply to the installed stable app";
 
 impl Config {
     pub fn from_lookup(
@@ -85,6 +89,18 @@ impl Config {
             codex_program,
             supervised,
         })
+    }
+
+    /// Why this pdtd never updates, or `None` when it may: only a stable instance under pdt-host updates. A dev
+    /// instance never does, even when supervised and holding a token (final review #1).
+    pub fn update_disabled_reason(&self) -> Option<String> {
+        if self.profile == Profile::Dev {
+            Some(DEV_UPDATE_REASON.into())
+        } else if !self.supervised {
+            Some(pdt_api::update::UNSUPERVISED_REASON.into())
+        } else {
+            None
+        }
     }
 
     pub fn from_env() -> anyhow::Result<Config> {
@@ -199,6 +215,18 @@ mod tests {
         assert!(!sup(&[("PDT_SUPERVISED", "0")]));
         assert!(!sup(&[("PDT_SUPERVISED", "yes")]));
         assert!(sup(&[("PDT_SUPERVISED", "1")]));
+    }
+
+    #[test]
+    fn only_a_supervised_stable_instance_updates() {
+        let reason = |v: &[(&str, &str)]| {
+            Config::from_lookup(lookup(v), Some("/d".into()), None).unwrap().update_disabled_reason()
+        };
+        assert_eq!(reason(&[("PDT_SUPERVISED", "1")]), None);
+        assert_eq!(reason(&[]).as_deref(), Some(pdt_api::update::UNSUPERVISED_REASON));
+        let dev = Some(DEV_UPDATE_REASON);
+        assert_eq!(reason(&[("PDT_PROFILE", "dev"), ("PDT_SUPERVISED", "1")]).as_deref(), dev);
+        assert_eq!(reason(&[("PDT_PROFILE", "dev")]).as_deref(), dev);
     }
 
     #[test]

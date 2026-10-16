@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use anyhow::Context;
 use pdt_host::config::HostConfig;
-use pdt_host::install::{Installer, Unsupported, installer_for};
+use pdt_host::install::host_installer;
 use pdt_host::log::log;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -41,11 +41,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     pdt_host::selfupdate::clean_old(&exe);
     log(&cfg, &format!("supervising {} on port {}", cfg.pdtd_path().display(), cfg.port));
-    // Ruling F9: without an installer (e.g. a dev build outside an .app) keep supervising and refuse updates.
-    let installer: Box<dyn Installer> = installer_for(&cfg).unwrap_or_else(|reason| {
-        log(&cfg, &format!("updates cannot be installed here: {reason}"));
-        Box::new(Unsupported { reason })
-    });
+    // Ruling F9 / final review #1: without an installer, or on the dev profile, keep supervising and refuse updates.
+    let installer = host_installer(&cfg);
     let stop = AtomicBool::new(false);
     let bundled = cfg.install_dir.join(format!("{}{}", pdt_core::brand::HOST_BIN, std::env::consts::EXE_SUFFIX));
     let after_install = || {

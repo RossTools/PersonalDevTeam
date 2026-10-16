@@ -60,9 +60,13 @@ pub struct UpdateStatus {
     pub last_result: Option<UpdateResult>,
 }
 
+/// Why an unsupervised pdtd never updates.
+pub const UNSUPERVISED_REASON: &str = "updates are installed by pdt-host, and this pdtd is not running under it";
+
 pub struct UpdateService {
     pub(crate) client: GitHubClient,
-    pub(crate) supervised: bool,
+    /// Whether this pdtd may check for and hand off updates (only a supervised stable instance does).
+    pub(crate) enabled: bool,
     current: String,
     status: Mutex<UpdateStatus>,
     /// The newer release a check found. Lock order: `status`, then `release`.
@@ -75,16 +79,23 @@ pub struct UpdateService {
 }
 
 impl UpdateService {
+    /// Updates are enabled when `supervised` (pdt-host started this pdtd), else disabled with the reason why.
     pub fn new(api_base: &str, repo: &str, supervised: bool, current: &str) -> Self {
+        let reason = (!supervised).then(|| UNSUPERVISED_REASON.to_string());
+        Self::with_disabled_reason(api_base, repo, reason, current)
+    }
+
+    /// Updates are enabled when `disabled_reason` is `None`; otherwise every check and install is refused with it.
+    pub fn with_disabled_reason(api_base: &str, repo: &str, disabled_reason: Option<String>, current: &str) -> Self {
+        let enabled = disabled_reason.is_none();
         Self {
             client: GitHubClient::new(api_base, repo),
-            supervised,
+            enabled,
             current: current.into(),
             status: Mutex::new(UpdateStatus {
                 current: current.into(),
-                state: if supervised { UpdateState::Idle } else { UpdateState::Disabled },
-                disabled_reason: (!supervised)
-                    .then(|| "updates are installed by pdt-host, and this pdtd is not running under it".into()),
+                state: if enabled { UpdateState::Idle } else { UpdateState::Disabled },
+                disabled_reason,
                 policy: UpdatePolicy::Notify,
                 latest: None,
                 last_checked_at: None,
@@ -175,7 +186,7 @@ pub(crate) async fn check(st: &AppState) -> UpdateStatus {
 async fn check_now(st: &AppState) -> UpdateStatus {
     let svc = &st.update;
     refresh_policy(st).await;
-    if !svc.supervised {
+    if !svc.enabled {
         return svc.snapshot();
     }
     let tok = match read_token(st).await {
@@ -310,7 +321,7 @@ fn prune_downloads(downloads: &Path, keep: &str) {
 /// hand-off run in their own task, so a dropped request does not cancel them halfway.
 pub(crate) async fn install(st: &AppState, force: bool) -> Result<UpdateStatus, ApiError> {
     let svc = &st.update;
-    if !svc.supervised {
+    if !svc.enabled {
         return Err(conflict("updates_disabled", svc.snapshot().disabled_reason.unwrap_or_default()));
     }
     if svc.snapshot().state == UpdateState::Installing {
@@ -426,7 +437,7 @@ fn skipped(data_dir: &Path, version: &str) -> bool {
 /// Checks every `check_interval` (unless the policy is manual), and installs when idle under auto-when-idle (spec
 /// §3.3). Runs only under pdt-host.
 pub async fn run_update_loop(st: AppState) {
-    if !st.update.supervised {
+    if !st.update.enabled {
         return;
     }
     tokio::time::sleep(st.update.first_check_delay).await;
@@ -522,7 +533,7 @@ pub(crate) async fn delete_token(State(st): State<AppState>) -> Result<StatusCod
     if !in_progress(s.state) {
         *svc.release.lock().unwrap_or_else(|e| e.into_inner()) = None;
         s.latest = None;
-        s.state = if svc.supervised { UpdateState::Idle } else { UpdateState::Disabled };
+        s.state = if svc.enabled { UpdateState::Idle } else { UpdateState::Disabled };
     }
     Ok(StatusCode::NO_CONTENT)
 }
