@@ -16,6 +16,10 @@ esac
 
 up() { curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/api/health"; }
 
+# The version the build reports (pdt_core::BUILD_VERSION): PDT_BUILD_VERSION, else the workspace version + -local.
+workspace_version="$(awk -F'"' '/^version = /{print $2; exit}' "$root/Cargo.toml")"
+build_version="${PDT_BUILD_VERSION:-$workspace_version-local}"
+
 cd "$root"
 pnpm install --frozen-lockfile
 pnpm --dir web build
@@ -37,16 +41,24 @@ if [[ -n "$status" && "$status" != *'"state":"disabled"'* ]]; then
   mkdir -p "$drop"
   (cd "$(dirname "$bundle")" && tar -czf "$drop/$product.app.tar.gz" "$product.app")
   now="$(($(date +%s) * 1000))"
+  from_version="$(printf '%s' "$status" | sed -n 's/.*"current":"\([^"]*\)".*/\1/p')"
   # Written whole, then renamed: pdt-host acts as soon as request.json appears.
-  printf '{"version":"0.1.0-local","tag":"local","asset":"%s","fromVersion":"local","requestedAt":%s}\n' \
-    "$drop/$product.app.tar.gz" "$now" > "$data_dir/update/request.json.tmp"
+  # pdt-host's health check expects exactly the version the new build reports.
+  printf '{"version":"%s","tag":"local","asset":"%s","fromVersion":"%s","requestedAt":%s}\n' \
+    "$build_version" "$drop/$product.app.tar.gz" "${from_version:-unknown}" "$now" > "$data_dir/update/request.json.tmp"
   mv -f "$data_dir/update/request.json.tmp" "$data_dir/update/request.json"
-  curl -fsS -X POST "http://127.0.0.1:$port/api/shutdown" >/dev/null
+  # pdt-host also stops pdtd once it sees the request, so pdtd may already be gone.
+  curl -fsS --max-time 10 -X POST "http://127.0.0.1:$port/api/shutdown" >/dev/null || true
   echo "Handed the bundle to pdt-host; see $data_dir/logs/pdt-host.log and $data_dir/update/result.json."
   exit 0
 fi
 
 dest="$HOME/Applications/$product.app"
+# A registered pdt-host that cannot take the update (KeepAlive) would start pdtd again: stop and unregister it. The
+# new app registers it again when it starts, copying the new pdt-host.
+agent="$HOME/Library/LaunchAgents/dev.personaldevteam.host.plist"
+launchctl bootout "gui/$(id -u)/dev.personaldevteam.host" 2>/dev/null || true
+rm -f "$agent"
 # The stable tray app (any process from the installed bundle other than pdtd) holds no state: stop it so the bundle
 # can be replaced. pdtd is stopped gracefully below. No pipelines here: under pipefail a SIGPIPE would skip this.
 procs="$(pgrep -fl "$dest/Contents/MacOS/" || true)"

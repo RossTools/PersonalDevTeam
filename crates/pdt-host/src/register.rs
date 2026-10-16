@@ -5,10 +5,12 @@
 //! Every command goes through a [`Runner`], so tests check the exact command lines without registering anything.
 
 use crate::config::HostConfig;
-use pdt_core::brand::{HOST_AUTOSTART_NAME, HOST_BIN, HOST_LABEL};
+use crate::health::{Probe, probe, request_shutdown};
+use pdt_core::brand::{DAEMON_BIN, HOST_AUTOSTART_NAME, HOST_BIN, HOST_LABEL};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 pub fn installed_host_path(data_dir: &Path) -> PathBuf {
     data_dir.join("host").join(format!("{HOST_BIN}{}", std::env::consts::EXE_SUFFIX))
@@ -52,7 +54,13 @@ pub fn launchd_plist(program: &Path, install_dir: &Path, log: &Path) -> String {
 }
 
 pub fn run_key_command(program: &Path, install_dir: &Path) -> String {
-    format!("\"{}\" run --install-dir \"{}\"", program.display(), install_dir.display())
+    // A trailing backslash would escape the closing quote (`"C:\dir\"`); a drive root becomes `C:\.`.
+    let dir = install_dir.display().to_string();
+    let mut dir = dir.trim_end_matches(['\\', '/']).to_string();
+    if dir.is_empty() || dir.ends_with(':') {
+        dir.push_str(r"\.");
+    }
+    format!("\"{}\" run --install-dir \"{dir}\"", program.display())
 }
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -108,11 +116,25 @@ pub struct Target<'a> {
     pub home: Option<&'a Path>,
 }
 
-/// Whether another pdt-host holds the data folder's lock.
-fn host_running(data_dir: &Path) -> bool {
-    let path = data_dir.join(format!("{HOST_BIN}.lock"));
+/// Whether another process holds the lock file at `path`.
+fn locked(path: &Path) -> bool {
     let Ok(f) = std::fs::File::options().write(true).open(path) else { return false };
     matches!(f.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
+/// Whether another pdt-host holds the data folder's lock.
+fn host_running(data_dir: &Path) -> bool {
+    locked(&data_dir.join(format!("{HOST_BIN}.lock")))
+}
+
+/// The process id of the pdt-host that holds the data folder's lock (written by `run` once it has the lock; the lock
+/// file itself cannot be read on Windows while it is held).
+pub fn pid_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(format!("{HOST_BIN}.pid"))
+}
+
+pub fn write_pid(data_dir: &Path) -> std::io::Result<()> {
+    std::fs::write(pid_path(data_dir), std::process::id().to_string())
 }
 
 fn launchd_domain(runner: &mut dyn Runner) -> Result<String, String> {
@@ -146,6 +168,9 @@ pub fn install(cfg: &HostConfig) -> Result<(), String> {
 pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) -> Result<(), String> {
     if target.os == Os::Other {
         return Err("registration is supported on macOS and Windows only".into());
+    }
+    if cfg.dev {
+        return Err("only the stable profile is started at login; unset PDT_PROFILE to register pdt-host".into());
     }
     let program = installed_host_path(&cfg.data_dir);
     let running = host_running(&cfg.data_dir);
@@ -206,17 +231,26 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
     Ok(())
 }
 
-/// Removes the login registration. A running pdt-host keeps running until logout.
-pub fn uninstall() -> Result<(), String> {
-    uninstall_with(Os::current(), std::env::home_dir().as_deref(), &mut System)
+/// Stops this data folder's pdt-host and pdtd (so the install folder can be removed), then removes the login
+/// registration.
+pub fn uninstall(cfg: &HostConfig) -> Result<(), String> {
+    uninstall_with(cfg, Os::current(), std::env::home_dir().as_deref(), &mut System)
 }
 
-pub fn uninstall_with(os: Os, home: Option<&Path>, runner: &mut dyn Runner) -> Result<(), String> {
+pub fn uninstall_with(cfg: &HostConfig, os: Os, home: Option<&Path>, runner: &mut dyn Runner) -> Result<(), String> {
+    if cfg.dev {
+        return Err("only the stable profile is registered at login; unset PDT_PROFILE to unregister pdt-host".into());
+    }
+    // pdt-host goes first, so nothing starts pdtd again. Booting the agent out stops a launchd-run pdt-host.
+    if os == Os::Mac {
+        let domain = launchd_domain(runner)?;
+        let _ = runner.status(launchctl(["bootout".to_string(), format!("{domain}/{HOST_LABEL}")]));
+    }
+    stop_host(cfg, os, runner);
+    stop_pdtd(cfg);
     match os {
         Os::Mac => {
             let home = home.ok_or("no home folder")?;
-            let domain = launchd_domain(runner)?;
-            let _ = runner.status(launchctl(["bootout".to_string(), format!("{domain}/{HOST_LABEL}")]));
             let _ = std::fs::remove_file(launch_agent_path(home));
         }
         Os::Windows => {
@@ -227,6 +261,34 @@ pub fn uninstall_with(os: Os, home: Option<&Path>, runner: &mut dyn Runner) -> R
         Os::Other => {}
     }
     Ok(())
+}
+
+/// Kills the pdt-host that holds `cfg`'s data folder lock, if one does (pdtd, its child, is left to stop gracefully).
+fn stop_host(cfg: &HostConfig, os: Os, runner: &mut dyn Runner) {
+    if !host_running(&cfg.data_dir) {
+        return;
+    }
+    let pid = std::fs::read_to_string(pid_path(&cfg.data_dir)).ok().and_then(|s| s.trim().parse::<u32>().ok());
+    let Some(pid) = pid.filter(|&p| p != std::process::id()) else { return };
+    let mut kill = if os == Os::Windows { Command::new("taskkill") } else { Command::new("kill") };
+    if os == Os::Windows {
+        kill.args(["/F", "/PID"]);
+    }
+    kill.arg(pid.to_string());
+    let _ = runner.status(kill);
+}
+
+/// Asks `cfg`'s pdtd to stop and waits (up to `stop_timeout`) until its port and its data folder lock are free.
+fn stop_pdtd(cfg: &HostConfig) {
+    if !matches!(probe(cfg.port), Probe::Ours { .. }) {
+        return;
+    }
+    let _ = request_shutdown(cfg.port);
+    let lock = cfg.data_dir.join(format!("{DAEMON_BIN}.lock"));
+    let deadline = Instant::now() + cfg.stop_timeout;
+    while (probe(cfg.port) != Probe::Free || locked(&lock)) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(test)]
@@ -262,6 +324,22 @@ mod tests {
             r#""C:\Users\me\AppData\Local\pdt\host\pdt-host.exe" run --install-dir "C:\Program Files\P D T""#
         );
         assert!(installed_host_path(Path::new("d")).starts_with(Path::new("d").join("host")));
+        let p = Path::new("p.exe");
+        assert_eq!(run_key_command(p, Path::new(r"C:\P D T\")), r#""p.exe" run --install-dir "C:\P D T""#);
+        assert_eq!(run_key_command(p, Path::new(r"C:\")), r#""p.exe" run --install-dir "C:\.""#);
+    }
+
+    #[test]
+    fn a_dev_profile_is_never_registered() {
+        let mut s = setup();
+        s.cfg.dev = true;
+        let mut r = Recorder::default();
+        let err = install_with(&s.cfg, &target(&s, Os::Windows), &mut r).unwrap_err();
+        assert!(err.contains("stable profile"), "{err}");
+        assert!(r.ran.is_empty());
+        assert!(!installed_host_path(&s.cfg.data_dir).exists());
+        assert!(uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).is_err());
+        assert!(r.ran.is_empty());
     }
 
     /// Records every command instead of running it.
@@ -297,6 +375,10 @@ mod tests {
         }
     }
 
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    }
+
     struct Setup {
         _tmp: tempfile::TempDir,
         cfg: HostConfig,
@@ -310,12 +392,15 @@ mod tests {
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
         std::fs::write(&exe, "new host").unwrap();
         let home = tmp.path().join("home");
-        let cfg = HostConfig::from_lookup(
+        let mut cfg = HostConfig::from_lookup(
             |k| (k == "PDT_DATA_DIR").then(|| tmp.path().join("data").to_string_lossy().into_owned()),
             None,
             tmp.path().join("app"),
         )
         .unwrap();
+        // Never the stable port: uninstall probes it.
+        cfg.port = free_port();
+        cfg.stop_timeout = Duration::from_millis(300);
         Setup { _tmp: tmp, cfg, exe, home }
     }
 
@@ -446,7 +531,7 @@ mod tests {
     fn uninstall_removes_the_registration() {
         let s = setup();
         let mut r = Recorder::default();
-        uninstall_with(Os::Windows, Some(&s.home), &mut r).unwrap();
+        uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).unwrap();
         assert_eq!(
             r.ran,
             [r"reg | delete | HKCU\Software\Microsoft\Windows\CurrentVersion\Run | /v | Personal Dev Team host | /f"]
@@ -456,8 +541,52 @@ mod tests {
         std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
         std::fs::write(&plist, "x").unwrap();
         let mut r = Recorder::default();
-        uninstall_with(Os::Mac, Some(&s.home), &mut r).unwrap();
+        uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut r).unwrap();
         assert_eq!(r.ran, ["id | -u", "launchctl | bootout | gui/501/dev.personaldevteam.host"]);
         assert!(!plist.exists());
+    }
+
+    /// Answers health as ours, records each request line, and accepts a shutdown.
+    fn fake_pdtd() -> (u16, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for mut c in l.incoming().flatten() {
+                let mut buf = [0u8; 1024];
+                let n = c.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+                let body = if req.starts_with("POST") {
+                    "HTTP/1.0 202 Accepted\r\n\r\n"
+                } else {
+                    "HTTP/1.0 200 OK\r\n\r\n{\"name\":\"Personal Dev Team\",\"version\":\"1\"}"
+                };
+                let _ = c.write_all(body.as_bytes());
+                let _ = tx.send(req);
+            }
+        });
+        (port, rx)
+    }
+
+    #[test]
+    fn uninstall_stops_this_data_folders_host_and_pdtd_first() {
+        let mut s = setup();
+        let (port, requests) = fake_pdtd();
+        s.cfg.port = port;
+        let lock = hold_lock(&s.cfg);
+        std::fs::write(pid_path(&s.cfg.data_dir), "4242\n").unwrap();
+        let mut r = Recorder::default();
+        uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).unwrap();
+        assert_eq!(r.ran[0], "taskkill | /F | /PID | 4242");
+        assert!(r.ran[1].starts_with("reg | delete | "), "{:?}", r.ran);
+        let seen: Vec<String> = requests.try_iter().collect();
+        assert!(seen.iter().any(|l| l.starts_with("POST /api/shutdown ")), "{seen:?}");
+
+        // No lock holder: nothing is killed.
+        drop(lock);
+        let mut r = Recorder::default();
+        uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut r).unwrap();
+        assert!(!r.ran.iter().any(|l| l.starts_with("kill")), "{:?}", r.ran);
     }
 }

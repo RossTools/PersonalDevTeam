@@ -40,13 +40,16 @@ pub fn desktop_profile(env: Option<&str>, debug_build: bool) -> Profile {
     }
 }
 
+/// The extras a stable pdt-host gets from the tray. The test-only knobs (`PDT_SECRET_STORE`, `PDT_TAILSCALE_BIN`)
+/// reach only a dev one.
+const STABLE_EXTRAS: [&str; 3] = ["PDT_WEB_DIR", "PDT_ALLOWED_HOSTS", "PDT_OWNER_LOGIN"];
+
 /// The `PDT_*` variables the tray starts pdt-host with: the profile, and the extras pdt-host passes on to pdtd (e.g.
 /// `PDT_WEB_DIR` in development). Port and data dir follow from the profile, the same for tray, pdt-host and pdtd.
 fn host_env(profile: Profile, lookup: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    let extras: &[&str] = if profile == Profile::Dev { &pdt_host::config::FORWARDED_ENV } else { &STABLE_EXTRAS };
     let profile = (profile == Profile::Dev).then(|| ("PDT_PROFILE".to_string(), "dev".to_string()));
-    let extras = pdt_host::config::FORWARDED_ENV
-        .iter()
-        .filter_map(|k| lookup(k).filter(|v| !v.trim().is_empty()).map(|v| (k.to_string(), v)));
+    let extras = extras.iter().filter_map(|k| lookup(k).filter(|v| !v.trim().is_empty()).map(|v| (k.to_string(), v)));
     profile.into_iter().chain(extras).collect()
 }
 
@@ -141,22 +144,32 @@ pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
     cmd.spawn().map(|_| ())
 }
 
-/// macOS: the installed stable app registers pdt-host's LaunchAgent once (there is no installer to do it).
-pub fn ensure_registered(profile: Profile) {
-    if !cfg!(target_os = "macos") || profile != Profile::Stable {
-        return;
+/// macOS: the installed stable app registers pdt-host's LaunchAgent once (there is no installer to do it). True when
+/// it did: `pdt-host install` has then started pdt-host through launchd (or one was already running), so the tray must
+/// not start another and only waits for pdtd.
+pub fn ensure_registered(profile: Profile) -> bool {
+    let os = pdt_host::register::Os::current();
+    let home = std::env::home_dir();
+    ensure_registered_with(os, profile, exe_dir().as_deref(), home.as_deref(), &mut pdt_host::register::System)
+}
+
+fn ensure_registered_with(
+    os: pdt_host::register::Os,
+    profile: Profile,
+    exe_dir: Option<&Path>,
+    home: Option<&Path>,
+    runner: &mut dyn pdt_host::register::Runner,
+) -> bool {
+    if os != pdt_host::register::Os::Mac || profile != Profile::Stable {
+        return false;
     }
-    let Some(home) = std::env::home_dir() else { return };
-    let exe_dir = exe_dir();
-    let installed_bundle = exe_dir.as_deref().and_then(pdt_host::install::bundle_of).is_some();
-    if installed_bundle && !pdt_host::register::launch_agent_path(&home).exists() {
-        let mut cmd = host_command(&bundled_host(exe_dir.as_deref()), profile);
-        cmd.arg("install");
-        if let Some(d) = exe_dir {
-            cmd.arg("--install-dir").arg(d);
-        }
-        let _ = cmd.status();
+    let (Some(home), Some(exe_dir)) = (home, exe_dir) else { return false };
+    if pdt_host::install::bundle_of(exe_dir).is_none() || pdt_host::register::launch_agent_path(home).exists() {
+        return false;
     }
+    let mut cmd = host_command(&bundled_host(Some(exe_dir)), profile);
+    cmd.arg("install").arg("--install-dir").arg(exe_dir);
+    runner.status(cmd).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -255,13 +268,75 @@ mod tests {
 
     #[test]
     fn pdt_host_gets_the_profile_and_only_the_forwarded_extras() {
-        let env: HashMap<&str, &str> =
-            [("PDT_WEB_DIR", "/web"), ("PDT_DATA_DIR", "/elsewhere"), ("PDT_PORT", "7420"), ("PDT_SECRET_STORE", "")]
-                .into();
+        let env: HashMap<&str, &str> = [
+            ("PDT_WEB_DIR", "/web"),
+            ("PDT_DATA_DIR", "/elsewhere"),
+            ("PDT_PORT", "7420"),
+            ("PDT_OWNER_LOGIN", ""),
+            ("PDT_SECRET_STORE", "memory"),
+            ("PDT_TAILSCALE_BIN", "/fake"),
+        ]
+        .into();
         let lookup = |k: &str| env.get(k).map(|v| v.to_string());
         let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
-        assert_eq!(host_env(Profile::Dev, lookup), [pair("PDT_PROFILE", "dev"), pair("PDT_WEB_DIR", "/web")]);
+        assert_eq!(
+            host_env(Profile::Dev, lookup),
+            [
+                pair("PDT_PROFILE", "dev"),
+                pair("PDT_WEB_DIR", "/web"),
+                pair("PDT_SECRET_STORE", "memory"),
+                pair("PDT_TAILSCALE_BIN", "/fake")
+            ]
+        );
+        // Test-only knobs never reach a stable pdtd from the tray.
         assert_eq!(host_env(Profile::Stable, lookup), [pair("PDT_WEB_DIR", "/web")]);
+    }
+
+    /// Records `status` commands and answers each with `ok`.
+    struct Recorder {
+        ran: Vec<String>,
+        ok: bool,
+    }
+
+    impl pdt_host::register::Runner for Recorder {
+        fn status(&mut self, cmd: Command) -> Result<bool, String> {
+            let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+            self.ran.push(args.join(" "));
+            Ok(self.ok)
+        }
+        fn stdout(&mut self, _: Command) -> Result<String, String> {
+            unreachable!()
+        }
+        fn spawn(&mut self, _: Command) -> Result<(), String> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn a_first_mac_launch_registers_pdt_host_and_then_does_not_start_one() {
+        use pdt_host::register::Os;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp.path().join("Personal Dev Team.app").join("Contents").join("MacOS");
+        let mut r = Recorder { ran: vec![], ok: true };
+        assert!(ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+        assert_eq!(r.ran, [format!("install --install-dir {}", exe_dir.display())]);
+
+        // A failed registration leaves starting pdt-host to the tray.
+        let mut r = Recorder { ran: vec![], ok: false };
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+
+        // Already registered, a dev tray, outside a bundle, or not macOS: nothing runs.
+        let plist = pdt_host::register::launch_agent_path(&home);
+        std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
+        std::fs::write(&plist, "").unwrap();
+        let mut r = Recorder { ran: vec![], ok: true };
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+        std::fs::remove_file(&plist).unwrap();
+        assert!(!ensure_registered_with(Os::Mac, Profile::Dev, Some(&exe_dir), Some(&home), &mut r));
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(tmp.path()), Some(&home), &mut r));
+        assert!(!ensure_registered_with(Os::Windows, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
+        assert!(r.ran.is_empty(), "{:?}", r.ran);
     }
 
     #[test]

@@ -25,6 +25,8 @@ struct Tray {
     version_item: MenuItem<Wry>,
     /// Set while startup or a restart runs, so they never overlap.
     busy: AtomicBool,
+    /// Set while an Update click is handled, so a second click never posts a second install.
+    updating: AtomicBool,
     /// Set once the first `ensure_daemon` succeeded. Opens requested before then are covered by the startup open.
     ready: AtomicBool,
 }
@@ -116,14 +118,17 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         update_item,
         version_item,
         busy: AtomicBool::new(true),
+        updating: AtomicBool::new(false),
         ready: AtomicBool::new(false),
     });
 
     let handle = app.handle().clone();
     std::thread::spawn(move || {
         let tray = handle.state::<Tray>();
-        daemon::ensure_registered(profile);
-        match daemon::ensure_daemon(port, pdt_host::health::probe, || daemon::spawn_host(profile), STARTUP_TIMEOUT) {
+        // A first macOS launch starts pdt-host through launchd; the tray then only waits for pdtd.
+        let registered = daemon::ensure_registered(profile);
+        let spawn = || if registered { Ok(()) } else { daemon::spawn_host(profile) };
+        match daemon::ensure_daemon(port, pdt_host::health::probe, spawn, STARTUP_TIMEOUT) {
             Ok(()) => {
                 let _ = tray.restart_item.set_enabled(true);
                 tray.ready.store(true, Ordering::SeqCst);
@@ -146,11 +151,12 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
 /// Updates the Update and Version items from pdtd.
 fn refresh(app: &AppHandle) {
     let tray = app.state::<Tray>();
-    if let Ok((200, s)) = api::call(tray.port, "GET", "/api/host/update", None) {
-        let (text, enabled) = api::update_label(&s);
-        let _ = tray.update_item.set_text(text);
-        let _ = tray.update_item.set_enabled(enabled);
-    }
+    let (text, enabled) = match api::call(tray.port, "GET", "/api/host/update", None) {
+        Ok((200, s)) => api::update_label(&s),
+        _ => ("Update check failed".into(), true),
+    };
+    let _ = tray.update_item.set_text(text);
+    let _ = tray.update_item.set_enabled(enabled);
     if let Ok((200, h)) = api::call(tray.port, "GET", "/api/health", None) {
         let _ = tray.version_item.set_text(format!("Version {}", h["version"].as_str().unwrap_or("?")));
     }
@@ -216,44 +222,50 @@ fn restart_daemon(app: &AppHandle) {
 
 /// Update: install the available release (asking first, and again if the host is busy), or check for one.
 fn update_clicked(app: &AppHandle) {
+    let tray = app.state::<Tray>();
+    if tray.updating.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
-        let port = app.state::<Tray>().port;
-        let status = api::call(port, "GET", "/api/host/update", None).map(|(_, v)| v).unwrap_or_default();
-        if status["state"] != "available" {
-            let _ = api::call(port, "POST", "/api/host/update/check", None);
-            refresh(&app);
-            return;
-        }
-        let version = status["latest"]["version"].as_str().unwrap_or("?").to_string();
-        if !ask(&app, &format!("Update to v{version}? Sessions resume afterwards."), "Update") {
-            return;
-        }
-        let mut force = false;
-        loop {
-            let body = serde_json::json!({ "force": force }).to_string();
-            match api::call(port, "POST", "/api/host/update/install", Some(&body)) {
-                Ok((200, _)) => break,
-                Ok((409, v)) if v["code"] == "host_busy" && !force => {
-                    if !ask(&app, v["message"].as_str().unwrap_or("The host is busy. Update anyway?"), "Update") {
-                        return;
-                    }
-                    force = true;
+        update_flow(&app);
+        app.state::<Tray>().updating.store(false, Ordering::SeqCst);
+    });
+}
+
+fn update_flow(app: &AppHandle) {
+    let port = app.state::<Tray>().port;
+    let status = api::call(port, "GET", "/api/host/update", None).map(|(_, v)| v).unwrap_or_default();
+    if status["state"] != "available" {
+        let _ = api::call(port, "POST", "/api/host/update/check", None);
+        refresh(app);
+        return;
+    }
+    let version = status["latest"]["version"].as_str().unwrap_or("?").to_string();
+    if !ask(app, &format!("Update to v{version}? Sessions resume afterwards."), "Update") {
+        return;
+    }
+    let mut force = false;
+    loop {
+        let body = serde_json::json!({ "force": force }).to_string();
+        match api::call(port, "POST", "/api/host/update/install", Some(&body)) {
+            Ok((200, _)) => break,
+            Ok((409, v)) if v["code"] == "host_busy" && !force => {
+                if !ask(app, v["message"].as_str().unwrap_or("The host is busy. Update anyway?"), "Update") {
+                    return;
                 }
-                Ok((_, v)) => {
-                    error_dialog(
-                        &app,
-                        format!("The update failed: {}", v["message"].as_str().unwrap_or("unknown error")),
-                    )
-                    .show(|_| {});
-                    break;
-                }
-                Err(e) => {
-                    error_dialog(&app, format!("The update failed: {e}")).show(|_| {});
-                    break;
-                }
+                force = true;
+            }
+            Ok((_, v)) => {
+                let message = v["message"].as_str().unwrap_or("unknown error");
+                error_dialog(app, format!("The update failed: {message}")).show(|_| {});
+                break;
+            }
+            Err(e) => {
+                error_dialog(app, format!("The update failed: {e}")).show(|_| {});
+                break;
             }
         }
-        refresh(&app);
-    });
+    }
+    refresh(app);
 }

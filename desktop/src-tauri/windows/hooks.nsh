@@ -4,6 +4,10 @@
   ExecWait '"$INSTDIR\pdt-host.exe" install --install-dir "$INSTDIR"'
 !macroend
 
+; Stops this install's pdt-host and pdtd (so the folder can be removed) and removes the login registration. Skipped
+; when the uninstaller runs as part of an update (/UPDATE), which must leave the supervisor running.
 !macro NSIS_HOOK_PREUNINSTALL
-  ExecWait '"$INSTDIR\pdt-host.exe" uninstall'
+  ${If} $UpdateMode <> 1
+    ExecWait '"$INSTDIR\pdt-host.exe" uninstall --install-dir "$INSTDIR"'
+  ${EndIf}
 !macroend

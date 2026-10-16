@@ -25,12 +25,12 @@ pub fn call(port: u16, method: &str, path: &str, body: Option<&str>) -> Result<(
 /// The Update menu item for a `/api/host/update` status: (label, enabled).
 pub fn update_label(status: &serde_json::Value) -> (String, bool) {
     match status["state"].as_str() {
-        Some("available") => (format!("Update to v{}â€¦", status["latest"]["version"].as_str().unwrap_or("?")), true),
-        Some("checking") => ("Checking for updatesâ€¦".into(), false),
-        Some("downloading") => ("Downloading the updateâ€¦".into(), false),
-        Some("installing") => ("Installing the updateâ€¦".into(), false),
+        Some("available") => (format!("Update to v{}…", status["latest"]["version"].as_str().unwrap_or("?")), true),
+        Some("checking") => ("Checking for updates…".into(), false),
+        Some("downloading") => ("Downloading the update…".into(), false),
+        Some("installing") => ("Installing the update…".into(), false),
         Some("disabled") => ("Updates are off for this app".into(), false),
-        _ if status["error"].is_string() => ("Update check failed â€” see Settings".into(), true),
+        _ if status["error"].is_string() => ("Update check failed — see Settings".into(), true),
         _ => ("Check for updates".into(), true),
     }
 }
@@ -44,7 +44,7 @@ mod tests {
     fn labels() {
         assert_eq!(
             update_label(&json!({"state": "available", "latest": {"version": "0.1.9"}})),
-            ("Update to v0.1.9â€¦".into(), true)
+            ("Update to v0.1.9…".into(), true)
         );
         assert!(!update_label(&json!({"state": "installing"})).1);
         assert!(!update_label(&json!({"state": "disabled"})).1);

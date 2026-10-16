@@ -15,7 +15,7 @@ fn usage() -> ! {
     let bin = pdt_core::brand::HOST_BIN;
     eprintln!("usage: {bin} run [--install-dir <dir>]");
     eprintln!("       {bin} install [--install-dir <dir>]");
-    eprintln!("       {bin} uninstall");
+    eprintln!("       {bin} uninstall [--install-dir <dir>]");
     std::process::exit(2);
 }
 
@@ -35,6 +35,9 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         log(&cfg, "another pdt-host is already supervising this data folder; exiting");
         return Ok(());
     };
+    if let Err(e) = pdt_host::register::write_pid(&cfg.data_dir) {
+        log(&cfg, &format!("could not record this process id: {e}"));
+    }
     let exe = std::env::current_exe()?;
     pdt_host::selfupdate::clean_old(&exe);
     log(&cfg, &format!("supervising {} on port {}", cfg.pdtd_path().display(), cfg.port));
@@ -69,6 +72,13 @@ fn install(args: &[String]) -> anyhow::Result<()> {
     })
 }
 
+/// Stops this data folder's pdt-host and pdtd and removes the login registration.
+fn uninstall(args: &[String]) -> anyhow::Result<()> {
+    let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
+    log(&cfg, "uninstalling: stopping pdt-host and pdtd, removing the login registration");
+    pdt_host::register::uninstall(&cfg).map_err(anyhow::Error::msg)
+}
+
 /// Starts the replaced pdt-host and exits. Under launchd, exiting is enough: KeepAlive starts the new copy. pdtd keeps
 /// running; the new pdt-host adopts it. Returns (and this copy keeps supervising) only when the new copy cannot start.
 fn relaunch(cfg: &HostConfig, exe: &std::path::Path, args: &[String]) {
@@ -94,7 +104,7 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("run") => run(&args[1..]),
         Some("install") => install(&args[1..]),
-        Some("uninstall") => pdt_host::register::uninstall().map_err(anyhow::Error::msg),
+        Some("uninstall") => uninstall(&args[1..]),
         _ => usage(),
     };
     if let Err(e) = result {

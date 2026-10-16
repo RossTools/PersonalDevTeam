@@ -18,6 +18,11 @@ function Test-Port([int]$p) {
     try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $p); $c.Close(); $true } catch { $false }
 }
 
+# The version the build reports (pdt_core::BUILD_VERSION): PDT_BUILD_VERSION, else the workspace version + -local.
+$workspaceVersion = (Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^version = "(.+)"' |
+    Select-Object -First 1).Matches[0].Groups[1].Value
+$buildVersion = if ($env:PDT_BUILD_VERSION) { $env:PDT_BUILD_VERSION } else { "$workspaceVersion-local" }
+
 Push-Location $root
 try {
     Invoke-Native 'pnpm install' { pnpm install --frozen-lockfile }
@@ -42,14 +47,15 @@ if ($status -and $status.state -ne 'disabled') {
     $drop = Join-Path $dataDir 'update\downloads\local'
     New-Item -ItemType Directory -Force $drop | Out-Null
     Copy-Item $setup.FullName (Join-Path $drop $setup.Name) -Force
-    # A local build reports 0.1.0-local (BUILD_VERSION); pdt-host's health check expects exactly that.
-    $request = @{ version = '0.1.0-local'; tag = 'local'; asset = (Join-Path $drop $setup.Name);
+    # pdt-host's health check expects exactly the version the new build reports.
+    $request = @{ version = $buildVersion; tag = 'local'; asset = (Join-Path $drop $setup.Name);
         fromVersion = $status.current; requestedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json
     # Written whole, then renamed: pdt-host acts as soon as request.json appears.
     $requestPath = Join-Path $dataDir 'update\request.json'
     [IO.File]::WriteAllText("$requestPath.tmp", $request)
     Move-Item "$requestPath.tmp" $requestPath -Force
-    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/api/shutdown" | Out-Null
+    # pdt-host also stops pdtd once it sees the request, so pdtd may already be gone.
+    try { Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/api/shutdown" -TimeoutSec 10 | Out-Null } catch {}
     Write-Host "Handed the installer to pdt-host; see $dataDir\logs\pdt-host.log and $dataDir\update\result.json."
     return
 }
