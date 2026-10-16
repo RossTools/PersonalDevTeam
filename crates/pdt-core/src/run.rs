@@ -202,13 +202,19 @@ pub struct StepLaunch {
 ///
 /// On Windows the line is run with `call`: a batch file that runs a `.cmd` shim (pnpm, npm, …) without it hands
 /// control to the shim for good, so the script's own `exit /b %ERRORLEVEL%` never runs and some shims' exit codes are
-/// lost (ruling F22).
+/// lost (ruling F22). The command is split on ` && ` (even inside quotes) into one `call` line per part, each followed
+/// by a check that ends the script with the failing exit code, because `call a && call b` after a shim is unreliable.
 pub fn step_launch(windows: bool, comspec: &str, command: &str, script_path: &Path) -> StepLaunch {
     if windows {
+        let mut script = String::from("@echo off\r\n");
+        for part in command.split(" && ").map(str::trim).filter(|p| !p.is_empty()) {
+            script.push_str(&format!("call {part}\r\nif not \"%errorlevel%\"==\"0\" exit /b %errorlevel%\r\n"));
+        }
+        script.push_str("exit /b 0\r\n");
         StepLaunch {
             program: comspec.to_string(),
             args: vec!["/d".into(), "/c".into(), script_path.to_string_lossy().into_owned()],
-            script: Some(format!("@echo off\r\ncall {command}\r\nexit /b %ERRORLEVEL%\r\n")),
+            script: Some(script),
         }
     } else {
         StepLaunch { program: "/bin/sh".into(), args: vec!["-c".into(), command.into()], script: None }
@@ -295,12 +301,59 @@ mod tests {
         assert_eq!(w.program, "C:\\Windows\\system32\\cmd.exe");
         assert_eq!(w.args, ["/d", "/c", "C:\\d\\s.cmd"]);
         // `call`, so a .cmd shim (pnpm.cmd) returns to the script instead of ending it (ruling F22).
-        assert_eq!(w.script.as_deref(), Some("@echo off\r\ncall pnpm dev && echo ok\r\nexit /b %ERRORLEVEL%\r\n"));
+        assert_eq!(
+            w.script.as_deref(),
+            Some(
+                "@echo off\r\ncall pnpm dev\r\nif not \"%errorlevel%\"==\"0\" exit /b %errorlevel%\r\n\
+                 call echo ok\r\nif not \"%errorlevel%\"==\"0\" exit /b %errorlevel%\r\nexit /b 0\r\n"
+            )
+        );
         let u = step_launch(false, "", "pnpm dev && echo ok", Path::new("/unused"));
         assert_eq!(
             (u.program.as_str(), u.args.as_slice()),
             ("/bin/sh", &["-c".to_string(), "pnpm dev && echo ok".into()][..])
         );
         assert_eq!(u.script, None);
+    }
+
+    /// Runs `command` through the generated script with `a`, `b` and `c` shims (batch files, like pnpm.cmd) in the
+    /// folder; returns (exit code, output).
+    #[cfg(windows)]
+    fn run_chain(tag: &str, command: &str) -> (i32, String) {
+        let dir = std::env::temp_dir().join(format!("pdt-step-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, code) in [("shima", 0), ("shimb", 0), ("shimfail", 3)] {
+            std::fs::write(
+                dir.join(format!("{name}.cmd")),
+                format!("@echo off\r\necho ran {name}\r\nexit /b {code}\r\n"),
+            )
+            .unwrap();
+        }
+        let comspec = std::env::var("ComSpec").unwrap();
+        let script = dir.join("step.cmd");
+        let l = step_launch(true, &comspec, command, &script);
+        std::fs::write(&script, l.script.unwrap()).unwrap();
+        let path = format!("{};{}", dir.display(), std::env::var("PATH").unwrap_or_default());
+        let out =
+            std::process::Command::new(&l.program).args(&l.args).current_dir(&dir).env("PATH", path).output().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        (out.status.code().unwrap(), String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_chain_runs_every_shim_and_returns_the_failing_code() {
+        let (code, out) = run_chain("ok", "shima && shimb && shimfail");
+        assert_eq!(code, 3);
+        assert!(out.contains("ran shima") && out.contains("ran shimb") && out.contains("ran shimfail"), "{out}");
+        assert_eq!(run_chain("ok2", "shima && shimb").0, 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_failing_first_part_stops_the_chain() {
+        let (code, out) = run_chain("stop", "shimfail && shima");
+        assert_eq!(code, 3);
+        assert!(out.contains("ran shimfail") && !out.contains("ran shima"), "{out}");
     }
 }

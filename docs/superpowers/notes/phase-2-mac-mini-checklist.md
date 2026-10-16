@@ -8,7 +8,8 @@ tailnet (the Windows desktop or the phone), operated by the user; ask them to do
 **The stable instance is never touched by an agent.** Any step marked **USER does this** stops, kills, shuts down,
 installs or updates the stable pdtd or the stable app: agents never touch the stable instance, so you ask the user to
 do it, then you observe and record the result. Everything else you may run yourself. Dev instances (runs) are fine to
-start and stop.
+start and stop. Changing the stable instance's own Settings toggles from its UI (Remote access, owner, update policy)
+is allowed for you; that is not stopping or updating it.
 
 ## 0. Preconditions
 1. `tailscale status --json | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["BackendState"], d["Self"]["DNSName"], d["CertDomains"])'`
@@ -19,6 +20,17 @@ start and stop.
    remote access is turned on (the name of this machine ends up in a public log). Do not continue until they say yes.
 3. `claude auth status` → `"loggedIn": true`; `codex login status` → exit 0. If not, ask the user to log in.
 4. Note the stable instance's version: `curl -s http://127.0.0.1:7420/api/health`. Reading health is allowed.
+5. Toolchain for runs (setup builds PDT itself). In a Terminal with the user's normal shell profile:
+   - `git --version` → `git version 2.x` (any 2.x).
+   - `node --version` → `v22` or newer (what `web/package.json` "engines" asks for, if it names one).
+   - `pnpm --version` → a version number (10.x or what `packageManager` in `web/package.json` names).
+   - `rustc --version` and `cargo --version` → `1.99.0` or newer (`rust-toolchain.toml` pins 1.99.0).
+   - `xcode-select -p` → a path (the C toolchain for cargo).
+   If one is missing, ask the user to install it; do not install system software yourself.
+6. The branch carries the run configuration: in the clone used as the project,
+   `git fetch origin && git show origin/phase-2-remote-host:.pdt/project.toml | head -3`
+   Expected: starts with the comment `# PDT's own run configuration`. If the file is absent, the branch is not pushed;
+   ask the user to push it.
 
 ## 1. Install and the login item
 1. **USER does this** (installs the stable app): install the latest release: download the `.app.tar.gz` from the
@@ -45,8 +57,9 @@ start and stop.
    `https://<machine>…` → `http://127.0.0.1:7420`. Only the stable instance claims 443.
 2. Check whether `tailscale serve --https=443 off` works: turn Remote access off in Settings and run
    `tailscale serve status`. Expected: no 443 mapping. Record the result: it settles whether the off form needs
-   `--bg` (verified fact 5 left this open). If it fails, also try `tailscale serve --bg --https=443 off` and record
-   which form worked. Turn Remote access back on.
+   `--bg` (verified fact 5 left this open). Turn Remote access back on. If the Settings toggle left the mapping in
+   place, **USER does this** (changes the stable instance's 443 mapping by hand): try
+   `tailscale serve --https=443 off`, then `tailscale serve --bg --https=443 off`, and record which form worked.
 3. The Host header is preserved by serve (the DNS-rebinding guard depends on it): from device B open the URL; PDT must
    load rather than answer 403 for the Host. Also `tail -20 ~/Library/Application\ Support/pdt/logs/pdtd.*.log`
    shows no rejected-host lines for it. Record what you saw.
@@ -68,14 +81,10 @@ stable instance gets a port in 8400–8499.
    and a separate `:84xx` → `http://127.0.0.1:84xx`.
 3. Device B: open the run's link. Expected: a second PDT (the dev instance) loads and admits the owner. A non-owner
    login gets 403 `forbidden_identity` there too.
-4. Token per data dir: with the dev instance open in the browser, Settings → This host shows no update token stored,
-   even though the stable instance has one (section 5). `security find-generic-password -s dev.personaldevteam` lists
-   the stable account `update-token`; a dev instance would use `update-token:<hash>`. The dev instance never sees
-   stable's token.
-5. Stop the run. Expected: state stopped; the port's mapping is gone from `tailscale serve status`;
+4. Stop the run. Expected: state stopped; the port's mapping is gone from `tailscale serve status`;
    `lsof -iTCP:<port> -sTCP:LISTEN` prints nothing; 443 → 7420 is untouched.
-6. Start two runs on two branches; both get different ports and work side by side.
-7. Start a run, then **USER does this** (restarts the stable pdtd, which resumes the run): restart the daemon from the
+5. Start two runs on two branches; both get different ports and work side by side.
+6. Start a run, then **USER does this** (restarts the stable pdtd, which resumes the run): restart the daemon from the
    tray. Expected: the run comes back (on the same port unless taken); no other mapping in `tailscale serve status`
    disappeared.
 
@@ -89,7 +98,11 @@ stable instance gets a port in 8400–8499.
 Every step that makes the stable instance update, restart or roll back is **USER does this**; you observe.
 1. Settings → This host: paste the fine-grained token (the user gives it to you or does this); policy "notify".
    Expected: token "stored in the OS keychain" (Keychain Access shows an item for service `dev.personaldevteam`);
-   no expiry warning unless < 14 days.
+   no expiry warning unless < 14 days. The keychain account of the stable token is `update-token` (the user may need to
+   check in Keychain Access: service `dev.personaldevteam`).
+1b. Token per data dir: start a run (Run → pdt) and open the dev instance at its link. Settings → This host there shows
+   no token stored (the dev instance runs with PDT_SECRET_STORE=memory), and Keychain Access gains no new item (the
+   items for service `dev.personaldevteam` are the same as in step 1, none named `update-token:<hash>`). Stop the run.
 2. Merge any small PR so CI publishes v0.1.N+1 (ask the user). Within an hour, or after "Check now", every device shows
    "Update to v0.1.N+1 available" with the notes.
 3. **USER does this** (updates the stable app): with a Claude session working, click Update. Expected: a confirm

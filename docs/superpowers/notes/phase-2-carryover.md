@@ -7,9 +7,11 @@
 - **Runs restart only on request** when their branch changes; dev servers with hot reload pick up changes themselves.
 - **A resumed run that moves maps only its new port**; its old port is never unserved, so a mapping can linger to a
   port nobody serves (harmless; `tailscale serve reset` clears it).
-- **Windows run steps** go through a generated `.cmd` with a `call` prefix on the command: no `if`/`for` at the start
-  of a command, a first word that is a path needs backslashes (so `.pdt/project.toml` uses `cargo run -q -p pdtd`
-  rather than `target/debug/pdtd`), `%` is expanded a second time, and a shim's exit code can be lost in `a && b`.
+- **Windows run steps** go through a generated `.cmd`. The command is split on ` && ` (also inside quotes, so avoid it
+  in quoted arguments) into one `call <part>` line per part, each followed by a check that ends the script with the
+  failing exit code: shims (pnpm.cmd) after a `&&` work and the exit code is kept. Limits: no `if`/`for` at the start
+  of a part, a first word that is a path needs backslashes (so `.pdt/project.toml` uses `cargo run -q -p pdtd` rather
+  than `target/debug/pdtd`), and `%` is expanded a second time. Other operators (`||`, `;`, `|`) are not split.
   Readiness probes 127.0.0.1 and ::1.
 - **Fork PRs** cannot be run until the git integration phase (only branches on origin).
 - **Owner identity** compares Tailscale-User-Login case-insensitively; RFC 2047 values are decoded (Q only).
