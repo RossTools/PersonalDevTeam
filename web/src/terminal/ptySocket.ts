@@ -87,6 +87,8 @@ export class PtySocket {
         const msg = JSON.parse(ev.data) as PtyServerMessage;
         if (msg.type === 'ready') {
           ready = true;
+          // A server that held this connection while it waited for the session to start has not seen our size.
+          if (this.size) this.control({ type: 'resize', ...this.size });
           this.h.onReady?.();
         } else if (msg.type === 'exit') {
           this.exited = true;

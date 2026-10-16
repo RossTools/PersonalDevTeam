@@ -250,3 +250,26 @@ async fn shutdown_releases_terminals_waiting_for_a_resume() {
     assert_eq!(text, r#"{"type":"not_running"}"#);
     state.ptys.shutdown().await;
 }
+
+/// Prints the terminal size as "<rows> <cols>" on unix and "<cols*1000+rows>" on Windows.
+const SIZE_PROBE: &str =
+    if cfg!(windows) { "echo ([Console]::WindowWidth*1000+[Console]::WindowHeight)\r" } else { "stty size\r" };
+const SIZE_100X30: &str = if cfg!(windows) { "100030" } else { "30 100" };
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_size_sent_while_waiting_is_applied_to_the_resumed_terminal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (port, state) = serve(tmp.path()).await;
+    let plan = pending_session(tmp.path(), port, &state, "sized", None).await;
+
+    let (mut ws, _) = connect_async(format!("ws://127.0.0.1:{port}/api/sessions/sized/pty")).await.unwrap();
+    ws.send(Message::Text(r#"{"type":"resize","cols":100,"rows":30}"#.into())).await.unwrap();
+    assert!(next_message(&mut ws, Duration::from_millis(400)).await.is_none());
+    // The resume starts the terminal at 120x30; the size the browser sent while waiting must win.
+    assert_eq!(plan.start(&state).await, 1);
+    let (_, text) = until_first_text(&mut ws).await;
+    assert_eq!(text, r#"{"type":"ready"}"#);
+    ws.send(Message::Binary(SIZE_PROBE.as_bytes().to_vec().into())).await.unwrap();
+    read_until(&mut ws, SIZE_100X30).await;
+    state.ptys.shutdown().await;
+}
