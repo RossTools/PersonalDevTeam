@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::Context;
 use pdt_host::config::HostConfig;
 use pdt_host::install::{Installer, Unsupported, installer_for};
 use pdt_host::log::log;
@@ -32,9 +32,6 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     };
     let exe = std::env::current_exe()?;
     pdt_host::selfupdate::clean_old(&exe);
-    if !cfg.pdtd_path().is_file() {
-        bail!("{} not found", cfg.pdtd_path().display());
-    }
     log(&cfg, &format!("supervising {} on port {}", cfg.pdtd_path().display(), cfg.port));
     // Ruling F9: without an installer (e.g. a dev build outside an .app) keep supervising and refuse updates.
     let installer: Box<dyn Installer> = installer_for(&cfg).unwrap_or_else(|reason| {
@@ -47,7 +44,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
         if exe != bundled && pdt_host::selfupdate::needs_replace(&exe, &bundled) {
             log(&cfg, "the release changes pdt-host itself; replacing and restarting");
             match pdt_host::selfupdate::replace(&exe, &bundled) {
-                Ok(()) => relaunch(&exe, args),
+                Ok(()) => relaunch(&cfg, &exe, args),
                 Err(e) => log(&cfg, &format!("could not replace pdt-host: {e}")),
             }
         }
@@ -58,20 +55,23 @@ fn run(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Starts the replaced pdt-host and exits. Under launchd, exiting is enough: KeepAlive starts the new copy. pdtd keeps
-/// running; the new pdt-host adopts it.
-fn relaunch(exe: &std::path::Path, args: &[String]) -> ! {
+/// running; the new pdt-host adopts it. Returns (and this copy keeps supervising) only when the new copy cannot start.
+fn relaunch(cfg: &HostConfig, exe: &std::path::Path, args: &[String]) {
     let under_launchd = std::env::var("XPC_SERVICE_NAME").is_ok_and(|v| v == pdt_core::brand::HOST_LABEL);
-    if !under_launchd {
-        let mut cmd = std::process::Command::new(exe);
-        cmd.arg("run").args(args);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000 | 0x0000_0200);
-        }
-        let _ = cmd.spawn();
+    if under_launchd {
+        std::process::exit(0);
     }
-    std::process::exit(0);
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("run").args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000 | 0x0000_0200);
+    }
+    match cmd.spawn() {
+        Ok(_) => std::process::exit(0),
+        Err(e) => log(cfg, &format!("could not start the replaced pdt-host ({e}); this copy keeps supervising")),
+    }
 }
 
 fn main() {

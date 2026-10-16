@@ -2,12 +2,12 @@
 //! exits, and install the update it hands over, rolling back when the new version fails its health check.
 
 use crate::config::HostConfig;
-use crate::health::{Probe, probe};
+use crate::health::{Probe, probe, request_shutdown};
 use crate::install::Installer;
 use crate::log::{log, log_path};
-use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, request_path, result_path};
+use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, request_path, result_path, update_dir};
 use std::fs::{File, TryLockError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -36,12 +36,39 @@ impl Backoff {
     }
 }
 
-/// Takes the pending update request, renaming the file so a crash loop never installs it twice.
-pub fn take_request(data_dir: &Path) -> Option<UpdateRequest> {
+/// Exists while an update is being installed (written after the backup, removed once the result is written). Found
+/// at startup, it means pdt-host died mid-install: the update is rolled back.
+pub fn marker_path(data_dir: &Path) -> PathBuf {
+    update_dir(data_dir).join("installing.json")
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TakenRequest {
+    None,
+    Request(UpdateRequest),
+    /// The request was taken but could not be parsed.
+    Malformed(String),
+    /// The request file could not be read or removed; it is left alone (installing it could repeat forever).
+    Stuck(String),
+}
+
+/// Takes the pending update request, renaming (or else deleting) the file so a crash loop never installs it twice.
+pub fn take_request(data_dir: &Path) -> TakenRequest {
     let path = request_path(data_dir);
-    let bytes = std::fs::read(&path).ok()?;
-    let _ = std::fs::rename(&path, path.with_extension("taken.json"));
-    serde_json::from_slice(&bytes).ok()
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return TakenRequest::None,
+        Err(e) => return TakenRequest::Stuck(format!("could not read {}: {e}", path.display())),
+    };
+    if let Err(rename) = std::fs::rename(&path, path.with_extension("taken.json"))
+        && let Err(remove) = std::fs::remove_file(&path)
+    {
+        return TakenRequest::Stuck(format!("could not take {} ({rename}; {remove})", path.display()));
+    }
+    match serde_json::from_slice(&bytes) {
+        Ok(r) => TakenRequest::Request(r),
+        Err(e) => TakenRequest::Malformed(e.to_string()),
+    }
 }
 
 /// Locks `path` (created if missing), retrying for `within` while another process holds it (ruling F10: a relaunched
@@ -63,26 +90,22 @@ pub fn acquire_lock(path: &Path, within: Duration) -> std::io::Result<Option<Fil
     }
 }
 
+/// Starts pdtd with exactly `cfg.pdtd_env()` as its `PDT_*` variables (ruling A).
 pub fn spawn_pdtd(cfg: &HostConfig) -> std::io::Result<Child> {
     let launch_log = cfg.data_dir.join("logs").join(format!("{}-launch.log", pdt_core::brand::DAEMON_BIN));
     let _ = std::fs::create_dir_all(launch_log.parent().expect("logs dir"));
     let out = File::options().create(true).append(true).open(&launch_log)?;
     let mut cmd = Command::new(cfg.pdtd_path());
-    for (k, _) in std::env::vars() {
-        if k.starts_with("PDT_") {
+    for (k, _) in std::env::vars_os() {
+        if k.to_string_lossy().starts_with("PDT_") {
             cmd.env_remove(k);
         }
     }
-    cmd.env("PDT_PORT", cfg.port.to_string())
-        .env("PDT_DATA_DIR", &cfg.data_dir)
-        .env("PDT_SUPERVISED", "1")
+    cmd.envs(cfg.pdtd_env())
         .current_dir(&cfg.install_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(out.try_clone()?))
         .stderr(Stdio::from(out));
-    if cfg.dev {
-        cmd.env("PDT_PROFILE", "dev");
-    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -97,9 +120,13 @@ pub fn spawn_pdtd(cfg: &HostConfig) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
+fn stopped(stop: &AtomicBool) -> bool {
+    stop.load(Ordering::SeqCst)
+}
+
 fn sleep_unless_stopped(d: Duration, stop: &AtomicBool) {
     let end = Instant::now() + d;
-    while !stop.load(Ordering::SeqCst) {
+    while !stopped(stop) {
         let now = Instant::now();
         if now >= end {
             break;
@@ -108,24 +135,58 @@ fn sleep_unless_stopped(d: Duration, stop: &AtomicBool) {
     }
 }
 
+/// Whether our child has exited (it is then forgotten).
+fn reap(child: &mut Option<Child>) -> bool {
+    if let Some(c) = child
+        && c.try_wait().ok().flatten().is_some()
+    {
+        *child = None;
+        return true;
+    }
+    false
+}
+
 /// Waits for our pdtd to answer health (with `version` when given). Fails early if the child exits.
 fn wait_healthy(cfg: &HostConfig, child: &mut Option<Child>, version: Option<&str>, stop: &AtomicBool) -> bool {
     let end = Instant::now() + cfg.health_timeout;
-    while Instant::now() < end && !stop.load(Ordering::SeqCst) {
+    while Instant::now() < end && !stopped(stop) {
         if let Probe::Ours { version: v } = probe(cfg.port)
             && version.is_none_or(|want| want == v)
         {
             return true;
         }
-        if let Some(c) = child
-            && c.try_wait().ok().flatten().is_some()
-        {
-            *child = None;
+        if reap(child) {
             return false;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     false
+}
+
+/// False when the child exits before `until`.
+fn stays_up(child: &mut Option<Child>, until: Instant, stop: &AtomicBool) -> bool {
+    while Instant::now() < until && !stopped(stop) {
+        if reap(child) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+/// Waits until our child (if any) has exited and the port is free.
+fn wait_gone(cfg: &HostConfig, child: &mut Option<Child>, within: Duration, stop: &AtomicBool) -> bool {
+    let end = Instant::now() + within;
+    loop {
+        reap(child);
+        if child.is_none() && probe(cfg.port) == Probe::Free {
+            return true;
+        }
+        if Instant::now() >= end || stopped(stop) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 fn kill(child: &mut Option<Child>) {
@@ -135,13 +196,16 @@ fn kill(child: &mut Option<Child>) {
     }
 }
 
-/// Returns once pdtd has gone: our child exited, or (adopted) it stopped answering three times in a row.
-fn watch(cfg: &HostConfig, child: &mut Option<Child>, stop: &AtomicBool) {
+/// Returns once pdtd has gone (our child exited, or an adopted one stopped answering three times in a row), or, when
+/// `notice_requests`, once an update request appears.
+fn watch(cfg: &HostConfig, child: &mut Option<Child>, stop: &AtomicBool, notice_requests: bool) {
     let mut misses = 0;
-    while !stop.load(Ordering::SeqCst) {
-        if let Some(c) = child {
-            if c.try_wait().ok().flatten().is_some() {
-                *child = None;
+    while !stopped(stop) {
+        if notice_requests && request_path(&cfg.data_dir).exists() {
+            return;
+        }
+        if child.is_some() {
+            if reap(child) {
                 return;
             }
         } else if matches!(probe(cfg.port), Probe::Ours { .. }) {
@@ -156,10 +220,40 @@ fn watch(cfg: &HostConfig, child: &mut Option<Child>, stop: &AtomicBool) {
     }
 }
 
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::create_dir_all(path.parent().expect("a parent"))?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(tmp, path)
+}
+
 fn write_result(cfg: &HostConfig, r: &UpdateResult) {
-    let path = result_path(&cfg.data_dir);
-    let _ = std::fs::create_dir_all(path.parent().expect("update dir"));
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(r).expect("json"));
+    if let Err(e) = write_atomic(&result_path(&cfg.data_dir), &serde_json::to_vec_pretty(r).expect("json")) {
+        log(cfg, &format!("could not write the update result: {e}"));
+    }
+}
+
+fn update_result(cfg: &HostConfig, outcome: UpdateOutcome, from: &str, to: &str, message: String) -> UpdateResult {
+    UpdateResult {
+        outcome,
+        from_version: from.into(),
+        to_version: to.into(),
+        message,
+        log: Some(log_path(cfg).to_string_lossy().into_owned()),
+        at: jiff::Timestamp::now().as_millisecond(),
+    }
+}
+
+/// Rolls back after the new version failed (`why`); the outcome and message to report.
+fn roll_back(cfg: &HostConfig, installer: &dyn Installer, version: &str, why: &str) -> (UpdateOutcome, String) {
+    log(cfg, &format!("v{version} failed ({why}); rolling back"));
+    match installer.rollback() {
+        Ok(()) => (UpdateOutcome::RolledBack, format!("Update to v{version} failed ({why}) and was rolled back")),
+        Err(e) => {
+            log(cfg, &format!("rollback failed: {e}"));
+            (UpdateOutcome::Failed, format!("Update to v{version} failed ({why}), and so did the rollback: {e}"))
+        }
+    }
 }
 
 fn handle_update(
@@ -169,74 +263,134 @@ fn handle_update(
     req: UpdateRequest,
     stop: &AtomicBool,
 ) -> UpdateOutcome {
-    // pdtd shut itself down after writing the request; make sure it is gone before files are replaced.
-    let end = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < end {
-        let exited = child.as_mut().is_none_or(|c| c.try_wait().ok().flatten().is_some());
-        if exited && probe(cfg.port) == Probe::Free {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    kill(child);
-    log(cfg, &format!("installing {} (from {})", req.version, req.from_version));
-    let result = |outcome, message: String| UpdateResult {
-        outcome,
-        from_version: req.from_version.clone(),
-        to_version: req.version.clone(),
-        message,
-        log: Some(log_path(cfg).to_string_lossy().into_owned()),
-        at: jiff::Timestamp::now().as_millisecond(),
+    let v = req.version.as_str();
+    let finish = |outcome: UpdateOutcome, message: String| {
+        write_result(cfg, &update_result(cfg, outcome, &req.from_version, v, message));
+        let _ = std::fs::remove_file(marker_path(&cfg.data_dir));
+        outcome
     };
-    let r = match installer.install(&req.asset) {
-        Err(e) => {
-            log(cfg, &format!("install failed: {e}"));
-            result(UpdateOutcome::Failed, format!("Update to v{} failed: {e}", req.version))
-        }
-        Ok(()) => {
-            *child = spawn_pdtd(cfg).map_err(|e| log(cfg, &format!("could not start the new pdtd: {e}"))).ok();
-            if wait_healthy(cfg, child, Some(&req.version), stop) {
-                log(cfg, &format!("v{} is healthy", req.version));
-                result(UpdateOutcome::Installed, format!("Updated to v{}", req.version))
-            } else {
-                log(cfg, &format!("v{} failed its health check; rolling back", req.version));
-                kill(child);
-                match installer.rollback() {
-                    Ok(()) => result(
-                        UpdateOutcome::RolledBack,
-                        format!("Update to v{} failed and was rolled back", req.version),
-                    ),
-                    Err(e) => {
-                        log(cfg, &format!("rollback failed: {e}"));
-                        result(
-                            UpdateOutcome::Failed,
-                            format!("Update to v{} failed, and so did the rollback: {e}", req.version),
-                        )
-                    }
-                }
+    // pdtd shuts itself down after writing the request; nothing is touched until it is gone.
+    if !wait_gone(cfg, child, cfg.stop_timeout, stop) && !stopped(stop) {
+        if matches!(probe(cfg.port), Probe::Ours { .. }) {
+            log(cfg, "pdtd is still running after handing over an update; asking it to stop");
+            if let Err(e) = request_shutdown(cfg.port) {
+                log(cfg, &format!("the shutdown request failed: {e}"));
             }
         }
+        wait_gone(cfg, child, cfg.stop_timeout, stop);
+    }
+    if child.is_some() || probe(cfg.port) != Probe::Free {
+        log(cfg, &format!("pdtd did not stop; v{v} was not installed"));
+        return finish(
+            UpdateOutcome::Failed,
+            format!("Update to v{v} was not installed: the running version did not stop"),
+        );
+    }
+    log(cfg, &format!("installing {v} (from {})", req.from_version));
+    if let Err(e) = installer.backup() {
+        log(cfg, &format!("install failed: {e}"));
+        return finish(UpdateOutcome::Failed, format!("Update to v{v} failed: {e}"));
+    }
+    let marker = serde_json::json!({ "request": &req, "backup": installer.backup_path() });
+    if let Err(e) = write_atomic(&marker_path(&cfg.data_dir), marker.to_string().as_bytes()) {
+        log(cfg, &format!("could not write the install marker: {e}"));
+        return finish(UpdateOutcome::Failed, format!("Update to v{v} failed: could not record the install: {e}"));
+    }
+    if let Err(e) = installer.install(&req.asset) {
+        let (outcome, message) = roll_back(cfg, installer, v, &e);
+        return finish(outcome, message);
+    }
+    // The new pdtd reads the result at startup; it is overwritten if the new version is rolled back.
+    write_result(cfg, &update_result(cfg, UpdateOutcome::Installed, &req.from_version, v, format!("Updated to v{v}")));
+    let started = Instant::now();
+    *child = match spawn_pdtd(cfg) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            let (outcome, message) = roll_back(cfg, installer, v, &format!("it could not be started: {e}"));
+            return finish(outcome, message);
+        }
     };
-    write_result(cfg, &r);
-    r.outcome
+    let failure = if !wait_healthy(cfg, child, Some(v), stop) {
+        Some("it failed its health check")
+    } else if !stays_up(child, started + cfg.health_timeout, stop) {
+        Some("it exited soon after starting")
+    } else {
+        None
+    };
+    if let Some(why) = failure {
+        kill(child);
+        let (outcome, message) = roll_back(cfg, installer, v, why);
+        return finish(outcome, message);
+    }
+    log(cfg, &format!("v{v} is healthy"));
+    finish(UpdateOutcome::Installed, format!("Updated to v{v}"))
+}
+
+/// At startup: rolls back an install that pdt-host died in the middle of, and restores the previous version when
+/// pdtd is missing.
+fn recover(cfg: &HostConfig, installer: &dyn Installer) {
+    let marker = marker_path(&cfg.data_dir);
+    if let Ok(bytes) = std::fs::read(&marker) {
+        let req = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|v| serde_json::from_value::<UpdateRequest>(v["request"].clone()).ok());
+        let (from, to) = req.map(|r| (r.from_version, r.version)).unwrap_or_default();
+        log(cfg, &format!("an update to v{to} was interrupted; rolling back"));
+        let (outcome, message) = match installer.rollback() {
+            Ok(()) => (UpdateOutcome::RolledBack, format!("Update to v{to} was interrupted and was rolled back")),
+            Err(e) => {
+                log(cfg, &format!("rollback failed: {e}"));
+                (UpdateOutcome::Failed, format!("Update to v{to} was interrupted, and the rollback failed: {e}"))
+            }
+        };
+        write_result(cfg, &update_result(cfg, outcome, &from, &to, message));
+        let _ = std::fs::remove_file(&marker);
+    }
+    if !cfg.pdtd_path().is_file() {
+        match installer.backup_path() {
+            Some(b) if b.exists() => {
+                log(cfg, &format!("{} is missing; restoring the previous version", cfg.pdtd_path().display()));
+                if let Err(e) = installer.rollback() {
+                    log(cfg, &format!("restoring the previous version failed: {e}"));
+                }
+            }
+            _ => log(cfg, &format!("{} is missing; retrying until it appears", cfg.pdtd_path().display())),
+        }
+    }
 }
 
 /// Runs until `stop` is set (tests); in production it runs for the life of the process. `after_install` is called
 /// after a successful install (pdt-host's main uses it to replace itself last).
 pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after_install: &dyn Fn()) {
+    recover(cfg, installer);
     let mut failures = 0u32;
     let mut child: Option<Child> = None;
-    while !stop.load(Ordering::SeqCst) {
-        if let Some(req) = take_request(&cfg.data_dir) {
-            if handle_update(cfg, installer, &mut child, req, stop) == UpdateOutcome::Installed {
-                after_install();
+    // Set when a request file cannot be removed: it is then left alone until pdt-host restarts.
+    let mut ignore_requests = false;
+    while !stopped(stop) {
+        let taken = if ignore_requests { TakenRequest::None } else { take_request(&cfg.data_dir) };
+        match taken {
+            TakenRequest::Request(req) => {
+                if handle_update(cfg, installer, &mut child, req, stop) == UpdateOutcome::Installed {
+                    after_install();
+                }
+                failures = 0;
+                if child.is_none() {
+                    continue;
+                }
             }
-            failures = 0;
-            if child.is_none() {
+            TakenRequest::Malformed(e) => {
+                log(cfg, &format!("the update request could not be read: {e}"));
+                let message = format!("The update request could not be read: {e}");
+                write_result(cfg, &update_result(cfg, UpdateOutcome::Failed, "", "", message));
                 continue;
             }
-        } else {
-            match probe(cfg.port) {
+            TakenRequest::Stuck(e) => {
+                log(cfg, &format!("{e}; update requests are ignored until pdt-host restarts"));
+                ignore_requests = true;
+                continue;
+            }
+            TakenRequest::None => match probe(cfg.port) {
                 Probe::Ours { .. } => {}
                 Probe::Foreign(why) => {
                     failures += 1;
@@ -262,11 +416,11 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
                         continue;
                     }
                 }
-            }
+            },
         }
         let started = Instant::now();
-        watch(cfg, &mut child, stop);
-        if stop.load(Ordering::SeqCst) || request_path(&cfg.data_dir).exists() {
+        watch(cfg, &mut child, stop, !ignore_requests);
+        if stopped(stop) || (!ignore_requests && request_path(&cfg.data_dir).exists()) {
             continue;
         }
         if started.elapsed() >= cfg.backoff.reset_after {
@@ -283,8 +437,6 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pdt_core::handoff::request_path;
-    use std::time::Instant;
 
     #[test]
     fn backoff_doubles_up_to_the_cap() {
@@ -307,8 +459,27 @@ mod tests {
         let p = request_path(tmp.path());
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, serde_json::to_vec(&req).unwrap()).unwrap();
-        assert_eq!(take_request(tmp.path()), Some(req));
-        assert_eq!(take_request(tmp.path()), None);
+        assert_eq!(take_request(tmp.path()), TakenRequest::Request(req));
+        assert_eq!(take_request(tmp.path()), TakenRequest::None);
+    }
+
+    #[test]
+    fn a_malformed_request_is_taken_and_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = request_path(tmp.path());
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{not json").unwrap();
+        assert!(matches!(take_request(tmp.path()), TakenRequest::Malformed(_)));
+        assert!(!p.exists());
+    }
+
+    #[test]
+    fn an_unreadable_request_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = request_path(tmp.path());
+        std::fs::create_dir_all(&p).unwrap(); // a folder where the file should be
+        assert!(matches!(take_request(tmp.path()), TakenRequest::Stuck(_)));
+        assert!(p.exists());
     }
 
     #[test]

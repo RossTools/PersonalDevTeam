@@ -442,3 +442,54 @@ async fn the_loop_waits_for_a_busy_host_under_auto_when_idle() {
     task.abort();
     assert!(!request_path(&data(tmp.path())).exists());
 }
+
+fn failed_result(outcome: pdt_core::handoff::UpdateOutcome) -> pdt_core::handoff::UpdateResult {
+    pdt_core::handoff::UpdateResult {
+        outcome,
+        from_version: "0.1.0".into(),
+        to_version: "0.1.7".into(),
+        message: "Update to v0.1.7 failed (it failed its health check) and was rolled back".into(),
+        log: None,
+        at: 1,
+    }
+}
+
+/// Ruling B: a version whose last install was rolled back (or failed) is never installed automatically again; a
+/// manual update may retry it, and the status shows the previous failure.
+#[tokio::test]
+async fn the_loop_never_auto_installs_a_version_that_was_rolled_back() {
+    use pdt_core::handoff::UpdateOutcome;
+    for outcome in [UpdateOutcome::RolledBack, UpdateOutcome::Failed] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, state, fake) = setup(tmp.path(), true).await;
+        store_token(&state);
+        set_policy(&app, "auto_when_idle").await;
+        state.update.set_last_result(Some(failed_result(outcome)));
+        let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+        let s = wait_status(&app, state_is("available")).await;
+        assert_eq!(s["lastResult"]["toVersion"], "0.1.7", "{s}");
+        while fake.hits.load(Ordering::SeqCst) < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        task.abort();
+        assert!(!request_path(&data(tmp.path())).exists(), "{outcome:?}: not installed automatically");
+        let (code, v) = call(&app, "POST", "/api/host/update/install", Some(json!({}))).await;
+        assert_eq!(code, StatusCode::OK, "{v}");
+        assert!(request_path(&data(tmp.path())).exists(), "a manual update retries it");
+    }
+}
+
+#[tokio::test]
+async fn the_loop_auto_installs_a_newer_version_than_the_one_that_failed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    store_token(&state);
+    set_policy(&app, "auto_when_idle").await;
+    let mut r = failed_result(pdt_core::handoff::UpdateOutcome::RolledBack);
+    r.to_version = "0.1.6".into();
+    state.update.set_last_result(Some(r));
+    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    tokio::time::timeout(Duration::from_secs(5), state.shutdown.notified()).await.expect("pdtd asked to stop");
+    task.abort();
+    assert!(request_path(&data(tmp.path())).exists());
+}

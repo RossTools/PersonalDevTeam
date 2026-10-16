@@ -1,21 +1,61 @@
-//! A stand-in pdtd for pdt-host's tests. Reads `fake.json` next to its own exe: {"version": "...", "mode": "healthy" |
-//! "crash" | "crash_once" | "unhealthy"}. Serves /api/health on $PDT_PORT, exits on POST /api/shutdown, and records
-//! $PDT_SUPERVISED in `env.txt` beside itself.
+//! A stand-in pdtd (and installer) for pdt-host's tests. Reads `fake.json` next to its own exe:
+//! {"version": "...", "mode": "healthy" | "crash" | "crash_once" | "unhealthy" | "stubborn" | "die_soon",
+//!  "installer": "hang" | "fail_partial"}.
+//! As pdtd: serves /api/health on $PDT_PORT and exits on POST /api/shutdown ("stubborn" answers but keeps running;
+//! "die_soon" exits a second after starting). Beside itself it records $PDT_SUPERVISED in `env.txt`, every `PDT_*`
+//! variable in `env.json`, and the outcome in `<PDT_DATA_DIR>/update/result.json` at startup in `seen-result.txt`.
+//! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "fail_partial" breaks `<dir>/fake.json` and
+//! fails.
 use std::io::{Read, Write};
+
+fn installer(cfg: &serde_json::Value, args: &[String]) -> ! {
+    let dest = args.iter().find_map(|a| a.strip_prefix("/D=")).expect("/D=<dir>");
+    match cfg["installer"].as_str().unwrap_or("") {
+        "hang" => {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+            std::process::exit(0)
+        }
+        "fail_partial" => {
+            let _ = std::fs::write(std::path::Path::new(dest).join("fake.json"), "{half-written");
+            std::process::exit(3)
+        }
+        _ => std::process::exit(0),
+    }
+}
 
 fn main() {
     let exe = std::env::current_exe().expect("exe");
     let dir = exe.parent().expect("dir").to_path_buf();
     let cfg: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.join("fake.json")).expect("fake.json")).expect("json");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "/S") {
+        installer(&cfg, &args);
+    }
     let version = cfg["version"].as_str().unwrap_or("0.0.0").to_string();
     let mode = cfg["mode"].as_str().unwrap_or("healthy").to_string();
     let _ = std::fs::write(dir.join("env.txt"), std::env::var("PDT_SUPERVISED").unwrap_or_default());
+    let env: serde_json::Map<String, serde_json::Value> =
+        std::env::vars().filter(|(k, _)| k.starts_with("PDT_")).map(|(k, v)| (k, v.into())).collect();
+    let _ = std::fs::write(dir.join("env.json"), serde_json::Value::Object(env).to_string());
+    let seen = std::env::var("PDT_DATA_DIR")
+        .ok()
+        .and_then(|d| std::fs::read(std::path::Path::new(&d).join("update").join("result.json")).ok())
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v["outcome"].as_str().map(String::from))
+        .unwrap_or_else(|| "none".into());
+    let _ = std::fs::write(dir.join("seen-result.txt"), seen);
     let crash = mode == "crash" || (mode == "crash_once" && !dir.join("crashed-once").exists());
     if crash {
         let _ = std::fs::write(dir.join("crashed-once"), "");
         std::thread::sleep(std::time::Duration::from_millis(200));
         std::process::exit(1);
+    }
+    if mode == "die_soon" {
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            std::process::exit(1);
+        });
     }
     let port: u16 = std::env::var("PDT_PORT").expect("PDT_PORT").parse().expect("port");
     let listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind");
@@ -30,7 +70,10 @@ fn main() {
             // Close gracefully: exiting with the socket open resets it on Windows and the reply is lost.
             let _ = s.shutdown(std::net::Shutdown::Write);
             drop(s);
-            std::process::exit(0);
+            if mode != "stubborn" {
+                std::process::exit(0);
+            }
+            continue;
         }
         let reply = if req.starts_with("GET /api/health") && mode != "unhealthy" {
             let body = serde_json::json!({"status": "ok", "name": pdt_core::brand::PRODUCT_NAME, "version": version})
