@@ -15,6 +15,10 @@
   `env`, e.g. PDT's own run with `PDT_ALLOWED_HOSTS`), on the same port when free, so they pick up the new host.
   Other runs keep running and only their link changes; a program that reads `PDT_RUN_HOST` from its environment
   without the config naming it is not detected (restart it by hand).
+  Known gaps in that restart: a Stop clicked while it is stopping the run is overridden (the run starts again); if
+  the config is now invalid or no port is free, the run stays stopped with the reason only in the log; toggling on
+  then off within milliseconds can leave the old link until a manual restart; test runs that name those variables
+  restart too.
 - **Windows run steps** go through a generated `.cmd`. The command is split on ` && ` (also inside quotes, so avoid it
   in quoted arguments) into one `call <part>` line per part, each followed by a check that ends the script with the
   failing exit code: shims (pnpm.cmd) after a `&&` work and the exit code is kept. Limits: no `if`/`for` at the start
