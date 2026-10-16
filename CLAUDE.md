@@ -9,7 +9,11 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - crates/pdt-store — SQLite (sqlx) + migrations in crates/pdt-store/migrations
 - crates/pdt-agents — PTY terminals (later: structured agent adapters)
 - crates/pdt-api — axum routes; errors are JSON {code, message}
+- crates/pdt-tailscale — tailscale CLI wrapper (serve, status)
+- crates/pdt-update — GitHub release client (token, verified downloads)
+- crates/pdt-host — the supervisor: runs pdtd, installs updates, rolls back
 - crates/pdtd — daemon binary
+- .pdt/project.toml — this repo's run configuration (dev instance + tests)
 - web/ — React + Vite UI; web/ui is the design system (tokens.css is the only place colors live)
 - desktop/src-tauri — Tauri v2 shell
 
@@ -32,6 +36,9 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - Data lives in `<local data dir>/pdt` or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir.
 - `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>` and `localhost:<port>` (DNS-rebinding guard).
 - Remote access (Host settings) maps the daemon over `tailscale serve --bg`: the stable instance on https 443, any other port (dev, explicit `PDT_PORT`) on https `<its own port>`. With it off, pdtd runs no tailscale command; turning it off removes only the mappings that process made. `PDT_TAILSCALE_BIN` sets the tailscale CLI path (tests point it at `fake-tailscale` or a missing file so they never touch the real Tailscale); otherwise it is found on PATH or in the standard install location.
+- Remote requests must carry the owner's Tailscale-User-Login (case-insensitive); tagged/Funnel/proxied requests without it get 403 `forbidden_identity`. `PDT_OWNER_LOGIN` sets the owner for dev instances (PDT passes it to every run).
+- Runs: "Run" on a worktree/branch starts a `.pdt/project.toml` run on a port from the host's range (stable 8400–8499, dev profile 8500–8599) with its own data folder; this repo's "pdt" run is a dev instance of PDT. Steps run in the checkout: `/bin/sh -c` on macOS, a generated `<data>/runs/scripts/<run id>/<step>.cmd` on Windows with a `call` prefix, so a command cannot start with `if`/`for`, cannot use a `/`-path as its first word, `%` is expanded again, and a shim's exit code can be lost in `a && b`. Readiness probes 127.0.0.1 and ::1. Only `$NAME`/`${NAME}` of PDT's variables are expanded; other text is left to the shell.
+- Agent activity: Claude sessions get `--settings <data dir>/sessions/<id>/claude-settings.json` (hooks run `pdtd hook claude <Event>`); Codex gets `-c notify=[pdtd, hook, codex-notify]`. The user's own settings are never edited.
 - Terminals: sessions are PTYs owned by pdtd; they survive closed windows. WebSocket at /api/sessions/{id}/pty.
 - Agent restart: Claude runs with `--session-id <session id>` and restarts with `--resume <session id>`. Codex cannot be given an id, so each Codex session resumes its own conversation by id: pdtd finds it in `$CODEX_HOME/sessions/**/rollout-*.jsonl` (default `~/.codex`), matches it by working folder and start time against the session's `fresh_started_at` (when it was last launched without a conversation), stores it as `external_session_id` (at process exit or restart) and restarts with `codex resume <id>`. Fresh Codex launches in one folder are spaced 5 s apart so start times stay unambiguous (a create or restart can wait up to 5 s). A session that never took a turn restarts fresh.
 - Auto-resume: at startup pdtd decides how to resume every session left `interrupted` (binding Codex conversations) before serving, then restarts them in the background once it is serving (resume mode, 120x30; clients resize on attach; a manual Restart that gets there first wins and auto-resume skips that session; several fresh Codex sessions in one folder start 5 s apart); a session that fails to start stays `interrupted`. Stopped (`finished`) sessions are never auto-resumed.
@@ -45,8 +52,9 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 
 ## Rules
 - TDD for core logic. Tests must pass on Windows and macOS.
-- Never run or restart the *stable* pdtd (port 7420) from a dev build — it hosts the agents building this repo. Use PDT_PROFILE=dev.
-- Never run scripts/release-stable.* without -BuildOnly/--build-only, never run the built installer, and never POST /api/shutdown on port 7420. Only the user updates the stable app.
+- Agents never stop, restart or update the stable instance (port 7420; it hosts the agents building this repo), and never call its /api/shutdown. Only pdt-host and the user's Update do. Never run scripts/release-stable.* without -BuildOnly/--build-only, never run a built installer, and never run `pdt-host install` or `pdt-host uninstall`.
+- A dev instance always gets an explicit PDT_PORT and PDT_DATA_DIR: use this repo's "pdt" run (Run → pdt), or PDT_PROFILE=dev for a manual one. pdtd refuses a data folder another pdtd holds.
+- Tests never touch port 7420 or the real data folders, and never the real keychain (PDT_SECRET_STORE=memory).
 - Names (product, slug, daemon, ports, release repo) live only in crates/pdt-core/src/brand.rs (+ desktop/src-tauri/tauri.conf.json, desktop/src-tauri/tauri.bundle.conf.json, desktop/src-tauri/windows/hooks.nsh and scripts/release-stable.*).
 - Never edit an applied migration (sqlx checksums them); add a new one.
 - On Windows, run cargo from PowerShell, not Git Bash: Git Bash's `link` shadows MSVC `link.exe`.

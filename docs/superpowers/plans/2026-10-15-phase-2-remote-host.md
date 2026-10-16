@@ -241,7 +241,7 @@ The spec leaves these open, or the facts above force them. Each is recorded so i
 
    Pinned in Task 9 (`hook_is_silent_and_exits_0_when_pdtd_is_down`).
 4. **The update token never leaves api.github.com,** and a bad or missing checksum leaves nothing for `pdt-host`. The asset redirect is followed without `Authorization`, and no `request.json` is written. Pinned in Task 11 (`asset_redirect_drops_the_token`, `bad_checksum_hands_nothing_off`).
-5. **A `pdtd` restart with active runs** restarts them on their old port, and a run whose port was taken meanwhile gets a new one. Its old Tailscale mapping is removed: `resume_runs` unserves the old port, which is a review point because no test exercises it with remote access on. Pinned in Task 7 (`active_runs_resume_on_restart`, `resume_moves_to_a_free_port_when_the_old_one_is_taken`).
+5. **A `pdtd` restart with active runs** restarts them on their old port, and a run whose port was taken meanwhile gets a new one. A resumed run that moves maps only its new port; the old port is never unserved (it may be a mapping this process did not make, such as stable's live run). Pinned in Task 7 (`active_runs_resume_on_restart`, `resume_moves_to_a_free_port_when_the_old_one_is_taken`).
 
 ## File structure
 

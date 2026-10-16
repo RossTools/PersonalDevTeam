@@ -406,4 +406,23 @@ command = "cargo run"
         let env = run_env(&c.runs[0], &vars());
         assert_eq!(env.iter().rev().find(|(k, _)| k == "PDT_RUN_HOST").unwrap().1, "custom");
     }
+
+    #[test]
+    fn pdts_own_configuration_is_valid() {
+        let c = merge(Some(parse(include_str!("../../../.pdt/project.toml"), Source::File).unwrap()), None).unwrap();
+        let pdt = &c.runs[0];
+        assert!(pdt.web && pdt.data);
+        assert_eq!(pdt.env["PDT_PORT"], "$PORT");
+        assert_eq!(pdt.env["PDT_DATA_DIR"], "$PDT_RUN_DATA");
+        assert_eq!(pdt.env["PDT_PROFILE"], "dev");
+        // PDT supplies the owner itself; repeating it would pass the literal "$PDT_OWNER_LOGIN" when there is none.
+        assert!(!pdt.env.contains_key("PDT_OWNER_LOGIN"));
+        // The first word must be a command under cmd.exe too, so not a path with forward slashes.
+        assert!(!pdt.command.split_whitespace().next().unwrap().contains('/'));
+        let env = run_env(pdt, &vars());
+        let get = |k: &str| env.iter().rev().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).unwrap();
+        assert_eq!(get("PDT_PORT"), "8401");
+        assert_eq!(get("PDT_ALLOWED_HOSTS"), "box.t.ts.net:8401");
+        assert_eq!(c.tests.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["rust", "web"]);
+    }
 }
