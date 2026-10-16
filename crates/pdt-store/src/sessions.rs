@@ -1,15 +1,19 @@
 use crate::{Store, StoreError};
+use pdt_core::activity::Activity;
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
-                       external_session_id, fresh_started_at";
+                       external_session_id, fresh_started_at, activity, attention_at, last_viewed_at";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
     let agent: Option<String> = r.try_get("agent")?;
     let status: String = r.try_get("status")?;
+    let activity: Option<String> = r.try_get("activity")?;
+    let attention_at: Option<i64> = r.try_get("attention_at")?;
+    let last_viewed_at: Option<i64> = r.try_get("last_viewed_at")?;
     let corrupt = |what: &str, v: &str| StoreError::Corrupt(format!("unknown session {what} {v:?}"));
     Ok(Session {
         id: r.try_get("id")?,
@@ -28,6 +32,13 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         ended_at: r.try_get("ended_at")?,
         external_session_id: r.try_get("external_session_id")?,
         fresh_started_at: r.try_get("fresh_started_at")?,
+        activity: match activity {
+            Some(a) => Some(Activity::parse(&a).ok_or_else(|| corrupt("activity", &a))?),
+            None => None,
+        },
+        attention_at,
+        last_viewed_at,
+        unseen: pdt_core::activity::is_unseen(attention_at, last_viewed_at),
     })
 }
 
@@ -35,7 +46,8 @@ impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
-             external_session_id, fresh_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -50,6 +62,9 @@ impl Store {
         .bind(s.ended_at)
         .bind(&s.external_session_id)
         .bind(s.fresh_started_at)
+        .bind(s.activity.map(Activity::as_str))
+        .bind(s.attention_at)
+        .bind(s.last_viewed_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -83,7 +98,8 @@ impl Store {
         ended_at: i64,
     ) -> Result<bool, StoreError> {
         let r = sqlx::query(
-            "UPDATE sessions SET status = ?, exit_code = ?, ended_at = ? WHERE id = ? AND status = 'running'",
+            "UPDATE sessions SET status = ?, exit_code = ?, ended_at = ?, activity = NULL \
+             WHERE id = ? AND status = 'running'",
         )
         .bind(status.as_str())
         .bind(exit_code)
@@ -150,6 +166,32 @@ impl Store {
         }
     }
 
+    /// Sets the activity; `attention_at` (when Some) records that it now needs the user's attention.
+    pub async fn update_activity(
+        &self,
+        id: &str,
+        activity: Option<Activity>,
+        attention_at: Option<i64>,
+    ) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET activity = ?, attention_at = COALESCE(?, attention_at) WHERE id = ?")
+            .bind(activity.map(Activity::as_str))
+            .bind(attention_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Records that the user viewed the session at `at` (ms), on any device.
+    pub async fn mark_viewed(&self, id: &str, at: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET last_viewed_at = ? WHERE id = ?")
+            .bind(at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<bool, StoreError> {
         let r =
             sqlx::query("UPDATE sessions SET title = ? WHERE id = ?").bind(title).bind(id).execute(&self.pool).await?;
@@ -163,10 +205,12 @@ impl Store {
 
     /// Marks every `running` session as `interrupted` (pdtd stopped or restarted). Returns how many changed.
     pub async fn mark_running_interrupted(&self, ended_at: i64) -> Result<u64, StoreError> {
-        let r = sqlx::query("UPDATE sessions SET status = 'interrupted', ended_at = ? WHERE status = 'running'")
-            .bind(ended_at)
-            .execute(&self.pool)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE sessions SET status = 'interrupted', ended_at = ?, activity = NULL WHERE status = 'running'",
+        )
+        .bind(ended_at)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected())
     }
 }
@@ -192,7 +236,46 @@ mod tests {
             ended_at: None,
             external_session_id: None,
             fresh_started_at: Some(created_at),
+            activity: None,
+            attention_at: None,
+            last_viewed_at: None,
+            unseen: false,
         }
+    }
+
+    #[tokio::test]
+    async fn activity_attention_and_viewing() {
+        use pdt_core::activity::Activity;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        store.update_activity("a", Some(Activity::Working), None).await.unwrap();
+        let s = store.get_session("a").await.unwrap().unwrap();
+        assert_eq!((s.activity, s.unseen), (Some(Activity::Working), false));
+        store.update_activity("a", Some(Activity::Idle), Some(50)).await.unwrap();
+        let s = store.get_session("a").await.unwrap().unwrap();
+        assert_eq!((s.activity, s.attention_at, s.unseen), (Some(Activity::Idle), Some(50), true));
+        store.update_activity("a", Some(Activity::Working), None).await.unwrap();
+        assert_eq!(
+            store.get_session("a").await.unwrap().unwrap().attention_at,
+            Some(50),
+            "kept until the next attention"
+        );
+        assert!(store.mark_viewed("a", 60).await.unwrap());
+        let s = store.get_session("a").await.unwrap().unwrap();
+        assert_eq!((s.last_viewed_at, s.unseen), (Some(60), false));
+        store.update_activity("a", None, None).await.unwrap();
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().activity, None);
+        assert!(!store.mark_viewed("zz", 1).await.unwrap());
+        store.update_activity("a", Some(Activity::Working), None).await.unwrap();
+        store.end_session("a", SessionStatus::Finished, Some(0), 70).await.unwrap();
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().activity, None, "ended sessions have none");
+        store.set_session_running("a").await.unwrap();
+        store.update_activity("a", Some(Activity::Working), None).await.unwrap();
+        store.mark_running_interrupted(80).await.unwrap();
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().activity, None, "interrupted ones neither");
+        sqlx::query("UPDATE sessions SET activity = 'dancing' WHERE id = 'a'").execute(&store.pool).await.unwrap();
+        assert!(matches!(store.get_session("a").await, Err(StoreError::Corrupt(_))));
     }
 
     #[tokio::test]

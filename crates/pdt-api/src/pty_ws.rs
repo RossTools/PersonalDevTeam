@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
-use pdt_agents::{Attachment, PtyEvent, PtyManager};
+use pdt_agents::{Attachment, PtyEvent};
 use pdt_core::session::{PtyClientMessage, PtyServerMessage};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -33,12 +33,11 @@ pub(crate) fn upgrade(
     let ws = ws.map_err(|_| {
         ApiError::new(StatusCode::BAD_REQUEST, "websocket_required", "this endpoint needs a WebSocket upgrade")
     })?;
-    let ptys = st.ptys.clone();
     let id = pty_id;
     // A session with no terminal (stopped, or interrupted by a daemon restart) still gets the upgrade, so the
     // browser can tell "not running" from "daemon unreachable" and stop retrying.
     Ok(match classify(&st, &id) {
-        Outcome::Attach(attachment) => ws.on_upgrade(move |socket| pump(socket, ptys, id, attachment)),
+        Outcome::Attach(attachment) => ws.on_upgrade(move |socket| pump(socket, st, id, attachment)),
         // The startup auto-resume has not got to this session yet: wait for it rather than report "not running".
         Outcome::Wait => ws.on_upgrade(move |socket| wait_for_resume(socket, st, id)),
         Outcome::NotRunning => ws.on_upgrade(not_running),
@@ -81,7 +80,7 @@ async fn wait_for_resume(mut socket: WebSocket, st: AppState, id: String) {
                 if let Some((cols, rows)) = size {
                     let _ = st.ptys.resize(&id, cols, rows);
                 }
-                return pump(socket, st.ptys.clone(), id, att).await;
+                return pump(socket, st, id, att).await;
             }
             Outcome::NotRunning => return not_running(socket).await,
             Outcome::Wait if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) => {
@@ -119,7 +118,7 @@ async fn not_running(mut socket: WebSocket) {
     let _ = socket.close().await;
 }
 
-async fn pump(socket: WebSocket, ptys: PtyManager, id: String, att: Attachment) {
+async fn pump(socket: WebSocket, st: AppState, id: String, att: Attachment) {
     let (mut tx, mut rx) = socket.split();
     let Attachment { scrollback, exited, mut events } = att;
     if !scrollback.is_empty() && tx.send(Message::Binary(scrollback.into())).await.is_err() {
@@ -159,11 +158,12 @@ async fn pump(socket: WebSocket, ptys: PtyManager, id: String, att: Attachment) 
         while let Some(Ok(msg)) = rx.next().await {
             match msg {
                 Message::Binary(bytes) => {
-                    let _ = ptys.write(&id, &bytes);
+                    crate::activity::on_input(&st, &id, &bytes);
+                    let _ = st.ptys.write(&id, &bytes);
                 }
                 Message::Text(text) => {
                     if let Ok(PtyClientMessage::Resize { cols, rows }) = serde_json::from_str(text.as_str()) {
-                        let _ = ptys.resize(&id, cols, rows);
+                        let _ = st.ptys.resize(&id, cols, rows);
                     }
                 }
                 Message::Close(_) => break,

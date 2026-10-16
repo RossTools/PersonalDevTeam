@@ -96,6 +96,16 @@ pub struct Session {
     /// alone. None for rows from before it was recorded.
     #[ts(type = "number | null")]
     pub fresh_started_at: Option<i64>,
+    /// Agents only; None for shells and ended sessions.
+    pub activity: Option<crate::activity::Activity>,
+    /// When the session last became idle or needs_you (ms).
+    #[ts(type = "number | null")]
+    pub attention_at: Option<i64>,
+    /// When the user last viewed the session, on any device (ms).
+    #[ts(type = "number | null")]
+    pub last_viewed_at: Option<i64>,
+    /// Computed: became idle or needs_you after the user last viewed it (on any device).
+    pub unseen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

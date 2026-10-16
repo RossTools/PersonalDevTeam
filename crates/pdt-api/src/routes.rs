@@ -74,6 +74,10 @@ pub struct AppState {
     pub(crate) run_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
     pub run_stop_wait: std::time::Duration,
+    /// The program agent hooks run (`<this pdtd> hook …`).
+    pub hook_program: std::path::PathBuf,
+    /// The activity tracker of each agent session running in this daemon run.
+    pub(crate) activity: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, crate::activity::Tracker>>>,
 }
 
 impl AppState {
@@ -105,6 +109,8 @@ impl AppState {
             run_controls: Default::default(),
             run_start_lock: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),
+            hook_program: std::env::current_exe().unwrap_or_default(),
+            activity: Default::default(),
         }
     }
 }
@@ -211,6 +217,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
         .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
         .route("/sessions/{id}/pty", get(pty_ws::connect))
+        .route("/sessions/{id}/activity", axum::routing::post(crate::activity::post_report))
+        .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")

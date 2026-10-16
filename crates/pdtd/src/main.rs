@@ -1,18 +1,25 @@
 mod config;
+mod hook;
 mod lock;
 mod logging;
 mod shutdown;
 
 use anyhow::Context;
 use pdt_api::{
-    AppState, apply_remote_access, plan_resume_interrupted, resume_runs, router, sweep_gone_runs, with_host_guard,
+    AppState, apply_remote_access, plan_resume_interrupted, resume_runs, router, run_activity_ticker, sweep_gone_runs,
+    with_host_guard,
 };
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
 
-#[tokio::main]
-async fn main() {
-    if let Err(e) = run().await {
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    // `pdtd hook …` runs inside agent sessions: no runtime, no logging, never stdout, always exit 0.
+    if args.get(1).map(String::as_str) == Some("hook") {
+        std::process::exit(hook::run(&args[2..], &mut std::io::stdin(), &|k| std::env::var(k).ok()));
+    }
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    if let Err(e) = rt.block_on(run()) {
         tracing::error!("{e:#}");
         eprintln!("{DAEMON_BIN}: {e:#}");
         std::process::exit(2);
@@ -45,6 +52,12 @@ async fn run() -> anyhow::Result<()> {
         tracing::info!(sessions = interrupted, "sessions from the previous run are now interrupted");
     }
     let mut state = AppState::new(store.clone(), cfg.data_dir.clone());
+    if let Some(p) = &cfg.claude_program {
+        state.platform.claude_program = p.clone();
+    }
+    if let Some(p) = &cfg.codex_program {
+        state.platform.codex_program = p.clone();
+    }
     state.owner_from_env = cfg.owner_login.clone();
     state.refresh_owner().await;
     state.secrets = if cfg.memory_secrets {
@@ -96,6 +109,8 @@ async fn run() -> anyhow::Result<()> {
             }
         });
     }
+    // Time-based activity signals (no output while working, a Claude hook that never came).
+    tokio::spawn(run_activity_ticker(state.clone()));
     shutdown::serve(listener, app, state).await?;
     store.close().await;
     tracing::info!("stopped");

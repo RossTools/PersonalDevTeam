@@ -24,6 +24,10 @@ pub struct Config {
     /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
     /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
     pub remote_https_port: u16,
+    /// `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM`: the agent programs to launch instead of the detected ones (tests,
+    /// unusual installs).
+    pub claude_program: Option<String>,
+    pub codex_program: Option<String>,
 }
 
 impl Config {
@@ -62,6 +66,8 @@ impl Config {
         let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
         let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
+        let claude_program = lookup("PDT_CLAUDE_PROGRAM");
+        let codex_program = lookup("PDT_CODEX_PROGRAM");
         Ok(Config {
             profile,
             port,
@@ -72,6 +78,8 @@ impl Config {
             memory_secrets,
             tailscale_bin,
             remote_https_port,
+            claude_program,
+            codex_program,
         })
     }
 
@@ -187,6 +195,19 @@ mod tests {
         let c = Config::from_lookup(lookup(&[("PDT_TAILSCALE_BIN", "/x/fake-tailscale")]), Some("/d".into()), None)
             .unwrap();
         assert_eq!(c.tailscale_bin, Some(PathBuf::from("/x/fake-tailscale")));
+    }
+
+    #[test]
+    fn agent_programs_from_env() {
+        let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
+        assert_eq!((c.claude_program, c.codex_program), (None, None));
+        let c = Config::from_lookup(
+            lookup(&[("PDT_CLAUDE_PROGRAM", "/x/claude"), ("PDT_CODEX_PROGRAM", "/x/codex")]),
+            Some("/d".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!((c.claude_program.as_deref(), c.codex_program.as_deref()), (Some("/x/claude"), Some("/x/codex")));
     }
 
     #[test]

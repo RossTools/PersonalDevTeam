@@ -59,15 +59,21 @@ pub(crate) async fn create(
         ended_at: None,
         external_session_id: None,
         fresh_started_at,
+        activity: None,
+        attention_at: None,
+        last_viewed_at: None,
+        unseen: false,
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(&st, &session.project_id).await?;
     st.store.insert_session(&session).await?;
     if let Err(e) = start_pty(&st, &session, valid.size, &Resume::Fresh, creds) {
         st.store.delete_session(&session.id).await?;
+        let _ = std::fs::remove_dir_all(session_data_dir(&st, &session.id));
         return Err(e.into());
     }
-    Ok((StatusCode::CREATED, Json(session)))
+    crate::activity::track(&st, &session).await;
+    Ok((StatusCode::CREATED, Json(load(&st, &session.id).await?)))
 }
 
 /// The credential policy for agents in this project (project override, else host setting).
@@ -202,11 +208,17 @@ fn start_pty(
 ) -> Result<(), PtyError> {
     let l = launch(s.kind, s.agent, &st.platform, resume, &s.id);
     let login_path = st.platform.login_path.as_deref();
-    let (program, args) = pdt_agents::launch::resolve(&l.program, &l.args, login_path)?;
+    let launch_args = with_hook_args(st, s, l.args)?;
+    let (program, args) = pdt_agents::launch::resolve(&l.program, &launch_args, login_path)?;
     let mut env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
     if let Some(path) = login_path {
         // So `#!/usr/bin/env node` shebangs and the agents' own child processes find the user's tools.
         env.push(("PATH".into(), path.into()));
+    }
+    if s.kind == SessionKind::AgentTui {
+        // For `pdtd hook`. Set after the inherited PDT_* variables are scrubbed, so only these values reach it.
+        env.push(("PDT_SESSION_ID".into(), s.id.clone()));
+        env.push(("PDT_HOOK_PORT".into(), st.listen_port.to_string()));
     }
     let spec = SpawnSpec {
         id: s.id.clone(),
@@ -238,6 +250,41 @@ fn start_pty(
     });
     st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).insert(s.id.clone(), handle);
     Ok(())
+}
+
+/// The agent's launch arguments plus its activity hooks (remote-host spec §5.1): Claude gets a per-session
+/// `--settings` file in PDT's data folder, Codex a `-c notify=[…]` that chains to the user's own notify. The user's
+/// own agent settings are never written.
+fn with_hook_args(st: &AppState, s: &Session, args: Vec<String>) -> Result<Vec<String>, PtyError> {
+    if s.kind != SessionKind::AgentTui {
+        return Ok(args);
+    }
+    match s.agent {
+        Some(AgentKind::Claude) => {
+            let file = pdt_agents::hooks::write_claude_settings(&session_data_dir(st, &s.id), &st.hook_program)
+                .map_err(|e| PtyError::Spawn(format!("writing the session's hook settings: {e}")))?;
+            let mut args = args;
+            args.extend(["--settings".to_string(), file.to_string_lossy().into_owned()]);
+            Ok(args)
+        }
+        Some(AgentKind::Codex) => {
+            let chain = st
+                .platform
+                .codex_home
+                .as_deref()
+                .and_then(|h| pdt_agents::hooks::user_codex_notify(h, &st.hook_program))
+                .unwrap_or_default();
+            let mut all = pdt_agents::hooks::codex_notify_args(&st.hook_program, &chain);
+            all.extend(args);
+            Ok(all)
+        }
+        None => Ok(args),
+    }
+}
+
+/// PDT's own files for one session (the Claude hook settings).
+fn session_data_dir(st: &AppState, id: &str) -> PathBuf {
+    st.data_dir.join("sessions").join(id)
 }
 
 /// Waits for the previous run's exit write (the process has already exited, so this is prompt).
@@ -317,6 +364,7 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
         }
         return Err(e.into());
     }
+    crate::activity::track(st, &session).await;
     Ok(())
 }
 
@@ -416,6 +464,8 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     settle_exit(&st, &id).await;
     st.remove_pty(&id).await;
     st.store.delete_session(&id).await?;
+    // Best-effort: the session's hook settings.
+    let _ = std::fs::remove_dir_all(session_data_dir(&st, &id));
     st.forget_session_lock(&id);
     Ok(StatusCode::NO_CONTENT)
 }

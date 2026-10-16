@@ -1,3 +1,4 @@
+mod activity;
 mod error;
 mod host;
 mod host_guard;
@@ -13,6 +14,7 @@ pub mod secrets;
 mod sessions;
 mod worktrees;
 
+pub use activity::run_activity_ticker;
 pub use error::ApiErrorBody;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use remote::{RemoteStatus, apply_remote_access};
