@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { PanelBottom } from 'lucide-react';
+import { api } from '../api/client';
+import { branchUrl } from '../projects/github';
 import { Button } from '@ui';
 import { AddProjectForm } from '../projects/AddProjectForm';
-import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
+import { ProjectPage } from '../projects/ProjectPage';
+import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
@@ -18,11 +22,10 @@ import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
 import { VIEWS, type ViewId } from './views';
 
-const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings'>, string> = {
+const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings' | 'files'>, string> = {
   inbox: 'The inbox arrives with the pipeline (Phase 7).',
   board: 'The board arrives with tickets (Phase 4).',
   personas: 'Personas arrive with the pipeline (Phase 7).',
-  files: 'The folder view arrives with git integration (Phase 3b).',
 };
 
 /** Keeps the browser tab's title as `(<n>) <page title>` while n sessions need the user. */
@@ -91,6 +94,15 @@ export function AppShell() {
   const label = VIEWS.find((v) => v.id === view)!.label;
   const current = ws.currentInfo;
   const settingsProject = ws.projects.find((p) => p.id === settingsProjectId) ?? null;
+  const currentProject = ws.projects.find((p) => p.id === current?.projectId) ?? null;
+  const worktrees = useQuery({
+    queryKey: ['worktrees', currentProject?.id ?? ''],
+    queryFn: () => api.listWorktrees(currentProject!.id),
+    enabled: !!currentProject?.githubRepo && !!current?.worktreeId,
+  });
+  const branch = current?.run?.branch ?? worktrees.data?.find((w) => w.id === current?.worktreeId)?.branch ?? null;
+  const branchLink = currentProject?.githubRepo && branch ? branchUrl(currentProject.githubRepo, branch) : null;
+  const folder = useFolderView(ws.projects, current ? { projectId: current.projectId, worktreeId: current.worktreeId } : null);
   const bottomProject = ws.projects.find((p) => p.id === (current?.projectId ?? ws.workspace?.projectId)) ?? ws.projects[0] ?? null;
 
   return (
@@ -108,6 +120,8 @@ export function AppShell() {
               )}
               <Sidebar ws={ws} onRenameTab={setRenamingTabId} />
             </>
+          ) : view === 'files' ? (
+            <FolderTree state={folder} />
           ) : view === 'settings' ? (
             <>
               <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
@@ -116,10 +130,12 @@ export function AppShell() {
                 <h3 className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">Projects</h3>
                 {ws.projects.map((p) => (
                   <button key={p.id} type="button" title={p.repoPath} aria-current={settingsProjectId === p.id ? 'true' : undefined} onClick={() => setSettingsProjectId(p.id)}
-                    className={`text-left px-2 py-1 rounded-pdt text-sm truncate ${settingsProjectId === p.id ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>{p.name}</button>
+                    className={`text-left px-2 py-1 rounded-pdt text-sm truncate ${settingsProjectId === p.id ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>
+                    <span className="mr-2 font-mono text-[11px] text-muted">{p.key}</span>{p.name}
+                  </button>
                 ))}
               </nav>
-              <AddProjectForm />
+              <AddProjectForm onAdded={(p) => setSettingsProjectId(p.id)} />
             </>
           ) : (
             <p className="px-2 text-xs text-muted">{PHASE_NOTE[view]}</p>
@@ -128,7 +144,7 @@ export function AppShell() {
       </aside>
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
         <UpdateBanner />
-        {view !== 'settings' && (
+        {view !== 'settings' && view !== 'files' && (
           <WorkspaceBar
             ws={ws}
             renamingTabId={renamingTabId}
@@ -145,12 +161,14 @@ export function AppShell() {
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {view === 'settings' ? (
-              settingsProject ? <ProjectSettingsPanel key={settingsProject.id} project={settingsProject} /> : <HostSettingsPage />
+            {view === 'files' ? (
+              <FileViewer state={folder} />
+            ) : view === 'settings' ? (
+              settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
             ) : current?.run ? (
-              <RunView key={current.run.id} run={current.run} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} />
+              <RunView key={current.run.id} run={current.run} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} branchLink={branchLink} />
             ) : current?.session ? (
-              <SessionView key={current.session.id} session={current.session} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} />
+              <SessionView key={current.session.id} session={current.session} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} branchLink={branchLink} />
             ) : ws.projects.length === 0 ? (
               <p className="p-4 text-sm text-muted">Add a project to get started.</p>
             ) : (

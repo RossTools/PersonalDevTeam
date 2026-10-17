@@ -37,6 +37,7 @@ function WorkspaceRow({ ws, w, onMenu }: { ws: WorkspacesApi; w: Workspace; onMe
   const [renaming, setRenaming] = useState(false);
   const { activity, state } = rollup(ws, w);
   const current = ws.workspace?.id === w.id;
+  const projectKey = w.projectId ? ws.projects.find((p) => p.id === w.projectId)?.key : undefined;
   if (renaming) {
     return (
       <form className="px-1" onSubmit={(e) => {
@@ -72,6 +73,7 @@ function WorkspaceRow({ ws, w, onMenu }: { ws: WorkspacesApi; w: Workspace; onMe
     >
       {activity ? <StateDot activity={activity} fallback="idle" /> : <span className="inline-block size-2" />}
       <span className="flex-1 truncate">{w.name}</span>
+      {projectKey && <span className="font-mono text-[10px] text-muted">{projectKey}</span>}
       {state && state !== 'Idle' && <span className={`text-[11px] ${state === 'Needs you' ? 'text-waiting font-semibold' : 'text-muted'}`}>{state}</span>}
       <span className="text-[11px] text-muted tabular-nums">{w.tabs.length}</span>
     </button>

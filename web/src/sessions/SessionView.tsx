@@ -8,7 +8,13 @@ import { ActivityBadge } from './ActivityBadge';
 import { INITIAL_SIZE, toDot } from './status';
 import { useViewTracking } from './useViewTracking';
 
-export function SessionView({ session, polledAt, onRemoved }: { session: Session; polledAt?: number; onRemoved: () => void }) {
+export function SessionView({ session, polledAt, onRemoved, branchLink }: {
+  session: Session;
+  polledAt?: number;
+  onRemoved: () => void;
+  /** The session's branch on GitHub, when known. */
+  branchLink?: string | null;
+}) {
   useViewTracking(session.id, polledAt);
   const qc = useQueryClient();
   const [composing, setComposing] = useState(false);
@@ -34,6 +40,7 @@ export function SessionView({ session, polledAt, onRemoved }: { session: Session
         <span className="font-medium">{session.title}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-muted" title={session.cwd}>{session.cwd}</span>
         <ActivityBadge activity={session.activity} unseen={session.unseen} />
+        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-accent underline">GitHub</a>}
         {running && (
           <Button variant="ghost" aria-pressed={composing} onClick={() => setComposing((c) => !c)}>Compose</Button>
         )}

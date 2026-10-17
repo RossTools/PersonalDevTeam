@@ -161,6 +161,19 @@ export function HostSettingsPage() {
         </select>
       </section>
 
+      <section aria-label="Projects folder" className="flex flex-col gap-2">
+        <h3 className={h}>Projects folder</h3>
+        <p className="text-xs text-muted">Where “clone by URL” puts new repositories.</p>
+        <input
+          key={s.projectsDir ?? ''}
+          aria-label="Projects folder"
+          className={field}
+          placeholder={v.projectsDir ?? '~/work'}
+          defaultValue={s.projectsDir ?? ''}
+          onBlur={(e) => { if (e.target.value.trim() !== (s.projectsDir ?? '')) save.mutate({ projectsDir: e.target.value }); }}
+        />
+      </section>
+
       <section aria-label="Checks" className="flex flex-col gap-1">
         <h3 className={h}>Checks</h3>
         {checks.data && (['claude', 'codex', 'git', 'tailscale'] as const).map((k) => (

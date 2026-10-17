@@ -16,7 +16,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 
 ## Now
 - **Phase 3b: Git integration** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md §6): project keys,
-  clone by URL, GitHub links, adopt/remove worktrees, remove projects, folder view.
+  clone by URL, GitHub links, adopt/remove worktrees, remove projects, folder view. In review
+  (plan: docs/superpowers/plans/2026-10-17-phase-3b-git.md).
 
 ## Next (build order)
 1. **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT.

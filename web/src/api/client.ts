@@ -5,6 +5,10 @@ import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { HostSettingsView } from './gen/HostSettingsView';
 import type { Branch } from './gen/Branch';
 import type { NewProject } from './gen/NewProject';
+import type { CloneProject } from './gen/CloneProject';
+import type { FileContent } from './gen/FileContent';
+import type { FileEntry } from './gen/FileEntry';
+import type { ProjectPatch } from './gen/ProjectPatch';
 import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
 import type { NewWorktree } from './gen/NewWorktree';
@@ -50,10 +54,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const enc = encodeURIComponent;
 
+function filesQuery(worktreeId: string | null, path: string): string {
+  return new URLSearchParams({ ...(worktreeId ? { worktreeId } : {}), path }).toString();
+}
+
 export const api = {
   health: () => request<Health>('/api/health'),
   listProjects: () => request<Project[]>('/api/projects'),
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
+  cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
+  updateProject: (id: string, p: ProjectPatch) => request<Project>(`/api/projects/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: 'DELETE' }),
+  removeWorktree: (id: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) =>
+    request<void>(`/api/worktrees/${enc(id)}?force=${opts.force ? 'true' : 'false'}&deleteBranch=${opts.deleteBranch ? 'true' : 'false'}`, { method: 'DELETE' }),
+  listFiles: (projectId: string, worktreeId: string | null, path: string) =>
+    request<FileEntry[]>(`/api/projects/${enc(projectId)}/files?${filesQuery(worktreeId, path)}`),
+  fileContent: (projectId: string, worktreeId: string | null, path: string) =>
+    request<FileContent>(`/api/projects/${enc(projectId)}/files/content?${filesQuery(worktreeId, path)}`),
   listWorktrees: (projectId: string) => request<Worktree[]>(`/api/projects/${enc(projectId)}/worktrees`),
   createWorktree: (projectId: string, w: NewWorktree) =>
     request<Worktree>(`/api/projects/${enc(projectId)}/worktrees`, { method: 'POST', body: JSON.stringify(w) }),

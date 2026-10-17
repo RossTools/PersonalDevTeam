@@ -9,6 +9,7 @@ import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { newSession, type Choice } from '../sessions/newSession';
 import { findTab } from './model';
+import { PlacePicker } from './PlacePicker';
 import type { WorkspacesApi } from './useWorkspaces';
 
 const KEYS: Record<string, Choice> = { c: 'Claude', x: 'Codex', s: 'Shell' };
@@ -24,26 +25,6 @@ function usePlace(ws: WorkspacesApi) {
   const [picked, setPicked] = useState<{ projectId: string; worktreeId: string | null } | null>(null);
   const place = picked ?? initial ?? (ws.projects[0] ? { projectId: ws.projects[0].id, worktreeId: null } : null);
   return { place, setPicked };
-}
-
-function PlacePicker({ ws, place, onPick }: {
-  ws: WorkspacesApi;
-  place: { projectId: string; worktreeId: string | null };
-  onPick: (p: { projectId: string; worktreeId: string | null }) => void;
-}) {
-  const worktrees = useQuery({ queryKey: ['worktrees', place.projectId], queryFn: () => api.listWorktrees(place.projectId) });
-  const select = 'rounded-pdt bg-bg border border-border text-xs px-1 py-0.5';
-  return (
-    <div className="flex gap-2">
-      <select aria-label="Project" className={select} value={place.projectId} onChange={(e) => onPick({ projectId: e.target.value, worktreeId: null })}>
-        {ws.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
-      <select aria-label="Place" className={select} value={place.worktreeId ?? ''} onChange={(e) => onPick({ ...place, worktreeId: e.target.value || null })}>
-        <option value="">Repository</option>
-        {(worktrees.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.branch}</option>)}
-      </select>
-    </div>
-  );
 }
 
 /** The new-tab chooser: launch Claude, Codex or a shell, start a run, or bring an existing session or run here. */
@@ -99,7 +80,7 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
           <p className="text-sm text-muted">Add a project first.</p>
         ) : (
           <>
-            <PlacePicker ws={ws} place={place} onPick={setPicked} />
+            <PlacePicker projects={ws.projects} place={place} onPick={setPicked} />
             <div className="flex flex-wrap items-center gap-2">
               {(['Claude', 'Codex', 'Shell'] as Choice[]).map((c) => (
                 <button key={c} type="button" className={btn} disabled={create.isPending} onClick={() => create.mutate(c)}>
