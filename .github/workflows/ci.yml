@@ -117,6 +117,9 @@ jobs:
           bundles: app
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer: ${{ secrets.MACOS_NOTARY_ISSUER }}
 
   bundle-windows:
     name: bundle (windows-latest, nsis)
