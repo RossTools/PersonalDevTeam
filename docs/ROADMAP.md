@@ -14,8 +14,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
   docs/superpowers/plans/2026-10-16-mac-mini-move.md)
 
 ## Now
-- **Phase 3: Workspaces** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md). Two PRs: 3a workspaces,
-  tabs, split panes, session tree, keyboard, status at a glance, drag to rearrange; 3b project keys, clone by URL,
+- **Phase 3: Workspaces** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md). Two PRs: 3a workspaces
+  and tabs (no split panes), session tree, keyboard, status at a glance, drag to reorder; 3b project keys, clone by URL,
   GitHub links, adopt/remove worktrees, remove projects, folder view.
 
 ## Next (build order)

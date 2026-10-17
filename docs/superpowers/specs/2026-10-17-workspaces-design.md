@@ -1,85 +1,70 @@
 # Personal Dev Team — Workspaces and Git Integration (Phase 3) Design
 
 Status: draft from brainstorming on 2026-10-17, awaiting the user's review. This amends the main spec,
-`2026-10-14-personal-dev-team-design.md`: it is Phase 3, and it replaces the main spec's bottom panel (§7.1) with
-split panes.
+`2026-10-14-personal-dev-team-design.md`: it is Phase 3.
 
 ## 1. Purpose
 
 Day-to-day agent work in PDT without herdr. Today PDT shows one session at a time, picked from a list for one
-project, plus a bottom panel of shells. After this phase the user works the way they do in herdr: several agents and
-shells side by side in split panes, grouped into tabs and workspaces, driven from the keyboard, with each tab and
-workspace showing at a glance which agents are working, waiting on the user, or done. The same layouts appear on the
-desktop, the laptop and the phone.
+project. After this phase the user keeps their agents, shells and runs open as tabs, grouped into workspaces,
+switches between them from the keyboard, and sees at a glance which agents are working, waiting on them, or done.
+The same workspaces and tabs appear on the desktop, the laptop and the phone.
+
+There are no split panes: a tab shows one session or run, full size. (The bottom shell panel stays as it is.)
 
 The phase ships as two PRs under this one spec:
 
-- **3a — Workspaces** (§2–§5): workspaces, tabs, split panes, the session tree, keyboard, status, drag to rearrange.
+- **3a — Workspaces** (§2–§5): workspaces, tabs, the session tree, keyboard, status at a glance, drag to reorder.
 - **3b — Git integration** (§6): project keys, clone by URL, GitHub links, adopting and removing worktrees, removing
   projects, the folder view.
 
 ### Success criteria
 
-- The user can run three agents and a shell for one branch side by side in one tab, and a second branch's agents in
-  another tab, without the mouse.
+- The user can keep three agents and a shell for one branch open as tabs and switch between them without the mouse.
 - A free-form workspace can hold sessions from two projects.
-- Opening PDT on another device shows the same workspaces, tabs and panes.
-- From any tab the user can see which other tabs and workspaces have an agent that needs them.
+- Opening PDT on another device shows the same workspaces and tabs.
+- From any tab the user can see which other tabs and workspaces have an agent that needs them, and jump to it.
 - A project can be added by cloning a GitHub URL, and every branch links to GitHub.
 
 ## 2. Model (3a)
 
 ### 2.1 Workspaces
 
-- A **workspace** has a name, an order, and a list of tabs.
+- A **workspace** has a name, an order, and an ordered list of tabs.
 - Two kinds:
   - **Project workspace:** exactly one per project, made when the project is added (and for existing projects by the
     migration). Named after the project; it can't be deleted while the project exists.
   - **Free-form workspace:** made and named by the user. It can hold sessions and runs from any project.
-- Both kinds behave the same once made: any session or run can be placed in either.
+- Both kinds behave the same once made.
 
 ### 2.2 Tabs
 
-- A tab has a title, an order, a layout (§2.3) and the pane that last had focus.
-- A project workspace starts with one tab per place sessions live: "Repository" and one per worktree, titled with the
-  branch. New worktrees add a tab. The user can rename, reorder, close and add tabs freely afterwards.
-- Free-form workspaces start with one empty tab.
+- A tab shows **one session** (agent or shell terminal, as `SessionView` today) **or one run** (its output and
+  controls, as `RunView` today).
+- A tab's title is the session's or run's title; renaming the tab renames the session (as today).
+- A session or run has at most one tab per workspace, but can have tabs in several workspaces. All viewers share the
+  one PTY; it takes the size of whichever view most recently attached or resized (last writer wins, as today).
+- Closing a tab never stops the session or run; it stays in the tree. Removing a session or run closes its tabs.
 
-### 2.3 Layouts and panes
+### 2.3 Where tabs come from
 
-- A tab's layout is a tree. A node is either a **split** (direction `row` or `column`, two or more children with
-  relative sizes) or a **pane**.
-- A pane shows one thing:
-  - a **session** (agent or shell terminal, as `SessionView` today),
-  - a **run** (its output and controls, as `RunView` today),
-  - or nothing yet (an empty pane offers the quick-new choices, §4.3).
-- A session or run may appear in any number of panes and workspaces. All viewers share the one PTY; the PTY takes the
-  size of the pane that most recently had focus or was resized (last writer wins, as today).
-- Removing a session or run empties the panes that showed it; the pane stays so the layout doesn't jump.
+- **Launching** a session or starting a run from the tree opens it as a new tab in its project workspace, after the
+  current tab if that's the workspace on screen, else at the end, and switches to it.
+- **Launching** from the "+" in the tab strip (§4.3) opens the new session in the workspace on screen.
+- **Clicking** a session or run in the tree switches to its tab in the workspace on screen if it has one; otherwise
+  to its tab in its project workspace, opening one there if needed.
+- **Opening elsewhere:** a tab's menu has "Open in workspace…" (pick or make a free-form workspace); a session or run
+  can also be dragged from the tree onto a workspace's tab strip.
+- The migration opens a tab in each project workspace for every session and active run the project has, grouped by
+  place (Repository first, then worktrees) so a branch's tabs sit together.
 
-### 2.4 Where sessions go
+### 2.4 Shared and per-device state
 
-- **Launching** from the session tree (§3) places the new session in its project workspace, in the tab for its
-  branch (made if missing), as a new pane split off that tab's focused pane, and switches to it.
-- **Launching** from a pane (§4.3) puts the session in that pane or a split of it, in whatever workspace that is.
-- **Clicking** a session or run in the tree focuses a pane already showing it in the current workspace. If there is
-  none, it goes to its project workspace and branch tab, placed in a new split if not already there.
-- **Opening elsewhere:** a session's menu has "Open in workspace…" (pick or make a free-form workspace) and the tree
-  supports dragging a session or run onto a pane or tab.
-
-### 2.5 Shared and per-device state
-
-- Workspaces, tabs and layouts are stored in pdtd's database and shared by every device.
-- Which workspace and tab a device is looking at, the tree's collapsed groups, and the phone's current pane are
-  per-device (browser storage), so the phone doesn't yank the desktop around.
-- Concurrent edits: each tab has a `version`. A layout save sends the version it was based on; a stale save gets
-  `409 layout_conflict` and the client reloads the tab and reapplies the user's last action if it still makes sense
-  (otherwise it just shows the new layout). Clients poll workspaces like sessions (every 2 s).
-
-### 2.6 The bottom panel
-
-The bottom panel goes away: a shell is a pane like any other. Ctrl+` now toggles a shell pane in the current tab
-(splits one off the focused pane, or focuses it if the tab already has one; a second press returns focus).
+- Workspaces, tabs and their order are stored in pdtd's database and shared by every device.
+- Which workspace and tab a device is looking at, and the tree's collapsed groups, are per-device (browser storage),
+  so the phone doesn't yank the desktop around.
+- Tab operations are small and independent (open, close, move), so there's no conflict handling beyond "last write
+  wins" on order. Clients poll workspaces like sessions (every 2 s).
 
 ## 3. Session tree (3a)
 
@@ -101,31 +86,28 @@ The Sessions list column becomes a tree of every project:
 - Each group header shows the most urgent activity under it (needs you > working > idle) and the unseen dot.
 - Launch buttons (Shell / Claude / Codex, skip-permissions toggle) stay on each place's header; Run stays as today.
 - Project settings, the run-branch form and add-project move into the project's header menu.
-- The current workspace's sessions are highlighted in the tree.
+- Sessions and runs with a tab in the workspace on screen are marked in the tree.
 
 ## 4. Workspace view (3a)
 
 ### 4.1 Layout
 
-- The work area gets a header with the **workspace switcher** (a dropdown listing workspaces with their status,
-  plus "New workspace") and the **tab strip** (tabs with their status, "+" for a new tab).
-- Below it, the tab's panes, separated by draggable dividers. Each pane has a slim title bar (status dot, title,
-  activity badge, the session's actions, close-pane, a menu with split/move/open-in-workspace).
-- The focused pane has an accent border; keyboard input goes to its terminal.
+- The work area's header gets the **workspace switcher** (a dropdown listing workspaces with their status, plus
+  "New workspace") and the **tab strip** (tabs with status dot and activity, "+" for a new session).
+- Below it, the current tab's session or run, as today.
 
 ### 4.2 Status at a glance
 
-- A tab's status is the most urgent activity of the sessions in its panes; a workspace's is the most urgent of its
-  tabs. Same order and colors as the session activity badge (§5 of the remote-host spec): needs you (amber) >
-  working (green) > idle (gray).
-- The unseen dot shows on a tab or workspace when any session in it is unseen.
+- Each tab shows its session's status dot, activity and unseen dot, as the session list does today.
+- A workspace's status is the most urgent activity of its tabs: needs you (amber) > working (green) > idle (gray),
+  same colors as the session activity badge (remote-host spec §5); the unseen dot shows when any tab is unseen.
 - The browser tab title shows a count of sessions that need the user (e.g. `(2) PDT`).
 
-### 4.3 Quick new pane
+### 4.3 New tab
 
-- Split right / split down opens a small chooser in the new pane: **Claude**, **Codex**, **Shell**, **Run…**, or an
-  existing session or run (type to filter). One keypress picks Claude/Codex/Shell (`c`, `x`, `s`).
-- The new session starts in the same place (project and worktree) as the focused pane's session or run. In an empty
+- "+" in the tab strip opens a small chooser: **Claude**, **Codex**, **Shell**, **Run…**, or an existing session or
+  run (type to filter). One keypress picks Claude/Codex/Shell (`c`, `x`, `s`).
+- The new session starts in the same place (project and worktree) as the current tab's session or run. In an empty
   free-form workspace the chooser asks for the project and place first.
 - The skip-permissions toggle is in the chooser too.
 
@@ -136,14 +118,11 @@ through to the terminal.
 
 | Keys (after the prefix) | Action |
 |---|---|
-| `\|` / `-` | split right / split down (opens the chooser) |
-| arrows or `h j k l` | focus the pane in that direction |
-| `z` | zoom: the focused pane fills the tab (again to restore) |
-| `x` | close the pane (the session keeps running) |
-| `t` | new tab |
+| `c` | new tab (opens the chooser) |
 | `1`–`9` | go to tab N |
 | `n` / `p` | next / previous tab |
 | `w` | workspace switcher (type to filter, Enter to go) |
+| `x` | close the tab (the session keeps running) |
 | `r` | rename the tab |
 | `a` | jump to the next session that needs you, in any workspace |
 | `?` | show these keys |
@@ -151,24 +130,20 @@ through to the terminal.
 - **Default prefix: Ctrl+]**, chosen because it is unbound in zsh/readline and not taken by browsers or macOS
   (confirm against current Claude Code and Codex keybindings while building). Ctrl+B (tmux's) is taken by Claude
   Code (background tasks). The prefix is a host setting.
-- Ctrl+` keeps toggling the shell pane (§2.6). Browser-reserved keys (Cmd/Ctrl+T, W, N) are left alone.
+- Ctrl+` keeps toggling the bottom shell panel. Browser-reserved keys (Cmd/Ctrl+T, W, N) are left alone.
 
-### 4.5 Drag to rearrange
+### 4.5 Drag to reorder
 
-- Drag a divider to resize; sizes are saved with the layout.
-- Drag a pane by its title bar onto another pane's edge (split there) or centre (swap), or onto a tab (move it to
-  that tab).
-- Drag tabs to reorder them, or onto another workspace in the switcher to move them.
-- Drag a session or run from the tree onto a pane or tab (§2.4).
-- Everything dragging does has a keyboard or menu equivalent.
+- Drag tabs to reorder them, or onto another workspace in the switcher to move them there.
+- Drag workspaces in the switcher to reorder them.
+- Drag a session or run from the tree onto a tab strip to open it there (§2.3).
+- Everything dragging does has a keyboard or menu equivalent ("Move to workspace…", "Move left/right").
 
 ### 4.6 Phone
 
-- One pane at a time, full width. The tab strip scrolls horizontally; under it a pane switcher lists the tab's panes
-  with their status. Swiping left/right moves between panes.
-- Splitting on the phone adds a pane to the tab (shown in the switcher), so layouts made on the phone look sensible on
-  the desktop.
-- No drag on the phone; the pane menu has "Move to tab…" instead.
+- The tab strip scrolls horizontally; swiping left/right on the header moves between tabs. The workspace switcher is
+  a full-screen list.
+- No drag on the phone; the tab menu has the move actions instead.
 - The mobile terminal key bar stays as it is.
 
 ## 5. API and storage (3a)
@@ -184,44 +159,36 @@ CREATE TABLE workspaces (
     created_at INTEGER NOT NULL
 );
 CREATE TABLE workspace_tabs (
-    id            TEXT PRIMARY KEY NOT NULL,
-    workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    title         TEXT NOT NULL,
-    position      INTEGER NOT NULL,
-    layout        TEXT NOT NULL,          -- JSON layout tree (§2.3)
-    focused_pane  TEXT,
-    worktree_id   TEXT REFERENCES worktrees(id) ON DELETE SET NULL,  -- the branch tab a project workspace made
-    version       INTEGER NOT NULL,
-    created_at    INTEGER NOT NULL
+    id           TEXT PRIMARY KEY NOT NULL,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    session_id   TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    run_id       TEXT REFERENCES runs(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL,
+    CHECK ((session_id IS NULL) <> (run_id IS NULL)),
+    UNIQUE (workspace_id, session_id),
+    UNIQUE (workspace_id, run_id)
 );
 ```
-
-The migration makes a project workspace for each existing project, with a Repository tab and one tab per worktree;
-each tab's layout holds that place's sessions in a row of panes (empty if none, at most four; more stay in the tree).
-
-- The layout JSON is typed in pdt-core (`Layout`, `LayoutNode`, `PaneContent`) and exported with ts-rs. pdtd
-  validates it on save: known pane contents, unique pane ids, split sizes positive, depth ≤ 8, panes ≤ 16 per tab.
-  Pane contents pointing at missing sessions or runs are kept and shown as empty.
-- Pure layout operations (split, close, move, swap, resize, focus-direction, insert-session-for-launch) live in a
-  TypeScript module with unit tests, mirrored in pdt-core only where the server needs them (the migration seed,
-  the launch placement in §2.4).
 
 Routes (errors are `{code, message}`):
 
 | Route | Purpose |
 |---|---|
-| `GET /api/workspaces` | all workspaces with their tabs (layouts included) and aggregated status |
+| `GET /api/workspaces` | all workspaces with their tabs, in order |
 | `POST /api/workspaces` | new free-form workspace `{name}` |
 | `PATCH /api/workspaces/{id}` | rename, move `{name?, position?}` |
 | `DELETE /api/workspaces/{id}` | delete a free-form workspace (`409 project_workspace` for a project's) |
-| `POST /api/workspaces/{id}/tabs` | new tab `{title?}` |
-| `PATCH /api/tabs/{id}` | rename, reorder, move to another workspace `{title?, position?, workspaceId?}` |
-| `PUT /api/tabs/{id}/layout` | save `{layout, focusedPane, version}` → new version, or `409 layout_conflict` |
-| `DELETE /api/tabs/{id}` | close a tab (its sessions keep running) |
+| `POST /api/workspaces/{id}/tabs` | open a tab `{sessionId \| runId, position?}`; returns the existing tab if there is one |
+| `PATCH /api/tabs/{id}` | reorder or move to another workspace `{position?, workspaceId?}` |
+| `DELETE /api/tabs/{id}` | close a tab (its session or run keeps going) |
 
-`POST /api/sessions` gains an optional `placement` (`{tabId, paneId, split: "right" \| "down" \| "replace"}`); without
-one, pdtd places the session as in §2.4 and returns the tab and pane it used. Session activity and unseen come from
-the existing session list; the client aggregates tab and workspace status from it, so there's no new polling.
+- `POST /api/sessions` and run start gain an optional `workspaceId` (+ `position`); without one, pdtd opens the tab
+  in the project workspace as in §2.3 and returns it with the session or run.
+- Tab and workspace status are aggregated by the client from the session and run lists it already polls, so there's
+  no new status polling.
+- Placement and ordering rules (insert after current, move between workspaces, renumbering positions) are pure
+  functions with unit tests, in pdt-core for the server and mirrored in a small TS module for optimistic updates.
 
 ## 6. Git integration (3b)
 
@@ -273,13 +240,14 @@ the existing session list; the client aggregates tab and workspace status from i
 
 ## 7. Testing
 
-- **Layout module (TS):** split/close/move/swap/resize/focus-direction, placement rules of §2.4, validation limits.
-  Pure functions, TDD.
-- **pdt-core:** layout (de)serialization and validation; the migration seed for existing projects.
-- **pdt-store / pdt-api:** workspace and tab CRUD, versioned layout saves and `409 layout_conflict`, project
-  workspace made with a project and removed with it, launch placement, tabs made for new worktrees.
-- **Web:** tree rendering and aggregation, prefix keys (including the double-prefix pass-through), the quick-new
-  chooser, phone single-pane mode, drag behaviour through its keyboard equivalents.
+- **Placement and ordering (pdt-core, TS mirror):** insert after current, open-or-focus existing tab, move between
+  workspaces, position renumbering. Pure functions, TDD.
+- **pdt-store / pdt-api:** workspace and tab CRUD, one tab per session/run per workspace, project workspace made with
+  a project and removed with it, `409 project_workspace`, launch placement, tabs closed when a session or run is
+  removed, the migration seed for existing projects.
+- **Web:** tree rendering and status aggregation, tab strip and switcher status, prefix keys (including the
+  double-prefix pass-through), the new-tab chooser, drag behaviour through its keyboard and menu equivalents, phone
+  tab switching.
 - **3b:** key validation and suggestion, clone into a temp dir from a local bare repo (no network), GitHub URL
   parsing (https, ssh, `.git` suffix, non-GitHub), worktree adopt/remove/missing, folder path containment
   (`..`, absolute paths, symlinks out of the checkout), `.gitignore` filtering.
@@ -288,9 +256,10 @@ the existing session list; the client aggregates tab and workspace status from i
 
 ## 8. Deferred
 
-- Pane types beyond terminals and runs (conversation views come with Phase 5, diff with Phase 6, folder view as a pane
+- Split panes (decided against: a tab shows one thing).
+- Tab types beyond terminals and runs (conversation views come with Phase 5, diff with Phase 6, folder view as a tab
   later).
-- Workspace templates and restoring a closed tab.
+- Workspace templates and reopening a closed tab.
 - Sessions spawning child sessions.
 - PR state, checks and reviews from GitHub (Phase 6 / GitHub integration follow-up).
 - File editing.
