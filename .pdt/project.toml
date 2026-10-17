@@ -8,13 +8,14 @@
 #   Setup has already built it, so cargo only starts it.
 # - PDT_WEB_DIR is relative to the checkout, which is the working folder of every step.
 # - PDT_SECRET_STORE=memory keeps dev instances out of the keychain. They are not supervised, so they never update.
+# - PDT_SEED=demo fills a new (empty) data folder with demo projects, sessions and runs; Reset data starts it over.
 [[run]]
 name    = "pdt"
 setup   = "pnpm install --frozen-lockfile && pnpm --dir web build && cargo build -p pdtd"
 command = "cargo run -q -p pdtd"
 web     = true
 data    = true
-env     = { PDT_PROFILE = "dev", PDT_PORT = "$PORT", PDT_DATA_DIR = "$PDT_RUN_DATA", PDT_WEB_DIR = "web/dist", PDT_ALLOWED_HOSTS = "$PDT_RUN_HOST:$PORT", PDT_SECRET_STORE = "memory" }
+env     = { PDT_PROFILE = "dev", PDT_PORT = "$PORT", PDT_DATA_DIR = "$PDT_RUN_DATA", PDT_WEB_DIR = "web/dist", PDT_ALLOWED_HOSTS = "$PDT_RUN_HOST:$PORT", PDT_SECRET_STORE = "memory", PDT_SEED = "demo" }
 
 [[test]]
 name    = "rust"

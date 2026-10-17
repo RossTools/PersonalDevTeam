@@ -20,6 +20,8 @@ jiff.workspace = true
 pdt-tailscale.workspace = true
 serde_json.workspace = true
 pdt-update.workspace = true
+pdt-git.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
