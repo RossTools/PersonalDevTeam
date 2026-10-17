@@ -135,6 +135,10 @@ pub struct NewRun {
     #[serde(default)]
     #[ts(optional)]
     pub stop_run_id: Option<String>,
+    /// Where the run's tab opens; the end of its project's workspace when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub tab: Option<crate::workspace::TabPlacement>,
 }
 
 /// Optional body of a restart.

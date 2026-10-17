@@ -3,10 +3,12 @@ mod host;
 mod migrate;
 mod runs;
 mod sessions;
+mod workspaces;
 mod worktrees;
 
 pub use error::StoreError;
 pub use host::ProjectSettings;
+pub use workspaces::DeleteWorkspace;
 
 use pdt_core::project::Project;
 use sqlx::migrate::Migrator;
@@ -59,15 +61,19 @@ impl Store {
         self.pool.close().await;
     }
 
+    /// Adds a project and its own workspace.
     pub async fn insert_project(&self, p: &Project) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query("INSERT INTO projects (id, name, repo_path, base_branch, created_at) VALUES (?, ?, ?, ?, ?)")
             .bind(&p.id)
             .bind(&p.name)
             .bind(&p.repo_path)
             .bind(&p.base_branch)
             .bind(p.created_at)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        workspaces::insert_project_workspace(&mut tx, &p.id, &p.name, p.created_at).await?;
+        tx.commit().await?;
         Ok(())
     }
 

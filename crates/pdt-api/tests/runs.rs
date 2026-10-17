@@ -189,6 +189,27 @@ async fn tests_pass_and_fail() {
     assert_eq!((s, v["code"].as_str()), (StatusCode::NOT_FOUND, Some("unknown_run")));
 }
 
+#[tokio::test]
+async fn a_run_opens_a_tab_in_its_project_workspace_or_where_asked() {
+    let env = setup().await;
+    let tabs = |w: &Value| -> Vec<String> {
+        w["tabs"].as_array().unwrap().iter().map(|t| t["runId"].as_str().unwrap().to_string()).collect()
+    };
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let home = list[0]["id"].as_str().unwrap().to_string();
+    let (_, first) = start(&env, json!({"name": "ok", "kind": "test"})).await;
+    let (s, second) =
+        start(&env, json!({"name": "ok", "kind": "test", "tab": {"workspaceId": home, "position": 0}})).await;
+    assert_eq!(s, StatusCode::CREATED, "{second}");
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    assert_eq!(tabs(&list[0]), [second["id"].as_str().unwrap(), first["id"].as_str().unwrap()]);
+    let (s, v) = start(&env, json!({"name": "ok", "kind": "test", "tab": {"workspaceId": "nope"}})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
+    for r in [&first, &second] {
+        wait_state(&env.app, r["id"].as_str().unwrap(), &["passed", "failed"]).await;
+    }
+}
+
 /// A step that runs a `.cmd` shim (like pnpm.cmd) keeps the shim's exit code (ruling F22). This shim's code is lost
 /// when the step's batch file hands control to it without `call`.
 #[cfg(windows)]

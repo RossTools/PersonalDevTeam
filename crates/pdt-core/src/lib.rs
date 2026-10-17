@@ -10,6 +10,7 @@ pub mod release;
 pub mod run;
 pub mod runconfig;
 pub mod session;
+pub mod workspace;
 pub mod worktree;
 
 /// The version this build reports: `PDT_BUILD_VERSION` at compile time (CI release builds set it to the release
