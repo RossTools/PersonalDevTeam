@@ -68,7 +68,7 @@ export function AppShell() {
   const label = VIEWS.find((v) => v.id === view)!.label;
 
   return (
-    <div className="h-full flex flex-col-reverse md:flex-row bg-bg text-fg">
+    <div className="h-full overflow-hidden flex flex-col-reverse md:flex-row bg-bg text-fg">
       <IconRail active={view} onSelect={setView} />
       <aside aria-label={`${label} list`} className="md:w-72 max-h-[40vh] md:max-h-none border-border md:border-r flex flex-col min-h-0">
         <h2 className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">{label}</h2>

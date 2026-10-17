@@ -59,10 +59,12 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
 
   useEffect(() => {
     const el = host.current!;
+    const fontFamily = cssVar('--pdt-font-mono') || 'monospace';
+    const fontSize = 13;
     let underliner: ReturnType<typeof linkUnderliner> | null = null;
     const term = new Terminal({
-      fontFamily: cssVar('--pdt-font-mono') || 'monospace',
-      fontSize: 13,
+      fontFamily,
+      fontSize,
       cursorBlink: true,
       scrollback: 5000,
       theme: terminalTheme(),
@@ -124,15 +126,42 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       onStatus: setStatus,
     });
     sockRef.current = sock;
+    // Refits at most once per frame, and tells the PTY only when the grid really changed: a resize the PTY sees
+    // makes the program redraw, and a redraw must never feed back into another layout change.
+    let frame = 0;
+    let sent = '';
     const refit = () => {
       try {
         fit.fit();
       } catch {
         // Not laid out yet (hidden panel); the next resize fixes it.
       }
+      const size = `${term.cols}x${term.rows}`;
+      if (size === sent) return;
+      sent = size;
       sock.resize(term.cols, term.rows);
     };
+    const scheduleRefit = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        refit();
+      });
+    };
     refit();
+    // The web font loads lazily: until it has, xterm measures its cells with a fallback font (a different height),
+    // and it measures again only when some later resize forces it, so the grid stops fitting and the layout jumps.
+    // Once the font is in, make xterm measure again and refit.
+    let disposed = false;
+    document.fonts?.load(`${fontSize}px ${fontFamily}`).then(
+      () => {
+        if (disposed) return;
+        term.options.fontFamily = 'monospace';
+        term.options.fontFamily = fontFamily;
+        scheduleRefit();
+      },
+      () => {},
+    );
     const input = term.onData((d) => {
       if (!replaying()) sock.send(d);
     });
@@ -145,11 +174,13 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       }
       return false;
     });
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refit);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleRefit);
     observer?.observe(el);
     sock.connect();
     return () => {
+      disposed = true;
       observer?.disconnect();
+      cancelAnimationFrame(frame);
       document.removeEventListener('mouseup', copySelection);
       selection.dispose();
       underliner?.dispose();
@@ -191,7 +222,11 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-bg">
       <div className="relative min-h-0 flex-1">
-        <div ref={host} data-testid="terminal" className="absolute inset-0 p-1" />
+        {/* The padding lives on this wrapper: xterm fits itself to the full height of the element it is opened in,
+            padding included, so a padded host makes it stick out and the page scroll (a resize loop on phones). */}
+        <div className="absolute inset-0 overflow-hidden p-1">
+          <div ref={host} data-testid="terminal" className="h-full w-full" />
+        </div>
         {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
         {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted">Session ended.</p>}
       </div>

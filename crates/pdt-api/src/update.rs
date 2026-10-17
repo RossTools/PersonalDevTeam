@@ -170,10 +170,16 @@ async fn write_token(st: &AppState, token: Option<String>) -> Result<(), ApiErro
 pub async fn sync_token_state(st: &AppState) {
     match read_token(st).await.map(|t| t.is_some()) {
         Ok(present) => {
-            st.update.edit(|s| match (present, &s.token) {
-                (false, _) => s.token = TokenState::Missing,
-                (true, TokenState::Missing) => s.token = TokenState::Valid { expires_at: None },
-                (true, _) => {}
+            st.update.edit(|s| {
+                match (present, &s.token) {
+                    (false, _) => s.token = TokenState::Missing,
+                    (true, TokenState::Missing) => s.token = TokenState::Valid { expires_at: None },
+                    (true, _) => {}
+                }
+                // The keychain answers again: its earlier failure no longer applies (other errors stay).
+                if s.error.as_deref().is_some_and(|e| e.starts_with(crate::secrets::KEYCHAIN_FAILED)) {
+                    s.error = None;
+                }
             });
         }
         Err(e) => {

@@ -24,8 +24,11 @@ pub fn update_token_account(data_dir: &std::path::Path, stable_data_dir: Option<
     format!("{UPDATE_TOKEN}:{:012x}", hash >> 16)
 }
 
+/// How every keychain failure message starts (so a later successful read can clear it).
+pub const KEYCHAIN_FAILED: &str = "the OS keychain failed";
+
 #[derive(Debug, thiserror::Error)]
-#[error("the OS keychain failed: {0}")]
+#[error("{KEYCHAIN_FAILED}: {0}")]
 pub struct SecretError(pub String);
 
 /// Blocking: call from `spawn_blocking` (macOS may show a keychain prompt).

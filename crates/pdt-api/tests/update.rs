@@ -306,6 +306,41 @@ async fn a_stalled_keychain_is_reported_and_never_hangs_requests() {
     assert_eq!(fake.hits.load(Ordering::SeqCst), 1, "only the new token's validation reached GitHub");
 }
 
+/// A keychain that fails while `failing` is set (e.g. a prompt nobody has answered yet), then works.
+struct FlakyKeychain {
+    failing: Arc<AtomicBool>,
+    inner: pdt_api::secrets::MemorySecretStore,
+}
+impl pdt_api::secrets::SecretStore for FlakyKeychain {
+    fn get(&self, name: &str) -> Result<Option<String>, pdt_api::secrets::SecretError> {
+        if self.failing.load(Ordering::SeqCst) {
+            return Err(pdt_api::secrets::SecretError(pdt_api::secrets::KEYCHAIN_STALLED.into()));
+        }
+        self.inner.get(name)
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.inner.set(name, value)
+    }
+    fn delete(&self, name: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.inner.delete(name)
+    }
+}
+
+#[tokio::test]
+async fn a_keychain_error_clears_once_the_keychain_answers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state, _) = setup(tmp.path(), true).await;
+    let failing = Arc::new(AtomicBool::new(true));
+    state.secrets = Arc::new(FlakyKeychain { failing: failing.clone(), inner: Default::default() });
+    let app = pdt_api::router(state.clone(), None);
+    let (_, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert!(v["error"].as_str().unwrap_or("").starts_with(pdt_api::secrets::KEYCHAIN_FAILED), "{v}");
+    failing.store(false, Ordering::SeqCst);
+    let (_, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert_eq!(v["error"], Value::Null, "{v}");
+    assert_eq!(v["token"]["state"], "missing");
+}
+
 #[tokio::test]
 async fn each_data_dir_has_its_own_token() {
     let tmp = tempfile::tempdir().unwrap();
