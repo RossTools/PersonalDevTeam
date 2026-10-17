@@ -240,7 +240,7 @@ type Outcome = (RunState, Option<i32>, Option<String>);
 async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) -> Outcome {
     let v = vars(st, run);
     let pairs = v.pairs();
-    let mut env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
+    let mut env = pdt_core::session::terminal_env();
     if let Some(path) = &st.platform.login_path {
         env.push(("PATH".into(), path.clone()));
     }

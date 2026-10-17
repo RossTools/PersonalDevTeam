@@ -211,7 +211,7 @@ fn start_pty(
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args)?;
     let (program, args) = pdt_agents::launch::resolve(&l.program, &launch_args, login_path)?;
-    let mut env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
+    let mut env = pdt_core::session::terminal_env();
     if let Some(path) = login_path {
         // So `#!/usr/bin/env node` shebangs and the agents' own child processes find the user's tools.
         env.push(("PATH".into(), path.into()));
