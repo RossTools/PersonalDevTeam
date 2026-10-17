@@ -302,6 +302,11 @@ async fn a_stalled_keychain_is_reported_and_never_hangs_requests() {
     assert!(v["error"].as_str().unwrap_or("").ends_with(pdt_api::secrets::KEYCHAIN_STALLED), "{v}");
     let (s, e) = call(&app, "PUT", "/api/host/token", Some(json!({"token": TOKEN}))).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("keychain_unavailable")), "{e}");
+    // Host settings still load; only the token part reports the keychain.
+    let (s, v) = call(&app, "GET", "/api/host/settings", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["tokenPresent"], false, "{v}");
+    assert!(v["tokenError"].as_str().unwrap_or("").ends_with(pdt_api::secrets::KEYCHAIN_STALLED), "{v}");
     assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
     assert_eq!(fake.hits.load(Ordering::SeqCst), 1, "only the new token's validation reached GitHub");
 }

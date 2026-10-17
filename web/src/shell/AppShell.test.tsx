@@ -22,6 +22,7 @@ const hostRoutes = {
     settings: { remoteAccess: true, ownerLogin: 'me@example.com', updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 }, maxConcurrentRuns: 4, agentCredentials: 'subscription' },
     ownerFromEnv: null,
     tokenPresent: true,
+    tokenError: null,
     remote: { enabled: true, active: true, url: 'https://box.ts.net', dnsName: 'box.ts.net', error: null, tailscaleLogin: 'me@example.com' },
   },
   'GET /api/host/update': {

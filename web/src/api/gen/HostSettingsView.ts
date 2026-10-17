@@ -8,6 +8,11 @@ export type HostSettingsView = { settings: HostSettings,
  */
 ownerFromEnv: string | null, tokenPresent: boolean, 
 /**
+ * Why the token could not be read (e.g. the keychain is waiting on an approval prompt); `tokenPresent` is then
+ * false. The rest of the settings still load.
+ */
+tokenError: string | null, 
+/**
  * The last result of applying the remote-access setting.
  */
 remote: RemoteStatus, };

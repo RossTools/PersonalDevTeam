@@ -46,6 +46,4 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Delete the stale remote branch `phase-0-foundation`.
 - **Developer ID signing + notarization** for macOS releases (Gatekeeper); the self-signed certificate only keeps
   the keychain's trust across updates.
-- **Host settings with an unreadable keychain:** the page fails with `keychain_unavailable`; show settings and the
-  token problem instead.
 - Final product name (codename for now; no "ads" in names).
