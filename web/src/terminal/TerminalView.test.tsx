@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   term: null as null | {
     written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
     keyHandler: ((e: KeyboardEvent) => boolean) | null; modes: { bracketedPasteMode: boolean };
+    selectionCb: (() => void) | null; selection: string;
   },
   clipboard: null as null | { readText(s: string): string; writeText(s: string, t: string): Promise<void> },
   sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean; retries: number },
@@ -22,6 +23,11 @@ vi.mock('@xterm/xterm', () => ({
     modes = { bracketedPasteMode: true };
     constructor() { h.term = this; }
     attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) { this.keyHandler = fn; }
+    selectionCb: (() => void) | null = null;
+    selection = '';
+    onSelectionChange(cb: () => void) { this.selectionCb = cb; return { dispose() {} }; }
+    hasSelection() { return this.selection !== ''; }
+    getSelection() { return this.selection; }
     loadAddon() {}
     open() {}
     focus() {}
@@ -36,6 +42,7 @@ vi.mock('@xterm/xterm', () => ({
 }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
+vi.mock('./linkSpan', () => ({ linkUnderliner: () => ({ show() {}, clear() {}, dispose() {} }) }));
 vi.mock('@xterm/addon-clipboard', () => ({
   ClipboardAddon: class {
     constructor(_b: unknown, provider: NonNullable<typeof h.clipboard>) { h.clipboard = provider; }
@@ -144,6 +151,20 @@ describe('TerminalView', () => {
     await h.clipboard!.writeText('c', 'copied');
     expect(writeText).toHaveBeenCalledWith('copied');
     expect(h.clipboard!.readText('c')).toBe('');
+  });
+
+  it('copies a mouse selection to the clipboard when the mouse is released', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<TerminalView sessionId="s1" />);
+    fireEvent.mouseUp(document);
+    expect(writeText).not.toHaveBeenCalled(); // no selection made
+    h.term!.selection = 'picked';
+    h.term!.selectionCb!();
+    fireEvent.mouseUp(document);
+    fireEvent.mouseUp(document); // a later click elsewhere doesn't copy again
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith('picked');
   });
 
   it('reattaches when the session becomes running again after it ended', () => {

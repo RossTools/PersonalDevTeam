@@ -8,6 +8,7 @@ import type { SessionStatus } from '../api/gen/SessionStatus';
 import { PtySocket, ptyUrl, type PtyStatus } from './ptySocket';
 import { cssVar, terminalTheme } from './theme';
 import { NEWLINE, isShiftEnter, promptSequence, shouldOpenLink } from './input';
+import { linkUnderliner } from './linkSpan';
 import { Button } from '@ui';
 
 /** The least time between two automatic reattach attempts of one terminal. */
@@ -23,15 +24,17 @@ const openLink = (e: MouseEvent, uri: string) => {
  * Programs copy by sending OSC 52 (Claude Code does on every copy, alongside its own pbcopy on the host); this puts
  * the text on the viewer's clipboard. Reading is refused: a program in the terminal must not see the clipboard.
  */
+const copyText = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // No permission (e.g. Safari without a recent click, or a non-https origin); nothing to fall back to.
+  }
+};
+
 const clipboard: IClipboardProvider = {
   readText: () => '',
-  writeText: async (_sel: ClipboardSelectionType, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // No permission (e.g. Safari without a recent click, or a non-https origin); nothing to fall back to.
-    }
-  },
+  writeText: (_sel: ClipboardSelectionType, text: string) => copyText(text),
 };
 
 /**
@@ -56,6 +59,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
 
   useEffect(() => {
     const el = host.current!;
+    let underliner: ReturnType<typeof linkUnderliner> | null = null;
     const term = new Terminal({
       fontFamily: cssVar('--pdt-font-mono') || 'monospace',
       fontSize: 13,
@@ -65,7 +69,13 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       // Option+drag selects even while the program captures the mouse (Claude Code does).
       macOptionClickForcesSelection: true,
       // OSC 8 hyperlinks (Claude Code sends them for URLs because pdtd sets FORCE_HYPERLINK), wrapped lines included.
-      linkHandler: { activate: openLink, allowNonHttpProtocols: false },
+      // xterm underlines only the hovered row of a wrapped link; the underliner does the other rows.
+      linkHandler: {
+        activate: openLink,
+        hover: (_e, _text, range) => underliner?.show(range.start.x, range.start.y),
+        leave: () => underliner?.clear(),
+        allowNonHttpProtocols: false,
+      },
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -73,6 +83,19 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     term.loadAddon(new WebLinksAddon(openLink));
     term.loadAddon(new ClipboardAddon(undefined, clipboard));
     term.open(el);
+    underliner = linkUnderliner(term);
+    // Copy on select: when a mouse selection ends, its text goes to the clipboard (inside the click, so browsers
+    // allow it). The program never sees this selection, since it doesn't capture the mouse.
+    let selectionChanged = false;
+    const selection = term.onSelectionChange(() => {
+      selectionChanged = true;
+    });
+    const copySelection = () => {
+      if (!selectionChanged) return;
+      selectionChanged = false;
+      if (term.hasSelection()) void copyText(term.getSelection());
+    };
+    document.addEventListener('mouseup', copySelection);
     // The scrollback replayed on each connect contains terminal queries (cursor position, device attributes,
     // colours) that xterm answers through onData. Those answers were already given once, so they must not reach
     // the PTY again: input is held back until the server says the replay is over and xterm has parsed all of it.
@@ -125,6 +148,9 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     sock.connect();
     return () => {
       observer?.disconnect();
+      document.removeEventListener('mouseup', copySelection);
+      selection.dispose();
+      underliner?.dispose();
       input.dispose();
       sock.dispose();
       term.dispose();
