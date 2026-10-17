@@ -460,6 +460,24 @@ pub async fn resume_interrupted(st: &AppState) -> usize {
     plan_resume_interrupted(st).await.start(st).await
 }
 
+/// Stops a session if it runs and forgets it entirely (row, terminal, hook settings). Used when its project or
+/// worktree goes away.
+pub(crate) async fn discard(st: &AppState, id: &str) {
+    let _guard = st.lock_session(id).await;
+    if st.ptys.is_running(id) {
+        let _ = st.kill_pty(id).await;
+    }
+    settle_exit(st, id).await;
+    st.remove_pty(id).await;
+    if let Err(e) = st.store.delete_session(id).await {
+        tracing::warn!(session = %id, error = %e, "could not delete the session row");
+    }
+    let _ = std::fs::remove_dir_all(session_data_dir(st, id));
+    crate::activity::forget(st, id);
+    drop(_guard);
+    st.forget_session_lock(id);
+}
+
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let _guard = st.lock_session(&id).await;
     load(&st, &id).await?;

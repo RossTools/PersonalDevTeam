@@ -21,6 +21,8 @@ pub struct HostSettingsView {
     pub token_error: Option<String>,
     /// The last result of applying the remote-access setting.
     pub remote: crate::remote::RemoteStatus,
+    /// Where clones go: `settings.projectsDir`, else `~/work`.
+    pub projects_dir: Option<String>,
 }
 
 impl From<HostSettingsError> for ApiError {
@@ -34,8 +36,12 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
         Ok(t) => (t.is_some(), None),
         Err(e) => (false, Some(e.message().to_string())),
     };
+    let settings = st.store.get_host_settings().await?;
+    let projects_dir =
+        crate::projects::projects_dir(settings.projects_dir.as_deref()).map(|p| p.to_string_lossy().into_owned());
     Ok(HostSettingsView {
-        settings: st.store.get_host_settings().await?,
+        projects_dir,
+        settings,
         owner_from_env: st.owner_from_env.clone(),
         token_present,
         token_error,

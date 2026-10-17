@@ -417,6 +417,7 @@ mod tests {
             path: "/w".into(),
             base_commit: "c".into(),
             created_at: 1,
+            missing: false,
         };
         store.insert_worktree(&w).await.unwrap();
         let mut s = session("a", 1);

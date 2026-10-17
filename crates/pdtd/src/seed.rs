@@ -49,6 +49,8 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         repo_path: path(&repos.app),
         base_branch: "main".into(),
         created_at: now - 3 * DAY,
+        key: String::new(),
+        github_repo: None,
     };
     let lib = Project {
         id: id(),
@@ -56,6 +58,8 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         repo_path: path(&repos.lib),
         base_branch: "main".into(),
         created_at: now - 2 * DAY,
+        key: String::new(),
+        github_repo: None,
     };
     let wt = Worktree {
         id: id(),
@@ -64,6 +68,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         path: path(&repos.feature_path),
         base_commit: repos.feature_base.clone(),
         created_at: now - 5 * HOUR,
+        missing: false,
     };
     for p in [&app, &lib] {
         store.insert_project(p).await?;

@@ -119,6 +119,28 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
     let repo = PathBuf::from(&project.repo_path);
     let path = worktree_path(&repo, branch);
     let path_str = path.to_string_lossy().into_owned();
+    // A worktree made outside PDT (plain `git worktree add`) for this branch is registered as it is.
+    let adopted = if path.exists() && !existing.iter().any(|w| w.path == path_str) {
+        let (r, p, b) = (repo.clone(), path.clone(), branch.to_string());
+        tokio::task::spawn_blocking(move || crate::worktrees::adoptable(&r, &p, &b))
+            .await
+            .map_err(ApiError::internal)?
+    } else {
+        None
+    };
+    if let Some(head) = adopted {
+        let wt = Worktree {
+            id: uuid::Uuid::now_v7().to_string(),
+            project_id: project.id.clone(),
+            branch: branch.to_string(),
+            path: path_str,
+            base_commit: head,
+            created_at: now_ms(),
+            missing: false,
+        };
+        st.store.insert_worktree(&wt).await?;
+        return Ok(wt.id);
+    }
     if path.exists() || existing.iter().any(|w| w.path == path_str) {
         return Err(conflict(
             "worktree_path_taken",
@@ -139,6 +161,7 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
         path: path_str,
         base_commit,
         created_at: now_ms(),
+        missing: false,
     };
     st.store.insert_worktree(&wt).await?;
     Ok(wt.id)
@@ -289,6 +312,19 @@ pub(crate) async fn reset_data(State(st): State<AppState>, Path(id): Path<String
         .map_err(ApiError::internal)?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Stops a run if it is active and forgets its terminals and scripts (not its data folder). Used when its project
+/// goes away. Returns false if it did not stop in time.
+pub(crate) async fn discard(st: &AppState, run: &Run) -> bool {
+    if run.state.is_active() && !run_manager::stop(st, &run.id, None).await {
+        return false;
+    }
+    for step in [RunStep::Setup, RunStep::Command] {
+        st.remove_pty(&pty_id(&run.id, step)).await;
+    }
+    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, &run.id));
+    true
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

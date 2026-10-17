@@ -4,4 +4,8 @@ export type Worktree = { id: string, projectId: string, branch: string,
 /**
  * Absolute path, native separators.
  */
-path: string, baseCommit: string, createdAt: number, };
+path: string, baseCommit: string, createdAt: number, 
+/**
+ * The folder is gone (removed outside PDT). Filled in by the API, never stored.
+ */
+missing: boolean, };

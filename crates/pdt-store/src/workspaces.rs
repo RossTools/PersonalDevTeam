@@ -371,6 +371,8 @@ mod tests {
             repo_path: "/q".into(),
             base_branch: "main".into(),
             created_at: 2,
+            key: String::new(),
+            github_repo: None,
         };
         store.insert_project(&q).await.unwrap();
         let list = store.list_workspaces().await.unwrap();

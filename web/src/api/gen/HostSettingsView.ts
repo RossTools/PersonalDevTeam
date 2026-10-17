@@ -15,4 +15,8 @@ tokenError: string | null,
 /**
  * The last result of applying the remote-access setting.
  */
-remote: RemoteStatus, };
+remote: RemoteStatus, 
+/**
+ * Where clones go: `settings.projectsDir`, else `~/work`.
+ */
+projectsDir: string | null, };

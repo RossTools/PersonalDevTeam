@@ -1,10 +1,12 @@
 mod activity;
 mod checks;
 mod error;
+mod files;
 mod host;
 mod host_guard;
 mod identity_guard;
 mod project_settings;
+mod projects;
 mod pty_ws;
 pub mod remote;
 mod routes;

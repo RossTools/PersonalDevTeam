@@ -69,8 +69,6 @@ async fn create_and_list_worktrees_inside_the_repo() {
 
     let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/worktrees"), None).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
-    let (s, _) = call(&app, "DELETE", &format!("/api/worktrees/{}", wt["id"].as_str().unwrap()), None).await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "no removal before merge");
 }
 
 #[tokio::test]

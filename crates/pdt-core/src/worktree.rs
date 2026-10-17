@@ -16,6 +16,9 @@ pub struct Worktree {
     pub base_commit: String,
     #[ts(type = "number")]
     pub created_at: i64,
+    /// The folder is gone (removed outside PDT). Filled in by the API, never stored.
+    #[serde(default)]
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

@@ -22,18 +22,22 @@ pub struct Store {
     host_defaults: std::sync::Arc<pdt_core::host::HostSettings>,
 }
 
-type ProjectRow = (String, String, String, String, i64);
+type ProjectRow = (String, String, String, String, i64, Option<String>);
 
-fn to_project((id, name, repo_path, base_branch, created_at): ProjectRow) -> Project {
-    Project { id, name, repo_path, base_branch, created_at }
+fn to_project((id, name, repo_path, base_branch, created_at, key): ProjectRow) -> Project {
+    Project { id, name, repo_path, base_branch, created_at, key: key.unwrap_or_default(), github_repo: None }
 }
+
+const PROJECT_COLUMNS: &str = "id, name, repo_path, base_branch, created_at, key";
 
 impl Store {
     /// Opens (creating if needed) the database, backing up to `<db dir>/backups`
     /// before applying any pending migrations.
     pub async fn open(db_path: &Path) -> Result<Store, StoreError> {
         let backup_dir = db_path.parent().unwrap_or(Path::new(".")).join("backups");
-        Self::open_with(db_path, &migrate::MIGRATOR, &backup_dir).await
+        let store = Self::open_with(db_path, &migrate::MIGRATOR, &backup_dir).await?;
+        store.backfill_project_keys().await?;
+        Ok(store)
     }
 
     pub async fn open_with(db_path: &Path, migrator: &Migrator, backup_dir: &Path) -> Result<Store, StoreError> {
@@ -61,37 +65,92 @@ impl Store {
         self.pool.close().await;
     }
 
-    /// Adds a project and its own workspace.
+    /// Gives every project without a key one suggested from its name (projects made before keys existed).
+    async fn backfill_project_keys(&self) -> Result<(), StoreError> {
+        let missing: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, name FROM projects WHERE key IS NULL OR key = '' ORDER BY created_at, id")
+                .fetch_all(&self.pool)
+                .await?;
+        for (id, name) in missing {
+            let key = pdt_core::project::suggest_key(&name, &self.project_keys().await?);
+            sqlx::query("UPDATE projects SET key = ? WHERE id = ?").bind(key).bind(id).execute(&self.pool).await?;
+        }
+        Ok(())
+    }
+
+    /// Every key in use.
+    pub async fn project_keys(&self) -> Result<Vec<String>, StoreError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT key FROM projects WHERE key IS NOT NULL").fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|(k,)| k).collect())
+    }
+
+    /// Adds a project and its own workspace. A blank `key` gets one suggested from the name.
     pub async fn insert_project(&self, p: &Project) -> Result<(), StoreError> {
+        let key = if p.key.trim().is_empty() {
+            pdt_core::project::suggest_key(&p.name, &self.project_keys().await?)
+        } else {
+            p.key.clone()
+        };
         let mut tx = self.pool.begin().await?;
-        sqlx::query("INSERT INTO projects (id, name, repo_path, base_branch, created_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(&p.id)
-            .bind(&p.name)
-            .bind(&p.repo_path)
-            .bind(&p.base_branch)
-            .bind(p.created_at)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO projects (id, name, repo_path, base_branch, created_at, key) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&p.id)
+        .bind(&p.name)
+        .bind(&p.repo_path)
+        .bind(&p.base_branch)
+        .bind(p.created_at)
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
         workspaces::insert_project_workspace(&mut tx, &p.id, &p.name, p.created_at).await?;
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, StoreError> {
-        let rows: Vec<ProjectRow> =
-            sqlx::query_as("SELECT id, name, repo_path, base_branch, created_at FROM projects ORDER BY created_at, id")
-                .fetch_all(&self.pool)
-                .await?;
+        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects ORDER BY created_at, id");
+        let rows: Vec<ProjectRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(to_project).collect())
     }
 
     pub async fn get_project(&self, id: &str) -> Result<Option<Project>, StoreError> {
+        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ?");
         let row: Option<ProjectRow> =
-            sqlx::query_as("SELECT id, name, repo_path, base_branch, created_at FROM projects WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?;
+            sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
         Ok(row.map(to_project))
+    }
+
+    /// Renames a project (and its workspace) and/or changes its key. False if there is no such project;
+    /// `Conflict` if the key is taken.
+    pub async fn update_project(&self, id: &str, name: Option<&str>, key: Option<&str>) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let found: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM projects WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
+        if found.is_none() {
+            return Ok(false);
+        }
+        if let Some(name) = name {
+            sqlx::query("UPDATE projects SET name = ? WHERE id = ?").bind(name).bind(id).execute(&mut *tx).await?;
+            sqlx::query("UPDATE workspaces SET name = ? WHERE project_id = ?")
+                .bind(name)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if let Some(key) = key {
+            sqlx::query("UPDATE projects SET key = ? WHERE id = ?").bind(key).bind(id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Removes a project and everything recorded about it (worktrees, sessions, runs, its workspace and tabs).
+    /// Files on disk are not touched.
+    pub async fn delete_project(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("DELETE FROM projects WHERE id = ?").bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
     }
 }
 #[cfg(test)]
@@ -100,15 +159,24 @@ mod tests {
     use pdt_core::project::Project;
 
     fn project(id: &str, path: &str) -> Project {
-        Project { id: id.into(), name: "P".into(), repo_path: path.into(), base_branch: "main".into(), created_at: 1 }
+        Project {
+            id: id.into(),
+            name: "P".into(),
+            repo_path: path.into(),
+            base_branch: "main".into(),
+            created_at: 1,
+            key: String::new(),
+            github_repo: None,
+        }
     }
 
     #[tokio::test]
     async fn insert_list_get_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-        let p = project("a", "C:\\work\\my repo é");
+        let mut p = project("a", "C:\\work\\my repo é");
         store.insert_project(&p).await.unwrap();
+        p.key = "PX".into();
         assert_eq!(store.list_projects().await.unwrap(), vec![p.clone()]);
         assert_eq!(store.get_project("a").await.unwrap(), Some(p));
         assert_eq!(store.get_project("missing").await.unwrap(), None);
@@ -132,5 +200,46 @@ mod tests {
         store.close().await;
         let store = Store::open(&db).await.unwrap();
         assert_eq!(store.list_projects().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn keys_are_suggested_unique_and_editable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+        let mut a = project("a", "/a");
+        a.name = "Personal Dev Team".into();
+        store.insert_project(&a).await.unwrap();
+        let mut b = project("b", "/b");
+        b.name = "Pretty Dull Thing".into();
+        store.insert_project(&b).await.unwrap();
+        let keys: Vec<String> = store.list_projects().await.unwrap().into_iter().map(|p| p.key).collect();
+        assert_eq!(keys, ["PDT", "PDT2"]);
+
+        assert!(store.update_project("b", Some("Renamed"), Some("RN")).await.unwrap());
+        let b = store.get_project("b").await.unwrap().unwrap();
+        assert_eq!((b.name.as_str(), b.key.as_str()), ("Renamed", "RN"));
+        let ws = store.list_workspaces().await.unwrap();
+        assert!(ws.iter().any(|w| w.name == "Renamed" && w.project_id.as_deref() == Some("b")));
+        assert!(matches!(store.update_project("b", None, Some("PDT")).await, Err(StoreError::Conflict(_))));
+        assert!(!store.update_project("nope", Some("x"), None).await.unwrap());
+
+        assert!(store.delete_project("b").await.unwrap());
+        assert!(!store.delete_project("b").await.unwrap());
+        assert_eq!(store.list_workspaces().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn existing_projects_get_keys_when_the_store_opens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("pdt.db");
+        let store = Store::open(&db).await.unwrap();
+        sqlx::query("INSERT INTO projects (id, name, repo_path, base_branch, created_at) VALUES ('x', 'PDT configuration', '/x', 'main', 1), ('y', 'Pdt Config', '/y', 'main', 2)")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store.close().await;
+        let store = Store::open(&db).await.unwrap();
+        let keys: Vec<String> = store.list_projects().await.unwrap().into_iter().map(|p| p.key).collect();
+        assert_eq!(keys, ["PC", "PC2"]);
     }
 }
