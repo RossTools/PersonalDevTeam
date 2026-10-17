@@ -5,7 +5,6 @@ import { AddProjectForm } from '../projects/AddProjectForm';
 import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
-import { FirstRunChecklist } from '../host/FirstRunChecklist';
 import { HostSettingsPage } from '../host/HostSettingsPage';
 import { UpdateBanner } from '../host/UpdateBanner';
 import { KeyHelp } from '../workspaces/KeyHelp';
@@ -102,7 +101,6 @@ export function AppShell() {
         <div className="flex-1 overflow-auto px-1">
           {view === 'sessions' ? (
             <>
-              <FirstRunChecklist onOpenSettings={() => setView('settings')} />
               {ws.projects.length === 0 && (
                 <p className="px-2 py-2 text-xs text-muted">
                   No projects yet. <button type="button" className="underline" onClick={() => setView('settings')}>Add one in Settings</button>.
@@ -112,7 +110,6 @@ export function AppShell() {
             </>
           ) : view === 'settings' ? (
             <>
-              <FirstRunChecklist />
               <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
                 <button type="button" aria-current={settingsProjectId === null ? 'true' : undefined} onClick={() => setSettingsProjectId(null)}
                   className={`text-left px-2 py-1 rounded-pdt text-sm ${settingsProjectId === null ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>This host</button>

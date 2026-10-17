@@ -15,7 +15,7 @@ afterEach(() => vi.unstubAllGlobals());
 const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1 };
 const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false };
 
-// The shell always renders the update banner and the first-run checklist; a fully set-up host shows neither.
+// The shell always renders the update banner; a fully set-up host shows none.
 const hostTool = { found: true, ok: true, detail: 'ok' };
 const hostRoutes = {
   'GET /api/host/settings': {
