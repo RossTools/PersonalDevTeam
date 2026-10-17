@@ -23,6 +23,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt }: {
 }) {
   const host = useRef<HTMLDivElement>(null);
   const sockRef = useRef<PtySocket | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   const [status, setStatus] = useState<PtyStatus>('connecting');
 
   useEffect(() => {
@@ -34,6 +35,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt }: {
       scrollback: 5000,
       theme: terminalTheme(),
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
@@ -84,8 +86,16 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt }: {
       sock.dispose();
       term.dispose();
       sockRef.current = null;
+      termRef.current = null;
     };
   }, [sessionId, url]);
+
+  // Send a raw byte sequence to the PTY (from the on-screen key bar), keeping the terminal focused so the phone's
+  // soft keyboard stays up.
+  const sendKey = (seq: string) => {
+    sockRef.current?.send(seq);
+    termRef.current?.focus();
+  };
 
   // Safety net: if the terminal is ended or exited but the latest poll says the session is running, reattach. It is
   // evaluated on every poll (the status may have flipped between two polls and never been seen to change), at most
@@ -102,10 +112,48 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt }: {
   }, [sessionStatus, polledAt]);
 
   return (
-    <div className="relative flex-1 min-h-0 bg-bg">
-      <div ref={host} data-testid="terminal" className="absolute inset-0 p-1" />
-      {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
-      {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted">Session ended.</p>}
+    <div className="relative flex min-h-0 flex-1 flex-col bg-bg">
+      <div className="relative min-h-0 flex-1">
+        <div ref={host} data-testid="terminal" className="absolute inset-0 p-1" />
+        {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
+        {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted">Session ended.</p>}
+      </div>
+      <KeyBar onKey={sendKey} />
+    </div>
+  );
+}
+
+/** Keys a phone's soft keyboard can't send, for driving agent prompts and menus. Shown only on touch devices. */
+const KEYS: { label: string; aria: string; seq: string }[] = [
+  { label: 'Esc', aria: 'Escape', seq: '\x1b' },
+  { label: 'Tab', aria: 'Tab', seq: '\t' },
+  { label: '^C', aria: 'Control C', seq: '\x03' },
+  { label: '↑', aria: 'Up', seq: '\x1b[A' },
+  { label: '↓', aria: 'Down', seq: '\x1b[B' },
+  { label: '←', aria: 'Left', seq: '\x1b[D' },
+  { label: '→', aria: 'Right', seq: '\x1b[C' },
+];
+
+function KeyBar({ onKey }: { onKey: (seq: string) => void }) {
+  return (
+    <div
+      role="toolbar"
+      aria-label="Terminal keys"
+      className="hidden shrink-0 gap-1 overflow-x-auto border-t border-border bg-surface px-1 py-1 pointer-coarse:flex"
+    >
+      {KEYS.map((k) => (
+        <button
+          key={k.label}
+          type="button"
+          aria-label={k.aria}
+          // Don't take focus from the terminal, or the soft keyboard would close on each tap.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onKey(k.seq)}
+          className="min-h-11 min-w-11 shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent-soft"
+        >
+          {k.label}
+        </button>
+      ))}
     </div>
   );
 }

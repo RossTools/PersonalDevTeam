@@ -68,13 +68,15 @@ fn codex_notify_runs_the_users_chained_notifier() {
     assert_eq!(std::fs::read_to_string(&out_file).unwrap(), payload);
 }
 
-/// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits.
+/// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits. It records only when spawned
+/// as a session (PDT_SESSION_ID set): the health check also runs `claude auth status` in the background, and without
+/// this guard that invocation would race the session launch and clobber the shared files.
 fn fake_claude(dir: &Path) -> PathBuf {
     if cfg!(windows) {
         let p = dir.join("claude.cmd");
         std::fs::write(
             &p,
-            "@echo off\r\necho %*> \"%~dp0args.txt\"\r\necho %PDT_SESSION_ID%> \"%~dp0session.txt\"\r\nping -n 120 127.0.0.1 >nul\r\n",
+            "@echo off\r\nif defined PDT_SESSION_ID (\r\n  echo %*> \"%~dp0args.txt\"\r\n  echo %PDT_SESSION_ID%> \"%~dp0session.txt\"\r\n)\r\nping -n 120 127.0.0.1 >nul\r\n",
         )
         .unwrap();
         p
@@ -82,7 +84,7 @@ fn fake_claude(dir: &Path) -> PathBuf {
         let p = dir.join("claude");
         std::fs::write(
             &p,
-            "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/args.txt\"\necho \"$PDT_SESSION_ID\" > \"$(dirname \"$0\")/session.txt\"\nexec sleep 120\n",
+            "#!/bin/sh\nif [ -n \"$PDT_SESSION_ID\" ]; then\n  echo \"$@\" > \"$(dirname \"$0\")/args.txt\"\n  echo \"$PDT_SESSION_ID\" > \"$(dirname \"$0\")/session.txt\"\nfi\nexec sleep 120\n",
         )
         .unwrap();
         #[cfg(unix)]
@@ -105,7 +107,7 @@ fn hook_events_change_a_sessions_activity() {
     std::fs::create_dir_all(&repo).unwrap();
     assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
     let port = free_port();
-    let _d = start_with(port, &data, &[("PDT_CLAUDE_PROGRAM", &claude.to_string_lossy())]);
+    let d = std::cell::RefCell::new(start_with(port, &data, &[("PDT_CLAUDE_PROGRAM", &claude.to_string_lossy())]));
     let (_, p) = http(
         port,
         "POST",
@@ -134,15 +136,30 @@ fn hook_events_change_a_sessions_activity() {
 
     let port_s = port.to_string();
     let env = [("PDT_SESSION_ID", id.as_str()), ("PDT_HOOK_PORT", port_s.as_str())];
-    let activity = || http(port, "GET", &format!("/api/sessions/{id}"), None).1;
-    assert_eq!(activity()["activity"], "idle");
+    // A hook updates activity through a separate `pdtd hook` process, so the change may land a moment after the hook
+    // returns; poll for the expected fields rather than reading once (a loaded CI runner can lag).
+    let wait = |want: serde_json::Value| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let t = Instant::now();
+            let s = http(port, "GET", &format!("/api/sessions/{id}"), None).1;
+            if want.as_object().unwrap().iter().all(|(k, v)| &s[k] == v) {
+                return s;
+            }
+            if Instant::now() >= deadline {
+                let why = diagnose(&mut d.borrow_mut(), port, &data);
+                panic!("session never reached {want}: {s} (last GET took {:?})\n{why}", t.elapsed());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    wait(serde_json::json!({"activity": "idle"}));
     assert!(hook(&["claude", "UserPromptSubmit"], &env, r#"{"prompt":"x"}"#).0.status.success());
-    assert_eq!(activity()["activity"], "working");
+    wait(serde_json::json!({"activity": "working"}));
     hook(&["claude", "Stop"], &env, "{}");
-    let s = activity();
-    assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)), "{s}");
+    wait(serde_json::json!({"activity": "idle", "unseen": true}));
     assert_eq!(http(port, "POST", &format!("/api/sessions/{id}/view"), None).0, 204);
-    assert_eq!(activity()["unseen"], false);
+    wait(serde_json::json!({"unseen": false}));
     hook(&["claude", "Notification"], &env, r#"{"notification_type":"permission_prompt","message":"m"}"#);
-    assert_eq!(activity()["activity"], "needs_you");
+    wait(serde_json::json!({"activity": "needs_you"}));
 }

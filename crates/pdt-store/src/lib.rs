@@ -40,7 +40,10 @@ impl Store {
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .foreign_keys(true);
-        let pool = SqlitePoolOptions::new().max_connections(8).connect_with(options).await?;
+        // No ping before handing out an idle connection: a local SQLite connection doesn't go stale, and on Windows
+        // that ping could stall a checkout indefinitely under load (with idle connections in the pool), hanging the
+        // request that needed it (docs/superpowers/notes/phase-2-carryover.md).
+        let pool = SqlitePoolOptions::new().max_connections(8).test_before_acquire(false).connect_with(options).await?;
         migrate::backup_if_pending(&pool, migrator, backup_dir).await?;
         migrator.run(&pool).await?;
         Ok(Store { pool, host_defaults: Default::default() })

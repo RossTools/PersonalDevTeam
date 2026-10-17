@@ -382,6 +382,7 @@ async fn seed_with(
         worktree_id: None,
         kind: if agent.is_some() { SessionKind::AgentTui } else { SessionKind::Shell },
         agent,
+        bypass_permissions: false,
         title: id.into(),
         cwd: cwd.to_string_lossy().into_owned(),
         status: SessionStatus::Running,

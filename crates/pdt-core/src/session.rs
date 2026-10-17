@@ -79,6 +79,9 @@ pub struct Session {
     pub worktree_id: Option<String>,
     pub kind: SessionKind,
     pub agent: Option<AgentKind>,
+    /// Agents only: launched with permission prompts bypassed (`--dangerously-skip-permissions` for Claude,
+    /// `--dangerously-bypass-approvals-and-sandbox` for Codex). Persisted so restart/auto-resume keep it.
+    pub bypass_permissions: bool,
     pub title: String,
     /// Working directory, native separators.
     pub cwd: String,
@@ -134,6 +137,10 @@ pub struct NewSession {
     #[serde(default)]
     #[ts(optional)]
     pub agent: Option<AgentKind>,
+    /// Agents only: bypass the agent's permission prompts. Absent/false launches normally; ignored for shells.
+    #[serde(default)]
+    #[ts(optional)]
+    pub bypass_permissions: Option<bool>,
     pub cols: u16,
     pub rows: u16,
 }
@@ -144,6 +151,7 @@ pub struct ValidSession {
     pub worktree_id: Option<String>,
     pub kind: SessionKind,
     pub agent: Option<AgentKind>,
+    pub bypass_permissions: bool,
     pub size: TerminalSize,
 }
 
@@ -172,7 +180,16 @@ impl NewSession {
             _ => {}
         }
         let size = TerminalSize { cols: self.cols, rows: self.rows }.validate()?;
-        Ok(ValidSession { project_id: project_id.into(), worktree_id, kind: self.kind, agent: self.agent, size })
+        // Bypass only applies to agents; a shell never carries it.
+        let bypass_permissions = self.kind == SessionKind::AgentTui && self.bypass_permissions.unwrap_or(false);
+        Ok(ValidSession {
+            project_id: project_id.into(),
+            worktree_id,
+            kind: self.kind,
+            agent: self.agent,
+            bypass_permissions,
+            size,
+        })
     }
 }
 
@@ -211,13 +228,15 @@ pub enum Resume {
     Codex(String),
 }
 
-/// What to run for a session. Shells ignore `resume`. A resume that does not match the agent starts fresh.
+/// What to run for a session. Shells ignore `resume` and `bypass_permissions`. A resume that does not match the
+/// agent starts fresh. `bypass_permissions` adds the agent's skip-all-prompts flag (dangerous; see `Session`).
 pub fn launch(
     kind: SessionKind,
     agent: Option<AgentKind>,
     platform: &Platform,
     resume: &Resume,
     session_id: &str,
+    bypass_permissions: bool,
 ) -> Launch {
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     match (kind, agent) {
@@ -229,17 +248,24 @@ pub fn launch(
             program: platform.unix_shell.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "/bin/zsh".into()),
             args: args(&["-l"]),
         },
-        (SessionKind::AgentTui, Some(AgentKind::Codex)) => Launch {
-            program: platform.codex_program.clone(),
-            args: match resume {
+        (SessionKind::AgentTui, Some(AgentKind::Codex)) => {
+            let mut a = match resume {
                 Resume::Codex(id) => args(&["resume", id]),
                 _ => vec![],
-            },
-        },
-        (SessionKind::AgentTui, _) => Launch {
-            program: platform.claude_program.clone(),
-            args: args(&[if *resume == Resume::Claude { "--resume" } else { "--session-id" }, session_id]),
-        },
+            };
+            // Valid on both the root command and `resume`, so appending always works.
+            if bypass_permissions {
+                a.push("--dangerously-bypass-approvals-and-sandbox".into());
+            }
+            Launch { program: platform.codex_program.clone(), args: a }
+        }
+        (SessionKind::AgentTui, _) => {
+            let mut a = args(&[if *resume == Resume::Claude { "--resume" } else { "--session-id" }, session_id]);
+            if bypass_permissions {
+                a.push("--dangerously-skip-permissions".into());
+            }
+            Launch { program: platform.claude_program.clone(), args: a }
+        }
     }
 }
 
@@ -360,11 +386,11 @@ mod tests {
     #[test]
     fn shell_launch_per_platform() {
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), &Resume::Fresh, SID)),
+            launch_of(launch(SessionKind::Shell, None, &platform(true, true, None), &Resume::Fresh, SID, false)),
             ("pwsh".into(), vec!["-NoLogo".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), &Resume::Fresh, SID)),
+            launch_of(launch(SessionKind::Shell, None, &platform(true, false, None), &Resume::Fresh, SID, false)),
             ("powershell.exe".into(), vec!["-NoLogo".into()])
         );
         assert_eq!(
@@ -373,13 +399,33 @@ mod tests {
                 None,
                 &platform(false, false, Some("/bin/bash")),
                 &Resume::Fresh,
-                SID
+                SID,
+                false
             )),
             ("/bin/bash".into(), vec!["-l".into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::Shell, None, &platform(false, false, Some("  ")), &Resume::Fresh, SID)),
+            launch_of(launch(
+                SessionKind::Shell,
+                None,
+                &platform(false, false, Some("  ")),
+                &Resume::Fresh,
+                SID,
+                false
+            )),
             ("/bin/zsh".into(), vec!["-l".into()])
+        );
+        // Bypass never affects a shell.
+        assert_eq!(
+            launch_of(launch(
+                SessionKind::Shell,
+                None,
+                &platform(false, false, Some("/bin/bash")),
+                &Resume::Fresh,
+                SID,
+                true
+            )),
+            ("/bin/bash".into(), vec!["-l".into()])
         );
     }
 
@@ -387,35 +433,82 @@ mod tests {
     fn agent_launch_and_resume() {
         let p = platform(false, false, None);
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Fresh, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Fresh, SID, false)),
             ("claude".into(), vec!["--session-id".into(), SID.into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Claude, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Claude, SID, false)),
             ("claude".into(), vec!["--resume".into(), SID.into()])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Fresh, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Fresh, SID, false)),
             ("codex".into(), vec![])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Codex("019-abc".into()), SID)),
+            launch_of(launch(
+                SessionKind::AgentTui,
+                Some(AgentKind::Codex),
+                &p,
+                &Resume::Codex("019-abc".into()),
+                SID,
+                false
+            )),
             ("codex".into(), vec!["resume".into(), "019-abc".into()])
         );
         // A resume for the wrong agent starts fresh, and a Claude session never gets Codex's id.
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Claude, SID)),
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Claude, SID, false)),
             ("codex".into(), vec![])
         );
         assert_eq!(
-            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Codex("x".into()), SID)),
+            launch_of(launch(
+                SessionKind::AgentTui,
+                Some(AgentKind::Claude),
+                &p,
+                &Resume::Codex("x".into()),
+                SID,
+                false
+            )),
             ("claude".into(), vec!["--session-id".into(), SID.into()])
         );
         let mut custom = p.clone();
         custom.codex_program = "/opt/codex".into();
         assert_eq!(
-            launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, &Resume::Fresh, SID).program,
+            launch(SessionKind::AgentTui, Some(AgentKind::Codex), &custom, &Resume::Fresh, SID, false).program,
             "/opt/codex"
+        );
+    }
+
+    #[test]
+    fn bypass_permissions_adds_the_skip_flag() {
+        let p = platform(false, false, None);
+        // Claude: the flag follows the conversation args, fresh or resumed.
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Fresh, SID, true)),
+            ("claude".into(), vec!["--session-id".into(), SID.into(), "--dangerously-skip-permissions".into()])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Claude, SID, true)),
+            ("claude".into(), vec!["--resume".into(), SID.into(), "--dangerously-skip-permissions".into()])
+        );
+        // Codex: fresh and resumed both take the bypass flag.
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Fresh, SID, true)),
+            ("codex".into(), vec!["--dangerously-bypass-approvals-and-sandbox".into()])
+        );
+        assert_eq!(
+            launch_of(launch(
+                SessionKind::AgentTui,
+                Some(AgentKind::Codex),
+                &p,
+                &Resume::Codex("019-abc".into()),
+                SID,
+                true
+            )),
+            (
+                "codex".into(),
+                vec!["resume".into(), "019-abc".into(), "--dangerously-bypass-approvals-and-sandbox".into()]
+            )
         );
     }
 
@@ -475,7 +568,15 @@ mod tests {
     }
 
     fn new(kind: SessionKind, agent: Option<AgentKind>, cols: u16, rows: u16) -> NewSession {
-        NewSession { project_id: " p1 ".into(), worktree_id: Some("  ".into()), kind, agent, cols, rows }
+        NewSession {
+            project_id: " p1 ".into(),
+            worktree_id: Some("  ".into()),
+            kind,
+            agent,
+            bypass_permissions: None,
+            cols,
+            rows,
+        }
     }
 
     #[test]
@@ -484,6 +585,13 @@ mod tests {
         assert_eq!(v.project_id, "p1");
         assert_eq!(v.worktree_id, None, "blank worktree id means the repo root");
         assert_eq!(v.size, TerminalSize { cols: 80, rows: 24 });
+        // Bypass rides through for an agent, but a shell never carries it.
+        let mut agent = new(SessionKind::AgentTui, Some(AgentKind::Claude), 80, 24);
+        agent.bypass_permissions = Some(true);
+        assert!(agent.validate().unwrap().bypass_permissions);
+        let mut shell = new(SessionKind::Shell, None, 80, 24);
+        shell.bypass_permissions = Some(true);
+        assert!(!shell.validate().unwrap().bypass_permissions, "a shell drops bypass");
         assert_eq!(
             new(SessionKind::AgentTui, None, 80, 24).validate().unwrap_err(),
             SessionValidationError::MissingAgent

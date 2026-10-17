@@ -51,6 +51,7 @@ pub(crate) async fn create(
         worktree_id,
         kind: valid.kind,
         agent: valid.agent,
+        bypass_permissions: valid.bypass_permissions,
         title: default_title(valid.kind, valid.agent, &place),
         cwd,
         status: SessionStatus::Running,
@@ -206,7 +207,7 @@ fn start_pty(
     resume: &Resume,
     creds: pdt_core::host::CredentialPolicy,
 ) -> Result<(), PtyError> {
-    let l = launch(s.kind, s.agent, &st.platform, resume, &s.id);
+    let l = launch(s.kind, s.agent, &st.platform, resume, &s.id, s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args)?;
     let (program, args) = pdt_agents::launch::resolve(&l.program, &launch_args, login_path)?;
