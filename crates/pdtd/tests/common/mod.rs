@@ -43,7 +43,7 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         .envs(extra_env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(log_file(data))
         .spawn()
         .unwrap();
     let d = Daemon(child);
@@ -55,6 +55,41 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("pdtd did not become healthy");
+}
+
+/// pdtd's stderr, kept in the data dir's parent so `diagnose` can show it.
+fn log_file(data: &Path) -> Stdio {
+    let path = data.with_extension("stderr.log");
+    match std::fs::File::create(&path) {
+        Ok(f) => Stdio::from(f),
+        Err(_) => Stdio::null(),
+    }
+}
+
+/// What a failing test should print about its daemon: alive or not, health, and its logs.
+pub fn diagnose(d: &mut Daemon, port: u16, data: &Path) -> String {
+    let alive = match d.0.try_wait() {
+        Ok(None) => "running".to_string(),
+        Ok(Some(s)) => format!("exited: {s}"),
+        Err(e) => format!("unknown: {e}"),
+    };
+    let t = Instant::now();
+    let health = http(port, "GET", "/api/health", None);
+    let mut out = format!("pdtd {alive}; health {:?} in {:?}\n", health, t.elapsed());
+    let mut logs: Vec<_> =
+        std::fs::read_dir(data.join("logs")).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    logs.push(data.with_extension("stderr.log"));
+    for p in logs {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            let tail: Vec<&str> = text.lines().rev().take(80).collect();
+            out.push_str(&format!("--- {}\n", p.display()));
+            for l in tail.into_iter().rev() {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+    }
+    out
 }
 
 pub fn http(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, serde_json::Value) {

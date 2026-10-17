@@ -107,7 +107,11 @@ fn hook_events_change_a_sessions_activity() {
     std::fs::create_dir_all(&repo).unwrap();
     assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
     let port = free_port();
-    let _d = start_with(port, &data, &[("PDT_CLAUDE_PROGRAM", &claude.to_string_lossy())]);
+    let d = std::cell::RefCell::new(start_with(
+        port,
+        &data,
+        &[("PDT_CLAUDE_PROGRAM", &claude.to_string_lossy()), ("RUST_LOG", "debug,hyper=info,hyper_util=info")],
+    ));
     let (_, p) = http(
         port,
         "POST",
@@ -141,11 +145,15 @@ fn hook_events_change_a_sessions_activity() {
     let wait = |want: serde_json::Value| {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            let t = Instant::now();
             let s = http(port, "GET", &format!("/api/sessions/{id}"), None).1;
             if want.as_object().unwrap().iter().all(|(k, v)| &s[k] == v) {
                 return s;
             }
-            assert!(Instant::now() < deadline, "session never reached {want}: {s}");
+            if Instant::now() >= deadline {
+                let why = diagnose(&mut d.borrow_mut(), port, &data);
+                panic!("session never reached {want}: {s} (last GET took {:?})\n{why}", t.elapsed());
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
     };
