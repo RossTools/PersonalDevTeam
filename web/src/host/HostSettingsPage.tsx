@@ -123,9 +123,8 @@ export function HostSettingsPage() {
             <p>Token: cannot be read. {v.tokenError}</p>
             <p className="text-muted">
               A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
-              on this Mac and choose Always Allow. If there is none, remove the old item with{' '}
-              <code>security delete-generic-password -s dev.personaldevteam -a update-token</code>, restart the daemon
-              from the tray, and save the token again here.
+              on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
+              Access, restart the daemon from the tray, and save the token again here.
             </p>
           </div>
         ) : (
