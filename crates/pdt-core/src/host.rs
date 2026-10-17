@@ -116,6 +116,8 @@ pub enum HostSettingsError {
     BadMaxRuns,
     #[error("the owner login must not contain spaces or control characters")]
     BadOwner,
+    #[error("the projects folder must be a full path (or start with ~ for your home folder)")]
+    BadProjectsDir,
 }
 
 impl HostSettings {
@@ -161,6 +163,9 @@ impl HostSettings {
         }
         if let Some(d) = &p.projects_dir {
             let d = d.trim();
+            if !d.is_empty() && !d.starts_with('~') && !std::path::Path::new(d).is_absolute() {
+                return Err(HostSettingsError::BadProjectsDir);
+            }
             s.projects_dir = (!d.is_empty()).then(|| d.to_string());
         }
         Ok(s)
@@ -267,5 +272,9 @@ mod tests {
         assert_eq!(s.projects_dir.as_deref(), Some("/srv/code"));
         let s = s.apply(&HostSettingsPatch { projects_dir: Some(" ".into()), ..patch() }).unwrap();
         assert_eq!(s.projects_dir, None);
+        let s = s.apply(&HostSettingsPatch { projects_dir: Some("~/code".into()), ..patch() }).unwrap();
+        assert_eq!(s.projects_dir.as_deref(), Some("~/code"));
+        let bad = s.apply(&HostSettingsPatch { projects_dir: Some("code".into()), ..patch() });
+        assert_eq!(bad, Err(HostSettingsError::BadProjectsDir));
     }
 }

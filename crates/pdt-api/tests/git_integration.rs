@@ -155,6 +155,33 @@ async fn clone_by_url_adds_the_project() {
     .await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_GATEWAY, Some("clone_failed")), "{v}");
     assert!(!parent.join("nothing-here").exists());
+    let typo = env.tmp.path().join("no-such-dir").join("work");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        "/api/projects/clone",
+        Some(json!({"url": env.repo.to_string_lossy(), "parentDir": typo.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("folder_missing")), "{v}");
+    assert!(!typo.exists(), "a mistyped folder is not created");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        "/api/projects/clone",
+        Some(json!({"url": env.repo.to_string_lossy(), "parentDir": "relative/dir"})),
+    )
+    .await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_folder")), "{v}");
+    let fresh = env.tmp.path().join("fresh");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        "/api/projects/clone",
+        Some(json!({"url": env.repo.to_string_lossy(), "parentDir": fresh.to_string_lossy(), "name": "Second"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "a missing folder whose parent exists is created: {v}");
     let (s, v) = call(&env.app, "POST", "/api/projects/clone", Some(json!({"url": "--upload-pack=x"}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
 }

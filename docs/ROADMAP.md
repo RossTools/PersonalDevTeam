@@ -26,6 +26,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
 ## Follow-ups (any time)
+- **Folder picker:** browse the host's folders to choose a path (Add project → Folder, Clone URL → Into folder, Host
+  settings → Projects folder) instead of typing it.
 - **Faster CI, next steps** (done: nextest, no debug info, Mac mini runner for PRs, Windows and bundles off the PR
   path; docs/superpowers/notes/ci.md). Next: a single `ci` gate job as the only required check (lets jobs be
   renamed), a Windows runner on the desktop, Dev Drive for hosted Windows.

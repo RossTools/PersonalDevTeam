@@ -110,6 +110,12 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
     ];
     for s in &sessions {
         store.insert_session(s).await?;
+        // Each session is a tab in its project's workspace, as sessions made through the API are.
+        if let Some(home) = store.project_workspace_id(&s.project_id).await? {
+            store
+                .open_tab(&id(), &home, &pdt_core::workspace::TabItem::Session(s.id.clone()), None, s.created_at)
+                .await?;
+        }
     }
 
     let run = |project: &Project, wt: Option<&Worktree>, branch: &str, name: &str, kind: RunKind, ago: i64| Run {
@@ -236,6 +242,9 @@ mod tests {
         assert!(sessions.iter().all(|s| s.status == SessionStatus::Finished && s.ended_at.is_some()));
         assert!(sessions.iter().any(|s| s.worktree_id.as_deref() == Some(wts[0].id.as_str())));
         assert!(store.list_sessions_by_status(SessionStatus::Interrupted).await.unwrap().is_empty());
+        let workspaces = store.list_workspaces().await.unwrap();
+        let tabs = |name: &str| workspaces.iter().find(|w| w.name == name).map(|w| w.tabs.len());
+        assert_eq!((tabs("Sample App"), tabs("Sample Library")), (Some(4), Some(1)), "every session has a tab");
 
         let runs = store.list_runs(&app.id).await.unwrap();
         assert_eq!(runs.len(), 3);

@@ -67,6 +67,33 @@ pub struct CloneProject {
     pub key: Option<String>,
 }
 
+/// A folder the user typed: `~` or `~/...` expands to `home`; anything else must already be absolute. Trimmed.
+pub fn resolve_folder(input: &str, home: Option<&std::path::Path>) -> Result<std::path::PathBuf, FolderError> {
+    let s = input.trim();
+    if s.is_empty() {
+        return Err(FolderError::Empty);
+    }
+    let rest = if s == "~" { Some("") } else { s.strip_prefix("~/").or_else(|| s.strip_prefix("~\\")) };
+    let path = match rest {
+        Some(r) => home.ok_or(FolderError::NoHome)?.join(r),
+        None => std::path::PathBuf::from(s),
+    };
+    if !path.is_absolute() {
+        return Err(FolderError::NotAbsolute(s.to_string()));
+    }
+    Ok(path)
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum FolderError {
+    #[error("enter a folder")]
+    Empty,
+    #[error("the home folder is not known; enter the full path")]
+    NoHome,
+    #[error("{0:?} is not a full path; start it with / (or ~ for your home folder)")]
+    NotAbsolute(String),
+}
+
 /// Longest project key.
 pub const MAX_KEY: usize = 10;
 
@@ -207,5 +234,17 @@ mod tests {
         assert_eq!(suggest_key("PDT configuration", &["PC".into()]), "PC2");
         assert_eq!(suggest_key("Personal Dev Team", &["pdt".into(), "PDT2".into()]), "PDT3");
         assert!(valid_key(&suggest_key("a b c d e f g h i j k l", &none)).is_ok());
+    }
+
+    #[test]
+    fn folders_expand_home_and_must_be_absolute() {
+        let home = std::env::temp_dir();
+        assert_eq!(resolve_folder(" ~/work ", Some(&home)), Ok(home.join("work")));
+        assert_eq!(resolve_folder("~", Some(&home)), Ok(home.join("")));
+        let abs = home.join("code");
+        assert_eq!(resolve_folder(&abs.to_string_lossy(), None), Ok(abs.clone()));
+        assert_eq!(resolve_folder("work/code", Some(&home)), Err(FolderError::NotAbsolute("work/code".into())));
+        assert_eq!(resolve_folder("~/x", None), Err(FolderError::NoHome));
+        assert_eq!(resolve_folder("  ", Some(&home)), Err(FolderError::Empty));
     }
 }

@@ -87,12 +87,30 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(p)))
 }
 
-/// The folder new clones go in: the host setting, else `~/work`.
+/// The folder new clones go in: the host setting (with `~` expanded), else `~/work`.
 pub(crate) fn projects_dir(setting: Option<&str>) -> Option<PathBuf> {
-    match setting {
-        Some(d) => Some(PathBuf::from(d)),
-        None => std::env::home_dir().map(|h| h.join("work")),
+    pdt_core::project::resolve_folder(setting.unwrap_or("~/work"), std::env::home_dir().as_deref()).ok()
+}
+
+/// Makes sure the folder a clone goes in exists. A missing folder is created only when its own parent exists, so a
+/// mistyped path (`/User/me/work`) is reported instead of attempted.
+fn ensure_parent(dir: &std::path::Path) -> Result<(), ApiError> {
+    if dir.is_dir() {
+        return Ok(());
     }
+    let missing = || {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "folder_missing",
+            format!("{} does not exist; check the path or create the folder first", dir.display()),
+        )
+    };
+    if dir.exists() || !dir.parent().is_some_and(|p| p.is_dir()) {
+        return Err(missing());
+    }
+    std::fs::create_dir(dir).map_err(|e| {
+        ApiError::new(StatusCode::BAD_REQUEST, "folder_missing", format!("could not create {}: {e}", dir.display()))
+    })
 }
 
 pub(crate) async fn clone(
@@ -109,12 +127,15 @@ pub(crate) async fn clone(
     let key = input.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
     let name = input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&repo).to_string();
     let parent = match input.parent_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-        Some(d) => PathBuf::from(d),
+        Some(d) => pdt_core::project::resolve_folder(d, std::env::home_dir().as_deref())
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_folder", e.to_string()))?,
         None => {
             let setting = st.store.get_host_settings().await?.projects_dir;
             projects_dir(setting.as_deref()).ok_or_else(|| bad("set a Projects folder in Host settings"))?
         }
     };
+    let check = parent.clone();
+    tokio::task::spawn_blocking(move || ensure_parent(&check)).await.map_err(ApiError::internal)??;
     let dest = parent.join(&repo);
     if dest.exists() {
         return Err(ApiError::new(
