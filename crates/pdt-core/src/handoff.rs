@@ -20,6 +20,9 @@ pub fn result_path(data_dir: &Path) -> PathBuf {
 pub fn skip_path(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("skip.json")
 }
+/// The argument pdt-host starts the tray app with after an install or rollback: the tray then skips opening the web
+/// UI, since the browser already has it open and reconnects by itself.
+pub const TRAY_QUIET_ARG: &str = "--no-open";
 pub fn downloads_dir(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("downloads")
 }

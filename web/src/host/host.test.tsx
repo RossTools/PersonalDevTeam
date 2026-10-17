@@ -166,6 +166,21 @@ describe('HostSettingsPage', () => {
 });
 
 describe('UpdateBanner', () => {
+  it('stays one line and shows the release notes over the page, not in it', async () => {
+    stubApi({ 'GET /api/host/update': update({ state: 'available', latest: { ...release, notes: 'Fixes things' } }) });
+    renderWithQuery(<UpdateBanner />);
+    const toggle = await screen.findByRole('button', { name: 'Release notes' });
+    const strip = screen.getByText(/Update to v0.1.7 available/).parentElement!;
+    expect(strip).toHaveClass('h-8', 'flex-nowrap');
+    expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: 'Release notes' })).toHaveClass('absolute');
+    expect(screen.getByText('Fixes things')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+  });
+
   it('confirms before updating a busy host', async () => {
     let n = 0;
     const calls = stubApi({

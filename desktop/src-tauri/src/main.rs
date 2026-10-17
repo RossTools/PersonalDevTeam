@@ -29,6 +29,8 @@ struct Tray {
     updating: AtomicBool,
     /// Set once the first `ensure_daemon` succeeded. Opens requested before then are covered by the startup open.
     ready: AtomicBool,
+    /// Started by pdt-host after an update: the browser already shows the UI, so startup opens no new window.
+    quiet_start: bool,
 }
 
 impl Tray {
@@ -120,6 +122,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         busy: AtomicBool::new(true),
         updating: AtomicBool::new(false),
         ready: AtomicBool::new(false),
+        quiet_start: daemon::quiet_start(std::env::args()),
     });
 
     let handle = app.handle().clone();
@@ -133,7 +136,9 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
                 let _ = tray.restart_item.set_enabled(true);
                 tray.ready.store(true, Ordering::SeqCst);
                 tray.end();
-                open_ui(&handle);
+                if !tray.quiet_start {
+                    open_ui(&handle);
+                }
                 loop {
                     refresh(&handle);
                     std::thread::sleep(REFRESH_EVERY);
