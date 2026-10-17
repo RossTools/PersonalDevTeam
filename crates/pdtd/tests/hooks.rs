@@ -136,15 +136,26 @@ fn hook_events_change_a_sessions_activity() {
 
     let port_s = port.to_string();
     let env = [("PDT_SESSION_ID", id.as_str()), ("PDT_HOOK_PORT", port_s.as_str())];
-    let activity = || http(port, "GET", &format!("/api/sessions/{id}"), None).1;
-    assert_eq!(activity()["activity"], "idle");
+    // A hook updates activity through a separate `pdtd hook` process, so the change may land a moment after the hook
+    // returns; poll for the expected fields rather than reading once (a loaded CI runner can lag).
+    let wait = |want: serde_json::Value| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let s = http(port, "GET", &format!("/api/sessions/{id}"), None).1;
+            if want.as_object().unwrap().iter().all(|(k, v)| &s[k] == v) {
+                return s;
+            }
+            assert!(Instant::now() < deadline, "session never reached {want}: {s}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    wait(serde_json::json!({"activity": "idle"}));
     assert!(hook(&["claude", "UserPromptSubmit"], &env, r#"{"prompt":"x"}"#).0.status.success());
-    assert_eq!(activity()["activity"], "working");
+    wait(serde_json::json!({"activity": "working"}));
     hook(&["claude", "Stop"], &env, "{}");
-    let s = activity();
-    assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)), "{s}");
+    wait(serde_json::json!({"activity": "idle", "unseen": true}));
     assert_eq!(http(port, "POST", &format!("/api/sessions/{id}/view"), None).0, 204);
-    assert_eq!(activity()["unseen"], false);
+    wait(serde_json::json!({"unseen": false}));
     hook(&["claude", "Notification"], &env, r#"{"notification_type":"permission_prompt","message":"m"}"#);
-    assert_eq!(activity()["activity"], "needs_you");
+    wait(serde_json::json!({"activity": "needs_you"}));
 }
