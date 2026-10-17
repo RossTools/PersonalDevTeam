@@ -56,6 +56,17 @@ cargo clippy -p pdt-desktop --all-targets -- -D warnings   # only if desktop/ ch
 cargo test -p pdt-desktop                                  # likewise
 ```
 
+**Watching CI:** use the Actions run, not `gh pr checks`. The `gh` token here is fine-grained, and fine-grained tokens
+cannot read check runs (there is no Checks permission for them), so `gh pr checks` fails with "Resource not
+accessible by personal access token".
+
+```sh
+gh run list --branch <branch> --limit 1 --json databaseId,status,headSha   # the run for the latest push
+gh run watch <run id> --interval 30 --exit-status                          # exits non-zero if CI failed
+```
+
+A new push starts a new run (the old one is cancelled), so look the run up again after each push.
+
 A fresh worktree needs `pnpm install --frozen-lockfile` once. Its `target/` starts empty, so the first build is slow.
 Tests never touch port 7420, the real data folders or the real keychain.
 
