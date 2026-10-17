@@ -1,0 +1,183 @@
+import { useCallback, useMemo, useState } from 'react';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { Status } from '@ui';
+import { api } from '../api/client';
+import type { Activity } from '../api/gen/Activity';
+import type { Project } from '../api/gen/Project';
+import type { Run } from '../api/gen/Run';
+import type { Session } from '../api/gen/Session';
+import type { Tab } from '../api/gen/Tab';
+import type { TabPlacement } from '../api/gen/TabPlacement';
+import type { Workspace } from '../api/gen/Workspace';
+import { runDot } from '../runs/runState';
+import { toDot } from '../sessions/status';
+import { findTab, itemOf, resolveCurrent, type CurrentChoice, type Item } from './model';
+
+const STORAGE_KEY = 'pdt.workspaces.current';
+
+function loadChoice(): CurrentChoice {
+  try {
+    const v = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
+    if (v && typeof v === 'object' && typeof v.tabs === 'object') return { workspaceId: v.workspaceId ?? null, tabs: v.tabs ?? {} };
+  } catch {
+    // Unreadable or blocked storage: start from the first workspace.
+  }
+  return { workspaceId: null, tabs: {} };
+}
+
+function saveChoice(c: CurrentChoice) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(c));
+  } catch {
+    // Storage blocked (private window): the choice lasts for this page only.
+  }
+}
+
+/** What the UI needs to show an item in a tab or the tree. */
+export interface ItemInfo {
+  item: Item;
+  title: string;
+  status: Status;
+  activity: Activity | null;
+  unseen: boolean;
+  projectId: string;
+  worktreeId: string | null;
+  session?: Session;
+  run?: Run;
+  /** When the list holding it was last polled (passed to the terminal views). */
+  polledAt: number;
+}
+
+export function sessionInfo(s: Session, polledAt: number): ItemInfo {
+  return {
+    item: { kind: 'session', id: s.id }, title: s.title, status: toDot(s.status), activity: s.activity, unseen: s.unseen,
+    projectId: s.projectId, worktreeId: s.worktreeId, session: s, polledAt,
+  };
+}
+
+export function runInfo(r: Run, polledAt: number): ItemInfo {
+  return {
+    item: { kind: 'run', id: r.id }, title: `${r.kind === 'test' ? 'Test ' : ''}${r.name} · ${r.branch}`,
+    status: runDot(r.state), activity: null, unseen: false, projectId: r.projectId, worktreeId: r.worktreeId, run: r, polledAt,
+  };
+}
+
+/**
+ * Workspaces, the per-device choice of workspace and tab, every project's sessions and runs (the same queries the
+ * tree uses), and the tab actions.
+ */
+export function useWorkspaces() {
+  const qc = useQueryClient();
+  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projectList: Project[] = useMemo(() => projects.data ?? [], [projects.data]);
+  const workspacesQ = useQuery({ queryKey: ['workspaces'], queryFn: api.listWorkspaces, refetchInterval: 2000 });
+  const workspaces: Workspace[] = useMemo(() => workspacesQ.data ?? [], [workspacesQ.data]);
+  const sessionQs = useQueries({
+    queries: projectList.map((p) => ({ queryKey: ['sessions', p.id], queryFn: () => api.listSessions(p.id), refetchInterval: 2000 })),
+  });
+  const runQs = useQueries({
+    queries: projectList.map((p) => ({ queryKey: ['runs', p.id], queryFn: () => api.listRuns(p.id), refetchInterval: 2000 })),
+  });
+
+  const infos = useMemo(() => {
+    const m = new Map<string, ItemInfo>();
+    for (const q of sessionQs) for (const s of q.data ?? []) m.set(`session:${s.id}`, sessionInfo(s, q.dataUpdatedAt));
+    for (const q of runQs) for (const r of q.data ?? []) m.set(`run:${r.id}`, runInfo(r, q.dataUpdatedAt));
+    return m;
+    // The query result arrays are new objects on every render; their data timestamps say when anything changed.
+  }, [sessionQs.map((q) => q.dataUpdatedAt).join(), runQs.map((q) => q.dataUpdatedAt).join()]);
+  const info = useCallback((item: Item) => infos.get(`${item.kind}:${item.id}`) ?? null, [infos]);
+  const allInfos = useMemo(() => [...infos.values()], [infos]);
+
+  const [choice, setChoiceState] = useState<CurrentChoice>(loadChoice);
+  const setChoice = useCallback((f: (c: CurrentChoice) => CurrentChoice) => {
+    setChoiceState((c) => {
+      const next = f(c);
+      saveChoice(next);
+      return next;
+    });
+  }, []);
+  const { workspace, tab } = resolveCurrent(workspaces, choice);
+
+  const selectWorkspace = useCallback((id: string) => setChoice((c) => ({ ...c, workspaceId: id })), [setChoice]);
+  const selectTab = useCallback(
+    (t: Tab) => setChoice((c) => ({ workspaceId: t.workspaceId, tabs: { ...c.tabs, [t.workspaceId]: t.id } })),
+    [setChoice],
+  );
+  const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['workspaces'] }), [qc]);
+
+  /** Shows an item: its tab wherever it is, else a new tab in its project's workspace. */
+  const focusItem = useCallback(
+    async (item: Item, projectId: string) => {
+      const cached = qc.getQueryData<Workspace[]>(['workspaces']) ?? [];
+      let found = findTab(cached, item);
+      if (!found) {
+        const fresh = await qc.fetchQuery({ queryKey: ['workspaces'], queryFn: api.listWorkspaces, staleTime: 0 });
+        found = findTab(fresh, item);
+        if (!found) {
+          const home = fresh.find((w) => w.projectId === projectId);
+          if (!home) return;
+          const t = await api.openTab(home.id, item.kind === 'session' ? { sessionId: item.id } : { runId: item.id });
+          await refresh();
+          selectTab(t);
+          return;
+        }
+      }
+      selectTab(found.tab);
+    },
+    [qc, refresh, selectTab],
+  );
+
+  /** Where a session or run launched from the tree opens: after the current tab when its project's workspace is on
+   * screen, else (undefined) the end of that workspace. */
+  const placementFor = useCallback(
+    (projectId: string): TabPlacement | undefined => {
+      if (!workspace || workspace.projectId !== projectId) return undefined;
+      return { workspaceId: workspace.id, position: tab ? tab.position + 1 : workspace.tabs.length };
+    },
+    [workspace, tab],
+  );
+
+  const closeTab = useCallback(
+    async (t: Tab) => {
+      const w = workspaces.find((x) => x.id === t.workspaceId);
+      if (w && tab?.id === t.id) {
+        const i = w.tabs.findIndex((x) => x.id === t.id);
+        const neighbour = w.tabs[i + 1] ?? w.tabs[i - 1];
+        setChoice((c) => ({ ...c, tabs: { ...c.tabs, [w.id]: neighbour?.id ?? '' } }));
+      }
+      await api.closeTab(t.id);
+      await refresh();
+    },
+    [workspaces, tab, setChoice, refresh],
+  );
+
+  const moveTab = useCallback(
+    async (t: Tab, workspaceId: string, position?: number) => {
+      await api.updateTab(t.id, { workspaceId, ...(position !== undefined ? { position } : {}) });
+      await refresh();
+    },
+    [refresh],
+  );
+
+  /** Opens an item in a workspace (moving its tab if it has one) and shows it. */
+  const openIn = useCallback(
+    async (item: Item, workspaceId: string, position?: number) => {
+      const t = await api.openTab(workspaceId, {
+        ...(item.kind === 'session' ? { sessionId: item.id } : { runId: item.id }),
+        ...(position !== undefined ? { position } : {}),
+      });
+      await refresh();
+      selectTab(t);
+    },
+    [refresh, selectTab],
+  );
+
+  return {
+    projects: projectList, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos,
+    selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
+    currentInfo: tab ? info(itemOf(tab)) : null,
+  };
+}
+
+export type WorkspacesApi = ReturnType<typeof useWorkspaces>;

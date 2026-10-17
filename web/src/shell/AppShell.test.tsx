@@ -1,7 +1,7 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { AppShell } from './AppShell';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -38,6 +38,8 @@ function stubAlpha() {
     'GET /api/projects': [project],
     [`GET /api/projects/${project.id}/worktrees`]: [],
     [`GET /api/projects/${project.id}/sessions`]: [shell],
+    [`GET /api/projects/${project.id}/runs`]: [],
+    'GET /api/workspaces': [{ id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [] }],
   });
 }
 
@@ -75,41 +77,160 @@ describe('AppShell', () => {
     expect(screen.getByRole('region', { name: 'Terminal panel' })).toHaveTextContent('Select a project to open a terminal.');
   });
 
-  it('shows the selected project name, not its id', async () => {
+
+  it('shows the empty state when the project workspace has no tabs', async () => {
     stubAlpha();
     renderWithQuery(<AppShell />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Alpha' }));
-    const main = screen.getByRole('main');
-    expect(main).toHaveTextContent('Project Alpha');
-    expect(main).not.toHaveTextContent(project.id);
-    expect(screen.getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-current', 'true');
+    expect(await screen.findByRole('button', { name: 'Workspace: Alpha' })).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveTextContent('No tabs here.');
+  });
+});
+
+const sess = (id: string, title: string, extra: Record<string, unknown> = {}) => ({ ...shell, id, title, ...extra });
+const tabOf = (id: string, workspaceId: string, sessionId: string, position: number) => ({ id, workspaceId, sessionId, runId: null, position });
+
+/** Alpha with sessions a, b (tabs in Alpha's workspace) and c (no tab), and a free-form workspace "Release". */
+function stubWorkspaces(extra: Record<string, unknown> = {}): Call[] {
+  localStorage.clear();
+  const sessions = [
+    sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working' }),
+    sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', activity: 'needs_you', unseen: true }),
+    sess('c', 'Shell C'),
+  ];
+  const workspaces = [
+    { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0), tabOf('tb', 'wa', 'b', 1)] },
+    { id: 'wr', name: 'Release', projectId: null, position: 1, createdAt: 2, tabs: [] },
+  ];
+  return stubApi({
+    ...hostRoutes,
+    'GET /api/projects': [project],
+    [`GET /api/projects/${project.id}/worktrees`]: [],
+    [`GET /api/projects/${project.id}/sessions`]: sessions,
+    [`GET /api/projects/${project.id}/runs`]: [],
+    'GET /api/workspaces': workspaces,
+    ...extra,
+  });
+}
+
+describe('workspaces', () => {
+  beforeEach(() => { document.title = 'PDT'; });
+  afterEach(() => { document.title = ''; });
+
+  it('shows the workspace tabs with their status and the current tab', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const tabs = await screen.findByRole('tablist', { name: 'Tabs' });
+    await within(tabs).findByRole('tab', { name: /Claude A/ });
+    const b = within(tabs).getByRole('tab', { name: /Codex B/ });
+    expect(within(b).getByRole('img', { name: 'unseen' })).toBeInTheDocument();
+    expect(within(tabs).getByRole('tab', { name: /Claude A/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('main').querySelector('[data-testid="terminal-view"]')).toHaveTextContent('a');
+    await userEvent.click(b);
+    expect(b).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('main').querySelector('[data-testid="terminal-view"]')).toHaveTextContent('b');
+    await waitFor(() => expect(document.title).toBe('(1) PDT'));
   });
 
-  it('opens a selected session in the work area and shells as panel tabs', async () => {
-    stubAlpha();
+  it('focuses a tab from the tree, and opens one in the project workspace for an item without a tab', async () => {
+    const calls = stubWorkspaces({ 'POST /api/workspaces/wa/tabs': tabOf('tc', 'wa', 'c', 2) });
     renderWithQuery(<AppShell />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Alpha' }));
-    // The session row's name includes its StatusDot label ("running" + "Shell", no space in jsdom), unlike "New Shell in Repository".
-    await userEvent.click(await screen.findByRole('button', { name: /^running\s*Shell$/ }));
-    expect(screen.getByRole('main')).toContainElement(screen.getByTestId('terminal-view'));
-    await userEvent.click(screen.getByRole('button', { name: 'Toggle terminal panel' }));
-    expect(await screen.findByRole('tab', { name: /Shell/ })).toHaveAttribute('aria-selected', 'true');
-    await userEvent.click(screen.getByRole('button', { name: 'Maximize terminal panel' }));
-    expect(screen.getByRole('button', { name: 'Restore terminal panel' })).toBeInTheDocument();
-    expect(screen.getAllByTestId('terminal-view')).toHaveLength(1);
+    const tree = await screen.findByRole('region', { name: 'Project Alpha' });
+    await userEvent.click(await within(tree).findByRole('button', { name: /Codex B/ }));
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(within(tree).getByRole('button', { name: /Shell C/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wa/tabs', body: { sessionId: 'c' } }));
   });
 
-  it('tells both terminals the session status and when the list was last polled', async () => {
-    stubAlpha();
+  it('closes a tab without stopping its session', async () => {
+    const calls = stubWorkspaces({ 'DELETE /api/tabs/tb': undefined });
     renderWithQuery(<AppShell />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Alpha' }));
-    await userEvent.click(await screen.findByRole('button', { name: /^running\s*Shell$/ }));
-    const inWork = screen.getByRole('main').querySelector('[data-testid="terminal-view"]')!;
-    expect(inWork).toHaveAttribute('data-status', 'running');
-    expect(Number(inWork.getAttribute('data-polled'))).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole('button', { name: 'Toggle terminal panel' }));
-    const panel = (await screen.findByRole('region', { name: 'Terminal panel' })).querySelector('[data-testid="terminal-view"]')!;
-    expect(panel).toHaveAttribute('data-status', 'running');
-    expect(Number(panel.getAttribute('data-polled'))).toBeGreaterThan(0);
+    await userEvent.click(await screen.findByRole('button', { name: 'Close Codex B' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tb')).toBe(true));
+    expect(calls.some((c) => c.path.includes('/kill'))).toBe(false);
+  });
+
+  it('switches tabs and opens the key help with the prefix keys', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Codex B/ });
+    await userEvent.keyboard('{Control>}]{/Control}2');
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.keyboard('{Control>}]{/Control}p');
+    expect(screen.getByRole('tab', { name: /Claude A/ })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.keyboard('{Control>}]{/Control}?');
+    expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeInTheDocument();
+  });
+
+  it('jumps to the next session that needs you', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Codex B/ });
+    await userEvent.keyboard('{Control>}]{/Control}a');
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('launches an agent from the new-tab chooser right after the current tab', async () => {
+    const created = sess('d', 'Claude D', { kind: 'agent_tui', agent: 'claude' });
+    const calls = stubWorkspaces({ 'POST /api/sessions': created });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}c');
+    const chooser = screen.getByRole('dialog', { name: 'New tab' });
+    await waitFor(() => expect(chooser).toHaveFocus());
+    await userEvent.keyboard('c');
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body).toMatchObject({
+      projectId: project.id, kind: 'agent_tui', agent: 'claude', tab: { workspaceId: 'wa', position: 1 },
+    }));
+  });
+
+  it('brings an existing session into the workspace from the chooser', async () => {
+    const calls = stubWorkspaces({ 'POST /api/workspaces/wr/tabs': tabOf('ta', 'wr', 'a', 0) });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Workspace: Alpha' }));
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Workspaces' })).getByRole('button', { name: /Release/ }));
+    expect(await screen.findByRole('button', { name: 'Workspace: Release' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    const list = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('list', { name: 'Other sessions and runs' });
+    await userEvent.click(within(list).getByRole('button', { name: /Claude A/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wr/tabs', body: { sessionId: 'a', position: 0 } }));
+  });
+
+  it('creates a workspace from the switcher', async () => {
+    const calls = stubWorkspaces({ 'POST /api/workspaces': { id: 'wn', name: 'Spike', projectId: null, position: 2, createdAt: 3, tabs: [] } });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Workspace: Alpha' }));
+    const dialog = screen.getByRole('dialog', { name: 'Workspaces' });
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'New workspace name' }), 'Spike{Enter}');
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces', body: { name: 'Spike' } }));
+  });
+
+  it('moves tabs from the tab menu and by dragging', async () => {
+    const calls = stubWorkspaces({ 'PATCH /api/tabs/tb': tabOf('tb', 'wa', 'b', 0), 'PATCH /api/tabs/ta': tabOf('ta', 'wr', 'a', 0) });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Tab menu for Claude A' }));
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Tab menu for Claude A' })).getByRole('menuitem', { name: 'Release' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/ta', body: { workspaceId: 'wr' } }));
+
+    const data: Record<string, string> = {};
+    const dataTransfer = {
+      setData: (k: string, v: string) => { data[k] = v; },
+      getData: (k: string) => data[k] ?? '',
+      get types() { return Object.keys(data); },
+      effectAllowed: 'move',
+    };
+    fireEvent.dragStart(screen.getByRole('tab', { name: /Codex B/ }), { dataTransfer });
+    const target = screen.getByRole('tab', { name: /Claude A/ }).parentElement!;
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/tb', body: { workspaceId: 'wa', position: 0 } }));
+  });
+
+  it('marks the project in the tree with the most urgent activity', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const header = await screen.findByRole('button', { name: /^Alpha/ });
+    await waitFor(() => expect(within(header).getByRole('img', { name: 'waiting' })).toBeInTheDocument());
+    await userEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'false');
   });
 });

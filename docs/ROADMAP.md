@@ -16,7 +16,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 ## Now
 - **Phase 3: Workspaces** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md). Two PRs: 3a workspaces
   and tabs (no split panes), session tree, keyboard, status at a glance, drag to reorder; 3b project keys, clone by URL,
-  GitHub links, adopt/remove worktrees, remove projects, folder view.
+  GitHub links, adopt/remove worktrees, remove projects, folder view. 3a is in review
+  (plan: docs/superpowers/plans/2026-10-17-phase-3a-workspaces.md).
 
 ## Next (build order)
 1. **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT.

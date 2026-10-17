@@ -5,15 +5,17 @@ import { Button, StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { NewSession } from '../api/gen/NewSession';
 import type { Project } from '../api/gen/Project';
+import type { TabPlacement } from '../api/gen/TabPlacement';
+import { dragItem } from '../workspaces/dnd';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { RunsSection } from '../runs/RunsSection';
 import { ActivityBadge } from './ActivityBadge';
 import { INITIAL_SIZE, toDot } from './status';
 
-type Choice = 'Shell' | 'Claude' | 'Codex';
+export type Choice = 'Shell' | 'Claude' | 'Codex';
 const CHOICES: Choice[] = ['Shell', 'Claude', 'Codex'];
 
-function newSession(projectId: string, worktreeId: string | null, choice: Choice, bypass: boolean): NewSession {
+export function newSession(projectId: string, worktreeId: string | null, choice: Choice, bypass: boolean): NewSession {
   const base = { projectId, ...(worktreeId ? { worktreeId } : {}) };
   return choice === 'Shell'
     ? { ...base, kind: 'shell', ...INITIAL_SIZE }
@@ -103,13 +105,17 @@ function RenameInput({ initial, onSave, onCancel }: {
 
 const small = 'rounded-pdt px-1.5 py-0.5 text-[11px] text-muted hover:text-fg hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export function SessionList({ project, selectedId, onSelect, selectedRunId, onSelectRun, onOpenSettings }: {
+export function SessionList({ project, selectedId, onSelect, selectedRunId, onSelectRun, onOpenSettings, placement, whereIs }: {
   project: Project;
   selectedId: string | null;
   onSelect: (id: string) => void;
   selectedRunId?: string | null;
   onSelectRun?: (id: string) => void;
   onOpenSettings?: () => void;
+  /** Where a session or run launched here opens its tab (default: the end of the project's workspace). */
+  placement?: () => TabPlacement | undefined;
+  /** The name of the free-form workspace holding a session or run, shown next to it. */
+  whereIs?: (kind: 'session' | 'run', id: string) => string | null;
 }) {
   const qc = useQueryClient();
   const worktrees = useQuery({ queryKey: ['worktrees', project.id], queryFn: () => api.listWorktrees(project.id) });
@@ -119,7 +125,10 @@ export function SessionList({ project, selectedId, onSelect, selectedRunId, onSe
     refetchInterval: 2000,
   });
   const create = useMutation({
-    mutationFn: api.createSession,
+    mutationFn: (s: NewSession) => {
+      const tab = placement?.();
+      return api.createSession(tab ? { ...s, tab } : s);
+    },
     onSuccess: (s) => {
       void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
       onSelect(s.id);
@@ -169,6 +178,8 @@ export function SessionList({ project, selectedId, onSelect, selectedRunId, onSe
                   <button
                     type="button"
                     aria-current={s.id === selectedId ? 'true' : undefined}
+                    draggable
+                    onDragStart={(e) => dragItem(e, { kind: 'session', id: s.id }, project.id)}
                     title="Double-click to rename"
                     onClick={() => onSelect(s.id)}
                     onDoubleClick={() => setRenamingId(s.id)}
@@ -177,6 +188,7 @@ export function SessionList({ project, selectedId, onSelect, selectedRunId, onSe
                   >
                     <StatusDot status={toDot(s.status)} />
                     <span className={`truncate ${s.unseen ? 'font-semibold' : ''}`}>{s.title}</span>
+                    {whereIs?.('session', s.id) && <span className="shrink-0 text-[10px] text-muted">in {whereIs('session', s.id)}</span>}
                     <ActivityBadge activity={s.activity} unseen={s.unseen} />
                   </button>
                 )}
@@ -190,6 +202,8 @@ export function SessionList({ project, selectedId, onSelect, selectedRunId, onSe
               label={g.label}
               selectedRunId={selectedRunId ?? null}
               onSelectRun={onSelectRun}
+              placement={placement}
+              whereIs={whereIs}
             />
           )}
         </section>

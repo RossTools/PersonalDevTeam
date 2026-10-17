@@ -85,12 +85,11 @@ The Sessions list column becomes a tree of every project:
 ▸ Other project
 ```
 
-- Project → place (Repository, then worktrees) → sessions and runs. Groups collapse; collapsed state is per device.
-- Each group header shows the most urgent activity under it (needs you > working > idle) and the unseen dot.
+- Project → place (Repository, then worktrees) → sessions and runs. Projects collapse; collapsed state is per device.
+- Each project header shows the most urgent activity under it (needs you > working) and the unseen dot.
 - Launch buttons (Shell / Claude / Codex, skip-permissions toggle) stay on each place's header; Run stays as today.
-- Project settings, the run-branch form and add-project move into the project's header menu.
-- Sessions and runs with a tab in the workspace on screen are marked in the tree; ones in a free-form workspace show
-  its name.
+- Project settings and the run-branch form stay inside each project; add-project stays under the tree.
+- The item on screen is highlighted in the tree; items in a free-form workspace show its name.
 
 ## 4. Workspace view (3a)
 
@@ -133,7 +132,7 @@ through to the terminal.
 
 - **Default prefix: Ctrl+]**, chosen because it is unbound in zsh/readline and not taken by browsers or macOS
   (confirm against current Claude Code and Codex keybindings while building). Ctrl+B (tmux's) is taken by Claude
-  Code (background tasks). The prefix is a host setting.
+  Code (background tasks). The prefix is fixed for now; a setting comes if it ever clashes.
 - Ctrl+` keeps toggling the bottom shell panel. Browser-reserved keys (Cmd/Ctrl+T, W, N) are left alone.
 
 ### 4.5 Drag to reorder
@@ -191,8 +190,10 @@ Routes (errors are `{code, message}`):
   in the project workspace as in §2.3 and returns it with the session or run.
 - Tab and workspace status are aggregated by the client from the session and run lists it already polls, so there's
   no new status polling.
-- Placement and ordering rules (insert after current, move between workspaces, renumbering positions) are pure
-  functions with unit tests, in pdt-core for the server and mirrored in a small TS module for optimistic updates.
+- Placement and ordering (`place_at` in pdt-core) are pure functions with unit tests. The client doesn't update
+  optimistically: it calls the API and refetches the workspaces.
+- The client reuses the per-project session and run lists (`['sessions', id]`, `['runs', id]`) for every project, so
+  there are no new list endpoints.
 
 ## 6. Git integration (3b)
 
