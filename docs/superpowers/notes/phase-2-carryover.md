@@ -29,3 +29,10 @@
 - **Owner identity** compares Tailscale-User-Login case-insensitively; RFC 2047 values are decoded (Q only).
 - **Windows rollback** restores a copy of the install folder; the uninstall registry entry keeps the newer version.
 - **Tagged-device access** is refused; app-capability headers (Tailscale ≥ 1.92) could allow chosen tags later.
+- **SQLite pool: no ping before acquire.** On Windows with few cores (CI, or a test run pinned to one core with
+  `ProcessorAffinity = 1`), sqlx 0.9's ping of an idle connection before handing it out could stall a checkout for
+  longer than 10 s while the pool had only idle connections: one request hung (here `GET /api/sessions/{id}` in
+  `hook_events_change_a_sessions_activity`) while `/api/health` kept answering. The store now opens its pool with
+  `test_before_acquire(false)`; a local SQLite connection doesn't go stale. Why the ping stalls inside sqlx was not
+  traced further. If a request ever hangs on the store again, start there (pdtd tests print the daemon's logs on a
+  hooks-test timeout).
