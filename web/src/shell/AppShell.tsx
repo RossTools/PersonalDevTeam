@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
 import { Button } from '@ui';
 import { AddProjectForm } from '../projects/AddProjectForm';
+import { AddProjectDialog } from '../projects/AddProjectDialog';
 import { ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
@@ -45,6 +46,7 @@ export function AppShell() {
   const [chooserOpen, setChooserOpen] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [addingProject, setAddingProject] = useState(false);
   const ws = useWorkspaces();
   const tabId = ws.tab?.id ?? null;
 
@@ -118,7 +120,12 @@ export function AppShell() {
                   No projects yet. <button type="button" className="underline" onClick={() => setView('settings')}>Add one in Settings</button>.
                 </p>
               )}
-              <Sidebar ws={ws} onRenameTab={setRenamingTabId} onProjectSettings={(id) => { setSettingsProjectId(id); setView('settings'); }} />
+              <Sidebar
+                ws={ws}
+                onRenameTab={setRenamingTabId}
+                onProjectSettings={(id) => { setSettingsProjectId(id); setView('settings'); }}
+                onAddProject={() => setAddingProject(true)}
+              />
             </>
           ) : view === 'files' ? (
             <FolderTree state={folder} />
@@ -159,6 +166,19 @@ export function AppShell() {
         )}
         {chooserOpen && view !== 'settings' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} />}
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
+        {addingProject && (
+          <AddProjectDialog
+            onClose={() => setAddingProject(false)}
+            onAdded={(p) => {
+              // Show the new project's workspace once the list includes it.
+              void api.listWorkspaces().then((list) => {
+                const home = list.find((w) => w.projectId === p.id);
+                if (home) ws.selectWorkspace(home.id);
+                void ws.refresh();
+              });
+            }}
+          />
+        )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             {view === 'files' ? (

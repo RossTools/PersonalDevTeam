@@ -270,7 +270,7 @@ describe('workspaces', () => {
     fireEvent.drop(target, { dataTransfer });
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/tb', body: { workspaceId: 'wa', position: 0 } }));
   });
-  it('opens project settings and the add-project form from the sidebar', async () => {
+  it('opens project settings, and the add-project modal, from the sidebar', async () => {
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
@@ -279,7 +279,11 @@ describe('workspaces', () => {
     expect(await screen.findByRole('textbox', { name: 'Project key' })).toHaveValue('ALP');
     await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Add project' }));
-    expect(await screen.findByRole('tab', { name: 'Clone URL' })).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: 'Add project' });
+    expect(within(dialog).getByRole('tab', { name: 'Clone URL' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Workspaces' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Add project' })).not.toBeInTheDocument();
   });
 
   it('rolls up each workspace to its most urgent agent', async () => {

@@ -37,7 +37,7 @@ function WorkspaceRow({ ws, w, onMenu, onProjectSettings }: {
   ws: WorkspacesApi;
   w: Workspace;
   onMenu: ReturnType<typeof useContextMenu>['bind'];
-  onProjectSettings: (projectId: string | null) => void;
+  onProjectSettings: (projectId: string) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const { activity, state } = rollup(ws, w);
@@ -86,11 +86,12 @@ function WorkspaceRow({ ws, w, onMenu, onProjectSettings }: {
 }
 
 /** herdr's left panel: workspaces on top, every agent below with its state and where it is. */
-export function Sidebar({ ws, onRenameTab, onProjectSettings }: {
+export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
-  /** Opens a project's page in Settings, or (null) the add-project form there. */
-  onProjectSettings: (projectId: string | null) => void;
+  /** Opens a project's page in Settings. */
+  onProjectSettings: (projectId: string) => void;
+  onAddProject: () => void;
 }) {
   const { bind, menu } = useContextMenu();
   const [adding, setAdding] = useState(false);
@@ -175,7 +176,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings }: {
           </ul>
         )}
       </section>
-      <button type="button" onClick={() => onProjectSettings(null)} className="mt-3 mx-2 self-start inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+      <button type="button" onClick={onAddProject} className="mt-3 mx-2 self-start inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
         <Plus size={12} aria-hidden /> Add project
       </button>
       {menu}
