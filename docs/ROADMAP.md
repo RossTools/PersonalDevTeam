@@ -25,9 +25,9 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 5. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
 ## Follow-ups (any time)
-- **Faster CI, next steps** (done: nextest, no debug info, cache saved only from main). Windows is still the
-  slowest: try a Dev Drive (ReFS) for the target dir and cargo home; skip the PR bundle build when nothing it packs
-  changed; split the slow `pdt-host` supervise tests; larger runners if PR volume grows.
+- **Faster CI, next steps** (done: nextest, no debug info, Mac mini runner for PRs, Windows and bundles off the PR
+  path; docs/superpowers/notes/ci.md). Next: a single `ci` gate job as the only required check (lets jobs be
+  renamed), a Windows runner on the desktop, Dev Drive for hosted Windows.
 - **Phone UI** (parallel workstream): single-column layout, touch terminals.
 - **Notifications** for needs-you and unseen sessions.
 - **Work laptop install:** separate self-contained install, corporate accounts, no Tailscale, updates by token or by

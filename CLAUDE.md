@@ -6,6 +6,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 ## Workflow (full version: docs/SDLC.md)
 - Every change gets its own branch and worktree at `.worktrees/<branch>`, created through the stable PDT (`POST 127.0.0.1:7420/api/projects/<id>/worktrees` with `{"branch":"..."}`) so its sessions and Run know it. Never commit on `main` in the main checkout.
 - Before pushing, run the CI checks: fmt, clippy, `cargo test` (commit web/src/api/gen), web typecheck/test/build.
+- CI layout (docs/superpowers/notes/ci.md): PR macOS checks run on the Mac mini's self-hosted runner (`~/actions-runner-pdt`, never touch it from a test); Windows checks and bundles run on PRs only with the `windows`/`bundle` label or a change to their files, always on main. Job names are the ruleset's required checks: don't rename them.
 - PR against `main`; the user tests the branch with Run → pdt; squash-merge only when the user says so and CI is green; then remove the worktree and branch.
 
 ## Layout
