@@ -271,6 +271,41 @@ async fn token_state_follows_the_keychain() {
     assert_eq!(fake.hits.load(Ordering::SeqCst), 1, "only the validation of the new token");
 }
 
+/// A keychain waiting on an approval prompt (one only the person at the Mac can answer).
+struct StalledKeychain;
+impl pdt_api::secrets::SecretStore for StalledKeychain {
+    fn get(&self, _: &str) -> Result<Option<String>, pdt_api::secrets::SecretError> {
+        std::thread::sleep(Duration::from_secs(30));
+        Ok(None)
+    }
+    fn set(&self, _: &str, _: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.get("").map(|_| ())
+    }
+    fn delete(&self, _: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.get("").map(|_| ())
+    }
+}
+
+#[tokio::test]
+async fn a_stalled_keychain_is_reported_and_never_hangs_requests() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state, fake) = setup(tmp.path(), true).await;
+    state.secrets = Arc::new(pdt_api::secrets::TimeLimited::new(Arc::new(StalledKeychain), Duration::from_millis(200)));
+    let app = pdt_api::router(state.clone(), None);
+    let started = std::time::Instant::now();
+    pdt_api::update::sync_token_state(&state).await;
+    let (s, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(v["error"].as_str().unwrap_or("").ends_with(pdt_api::secrets::KEYCHAIN_STALLED), "{v}");
+    let (s, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(v["error"].as_str().unwrap_or("").ends_with(pdt_api::secrets::KEYCHAIN_STALLED), "{v}");
+    let (s, e) = call(&app, "PUT", "/api/host/token", Some(json!({"token": TOKEN}))).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("keychain_unavailable")), "{e}");
+    assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    assert_eq!(fake.hits.load(Ordering::SeqCst), 1, "only the new token's validation reached GitHub");
+}
+
 #[tokio::test]
 async fn each_data_dir_has_its_own_token() {
     let tmp = tempfile::tempdir().unwrap();

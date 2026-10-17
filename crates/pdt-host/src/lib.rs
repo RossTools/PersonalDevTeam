@@ -2,6 +2,7 @@
 //! Deliberately small and synchronous, so it rarely needs to change itself.
 
 pub mod config;
+pub mod dbsnap;
 pub mod health;
 pub mod install;
 pub mod log;

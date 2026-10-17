@@ -41,7 +41,7 @@ async fn run() -> anyhow::Result<()> {
     if cfg.web_dir.is_none() {
         tracing::warn!("the web UI is not served (no web dir found); set PDT_WEB_DIR to the built web/dist directory");
     }
-    let db_path = cfg.data_dir.join("pdt.db");
+    let db_path = cfg.data_dir.join(pdt_core::handoff::DB_FILE);
     let store = Store::open(&db_path)
         .await
         .with_context(|| format!("opening database {}", db_path.display()))?
@@ -63,7 +63,11 @@ async fn run() -> anyhow::Result<()> {
     state.secrets = if cfg.memory_secrets {
         std::sync::Arc::new(pdt_api::secrets::MemorySecretStore::default())
     } else {
-        std::sync::Arc::new(pdt_api::secrets::KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE))
+        // A keychain waiting on an approval prompt must never hang pdtd (or its health check).
+        std::sync::Arc::new(pdt_api::secrets::TimeLimited::new(
+            std::sync::Arc::new(pdt_api::secrets::KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE)),
+            std::time::Duration::from_secs(5),
+        ))
     };
     state.listen_port = cfg.port;
     state.remote_https_port = cfg.remote_https_port;
@@ -90,7 +94,11 @@ async fn run() -> anyhow::Result<()> {
     let stable_data_dir =
         dirs::data_local_dir().map(|root| root.join(pdt_core::brand::Profile::Stable.data_dir_name()));
     state.update_token_account = pdt_api::secrets::update_token_account(&cfg.data_dir, stable_data_dir.as_deref());
-    pdt_api::update::sync_token_state(&state).await;
+    // In the background: serving (and pdt-host's health check after an update) never waits on the keychain.
+    tokio::spawn({
+        let st = state.clone();
+        async move { pdt_api::update::sync_token_state(&st).await }
+    });
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;

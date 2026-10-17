@@ -1,4 +1,7 @@
-use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path};
+use pdt_core::handoff::{
+    DB_FILE, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, db_snapshot_dir, request_path, result_path,
+    skip_path,
+};
 use pdt_host::config::HostConfig;
 use pdt_host::health::{Probe, probe, request_shutdown};
 use pdt_host::install::{CopyDirInstaller, Installer, NsisInstaller, Unsupported, host_installer};
@@ -21,6 +24,28 @@ fn fake_install(dir: &Path, version: &str, mode: &str) -> PathBuf {
     std::fs::copy(env!("CARGO_BIN_EXE_fake-pdtd"), dir.join(format!("pdtd{EXE}"))).unwrap();
     std::fs::write(dir.join("fake.json"), serde_json::json!({"version": version, "mode": mode}).to_string()).unwrap();
     dir.to_path_buf()
+}
+
+/// `fake_install`, as a version with a new migration (see fake-pdtd's "migrate").
+fn fake_migrating_install(dir: &Path, version: &str, mode: &str) -> PathBuf {
+    let d = fake_install(dir, version, mode);
+    let cfg = serde_json::json!({"version": version, "mode": mode, "migrate": true});
+    std::fs::write(d.join("fake.json"), cfg.to_string()).unwrap();
+    d
+}
+
+/// The database as the old version left it: the main file and its WAL, no `-shm`.
+fn old_database(data: &Path) {
+    std::fs::create_dir_all(data).unwrap();
+    std::fs::write(data.join(DB_FILE), "old data").unwrap();
+    std::fs::write(data.join(format!("{DB_FILE}-wal")), "old wal").unwrap();
+}
+
+fn assert_old_database(data: &Path) {
+    assert_eq!(read(&data.join(DB_FILE)), "old data");
+    assert_eq!(read(&data.join(format!("{DB_FILE}-wal"))), "old wal");
+    assert!(!data.join(format!("{DB_FILE}-shm")).exists(), "the new version's -shm was removed");
+    assert!(!db_snapshot_dir(data).exists(), "the snapshot is removed once restored");
 }
 
 /// A fake NSIS installer (`setup[.exe]`) that behaves as `behaviour` says.
@@ -261,6 +286,64 @@ fn rolls_back_when_the_new_version_fails_its_health_check() {
     assert_eq!(skip(&data).map(|s| s.version), Some("0.1.6".into()), "automatic updates skip v0.1.6");
 }
 
+/// The v0.1.42 incident: the new version migrated the database and then failed its health check. The old version
+/// cannot open a database with a migration it does not know, so the rollback restores the database too.
+#[test]
+fn a_rollback_restores_the_database_the_new_version_migrated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let asset = fake_migrating_install(&tmp.path().join("release"), "0.1.6", "unhealthy");
+    let data = tmp.path().join("data");
+    old_database(&data);
+    let port = free_port();
+    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    request(&data, "0.1.6", &asset);
+    request_shutdown(port).unwrap();
+    let r = read_result(&data);
+    assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
+    wait_version(port, "0.1.5", Duration::from_secs(30));
+    assert_old_database(&data);
+}
+
+#[test]
+fn a_successful_update_keeps_the_migrated_database() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let asset = fake_migrating_install(&tmp.path().join("release"), "0.1.6", "healthy");
+    let data = tmp.path().join("data");
+    old_database(&data);
+    let port = free_port();
+    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    request(&data, "0.1.6", &asset);
+    request_shutdown(port).unwrap();
+    wait_version(port, "0.1.6", Duration::from_secs(30));
+    let r = read_result(&data);
+    assert_eq!(r.outcome, UpdateOutcome::Installed, "{}", r.message);
+    assert_eq!(read(&data.join(DB_FILE)), "migrated by 0.1.6");
+    assert!(!db_snapshot_dir(&data).exists(), "the snapshot is dropped once the update is in");
+}
+
+/// A first install has no database yet: rolling back removes the one the new version created.
+#[test]
+fn a_rollback_without_a_database_before_removes_the_new_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let asset = fake_migrating_install(&tmp.path().join("release"), "0.1.6", "unhealthy");
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    request(&data, "0.1.6", &asset);
+    request_shutdown(port).unwrap();
+    let r = read_result(&data);
+    assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
+    for suffix in ["", "-wal", "-shm"] {
+        assert!(!data.join(format!("{DB_FILE}{suffix}")).exists(), "{DB_FILE}{suffix} was removed");
+    }
+}
+
 #[test]
 fn rolls_back_a_new_version_that_exits_soon_after_becoming_healthy() {
     let tmp = tempfile::tempdir().unwrap();
@@ -418,6 +501,27 @@ fn an_interrupted_install_is_rolled_back_at_startup() {
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     assert!(r.message.contains("0.1.6") && r.message.contains("interrupted"), "{}", r.message);
     wait_version(port, "0.1.5", Duration::from_secs(20));
+}
+
+/// An install pdt-host died in the middle of (after the new version migrated the database) restores the database
+/// with the app.
+#[test]
+fn an_interrupted_install_restores_the_database() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (backup, install, data) = interrupted_install(tmp.path(), "healthy");
+    // As pdt-host left it: the snapshot taken before the install, and the new version's migrated database.
+    let snap = db_snapshot_dir(&data);
+    std::fs::create_dir_all(&snap).unwrap();
+    std::fs::write(snap.join(DB_FILE), "old data").unwrap();
+    std::fs::write(snap.join(format!("{DB_FILE}-wal")), "old wal").unwrap();
+    std::fs::write(data.join(DB_FILE), "migrated by 0.1.6").unwrap();
+    std::fs::write(data.join(format!("{DB_FILE}-shm")), "new").unwrap();
+    let port = free_port();
+    let _h = supervise(config(&install, &data, port, Duration::from_secs(10)), backup);
+    let r = read_result(&data);
+    assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    assert_old_database(&data);
 }
 
 /// Review issue 6: a missing pdtd is restored from the previous version.

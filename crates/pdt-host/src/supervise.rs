@@ -2,6 +2,7 @@
 //! exits, and install the update it hands over, rolling back when the new version fails its health check.
 
 use crate::config::HostConfig;
+use crate::dbsnap;
 use crate::health::{Probe, probe, request_shutdown};
 use crate::install::Installer;
 use crate::log::{log, log_path};
@@ -265,16 +266,30 @@ fn update_result(cfg: &HostConfig, outcome: UpdateOutcome, from: &str, to: &str,
     }
 }
 
-/// Rolls back after the new version failed (`why`); the outcome and message to report.
+/// Rolls back after the new version failed (`why`); the outcome and message to report. No pdtd may be running.
 fn roll_back(cfg: &HostConfig, installer: &dyn Installer, version: &str, why: &str) -> (UpdateOutcome, String) {
     log(cfg, &format!("v{version} failed ({why}); rolling back"));
-    match installer.rollback() {
+    match restore_previous(cfg, installer) {
         Ok(()) => (UpdateOutcome::RolledBack, format!("Update to v{version} failed ({why}) and was rolled back")),
-        Err(e) => {
-            log(cfg, &format!("rollback failed: {e}"));
-            (UpdateOutcome::Failed, format!("Update to v{version} failed ({why}), and so did the rollback: {e}"))
-        }
+        Err(e) => (UpdateOutcome::Failed, format!("Update to v{version} failed ({why}), and so did the rollback: {e}")),
     }
+}
+
+/// Restores the previous version and the database it had (the new version may have migrated it, and the old one
+/// cannot open a migrated database). The database is restored even when the app could not be: it suits the old
+/// version, and the new one simply migrates it again.
+fn restore_previous(cfg: &HostConfig, installer: &dyn Installer) -> Result<(), String> {
+    let app = installer.rollback();
+    let db = dbsnap::restore(&cfg.data_dir).map_err(|e| format!("restoring the database: {e}"));
+    match &db {
+        Ok(true) => log(cfg, "restored the database from before the update"),
+        Ok(false) => {}
+        Err(e) => log(cfg, &format!("rollback failed: {e}")),
+    }
+    if let Err(e) = &app {
+        log(cfg, &format!("rollback failed: {e}"));
+    }
+    app.and(db.map(|_| ()))
 }
 
 fn handle_update(
@@ -292,6 +307,9 @@ fn handle_update(
     };
     // Success: the provisional result already says so and may have been dismissed since; it is not written again.
     let succeeded = || {
+        if let Err(e) = dbsnap::discard(&cfg.data_dir) {
+            log(cfg, &format!("could not remove the database snapshot: {e}"));
+        }
         let _ = std::fs::remove_file(marker_path(&cfg.data_dir));
         UpdateOutcome::Installed
     };
@@ -313,6 +331,14 @@ fn handle_update(
         );
     }
     log(cfg, &format!("installing {v} (from {})", req.from_version));
+    // Before anything changes, so a rollback can always put the database back as the running version knew it.
+    if let Err(e) = dbsnap::take(&cfg.data_dir) {
+        log(cfg, &format!("install failed: could not copy the database: {e}"));
+        return finish(
+            UpdateOutcome::Failed,
+            format!("Update to v{v} was not installed: could not copy the database: {e}"),
+        );
+    }
     if let Err(e) = installer.backup() {
         log(cfg, &format!("install failed: {e}"));
         return finish(UpdateOutcome::Failed, format!("Update to v{v} failed: {e}"));
@@ -379,12 +405,9 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bo
             .and_then(|v| serde_json::from_value::<UpdateRequest>(v["request"].clone()).ok());
         let (from, to) = req.map(|r| (r.from_version, r.version)).unwrap_or_default();
         log(cfg, &format!("an update to v{to} was interrupted; rolling back"));
-        let (outcome, message) = match installer.rollback() {
+        let (outcome, message) = match restore_previous(cfg, installer) {
             Ok(()) => (UpdateOutcome::RolledBack, format!("Update to v{to} was interrupted and was rolled back")),
-            Err(e) => {
-                log(cfg, &format!("rollback failed: {e}"));
-                (UpdateOutcome::Failed, format!("Update to v{to} was interrupted, and the rollback failed: {e}"))
-            }
+            Err(e) => (UpdateOutcome::Failed, format!("Update to v{to} was interrupted, and the rollback failed: {e}")),
         };
         write_result(cfg, &update_result(cfg, outcome, &from, &to, message));
         let _ = std::fs::remove_file(&marker);
