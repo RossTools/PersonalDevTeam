@@ -185,3 +185,43 @@ fn sighup_shuts_down_gracefully() {
     let exit = wait_exit(&mut d, Duration::from_secs(20));
     assert!(exit.success(), "a graceful shutdown exits 0, not by the signal: {exit:?}");
 }
+
+#[test]
+fn demo_seed_fills_an_empty_dev_database_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let seed = [("PDT_SEED", "demo")];
+
+    let mut d = start_with(port, &data, &seed);
+    let (status, projects) = http(port, "GET", "/api/projects", None);
+    assert_eq!(status, 200, "{projects}");
+    let names: Vec<_> = projects.as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Sample App", "Sample Library"], "{}", diagnose(&mut d, port, &data));
+    let app = projects[0]["id"].as_str().unwrap().to_string();
+    let (_, sessions) = http(port, "GET", &format!("/api/projects/{app}/sessions"), None);
+    assert_eq!(sessions.as_array().map(Vec::len), Some(4), "{sessions}");
+    assert!(sessions.as_array().unwrap().iter().all(|s| s["status"] == "finished"), "{sessions}");
+    let (_, runs) = http(port, "GET", &format!("/api/projects/{app}/runs"), None);
+    assert_eq!(runs.as_array().map(Vec::len), Some(3), "{runs}");
+    let (_, config) = http(port, "GET", &format!("/api/projects/{app}/run-config"), None);
+    assert_eq!(config["error"], serde_json::Value::Null, "{config}");
+    assert_eq!(config["effective"]["runs"][0]["name"], "web", "{config}");
+
+    // Restarting with the seed still set keeps what is there instead of adding a second copy.
+    assert_eq!(http(port, "POST", "/api/shutdown", None).0, 202);
+    assert!(wait_exit(&mut d, Duration::from_secs(20)).success());
+    let _d = start_with(port, &data, &seed);
+    let (_, projects) = http(port, "GET", "/api/projects", None);
+    assert_eq!(projects.as_array().map(Vec::len), Some(2), "{projects}");
+}
+
+#[test]
+fn without_the_seed_a_dev_database_starts_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let _d = start(port, &data);
+    let (_, projects) = http(port, "GET", "/api/projects", None);
+    assert_eq!(projects, serde_json::json!([]));
+}

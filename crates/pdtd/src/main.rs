@@ -2,6 +2,7 @@ mod config;
 mod hook;
 mod lock;
 mod logging;
+mod seed;
 mod shutdown;
 
 use anyhow::Context;
@@ -47,6 +48,15 @@ async fn run() -> anyhow::Result<()> {
         .with_context(|| format!("opening database {}", db_path.display()))?
         // The dev profile's runs default to their own port range, apart from the stable instance's.
         .with_host_defaults(pdt_core::host::HostSettings::for_profile(cfg.profile));
+    if cfg.seed == Some(config::Seed::Demo) {
+        if cfg.profile == pdt_core::brand::Profile::Dev {
+            if seed::seed_demo(&store, &cfg.data_dir, jiff::Timestamp::now().as_millisecond()).await? {
+                tracing::info!(dir = %cfg.data_dir.join(seed::DEMO_DIR).display(), "seeded demo data (PDT_SEED=demo)");
+            }
+        } else {
+            tracing::warn!("PDT_SEED is ignored outside the dev profile");
+        }
+    }
     let interrupted = store.mark_running_interrupted(jiff::Timestamp::now().as_millisecond()).await?;
     if interrupted > 0 {
         tracing::info!(sessions = interrupted, "sessions from the previous run are now interrupted");
