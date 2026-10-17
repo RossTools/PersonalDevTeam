@@ -42,19 +42,22 @@ The phase ships as two PRs under this one spec:
 - A tab shows **one session** (agent or shell terminal, as `SessionView` today) **or one run** (its output and
   controls, as `RunView` today).
 - A tab's title is the session's or run's title; renaming the tab renames the session (as today).
-- A session or run has at most one tab per workspace, but can have tabs in several workspaces. All viewers share the
-  one PTY; it takes the size of whichever view most recently attached or resized (last writer wins, as today).
-- Closing a tab never stops the session or run; it stays in the tree. Removing a session or run closes its tabs.
+- **A session or run has at most one tab, in one workspace.** Moving it to another workspace moves the tab; it never
+  appears in two. (Several devices may still view it at once: all viewers share the one PTY, which takes the size of
+  whichever view most recently attached or resized, as today.)
+- Closing a tab never stops the session or run; it stays in the tree, and opening it again puts the tab back in its
+  project workspace. Removing a session or run removes its tab.
 
 ### 2.3 Where tabs come from
 
 - **Launching** a session or starting a run from the tree opens it as a new tab in its project workspace, after the
   current tab if that's the workspace on screen, else at the end, and switches to it.
 - **Launching** from the "+" in the tab strip (§4.3) opens the new session in the workspace on screen.
-- **Clicking** a session or run in the tree switches to its tab in the workspace on screen if it has one; otherwise
-  to its tab in its project workspace, opening one there if needed.
-- **Opening elsewhere:** a tab's menu has "Open in workspace…" (pick or make a free-form workspace); a session or run
-  can also be dragged from the tree onto a workspace's tab strip.
+- **Clicking** a session or run in the tree switches to the workspace and tab that hold it; if it has no tab, it
+  opens one in its project workspace.
+- **Moving:** a tab's menu has "Move to workspace…" (pick or make a free-form workspace); a tab or a tree entry can
+  also be dragged onto a workspace's tab strip.
+- **Deleting a free-form workspace** moves its tabs back to the end of their project workspaces.
 - The migration opens a tab in each project workspace for every session and active run the project has, grouped by
   place (Repository first, then worktrees) so a branch's tabs sit together.
 
@@ -86,7 +89,8 @@ The Sessions list column becomes a tree of every project:
 - Each group header shows the most urgent activity under it (needs you > working > idle) and the unseen dot.
 - Launch buttons (Shell / Claude / Codex, skip-permissions toggle) stay on each place's header; Run stays as today.
 - Project settings, the run-branch form and add-project move into the project's header menu.
-- Sessions and runs with a tab in the workspace on screen are marked in the tree.
+- Sessions and runs with a tab in the workspace on screen are marked in the tree; ones in a free-form workspace show
+  its name.
 
 ## 4. Workspace view (3a)
 
@@ -166,8 +170,8 @@ CREATE TABLE workspace_tabs (
     position     INTEGER NOT NULL,
     created_at   INTEGER NOT NULL,
     CHECK ((session_id IS NULL) <> (run_id IS NULL)),
-    UNIQUE (workspace_id, session_id),
-    UNIQUE (workspace_id, run_id)
+    UNIQUE (session_id),                  -- one tab per session or run
+    UNIQUE (run_id)
 );
 ```
 
@@ -178,8 +182,8 @@ Routes (errors are `{code, message}`):
 | `GET /api/workspaces` | all workspaces with their tabs, in order |
 | `POST /api/workspaces` | new free-form workspace `{name}` |
 | `PATCH /api/workspaces/{id}` | rename, move `{name?, position?}` |
-| `DELETE /api/workspaces/{id}` | delete a free-form workspace (`409 project_workspace` for a project's) |
-| `POST /api/workspaces/{id}/tabs` | open a tab `{sessionId \| runId, position?}`; returns the existing tab if there is one |
+| `DELETE /api/workspaces/{id}` | delete a free-form workspace, moving its tabs home (`409 project_workspace` for a project's) |
+| `POST /api/workspaces/{id}/tabs` | open or move a tab here `{sessionId \| runId, position?}` (an existing tab moves) |
 | `PATCH /api/tabs/{id}` | reorder or move to another workspace `{position?, workspaceId?}` |
 | `DELETE /api/tabs/{id}` | close a tab (its session or run keeps going) |
 
@@ -240,9 +244,10 @@ Routes (errors are `{code, message}`):
 
 ## 7. Testing
 
-- **Placement and ordering (pdt-core, TS mirror):** insert after current, open-or-focus existing tab, move between
+- **Placement and ordering (pdt-core, TS mirror):** insert after current, open-or-move an existing tab, move between
   workspaces, position renumbering. Pure functions, TDD.
-- **pdt-store / pdt-api:** workspace and tab CRUD, one tab per session/run per workspace, project workspace made with
+- **pdt-store / pdt-api:** workspace and tab CRUD, one tab per session or run (opening elsewhere moves it), deleting
+  a free-form workspace moves its tabs home, project workspace made with
   a project and removed with it, `409 project_workspace`, launch placement, tabs closed when a session or run is
   removed, the migration seed for existing projects.
 - **Web:** tree rendering and status aggregation, tab strip and switcher status, prefix keys (including the
