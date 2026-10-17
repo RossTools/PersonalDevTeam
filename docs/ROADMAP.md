@@ -44,6 +44,7 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - **Stale project** "PDT configuration" on the Mac mini's stable instance points at a missing folder
   (`~/work/pdt`); remove it once projects can be removed.
 - Delete the stale remote branch `phase-0-foundation`.
-- **Developer ID signing + notarization** for macOS releases (Gatekeeper); the self-signed certificate only keeps
-  the keychain's trust across updates.
+- **Developer ID signing + notarization** for macOS releases: CI and scripts are ready; enroll, then replace the
+  signing secrets and add the notary ones (docs/superpowers/notes/developer-id.md). Until then every macOS update
+  asks for keychain access again.
 - Final product name (codename for now; no "ads" in names).
