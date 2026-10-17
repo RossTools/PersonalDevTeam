@@ -192,6 +192,18 @@ describe('workspaces', () => {
     }));
   });
 
+  it('keeps focus in the chooser\'s menus when the screen refreshes', async () => {
+    stubWorkspaces();
+    const { rerender } = renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'New tab' }));
+    const chooser = screen.getByRole('dialog', { name: 'New tab' });
+    await waitFor(() => expect(chooser).toHaveFocus());
+    const place = within(chooser).getByRole('combobox', { name: 'Place' });
+    place.focus();
+    rerender(<AppShell />);
+    expect(place).toHaveFocus();
+  });
+
   it('brings an existing session into the workspace from the chooser', async () => {
     const calls = stubWorkspaces({ 'POST /api/workspaces/wr/tabs': tabOf('ta', 'wr', 'a', 0) });
     renderWithQuery(<AppShell />);
@@ -258,6 +270,18 @@ describe('workspaces', () => {
     fireEvent.drop(target, { dataTransfer });
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/tb', body: { workspaceId: 'wa', position: 0 } }));
   });
+  it('opens project settings and the add-project form from the sidebar', async () => {
+    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
+    renderWithQuery(<AppShell />);
+    const list = await screen.findByRole('region', { name: 'Workspaces' });
+    fireEvent.contextMenu(await within(list).findByRole('button', { name: /Alpha/ }));
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Workspace Alpha' })).getByRole('menuitem', { name: 'Project settings…' }));
+    expect(await screen.findByRole('textbox', { name: 'Project key' })).toHaveValue('ALP');
+    await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add project' }));
+    expect(await screen.findByRole('tab', { name: 'Clone URL' })).toBeInTheDocument();
+  });
+
   it('rolls up each workspace to its most urgent agent', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);

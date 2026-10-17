@@ -47,6 +47,7 @@ function Identity({ project }: { project: Project }) {
         </label>
         <Button type="submit" variant="secondary" disabled={!changed || save.isPending}>Save name and key</Button>
       </form>
+      <p className="text-xs text-muted">The key is the project's short code (2–10 letters and digits); tickets will be numbered with it, like {project.key}-42.</p>
       {save.isError && <p role="alert" className="text-xs text-failed">{save.error.message}</p>}
       <p className="text-xs text-muted flex flex-wrap items-center gap-3">
         <span className="font-mono" title="Repository folder">{project.repoPath}</span>

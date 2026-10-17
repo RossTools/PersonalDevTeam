@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Zap } from 'lucide-react';
 import { StatusDot } from '@ui';
@@ -31,6 +31,9 @@ function usePlace(ws: WorkspacesApi) {
 export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () => void }) {
   const qc = useQueryClient();
   const { place, setPicked } = usePlace(ws);
+  // Focus once, on open: grabbing it on every render would close an open dropdown each time the lists refresh.
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => dialog.current?.focus(), []);
   const [bypass, setBypass] = useState(false);
   const [filter, setFilter] = useState('');
   const workspace = ws.workspace;
@@ -65,7 +68,7 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
         role="dialog"
         aria-label="New tab"
         tabIndex={-1}
-        ref={(el) => el?.focus()}
+        ref={dialog}
         onKeyDown={(e) => {
           if (e.key === 'Escape') onClose();
           const choice = KEYS[e.key];

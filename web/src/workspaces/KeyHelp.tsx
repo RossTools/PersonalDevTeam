@@ -1,7 +1,10 @@
+import { useEffect, useRef } from 'react';
 import { KEY_HELP } from './keys';
 
 /** The list of prefix keys (Ctrl+] then one key). */
 export function KeyHelp({ onClose }: { onClose: () => void }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => dialog.current?.focus(), []);
   return (
     <>
       <div className="fixed inset-0 z-10 bg-black/20" onClick={onClose} aria-hidden />
@@ -9,7 +12,7 @@ export function KeyHelp({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-label="Keyboard shortcuts"
         tabIndex={-1}
-        ref={(el) => el?.focus()}
+        ref={dialog}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
         className="absolute z-20 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 top-12 md:w-96 rounded-pdt border border-border bg-surface shadow-lg p-4 outline-none"
       >

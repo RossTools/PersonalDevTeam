@@ -118,7 +118,7 @@ export function AppShell() {
                   No projects yet. <button type="button" className="underline" onClick={() => setView('settings')}>Add one in Settings</button>.
                 </p>
               )}
-              <Sidebar ws={ws} onRenameTab={setRenamingTabId} />
+              <Sidebar ws={ws} onRenameTab={setRenamingTabId} onProjectSettings={(id) => { setSettingsProjectId(id); setView('settings'); }} />
             </>
           ) : view === 'files' ? (
             <FolderTree state={folder} />
