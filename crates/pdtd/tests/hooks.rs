@@ -68,13 +68,15 @@ fn codex_notify_runs_the_users_chained_notifier() {
     assert_eq!(std::fs::read_to_string(&out_file).unwrap(), payload);
 }
 
-/// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits.
+/// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits. It records only when spawned
+/// as a session (PDT_SESSION_ID set): the health check also runs `claude auth status` in the background, and without
+/// this guard that invocation would race the session launch and clobber the shared files.
 fn fake_claude(dir: &Path) -> PathBuf {
     if cfg!(windows) {
         let p = dir.join("claude.cmd");
         std::fs::write(
             &p,
-            "@echo off\r\necho %*> \"%~dp0args.txt\"\r\necho %PDT_SESSION_ID%> \"%~dp0session.txt\"\r\nping -n 120 127.0.0.1 >nul\r\n",
+            "@echo off\r\nif defined PDT_SESSION_ID (\r\n  echo %*> \"%~dp0args.txt\"\r\n  echo %PDT_SESSION_ID%> \"%~dp0session.txt\"\r\n)\r\nping -n 120 127.0.0.1 >nul\r\n",
         )
         .unwrap();
         p
@@ -82,7 +84,7 @@ fn fake_claude(dir: &Path) -> PathBuf {
         let p = dir.join("claude");
         std::fs::write(
             &p,
-            "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/args.txt\"\necho \"$PDT_SESSION_ID\" > \"$(dirname \"$0\")/session.txt\"\nexec sleep 120\n",
+            "#!/bin/sh\nif [ -n \"$PDT_SESSION_ID\" ]; then\n  echo \"$@\" > \"$(dirname \"$0\")/args.txt\"\n  echo \"$PDT_SESSION_ID\" > \"$(dirname \"$0\")/session.txt\"\nfi\nexec sleep 120\n",
         )
         .unwrap();
         #[cfg(unix)]
