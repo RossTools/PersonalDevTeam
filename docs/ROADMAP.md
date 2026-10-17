@@ -8,6 +8,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Phase 1: terminals (#1)
 - Tray-only desktop, CI releases, update from GitHub releases (#2)
 - Phase 2: remote host (#3)
+- Update incident fixes: keychain never blocks startup, rollback restores the database, signed macOS releases
+  (docs/superpowers/notes/update-incident-2026-10-17.md)
 
 ## Now
 - **Move PDT to the Mac mini** (runbook: docs/superpowers/plans/2026-10-16-mac-mini-move.md). Run the Phase 2 Mac mini
@@ -41,4 +43,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - **Stale project** "PDT configuration" on the Mac mini's stable instance points at a missing folder
   (`~/work/pdt`); remove it once projects can be removed.
 - Delete the stale remote branch `phase-0-foundation`.
+- **Developer ID signing + notarization** for macOS releases (Gatekeeper); the self-signed certificate only keeps
+  the keychain's trust across updates.
+- **Host settings with an unreadable keychain:** the page fails with `keychain_unavailable`; show settings and the
+  token problem instead.
 - Final product name (codename for now; no "ads" in names).

@@ -88,9 +88,106 @@ impl SecretStore for KeyringStore {
     }
 }
 
+/// What a keychain call that ran out of time reports (after "the OS keychain failed: ").
+pub const KEYCHAIN_STALLED: &str =
+    "it did not answer in time (macOS may be waiting for someone at this Mac to allow access to the update token)";
+
+/// Bounds every call to `inner` by `timeout`, so a keychain waiting on an approval prompt nobody sees cannot hang
+/// pdtd. A call that times out keeps running on its own thread; until it returns, further calls fail at once
+/// instead of piling up more stuck threads.
+pub struct TimeLimited {
+    inner: std::sync::Arc<dyn SecretStore>,
+    timeout: std::time::Duration,
+    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TimeLimited {
+    pub fn new(inner: std::sync::Arc<dyn SecretStore>, timeout: std::time::Duration) -> Self {
+        Self { inner, timeout, busy: Default::default() }
+    }
+
+    fn call<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&dyn SecretStore) -> Result<T, SecretError> + Send + 'static,
+    ) -> Result<T, SecretError> {
+        use std::sync::atomic::Ordering;
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return Err(SecretError(KEYCHAIN_STALLED.into()));
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (inner, busy) = (self.inner.clone(), self.busy.clone());
+        std::thread::spawn(move || {
+            let r = f(inner.as_ref());
+            busy.store(false, Ordering::SeqCst);
+            let _ = tx.send(r);
+        });
+        rx.recv_timeout(self.timeout).unwrap_or_else(|_| Err(SecretError(KEYCHAIN_STALLED.into())))
+    }
+}
+
+impl SecretStore for TimeLimited {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+        let name = name.to_string();
+        self.call(move |s| s.get(&name))
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretError> {
+        let (name, value) = (name.to_string(), value.to_string());
+        self.call(move |s| s.set(&name, &value))
+    }
+    fn delete(&self, name: &str) -> Result<(), SecretError> {
+        let name = name.to_string();
+        self.call(move |s| s.delete(&name))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    /// A store whose `get` waits until `release` is sent (a keychain showing a prompt).
+    struct Blocking(Mutex<std::sync::mpsc::Receiver<()>>);
+    impl SecretStore for Blocking {
+        fn get(&self, _: &str) -> Result<Option<String>, SecretError> {
+            let _ = self.0.lock().unwrap().recv();
+            Ok(Some("tok".into()))
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_stalled_keychain_times_out_and_later_calls_fail_fast_until_it_answers() {
+        let (release, rx) = std::sync::mpsc::channel();
+        let s = TimeLimited::new(Arc::new(Blocking(Mutex::new(rx))), Duration::from_millis(100));
+        let t = Instant::now();
+        assert_eq!(s.get("a").unwrap_err().0, KEYCHAIN_STALLED);
+        assert!(t.elapsed() < Duration::from_secs(2));
+        let t = Instant::now();
+        assert_eq!(s.get("a").unwrap_err().0, KEYCHAIN_STALLED, "still stuck: no second thread");
+        assert!(t.elapsed() < Duration::from_millis(50), "fails at once while the first call is stuck");
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while s.busy.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        release.send(()).unwrap();
+        assert_eq!(s.get("a").unwrap().as_deref(), Some("tok"), "answers again once the prompt is dealt with");
+    }
+
+    #[test]
+    fn time_limited_passes_calls_through() {
+        let s = TimeLimited::new(Arc::new(MemorySecretStore::default()), Duration::from_secs(5));
+        s.set("a", "1").unwrap();
+        assert_eq!(s.get("a").unwrap().as_deref(), Some("1"));
+        s.delete("a").unwrap();
+        assert_eq!(s.get("a").unwrap(), None);
+    }
 
     #[test]
     fn token_accounts_are_per_data_dir() {
