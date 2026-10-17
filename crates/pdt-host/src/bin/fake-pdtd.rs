@@ -1,9 +1,11 @@
 //! A stand-in pdtd (and installer) for pdt-host's tests. Reads `fake.json` next to its own exe:
 //! {"version": "...", "mode": "healthy" | "crash" | "crash_once" | "unhealthy" | "stubborn" | "die_soon",
-//!  "installer": "hang" | "hang_tree" | "fail_partial"}.
+//!  "installer": "hang" | "hang_tree" | "fail_partial", "migrate": bool}.
 //! As pdtd: serves /api/health on $PDT_PORT and exits on POST /api/shutdown ("stubborn" answers but keeps running;
 //! "die_soon" exits a second after starting). Beside itself it records $PDT_SUPERVISED in `env.txt`, every `PDT_*`
 //! variable in `env.json`, and the outcome in `<PDT_DATA_DIR>/update/result.json` at startup in `seen-result.txt`.
+//! With "migrate" it stands in for a version with a new migration: at startup it rewrites `<PDT_DATA_DIR>/pdt.db`
+//! (to `migrated by <version>`) and its `-wal` and `-shm` files.
 //! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "hang_tree" also starts a child that never
 //! finishes (its pid in `grandchild.pid` beside the installer); "fail_partial" breaks `<dir>/fake.json` and fails.
 use std::io::{Read, Write};
@@ -57,6 +59,16 @@ fn main() {
         .and_then(|v| v["outcome"].as_str().map(String::from))
         .unwrap_or_else(|| "none".into());
     let _ = std::fs::write(dir.join("seen-result.txt"), seen);
+    if cfg["migrate"].as_bool() == Some(true)
+        && let Ok(d) = std::env::var("PDT_DATA_DIR")
+    {
+        let db = std::path::Path::new(&d).join(pdt_core::handoff::DB_FILE);
+        let _ = std::fs::create_dir_all(&d);
+        let _ = std::fs::write(&db, format!("migrated by {version}"));
+        for suffix in ["-wal", "-shm"] {
+            let _ = std::fs::write(format!("{}{suffix}", db.display()), "new");
+        }
+    }
     let crash = mode == "crash" || (mode == "crash_once" && !dir.join("crashed-once").exists());
     if crash {
         let _ = std::fs::write(dir.join("crashed-once"), "");

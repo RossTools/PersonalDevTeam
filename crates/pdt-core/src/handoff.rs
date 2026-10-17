@@ -23,6 +23,13 @@ pub fn skip_path(data_dir: &Path) -> PathBuf {
 pub fn downloads_dir(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("downloads")
 }
+/// pdtd's database in its data dir. SQLite in WAL mode: `<DB_FILE>-wal` and `<DB_FILE>-shm` sit beside it.
+pub const DB_FILE: &str = "pdt.db";
+/// pdt-host's copy of the database, taken (with pdtd stopped) before an update is installed and put back if the
+/// update is rolled back: a new version may migrate the database, and the old one cannot open a migrated one.
+pub fn db_snapshot_dir(data_dir: &Path) -> PathBuf {
+    update_dir(data_dir).join("db-before-update")
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

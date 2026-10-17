@@ -85,6 +85,21 @@ jobs:
           args=(--config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" --bundles "${{ matrix.bundles }}")
           if [ -n "${PDT_BUILD_VERSION:-}" ]; then args+=(--config "$RUNNER_TEMP/release.conf.json"); fi
           pnpm --dir desktop exec tauri build "${args[@]}"
+      # One certificate signs every macOS release, so the keychain keeps trusting pdtd across updates (an ad-hoc
+      # signature differs per build and makes pdtd wait on a keychain prompt; scripts/sign-macos.sh). Releases must
+      # be signed; other builds are signed when the secret is available to them.
+      - name: Sign the app bundle
+        if: matrix.bundles == 'app'
+        shell: bash
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_SIGNING_P12" ] && [ -z "${PDT_BUILD_VERSION:-}" ]; then
+            echo "::notice::No signing certificate; this build is not a release, so it stays ad-hoc signed."
+            exit 0
+          fi
+          scripts/sign-macos.sh "$(ls -d target/release/bundle/macos/*.app | head -n 1)"
       # Asset names must match what hosts install (pdt_core::release::asset_suffix): *-setup.exe and *.app.tar.gz.
       - name: Collect the release asset
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

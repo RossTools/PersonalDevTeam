@@ -29,6 +29,13 @@ pnpm --dir desktop exec tauri build --config "$root/desktop/src-tauri/tauri.bund
 
 bundle="$root/target/release/bundle/macos/$product.app"
 [[ -d "$bundle" ]] || { echo "no app bundle was produced at $bundle" >&2; exit 1; }
+# Signed like a release when PDT_SIGNING_IDENTITY (or MACOS_SIGNING_P12) is set; otherwise the keychain asks once
+# more for access to the update token after this build is installed (scripts/sign-macos.sh).
+if [[ -n "${PDT_SIGNING_IDENTITY:-}${MACOS_SIGNING_P12:-}" ]]; then
+  scripts/sign-macos.sh "$bundle"
+else
+  echo "warning: not signed with the release certificate; allow keychain access when asked" >&2
+fi
 echo "Built $bundle"
 $build_only && exit 0
 

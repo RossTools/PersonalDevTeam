@@ -143,7 +143,13 @@ pub(crate) async fn read_token(st: &AppState) -> Result<Option<String>, ApiError
     tokio::task::spawn_blocking(move || secrets.get(&account))
         .await
         .map_err(ApiError::internal)?
-        .map_err(ApiError::internal)
+        .map_err(keychain_error)
+}
+
+/// A keychain failure, said plainly (its message never holds the secret).
+fn keychain_error(e: crate::secrets::SecretError) -> ApiError {
+    tracing::warn!(error = %e, "keychain call failed");
+    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "keychain_unavailable", e.to_string())
 }
 
 /// Stores (`Some`) or deletes (`None`) this instance's update token.
@@ -155,18 +161,24 @@ async fn write_token(st: &AppState, token: Option<String>) -> Result<(), ApiErro
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(ApiError::internal)
+    .map_err(keychain_error)
 }
 
 /// Brings `token` in line with the keychain (as host settings' `tokenPresent` sees it): missing without a token,
 /// valid (expiry unknown until a check) for a token stored before this process knew of it, e.g. before startup.
+/// A keychain that cannot be read (e.g. it is waiting on an approval prompt) is reported in `error`.
 pub async fn sync_token_state(st: &AppState) {
-    if let Ok(present) = read_token(st).await.map(|t| t.is_some()) {
-        st.update.edit(|s| match (present, &s.token) {
-            (false, _) => s.token = TokenState::Missing,
-            (true, TokenState::Missing) => s.token = TokenState::Valid { expires_at: None },
-            (true, _) => {}
-        });
+    match read_token(st).await.map(|t| t.is_some()) {
+        Ok(present) => {
+            st.update.edit(|s| match (present, &s.token) {
+                (false, _) => s.token = TokenState::Missing,
+                (true, TokenState::Missing) => s.token = TokenState::Valid { expires_at: None },
+                (true, _) => {}
+            });
+        }
+        Err(e) => {
+            st.update.edit(|s| s.error = Some(e.message().to_string()));
+        }
     }
 }
 
