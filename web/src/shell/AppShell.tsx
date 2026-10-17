@@ -12,7 +12,7 @@ import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
 import { nextNeedingYou } from '../workspaces/model';
 import { NewTabChooser } from '../workspaces/NewTabChooser';
-import { ProjectTree } from '../workspaces/ProjectTree';
+import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
@@ -40,15 +40,12 @@ export function AppShell() {
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
   const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const ws = useWorkspaces();
   const tabId = ws.tab?.id ?? null;
 
-  // Picking a tab leaves project settings.
-  useEffect(() => setSettingsProjectId(null), [tabId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,7 +64,10 @@ export function AppShell() {
     setView('sessions');
     switch (a.type) {
       case 'newTab': setChooserOpen(true); break;
-      case 'switcher': setSwitcherOpen(true); break;
+      case 'switcher':
+        // Focus the current workspace in the sidebar; Up/Down and Enter pick another.
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('#workspace-list [aria-current=true], #workspace-list [data-row]')?.focus());
+        break;
       case 'help': setHelpOpen(true); break;
       case 'tab': if (w?.tabs[a.index]) ws.selectTab(w.tabs[a.index]); break;
       case 'next':
@@ -103,11 +103,27 @@ export function AppShell() {
           {view === 'sessions' ? (
             <>
               <FirstRunChecklist onOpenSettings={() => setView('settings')} />
-              <ProjectTree ws={ws} onOpenSettings={setSettingsProjectId} />
-              <AddProjectForm />
+              {ws.projects.length === 0 && (
+                <p className="px-2 py-2 text-xs text-muted">
+                  No projects yet. <button type="button" className="underline" onClick={() => setView('settings')}>Add one in Settings</button>.
+                </p>
+              )}
+              <Sidebar ws={ws} onRenameTab={setRenamingTabId} />
             </>
           ) : view === 'settings' ? (
-            <FirstRunChecklist />
+            <>
+              <FirstRunChecklist />
+              <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
+                <button type="button" aria-current={settingsProjectId === null ? 'true' : undefined} onClick={() => setSettingsProjectId(null)}
+                  className={`text-left px-2 py-1 rounded-pdt text-sm ${settingsProjectId === null ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>This host</button>
+                <h3 className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">Projects</h3>
+                {ws.projects.map((p) => (
+                  <button key={p.id} type="button" title={p.repoPath} aria-current={settingsProjectId === p.id ? 'true' : undefined} onClick={() => setSettingsProjectId(p.id)}
+                    className={`text-left px-2 py-1 rounded-pdt text-sm truncate ${settingsProjectId === p.id ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>{p.name}</button>
+                ))}
+              </nav>
+              <AddProjectForm />
+            </>
           ) : (
             <p className="px-2 text-xs text-muted">{PHASE_NOTE[view]}</p>
           )}
@@ -118,8 +134,6 @@ export function AppShell() {
         {view !== 'settings' && (
           <WorkspaceBar
             ws={ws}
-            switcherOpen={switcherOpen}
-            setSwitcherOpen={setSwitcherOpen}
             renamingTabId={renamingTabId}
             setRenamingTabId={setRenamingTabId}
             onNewTab={() => setChooserOpen(true)}
@@ -135,9 +149,7 @@ export function AppShell() {
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             {view === 'settings' ? (
-              <HostSettingsPage />
-            ) : settingsProject ? (
-              <ProjectSettingsPanel project={settingsProject} />
+              settingsProject ? <ProjectSettingsPanel key={settingsProject.id} project={settingsProject} /> : <HostSettingsPage />
             ) : current?.run ? (
               <RunView key={current.run.id} run={current.run} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} />
             ) : current?.session ? (
@@ -146,7 +158,7 @@ export function AppShell() {
               <p className="p-4 text-sm text-muted">Add a project to get started.</p>
             ) : (
               <p className="p-4 text-sm text-muted">
-                {ws.tab ? 'Loading…' : 'No tabs here. Start a shell or an agent from the list, or press + (Ctrl+] c).'}
+                {ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}
               </p>
             )}
           </div>

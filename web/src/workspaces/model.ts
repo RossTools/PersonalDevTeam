@@ -40,6 +40,19 @@ export function activityStatus(a: Activity | null): Status | null {
   }
 }
 
+export type AgentState = 'Needs you' | 'Working' | 'Done' | 'Idle' | 'Unknown';
+
+/** herdr-style state words: an idle agent nobody has looked at since it finished is "Done". */
+export function agentState(activity: Activity | null, unseen: boolean): AgentState | null {
+  switch (activity) {
+    case 'needs_you': return 'Needs you';
+    case 'working': return 'Working';
+    case 'idle': return unseen ? 'Done' : 'Idle';
+    case 'unknown': return 'Unknown';
+    default: return null;
+  }
+}
+
 /** Per-device choice: the workspace on screen and the last tab looked at in each workspace. */
 export interface CurrentChoice {
   workspaceId: string | null;

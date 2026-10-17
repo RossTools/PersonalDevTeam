@@ -173,7 +173,21 @@ export function useWorkspaces() {
     [refresh, selectTab],
   );
 
+  const createWorkspace = useCallback(
+    async (name: string) => {
+      const w = await api.createWorkspace({ name });
+      await refresh();
+      selectWorkspace(w.id);
+      return w;
+    },
+    [refresh, selectWorkspace],
+  );
+  const renameWorkspace = useCallback(async (id: string, name: string) => { await api.updateWorkspace(id, { name }); await refresh(); }, [refresh]);
+  const moveWorkspace = useCallback(async (id: string, position: number) => { await api.updateWorkspace(id, { position }); await refresh(); }, [refresh]);
+  const deleteWorkspace = useCallback(async (id: string) => { await api.deleteWorkspace(id); await refresh(); }, [refresh]);
+
   return {
+    createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
     projects: projectList, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
     currentInfo: tab ? info(itemOf(tab)) : null,

@@ -14,7 +14,7 @@ There are no split panes: a tab shows one session or run, full size. (The bottom
 
 The phase ships as two PRs under this one spec:
 
-- **3a — Workspaces** (§2–§5): workspaces, tabs, the session tree, keyboard, status at a glance, drag to reorder.
+- **3a — Workspaces** (§2–§5): workspaces, tabs, the herdr-style sidebar, keyboard, status at a glance, drag to reorder.
 - **3b — Git integration** (§6): project keys, clone by URL, GitHub links, adopting and removing worktrees, removing
   projects, the folder view.
 
@@ -45,17 +45,16 @@ The phase ships as two PRs under this one spec:
 - **A session or run has at most one tab, in one workspace.** Moving it to another workspace moves the tab; it never
   appears in two. (Several devices may still view it at once: all viewers share the one PTY, which takes the size of
   whichever view most recently attached or resized, as today.)
-- Closing a tab never stops the session or run; it stays in the tree, and opening it again puts the tab back in its
-  project workspace. Removing a session or run removes its tab.
+- Closing a tab never stops the session or run; it can be brought back from the "+" chooser (or, for an agent, the
+  sidebar), which opens the tab again. Removing a session or run removes its tab.
 
 ### 2.3 Where tabs come from
 
-- **Launching** a session or starting a run from the tree opens it as a new tab in its project workspace, after the
-  current tab if that's the workspace on screen, else at the end, and switches to it.
-- **Launching** from the "+" in the tab strip (§4.3) opens the new session in the workspace on screen.
-- **Clicking** a session or run in the tree switches to the workspace and tab that hold it; if it has no tab, it
+- **Launching** a session or starting a run opens it as a new tab after the current one in the workspace on screen
+  (sessions and runs started through the API without a placement go to the end of their project workspace).
+- **Clicking** an agent in the sidebar switches to the workspace and tab that hold it; if it has no tab, it
   opens one in its project workspace.
-- **Moving:** a tab's menu has "Move to workspace…" (pick or make a free-form workspace); a tab or a tree entry can
+- **Moving:** a tab's menu has "Move to workspace…" (pick or make a free-form workspace); a tab or a sidebar agent can
   also be dragged onto a workspace's tab strip.
 - **Deleting a free-form workspace** moves its tabs back to the end of their project workspaces.
 - The migration opens a tab in each project workspace for every session and active run the project has, grouped by
@@ -64,39 +63,45 @@ The phase ships as two PRs under this one spec:
 ### 2.4 Shared and per-device state
 
 - Workspaces, tabs and their order are stored in pdtd's database and shared by every device.
-- Which workspace and tab a device is looking at, and the tree's collapsed groups, are per-device (browser storage),
+- Which workspace and tab a device is looking at, are per-device (browser storage),
   so the phone doesn't yank the desktop around.
 - Tab operations are small and independent (open, close, move), so there's no conflict handling beyond "last write
   wins" on order. Clients poll workspaces like sessions (every 2 s).
 
-## 3. Session tree (3a)
+## 3. Sidebar (3a)
 
-The Sessions list column becomes a tree of every project:
+The Sessions list column works like herdr's: **workspaces on top, agents below.**
 
 ```
-▾ Personal Dev Team                 ● needs you
-  ▾ Repository
-      claude  · Working
-      shell
-  ▾ phase-3-workspaces
-      claude  · Needs you •
-      codex   · Idle
-      ▸ Run: pdt  (ready)
-▸ Other project
+WORKSPACES                 +
+● Personal Dev Team   Needs you  3
+  Release                        1
+AGENTS
+● claude · phase-3   Needs you •
+  Release · phase-3-workspaces
+● codex · main        Working
+  Personal Dev Team · Personal Dev Team
 ```
 
-- Project → place (Repository, then worktrees) → sessions and runs. Projects collapse; collapsed state is per device.
-- Each project header shows the most urgent activity under it (needs you > working) and the unseen dot.
-- Launch buttons (Shell / Claude / Codex, skip-permissions toggle) stay on each place's header; Run stays as today.
-- Project settings and the run-branch form stay inside each project; add-project stays under the tree.
-- The item on screen is highlighted in the tree; items in a free-form workspace show its name.
+- **Workspaces:** one row each, with the most urgent state of its agents (needs you > working > done > idle; "done"
+  is an idle agent nobody has looked at since it finished) and its tab count. Click to switch; Up/Down move between
+  rows; double-click renames a free-form workspace; drag to reorder; drop a tab or an agent on one to move it there.
+  "+" makes a new one.
+- **Agents:** every agent session (not shells or runs) in workspace and tab order, then agents without a tab. Each
+  row shows its state, the unseen dot, its workspace and its place. Click to go to its tab (opening one in its
+  project workspace if it has none); drag onto a tab strip or workspace.
+- **Right-click menus** (long press on touch screens), drawn at the pointer above everything else:
+  - tab or agent: Rename, Move left / right, Move to workspace (or a new one), Close tab;
+  - workspace: Rename and Delete (free-form only), Move up / down.
+- Shells, runs and new agents start from the tab bar's "+" (§4.3). Projects are added and configured in the Settings
+  view (This host, then one entry per project, then Add project).
 
 ## 4. Workspace view (3a)
 
 ### 4.1 Layout
 
-- The work area's header gets the **workspace switcher** (a dropdown listing workspaces with their status, plus
-  "New workspace") and the **tab strip** (tabs with status dot and activity, "+" for a new session).
+- The work area's header shows the current workspace's name and its **tab strip** (tabs with status dot and
+  activity, close, "+" for a new tab). Workspaces are switched from the sidebar.
 - Below it, the current tab's session or run, as today.
 
 ### 4.2 Status at a glance
@@ -110,8 +115,8 @@ The Sessions list column becomes a tree of every project:
 
 - "+" in the tab strip opens a small chooser: **Claude**, **Codex**, **Shell**, **Run…**, or an existing session or
   run (type to filter). One keypress picks Claude/Codex/Shell (`c`, `x`, `s`).
-- The new session starts in the same place (project and worktree) as the current tab's session or run. In an empty
-  free-form workspace the chooser asks for the project and place first.
+- Project and place pickers start at the current tab's place (or the workspace's project) and can be changed; "Run
+  another branch…" runs any branch, making its worktree.
 - The skip-permissions toggle is in the chooser too.
 
 ### 4.4 Keyboard
@@ -124,7 +129,7 @@ through to the terminal.
 | `c` | new tab (opens the chooser) |
 | `1`–`9` | go to tab N |
 | `n` / `p` | next / previous tab |
-| `w` | workspace switcher (type to filter, Enter to go) |
+| `w` | focus the workspace list (Up/Down, Enter) |
 | `x` | close the tab (the session keeps running) |
 | `r` | rename the tab |
 | `a` | jump to the next session that needs you, in any workspace |
@@ -137,16 +142,16 @@ through to the terminal.
 
 ### 4.5 Drag to reorder
 
-- Drag tabs to reorder them, or onto another workspace in the switcher to move them there.
-- Drag workspaces in the switcher to reorder them.
-- Drag a session or run from the tree onto a tab strip to open it there (§2.3).
+- Drag tabs to reorder them, or onto a workspace in the sidebar to move them there.
+- Drag workspaces in the sidebar to reorder them.
+- Drag an agent from the sidebar onto a tab strip or workspace (§2.3).
 - Everything dragging does has a keyboard or menu equivalent ("Move to workspace…", "Move left/right").
 
 ### 4.6 Phone
 
-- The tab strip scrolls horizontally; swiping left/right on the header moves between tabs. The workspace switcher is
-  a full-screen list.
-- No drag on the phone; the tab menu has the move actions instead.
+- The tab strip scrolls horizontally; swiping left/right on the header, or ‹ ›, moves between tabs. The sidebar
+  sits below the work area.
+- No drag on the phone; a long press opens the same menus.
 - The mobile terminal key bar stays as it is.
 
 ## 5. API and storage (3a)
@@ -203,7 +208,7 @@ Routes (errors are `{code, message}`):
   `PDT`). Phase 4 numbers tickets with it (`PDT-42`).
 - Suggested from the name when adding (initials, or the first letters of a one-word name) and editable in project
   settings. Existing projects get one in the migration (deduplicated with a number).
-- Shown in the tree and the workspace switcher.
+- Shown in the sidebar and the Settings project list.
 
 ### 6.2 Adding projects
 

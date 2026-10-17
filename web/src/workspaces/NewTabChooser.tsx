@@ -4,25 +4,26 @@ import { Zap } from 'lucide-react';
 import { StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { TabPlacement } from '../api/gen/TabPlacement';
+import { RunBranchForm } from '../runs/RunBranchForm';
 import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
-import { newSession, type Choice } from '../sessions/SessionList';
+import { newSession, type Choice } from '../sessions/newSession';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
 const KEYS: Record<string, Choice> = { c: 'Claude', x: 'Codex', s: 'Shell' };
 const btn = 'rounded-pdt border border-border px-3 py-1.5 text-sm hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50';
 
-/** Where a new session starts: the current tab's place, else the project workspace's project, else the user's pick. */
+/** Where a new session starts: the user's pick, else the current tab's place, else the project workspace's project. */
 function usePlace(ws: WorkspacesApi) {
-  const fixed = ws.currentInfo
+  const initial = ws.currentInfo
     ? { projectId: ws.currentInfo.projectId, worktreeId: ws.currentInfo.worktreeId }
     : ws.workspace?.projectId
       ? { projectId: ws.workspace.projectId, worktreeId: null }
       : null;
   const [picked, setPicked] = useState<{ projectId: string; worktreeId: string | null } | null>(null);
-  const place = fixed ?? picked ?? (ws.projects[0] ? { projectId: ws.projects[0].id, worktreeId: null } : null);
-  return { place, fixed: fixed !== null, setPicked };
+  const place = picked ?? initial ?? (ws.projects[0] ? { projectId: ws.projects[0].id, worktreeId: null } : null);
+  return { place, setPicked };
 }
 
 function PlacePicker({ ws, place, onPick }: {
@@ -48,7 +49,7 @@ function PlacePicker({ ws, place, onPick }: {
 /** The new-tab chooser: launch Claude, Codex or a shell, start a run, or bring an existing session or run here. */
 export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () => void }) {
   const qc = useQueryClient();
-  const { place, fixed, setPicked } = usePlace(ws);
+  const { place, setPicked } = usePlace(ws);
   const [bypass, setBypass] = useState(false);
   const [filter, setFilter] = useState('');
   const workspace = ws.workspace;
@@ -74,6 +75,7 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
     return where?.workspace.id !== workspace?.id && i.title.toLowerCase().includes(filter.trim().toLowerCase());
   });
   const error = create.error ?? start.error;
+  const project = ws.projects.find((p) => p.id === place?.projectId) ?? null;
 
   return (
     <>
@@ -97,7 +99,7 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
           <p className="text-sm text-muted">Add a project first.</p>
         ) : (
           <>
-            {!fixed && <PlacePicker ws={ws} place={place} onPick={setPicked} />}
+            <PlacePicker ws={ws} place={place} onPick={setPicked} />
             <div className="flex flex-wrap items-center gap-2">
               {(['Claude', 'Codex', 'Shell'] as Choice[]).map((c) => (
                 <button key={c} type="button" className={btn} disabled={create.isPending} onClick={() => create.mutate(c)}>
@@ -126,6 +128,12 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
               )}
             </div>
             {configError && <p className="text-[11px] text-failed">{configError}</p>}
+            {project && (
+              <details className="text-xs text-muted">
+                <summary className="cursor-pointer">Run another branch…</summary>
+                <RunBranchForm project={project} onSelectRun={(runId) => void done({ kind: 'run', id: runId }, project.id)} />
+              </details>
+            )}
           </>
         )}
         <div className="flex flex-col gap-1">

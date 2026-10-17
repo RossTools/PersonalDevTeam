@@ -6,7 +6,6 @@ import type { Run } from '../api/gen/Run';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
-import { RunsSection } from './RunsSection';
 import { RunView } from './RunView';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -33,64 +32,6 @@ const config = {
     tests: [{ name: 'unit', setup: null, command: 'y', web: false, data: false, env: {} }],
   },
 };
-
-describe('RunsSection', () => {
-  it('starts a configured run or test and selects it', async () => {
-    const calls = stubApi({
-      'GET /api/projects/p/runs': [run({ id: 'old', state: 'stopped' })],
-      'GET /api/projects/p/run-config': config,
-      'POST /api/projects/p/runs': (c) => run({ id: 'new', ...(c.body as object) }),
-    });
-    const onSelectRun = vi.fn();
-    renderWithQuery(<RunsSection project={project} worktreeId={null} label="Repository" selectedRunId={null} onSelectRun={onSelectRun} />);
-    expect(await screen.findByRole('button', { name: /web · stopped/ })).toBeInTheDocument();
-    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Run in Repository' }), 'test:unit');
-    await waitFor(() => expect(onSelectRun).toHaveBeenCalledWith('new'));
-    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'unit', kind: 'test' });
-  });
-
-  it('asks before stopping the oldest run when the host is at its limit', async () => {
-    let posts = 0;
-    const calls = stubApi({
-      'GET /api/projects/p/runs': [],
-      'GET /api/projects/p/run-config?worktreeId=w': config,
-      'GET /api/runs': [run({ id: 'oldest', name: 'web', branch: 'b1' }), run({ id: 'newer', branch: 'b2' })],
-      'POST /api/projects/p/runs': (c) =>
-        ++posts === 1
-          ? new Reply(409, { code: 'too_many_runs', message: 'Stop "web · b1" to start this one?' })
-          : run({ id: 'new', ...(c.body as object) }),
-    });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    renderWithQuery(<RunsSection project={project} worktreeId="w" label="feature/x" selectedRunId={null} onSelectRun={() => {}} />);
-    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Run in feature/x' }), 'run:web');
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2));
-    expect(confirm).toHaveBeenCalledWith('Stop "web · b1" to start this one?');
-    expect(calls.filter((c) => c.method === 'POST')[1].body).toEqual({ worktreeId: 'w', name: 'web', kind: 'run', stopRunId: 'oldest' });
-  });
-
-  it('does nothing more when the user declines', async () => {
-    const calls = stubApi({
-      'GET /api/projects/p/runs': [],
-      'GET /api/projects/p/run-config': config,
-      'POST /api/projects/p/runs': new Reply(409, { code: 'too_many_runs', message: 'Stop?' }),
-    });
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-    renderWithQuery(<RunsSection project={project} worktreeId={null} label="Repository" selectedRunId={null} onSelectRun={() => {}} />);
-    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Run in Repository' }), 'run:web');
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1));
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  it('shows a configuration error instead of the menu', async () => {
-    stubApi({
-      'GET /api/projects/p/runs': [],
-      'GET /api/projects/p/run-config': { ...config, effective: null, error: '"x" has no command' },
-    });
-    renderWithQuery(<RunsSection project={project} worktreeId={null} label="Repository" selectedRunId={null} onSelectRun={() => {}} />);
-    expect(await screen.findByText(/has no command/)).toBeInTheDocument();
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-  });
-});
 
 describe('RunBranchForm', () => {
   it('runs a branch that has no worktree yet', async () => {
