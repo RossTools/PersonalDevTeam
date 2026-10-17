@@ -12,12 +12,11 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
   (docs/superpowers/notes/update-incident-2026-10-17.md)
 - Moved PDT to the Mac mini: it runs the stable PDT that develops PDT (runbook:
   docs/superpowers/plans/2026-10-16-mac-mini-move.md)
+- Phase 3a: workspaces and tabs, herdr-style sidebar, Ctrl+] keys, right-click menus (#11)
 
 ## Now
-- **Phase 3: Workspaces** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md). Two PRs: 3a workspaces
-  and tabs (no split panes), session tree, keyboard, status at a glance, drag to reorder; 3b project keys, clone by URL,
-  GitHub links, adopt/remove worktrees, remove projects, folder view. 3a is in review
-  (plan: docs/superpowers/plans/2026-10-17-phase-3a-workspaces.md).
+- **Phase 3b: Git integration** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md §6): project keys,
+  clone by URL, GitHub links, adopt/remove worktrees, remove projects, folder view.
 
 ## Next (build order)
 1. **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT.
