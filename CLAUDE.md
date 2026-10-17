@@ -3,6 +3,11 @@
 Personal command center for agentic development: tickets + pipeline board, Claude Code / Codex sessions, review, terminals.
 Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs/superpowers/plans/. Roadmap (what comes next, until PDT has tickets): docs/ROADMAP.md — keep it current.
 
+## Workflow (full version: docs/SDLC.md)
+- Every change gets its own branch and worktree at `.worktrees/<branch>`, created through the stable PDT (`POST 127.0.0.1:7420/api/projects/<id>/worktrees` with `{"branch":"..."}`) so its sessions and Run know it. Never commit on `main` in the main checkout.
+- Before pushing, run the CI checks: fmt, clippy, `cargo test` (commit web/src/api/gen), web typecheck/test/build.
+- PR against `main`; the user tests the branch with Run → pdt; squash-merge only when the user says so and CI is green; then remove the worktree and branch.
+
 ## Layout
 - crates/pdt-core — pure domain types + brand constants (no I/O)
 - crates/pdt-git — git CLI wrapper
@@ -45,7 +50,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md. Plans: docs
 - Resume fallback: Claude saves `<claude config dir>/projects/*/<session id>.jsonl` only after its first turn. If that file is missing, restart/auto-resume launches `--session-id <id>` (fresh conversation, same id) instead of `--resume`. Config dir is `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
 - Terminal reconnect: a terminal that connects while the startup auto-resume has yet to get to its session waits (up to 30 s) and attaches once it starts. The WebSocket for an existing session with no PTY otherwise upgrades, sends `{"type":"not_running"}` and closes; the browser then shows "Session ended." and reattaches when the session list shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s).
 - Logs: <data dir>/logs/pdtd.<date>.log and pdt-host.log; a spawned pdt-host's and pdtd's startup output goes to <data dir>/logs/pdtd-launch.log.
-- Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed only after merge (Phase 4).
+- Worktrees live inside the repo at .worktrees/<branch> (listed in .git/info/exclude). They are removed by hand after merge (docs/SDLC.md) until Phase 6 automates it. A folder there that PDT didn't create makes Run on that branch fail with `worktree_path_taken`.
 - The dev profile also accepts the Vite dev server (localhost:5173) in its Host/Origin allowlist.
 - Stable app: scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd and pdt-host are sidecars via src-tauri/tauri.bundle.conf.json). When pdt-host supervises the stable pdtd they hand the build to it as an update; otherwise they stop the stable tray app and pdtd, install and launch. -BuildOnly / --build-only only builds.
 - pdt-host starts at login: `pdt-host install` copies itself to <data dir>/host and registers a LaunchAgent (macOS) or an HKCU Run value (Windows; the NSIS hooks in desktop/src-tauri/windows/hooks.nsh run it). Never run `pdt-host install`/`uninstall` on the dev machine.
