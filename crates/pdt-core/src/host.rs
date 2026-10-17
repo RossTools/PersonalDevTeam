@@ -266,10 +266,12 @@ mod tests {
 
     #[test]
     fn the_projects_folder_is_set_and_cleared() {
+        // A full path on this platform (on Windows that needs a drive letter).
+        let dir = std::env::temp_dir().join("code").to_string_lossy().into_owned();
         let s = HostSettings::default()
-            .apply(&HostSettingsPatch { projects_dir: Some(" /srv/code ".into()), ..patch() })
+            .apply(&HostSettingsPatch { projects_dir: Some(format!(" {dir} ")), ..patch() })
             .unwrap();
-        assert_eq!(s.projects_dir.as_deref(), Some("/srv/code"));
+        assert_eq!(s.projects_dir.as_deref(), Some(dir.as_str()));
         let s = s.apply(&HostSettingsPatch { projects_dir: Some(" ".into()), ..patch() }).unwrap();
         assert_eq!(s.projects_dir, None);
         let s = s.apply(&HostSettingsPatch { projects_dir: Some("~/code".into()), ..patch() }).unwrap();
