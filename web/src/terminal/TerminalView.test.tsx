@@ -5,7 +5,7 @@ const h = vi.hoisted(() => ({
   term: null as null | {
     written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
     keyHandler: ((e: KeyboardEvent) => boolean) | null; modes: { bracketedPasteMode: boolean };
-    selectionCb: (() => void) | null; selection: string;
+    selectionCb: (() => void) | null; selection: string; opts: Record<string, unknown>;
   },
   clipboard: null as null | { readText(s: string): string; writeText(s: string, t: string): Promise<void> },
   sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean; retries: number },
@@ -21,7 +21,8 @@ vi.mock('@xterm/xterm', () => ({
     resetCount = 0;
     keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
     modes = { bracketedPasteMode: true };
-    constructor() { h.term = this; }
+    opts: Record<string, unknown>;
+    constructor(opts: Record<string, unknown>) { this.opts = opts; h.term = this; }
     attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) { this.keyHandler = fn; }
     selectionCb: (() => void) | null = null;
     selection = '';
@@ -151,6 +152,11 @@ describe('TerminalView', () => {
     await h.clipboard!.writeText('c', 'copied');
     expect(writeText).toHaveBeenCalledWith('copied');
     expect(h.clipboard!.readText('c')).toBe('');
+  });
+
+  it('enables the proposed API the wrapped-link underline needs', () => {
+    render(<TerminalView sessionId="s1" />);
+    expect(h.term!.opts.allowProposedApi).toBe(true);
   });
 
   it('copies a mouse selection to the clipboard when the mouse is released', () => {

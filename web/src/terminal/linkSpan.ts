@@ -65,25 +65,34 @@ export function linkUnderliner(term: Terminal): { show(x: number, y: number): vo
     // x and y are xterm's 1-based buffer range coordinates.
     show(x, y) {
       clear();
-      const buf = term.buffer.active;
-      if (buf.type !== 'normal') return;
-      const cursorRow = buf.baseY + buf.cursorY;
-      for (const s of linkSegments(buf as unknown as BufferLike, y - 1, x - 1)) {
-        const marker = term.registerMarker(s.row - cursorRow);
-        const deco = term.registerDecoration({ marker, x: s.start, width: s.end - s.start, layer: 'top' });
-        if (!deco) {
-          marker.dispose();
-          continue;
-        }
-        deco.onRender((el) => {
-          el.style.boxSizing = 'border-box';
-          el.style.borderBottom = `1px solid ${cssVar('--pdt-fg')}`;
-          el.style.pointerEvents = 'none';
-        });
-        shown.push(deco, marker);
+      try {
+        draw(x, y);
+      } catch {
+        // Decorations are a proposed xterm API; without them only the hovered row is underlined.
+        clear();
       }
     },
     clear,
     dispose: clear,
   };
+
+  function draw(x: number, y: number) {
+    const buf = term.buffer.active;
+    if (buf.type !== 'normal') return;
+    const cursorRow = buf.baseY + buf.cursorY;
+    for (const s of linkSegments(buf as unknown as BufferLike, y - 1, x - 1)) {
+      const marker = term.registerMarker(s.row - cursorRow);
+      const deco = term.registerDecoration({ marker, x: s.start, width: s.end - s.start, layer: 'top' });
+      if (!deco) {
+        marker.dispose();
+        continue;
+      }
+      deco.onRender((el) => {
+        el.style.boxSizing = 'border-box';
+        el.style.borderBottom = `1px solid ${cssVar('--pdt-fg')}`;
+        el.style.pointerEvents = 'none';
+      });
+      shown.push(deco, marker);
+    }
+  }
 }

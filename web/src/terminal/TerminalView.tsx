@@ -68,6 +68,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       theme: terminalTheme(),
       // Option+drag selects even while the program captures the mouse (Claude Code does).
       macOptionClickForcesSelection: true,
+      // registerDecoration (the wrapped-link underline) is a proposed API.
+      allowProposedApi: true,
       // OSC 8 hyperlinks (Claude Code sends them for URLs because pdtd sets FORCE_HYPERLINK), wrapped lines included.
       // xterm underlines only the hovered row of a wrapped link; the underliner does the other rows.
       linkHandler: {
