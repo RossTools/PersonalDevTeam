@@ -2,4 +2,8 @@
 import type { AgentKind } from "./AgentKind";
 import type { SessionKind } from "./SessionKind";
 
-export type NewSession = { projectId: string, worktreeId?: string, kind: SessionKind, agent?: AgentKind, cols: number, rows: number, };
+export type NewSession = { projectId: string, worktreeId?: string, kind: SessionKind, agent?: AgentKind, 
+/**
+ * Agents only: bypass the agent's permission prompts. Absent/false launches normally; ignored for shells.
+ */
+bypassPermissions?: boolean, cols: number, rows: number, };

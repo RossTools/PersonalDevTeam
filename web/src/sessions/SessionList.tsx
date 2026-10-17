@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Zap } from 'lucide-react';
 import { Button, StatusDot } from '@ui';
 import { api } from '../api/client';
 import type { NewSession } from '../api/gen/NewSession';
@@ -12,11 +13,60 @@ import { INITIAL_SIZE, toDot } from './status';
 type Choice = 'Shell' | 'Claude' | 'Codex';
 const CHOICES: Choice[] = ['Shell', 'Claude', 'Codex'];
 
-function newSession(projectId: string, worktreeId: string | null, choice: Choice): NewSession {
+function newSession(projectId: string, worktreeId: string | null, choice: Choice, bypass: boolean): NewSession {
   const base = { projectId, ...(worktreeId ? { worktreeId } : {}) };
   return choice === 'Shell'
     ? { ...base, kind: 'shell', ...INITIAL_SIZE }
-    : { ...base, kind: 'agent_tui', agent: choice === 'Claude' ? 'claude' : 'codex', ...INITIAL_SIZE };
+    : {
+        ...base,
+        kind: 'agent_tui',
+        agent: choice === 'Claude' ? 'claude' : 'codex',
+        // Only sent when armed, so a normal launch stays a plain payload.
+        ...(bypass ? { bypassPermissions: true } : {}),
+        ...INITIAL_SIZE,
+      };
+}
+
+/**
+ * The Shell / Claude / Codex buttons for one place, with a toggle that arms "skip permissions" for the next agent
+ * launched here (Claude's `--dangerously-skip-permissions`, Codex's `--dangerously-bypass-approvals-and-sandbox`).
+ * Needed on mobile, where you can't answer the agents' permission prompts. Shells ignore it.
+ */
+function LaunchButtons({ projectId, group, disabled, onCreate }: {
+  projectId: string;
+  group: { id: string | null; label: string };
+  disabled: boolean;
+  onCreate: (s: NewSession) => void;
+}) {
+  const [bypass, setBypass] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={bypass}
+        aria-label={`Skip permission prompts for new agents in ${group.label}`}
+        title="Skip the agent's permission prompts (dangerous). Needed on mobile, where you can't answer them."
+        disabled={disabled}
+        onClick={() => setBypass((b) => !b)}
+        className={`${small} ${bypass ? 'text-failed' : ''}`}
+      >
+        <Zap size={12} aria-hidden fill={bypass ? 'currentColor' : 'none'} />
+      </button>
+      {CHOICES.map((c) => (
+        <button
+          key={c}
+          type="button"
+          aria-label={`New ${c} in ${group.label}${bypass && c !== 'Shell' ? ', skip permissions' : ''}`}
+          disabled={disabled}
+          onClick={() => onCreate(newSession(projectId, group.id, c, bypass))}
+          className={small}
+        >
+          {c}
+        </button>
+      ))}
+    </>
+  );
 }
 
 function RenameInput({ initial, onSave, onCancel }: {
@@ -101,18 +151,7 @@ export function SessionList({ project, selectedId, onSelect, selectedRunId, onSe
         <section key={g.id ?? 'repo'} aria-label={g.label}>
           <div className="flex items-center gap-0.5 px-2 text-xs text-muted">
             <span className="flex-1 truncate font-medium" title={g.label}>{g.label}</span>
-            {CHOICES.map((c) => (
-              <button
-                key={c}
-                type="button"
-                aria-label={`New ${c} in ${g.label}`}
-                disabled={create.isPending}
-                onClick={() => create.mutate(newSession(project.id, g.id, c))}
-                className={small}
-              >
-                {c}
-              </button>
-            ))}
+            <LaunchButtons projectId={project.id} group={g} disabled={create.isPending} onCreate={create.mutate} />
           </div>
           <ul className="flex flex-col gap-0.5">
             {sessions.data.filter((s) => s.worktreeId === g.id).map((s) => (

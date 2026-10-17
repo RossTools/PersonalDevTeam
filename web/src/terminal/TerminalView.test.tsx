@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -19,6 +19,7 @@ vi.mock('@xterm/xterm', () => ({
     constructor() { h.term = this; }
     loadAddon() {}
     open() {}
+    focus() {}
     callbacks: (() => void)[] = [];
     write(d: unknown, cb?: () => void) { this.written.push(d); if (cb) this.callbacks.push(cb); }
     /** Simulates xterm finishing parsing everything written so far. */
@@ -89,10 +90,17 @@ describe('TerminalView', () => {
     expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
     act(() => (h.sock!.handlers.onStatus as (s: string) => void)('reconnecting'));
     expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
     act(() => (h.sock!.handlers.onStatus as (s: string) => void)('ended'));
     expect(screen.queryByText(/Reconnecting/)).not.toBeInTheDocument();
     expect(screen.getByText('Session ended.')).toBeInTheDocument();
+  });
+
+  it('sends raw key sequences from the on-screen key bar', () => {
+    render(<TerminalView sessionId="s1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Escape' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Control C' }));
+    expect(h.sock!.sent).toEqual(['\x1b', '\x1b[A', '\x03']);
   });
 
   it('reattaches when the session becomes running again after it ended', () => {

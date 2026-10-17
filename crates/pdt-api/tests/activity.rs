@@ -29,6 +29,7 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
                 worktree_id: None,
                 kind,
                 agent,
+                bypass_permissions: false,
                 title: "t".into(),
                 cwd: repo.to_string_lossy().into(),
                 status: SessionStatus::Running,

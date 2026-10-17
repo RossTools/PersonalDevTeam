@@ -15,7 +15,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1 };
 const session = (over: Partial<Session>): Session => ({
-  id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, title: 'Shell', cwd: '/r',
+  id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,
   externalSessionId: null, freshStartedAt: 1,
   activity: null, attentionAt: null, lastViewedAt: null, unseen: false, ...over,
@@ -52,6 +52,23 @@ describe('SessionList', () => {
       { projectId: 'p', worktreeId: 'w', kind: 'agent_tui', agent: 'claude', cols: 120, rows: 32 },
     ]);
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('new'));
+  });
+
+  it('arms skip-permissions for the next agent and leaves shells alone', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/sessions': [],
+      'POST /api/sessions': (c) => session({ id: 'new', ...(c.body as object) }),
+    });
+    renderWithQuery(<SessionList project={project} selectedId={null} onSelect={() => {}} />);
+    await userEvent.click(await screen.findByRole('switch', { name: 'Skip permission prompts for new agents in Repository' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New Claude in Repository, skip permissions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New Shell in Repository' }));
+    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body);
+    expect(posts).toEqual([
+      { projectId: 'p', kind: 'agent_tui', agent: 'claude', bypassPermissions: true, cols: 120, rows: 32 },
+      { projectId: 'p', kind: 'shell', cols: 120, rows: 32 },
+    ]);
   });
 
   it('renames a session in place on Enter and cancels on Escape', async () => {

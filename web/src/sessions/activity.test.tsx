@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 const base: Session = {
-  id: 's1', projectId: 'p', worktreeId: null, kind: 'agent_tui', agent: 'claude', title: 'Claude · PDT', cwd: '/r',
+  id: 's1', projectId: 'p', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'Claude · PDT', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false,
 };

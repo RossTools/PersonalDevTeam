@@ -4,8 +4,9 @@ use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
-                       external_session_id, fresh_started_at, activity, attention_at, last_viewed_at";
+const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, \
+                       created_at, ended_at, external_session_id, fresh_started_at, activity, attention_at, \
+                       last_viewed_at";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
@@ -24,6 +25,7 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
             Some(a) => Some(AgentKind::parse(&a).ok_or_else(|| corrupt("agent", &a))?),
             None => None,
         },
+        bypass_permissions: r.try_get("bypass_permissions")?,
         title: r.try_get("title")?,
         cwd: r.try_get("cwd")?,
         status: SessionStatus::parse(&status).ok_or_else(|| corrupt("status", &status))?,
@@ -45,15 +47,16 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
 impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, title, cwd, status, exit_code, created_at, ended_at, \
+            "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
              external_session_id, fresh_started_at, activity, attention_at, last_viewed_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
         .bind(&s.worktree_id)
         .bind(s.kind.as_str())
         .bind(s.agent.map(AgentKind::as_str))
+        .bind(s.bypass_permissions)
         .bind(&s.title)
         .bind(&s.cwd)
         .bind(s.status.as_str())
@@ -228,6 +231,7 @@ mod tests {
             worktree_id: None,
             kind: SessionKind::AgentTui,
             agent: Some(AgentKind::Codex),
+            bypass_permissions: false,
             title: "Codex".into(),
             cwd: "C:\\r é".into(),
             status: SessionStatus::Running,

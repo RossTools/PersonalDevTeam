@@ -8,7 +8,12 @@ export type Session = { id: string, projectId: string,
 /**
  * None means the session runs in the project's main checkout.
  */
-worktreeId: string | null, kind: SessionKind, agent: AgentKind | null, title: string, 
+worktreeId: string | null, kind: SessionKind, agent: AgentKind | null, 
+/**
+ * Agents only: launched with permission prompts bypassed (`--dangerously-skip-permissions` for Claude,
+ * `--dangerously-bypass-approvals-and-sandbox` for Codex). Persisted so restart/auto-resume keep it.
+ */
+bypassPermissions: boolean, title: string, 
 /**
  * Working directory, native separators.
  */
