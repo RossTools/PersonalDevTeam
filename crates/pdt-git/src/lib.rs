@@ -262,6 +262,46 @@ pub fn ensure_excluded(repo: &Path, pattern: &str) -> Result<(), GitError> {
     std::fs::write(&file, text).map_err(io)
 }
 
+/// The identity and settings for commits PDT makes itself (demo data): they work without a configured git identity
+/// and never wait on a signing prompt.
+const PDT_COMMIT_CONFIG: [&str; 6] =
+    ["-c", "user.name=PDT Demo", "-c", "user.email=demo@pdt.invalid", "-c", "commit.gpgsign=false"];
+
+/// Creates a repository at `dir` (made if missing) whose first branch is `branch`.
+pub fn init(dir: &Path, branch: &str) -> Result<(), GitError> {
+    std::fs::create_dir_all(dir).map_err(|e| GitError::Command(format!("creating {}: {e}", dir.display())))?;
+    match git_with_env(dir, &["init", "-q", "-b", branch], &[])? {
+        Ok(_) => Ok(()),
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
+/// Stages every change in the working tree at `dir` and commits it with PDT's own identity. Returns the new commit.
+pub fn commit_all(dir: &Path, message: &str) -> Result<String, GitError> {
+    if let Err(f) = git_with_env(dir, &["add", "-A"], &[])? {
+        return Err(GitError::Command(f.stderr));
+    }
+    let mut args = PDT_COMMIT_CONFIG.to_vec();
+    args.extend(["commit", "-q", "-m", message]);
+    if let Err(f) = git_with_env(dir, &args, &[])? {
+        return Err(GitError::Command(f.stderr));
+    }
+    match git_with_env(dir, &["rev-parse", "HEAD"], &[])? {
+        Ok(sha) => Ok(sha),
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
+/// Creates branch `branch` at `start` (a branch or commit) without checking it out.
+pub fn create_branch(repo: &Path, branch: &str, start: &str) -> Result<(), GitError> {
+    check_branch_name(repo, branch)?;
+    match git_with_env(repo, &["branch", branch, start], &[])? {
+        Ok(_) => Ok(()),
+        Err(f) if f.stderr.contains("already exists") => Err(GitError::BranchExists(branch.to_string())),
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,5 +534,23 @@ mod tests {
         assert!(branch_exists(&clone, "feature/remote"), "now a local tracking branch");
         let c = clone.join(".worktrees").join("nope");
         assert!(matches!(add_worktree_for_branch(&clone, &c, "nope"), Err(GitError::UnknownRef(_))));
+    }
+
+    #[test]
+    fn init_commit_and_branch_without_a_git_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("new").join("repo");
+        init(&dir, "main").unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let first = commit_all(&dir, "First").unwrap();
+        std::fs::write(dir.join("b.txt"), "b").unwrap();
+        let second = commit_all(&dir, "Second").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(resolve_repo(&dir).unwrap().current_branch.as_deref(), Some("main"));
+        assert_eq!(git_ok(&dir, &["log", "-1", "--format=%an <%ae> %s"]), "PDT Demo <demo@pdt.invalid> Second");
+        create_branch(&dir, "fix/x", &first).unwrap();
+        assert_eq!(git_ok(&dir, &["rev-parse", "fix/x"]), first);
+        assert!(matches!(create_branch(&dir, "fix/x", "main"), Err(GitError::BranchExists(_))));
+        assert!(matches!(create_branch(&dir, "bad..name", "main"), Err(GitError::InvalidBranch(_))));
     }
 }
