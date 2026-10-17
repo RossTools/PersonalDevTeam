@@ -3243,6 +3243,7 @@ dependencies = [
  "jiff",
  "pdt-api",
  "pdt-core",
+ "pdt-git",
  "pdt-store",
  "pdt-tailscale",
  "pdt-update",
@@ -3252,6 +3253,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

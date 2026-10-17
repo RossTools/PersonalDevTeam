@@ -31,6 +31,14 @@ pub struct Config {
     /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
     /// (`update_disabled_reason`).
     pub supervised: bool,
+    /// `PDT_SEED=demo`: fill an empty database with demo data at startup (dev instances only; `seed.rs`).
+    pub seed: Option<Seed>,
+}
+
+/// What `PDT_SEED` asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seed {
+    Demo,
 }
 
 /// Why a dev instance never updates.
@@ -75,6 +83,11 @@ impl Config {
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
         let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
+        let seed = match lookup("PDT_SEED").as_deref().map(str::trim) {
+            None => None,
+            Some("demo") => Some(Seed::Demo),
+            Some(other) => bail!("PDT_SEED must be \"demo\", not {other:?}"),
+        };
         Ok(Config {
             profile,
             port,
@@ -88,6 +101,7 @@ impl Config {
             claude_program,
             codex_program,
             supervised,
+            seed,
         })
     }
 
@@ -260,6 +274,15 @@ mod tests {
         assert_eq!(port_of(&[("PDT_PROFILE", "dev")]), 7421);
         assert_eq!(port_of(&[("PDT_PORT", "9000")]), 9000);
         assert_eq!(port_of(&[("PDT_PROFILE", "dev"), ("PDT_PORT", "9001")]), 9001);
+    }
+
+    #[test]
+    fn seed_from_env() {
+        let seed = |v: &[(&str, &str)]| Config::from_lookup(lookup(v), Some("/d".into()), None).map(|c| c.seed);
+        assert_eq!(seed(&[]).unwrap(), None);
+        assert_eq!(seed(&[("PDT_SEED", "")]).unwrap(), None);
+        assert_eq!(seed(&[("PDT_SEED", " demo ")]).unwrap(), Some(Seed::Demo));
+        assert!(seed(&[("PDT_SEED", "lots")]).is_err());
     }
 
     #[test]

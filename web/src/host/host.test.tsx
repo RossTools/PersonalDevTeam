@@ -17,6 +17,7 @@ const settingsView = (over: object = {}) => ({
   },
   ownerFromEnv: null,
   tokenPresent: false,
+  tokenError: null,
   remote: { enabled: false, active: false, url: null, dnsName: null, error: null, tailscaleLogin: 'me@example.com' },
   ...over,
 });
@@ -100,6 +101,30 @@ describe('HostSettingsPage', () => {
     await waitFor(() => expect(field).toHaveValue(''));
   });
 
+  it('loads with an unreadable keychain and says what to do', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView({ tokenError: 'the OS keychain failed: it did not answer in time' }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByText(/Token: cannot be read/)).toBeInTheDocument();
+    expect(screen.getByText(/Always Allow/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Remote access' })).toBeInTheDocument();
+  });
+
+  it('shows why the settings failed to load instead of loading forever', async () => {
+    stubApi({
+      'GET /api/host/settings': new Reply(500, { code: 'internal', message: 'internal error' }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Host settings could not be loaded: internal error');
+  });
+
   it('reports the token state and that updates apply to the installed app', async () => {
     stubApi({
       'GET /api/host/settings': settingsView({ tokenPresent: true }),
@@ -116,6 +141,21 @@ describe('HostSettingsPage', () => {
 });
 
 describe('UpdateBanner', () => {
+  it('stays one line and shows the release notes over the page, not in it', async () => {
+    stubApi({ 'GET /api/host/update': update({ state: 'available', latest: { ...release, notes: 'Fixes things' } }) });
+    renderWithQuery(<UpdateBanner />);
+    const toggle = await screen.findByRole('button', { name: 'Release notes' });
+    const strip = screen.getByText(/Update to v0.1.7 available/).parentElement!;
+    expect(strip).toHaveClass('h-8', 'flex-nowrap');
+    expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: 'Release notes' })).toHaveClass('absolute');
+    expect(screen.getByText('Fixes things')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+  });
+
   it('confirms before updating a busy host', async () => {
     let n = 0;
     const calls = stubApi({

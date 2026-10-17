@@ -364,6 +364,8 @@ fn stop_tray(place: &Path) -> bool {
     }
 }
 
+/// Starts the tray app again after an install or rollback, asking it not to open the web UI (no new browser window
+/// on every update).
 fn start_tray(place: &Path) {
     if cfg!(windows) {
         let daemon = pdt_core::brand::DAEMON_BIN;
@@ -377,6 +379,7 @@ fn start_tray(place: &Path) {
         });
         if let Some(app) = app {
             let mut cmd = Command::new(app);
+            cmd.arg(pdt_core::handoff::TRAY_QUIET_ARG);
             for (k, _) in std::env::vars() {
                 if k.starts_with("PDT_") {
                     cmd.env_remove(k);
@@ -385,8 +388,13 @@ fn start_tray(place: &Path) {
             let _ = cmd.spawn();
         }
     } else {
-        let _ = Command::new("open").arg(place).status();
+        let _ = Command::new("open").args(open_tray_args(place)).status();
     }
+}
+
+/// `open`'s arguments for starting the tray bundle quietly.
+fn open_tray_args(bundle: &Path) -> Vec<std::ffi::OsString> {
+    vec![bundle.into(), "--args".into(), pdt_core::handoff::TRAY_QUIET_ARG.into()]
 }
 
 #[cfg(test)]
@@ -444,6 +452,12 @@ mod tests {
         assert!(e.contains("not supported") && e.contains(".app bundle"), "{e}");
         assert!(u.install(Path::new("x")).is_err());
         assert_eq!(u.backup_path(), None);
+    }
+
+    #[test]
+    fn the_tray_restarts_without_opening_the_ui() {
+        let args = open_tray_args(Path::new("/Applications/P.app"));
+        assert_eq!(args, ["/Applications/P.app", "--args", "--no-open"]);
     }
 
     #[test]
