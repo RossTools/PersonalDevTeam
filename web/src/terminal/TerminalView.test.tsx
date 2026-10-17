@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   term: null as null | {
     written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
+    keyHandler: ((e: KeyboardEvent) => boolean) | null; modes: { bracketedPasteMode: boolean };
   },
+  clipboard: null as null | { readText(s: string): string; writeText(s: string, t: string): Promise<void> },
   sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean; retries: number },
 }));
 
@@ -16,7 +18,10 @@ vi.mock('@xterm/xterm', () => ({
     dataCb: ((d: string) => void) | null = null;
     disposed = false;
     resetCount = 0;
+    keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
+    modes = { bracketedPasteMode: true };
     constructor() { h.term = this; }
+    attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) { this.keyHandler = fn; }
     loadAddon() {}
     open() {}
     focus() {}
@@ -30,6 +35,12 @@ vi.mock('@xterm/xterm', () => ({
   },
 }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
+vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
+vi.mock('@xterm/addon-clipboard', () => ({
+  ClipboardAddon: class {
+    constructor(_b: unknown, provider: NonNullable<typeof h.clipboard>) { h.clipboard = provider; }
+  },
+}));
 vi.mock('./ptySocket', () => ({
   ptyUrl: (id: string) => `ws://test/${id}`,
   PtySocket: class {
@@ -101,6 +112,38 @@ describe('TerminalView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Up' }));
     fireEvent.click(screen.getByRole('button', { name: 'Control C' }));
     expect(h.sock!.sent).toEqual(['\x1b', '\x1b[A', '\x03']);
+  });
+
+  it('sends Shift+Enter as a line break instead of Enter', () => {
+    render(<TerminalView sessionId="s1" />);
+    const ev = (type: string, init: Partial<KeyboardEvent>) =>
+      ({ type, key: 'Enter', shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, preventDefault() {}, ...init }) as KeyboardEvent;
+    expect(h.term!.keyHandler!(ev('keydown', { shiftKey: true }))).toBe(false);
+    expect(h.term!.keyHandler!(ev('keypress', { shiftKey: true }))).toBe(false);
+    expect(h.term!.keyHandler!(ev('keydown', {}))).toBe(true);
+    expect(h.sock!.sent).toEqual(['\x1b\r']);
+  });
+
+  it('sends a composed prompt as one paste followed by Enter', () => {
+    const onClose = vi.fn();
+    render(<TerminalView sessionId="s1" composing onComposeClose={onClose} />);
+    const box = screen.getByRole('textbox', { name: 'Prompt' });
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    fireEvent.change(box, { target: { value: 'fix it\nthen test' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(h.sock!.sent).toEqual(['\x1b[200~fix it\rthen test\x1b[201~\r']);
+    expect(box).toHaveValue('');
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('copies OSC 52 text to the clipboard but never reveals the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<TerminalView sessionId="s1" />);
+    await h.clipboard!.writeText('c', 'copied');
+    expect(writeText).toHaveBeenCalledWith('copied');
+    expect(h.clipboard!.readText('c')).toBe('');
   });
 
   it('reattaches when the session becomes running again after it ended', () => {

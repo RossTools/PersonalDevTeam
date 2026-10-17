@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button, StatusDot } from '@ui';
 import { api } from '../api/client';
@@ -10,6 +11,7 @@ import { useViewTracking } from './useViewTracking';
 export function SessionView({ session, polledAt, onRemoved }: { session: Session; polledAt?: number; onRemoved: () => void }) {
   useViewTracking(session.id, polledAt);
   const qc = useQueryClient();
+  const [composing, setComposing] = useState(false);
   const refresh = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const kill = useMutation({ mutationFn: () => api.killSession(session.id), onSuccess: refresh });
   const restart = useMutation({ mutationFn: () => api.restartSession(session.id, INITIAL_SIZE), onSuccess: refresh });
@@ -32,6 +34,9 @@ export function SessionView({ session, polledAt, onRemoved }: { session: Session
         <span className="font-medium">{session.title}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-muted" title={session.cwd}>{session.cwd}</span>
         <ActivityBadge activity={session.activity} unseen={session.unseen} />
+        {running && (
+          <Button variant="ghost" aria-pressed={composing} onClick={() => setComposing((c) => !c)}>Compose</Button>
+        )}
         {running ? (
           <Button variant="ghost" disabled={busy} onClick={() => kill.mutate()}>Stop</Button>
         ) : (
@@ -48,7 +53,14 @@ export function SessionView({ session, polledAt, onRemoved }: { session: Session
           {session.kind === 'agent_tui' ? '; the agent resumes its last conversation' : ''}.
         </p>
       ) : (
-        <TerminalView key={session.id} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
+        <TerminalView
+          key={session.id}
+          sessionId={session.id}
+          sessionStatus={session.status}
+          polledAt={polledAt}
+          composing={composing && running}
+          onComposeClose={() => setComposing(false)}
+        />
       )}
     </div>
   );
