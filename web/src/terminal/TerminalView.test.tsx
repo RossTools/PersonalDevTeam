@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   term: null as null | {
     written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
+    cols: number; rows: number; fontFamilySets: unknown[];
   },
-  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; disposed: boolean; connected: boolean; retries: number },
+  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; resizes: string[]; disposed: boolean; connected: boolean; retries: number },
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -16,7 +17,13 @@ vi.mock('@xterm/xterm', () => ({
     dataCb: ((d: string) => void) | null = null;
     disposed = false;
     resetCount = 0;
-    constructor() { h.term = this; }
+    options: Record<string, unknown> = {};
+    fontFamilySets: unknown[] = [];
+    constructor(opts: Record<string, unknown>) {
+      h.term = this;
+      const sets = this.fontFamilySets;
+      this.options = new Proxy({ ...opts }, { set(t, k, v) { if (k === 'fontFamily') sets.push(v); t[k as string] = v; return true; } });
+    }
     loadAddon() {}
     open() {}
     focus() {}
@@ -44,13 +51,46 @@ vi.mock('./ptySocket', () => ({
     }
     connect() { this.connected = true; }
     send(d: string) { this.sent.push(d); }
-    resize() {}
+    resizes: string[] = [];
+    resize(cols: number, rows: number) { this.resizes.push(`${cols}x${rows}`); }
     retry() { this.retries++; }
     dispose() { this.disposed = true; }
   },
 }));
 
 import { TerminalView } from './TerminalView';
+
+describe('TerminalView sizing', () => {
+  it('refits once per frame, tells the PTY only real size changes, and remeasures once the font loads', async () => {
+    let observed: (() => void) | null = null;
+    vi.stubGlobal('ResizeObserver', class { constructor(cb: () => void) { observed = cb; } observe() {} disconnect() {} });
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    let fontLoaded: () => void = () => {};
+    Object.defineProperty(document, 'fonts', { configurable: true, value: { load: () => new Promise<void>((r) => { fontLoaded = r; }) } });
+    const { unmount } = render(<TerminalView sessionId="s1" />);
+    expect(h.sock!.resizes).toEqual(['80x24']);
+    observed!();
+    observed!();
+    expect(frames).toHaveLength(1);
+    frames.splice(0).forEach((f) => f(0));
+    expect(h.sock!.resizes).toEqual(['80x24']);
+    h.term!.rows = 30;
+    observed!();
+    frames.splice(0).forEach((f) => f(0));
+    expect(h.sock!.resizes).toEqual(['80x24', '80x30']);
+    await act(async () => fontLoaded());
+    expect(h.term!.fontFamilySets).toHaveLength(2);
+    h.term!.rows = 28;
+    frames.splice(0).forEach((f) => f(0));
+    expect(h.sock!.resizes).toEqual(['80x24', '80x30', '80x28']);
+    unmount();
+    // @ts-expect-error jsdom has no FontFaceSet; remove the stub.
+    delete document.fonts;
+    vi.unstubAllGlobals();
+  });
+});
 
 describe('TerminalView', () => {
   it('wires the socket to the terminal and cleans up', () => {
