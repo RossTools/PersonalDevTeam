@@ -11,7 +11,13 @@ import { withStopConfirm } from './useStartRun';
 type Step = 'setup' | 'command';
 
 /** Keyed by run id by its parent, so tab and error state never carry over from another run. */
-export function RunView({ run, polledAt, onRemoved }: { run: Run; polledAt?: number; onRemoved: () => void }) {
+export function RunView({ run, polledAt, onRemoved, branchLink }: {
+  run: Run;
+  polledAt?: number;
+  onRemoved: () => void;
+  /** The run's branch on GitHub, when known. */
+  branchLink?: string | null;
+}) {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['runs', run.projectId] });
   // The tab follows the run's state (Setup while setting up, else Output) unless the user picked one in this state.
@@ -52,6 +58,7 @@ export function RunView({ run, polledAt, onRemoved }: { run: Run; polledAt?: num
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
         <StatusDot status={runDot(run.state)} />
         <span className="font-medium">{run.kind === 'test' ? 'Test ' : ''}{run.name} · {run.branch}</span>
+        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-accent underline">GitHub</a>}
         <span className="text-xs text-muted">{runLabel(run.state)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}</span>
         {run.url && run.state === 'ready' ? (
           <a href={run.url} target="_blank" rel="noreferrer" className="text-xs text-accent underline">{run.url}</a>

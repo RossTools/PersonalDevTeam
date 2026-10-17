@@ -27,10 +27,11 @@ export function tabMenu(ws: WorkspacesApi, tab: Tab, onRename: () => void): Menu
 }
 
 /** The right-click menu of a workspace in the sidebar. */
-export function workspaceMenu(ws: WorkspacesApi, w: Workspace, onRename: () => void): MenuEntry[] {
+export function workspaceMenu(ws: WorkspacesApi, w: Workspace, onRename: () => void, onProjectSettings?: (projectId: string) => void): MenuEntry[] {
   const i = ws.workspaces.findIndex((x) => x.id === w.id);
   const free = w.projectId === null;
   return [
+    ...(w.projectId && onProjectSettings ? [{ label: 'Project settings…', onSelect: () => onProjectSettings(w.projectId!) }] : []),
     ...(free ? [{ label: 'Rename', onSelect: onRename }] : []),
     { label: 'Move up', disabled: i <= 0, onSelect: () => void ws.moveWorkspace(w.id, i - 1) },
     { label: 'Move down', disabled: i >= ws.workspaces.length - 1, onSelect: () => void ws.moveWorkspace(w.id, i + 1) },

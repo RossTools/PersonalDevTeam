@@ -1,12 +1,10 @@
 use crate::error::ApiError;
 use crate::{pty_ws, sessions, worktrees};
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use pdt_core::brand::PRODUCT_NAME;
-use pdt_core::project::{NewProject, Project};
 use pdt_store::Store;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -228,8 +226,15 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/install", axum::routing::post(crate::update::post_install))
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
-        .route("/projects", get(list_projects).post(create_project))
-        .route("/projects/{id}", get(get_project))
+        .route("/projects", get(crate::projects::list).post(crate::projects::create))
+        .route("/projects/clone", axum::routing::post(crate::projects::clone))
+        .route(
+            "/projects/{id}",
+            get(crate::projects::get_one).patch(crate::projects::update).delete(crate::projects::remove),
+        )
+        .route("/projects/{id}/files", get(crate::files::list))
+        .route("/projects/{id}/files/content", get(crate::files::content))
+        .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
         .route(
             "/projects/{id}/settings",
             get(crate::project_settings::get_settings).put(crate::project_settings::put_settings),
@@ -274,37 +279,4 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
 
 async fn health() -> Json<Health> {
     Json(Health { status: "ok".into(), name: PRODUCT_NAME.into(), version: pdt_core::BUILD_VERSION.into() })
-}
-
-async fn list_projects(State(st): State<AppState>) -> Result<Json<Vec<Project>>, ApiError> {
-    Ok(Json(st.store.list_projects().await?))
-}
-
-async fn get_project(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Project>, ApiError> {
-    st.store.get_project(&id).await?.map(Json).ok_or_else(|| ApiError::not_found("project"))
-}
-
-async fn create_project(
-    State(st): State<AppState>,
-    payload: Result<Json<NewProject>, JsonRejection>,
-) -> Result<(StatusCode, Json<Project>), ApiError> {
-    let Json(input) = payload?;
-    let valid = input.validate()?;
-    let path = PathBuf::from(&valid.repo_path);
-    let info =
-        tokio::task::spawn_blocking(move || pdt_git::resolve_repo(&path)).await.map_err(ApiError::internal)??;
-    let project = Project {
-        id: uuid::Uuid::now_v7().to_string(),
-        name: valid.name,
-        repo_path: info.root.to_string_lossy().into_owned(),
-        base_branch: valid.base_branch.or(info.current_branch).unwrap_or_else(|| "main".into()),
-        created_at: now_ms(),
-    };
-    st.store.insert_project(&project).await.map_err(|e| match e {
-        pdt_store::StoreError::Conflict(_) => {
-            ApiError::new(StatusCode::CONFLICT, "conflict", "a project for this repository already exists")
-        }
-        other => other.into(),
-    })?;
-    Ok((StatusCode::CREATED, Json(project)))
 }

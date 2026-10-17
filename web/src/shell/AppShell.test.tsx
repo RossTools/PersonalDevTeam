@@ -12,7 +12,7 @@ vi.mock('../terminal/TerminalView', () => ({
 
 afterEach(() => vi.unstubAllGlobals());
 
-const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1 };
+const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', githubRepo: 'o/alpha' };
 const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false };
 
 // The shell always renders the update banner; a fully set-up host shows none.
@@ -192,6 +192,18 @@ describe('workspaces', () => {
     }));
   });
 
+  it('keeps focus in the chooser\'s menus when the screen refreshes', async () => {
+    stubWorkspaces();
+    const { rerender } = renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'New tab' }));
+    const chooser = screen.getByRole('dialog', { name: 'New tab' });
+    await waitFor(() => expect(chooser).toHaveFocus());
+    const place = within(chooser).getByRole('combobox', { name: 'Place' });
+    place.focus();
+    rerender(<AppShell />);
+    expect(place).toHaveFocus();
+  });
+
   it('brings an existing session into the workspace from the chooser', async () => {
     const calls = stubWorkspaces({ 'POST /api/workspaces/wr/tabs': tabOf('ta', 'wr', 'a', 0) });
     renderWithQuery(<AppShell />);
@@ -258,6 +270,22 @@ describe('workspaces', () => {
     fireEvent.drop(target, { dataTransfer });
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/tb', body: { workspaceId: 'wa', position: 0 } }));
   });
+  it('opens project settings, and the add-project modal, from the sidebar', async () => {
+    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
+    renderWithQuery(<AppShell />);
+    const list = await screen.findByRole('region', { name: 'Workspaces' });
+    fireEvent.contextMenu(await within(list).findByRole('button', { name: /Alpha/ }));
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Workspace Alpha' })).getByRole('menuitem', { name: 'Project settings…' }));
+    expect(await screen.findByRole('textbox', { name: 'Project key' })).toHaveValue('ALP');
+    await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add project' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add project' });
+    expect(within(dialog).getByRole('tab', { name: 'Clone URL' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Workspaces' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Add project' })).not.toBeInTheDocument();
+  });
+
   it('rolls up each workspace to its most urgent agent', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);
@@ -297,12 +325,14 @@ describe('workspaces', () => {
   });
 
   it('manages projects in the Settings view', async () => {
-    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { overrides: null, agentCredentials: null, effective: null, error: null } });
+    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { overrides: null, agentCredentials: null, effective: null, error: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(await within(nav).findByRole('button', { name: 'Alpha' }));
-    expect(within(nav).getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(await within(nav).findByRole('button', { name: /Alpha/ }));
+    expect(within(nav).getByRole('button', { name: /Alpha/ })).toHaveAttribute('aria-current', 'true');
+    expect(within(nav).getByRole('button', { name: /Alpha/ })).toHaveTextContent('ALP');
+    expect(await screen.findByRole('textbox', { name: 'Project key' })).toHaveValue('ALP');
     expect(screen.getByRole('button', { name: 'Add project' })).toBeInTheDocument();
   });
 });

@@ -12,7 +12,7 @@ vi.mock('../terminal/TerminalView', () => ({
 
 afterEach(() => vi.unstubAllGlobals());
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1 };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null };
 const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,

@@ -4,6 +4,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod manage;
+pub use manage::*;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoInfo {
     pub root: PathBuf,

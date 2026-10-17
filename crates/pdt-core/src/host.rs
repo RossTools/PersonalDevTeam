@@ -61,6 +61,8 @@ pub struct HostSettings {
     pub run_ports: PortRange,
     pub max_concurrent_runs: u32,
     pub agent_credentials: CredentialPolicy,
+    /// Where "clone by URL" puts new repositories by default; `~/work` when unset.
+    pub projects_dir: Option<String>,
 }
 
 impl Default for HostSettings {
@@ -72,6 +74,7 @@ impl Default for HostSettings {
             run_ports: DEFAULT_RUN_PORTS,
             max_concurrent_runs: DEFAULT_MAX_RUNS,
             agent_credentials: CredentialPolicy::Subscription,
+            projects_dir: None,
         }
     }
 }
@@ -99,6 +102,10 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub agent_credentials: Option<CredentialPolicy>,
+    /// Blank clears it (back to `~/work`).
+    #[serde(default)]
+    #[ts(optional)]
+    pub projects_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -109,6 +116,8 @@ pub enum HostSettingsError {
     BadMaxRuns,
     #[error("the owner login must not contain spaces or control characters")]
     BadOwner,
+    #[error("the projects folder must be a full path (or start with ~ for your home folder)")]
+    BadProjectsDir,
 }
 
 impl HostSettings {
@@ -151,6 +160,13 @@ impl HostSettings {
         }
         if let Some(c) = p.agent_credentials {
             s.agent_credentials = c;
+        }
+        if let Some(d) = &p.projects_dir {
+            let d = d.trim();
+            if !d.is_empty() && !d.starts_with('~') && !std::path::Path::new(d).is_absolute() {
+                return Err(HostSettingsError::BadProjectsDir);
+            }
+            s.projects_dir = (!d.is_empty()).then(|| d.to_string());
         }
         Ok(s)
     }
@@ -246,5 +262,21 @@ mod tests {
         assert_eq!(effective_credentials(Subscription, None), Subscription);
         assert_eq!(effective_credentials(Subscription, Some(PassThrough)), PassThrough);
         assert_eq!(effective_credentials(PassThrough, Some(Subscription)), Subscription);
+    }
+
+    #[test]
+    fn the_projects_folder_is_set_and_cleared() {
+        // A full path on this platform (on Windows that needs a drive letter).
+        let dir = std::env::temp_dir().join("code").to_string_lossy().into_owned();
+        let s = HostSettings::default()
+            .apply(&HostSettingsPatch { projects_dir: Some(format!(" {dir} ")), ..patch() })
+            .unwrap();
+        assert_eq!(s.projects_dir.as_deref(), Some(dir.as_str()));
+        let s = s.apply(&HostSettingsPatch { projects_dir: Some(" ".into()), ..patch() }).unwrap();
+        assert_eq!(s.projects_dir, None);
+        let s = s.apply(&HostSettingsPatch { projects_dir: Some("~/code".into()), ..patch() }).unwrap();
+        assert_eq!(s.projects_dir.as_deref(), Some("~/code"));
+        let bad = s.apply(&HostSettingsPatch { projects_dir: Some("code".into()), ..patch() });
+        assert_eq!(bad, Err(HostSettingsError::BadProjectsDir));
     }
 }

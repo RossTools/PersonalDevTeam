@@ -4,4 +4,12 @@ export type Project = { id: string, name: string,
 /**
  * Absolute repo root, as reported by git, using native separators.
  */
-repoPath: string, baseBranch: string, createdAt: number, };
+repoPath: string, baseBranch: string, createdAt: number, 
+/**
+ * Short unique key (e.g. `PDT`); tickets will be numbered with it. Blank on insert means "suggest one".
+ */
+key: string, 
+/**
+ * `owner/repo` when `origin` is on GitHub. Filled in by the API from git, never stored.
+ */
+githubRepo: string | null, };

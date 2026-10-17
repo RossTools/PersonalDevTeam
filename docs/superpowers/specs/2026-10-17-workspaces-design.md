@@ -206,16 +206,17 @@ Routes (errors are `{code, message}`):
 
 - Every project gets a **key**: 2–10 uppercase letters and digits starting with a letter, unique on the host (e.g.
   `PDT`). Phase 4 numbers tickets with it (`PDT-42`).
-- Suggested from the name when adding (initials, or the first letters of a one-word name) and editable in project
-  settings. Existing projects get one in the migration (deduplicated with a number).
+- Suggested from the name when adding (initials, or the first letters of a one-word name) and editable on the
+  project's Settings page. Existing projects get one when pdtd opens the database (deduplicated with a number).
 - Shown in the sidebar and the Settings project list.
 
 ### 6.2 Adding projects
 
 - **Add by path** (today) and **clone by URL**: `POST /api/projects/clone {url, parentDir?, name?, key?}` runs
   `git clone` into `<parentDir>/<repo name>` (default `parentDir` is a new host setting, "Projects folder", default
-  `~/work`), then adds the project. Progress streams to the add form; a failed clone removes the half-made folder.
-  Uses the host's own git credentials (SSH agent, credential helper); PDT stores none.
+  `~/work`), then adds the project. The form shows "Cloning…" until git finishes; a failed clone removes the
+  half-made folder. Uses the host's own git credentials (SSH agent, credential helper); PDT stores none, and git never
+  prompts (a credential or host-key question fails the clone instead of hanging).
 - **Remove project:** removes it from PDT (sessions stopped, runs stopped, database rows gone, its workspace
   deleted). Never deletes files. Fixes the stale "PDT configuration" project on the Mac mini.
 
@@ -225,7 +226,8 @@ Routes (errors are `{code, message}`):
   - the project → the repo,
   - a branch → its tree page, and "Open PR" → `compare/<base>...<branch>` (GitHub redirects to an existing PR's
     compare view; showing PR state needs the API and waits for Phase 6),
-  - a run or session's commit → the commit page.
+  - a session's or run's branch → its tree page (from the tab's header). Runs record no commit, so there are no
+    commit links.
 - No GitHub API calls and no token in this phase.
 
 ### 6.4 Worktrees
@@ -233,17 +235,19 @@ Routes (errors are `{code, message}`):
 - **Adopt:** when `.worktrees/<branch>` already exists as a git worktree for that branch, creating that worktree or
   running that branch registers it instead of failing with `worktree_path_taken`. A folder that isn't a worktree of
   this repo still fails.
-- **Remove worktree:** a tree action. Refuses while it has running sessions or runs; asks before removing a worktree
+- Worktree actions and GitHub links are on the project's page in Settings (the sidebar has no project tree).
+- **Remove worktree:** Refuses while it has running sessions or runs; asks before removing a worktree
   with uncommitted changes (`git worktree remove`, `--force` only after the user confirms). Deleting the branch is a
   separate checkbox, off by default. Its tab in the project workspace closes.
-- **Sync:** pdtd notices worktrees removed outside PDT (on list) and marks them missing; the tree offers to forget
-  them.
+- **Sync:** pdtd notices worktrees removed outside PDT (on list) and marks them missing; the project page offers to
+  forget them.
 
 ### 6.5 Folder view
 
 - The Files icon in the rail opens a read-only folder view for the current place (project root or worktree): a file
   tree honouring `.gitignore`, and a file viewer (CodeMirror, read-only, syntax highlighting) with the file's git
-  status. Large (> 1 MB) and binary files show a notice instead.
+  status. Large (> 1 MB) and binary files show a notice instead (the API returns `tooLarge` / `binary` without text).
+  Colours come from the design tokens, so light and dark mode both work.
 - `GET /api/projects/{id}/files?worktreeId=&path=` lists a directory; `GET …/files/content?…` returns a file. Paths
   are resolved inside the checkout and refused if they escape it (symlinks included).
 - Editing files is out of scope; Phase 6 adds the diff view next to this.

@@ -33,10 +33,16 @@ function rollup(ws: WorkspacesApi, w: Workspace) {
   return { activity, state: agentState(activity, infos.some((i) => i.unseen)) };
 }
 
-function WorkspaceRow({ ws, w, onMenu }: { ws: WorkspacesApi; w: Workspace; onMenu: ReturnType<typeof useContextMenu>['bind'] }) {
+function WorkspaceRow({ ws, w, onMenu, onProjectSettings }: {
+  ws: WorkspacesApi;
+  w: Workspace;
+  onMenu: ReturnType<typeof useContextMenu>['bind'];
+  onProjectSettings: (projectId: string) => void;
+}) {
   const [renaming, setRenaming] = useState(false);
   const { activity, state } = rollup(ws, w);
   const current = ws.workspace?.id === w.id;
+  const projectKey = w.projectId ? ws.projects.find((p) => p.id === w.projectId)?.key : undefined;
   if (renaming) {
     return (
       <form className="px-1" onSubmit={(e) => {
@@ -67,11 +73,12 @@ function WorkspaceRow({ ws, w, onMenu }: { ws: WorkspacesApi; w: Workspace; onMe
       }}
       onClick={() => ws.selectWorkspace(w.id)}
       onDoubleClick={() => w.projectId === null && setRenaming(true)}
-      {...onMenu(`Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenaming(true)))}
+      {...onMenu(`Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenaming(true), onProjectSettings))}
       className={`${row} ${current ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
     >
       {activity ? <StateDot activity={activity} fallback="idle" /> : <span className="inline-block size-2" />}
       <span className="flex-1 truncate">{w.name}</span>
+      {projectKey && <span className="font-mono text-[10px] text-muted">{projectKey}</span>}
       {state && state !== 'Idle' && <span className={`text-[11px] ${state === 'Needs you' ? 'text-waiting font-semibold' : 'text-muted'}`}>{state}</span>}
       <span className="text-[11px] text-muted tabular-nums">{w.tabs.length}</span>
     </button>
@@ -79,7 +86,13 @@ function WorkspaceRow({ ws, w, onMenu }: { ws: WorkspacesApi; w: Workspace; onMe
 }
 
 /** herdr's left panel: workspaces on top, every agent below with its state and where it is. */
-export function Sidebar({ ws, onRenameTab }: { ws: WorkspacesApi; onRenameTab: (tabId: string) => void }) {
+export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
+  ws: WorkspacesApi;
+  onRenameTab: (tabId: string) => void;
+  /** Opens a project's page in Settings. */
+  onProjectSettings: (projectId: string) => void;
+  onAddProject: () => void;
+}) {
   const { bind, menu } = useContextMenu();
   const [adding, setAdding] = useState(false);
   const agents = ws.allInfos
@@ -105,7 +118,7 @@ export function Sidebar({ ws, onRenameTab }: { ws: WorkspacesApi; onRenameTab: (
           </button>
         </h2>
         <div id="workspace-list" className="flex flex-col gap-0.5" onKeyDown={arrowKeys}>
-          {ws.workspaces.map((w) => <WorkspaceRow key={w.id} ws={ws} w={w} onMenu={bind} />)}
+          {ws.workspaces.map((w) => <WorkspaceRow key={w.id} ws={ws} w={w} onMenu={bind} onProjectSettings={onProjectSettings} />)}
         </div>
         {adding && (
           <form className="px-1 pt-0.5" onSubmit={(e) => {
@@ -163,6 +176,9 @@ export function Sidebar({ ws, onRenameTab }: { ws: WorkspacesApi; onRenameTab: (
           </ul>
         )}
       </section>
+      <button type="button" onClick={onAddProject} className="mt-3 mx-2 self-start inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+        <Plus size={12} aria-hidden /> Add project
+      </button>
       {menu}
     </div>
   );

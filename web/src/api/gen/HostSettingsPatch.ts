@@ -6,4 +6,8 @@ import type { UpdatePolicy } from "./UpdatePolicy";
 /**
  * A partial update. `owner_login: Some("")` (or blank) clears the owner.
  */
-export type HostSettingsPatch = { remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, };
+export type HostSettingsPatch = { remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, 
+/**
+ * Blank clears it (back to `~/work`).
+ */
+projectsDir?: string, };

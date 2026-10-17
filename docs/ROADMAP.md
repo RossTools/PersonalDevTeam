@@ -13,18 +13,20 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Moved PDT to the Mac mini: it runs the stable PDT that develops PDT (runbook:
   docs/superpowers/plans/2026-10-16-mac-mini-move.md)
 - Phase 3a: workspaces and tabs, herdr-style sidebar, Ctrl+] keys, right-click menus (#11)
+- Phase 3b: git integration: project keys, clone by URL, GitHub links, worktree adopt/remove, remove projects,
+  Files view (#16)
 
 ## Now
-- **Phase 3b: Git integration** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md §6): project keys,
-  clone by URL, GitHub links, adopt/remove worktrees, remove projects, folder view.
+- **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT. Own brainstorm and spec.
 
 ## Next (build order)
-1. **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT.
-2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
-3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
-4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
+1. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
+2. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
+3. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
 ## Follow-ups (any time)
+- **Folder picker:** browse the host's folders to choose a path (Add project → Folder, Clone URL → Into folder, Host
+  settings → Projects folder) instead of typing it.
 - **Faster CI, next steps** (done: nextest, no debug info, Mac mini runner for PRs, Windows and bundles off the PR
   path; docs/superpowers/notes/ci.md). Next: a single `ci` gate job as the only required check (lets jobs be
   renamed), a Windows runner on the desktop, Dev Drive for hosted Windows.

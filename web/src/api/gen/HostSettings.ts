@@ -7,4 +7,8 @@ export type HostSettings = { remoteAccess: boolean,
 /**
  * The Tailscale login allowed to use this host remotely. `PDT_OWNER_LOGIN` overrides it.
  */
-ownerLogin: string | null, updatePolicy: UpdatePolicy, runPorts: PortRange, maxConcurrentRuns: number, agentCredentials: CredentialPolicy, };
+ownerLogin: string | null, updatePolicy: UpdatePolicy, runPorts: PortRange, maxConcurrentRuns: number, agentCredentials: CredentialPolicy, 
+/**
+ * Where "clone by URL" puts new repositories by default; `~/work` when unset.
+ */
+projectsDir: string | null, };

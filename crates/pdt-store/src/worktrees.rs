@@ -4,7 +4,7 @@ use pdt_core::worktree::Worktree;
 type WorktreeRow = (String, String, String, String, String, i64);
 
 fn to_worktree((id, project_id, branch, path, base_commit, created_at): WorktreeRow) -> Worktree {
-    Worktree { id, project_id, branch, path, base_commit, created_at }
+    Worktree { id, project_id, branch, path, base_commit, created_at, missing: false }
 }
 
 const COLUMNS: &str = "id, project_id, branch, path, base_commit, created_at";
@@ -32,6 +32,12 @@ impl Store {
         Ok(rows.into_iter().map(to_worktree).collect())
     }
 
+    /// Forgets a worktree. Its sessions go with it; its runs keep their branch.
+    pub async fn delete_worktree(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("DELETE FROM worktrees WHERE id = ?").bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn get_worktree(&self, id: &str) -> Result<Option<Worktree>, StoreError> {
         let sql = format!("SELECT {COLUMNS} FROM worktrees WHERE id = ?");
         let row: Option<WorktreeRow> =
@@ -54,6 +60,8 @@ pub(crate) mod tests {
             repo_path: "/r".into(),
             base_branch: "main".into(),
             created_at: 1,
+            key: String::new(),
+            github_repo: None,
         };
         store.insert_project(&p).await.unwrap();
         store
@@ -67,6 +75,7 @@ pub(crate) mod tests {
             path: format!("/r/.worktrees/{branch}"),
             base_commit: "abc".into(),
             created_at: 2,
+            missing: false,
         }
     }
 

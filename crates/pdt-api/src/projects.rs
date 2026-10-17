@@ -1,0 +1,204 @@
+//! Project routes: list, add (by path or by cloning), rename/re-key, remove (workspaces spec §6.1–§6.3).
+
+use crate::error::ApiError;
+use crate::routes::{AppState, now_ms};
+use axum::Json;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use pdt_core::project::{CloneProject, NewProject, Project, ProjectPatch, valid_key};
+use std::path::PathBuf;
+
+/// Fills in `github_repo` from each project's `origin` (git runs off the async runtime).
+async fn with_github(mut projects: Vec<Project>) -> Vec<Project> {
+    let paths: Vec<PathBuf> = projects.iter().map(|p| PathBuf::from(&p.repo_path)).collect();
+    let repos = tokio::task::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|p| pdt_git::remote_url(p, "origin").and_then(|u| pdt_core::git_url::github_repo(&u)))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    for (p, r) in projects.iter_mut().zip(repos) {
+        p.github_repo = r;
+    }
+    projects
+}
+
+async fn load(st: &AppState, id: &str) -> Result<Project, ApiError> {
+    let p = st.store.get_project(id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    Ok(with_github(vec![p]).await.remove(0))
+}
+
+fn key_taken() -> ApiError {
+    ApiError::new(StatusCode::CONFLICT, "key_taken", "another project already uses this key")
+}
+
+pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Project>>, ApiError> {
+    Ok(Json(with_github(st.store.list_projects().await?).await))
+}
+
+pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Project>, ApiError> {
+    Ok(Json(load(&st, &id).await?))
+}
+
+/// Registers the repository at `path` (any folder inside it) as a project.
+async fn add(
+    st: &AppState,
+    path: PathBuf,
+    name: String,
+    base_branch: Option<String>,
+    key: Option<String>,
+) -> Result<Project, ApiError> {
+    let info =
+        tokio::task::spawn_blocking(move || pdt_git::resolve_repo(&path)).await.map_err(ApiError::internal)??;
+    if let Some(k) = &key
+        && st.store.project_keys().await?.iter().any(|t| t == k)
+    {
+        return Err(key_taken());
+    }
+    let project = Project {
+        id: uuid::Uuid::now_v7().to_string(),
+        name,
+        repo_path: info.root.to_string_lossy().into_owned(),
+        base_branch: base_branch.or(info.current_branch).unwrap_or_else(|| "main".into()),
+        created_at: now_ms(),
+        key: key.unwrap_or_default(),
+        github_repo: None,
+    };
+    st.store.insert_project(&project).await.map_err(|e| match e {
+        pdt_store::StoreError::Conflict(m) if m.contains("key") => key_taken(),
+        pdt_store::StoreError::Conflict(_) => {
+            ApiError::new(StatusCode::CONFLICT, "conflict", "a project for this repository already exists")
+        }
+        other => other.into(),
+    })?;
+    load(st, &project.id).await
+}
+
+pub(crate) async fn create(
+    State(st): State<AppState>,
+    payload: Result<Json<NewProject>, JsonRejection>,
+) -> Result<(StatusCode, Json<Project>), ApiError> {
+    let Json(input) = payload?;
+    let v = input.validate()?;
+    let p = add(&st, PathBuf::from(&v.repo_path), v.name, v.base_branch, v.key).await?;
+    Ok((StatusCode::CREATED, Json(p)))
+}
+
+/// The folder new clones go in: the host setting (with `~` expanded), else `~/work`.
+pub(crate) fn projects_dir(setting: Option<&str>) -> Option<PathBuf> {
+    pdt_core::project::resolve_folder(setting.unwrap_or("~/work"), std::env::home_dir().as_deref()).ok()
+}
+
+/// Makes sure the folder a clone goes in exists. A missing folder is created only when its own parent exists, so a
+/// mistyped path (`/User/me/work`) is reported instead of attempted.
+fn ensure_parent(dir: &std::path::Path) -> Result<(), ApiError> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    let missing = || {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "folder_missing",
+            format!("{} does not exist; check the path or create the folder first", dir.display()),
+        )
+    };
+    if dir.exists() || !dir.parent().is_some_and(|p| p.is_dir()) {
+        return Err(missing());
+    }
+    std::fs::create_dir(dir).map_err(|e| {
+        ApiError::new(StatusCode::BAD_REQUEST, "folder_missing", format!("could not create {}: {e}", dir.display()))
+    })
+}
+
+pub(crate) async fn clone(
+    State(st): State<AppState>,
+    payload: Result<Json<CloneProject>, JsonRejection>,
+) -> Result<(StatusCode, Json<Project>), ApiError> {
+    let Json(input) = payload?;
+    let url = input.url.trim().to_string();
+    let bad = |m: &str| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m.to_string());
+    if url.is_empty() || url.starts_with('-') {
+        return Err(bad("enter the repository's URL"));
+    }
+    let repo = pdt_core::git_url::repo_name(&url).ok_or_else(|| bad("the URL does not name a repository"))?;
+    let key = input.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
+    let name = input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&repo).to_string();
+    let parent = match input.parent_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        Some(d) => pdt_core::project::resolve_folder(d, std::env::home_dir().as_deref())
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_folder", e.to_string()))?,
+        None => {
+            let setting = st.store.get_host_settings().await?.projects_dir;
+            projects_dir(setting.as_deref()).ok_or_else(|| bad("set a Projects folder in Host settings"))?
+        }
+    };
+    let check = parent.clone();
+    tokio::task::spawn_blocking(move || ensure_parent(&check)).await.map_err(ApiError::internal)??;
+    let dest = parent.join(&repo);
+    if dest.exists() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "path_exists",
+            format!("{} already exists; add it by path instead", dest.display()),
+        ));
+    }
+    let target = dest.clone();
+    tokio::task::spawn_blocking(move || pdt_git::clone(&url, &target)).await.map_err(ApiError::internal)?.map_err(
+        |e| match e {
+            pdt_git::GitError::Command(m) => {
+                ApiError::new(StatusCode::BAD_GATEWAY, "clone_failed", format!("git clone failed: {m}"))
+            }
+            other => other.into(),
+        },
+    )?;
+    match add(&st, dest.clone(), name, None, key).await {
+        Ok(p) => Ok((StatusCode::CREATED, Json(p))),
+        Err(e) => {
+            // The clone is ours and unused: don't leave it behind.
+            let _ = std::fs::remove_dir_all(&dest);
+            Err(e)
+        }
+    }
+}
+
+pub(crate) async fn update(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<ProjectPatch>, JsonRejection>,
+) -> Result<Json<Project>, ApiError> {
+    let Json(patch) = payload?;
+    let name = match patch.name.as_deref().map(str::trim) {
+        Some("") => return Err(pdt_core::project::ValidationError::EmptyName.into()),
+        other => other.map(String::from),
+    };
+    let key = patch.key.as_deref().map(valid_key).transpose()?;
+    let found = st.store.update_project(&id, name.as_deref(), key.as_deref()).await.map_err(|e| match e {
+        pdt_store::StoreError::Conflict(_) => key_taken(),
+        other => other.into(),
+    })?;
+    if !found {
+        return Err(ApiError::not_found("project"));
+    }
+    Ok(Json(load(&st, &id).await?))
+}
+
+/// Removes a project from PDT: stops its sessions and runs and forgets everything about it. Files are never touched.
+pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    for run in st.store.list_runs(&id).await? {
+        if !crate::runs::discard(&st, &run).await {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "run_stopping",
+                "a run of this project has not stopped yet; try again in a moment",
+            ));
+        }
+    }
+    for s in st.store.list_sessions(&id).await? {
+        crate::sessions::discard(&st, &s.id).await;
+    }
+    st.store.delete_project(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
