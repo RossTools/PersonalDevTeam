@@ -1,4 +1,6 @@
 mod common;
+#[path = "../../../test-support/port_blocks.rs"]
+mod port_blocks;
 
 use axum::http::StatusCode;
 use common::{call, git};
@@ -61,17 +63,9 @@ struct Env {
 
 /// A block of 40 run ports in 30000–39999, below the OS ephemeral ranges (Windows and macOS start at 49152) and apart
 /// from pdtd's lifecycle tests (20000–29999), so a port the OS hands to some connection never lands in it. Each call
-/// in one process gets a different block.
+/// claims a block no other test holds (`port_blocks`).
 fn free_range() -> (u16, u16) {
-    // A random first block per test process, then consecutive ones: two tests in one process never share a block.
-    static FIRST: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let first = *FIRST.get_or_init(|| {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
-        std::process::id() ^ nanos
-    });
-    let block = first.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) % 250;
-    let start = 30000 + block as u16 * 40;
+    let start = port_blocks::claim(30000, 250, 40);
     (start, start + 39)
 }
 

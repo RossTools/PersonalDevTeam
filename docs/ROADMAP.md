@@ -25,8 +25,9 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 5. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
 ## Follow-ups (any time)
-- **Faster CI.** Windows is the bottleneck (~13 min vs ~5 on macOS). Ideas: no debug info in CI test builds
-  (`CARGO_PROFILE_DEV_DEBUG=0`), cargo-nextest, save the rust cache only from main.
+- **Faster CI, next steps** (done: nextest, no debug info, Mac mini runner for PRs, Windows and bundles off the PR
+  path; docs/superpowers/notes/ci.md). Next: a single `ci` gate job as the only required check (lets jobs be
+  renamed), a Windows runner on the desktop, Dev Drive for hosted Windows.
 - **Phone UI** (parallel workstream): single-column layout, touch terminals.
 - **Notifications** for needs-you and unseen sessions.
 - **Work laptop install:** separate self-contained install, corporate accounts, no Tailscale, updates by token or by

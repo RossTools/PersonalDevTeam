@@ -1,0 +1,37 @@
+name: PDT checks
+description: fmt, clippy, tests (nextest), generated TS types, web typecheck/test/build, desktop crate. Expects Rust and a checkout.
+runs:
+  using: composite
+  steps:
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
+    - uses: pnpm/action-setup@v6
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        # A self-hosted runner keeps its pnpm store; only hosted runners restore it from the cache.
+        cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    - run: cargo fmt --all -- --check
+      shell: bash
+    - run: cargo clippy --all-targets -- -D warnings
+      shell: bash
+    # nextest runs all test binaries at once (cargo test runs them one after another); it also writes the TS types.
+    - run: cargo nextest run --profile ci
+      shell: bash
+    - name: Generated TS types are committed
+      shell: bash
+      run: |
+        out="$(git status --porcelain -- web/src/api/gen)"; if [ -n "$out" ]; then echo "Generated TS types are out of date:"; echo "$out"; exit 1; fi
+    - run: pnpm --dir web typecheck
+      shell: bash
+    - run: pnpm --dir web test
+      shell: bash
+    - run: pnpm --dir web build
+      shell: bash
+    - run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
+      shell: bash
+    - run: cargo test -p pdt-desktop
+      shell: bash
