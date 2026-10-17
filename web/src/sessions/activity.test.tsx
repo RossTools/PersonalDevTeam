@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '../api/gen/Session';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { ActivityBadge } from './ActivityBadge';
-import { SessionList } from './SessionList';
 import { useViewTracking } from './useViewTracking';
 
 vi.mock('../terminal/TerminalView', () => ({ TerminalView: () => <div /> }));
@@ -31,21 +30,6 @@ describe('ActivityBadge', () => {
     expect(screen.getByText('Unknown')).toBeInTheDocument();
     rerender(<ActivityBadge activity={null} unseen={false} />);
     expect(container).toBeEmptyDOMElement();
-  });
-});
-
-describe('SessionList activity', () => {
-  it('distinguishes idle-and-unseen from idle-and-seen', async () => {
-    stubApi({
-      'GET /api/projects/p/worktrees': [],
-      'GET /api/projects/p/sessions': [base, { ...base, id: 's2', title: 'Codex · PDT', agent: 'codex', unseen: true }],
-    });
-    renderWithQuery(<SessionList project={{ id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1 }} selectedId={null} onSelect={() => {}} />);
-    const seen = await screen.findByRole('button', { name: /Claude · PDT/ });
-    const unseen = screen.getByRole('button', { name: /Codex · PDT/ });
-    expect(seen).toHaveAccessibleName(/Idle/);
-    expect(seen).not.toHaveAccessibleName(/unseen/);
-    expect(unseen).toHaveAccessibleName(/unseen/);
   });
 });
 

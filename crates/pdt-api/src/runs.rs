@@ -183,6 +183,7 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let project = st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     // Everything that can refuse the start comes before anything is created.
+    crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
     let place = place(&st, &project, &input).await?;
     let cfg = config_for(&st, &project, &place).await?;
     let list = if input.kind == RunKind::Test { &cfg.tests } else { &cfg.runs };
@@ -225,6 +226,8 @@ pub(crate) async fn create(
         updated_at: now,
     };
     st.store.insert_run(&run).await?;
+    let item = pdt_core::workspace::TabItem::Run(run.id.clone());
+    crate::workspaces::open_for_new(&st, &run.project_id, item, input.tab.as_ref()).await;
     run_manager::start(&st, run.clone(), def);
     Ok((StatusCode::CREATED, Json(run)))
 }

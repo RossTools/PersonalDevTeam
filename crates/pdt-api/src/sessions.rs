@@ -33,6 +33,7 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let valid = input.validate()?;
     let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
     let (worktree_id, cwd, place) = match &valid.worktree_id {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
@@ -74,6 +75,8 @@ pub(crate) async fn create(
         return Err(e.into());
     }
     crate::activity::track(&st, &session).await;
+    let item = pdt_core::workspace::TabItem::Session(session.id.clone());
+    crate::workspaces::open_for_new(&st, &session.project_id, item, input.tab.as_ref()).await;
     Ok((StatusCode::CREATED, Json(load(&st, &session.id).await?)))
 }
 

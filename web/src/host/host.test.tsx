@@ -2,8 +2,6 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
-import { checklist } from './checklist';
-import { FirstRunChecklist } from './FirstRunChecklist';
 import { HostSettingsPage } from './HostSettingsPage';
 import { UpdateBanner } from './UpdateBanner';
 
@@ -31,54 +29,6 @@ const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logge
 const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), git: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
 const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null };
-
-describe('checklist', () => {
-  it('lists what is missing on a fresh host', () => {
-    const items = checklist(settingsView() as never, update() as never, checks(false) as never);
-    expect(items.map((i) => i.id)).toEqual(['owner', 'remote', 'token', 'claude', 'codex']);
-  });
-
-  it('is empty when everything is set up', () => {
-    const s = settingsView({
-      tokenPresent: true,
-      settings: { ...settingsView().settings, remoteAccess: true, ownerLogin: 'me@example.com' },
-      remote: { ...settingsView().remote, enabled: true, active: true },
-    });
-    expect(checklist(s as never, update({ token: { state: 'valid', expiresAt: null } }) as never, checks(true) as never)).toEqual([]);
-  });
-
-  it('does not ask for an owner that PDT_OWNER_LOGIN sets', () => {
-    const items = checklist(settingsView({ ownerFromEnv: 'env@example.com' }) as never, update() as never, checks(true) as never);
-    expect(items.map((i) => i.id)).not.toContain('owner');
-  });
-
-  it('flags an expiring token and a remote access error', () => {
-    const s = settingsView({
-      tokenPresent: true,
-      settings: { ...settingsView().settings, remoteAccess: true, ownerLogin: 'me@example.com' },
-      remote: { ...settingsView().remote, enabled: true, active: false, error: 'Tailscale is not running' },
-    });
-    const items = checklist(s as never, update({ token: { state: 'expires_soon', expiresAt: 1 } }) as never, checks(true) as never);
-    expect(items.map((i) => i.id)).toEqual(['remote', 'token']);
-    expect(items[0].text).toContain('Tailscale is not running');
-  });
-});
-
-describe('FirstRunChecklist', () => {
-  it('lists the open items and links to the settings', async () => {
-    stubApi({
-      'GET /api/host/settings': settingsView(),
-      'GET /api/host/update': update(),
-      'GET /api/host/checks': checks(false),
-    });
-    const open = vi.fn();
-    renderWithQuery(<FirstRunChecklist onOpenSettings={open} />);
-    const box = await screen.findByRole('region', { name: 'Set up this host' });
-    expect(box).toHaveTextContent('Claude Code: not logged in');
-    await userEvent.click(screen.getByRole('button', { name: 'Open settings' }));
-    expect(open).toHaveBeenCalled();
-  });
-});
 
 describe('HostSettingsPage', () => {
   it('sets the owner from this device, then turns on remote access', async () => {

@@ -14,6 +14,7 @@ mod runs;
 pub mod secrets;
 mod sessions;
 pub mod update;
+mod workspaces;
 mod worktrees;
 
 pub use activity::run_activity_ticker;
