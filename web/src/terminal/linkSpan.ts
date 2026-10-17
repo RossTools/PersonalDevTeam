@@ -31,13 +31,14 @@ function segmentOn(b: BufferLike, row: number, id: number): Segment | null {
 }
 
 /**
- * The other rows' parts of the OSC 8 link at (row, x): an agent prints a URL that wraps as one link per row with
- * the same id. xterm underlines only the hovered row's part.
+ * Every row's part of the OSC 8 link at (row, x), top to bottom: an agent prints a URL that wraps as one link per
+ * row with the same id. xterm underlines only the hovered row's part.
  */
 export function linkSegments(b: BufferLike, row: number, x: number): Segment[] {
   const id = urlIdAt(b, row, x);
-  if (!id) return [];
-  const out: Segment[] = [];
+  const here = id ? segmentOn(b, row, id) : null;
+  if (!here) return [];
+  const out: Segment[] = [here];
   for (let r = row - 1; ; r--) {
     const s = segmentOn(b, r, id);
     if (!s) break;
@@ -52,8 +53,10 @@ export function linkSegments(b: BufferLike, row: number, x: number): Segment[] {
 }
 
 /**
- * Underlines the rest of a wrapped OSC 8 link while one of its rows is hovered (call from the link handler's hover
- * and leave). Normal buffer only: decorations need markers, which the alternate screen doesn't have.
+ * Underlines every row of a wrapped OSC 8 link while one of its rows is hovered (call from the link handler's hover
+ * and leave). The hovered row is drawn too: adding decorations re-renders the rows, which wipes xterm's own hover
+ * underline. A link on one row is left to xterm. Normal buffer only: decorations need markers, which the alternate
+ * screen doesn't have.
  */
 export function linkUnderliner(term: Terminal): { show(x: number, y: number): void; clear(): void } & IDisposable {
   let shown: IDisposable[] = [];
@@ -80,7 +83,9 @@ export function linkUnderliner(term: Terminal): { show(x: number, y: number): vo
     const buf = term.buffer.active;
     if (buf.type !== 'normal') return;
     const cursorRow = buf.baseY + buf.cursorY;
-    for (const s of linkSegments(buf as unknown as BufferLike, y - 1, x - 1)) {
+    const segments = linkSegments(buf as unknown as BufferLike, y - 1, x - 1);
+    if (segments.length < 2) return;
+    for (const s of segments) {
       const marker = term.registerMarker(s.row - cursorRow);
       const deco = term.registerDecoration({ marker, x: s.start, width: s.end - s.start, layer: 'top' });
       if (!deco) {
