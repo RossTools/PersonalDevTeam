@@ -249,7 +249,7 @@ Transitions are therefore **explicit, typed tool calls**, never guessed from the
 - **Work area:**
   - A header showing the ticket, stage, loop count and persona.
   - Tabs: Conversation · Diff · Files (read-only) · Ticket.
-- **Bottom panel:** can be shown, hidden or maximized. Holds tabs for terminal sessions (shells and interactive agent terminals), attached to whatever is in focus.
+- **Bottom panel** (replaced by split panes in Phase 3, `2026-10-17-workspaces-design.md` §2.6)**:** can be shown, hidden or maximized. Holds tabs for terminal sessions (shells and interactive agent terminals), attached to whatever is in focus.
 - **Board view:** columns are workflow stages. Cards show the owner persona and live session status.
 - **On narrow (phone) screens:** collapses to a single column (icon bar → list → work area) for use over Tailscale.
 - A command palette (Ctrl/⌘-K) for navigation.
@@ -313,7 +313,7 @@ Transitions are therefore **explicit, typed tool calls**, never guessed from the
 | 0. Foundation | Install the toolchain (Rust, pnpm, updated Codex); Cargo workspace; `pdtd` with SQLite and migrations; ts-rs; `web/ui` tokens and core components; Tauri window; the app frame; CI | — |
 | 1. Terminals | PTY sessions (shell, interactive agent terminal), xterm view, projects, worktrees, sessions surviving closed windows | **PDT is developed inside PDT,** Herd-style |
 | 2. Remote host | Remote access over Tailscale identity, `pdt-host` supervisor, token-based updates with rollback, run configurations with HTTPS previews, agent activity state, per-host settings (`2026-10-15-remote-host-design.md`) | **PDT moves to the Mac mini** and is developed there from any device |
-| 3. Workspaces | herdr-style workspaces, tabs and split panes; project keys; git integration (own brainstorm) | Day-to-day agent work without herdr |
+| 3. Workspaces | herdr-style workspaces, tabs and split panes; project keys; git integration (`2026-10-17-workspaces-design.md`) | Day-to-day agent work without herdr |
 | 4. Tickets and board | Tickets, the board, Start (attempt, worktree, session) | PDT's own backlog lives in PDT |
 | 5. Structured agents | Claude and Codex adapters, event log, conversation view, approvals, scratch chats | Rich, machine-readable agent sessions |
 | 6. Review | Diff view, line comments, sending feedback, merge | A review loop driven by the user |
