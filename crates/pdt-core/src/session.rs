@@ -308,6 +308,15 @@ const LEAKED_ENV_VARS: [&str; 10] = [
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 
+/// Variables every terminal child gets: what the browser terminal (xterm.js) supports. `FORCE_HYPERLINK` makes
+/// Claude Code and other CLIs send OSC 8 links, which stay clickable when a long URL wraps.
+pub fn terminal_env() -> Vec<(String, String)> {
+    [("TERM", "xterm-256color"), ("COLORTERM", "truecolor"), ("FORCE_HYPERLINK", "1")]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
 /// Whether the inherited environment variable `name` must be removed from a child of this kind.
 pub fn is_scrubbed(kind: SessionKind, name: &str, creds: crate::host::CredentialPolicy) -> bool {
     name.starts_with(PDT_ENV_PREFIX)
@@ -565,6 +574,15 @@ mod tests {
         assert!(!is_scrubbed(SessionKind::AgentTui, "ANTHROPIC_API_KEY", PassThrough));
         assert!(!is_scrubbed(SessionKind::AgentTui, "OPENAI_API_KEY", PassThrough));
         assert!(!is_scrubbed(SessionKind::Shell, "ANTHROPIC_API_KEY", Subscription));
+    }
+
+    #[test]
+    fn terminal_env_matches_xterm() {
+        let env = terminal_env();
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("TERM"), Some("xterm-256color"));
+        assert_eq!(get("COLORTERM"), Some("truecolor"));
+        assert_eq!(get("FORCE_HYPERLINK"), Some("1"));
     }
 
     fn new(kind: SessionKind, agent: Option<AgentKind>, cols: u16, rows: u16) -> NewSession {
