@@ -44,6 +44,12 @@ pub fn desktop_profile(env: Option<&str>, debug_build: bool) -> Profile {
 /// reach only a dev one.
 const STABLE_EXTRAS: [&str; 3] = ["PDT_WEB_DIR", "PDT_ALLOWED_HOSTS", "PDT_OWNER_LOGIN"];
 
+/// Whether the tray was started by pdt-host after an update (its first argument is `TRAY_QUIET_ARG`), so it must not
+/// open the web UI at startup.
+pub fn quiet_start(args: impl IntoIterator<Item = String>) -> bool {
+    args.into_iter().skip(1).any(|a| a == pdt_core::handoff::TRAY_QUIET_ARG)
+}
+
 /// The `PDT_*` variables the tray starts pdt-host with: the profile, and the extras pdt-host passes on to pdtd (e.g.
 /// `PDT_WEB_DIR` in development). Port and data dir follow from the profile, the same for tray, pdt-host and pdtd.
 fn host_env(profile: Profile, lookup: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
@@ -177,6 +183,14 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::collections::HashMap;
+
+    #[test]
+    fn only_pdt_hosts_restart_is_quiet() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(quiet_start(args(&["/A/P.app/Contents/MacOS/p", "--no-open"])));
+        assert!(!quiet_start(args(&["/A/P.app/Contents/MacOS/p"])));
+        assert!(!quiet_start(args(&["--no-open"])));
+    }
 
     fn ours() -> Probe {
         Probe::Ours { version: "x".into() }
