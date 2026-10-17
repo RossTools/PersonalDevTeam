@@ -1,0 +1,7 @@
+# cargo-nextest runs every test in its own process, all binaries at once (CI uses it; `cargo test` still works).
+[profile.default]
+# A test still running after 2 minutes is stuck: stop it and report it, rather than hanging the run.
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.ci]
+fail-fast = false
