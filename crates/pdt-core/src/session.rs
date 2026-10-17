@@ -143,6 +143,10 @@ pub struct NewSession {
     pub bypass_permissions: Option<bool>,
     pub cols: u16,
     pub rows: u16,
+    /// Where the session's tab opens; the end of its project's workspace when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub tab: Option<crate::workspace::TabPlacement>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -594,6 +598,7 @@ mod tests {
             bypass_permissions: None,
             cols,
             rows,
+            tab: None,
         }
     }
 

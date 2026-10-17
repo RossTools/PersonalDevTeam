@@ -10,19 +10,19 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Phase 2: remote host (#3)
 - Update incident fixes: keychain never blocks startup, rollback restores the database, signed macOS releases
   (docs/superpowers/notes/update-incident-2026-10-17.md)
+- Moved PDT to the Mac mini: it runs the stable PDT that develops PDT (runbook:
+  docs/superpowers/plans/2026-10-16-mac-mini-move.md)
+- Phase 3a: workspaces and tabs, herdr-style sidebar, Ctrl+] keys, right-click menus (#11)
 
 ## Now
-- **Move PDT to the Mac mini** (runbook: docs/superpowers/plans/2026-10-16-mac-mini-move.md). Run the Phase 2 Mac mini
-  checklist (docs/superpowers/notes/phase-2-mac-mini-checklist.md), then develop PDT inside the Mac mini's PDT from
-  the desktop, laptop and phone.
+- **Phase 3b: Git integration** (spec: docs/superpowers/specs/2026-10-17-workspaces-design.md §6): project keys,
+  clone by URL, GitHub links, adopt/remove worktrees, remove projects, folder view.
 
 ## Next (build order)
-1. **Phase 3: Workspaces.** herdr-style workspaces, tabs and split panes; nested sessions; project name + Jira-like
-   key; first-class git integration (clone by URL or add by path, GitHub links, in-app folder view). Own brainstorm.
-2. **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT.
-3. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
-4. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
-5. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
+1. **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT.
+2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
+3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
+4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
 ## Follow-ups (any time)
 - **Faster CI, next steps** (done: nextest, no debug info, Mac mini runner for PRs, Windows and bundles off the PR
@@ -39,11 +39,6 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - **Remote-access run restart gaps** (docs/superpowers/notes/phase-2-carryover.md).
 - **Flaky test watch:** `hook_events_change_a_sessions_activity` failed once on Windows CI (empty activity); it now
   prints the response body.
-- **Adopt existing worktrees:** Run on a branch whose `.worktrees/<branch>` was made with plain git fails with
-  `worktree_path_taken`; register it instead. Also a remove-worktree action (today: by hand, docs/SDLC.md).
-- **Stale project** "PDT configuration" on the Mac mini's stable instance points at a missing folder
-  (`~/work/pdt`); remove it once projects can be removed.
-- Delete the stale remote branch `phase-0-foundation`.
 - **Developer ID signing + notarization** for macOS releases (Gatekeeper); the self-signed certificate only keeps
   the keychain's trust across updates.
 - Final product name (codename for now; no "ads" in names).

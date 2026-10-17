@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { SessionList } from './SessionList';
 import { SessionView } from './SessionView';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -21,87 +20,6 @@ const session = (over: Partial<Session>): Session => ({
   activity: null, attentionAt: null, lastViewedAt: null, unseen: false, ...over,
 });
 const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1 };
-
-describe('SessionList', () => {
-  it('groups sessions under the repository and worktrees', async () => {
-    stubApi({
-      'GET /api/projects/p/worktrees': [worktree],
-      'GET /api/projects/p/sessions': [session({}), session({ id: 's2', worktreeId: 'w', kind: 'agent_tui', agent: 'claude', title: 'Claude' })],
-    });
-    renderWithQuery(<SessionList project={project} selectedId="s2" onSelect={() => {}} />);
-    const repo = await screen.findByRole('region', { name: 'Repository' });
-    expect(repo).toHaveTextContent('Shell');
-    const wt = screen.getByRole('region', { name: 'feature/x' });
-    expect(wt).toHaveTextContent('Claude');
-    expect(screen.getByRole('button', { name: /Claude/, current: true })).toBeInTheDocument();
-  });
-
-  it('starts sessions in the chosen place and selects them', async () => {
-    const calls = stubApi({
-      'GET /api/projects/p/worktrees': [worktree],
-      'GET /api/projects/p/sessions': [],
-      'POST /api/sessions': (c) => session({ id: 'new', ...(c.body as object) }),
-    });
-    const onSelect = vi.fn();
-    renderWithQuery(<SessionList project={project} selectedId={null} onSelect={onSelect} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'New Shell in Repository' }));
-    await userEvent.click(screen.getByRole('button', { name: 'New Claude in feature/x' }));
-    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body);
-    expect(posts).toEqual([
-      { projectId: 'p', kind: 'shell', cols: 120, rows: 32 },
-      { projectId: 'p', worktreeId: 'w', kind: 'agent_tui', agent: 'claude', cols: 120, rows: 32 },
-    ]);
-    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('new'));
-  });
-
-  it('arms skip-permissions for the next agent and leaves shells alone', async () => {
-    const calls = stubApi({
-      'GET /api/projects/p/worktrees': [],
-      'GET /api/projects/p/sessions': [],
-      'POST /api/sessions': (c) => session({ id: 'new', ...(c.body as object) }),
-    });
-    renderWithQuery(<SessionList project={project} selectedId={null} onSelect={() => {}} />);
-    await userEvent.click(await screen.findByRole('switch', { name: 'Skip permission prompts for new agents in Repository' }));
-    await userEvent.click(screen.getByRole('button', { name: 'New Claude in Repository, skip permissions' }));
-    await userEvent.click(screen.getByRole('button', { name: 'New Shell in Repository' }));
-    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.body);
-    expect(posts).toEqual([
-      { projectId: 'p', kind: 'agent_tui', agent: 'claude', bypassPermissions: true, cols: 120, rows: 32 },
-      { projectId: 'p', kind: 'shell', cols: 120, rows: 32 },
-    ]);
-  });
-
-  it('renames a session in place on Enter and cancels on Escape', async () => {
-    const calls = stubApi({
-      'GET /api/projects/p/worktrees': [],
-      'GET /api/projects/p/sessions': [session({ title: 'Shell · PDT' })],
-      'PATCH /api/sessions/s1': (c) => session({ title: (c.body as { title: string }).title }),
-    });
-    renderWithQuery(<SessionList project={project} selectedId={null} onSelect={() => {}} />);
-    await userEvent.dblClick(await screen.findByText('Shell · PDT'));
-    await userEvent.keyboard('{Escape}');
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
-    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
-
-    await userEvent.dblClick(screen.getByText('Shell · PDT'));
-    const input = screen.getByRole('textbox', { name: 'Session name' });
-    expect(input).toHaveValue('Shell · PDT');
-    await userEvent.clear(input);
-    await userEvent.type(input, ' Build server {Enter}');
-    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ title: 'Build server' }));
-    await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
-  });
-
-  it('shows server errors', async () => {
-    stubApi({
-      'GET /api/projects/p/worktrees': [],
-      'GET /api/projects/p/sessions': [],
-    });
-    renderWithQuery(<SessionList project={project} selectedId={null} onSelect={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'New Codex in Repository' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('POST /api/sessions');
-  });
-});
 
 describe('SessionView', () => {
   it('stops a running session', async () => {

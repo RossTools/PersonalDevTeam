@@ -5,6 +5,7 @@ use axum::response::{IntoResponse, Response};
 use pdt_agents::PtyError;
 use pdt_core::project::ValidationError;
 use pdt_core::session::SessionValidationError;
+use pdt_core::workspace::WorkspaceValidationError;
 use pdt_core::worktree::WorktreeValidationError;
 use pdt_git::GitError;
 use pdt_store::StoreError;
@@ -58,6 +59,12 @@ impl From<ValidationError> for ApiError {
 
 impl From<WorktreeValidationError> for ApiError {
     fn from(e: WorktreeValidationError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<WorkspaceValidationError> for ApiError {
+    fn from(e: WorkspaceValidationError) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
     }
 }
