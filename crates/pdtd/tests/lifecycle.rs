@@ -5,6 +5,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 mod common;
+#[path = "../../../test-support/port_blocks.rs"]
+mod port_blocks;
 use common::*;
 
 #[test]
@@ -87,18 +89,9 @@ fn now_ms() -> i64 {
 }
 
 /// A block of 40 run ports in 20000–29999, below the OS ephemeral ranges (Windows and macOS start at 49152), so a
-/// port another test's connection was just handed by the OS never lands in it. Calls in one process never share a
-/// block.
+/// port another test's connection was just handed by the OS never lands in it. No two tests share a block.
 fn run_port_base() -> u16 {
-    // A random first block per test process, then consecutive ones: two tests in one process never share a block.
-    static FIRST: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let first = *FIRST.get_or_init(|| {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos();
-        std::process::id() ^ nanos
-    });
-    let block = first.wrapping_add(NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) % 250;
-    20000 + block as u16 * 40
+    port_blocks::claim(20000, 250, 40)
 }
 
 /// A project whose repo has RUN_CONFIG, its own run port range (`run_port_base`), and a started web run.

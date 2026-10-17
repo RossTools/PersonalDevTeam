@@ -15,6 +15,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # CI never debugs its builds: no debug info makes compiling, linking and the cache much smaller and faster.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
 jobs:
   build:
     strategy:
@@ -27,6 +31,12 @@ jobs:
       - name: Show Rust toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves the cache (PRs restore it): PR runs skip uploading ~1 GB, and every PR starts warm.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -35,7 +45,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      # nextest runs all test binaries at once (cargo test runs them one after another); it also writes the TS types.
+      - run: cargo nextest run --profile ci
       - name: Generated TS types are committed
         shell: bash
         run: |
@@ -61,6 +72,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
