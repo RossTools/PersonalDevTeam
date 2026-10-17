@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Signs a built macOS app bundle with PDT's release certificate (a self-signed code-signing certificate).
+# Signs a built macOS app bundle with PDT's release certificate: an Apple Developer ID Application certificate, or
+# (until one is set up) a self-signed code-signing certificate.
 #
-# Why: the macOS keychain lets a program read an item without asking only when its signature meets the item's
-# access rule. An ad-hoc signature is a different identity in every build, so after each update pdtd's keychain read
-# waits on an approval prompt nobody sees. Signed with one certificate and a fixed identifier, every release meets
-# the same rule (`identifier "<id>" and certificate leaf = H"<cert hash>"`), so the update token stays readable.
+# Why: the macOS keychain lets a program read an item without asking only when it passes both the item's access rule
+# (the program's designated requirement) and its partition list. A Developer ID signature carries a Team ID, and the
+# partition list trusts the team (`teamid:<id>`), so every release reads the update token without a prompt once it
+# has been allowed. A self-signed certificate has no Team ID: the partition list then names each build's exact code
+# hash (`cdhash:<hash>`), so every update asks again (docs/superpowers/notes/developer-id.md). An ad-hoc signature
+# fails the access rule as well.
 #
 # usage: scripts/sign-macos.sh <path/to/App.app>
 # The certificate comes from either
 #   MACOS_SIGNING_P12 (base64 .p12) + MACOS_SIGNING_P12_PASSWORD: imported into a temporary keychain (CI), or
 #   PDT_SIGNING_IDENTITY: the SHA-1 hash of a code-signing identity already in your keychain (local builds).
-# Make the certificate with scripts/make-signing-cert.sh.
+# A Developer ID signature gets the hardened runtime and a secure timestamp (both required for notarization;
+# scripts/notarize-macos.sh). Make a self-signed certificate with scripts/make-signing-cert.sh.
 set -euo pipefail
 
 app="${1:?usage: $0 <path/to/App.app>}"
@@ -51,14 +55,22 @@ if [[ -n "${MACOS_SIGNING_P12:-}" ]]; then
   # A self-signed certificate is "not trusted", so codesign takes it only by hash, never by name.
   identity="$(security find-identity -p codesigning "$keychain" | awk '/^ *1\)/ { print $2; exit }')"
   [[ -n "$identity" ]] || { echo "the .p12 holds no code-signing identity" >&2; exit 1; }
+  identity_name="$(security find-identity -p codesigning "$keychain" | awk -F'"' '/^ *1\)/ { print $2; exit }')"
 elif [[ -n "${PDT_SIGNING_IDENTITY:-}" ]]; then
   identity="$PDT_SIGNING_IDENTITY"
+  identity_name="$(security find-identity -p codesigning | awk -F'"' -v h="$identity" '$0 ~ h { print $2; exit }')"
 else
   echo "no signing certificate: set MACOS_SIGNING_P12 (+ _PASSWORD) or PDT_SIGNING_IDENTITY" >&2
   exit 3
 fi
 
-sign() { codesign --force --timestamp=none --sign "$identity" "$@"; }
+if [[ "${identity_name:-}" == "Developer ID Application:"* ]]; then
+  echo "Signing with $identity_name (hardened runtime, secure timestamp)"
+  sign() { codesign --force --options runtime --timestamp --sign "$identity" "$@"; }
+else
+  echo "Signing with ${identity_name:-$identity} (self-signed: the keychain asks again after every update)"
+  sign() { codesign --force --timestamp=none --sign "$identity" "$@"; }
+fi
 # Inner executables first (the bundle's seal covers them), each with an identifier that never changes between
 # builds; the linker's default (`<name>-<hash>`) changes with every build.
 for exe in "$app/Contents/MacOS/"*; do

@@ -21,14 +21,17 @@
 - macOS releases are signed with one self-signed certificate and fixed identifiers (`scripts/sign-macos.sh`; CI
   secrets `MACOS_SIGNING_P12`, `MACOS_SIGNING_P12_PASSWORD`, made by `scripts/make-signing-cert.sh`). CI refuses to
   publish an unsigned release. Gatekeeper still sees an unidentified developer (a Developer ID would fix that).
+  **Correction:** this does not keep the keychain's trust across updates. The keychain's partition list trusts a
+  self-signed program by its exact code hash, so every new release asks again; only a Developer ID (Team ID) fixes
+  it. See docs/superpowers/notes/developer-id.md.
 
 ## Moving the Mac mini onto signed releases (once)
 The token stored by an ad-hoc build stays unreadable to signed builds: the keychain asks once more.
 1. Install the first signed release (with no token stored, by hand as in the runbook, or add the token in v0.1.42
    and update: the new pdtd now starts and passes its health check even if the token read stalls).
 2. If Host settings shows the keychain error, remove the old item (`security delete-generic-password -s
-   dev.personaldevteam -a update-token`) and add the token again in Host settings. The signed pdtd stores it, and
-   later signed releases read it without a prompt.
+   dev.personaldevteam -a update-token`) and add the token again in Host settings. (Later self-signed releases still
+   ask again: see the correction above.)
 
 The database fix covers rollbacks done by a pdt-host that has it: the update that installs it is still run by the
 old pdt-host (this change adds no migration, so that update is safe).

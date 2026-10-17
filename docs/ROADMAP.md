@@ -39,6 +39,7 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - **Remote-access run restart gaps** (docs/superpowers/notes/phase-2-carryover.md).
 - **Flaky test watch:** `hook_events_change_a_sessions_activity` failed once on Windows CI (empty activity); it now
   prints the response body.
-- **Developer ID signing + notarization** for macOS releases (Gatekeeper); the self-signed certificate only keeps
-  the keychain's trust across updates.
+- **Developer ID signing + notarization** for macOS releases: CI and scripts are ready; enroll, then replace the
+  signing secrets and add the notary ones (docs/superpowers/notes/developer-id.md). Until then every macOS update
+  asks for keychain access again.
 - Final product name (codename for now; no "ads" in names).
