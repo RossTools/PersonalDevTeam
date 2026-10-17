@@ -36,5 +36,9 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - **Remote-access run restart gaps** (docs/superpowers/notes/phase-2-carryover.md).
 - **Flaky test watch:** `hook_events_change_a_sessions_activity` failed once on Windows CI (empty activity); it now
   prints the response body.
+- **Adopt existing worktrees:** Run on a branch whose `.worktrees/<branch>` was made with plain git fails with
+  `worktree_path_taken`; register it instead. Also a remove-worktree action (today: by hand, docs/SDLC.md).
+- **Stale project** "PDT configuration" on the Mac mini's stable instance points at a missing folder
+  (`~/work/pdt`); remove it once projects can be removed.
 - Delete the stale remote branch `phase-0-foundation`.
 - Final product name (codename for now; no "ads" in names).
