@@ -19,6 +19,7 @@ const settingsView = (over: object = {}) => ({
   },
   ownerFromEnv: null,
   tokenPresent: false,
+  tokenError: null,
   remote: { enabled: false, active: false, url: null, dnsName: null, error: null, tailscaleLogin: 'me@example.com' },
   ...over,
 });
@@ -148,6 +149,30 @@ describe('HostSettingsPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save token' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/host/token')?.body).toEqual({ token: 'github_pat_abc' }));
     await waitFor(() => expect(field).toHaveValue(''));
+  });
+
+  it('loads with an unreadable keychain and says what to do', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView({ tokenError: 'the OS keychain failed: it did not answer in time' }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByText(/Token: cannot be read/)).toBeInTheDocument();
+    expect(screen.getByText(/Always Allow/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Remote access' })).toBeInTheDocument();
+  });
+
+  it('shows why the settings failed to load instead of loading forever', async () => {
+    stubApi({
+      'GET /api/host/settings': new Reply(500, { code: 'internal', message: 'internal error' }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Host settings could not be loaded: internal error');
   });
 
   it('reports the token state and that updates apply to the installed app', async () => {

@@ -61,7 +61,11 @@ export function HostSettingsPage() {
     setOwner(v.settings.ownerLogin ?? '');
     setPorts({ start: String(v.settings.runPorts.start), end: String(v.settings.runPorts.end) });
   }, [v]);
-  if (!v) return <p className="p-4 text-sm text-muted">Loading…</p>;
+  if (!v) {
+    return view.error
+      ? <p role="alert" className="p-4 text-sm text-failed">Host settings could not be loaded: {view.error.message}</p>
+      : <p className="p-4 text-sm text-muted">Loading…</p>;
+  }
   const s = v.settings;
   const error = save.error ?? token.error ?? removeToken.error ?? checkUpdate.error ?? retryRemote.error;
   const u = update.data;
@@ -114,7 +118,19 @@ export function HostSettingsPage() {
             <option value="manual">Manual (no checks)</option>
           </select>
         </label>
-        <p className="text-xs text-muted">Token: {tokenText(v.tokenPresent, u?.token)}</p>
+        {v.tokenError ? (
+          <div role="alert" className="flex flex-col gap-1 text-xs text-failed">
+            <p>Token: cannot be read. {v.tokenError}</p>
+            <p className="text-muted">
+              A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
+              on this Mac and choose Always Allow. If there is none, remove the old item with{' '}
+              <code>security delete-generic-password -s dev.personaldevteam -a update-token</code>, restart the daemon
+              from the tray, and save the token again here.
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs text-muted">Token: {tokenText(v.tokenPresent, u?.token)}</p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <input aria-label="GitHub token" type="password" autoComplete="off" className={field} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
           <Button variant="secondary" disabled={!secret.trim() || token.isPending} onClick={() => token.mutate(secret.trim())}>Save token</Button>

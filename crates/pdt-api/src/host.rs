@@ -16,6 +16,9 @@ pub struct HostSettingsView {
     /// `PDT_OWNER_LOGIN`, which overrides `settings.ownerLogin` when set.
     pub owner_from_env: Option<String>,
     pub token_present: bool,
+    /// Why the token could not be read (e.g. the keychain is waiting on an approval prompt); `tokenPresent` is then
+    /// false. The rest of the settings still load.
+    pub token_error: Option<String>,
     /// The last result of applying the remote-access setting.
     pub remote: crate::remote::RemoteStatus,
 }
@@ -26,15 +29,16 @@ impl From<HostSettingsError> for ApiError {
     }
 }
 
-pub(crate) async fn token_present(st: &AppState) -> Result<bool, ApiError> {
-    Ok(crate::update::read_token(st).await?.is_some())
-}
-
 pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
+    let (token_present, token_error) = match crate::update::read_token(st).await {
+        Ok(t) => (t.is_some(), None),
+        Err(e) => (false, Some(e.message().to_string())),
+    };
     Ok(HostSettingsView {
         settings: st.store.get_host_settings().await?,
         owner_from_env: st.owner_from_env.clone(),
-        token_present: token_present(st).await?,
+        token_present,
+        token_error,
         remote: st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     })
 }
