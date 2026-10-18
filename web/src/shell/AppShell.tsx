@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PanelBottom } from 'lucide-react';
 import { api } from '../api/client';
@@ -23,6 +23,7 @@ import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
+import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
 const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings' | 'files'>, string> = {
@@ -31,13 +32,9 @@ const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings' | 'files'>, str
   personas: 'Personas arrive with the pipeline (Phase 7).',
 };
 
-/** Keeps the browser tab's title as `(<n>) <page title>` while n sessions need the user. */
+/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n sessions need the user; [dev] on a dev instance. */
 function useAttentionTitle(count: number) {
-  const base = useRef(document.title);
-  useEffect(() => {
-    document.title = count > 0 ? `(${count}) ${base.current}` : base.current;
-  }, [count]);
-  useEffect(() => () => { document.title = base.current; }, []);
+  useDevTitle(count);
 }
 
 export function AppShell() {

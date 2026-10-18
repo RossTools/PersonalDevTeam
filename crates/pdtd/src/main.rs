@@ -80,6 +80,7 @@ async fn run() -> anyhow::Result<()> {
         ))
     };
     state.listen_port = cfg.port;
+    state.instance = pdt_core::instance::InstanceInfo::new(cfg.profile, cfg.port);
     state.remote_https_port = cfg.remote_https_port;
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
     // The real CLI is installed only here; `AppState::new` runs no tailscale command at all.
