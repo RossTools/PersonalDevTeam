@@ -135,6 +135,94 @@ fn fake_codex(dir: &Path) -> std::path::PathBuf {
     path
 }
 
+/// A startup trust dialog followed by a composer and one turn, emitting Codex 0.163's OSC 7501 states.
+fn fake_codex_status(dir: &Path) -> std::path::PathBuf {
+    let (file, body) = if cfg!(windows) {
+        (
+            "codex-status.cmd",
+            "@echo off\r\necho Folder access - Trust this folder?\r\nset /p x=\r\necho \x1b]7501;state=idle:app=codex\x07ready\r\nset /p x=\r\necho empty\r\nset /p x=\r\necho \x1b]7501;state=working:app=codex\x07\r\nset /p x=\r\necho \x1b]7501;state=blocked:app=codex:kind=permission\x07\r\nset /p x=\r\necho \x1b]7501;state=working:app=codex\x07\r\necho \x1b]7501;state=done:app=codex\x07\r\nset /p x=\r\n",
+        )
+    } else {
+        (
+            "codex-status",
+            "#!/bin/sh\nprintf 'Folder access - Trust this folder?\\n'\nread x\nprintf '\\033]7501;state=idle:app=codex\\007ready\\n'\nread x\nprintf 'empty\\n'\nread x\nprintf '\\033]7501;state=working:app=codex\\007'\nread x\nprintf '\\033]7501;state=blocked:app=codex:kind=permission\\007'\nread x\nprintf '\\033]7501;state=working:app=codex\\007\\033]7501;state=done:app=codex\\007'\nread x\n",
+        )
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
+    use futures_util::StreamExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state) = setup(tmp.path()).await;
+    state.platform.codex_program = fake_codex_status(tmp.path()).to_string_lossy().into_owned();
+    state.platform.codex_home = Some(tmp.path().join("codex-home"));
+    state.activity_timing.quiet_after_ms = 250;
+    state.activity_tick = Duration::from_millis(50);
+    tokio::spawn(pdt_api::run_activity_ticker(state.clone()));
+    let app = pdt_api::router(state.clone(), None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let served = app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
+    let (_, projects) = call(&app, "GET", "/api/projects", None).await;
+    let (_, created) = call(
+        &app,
+        "POST",
+        "/api/sessions",
+        Some(json!({
+            "projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24
+        })),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
+    let mut ws = terminal(port, id).await;
+    async fn output_until(ws: &mut Ws, marker: &str) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut seen = Vec::new();
+            while let Some(Ok(msg)) = ws.next().await {
+                if let Message::Binary(bytes) = msg {
+                    seen.extend_from_slice(&bytes);
+                    if String::from_utf8_lossy(&seen).contains(marker) {
+                        return;
+                    }
+                }
+            }
+            panic!("terminal closed before {marker}");
+        })
+        .await
+        .unwrap();
+    }
+    output_until(&mut ws, "Trust this folder?").await;
+    type_in(&mut ws, "\r").await;
+    output_until(&mut ws, "ready").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, id).await["activity"], "idle", "trust acceptance is not a turn");
+    type_in(&mut ws, "\r").await;
+    output_until(&mut ws, "empty").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, id).await["activity"], "idle", "empty Enter is not a turn");
+    type_in(&mut ws, "a prompt\r").await;
+    wait_for_activity(&app, id, json!("working")).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(session(&app, id).await["activity"], "working", "explicit work stays known while output is quiet");
+    report(&app, id, json!({"source": "codex", "event": "agent-turn-complete"})).await;
+    assert_eq!(session(&app, id).await["activity"], "working", "a delayed notify must not override live status");
+    type_in(&mut ws, "\r").await;
+    wait_for_activity(&app, id, json!("needs_you")).await;
+    type_in(&mut ws, "y\r").await;
+    wait_for_activity(&app, id, json!("idle")).await;
+    state.ptys.shutdown().await;
+}
+
 async fn wait_for_activity(app: &axum::Router, id: &str, want: Value) {
     for _ in 0..200 {
         if session(app, id).await["activity"] == want {
@@ -294,6 +382,48 @@ async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
     wait_for_activity(&app, &id, json!("unknown")).await;
     report(&app, &id, json!({"source": "claude", "event": "Stop"})).await;
     assert_eq!(session(&app, &id).await["activity"], "idle");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_interrupt_returns_to_idle_without_a_stop_hook() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, port, pid) = serve_claude(tmp.path(), 60_000).await;
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
+    // The fake echoes each line as output. Quoting the interruption message during ordinary work is not a stop.
+    type_in(&mut ws, "Interrupted · What should Claude do instead?\r").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "working");
+    // Use a separate terminal for cancellation so a delayed echo of the quoted example cannot serve as its ack.
+    call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
+    // Esc requests cancellation; a dialog can consume it, so wait for Claude's interruption acknowledgement.
+    type_in(&mut ws, "\x1b").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "working");
+    type_in(&mut ws, "Interrupted · What should Claude do instead?\r").await;
+    wait_for_activity(&app, &id, json!("idle")).await;
+    // A tool finishing while cancellation settles must not leave the session stuck working again.
+    report(&app, &id, json!({"source": "claude", "event": "PostToolUse"})).await;
+    report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "idle");
+    report(&app, &id, json!({"source": "claude", "event": "PreToolUse"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "new tool use proves work resumed");
+    report(&app, &id, json!({"source": "claude", "event": "Stop"})).await;
+    report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "a new prompt starts normally");
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
+    type_in(&mut ws, "\x1b").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "needs_you", "Esc alone can decline a permission");
+    report(&app, &id, json!({"source": "claude", "event": "PostToolUse"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "a declined permission can continue the turn");
     state.ptys.shutdown().await;
 }
 

@@ -56,3 +56,14 @@
   the approval screen up; 9026 bytes).
 - Other notes: a first run in an untrusted folder shows a "Trust this folder?" screen; it saves the decision to
   `config.toml`. This task avoided touching the user's config by running with `CODEX_HOME` pointing at a scratch copy.
+
+## Codex terminal status (verified 2026-10-18)
+- Codex CLI 0.163.0 emits OSC 7501 to a PTY. In an isolated CODEX_HOME and throwaway git repo,
+  accepting `Folder access` → `Trust and continue` printed `ESC ] 7501;state=idle:app=codex ESC \`.
+  Startup briefly emitted `working`, then `idle` again with no model prompt submitted.
+- Upstream `codex-rs/tui/src/terminal_program_status.rs` defines `idle`, `working`, `blocked`, `done`,
+  and `error`, with `:app=codex` and optional `:kind=permission|question|auth`. Exit emits
+  `state=clear` without an app. PDT maps done/error to idle (the TUI is waiting for input).
+- Once this status is observed, it is authoritative for that terminal run: Enter, approval-text detection,
+  quiet timers and legacy completion notifications cannot override it. Older CLIs keep the existing fallback.
+- The isolated CLI was closed without submitting a prompt; stable PDT and user config were not changed.

@@ -3,7 +3,8 @@
 - **Verify by hand (Mac mini and Windows checklists):** `tailscale serve --https=<port> off` without `--bg`; that serve preserves the
   Host header; the live format of GitHub-Authentication-Token-Expiration; the Tauri NSIS installer's behaviour with the
   tray running during a silent update; launchd KeepAlive restarting pdt-host after self-replacement.
-- **Codex activity is screen-read** (approval markers in pdt-core::activity); Phase 3's app-server adapter replaces it.
+- **Codex activity uses OSC 7501 when available**, with screen and Enter heuristics for older CLIs.
+  Phase 5's app-server adapter replaces the remaining fallback.
 - **Runs restart only on request** when their branch changes; dev servers with hot reload pick up changes themselves.
 - **A resumed run that moves maps only its new port**; its old port is never unserved, so a mapping can linger to a
   port nobody serves (harmless; `tailscale serve reset` clears it).

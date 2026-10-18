@@ -4,6 +4,9 @@ The working list of what comes next, until PDT has its own tickets (Phase 4); th
 in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs/superpowers/notes/*-carryover.md.
 
 ## Done
+- Agent activity: Codex OSC 7501 status drives activity when available, including returning idle after
+  folder trust; Shift+Enter is excluded from the legacy Enter fallback. Acknowledged Claude interruptions
+  clear working activity without relying on a Stop hook.
 - Browser favicon: blue terminal prompt matching the UI accent.
 - Phase 0: foundation
 - Phase 1: terminals (#1)
