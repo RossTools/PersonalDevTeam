@@ -9,8 +9,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::PtyEvent;
 use pdt_core::activity::{
-    Activity, HookReport, Signal, Watch, codex_approval_shown, needs_attention, next, osc_titles, squash, strip_ansi,
-    tick_with, titles_say_action_required,
+    Activity, HookReport, Signal, Watch, codex_approval_shown, codex_program_status, needs_attention, next, osc_titles,
+    squash, strip_ansi, tick_with, titles_say_action_required,
 };
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use std::sync::Arc;
@@ -27,6 +27,8 @@ pub(crate) struct Tracker {
     agent: AgentKind,
     activity: Activity,
     watch: Watch,
+    /// Once Codex emits OSC 7501, only its explicit statuses drive activity for this terminal run.
+    program_status_seen: bool,
     /// An interrupt key was sent; wait for the TUI acknowledgement before declaring the turn idle.
     interrupt_pending: bool,
     /// Ignore late tool hooks after an acknowledged interrupt until new work starts.
@@ -44,6 +46,8 @@ struct Screen {
     text: String,
     /// An unfinished window-title sequence from the previous chunk.
     title_carry: Vec<u8>,
+    /// Separate from the heuristic screen: input must not discard a split program-status sequence.
+    program_carry: Vec<u8>,
 }
 
 impl Screen {
@@ -63,6 +67,16 @@ impl Screen {
         }
         self.push_text(bytes);
         codex_approval_shown(title, &self.text)
+    }
+
+    fn program_status(&mut self, bytes: &[u8]) -> Option<Activity> {
+        let mut raw = std::mem::take(&mut self.program_carry);
+        raw.extend_from_slice(bytes);
+        let (activity, rest) = codex_program_status(&raw);
+        if rest.len() <= TITLE_CARRY {
+            self.program_carry = rest.to_vec();
+        }
+        activity
     }
 
     fn shows_interruption(&mut self, bytes: &[u8]) -> bool {
@@ -105,6 +119,12 @@ async fn apply_ordered(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiEr
     let tracked = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         map.get_mut(id).map(|t| {
+            if matches!(sig, Signal::ProgramStatus(_)) {
+                t.program_status_seen = true;
+            } else if t.program_status_seen {
+                // Includes a Busy task queued by input before the first explicit state was observed.
+                return (t.activity, t.activity);
+            }
             if sig == Signal::Interrupted {
                 if !t.interrupt_pending {
                     return (t.activity, t.activity);
@@ -158,6 +178,7 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
                 activity: Activity::Idle,
                 watch: Watch { last_output_ms: now_ms(), ..Default::default() },
                 clear_screen: false,
+                program_status_seen: false,
                 interrupt_pending: false,
                 interrupted: false,
                 generation,
@@ -197,17 +218,26 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
 }
 
 async fn on_output(st: &AppState, id: &str, bytes: &[u8], screen: &mut Screen) {
-    let (agent, activity, clear, interrupt_pending) = {
+    let (agent, activity, clear, interrupt_pending, program_status_seen) = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
         t.watch.last_output_ms = now_ms();
         if t.watch.enter_at_ms.is_some() {
             t.watch.output_since_enter = true;
         }
-        (t.agent, t.activity, std::mem::take(&mut t.clear_screen), t.interrupt_pending)
+        (t.agent, t.activity, std::mem::take(&mut t.clear_screen), t.interrupt_pending, t.program_status_seen)
     };
     if clear {
         screen.clear();
+    }
+    if agent == AgentKind::Codex {
+        if let Some(activity) = screen.program_status(bytes) {
+            let _ = apply(st, id, Signal::ProgramStatus(activity)).await;
+            return;
+        }
+        if program_status_seen {
+            return;
+        }
     }
     let signal = match agent {
         AgentKind::Claude if interrupt_pending && screen.shows_interruption(bytes) => Signal::Interrupted,
@@ -249,8 +279,8 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
             t.watch.output_since_enter = false;
         }
         match t.agent {
-            // Codex has no per-prompt hook: Enter starts a turn, and answering its approval prompt resumes it.
-            AgentKind::Codex if enter || answered => {
+            // Legacy Codex fallback. Once OSC 7501 is seen, Enter can also be trust, menus, or empty input.
+            AgentKind::Codex if !t.program_status_seen && (enter || answered) => {
                 t.clear_screen = true;
                 Some(Signal::Busy)
             }
@@ -280,6 +310,9 @@ pub async fn run_activity_ticker(st: AppState) {
             let now = now_ms();
             map.iter_mut()
                 .filter_map(|(id, t)| {
+                    if t.program_status_seen {
+                        return None;
+                    }
                     let sig = tick_with(t.activity, &t.watch, t.agent == AgentKind::Claude, now, &st.activity_timing)?;
                     if sig == Signal::HookMissing {
                         t.watch.enter_at_ms = None;

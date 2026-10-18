@@ -46,6 +46,8 @@ pub enum HookReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
+    /// Explicit Codex OSC 7501 status, authoritative over inferred activity and delayed notifications.
+    ProgramStatus(Activity),
     Busy,
     NeedsYou,
     TurnEnded,
@@ -81,6 +83,7 @@ impl HookReport {
 
 pub fn next(current: Activity, s: Signal) -> Activity {
     match s {
+        Signal::ProgramStatus(activity) => activity,
         Signal::Busy => Activity::Working,
         Signal::NeedsYou => Activity::NeedsYou,
         Signal::TurnEnded | Signal::Interrupted => Activity::Idle,
@@ -240,9 +243,48 @@ pub fn titles_say_action_required(titles: &[String]) -> bool {
 /// Window titles (OSC 0 and 2) set by complete sequences in `bytes`, and the unfinished sequence at its end (empty
 /// if none), to be prepended to the next chunk.
 pub fn osc_titles(bytes: &[u8]) -> (Vec<String>, &[u8]) {
+    let (messages, rest) = osc_messages(bytes);
+    (
+        messages
+            .into_iter()
+            .filter_map(|body| {
+                let ("0" | "2", title) = body.split_once(';')? else { return None };
+                Some(title.to_string())
+            })
+            .collect(),
+        rest,
+    )
+}
+
+/// The latest Codex OSC 7501 status in this chunk, plus an unfinished OSC sequence to carry forward.
+/// Codex reports idle/working/blocked/done/error; done and error both leave the TUI awaiting input.
+pub fn codex_program_status(bytes: &[u8]) -> (Option<Activity>, &[u8]) {
+    let (messages, rest) = osc_messages(bytes);
+    let latest = messages
+        .iter()
+        .filter_map(|body| {
+            let fields: Vec<_> = body.strip_prefix("7501;")?.split(':').collect();
+            if !fields.contains(&"app=codex") {
+                return None;
+            }
+            match fields.iter().find_map(|f| f.strip_prefix("state="))? {
+                "idle" | "done" | "error" => Some(Activity::Idle),
+                "working" => Some(Activity::Working),
+                "blocked" => Some(Activity::NeedsYou),
+                _ => None,
+            }
+        })
+        .next_back();
+    (latest, rest)
+}
+
+fn osc_messages(bytes: &[u8]) -> (Vec<String>, &[u8]) {
     let mut titles = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 == bytes.len() {
+            return (titles, &bytes[i..]);
+        }
         if !(bytes[i] == 0x1b && bytes.get(i + 1) == Some(&b']')) {
             i += 1;
             continue;
@@ -259,9 +301,7 @@ pub fn osc_titles(bytes: &[u8]) -> (Vec<String>, &[u8]) {
             }
         };
         let body = String::from_utf8_lossy(&bytes[start + 2..end.0]);
-        if let Some(("0" | "2", title)) = body.split_once(';') {
-            titles.push(title.to_string());
-        }
+        titles.push(body.into_owned());
         i = end.1;
     }
     (titles, &[])
@@ -397,6 +437,41 @@ mod tests {
         let two = squash("to run the following command? ... 1. Yes, proceed (y)");
         assert!(codex_approval_shown(false, &two));
         assert!(codex_approval_shown(true, ""), "the Action Required title alone is enough");
+    }
+
+    #[test]
+    fn codex_program_status_is_explicit_and_app_specific() {
+        for (name, activity) in
+            [("idle", Idle), ("working", Working), ("blocked", NeedsYou), ("done", Idle), ("error", Idle)]
+        {
+            for ending in ["\x07", "\x1b\\"] {
+                let bytes = format!("\x1b]7501;state={name}:app=codex:kind=permission{ending}");
+                assert_eq!(codex_program_status(bytes.as_bytes()), (Some(activity), &b""[..]));
+            }
+        }
+        for bytes in [
+            &b"state=working:app=codex"[..],
+            b"\x1b]7501;state=working:app=shell\x07",
+            b"\x1b]7501;state=new:app=codex\x07",
+            b"\x1b]7501;state=clear\x07",
+        ] {
+            assert_eq!(codex_program_status(bytes).0, None);
+        }
+        assert_eq!(
+            codex_program_status(b"\x1b]7501;state=working:app=codex\x07\x1b]7501;state=idle:app=codex\x07").0,
+            Some(Idle)
+        );
+        let bytes = b"\x1b]7501;state=blocked:app=codex\x1b\\";
+        let mut carry = Vec::new();
+        let mut found = None;
+        for byte in bytes {
+            carry.push(*byte);
+            let (activity, rest) = codex_program_status(&carry);
+            found = activity.or(found);
+            carry = rest.to_vec();
+        }
+        assert_eq!(found, Some(NeedsYou), "every byte can arrive separately");
+        assert!(carry.is_empty());
     }
 
     #[test]
