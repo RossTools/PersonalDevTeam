@@ -414,13 +414,13 @@ describe('workspaces', () => {
     expect(screen.getByRole('button', { name: 'Add project' })).toBeInTheDocument();
   });
 
-  it('shows one state dot per tab, plus the unseen dot', async () => {
+  it('shows one state dot per tab, plus the unseen dot, then what the session runs', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);
     const a = await screen.findByRole('tab', { name: /Claude A/ });
-    expect(within(a).getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual(['Working']);
+    expect(within(a).getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual(['Working', 'Claude']);
     const b = screen.getByRole('tab', { name: /Codex B/ });
-    expect(within(b).getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual(['Needs you', 'unseen']);
+    expect(within(b).getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual(['Needs you', 'unseen', 'Codex']);
   });
 
   it('toasts when a tab action fails', async () => {

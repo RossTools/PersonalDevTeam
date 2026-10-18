@@ -52,7 +52,7 @@ which active tickets would change the same code, so two agents don't make confli
 - **Windows `.cmd` shims:** the prompt goes to a file and the agent gets a short prompt naming it (cmd.exe would
   interpret `&`, `|`, `%` and newlines).
 - **The first prompt is not stored**; restarts resume the conversation. Started sessions are titled
-  `<Agent> · <ticket title>`; the ticket key shows as a chip beside them.
+  with the ticket title (the agent shows as an icon, PDT-20); the ticket key shows as a chip beside them.
 - **Start checks in 4b** are blockers only (`check | force`); `wait` and the area checks arrive with 4c.
 - Abandon is idempotent; bulk moves to Done/Won't do also end attempts; an existing branch without a worktree is
   checked out rather than refused.

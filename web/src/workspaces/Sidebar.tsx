@@ -5,6 +5,7 @@ import { Button, EmptyState, IconButton, List, ListRow, useMenuAt, type ListDrop
 import { api } from '../api/client';
 import type { Workspace } from '../api/gen/Workspace';
 import { AgentDot, AgentLabel, itemState, rollup, UnseenDot } from '../common/AgentState';
+import { SessionKindIcon } from '../common/SessionKindIcon';
 import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
 import { runAction } from '../common/useAction';
@@ -187,7 +188,12 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                 title={info.title}
                 bold={info.unseen}
                 current={!!ws.tab && where?.tab.id === ws.tab.id}
-                leading={<AgentDot state={state} unseenDot={false} />}
+                leading={
+                  <span className="flex items-center gap-1.5">
+                    <AgentDot state={state} unseenDot={false} />
+                    <SessionKindIcon session={info.session} />
+                  </span>
+                }
                 trailing={
                   state.label || info.unseen || info.session?.ticket ? (
                     <>

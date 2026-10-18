@@ -70,7 +70,7 @@ async fn shell_session_lifecycle() {
             .await;
     assert_eq!(s, StatusCode::CREATED, "{sess}");
     assert_eq!(sess["status"], "running");
-    assert_eq!(sess["title"], "Shell · P");
+    assert_eq!(sess["title"], "P");
     assert_eq!(sess["worktreeId"], Value::Null);
     assert!(same_dir(Path::new(sess["cwd"].as_str().unwrap()), &repo));
     let id = sess["id"].as_str().unwrap().to_string();
@@ -240,7 +240,7 @@ async fn session_runs_in_its_worktree() {
     .await;
     assert_eq!(s, StatusCode::CREATED);
     assert_eq!(sess["worktreeId"], wid);
-    assert_eq!(sess["title"], "Shell · w");
+    assert_eq!(sess["title"], "w");
     assert!(same_dir(Path::new(sess["cwd"].as_str().unwrap()), Path::new(wt["path"].as_str().unwrap())));
     state.ptys.shutdown().await;
 }

@@ -6,6 +6,7 @@ import type { Session } from '../api/gen/Session';
 import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
+import { SessionKindIcon } from '../common/SessionKindIcon';
 import { useAction } from '../common/useAction';
 import { branchUrl, repoUrl } from '../projects/github';
 import { TerminalView } from '../terminal/TerminalView';
@@ -110,7 +111,12 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <ViewHeader
-        leading={<AgentDot state={state} />}
+        leading={
+          <span className="flex items-center gap-1.5">
+            <AgentDot state={state} />
+            <SessionKindIcon session={session} />
+          </span>
+        }
         title={session.title}
         titleTooltip={`${session.title} · ${session.cwd}`}
         meta={

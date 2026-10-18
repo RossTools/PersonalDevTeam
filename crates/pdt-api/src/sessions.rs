@@ -74,7 +74,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         kind: valid.kind,
         agent: valid.agent,
         bypass_permissions: valid.bypass_permissions,
-        title: req.title.unwrap_or_else(|| default_title(valid.kind, valid.agent, &place)),
+        title: req.title.unwrap_or_else(|| default_title(&place)),
         cwd,
         status: SessionStatus::Running,
         exit_code: None,
