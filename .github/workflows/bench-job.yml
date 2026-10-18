@@ -29,6 +29,8 @@ jobs:
       - name: Ensure rustup
         if: runner.os != 'Windows'
         run: |
+          # Terminal tests start $SHELL; Namespace's Linux image names /bin/zsh without installing it.
+          if [ -n "${SHELL:-}" ] && [ ! -x "$SHELL" ]; then echo "SHELL=/bin/bash" >> "$GITHUB_ENV"; fi
           if ! command -v rustup >/dev/null; then
             curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
