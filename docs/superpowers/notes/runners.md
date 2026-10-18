@@ -113,6 +113,34 @@ new date. Self-hosted runners are still free.
 | Codemagic / Bitrise / Semaphore | $0.09–0.114/min | Codemagic only ($0.045/min) | ≈$150–230 | Built for mobile apps, or metered even on your own agents. |
 | Dagger | — | — | — | Linux containers only: no help for macOS signing or NSIS. |
 
+### E. Second sweep (hosts missed the first time)
+
+Same volume as above (Linux ~2,000 min, macOS ~1,600, Windows ~1,400). None beats Namespace on cost and speed across
+all three OSes. Two macOS-only runner services for GitHub Actions are cheaper per macOS minute.
+
+| Host | Linux | macOS ARM | Windows | Drop-in `runs-on`? | Est. $/month | Notes |
+|---|---|---|---|---|---|---|
+| **Bitrise Build Hub** | 8 vCPU ≈$0.0125/min ⚠ | M4 5 vCPU/14 GB **$0.03/min** | ❌ | ✅ | Tier 3 **$90** (fixed monthly budget) covers macOS + Linux | Builds stop when the monthly budget runs out; cache is an add-on. Needs Windows elsewhere |
+| **GetMac** | ❌ | M4 4 cores/**8 GB** | ❌ | ✅ | **$34** (3,000 min) | 8 GB is tight for Rust + Tauri; small vendor |
+| Azure Pipelines (Microsoft-hosted) | 2 vCPU | ❌ Intel only (ARM preview paused) | 2 vCPU | ❌ separate CI | $40 per parallel job, unlimited minutes | ~10 GB disk; slow; no Apple silicon |
+| AWS CodeBuild (GitHub Actions runner mode) | 8 vCPU $0.020 (arm $0.015) | Reserved fleet only, 24 h minimum, ≈$864 always-on | 8 vCPU $0.036 | ✅ | $55–90 + ≈$864 for macOS | Slowest CPU in RunsOn's Oct-2026 benchmark |
+| Harness CI Cloud | 8 vCPU $0.020 | M4 6-core $0.18/min | 8 vCPU $0.040 | ❌ | ≈$360–390 | Windows/macOS enabled by support |
+| TeamCity Cloud | $0.032 | M2 4 vCPU $0.08 | $0.032–0.064 | ❌ | ≈$250–300 + $15–18/committer | — |
+| AppVeyor | old Ubuntu | ❌ Intel, old macOS | 2 cores | ❌ | $99 (2 jobs) | Outdated images |
+| Travis CI | ✅ | ❌ (macOS ended 2025-03-31) | ✅ | ❌ | — | Out: no macOS |
+| Cirun / Sprinters | your cloud | via AWS Mac (24 h min) / ❌ | ⚠ / ❌ | ✅ | $29–79 + cloud / $0.01 per job + EC2 | Same AWS Mac problem |
+| BuildBuddy, CRACI, runmyjob.io | — | — | — | — | — | Bazel-only or Linux-only so far |
+
+Sources: [Bitrise pricing](https://bitrise.io/pricing) · [GetMac](https://getmac.io/pricing) ·
+[Azure DevOps pricing](https://azure.microsoft.com/en-us/pricing/details/devops/azure-devops-services/) ·
+[Azure hosted agents](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/hosted?view=azure-devops) ·
+[CodeBuild pricing](https://aws.amazon.com/codebuild/pricing/) ·
+[CodeBuild GHA runners](https://docs.aws.amazon.com/codebuild/latest/userguide/action-runner.html) ·
+[Harness](https://developer.harness.io/docs/continuous-integration/get-started/ci-subscription-mgmt/) ·
+[TeamCity Cloud](https://www.jetbrains.com/teamcity/cloud/) · [AppVeyor](https://www.appveyor.com/pricing/) ·
+[Travis macOS end](https://docs.travis-ci.com/user/reference/osx/) · [Cirun](https://cirun.io/pricing) ·
+[Sprinters](https://sprinters.sh/) · [RunsOn benchmark](https://runs-on.com/reference/benchmarks-gha-providers/)
+
 ## Keeping the pipeline portable (for Buildkite later)
 
 Put each check behind one command that any CI calls, so a CI file only picks the machine, installs tools, exposes
