@@ -11,5 +11,5 @@ export interface TextareaProps extends Omit<ComponentProps<'textarea'>, 'classNa
 /** Multi-line text input with the native textarea API; grows with its content. Inside a Field it is labelled by it. */
 export function Textarea({ mono = false, className, ...props }: TextareaProps) {
   const { labelledBy, ...field } = useFieldControl(props);
-  return <TextareaPrimitive {...props} {...field} aria-labelledby={labelledBy} className={mono ? `font-mono ${className ?? ''}` : className} />;
+  return <TextareaPrimitive autoComplete="off" {...props} {...field} aria-labelledby={labelledBy} className={mono ? `font-mono ${className ?? ''}` : className} />;
 }

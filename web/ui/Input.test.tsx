@@ -45,3 +45,11 @@ describe('Input', () => {
     expect(c).toHaveAttribute('aria-invalid', 'true');
   });
 });
+
+describe('Input autocomplete', () => {
+  it('turns browser autofill off unless asked', () => {
+    render(<><Input aria-label="Name" /><Input aria-label="Email" autoComplete="email" /></>);
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveAttribute('autocomplete', 'off');
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveAttribute('autocomplete', 'email');
+  });
+});
