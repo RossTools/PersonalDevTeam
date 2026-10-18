@@ -21,6 +21,16 @@ the Mac mini the build output stays warm; a small change re-checks in about a mi
 the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
 platform-specific code (`cfg(windows)`, process spawning, paths).
 
+## Keeping auto-merge PRs up to date
+
+The "Main" ruleset requires a PR to be up to date with main, so a merge leaves every other auto-merge PR "behind".
+`.github/workflows/update-prs.yml` runs on each push to main: for every open auto-merge PR from this repo that main
+has moved past, it calls GitHub's update-branch (merging main in, with `expected_head_sha` so it never races a push)
+and then dispatches `ci.yml` on the branch with `pr=<n>`. The dispatch is needed because a push made with
+`GITHUB_TOKEN` starts no `pull_request` run; with `pr` set, the `changes` job reads that PR's files and labels, so
+the dispatched run picks the same jobs a PR run would, and its checks land on the new head. A PR whose update
+conflicts is skipped with a warning in the run summary.
+
 ## The Mac mini runner
 - Lives in `~/actions-runner-pdt`, runs as the user (LaunchAgent `actions.runner.ross-game-tools-PersonalDevTeam.*`,
   installed with `./svc.sh install`), labels `self-hosted, macOS, ARM64, pdt-mini`. One job at a time.
