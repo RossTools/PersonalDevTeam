@@ -13,6 +13,8 @@ import { tabMenu } from './menus';
 import { itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 
+const coarsePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
 /** Applies something dropped on a workspace's tab strip (at `index`) or on the workspace itself (the end). */
 export async function applyDrop(ws: WorkspacesApi, d: Dropped, workspaceId: string, index?: number) {
   if (!d) return;
@@ -67,7 +69,9 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
             type="button"
             role="tab"
             aria-selected={selected}
-            draggable
+            // Touch screens move tabs from the long-press menu (workspaces spec §4.6): a natively draggable element turns
+            // Android's long press into a drag, so the menu would never open.
+            draggable={!coarsePointer()}
             onDragStart={(e) => dragTab(e, tab.id)}
             onClick={() => ws.selectTab(tab)}
             onDoubleClick={() => tab.sessionId && setRenaming(tab.id)}

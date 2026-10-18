@@ -42,6 +42,12 @@ the design (below). iOS Safari is still unverified.
 5. **Dependencies we drop after init:** `next-themes` (our theme code drives Sonner's `theme` prop) and the Geist
    font package.
 
+## Found while migrating (Android, real touch)
+
+- A long press on a **natively draggable** element (`draggable` attribute) starts Android's drag instead of the
+  context menu. Tabs are now draggable only when the pointer isn't coarse; on touch they move from the long-press
+  menu (workspaces spec §4.6). React Aria `List` rows aren't affected: they drag from a handle.
+
 ## Still open
 
 - **iOS Safari is unverified**: long press (React Aria blocks the callout), touch drag (Safari supports HTML drag and

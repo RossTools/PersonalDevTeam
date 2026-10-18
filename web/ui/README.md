@@ -46,7 +46,8 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
   returns focus to what opened it; Up/Down/Home/End in lists and menus; long press = right-click on touch.
 - **Touch.** Long press opens the same menu as right-click (`MenuTrigger trigger="contextMenu"`). Drag data is
   `text/plain` with a `pdt:<kind>:<id>` value (Android Chrome drops custom types); draggable rows carry a
-  `<Button slot="drag">` handle. Sheets open from a button, never an edge swipe.
+  `<Button slot="drag">` handle. Sheets open from a button, never an edge swipe. Never make a long-press target natively `draggable` on touch
+  screens (Android turns the long press into a drag): drag from a handle, or only with a fine pointer.
 - **Pending and errors.** Actions show `pending` on their control; forms show errors with `Alert`/`Field`; everything
   else toasts (`toast.error(message)`).
 

@@ -18,7 +18,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 
 ## Now
 - **Phase 3c: Design system and shell UX** (spec: docs/superpowers/specs/2026-10-17-design-system-ux-design.md, in
-  review; decisions D1–D7 made). 3c-1: tokens, `web/ui` components, gallery, every screen moved onto them. 3c-2:
+  review; decisions D1–D7 made). 3c-1 (in review): tokens, `web/ui` components (shadcn/ui on React Aria), gallery,
+  every screen moved onto them. 3c-2:
   shell fixes (dev badge, view header, ended sessions, settings as a page, command palette, new-tab picker, toasts,
   phone sidebar sheet).
 
