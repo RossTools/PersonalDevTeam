@@ -20,8 +20,8 @@ actions (§7 item 9) already shipped in 3c-1.
   `PDT_PORT` both show it. Text: `DEV · <port>`.
 - **Palette keys:** Ctrl+] k everywhere, plus ⌘K on macOS (the terminal never needs ⌘K). Not Ctrl+K: that is
   readline's kill-line in the terminal.
-- **Add project** leaves the sidebar form: the settings nav gets a "+" next to PROJECTS and the Sessions sidebar
-  keeps its "Add project" button; both open the existing `AddProjectDialog`.
+- **Add project** leaves the sidebar form: the settings nav gets a "+" next to PROJECTS, which opens the existing
+  `AddProjectDialog`; the Sessions sidebar has no Add project link (removed at the user's request).
 - **Ended sessions** keep the terminal's last screen; the bar floats over its bottom edge (no resize of the PTY,
   spec principle 4).
 - **Phone rail:** Sessions, Files, Search (palette), Settings — four items, 44px. Settings stays in the rail (the spec's

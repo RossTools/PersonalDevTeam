@@ -187,7 +187,6 @@ export function AppShell() {
         ws={ws}
         onRenameTab={setRenamingTabId}
         onProjectSettings={showProjectSettings}
-        onAddProject={() => { setSheetOpen(false); setAddingProject(true); }}
         onChoose={() => setSheetOpen(false)}
       />
     </>

@@ -56,12 +56,11 @@ export function agentSecondary(branch: string | null, workspaceName: string | nu
 }
 
 /** herdr's left panel: workspaces on top, every agent below with its state and where it is. */
-export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject, onChoose }: {
+export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
   /** Opens a project's page in Settings. */
   onProjectSettings: (projectId: string) => void;
-  onAddProject: () => void;
   /** Called after a workspace or an agent is chosen (the phone sheet closes). */
   onChoose?: () => void;
 }) {
@@ -206,9 +205,6 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject, onCh
           })}
         </List>
       </section>
-      <Button variant="ghost" size="sm" onClick={onAddProject} className="mx-2 mt-3 self-start text-muted-foreground">
-        <Plus aria-hidden /> Add project
-      </Button>
       {menu}
     </div>
   );

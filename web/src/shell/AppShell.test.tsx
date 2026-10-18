@@ -352,21 +352,14 @@ describe('workspaces', () => {
     fireEvent.drop(target, { dataTransfer });
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/tb', body: { workspaceId: 'wa', position: 0 } }));
   });
-  it('opens project settings, and the add-project modal, from the sidebar', async () => {
+  it('opens project settings from the sidebar, which has no Add project link (that is in Settings)', async () => {
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
+    expect(screen.queryByRole('button', { name: 'Add project' })).not.toBeInTheDocument();
     fireEvent.contextMenu(await within(list).findByRole('row', { name: /Alpha/ }));
     await userEvent.click(within(screen.getByRole('menu', { name: 'Workspace Alpha' })).getByRole('menuitem', { name: 'Project settings…' }));
     expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
-    await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Add project' }));
-    const dialog = screen.getByRole('dialog', { name: 'Add project' });
-    expect(within(dialog).getByRole('radio', { name: 'Clone URL' })).toBeInTheDocument();
-    // The modal hides the page behind it from assistive tech; the Sessions view is still underneath.
-    expect(screen.getByRole('region', { name: 'Workspaces', hidden: true })).toBeInTheDocument();
-    await userEvent.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog', { name: 'Add project' })).not.toBeInTheDocument();
   });
 
   it('rolls up each workspace to its most urgent agent', async () => {
