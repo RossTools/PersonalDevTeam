@@ -79,5 +79,6 @@ memory when `PDT_SECRET_STORE=memory`.
 - [AGENTS.md](AGENTS.md): the working guide for coding agents (and the most complete description of how PDT behaves)
 - [docs/SDLC.md](docs/SDLC.md): how a change goes from worktree to release
 - [docs/ROADMAP.md](docs/ROADMAP.md): what is done and what comes next
+- [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it
 - [docs/superpowers/specs](docs/superpowers/specs): designs; [plans](docs/superpowers/plans): build plans;
   [notes](docs/superpowers/notes): CI layout, carry-overs, incident notes
