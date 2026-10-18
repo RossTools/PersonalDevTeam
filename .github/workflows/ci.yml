@@ -189,7 +189,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run --profile ci
 
-    bundle-macos:
+  bundle-macos:
     name: bundle (macos-latest, app)
     needs: changes
     if: needs.changes.outputs.bundle == 'true' && github.event_name != 'schedule'
