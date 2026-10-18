@@ -46,14 +46,6 @@ function HubTabs({ value }: { value: HubTab }) {
   );
 }
 
-/** The header's primary action by stage: Draft → Submit (to Ready; Start arrives in Phase 4b). */
-function PrimaryAction({ ticket }: { ticket: Ticket }) {
-  const qc = useQueryClient();
-  const [submit, pending] = useAction(() => patchTicket(qc, ticket.id, { stage: 'ready' }));
-  if (ticket.stage !== 'draft') return null;
-  return <Button variant="primary" size="sm" pending={pending} onClick={() => void submit()}>Submit</Button>;
-}
-
 export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -70,21 +62,18 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
         </>
       }
       actions={
-        <>
-          <PrimaryAction ticket={ticket} />
-          <MenuButton
-            label="Ticket actions"
-            entries={() => [
-              { submenu: 'Move to', entries: moveToEntries(qc, ticket) },
-              { separator: true },
-              {
-                label: 'Delete…',
-                danger: true,
-                onSelect: () => void deleteTicket(confirm, qc, ticket).then((ok) => { if (ok) onDeleted?.(); }),
-              },
-            ]}
-          />
-        </>
+        <MenuButton
+          label="Ticket actions"
+          entries={() => [
+            { submenu: 'Move to', entries: moveToEntries(qc, ticket) },
+            { separator: true },
+            {
+              label: 'Delete…',
+              danger: true,
+              onSelect: () => void deleteTicket(confirm, qc, ticket).then((ok) => { if (ok) onDeleted?.(); }),
+            },
+          ]}
+        />
       }
     />
   );
@@ -109,11 +98,11 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
       <HubTabs value={tab} />
       <div role="tabpanel" aria-label="Overview" className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
-          <div className="flex min-w-0 flex-col gap-6">
+          <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
             <TicketDescription key={t.id} ticket={t} />
             <TicketTimeline ticketId={t.id} composer />
           </div>
-          <aside aria-label="Ticket details" className="flex min-w-0 flex-col gap-6">
+          <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
             <TicketDetails ticket={t} />
             <TicketLinks ticket={t} />
             <TicketAreas ticket={t} />

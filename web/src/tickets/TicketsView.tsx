@@ -229,7 +229,8 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
       {!t ? (
         q.isPending ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
       ) : (
-        <div className="flex flex-col gap-5 pt-1">
+        // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
+        <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
           <div className="flex flex-col gap-2 pr-8">
             <TicketKey ticketKey={t.key} className="self-start" />
             <TicketTitle ticket={t} className="text-base font-semibold" />
@@ -376,6 +377,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
         // React Aria's GridList can't gain or lose drag and drop in place: a new list when ranking turns on or off.
         key={rankable ? 'ranked' : 'plain'}
         aria-label="Tickets"
+        striped
         {...(sections ? { sections } : { items })}
         dependencies={[phone, rankable]}
         rowHeight={phone ? 56 : 36}

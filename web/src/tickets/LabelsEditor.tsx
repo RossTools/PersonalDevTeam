@@ -1,7 +1,6 @@
-import { useId, useState } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Chip, IconButton, Input } from '@ui';
+import { Chip, IconButton, SuggestInput } from '@ui';
 import { normaliseArea, normaliseLabel } from './model';
 
 export interface LabelsEditorProps {
@@ -16,14 +15,12 @@ export interface LabelsEditorProps {
   className?: string;
 }
 
-/** Chips with a remove button each, and a field that adds one on Enter (suggesting the project's existing ones). */
+/** Chips with a remove button each, and a field that adds one: pick an existing one from the list, or type a new one
+ *  and press Enter (or a comma). */
 export function LabelsEditor({ labels, onChange, suggestions = [], noun = 'Label', disabled, className }: LabelsEditorProps) {
-  const [draft, setDraft] = useState('');
-  const listId = useId();
   const lower = noun.toLowerCase();
-  const add = () => {
-    const v = (noun === 'Area' ? normaliseArea : normaliseLabel)(draft);
-    setDraft('');
+  const add = (text: string) => {
+    const v = (noun === 'Area' ? normaliseArea : normaliseLabel)(text);
     if (v && !labels.includes(v)) onChange([...labels, v].sort());
   };
   const offered = suggestions.filter((s) => !labels.includes(s));
@@ -44,29 +41,17 @@ export function LabelsEditor({ labels, onChange, suggestions = [], noun = 'Label
           </IconButton>
         </span>
       ))}
-      <Input
+      <SuggestInput
         size="sm"
         aria-label={`Add ${lower}`}
         placeholder={`Add ${lower}…`}
-        list={offered.length > 0 ? listId : undefined}
-        value={draft}
+        suggestions={offered}
+        onCommit={add}
         disabled={disabled}
         maxLength={noun === 'Area' ? 60 : 30}
-        autoComplete="off"
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ',') {
-            e.preventDefault();
-            add();
-          }
-        }}
-        className="w-28"
+        commitKeys={[',']}
+        className="w-32"
       />
-      {offered.length > 0 && (
-        <datalist id={listId}>
-          {offered.map((s) => <option key={s} value={s} />)}
-        </datalist>
-      )}
     </div>
   );
 }

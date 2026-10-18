@@ -7,6 +7,7 @@ export * from './IconButton';
 export * from './Input';
 export * from './Textarea';
 export * from './Select';
+export * from './SuggestInput';
 export * from './Field';
 export * from './Checkbox';
 export * from './Switch';

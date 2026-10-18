@@ -227,6 +227,7 @@ function Backlog() {
         <div className="border-t border-border" />
         <DataList
           aria-label="Tickets"
+          striped
           items={sections ? undefined : shown}
           sections={sections}
           rowHeight={36}

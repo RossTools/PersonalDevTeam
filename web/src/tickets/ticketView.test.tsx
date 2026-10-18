@@ -95,23 +95,31 @@ describe('ticket tab', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument());
   });
 
-  it('changes the stage from Details and submits a draft from the header', async () => {
+  it('changes the stage from Details (the header has no stage shortcut)', async () => {
     const calls = stub();
     view();
     const details = await screen.findByRole('region', { name: 'Details' });
     await userEvent.click(within(details).getByRole('button', { name: /Stage/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'In progress' }));
     await waitFor(() => expect(patches(calls)).toContainEqual({ stage: 'in_progress' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
-    await waitFor(() => expect(patches(calls)).toContainEqual({ stage: 'ready' }));
+    expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
   });
 
   it('adds and removes labels from Details', async () => {
     const calls = stub();
     view();
     const details = await screen.findByRole('region', { name: 'Details' });
-    await userEvent.type(within(details).getByRole('textbox', { name: 'Add label' }), 'Back End{Enter}');
+    await userEvent.type(within(details).getByRole('combobox', { name: 'Add label' }), 'Back End{Enter}');
     await waitFor(() => expect(patches(calls)).toContainEqual({ labels: ['back end'] }));
+  });
+
+  it('adds an existing label with one click on the suggestion', async () => {
+    const calls = stub();
+    view();
+    const details = await screen.findByRole('region', { name: 'Details' });
+    await userEvent.click(within(details).getByRole('combobox', { name: 'Add label' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'ui' }));
+    await waitFor(() => expect(patches(calls)).toContainEqual({ labels: ['ui'] }));
   });
 
   it('comments from the composer', async () => {
@@ -187,7 +195,7 @@ describe('new ticket form', () => {
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Why');
     await userEvent.click(within(dialog).getByRole('button', { name: /Priority/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'High' }));
-    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Add label' }), 'ui{Enter}');
+    await userEvent.type(within(dialog).getByRole('combobox', { name: 'Add label' }), 'ui{Enter}');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create ticket' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
       title: 'Half typed', description: 'Why', stage: 'draft', priority: 'high', labels: ['ui'],

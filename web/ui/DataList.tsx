@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, GripVertical } from 'lucide-react';
 import {
   Button as AriaButton,
@@ -53,6 +53,8 @@ export interface DataListProps<T extends { id: string }> {
   dependencies?: readonly unknown[];
   /** A fixed row height in px (fastest; at least 44 on touch screens). Without it rows are measured (estimate 36px). */
   rowHeight?: number;
+  /** Alternate rows get a faint fill (counted from the top of each group) so long lists are easier to read across. */
+  striped?: boolean;
   /** Multi-select with a checkbox per row: Shift-click for ranges, Cmd/Ctrl+A for all, Escape to clear. */
   selectable?: boolean;
   /** Controlled selection (ids). Leave out for the list to keep it. */
@@ -82,6 +84,8 @@ export interface DataListProps<T extends { id: string }> {
 const EMPTY: ReadonlySet<string> = new Set();
 /** Rows are at least 44px on touch screens (`pointer-coarse:min-h-control-touch`); fixed heights follow. */
 const LONG_PRESS_SLACK_MS = 400;
+/** The ids of rows that get the stripe fill (null: the list is not striped). */
+const Banded = createContext<ReadonlySet<string> | null>(null);
 const TOUCH_ROW = 44;
 
 function useCoarsePointer(): boolean {
@@ -107,6 +111,7 @@ export function DataList<T extends { id: string }>({
   children,
   dependencies,
   rowHeight,
+  striped = false,
   selectable = false,
   selectedKeys,
   onSelectionChange,
@@ -136,6 +141,12 @@ export function DataList<T extends { id: string }>({
     () => (sections ? sections.flatMap((s) => (s.collapsed ? [] : s.items)) : (items ?? [])).map((i) => i.id),
     [items, sections],
   );
+  // Odd rows of each group (or of the whole list), for `striped`.
+  const banded = useMemo(() => {
+    if (!striped) return null;
+    const groups = sections ? sections.map((s) => s.items) : [items ?? []];
+    return new Set(groups.flatMap((g) => g.filter((_, i) => i % 2 === 1).map((r) => r.id)));
+  }, [striped, items, sections]);
   const shift = useRef(false);
   const anchor = useRef<string | null>(null);
 
@@ -224,73 +235,75 @@ export function DataList<T extends { id: string }>({
   return (
     <RowMenus.Provider value={menus}>
       <RowLongPress.Provider value={onLongPress}>
-        <div
-          className="contents"
-          onPointerDownCapture={(e) => { shift.current = e.shiftKey; }}
-          onKeyDownCapture={(e) => {
-            shift.current = false;
-            if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-            const handler = e.key === 'ArrowUp' ? onMoveUp : onMoveDown;
-            const row = (e.target as HTMLElement).closest<HTMLElement>('[role="row"][data-key]');
-            if (!handler || !row?.dataset.key) return;
-            e.preventDefault();
-            e.stopPropagation();
-            handler(row.dataset.key);
-          }}
-          onKeyDown={(e) => openFocusedRowMenu(e, menus)}
-        >
-          <Virtualizer
-            layout={ListLayout}
-            layoutOptions={
-              fixedHeight
-                ? { rowHeight: fixedHeight, headingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
-                : { estimatedRowHeight: coarse ? TOUCH_ROW : 36, estimatedHeadingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
-            }
+        <Banded.Provider value={banded}>
+          <div
+            className="contents"
+            onPointerDownCapture={(e) => { shift.current = e.shiftKey; }}
+            onKeyDownCapture={(e) => {
+              shift.current = false;
+              if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+              const handler = e.key === 'ArrowUp' ? onMoveUp : onMoveDown;
+              const row = (e.target as HTMLElement).closest<HTMLElement>('[role="row"][data-key]');
+              if (!handler || !row?.dataset.key) return;
+              e.preventDefault();
+              e.stopPropagation();
+              handler(row.dataset.key);
+            }}
+            onKeyDown={(e) => openFocusedRowMenu(e, menus)}
           >
-            <GridList
-              aria-label={ariaLabel}
-              layout="stack"
-              selectionMode={selectable ? 'multiple' : 'none'}
-              selectionBehavior="toggle"
-              selectedKeys={selectable ? selected : undefined}
-              onSelectionChange={selectable ? onRacSelection : undefined}
-              onAction={
-                onAction || selectable
-                  ? (key: Key) => {
-                      const id = String(key);
-                      // Shift-click with nothing selected starts a selection rather than opening the row.
-                      if (selectable && shift.current) {
-                        const next = new Set(selected);
-                        for (const k of anchor.current ? range(anchor.current, id) : [id]) next.add(k);
-                        anchor.current ??= id;
-                        setSelected(next);
-                        return;
-                      }
-                      onAction?.(id);
-                    }
-                  : undefined
+            <Virtualizer
+              layout={ListLayout}
+              layoutOptions={
+                fixedHeight
+                  ? { rowHeight: fixedHeight, headingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
+                  : { estimatedRowHeight: coarse ? TOUCH_ROW : 36, estimatedHeadingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
               }
-              renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
-              dragAndDropHooks={dragKind ? dragAndDropHooks : undefined}
-              className={cn('relative overflow-auto outline-none', className)}
             >
-              {sections ? (
-                <Collection items={sections} dependencies={dependencies ? [...dependencies] : undefined}>
-                  {renderSection}
-                </Collection>
-              ) : (
-                <Collection items={items ?? []} dependencies={dependencies ? [...dependencies] : undefined}>
-                  {children}
-                </Collection>
-              )}
-              {onEndReached && (
-                <GridListLoadMoreItem onLoadMore={() => { if (!loadingMore) onEndReached(); }} isLoading={loadingMore} className="flex h-8 items-center justify-center">
-                  <Spinner />
-                </GridListLoadMoreItem>
-              )}
-            </GridList>
-          </Virtualizer>
-        </div>
+              <GridList
+                aria-label={ariaLabel}
+                layout="stack"
+                selectionMode={selectable ? 'multiple' : 'none'}
+                selectionBehavior="toggle"
+                selectedKeys={selectable ? selected : undefined}
+                onSelectionChange={selectable ? onRacSelection : undefined}
+                onAction={
+                  onAction || selectable
+                    ? (key: Key) => {
+                        const id = String(key);
+                        // Shift-click with nothing selected starts a selection rather than opening the row.
+                        if (selectable && shift.current) {
+                          const next = new Set(selected);
+                          for (const k of anchor.current ? range(anchor.current, id) : [id]) next.add(k);
+                          anchor.current ??= id;
+                          setSelected(next);
+                          return;
+                        }
+                        onAction?.(id);
+                      }
+                    : undefined
+                }
+                renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
+                dragAndDropHooks={dragKind ? dragAndDropHooks : undefined}
+                className={cn('relative overflow-auto outline-none', className)}
+              >
+                {sections ? (
+                  <Collection items={sections} dependencies={dependencies ? [...dependencies] : undefined}>
+                    {renderSection}
+                  </Collection>
+                ) : (
+                  <Collection items={items ?? []} dependencies={dependencies ? [...dependencies] : undefined}>
+                    {children}
+                  </Collection>
+                )}
+                {onEndReached && (
+                  <GridListLoadMoreItem onLoadMore={() => { if (!loadingMore) onEndReached(); }} isLoading={loadingMore} className="flex h-8 items-center justify-center">
+                    <Spinner />
+                  </GridListLoadMoreItem>
+                )}
+              </GridList>
+            </Virtualizer>
+          </div>
+        </Banded.Provider>
       </RowLongPress.Provider>
     </RowMenus.Provider>
   );
@@ -321,6 +334,7 @@ export interface DataListRowProps
 /** One `DataList` row: [drag handle] [checkbox] [leading] content [trailing]. */
 export function DataListRow({ id, textValue, children, leading, trailing, bold = false, disabled, onMenu, className, ...rest }: DataListRowProps) {
   const menuProps = useRowMenu(id, onMenu);
+  const striped = useContext(Banded)?.has(id) ?? false;
   return (
     <GridListItem
       {...rest}
@@ -330,6 +344,7 @@ export function DataListRow({ id, textValue, children, leading, trailing, bold =
       isDisabled={disabled}
       className={cn(
         'group/row flex min-h-9 cursor-default items-center gap-2 border-b border-border px-2 py-1 text-sm text-foreground outline-none select-none',
+        striped && 'bg-band',
         'pointer-coarse:min-h-control-touch',
         'data-hovered:bg-muted data-selected:bg-accent',
         'data-focus-visible:ring-2 data-focus-visible:ring-ring data-focus-visible:ring-inset',

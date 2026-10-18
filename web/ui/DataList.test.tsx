@@ -229,3 +229,29 @@ describe('DataList touch long press', () => {
     }
   });
 });
+
+describe('DataList striped', () => {
+  it('fills every other row, counting from the top of each group', () => {
+    const sections: DataListSection<Row>[] = [
+      { id: 'a', title: 'A', items: many(3) },
+      { id: 'b', title: 'B', items: [{ id: 'x0', title: 'X 0' }, { id: 'x1', title: 'X 1' }] },
+    ];
+    render(
+      <DataList aria-label="Tickets" rowHeight={36} striped sections={sections}>
+        {(r) => (
+          <DataListRow id={r.id} textValue={r.title}>
+            <span>{r.title}</span>
+          </DataListRow>
+        )}
+      </DataList>,
+    );
+    const banded = (name: string) => row(name).className.includes('bg-band');
+    expect([banded('Ticket 0'), banded('Ticket 1'), banded('Ticket 2')]).toEqual([false, true, false]);
+    expect([banded('X 0'), banded('X 1')]).toEqual([false, true]);
+  });
+
+  it('leaves rows plain without it', () => {
+    render(<Rows items={many(2)} />);
+    expect(row('Ticket 1').className).not.toContain('bg-band');
+  });
+});

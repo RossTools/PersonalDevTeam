@@ -64,6 +64,7 @@ function Dialog({
   showCloseButton = true,
   isDismissable = true,
   dialogProps,
+  innerClassName,
   ...props
 }: Omit<ModalOverlayPrimitiveProps, "className" | "children"> &
   Pick<React.ComponentProps<typeof ModalPrimitive>, "isDismissable"> & {
@@ -72,6 +73,9 @@ function Dialog({
     showCloseButton?: boolean
     /** Props for the inner React Aria Dialog (aria-describedby, role, aria-label). */
     dialogProps?: Omit<DialogPrimitiveProps, "children" | "className" | "style">
+    /** Layout of the inner dialog element, which holds the header, body and footer (the default inherits the
+     *  outer grid's display and gap; row templates are not inherited, so a layout with rows belongs here). */
+    innerClassName?: string
   }) {
   return (
     <DialogOverlay isDismissable={isDismissable} {...props}>
@@ -85,7 +89,7 @@ function Dialog({
         <DialogPrimitive
           data-slot="dialog"
           {...dialogProps}
-          className="[display:inherit] [gap:inherit] outline-none"
+          className={cn(innerClassName ?? "[display:inherit] [gap:inherit]", "outline-none")}
         >
           {children}
           {showCloseButton && (

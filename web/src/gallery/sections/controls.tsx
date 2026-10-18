@@ -5,6 +5,7 @@ import { IconButton } from '@ui/IconButton';
 import { Input } from '@ui/Input';
 import { Textarea } from '@ui/Textarea';
 import { Select } from '@ui/Select';
+import { SuggestInput } from '@ui/SuggestInput';
 import { Field } from '@ui/Field';
 import { Checkbox } from '@ui/Checkbox';
 import { Switch } from '@ui/Switch';
@@ -207,6 +208,9 @@ function render() {
         <Select aria-label="Small select" size="sm" value="a" onChange={() => {}} options={[{ value: 'a', label: 'Small' }]} />
         <Input aria-label="Disabled input" disabled value="disabled" className="w-32" readOnly />
       </Row>
+      <Row label="SuggestInput (pick a suggestion with one click, or type and press Enter)">
+        <SuggestDemo />
+      </Row>
       <Row label="Field · Checkbox · Switch · SegmentedControl">
         <FormDemo />
       </Row>
@@ -243,3 +247,13 @@ function render() {
 }
 
 export const section = { title: 'Controls', order: 10, render };
+
+function SuggestDemo() {
+  const [added, setAdded] = useState<string[]>([]);
+  return (
+    <>
+      <SuggestInput aria-label="Add label" size="sm" placeholder="Add label…" suggestions={['backend', 'bug', 'docs', 'perf', 'ui']} onCommit={(v) => setAdded((a) => [...a, v])} className="w-40" />
+      <span className="text-xs text-muted-foreground">{added.length > 0 ? `Added: ${added.join(', ')}` : 'Nothing added yet'}</span>
+    </>
+  );
+}

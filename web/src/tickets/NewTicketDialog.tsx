@@ -76,19 +76,22 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
         </>
       }
     >
-      <form id="new-ticket" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        {projects.length > 1 && (
-          <Field label="Project">
-            <Select
-              options={projects.map((p) => ({ value: p.id, label: `${p.key} · ${p.name}` }))}
-              value={projectId}
-              onChange={(v) => { setProjectId(v); setLabels([]); }}
-            />
+      {/* Three blocks divided by rules: what it is, the description, then its details. */}
+      <form id="new-ticket" className="flex flex-col divide-y divide-border *:py-4 *:first:pt-0 *:last:pb-0" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <div className="flex flex-col gap-3">
+          {projects.length > 1 && (
+            <Field label="Project">
+              <Select
+                options={projects.map((p) => ({ value: p.id, label: `${p.key} · ${p.name}` }))}
+                value={projectId}
+                onChange={(v) => { setProjectId(v); setLabels([]); }}
+              />
+            </Field>
+          )}
+          <Field label="Title">
+            <Input autoFocus value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing" />
           </Field>
-        )}
-        <Field label="Title">
-          <Input autoFocus value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing" />
-        </Field>
+        </div>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <span id="new-ticket-desc" className="flex-1 text-xs font-medium">Description</span>
@@ -115,17 +118,19 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
             </div>
           )}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Stage">
-            <Select options={OPEN_STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }))} value={stage} onChange={setStage} />
-          </Field>
-          <Field label="Priority">
-            <Select options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))} value={priority} onChange={setPriority} />
-          </Field>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium">Labels</span>
-          <LabelsEditor labels={labels} suggestions={known.data ?? []} onChange={setLabels} />
+        <div className="flex flex-col gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Stage">
+              <Select options={OPEN_STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }))} value={stage} onChange={setStage} />
+            </Field>
+            <Field label="Priority">
+              <Select options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))} value={priority} onChange={setPriority} />
+            </Field>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">Labels</span>
+            <LabelsEditor labels={labels} suggestions={known.data ?? []} onChange={setLabels} />
+          </div>
         </div>
         {error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{error}</Alert></div>}
       </form>
