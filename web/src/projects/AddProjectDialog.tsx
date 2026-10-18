@@ -22,7 +22,7 @@ export function AddProjectDialog({ onClose, onAdded }: { onClose: () => void; on
       >
         <div className="flex items-center border-b border-border px-3 py-2">
           <h2 className="flex-1 text-sm font-medium">Add project</h2>
-          <button type="button" aria-label="Close" onClick={onClose} className="rounded-pdt p-1 text-muted hover:text-fg hover:bg-surface-2">
+          <button type="button" aria-label="Close" onClick={onClose} className="rounded-pdt p-1 text-muted-foreground hover:text-fg hover:bg-surface-2">
             <X size={14} aria-hidden />
           </button>
         </div>

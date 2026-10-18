@@ -8,9 +8,9 @@ import type { Worktree } from '../api/gen/Worktree';
 import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { branchUrl, compareUrl, repoUrl } from './github';
 
-const h = 'text-xs uppercase tracking-wider text-muted';
+const h = 'text-xs uppercase tracking-wider text-muted-foreground';
 const field = 'rounded-pdt border border-border bg-surface px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
-const link = 'inline-flex items-center gap-1 text-xs text-accent underline';
+const link = 'inline-flex items-center gap-1 text-xs text-primary underline';
 
 function Ext({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -39,17 +39,17 @@ function Identity({ project }: { project: Project }) {
   return (
     <section aria-label="Project" className="flex flex-col gap-2">
       <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (changed) save.mutate(); }}>
-        <label className="flex flex-col gap-1 text-xs text-muted">Name
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">Name
           <input aria-label="Project name" className={`${field} w-64`} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
-        <label className="flex flex-col gap-1 text-xs text-muted">Key
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">Key
           <input aria-label="Project key" className={`${field} w-24 uppercase placeholder:normal-case font-mono`} maxLength={10} value={key} onChange={(e) => setKey(e.target.value)} />
         </label>
         <Button type="submit" variant="secondary" disabled={!changed || save.isPending}>Save name and key</Button>
       </form>
-      <p className="text-xs text-muted">The key is the project's short code (2–10 letters and digits); tickets will be numbered with it, like {project.key}-42.</p>
+      <p className="text-xs text-muted-foreground">The key is the project's short code (2–10 letters and digits); tickets will be numbered with it, like {project.key}-42.</p>
       {save.isError && <p role="alert" className="text-xs text-failed">{save.error.message}</p>}
-      <p className="text-xs text-muted flex flex-wrap items-center gap-3">
+      <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-3">
         <span className="font-mono" title="Repository folder">{project.repoPath}</span>
         {project.githubRepo && <Ext href={repoUrl(project.githubRepo)}>{project.githubRepo} on GitHub</Ext>}
       </p>
@@ -77,7 +77,7 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
     <li className="flex flex-col gap-1 rounded-pdt border border-border p-2">
       <div className="flex flex-wrap items-center gap-3">
         <span className="font-medium">{wt.branch}</span>
-        {wt.missing && <span className="text-[11px] text-waiting">folder missing</span>}
+        {wt.missing && <span className="text-meta text-waiting">folder missing</span>}
         {project.githubRepo && !wt.missing && (
           <>
             <Ext href={branchUrl(project.githubRepo, wt.branch)}>Branch</Ext>
@@ -91,7 +91,7 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
           <Button variant="ghost" onClick={() => setConfirming(true)}>Remove…</Button>
         ) : null}
       </div>
-      <span className="text-[11px] text-muted font-mono truncate" title={wt.path}>{wt.path}</span>
+      <span className="text-meta text-muted-foreground font-mono truncate" title={wt.path}>{wt.path}</span>
       {confirming && !wt.missing && (
         <div role="group" aria-label={`Remove ${wt.branch}`} className="flex flex-wrap items-center gap-2 text-xs">
           {dirty ? (
@@ -119,7 +119,7 @@ function Worktrees({ project }: { project: Project }) {
   return (
     <section aria-label="Worktrees" className="flex flex-col gap-2">
       <h3 className={h}>Worktrees</h3>
-      {list.data?.length === 0 && <p className="text-xs text-muted">No worktrees. Running a branch makes one.</p>}
+      {list.data?.length === 0 && <p className="text-xs text-muted-foreground">No worktrees. Running a branch makes one.</p>}
       <ul className="flex flex-col gap-1">
         {list.data?.map((w) => <WorktreeRow key={w.id} project={project} wt={w} />)}
       </ul>

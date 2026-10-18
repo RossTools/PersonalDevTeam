@@ -10,7 +10,7 @@ import { tabMenu } from './menus';
 import { activityStatus, itemOf, worstActivity } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 
-const small = 'rounded-pdt p-0.5 text-muted hover:text-fg hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const small = 'rounded-pdt p-0.5 text-muted-foreground hover:text-fg hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 /** Most urgent activity and whether anything is unseen, over some items. */
 export function summarize(infos: (ItemInfo | null)[]) {
@@ -26,7 +26,7 @@ export function AttentionDots({ activity, unseen, label }: { activity: ItemInfo[
       {status && activity !== 'idle' && activity !== 'unknown' && (
         <span title={label} className="inline-flex"><StatusDot status={status} /></span>
       )}
-      {unseen && <span role="img" aria-label="unseen" className="inline-block size-1.5 rounded-full bg-accent" />}
+      {unseen && <span role="img" aria-label="unseen" className="inline-block size-1.5 rounded-full bg-primary" />}
     </>
   );
 }
@@ -87,7 +87,7 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop, men
   });
   return (
     <div
-      className={`relative flex shrink-0 items-center gap-1 rounded-pdt pl-2 pr-0.5 py-0.5 ${selected ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2'}`}
+      className={`relative flex shrink-0 items-center gap-1 rounded-pdt pl-2 pr-0.5 py-0.5 ${selected ? 'bg-accent text-fg' : 'text-muted-foreground hover:bg-surface-2'}`}
       onDragOver={(e) => { if (accepts(e)) e.preventDefault(); }}
       onDrop={(e) => onDrop(e, tab.position)}
       {...menu(`Tab ${title}`, () => tabMenu(ws, tab, () => setRenaming(tab.id)))}

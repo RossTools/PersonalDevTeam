@@ -54,18 +54,16 @@
 }
 
 @theme inline {
-  /* Our names, used by today's screens. `accent` and `muted` mean something else in shadcn (a hover fill and a muted
-     fill); Task 4 renames our uses, then the shadcn meanings below take these two names over. */
+  /* Colour names follow shadcn (primary = our accent blue; accent = the soft selected/hover fill; muted-foreground =
+     secondary text). Our own names that don't clash stay: bg, surface, surface-2, fg, status colours. */
   --color-bg: var(--pdt-bg);
   --color-surface: var(--pdt-surface);
   --color-surface-2: var(--pdt-surface-2);
   --color-border: var(--pdt-border);
   --color-fg: var(--pdt-fg);
-  --color-muted: var(--pdt-muted);
-  --color-accent: var(--pdt-accent);
-  --color-on-accent: var(--pdt-on-accent);
-  --color-accent-soft: var(--pdt-accent-soft);
   --color-ring: var(--pdt-ring);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
   --color-running: var(--pdt-running);
   --color-waiting: var(--pdt-waiting);
   --color-failed: var(--pdt-failed);
@@ -74,8 +72,29 @@
   --font-sans: var(--pdt-font-sans);
   --font-mono: var(--pdt-font-mono);
   --font-heading: var(--pdt-font-sans);
+  --color-running-soft: var(--pdt-running-soft);
+  --color-waiting-soft: var(--pdt-waiting-soft);
+  --color-failed-soft: var(--pdt-failed-soft);
+  --color-diff-add: var(--pdt-diff-add);
+  --color-diff-del: var(--pdt-diff-del);
+  --color-diff-add-strong: var(--pdt-diff-add-strong);
+  --color-diff-del-strong: var(--pdt-diff-del-strong);
+  --color-backdrop: var(--pdt-backdrop);
+  --shadow-popover: var(--pdt-shadow-popover);
+  --shadow-dialog: var(--pdt-shadow-dialog);
+  --text-2xs: 10px;
+  --text-meta: 11px;
+  --spacing-control-sm: var(--pdt-control-sm);
+  --spacing-control-md: var(--pdt-control-md);
+  --spacing-control-touch: var(--pdt-control-touch);
+  --z-popover: var(--pdt-z-popover);
+  --z-dialog: var(--pdt-z-dialog);
+  --z-menu: var(--pdt-z-menu);
+  --z-toast: var(--pdt-z-toast);
+  --ease-pdt: var(--pdt-ease);
+  --default-transition-duration: var(--pdt-duration);
 
-  /* shadcn's names that don't clash with ours. */
+  /* The rest of shadcn's names. */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

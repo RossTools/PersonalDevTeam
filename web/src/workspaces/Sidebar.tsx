@@ -10,7 +10,7 @@ import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { applyDrop } from './WorkspaceBar';
 
 const WORKSPACE_MIME = 'application/x-pdt-workspace';
-const heading = 'px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted flex items-center';
+const heading = 'px-2 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground flex items-center';
 const row = 'w-full flex items-center gap-2 text-left px-2 py-1 rounded-pdt text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 /** Up/Down move focus between the rows of a list (Enter clicks the focused one). */
@@ -74,13 +74,13 @@ function WorkspaceRow({ ws, w, onMenu, onProjectSettings }: {
       onClick={() => ws.selectWorkspace(w.id)}
       onDoubleClick={() => w.projectId === null && setRenaming(true)}
       {...onMenu(`Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenaming(true), onProjectSettings))}
-      className={`${row} ${current ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
+      className={`${row} ${current ? 'bg-accent' : 'hover:bg-surface-2'}`}
     >
       {activity ? <StateDot activity={activity} fallback="idle" /> : <span className="inline-block size-2" />}
       <span className="flex-1 truncate">{w.name}</span>
-      {projectKey && <span className="font-mono text-[10px] text-muted">{projectKey}</span>}
-      {state && state !== 'Idle' && <span className={`text-[11px] ${state === 'Needs you' ? 'text-waiting font-semibold' : 'text-muted'}`}>{state}</span>}
-      <span className="text-[11px] text-muted tabular-nums">{w.tabs.length}</span>
+      {projectKey && <span className="font-mono text-2xs text-muted-foreground">{projectKey}</span>}
+      {state && state !== 'Idle' && <span className={`text-meta ${state === 'Needs you' ? 'text-waiting font-semibold' : 'text-muted-foreground'}`}>{state}</span>}
+      <span className="text-meta text-muted-foreground tabular-nums">{w.tabs.length}</span>
     </button>
   );
 }
@@ -136,7 +136,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
       <section aria-label="Agents">
         <h2 className={heading}>Agents</h2>
         {agents.length === 0 ? (
-          <p className="px-2 text-xs text-muted">No agents yet. Start one with + in the tab bar (Ctrl+] c).</p>
+          <p className="px-2 text-xs text-muted-foreground">No agents yet. Start one with + in the tab bar (Ctrl+] c).</p>
         ) : (
           <ul className="flex flex-col gap-0.5" onKeyDown={arrowKeys}>
             {agents.map(({ info, where }) => {
@@ -154,19 +154,19 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
                     {...bind(`Agent ${info.title}`, () => (where ? tabMenu(ws, where.tab, () => { ws.selectTab(where.tab); onRenameTab(where.tab.id); }) : [
                       { label: 'Open', onSelect: () => void ws.focusItem(info.item, info.projectId) },
                     ]))}
-                    className={`${row} flex-col items-stretch gap-0 ${current ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}
+                    className={`${row} flex-col items-stretch gap-0 ${current ? 'bg-accent' : 'hover:bg-surface-2'}`}
                   >
                     <span className="flex items-center gap-2">
                       <StateDot activity={info.session?.status === 'running' ? info.activity : null} fallback={info.status} />
                       <span className={`flex-1 truncate ${info.unseen ? 'font-semibold' : ''}`}>{info.title}</span>
                       {state && (
-                        <span className={`text-[11px] ${state === 'Needs you' ? 'text-waiting font-semibold' : state === 'Working' ? 'text-running' : 'text-muted'}`}>
+                        <span className={`text-meta ${state === 'Needs you' ? 'text-waiting font-semibold' : state === 'Working' ? 'text-running' : 'text-muted-foreground'}`}>
                           {state}
                         </span>
                       )}
-                      {info.unseen && <span role="img" aria-label="unseen" className="inline-block size-1.5 rounded-full bg-accent" />}
+                      {info.unseen && <span role="img" aria-label="unseen" className="inline-block size-1.5 rounded-full bg-primary" />}
                     </span>
-                    <span className="pl-4 text-[11px] text-muted truncate">
+                    <span className="pl-4 text-meta text-muted-foreground truncate">
                       {where ? where.workspace.name : 'no tab'} · {branchOf(info)}
                     </span>
                   </button>
@@ -176,7 +176,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
           </ul>
         )}
       </section>
-      <button type="button" onClick={onAddProject} className="mt-3 mx-2 self-start inline-flex items-center gap-1 text-xs text-muted hover:text-fg">
+      <button type="button" onClick={onAddProject} className="mt-3 mx-2 self-start inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-fg">
         <Plus size={12} aria-hidden /> Add project
       </button>
       {menu}

@@ -30,14 +30,14 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
     <div className="flex flex-col gap-3 p-4 text-sm overflow-auto">
       <h2 className="text-base font-semibold">{project.name}: settings on this host</h2>
       <section aria-label="Repository configuration" className="flex flex-col gap-1">
-        <h3 className="text-xs uppercase tracking-wider text-muted">{config.data?.filePath ?? '.pdt/project.toml'}</h3>
+        <h3 className="text-xs uppercase tracking-wider text-muted-foreground">{config.data?.filePath ?? '.pdt/project.toml'}</h3>
         <pre className="rounded-pdt bg-surface border border-border p-2 text-xs font-mono whitespace-pre-wrap">
           {config.data?.file ?? 'This repository has no run configuration file.'}
         </pre>
         {config.data?.error && <p className="text-xs text-failed">{config.data.error}</p>}
       </section>
       <label className="flex flex-col gap-1">
-        <span className="text-xs uppercase tracking-wider text-muted">Host overrides (TOML)</span>
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">Host overrides (TOML)</span>
         <textarea
           aria-label="Host overrides (TOML)"
           value={overrides}
@@ -62,7 +62,7 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
       </label>
       <div className="flex items-center gap-2">
         <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>Save</Button>
-        <span role="status" className="text-xs text-muted">{save.isSuccess ? 'Saved' : ''}</span>
+        <span role="status" className="text-xs text-muted-foreground">{save.isSuccess ? 'Saved' : ''}</span>
       </div>
       {save.isError && <p role="alert" className="text-xs text-failed">{save.error.message}</p>}
     </div>

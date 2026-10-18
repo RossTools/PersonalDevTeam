@@ -38,9 +38,9 @@ export function SessionView({ session, polledAt, onRemoved, branchLink }: {
       <header className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
         <StatusDot status={toDot(session.status)} />
         <span className="font-medium">{session.title}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted" title={session.cwd}>{session.cwd}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={session.cwd}>{session.cwd}</span>
         <ActivityBadge activity={session.activity} unseen={session.unseen} />
-        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-accent underline">GitHub</a>}
+        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-primary underline">GitHub</a>}
         {running && (
           <Button variant="ghost" aria-pressed={composing} onClick={() => setComposing((c) => !c)}>Compose</Button>
         )}
@@ -55,7 +55,7 @@ export function SessionView({ session, polledAt, onRemoved, branchLink }: {
       </header>
       {error && <p role="alert" className="px-3 py-1 text-xs text-failed">{error.message}</p>}
       {session.status === 'interrupted' ? (
-        <p className="p-4 text-sm text-muted">
+        <p className="p-4 text-sm text-muted-foreground">
           This session stopped when the daemon shut down. Restart it to continue
           {session.kind === 'agent_tui' ? '; the agent resumes its last conversation' : ''}.
         </p>

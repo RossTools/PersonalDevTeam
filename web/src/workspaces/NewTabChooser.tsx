@@ -80,14 +80,14 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
         className="absolute z-20 left-2 right-2 md:left-auto md:right-auto md:w-96 top-12 rounded-pdt border border-border bg-surface shadow-lg p-3 flex flex-col gap-3 outline-none"
       >
         {!place ? (
-          <p className="text-sm text-muted">Add a project first.</p>
+          <p className="text-sm text-muted-foreground">Add a project first.</p>
         ) : (
           <>
             <PlacePicker projects={ws.projects} place={place} onPick={setPicked} />
             <div className="flex flex-wrap items-center gap-2">
               {(['Claude', 'Codex', 'Shell'] as Choice[]).map((c) => (
                 <button key={c} type="button" className={btn} disabled={create.isPending} onClick={() => create.mutate(c)}>
-                  {c} <kbd className="ml-1 text-[10px] text-muted">{Object.keys(KEYS).find((k) => KEYS[k] === c)}</kbd>
+                  {c} <kbd className="ml-1 text-2xs text-muted-foreground">{Object.keys(KEYS).find((k) => KEYS[k] === c)}</kbd>
                 </button>
               ))}
               <button
@@ -97,7 +97,7 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
                 aria-label="Skip permission prompts for the new agent"
                 title="Skip the agent's permission prompts (dangerous)"
                 onClick={() => setBypass((b) => !b)}
-                className={`rounded-pdt p-1 ${bypass ? 'text-failed' : 'text-muted'} hover:bg-surface-2`}
+                className={`rounded-pdt p-1 ${bypass ? 'text-failed' : 'text-muted-foreground'} hover:bg-surface-2`}
               >
                 <Zap size={14} aria-hidden fill={bypass ? 'currentColor' : 'none'} />
               </button>
@@ -111,9 +111,9 @@ export function NewTabChooser({ ws, onClose }: { ws: WorkspacesApi; onClose: () 
                 />
               )}
             </div>
-            {configError && <p className="text-[11px] text-failed">{configError}</p>}
+            {configError && <p className="text-meta text-failed">{configError}</p>}
             {project && (
-              <details className="text-xs text-muted">
+              <details className="text-xs text-muted-foreground">
                 <summary className="cursor-pointer">Run another branch…</summary>
                 <RunBranchForm project={project} onSelectRun={(runId) => void done({ kind: 'run', id: runId }, project.id)} />
               </details>

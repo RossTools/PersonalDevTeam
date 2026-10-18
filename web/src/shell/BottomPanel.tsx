@@ -40,7 +40,7 @@ export function BottomPanel({ project, maximized, onToggleMaximize }: {
               role="tab"
               aria-selected={s.id === active?.id}
               onClick={() => setActiveId(s.id)}
-              className={`rounded-pdt px-2 py-0.5 ${s.id === active?.id ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2'}`}
+              className={`rounded-pdt px-2 py-0.5 ${s.id === active?.id ? 'bg-accent text-fg' : 'text-muted-foreground hover:bg-surface-2'}`}
             >
               {s.title} {i + 1}
             </button>
@@ -56,11 +56,11 @@ export function BottomPanel({ project, maximized, onToggleMaximize }: {
       </div>
       {create.isError && <p role="alert" className="px-3 py-1 text-xs text-failed">{create.error.message}</p>}
       {!project ? (
-        <p className="p-3 text-xs text-muted">Select a project to open a terminal.</p>
+        <p className="p-3 text-xs text-muted-foreground">Select a project to open a terminal.</p>
       ) : active ? (
         <TerminalView key={active.id} sessionId={active.id} sessionStatus={active.status} polledAt={sessions.dataUpdatedAt} />
       ) : (
-        <p className="p-3 text-xs text-muted">No shells running. Press + to start one.</p>
+        <p className="p-3 text-xs text-muted-foreground">No shells running. Press + to start one.</p>
       )}
     </section>
   );

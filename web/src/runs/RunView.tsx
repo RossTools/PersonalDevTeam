@@ -47,7 +47,7 @@ export function RunView({ run, polledAt, onRemoved, branchLink }: {
       type="button"
       aria-pressed={step === s}
       onClick={() => setPicked({ state: run.state, step: s })}
-      className={`rounded-pdt px-2 py-0.5 ${step === s ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2'}`}
+      className={`rounded-pdt px-2 py-0.5 ${step === s ? 'bg-accent text-fg' : 'text-muted-foreground hover:bg-surface-2'}`}
     >
       {label}
     </button>
@@ -58,12 +58,12 @@ export function RunView({ run, polledAt, onRemoved, branchLink }: {
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
         <StatusDot status={runDot(run.state)} />
         <span className="font-medium">{run.kind === 'test' ? 'Test ' : ''}{run.name} · {run.branch}</span>
-        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-accent underline">GitHub</a>}
-        <span className="text-xs text-muted">{runLabel(run.state)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}</span>
+        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-primary underline">GitHub</a>}
+        <span className="text-xs text-muted-foreground">{runLabel(run.state)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}</span>
         {run.url && run.state === 'ready' ? (
-          <a href={run.url} target="_blank" rel="noreferrer" className="text-xs text-accent underline">{run.url}</a>
+          <a href={run.url} target="_blank" rel="noreferrer" className="text-xs text-primary underline">{run.url}</a>
         ) : (
-          run.url && <span className="text-xs text-muted">{run.url}</span>
+          run.url && <span className="text-xs text-muted-foreground">{run.url}</span>
         )}
         <span className="flex-1" />
         {active && <Button variant="ghost" disabled={busy} onClick={() => stop.mutate()}>Stop</Button>}

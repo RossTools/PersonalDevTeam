@@ -51,7 +51,7 @@ function Menu({ menu, onClose }: { menu: OpenMenu; onClose: () => void }) {
       >
         {menu.entries.map((e, i) =>
           'heading' in e ? (
-            <p key={i} className="px-2 pt-1 text-[10px] uppercase tracking-wider text-muted">{e.heading}</p>
+            <p key={i} className="px-2 pt-1 text-2xs uppercase tracking-wider text-muted-foreground">{e.heading}</p>
           ) : 'input' in e ? (
             <form
               key={i}

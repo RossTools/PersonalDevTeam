@@ -35,12 +35,12 @@ export function UpdateBanner() {
       {r && (
         <div role={r.outcome === 'installed' ? 'status' : 'alert'} className={`${STRIP} ${r.outcome === 'installed' ? 'text-running' : 'text-failed'}`}>
           <span className="min-w-0 truncate" title={r.message}>{r.message}</span>
-          {r.outcome !== 'installed' && r.log && <code className="min-w-0 truncate text-muted" title={r.log}>{r.log}</code>}
+          {r.outcome !== 'installed' && r.log && <code className="min-w-0 truncate text-muted-foreground" title={r.log}>{r.log}</code>}
           <Button variant="ghost" className={SMALL} onClick={() => dismiss.mutate()}>Dismiss</Button>
         </div>
       )}
       {s.state === 'available' && s.latest && (
-        <div className={`${STRIP} relative overflow-visible bg-accent-soft`}>
+        <div className={`${STRIP} relative overflow-visible bg-accent`}>
           <span className="min-w-0 truncate font-medium">Update to v{s.latest.version} available</span>
           {s.latest.notes && (
             <Button variant="ghost" className={SMALL} aria-expanded={notesOpen} onClick={() => setNotesOpen((o) => !o)}>

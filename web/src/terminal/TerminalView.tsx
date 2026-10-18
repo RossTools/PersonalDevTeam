@@ -228,7 +228,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
           <div ref={host} data-testid="terminal" className="h-full w-full" />
         </div>
         {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
-        {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted">Session ended.</p>}
+        {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
       </div>
       {composing && (
         <Composer
@@ -306,7 +306,7 @@ function KeyBar({ onKey }: { onKey: (seq: string) => void }) {
           // Don't take focus from the terminal, or the soft keyboard would close on each tap.
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => onKey(k.seq)}
-          className="min-h-11 min-w-11 shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent-soft"
+          className="min-h-11 min-w-11 shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent"
         >
           {k.label}
         </button>

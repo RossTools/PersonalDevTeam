@@ -111,12 +111,12 @@ export function AppShell() {
     <div className="h-full overflow-hidden flex flex-col-reverse md:flex-row bg-bg text-fg">
       <IconRail active={view} onSelect={setView} />
       <aside aria-label={`${label} list`} className="md:w-72 max-h-[40vh] md:max-h-none border-border md:border-r flex flex-col min-h-0">
-        <h2 className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">{label}</h2>
+        <h2 className="px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground">{label}</h2>
         <div className="flex-1 overflow-auto px-1">
           {view === 'sessions' ? (
             <>
               {ws.projects.length === 0 && (
-                <p className="px-2 py-2 text-xs text-muted">
+                <p className="px-2 py-2 text-xs text-muted-foreground">
                   No projects yet. <button type="button" className="underline" onClick={() => setView('settings')}>Add one in Settings</button>.
                 </p>
               )}
@@ -133,19 +133,19 @@ export function AppShell() {
             <>
               <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
                 <button type="button" aria-current={settingsProjectId === null ? 'true' : undefined} onClick={() => setSettingsProjectId(null)}
-                  className={`text-left px-2 py-1 rounded-pdt text-sm ${settingsProjectId === null ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>This host</button>
-                <h3 className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">Projects</h3>
+                  className={`text-left px-2 py-1 rounded-pdt text-sm ${settingsProjectId === null ? 'bg-accent' : 'hover:bg-surface-2'}`}>This host</button>
+                <h3 className="px-2 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground">Projects</h3>
                 {ws.projects.map((p) => (
                   <button key={p.id} type="button" title={p.repoPath} aria-current={settingsProjectId === p.id ? 'true' : undefined} onClick={() => setSettingsProjectId(p.id)}
-                    className={`text-left px-2 py-1 rounded-pdt text-sm truncate ${settingsProjectId === p.id ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>
-                    <span className="mr-2 font-mono text-[11px] text-muted">{p.key}</span>{p.name}
+                    className={`text-left px-2 py-1 rounded-pdt text-sm truncate ${settingsProjectId === p.id ? 'bg-accent' : 'hover:bg-surface-2'}`}>
+                    <span className="mr-2 font-mono text-meta text-muted-foreground">{p.key}</span>{p.name}
                   </button>
                 ))}
               </nav>
               <AddProjectForm onAdded={(p) => setSettingsProjectId(p.id)} />
             </>
           ) : (
-            <p className="px-2 text-xs text-muted">{PHASE_NOTE[view]}</p>
+            <p className="px-2 text-xs text-muted-foreground">{PHASE_NOTE[view]}</p>
           )}
         </div>
       </aside>
@@ -190,9 +190,9 @@ export function AppShell() {
             ) : current?.session ? (
               <SessionView key={current.session.id} session={current.session} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} branchLink={branchLink} />
             ) : ws.projects.length === 0 ? (
-              <p className="p-4 text-sm text-muted">Add a project to get started.</p>
+              <p className="p-4 text-sm text-muted-foreground">Add a project to get started.</p>
             ) : (
-              <p className="p-4 text-sm text-muted">
+              <p className="p-4 text-sm text-muted-foreground">
                 {ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}
               </p>
             )}

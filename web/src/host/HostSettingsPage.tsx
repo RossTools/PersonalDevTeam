@@ -8,7 +8,7 @@ import type { TokenState } from '../api/gen/TokenState';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 
 const field = 'rounded-pdt bg-surface border border-border px-2 py-1 text-sm';
-const h = 'text-xs uppercase tracking-wider text-muted';
+const h = 'text-xs uppercase tracking-wider text-muted-foreground';
 
 /** Describes the stored token without ever showing it. */
 function tokenText(present: boolean, t: TokenState | undefined): string {
@@ -64,7 +64,7 @@ export function HostSettingsPage() {
   if (!v) {
     return view.error
       ? <p role="alert" className="p-4 text-sm text-failed">Host settings could not be loaded: {view.error.message}</p>
-      : <p className="p-4 text-sm text-muted">Loading…</p>;
+      : <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
   }
   const s = v.settings;
   const error = save.error ?? token.error ?? removeToken.error ?? checkUpdate.error ?? retryRemote.error;
@@ -84,8 +84,8 @@ export function HostSettingsPage() {
           <input type="checkbox" aria-label="Remote access" checked={s.remoteAccess} onChange={(e) => save.mutate({ remoteAccess: e.target.checked })} />
           <span>Serve this host on the tailnet over HTTPS</span>
         </label>
-        <p className="text-xs text-muted">
-          {v.remote.active && v.remote.url ? <a className="text-accent underline" href={v.remote.url}>{v.remote.url}</a> : v.remote.error ?? (s.remoteAccess ? 'Not active' : 'Off')}
+        <p className="text-xs text-muted-foreground">
+          {v.remote.active && v.remote.url ? <a className="text-primary underline" href={v.remote.url}>{v.remote.url}</a> : v.remote.error ?? (s.remoteAccess ? 'Not active' : 'Off')}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2">
@@ -96,7 +96,7 @@ export function HostSettingsPage() {
           {!v.ownerFromEnv && me && me !== s.ownerLogin && (
             <Button variant="secondary" onClick={() => save.mutate({ ownerLogin: me })}>Use {me}</Button>
           )}
-          {v.ownerFromEnv && <span className="text-xs text-muted">Set by PDT_OWNER_LOGIN</span>}
+          {v.ownerFromEnv && <span className="text-xs text-muted-foreground">Set by PDT_OWNER_LOGIN</span>}
         </div>
         <div>
           <Button variant="ghost" disabled={retryRemote.isPending} onClick={() => retryRemote.mutate()}>Retry</Button>
@@ -105,7 +105,7 @@ export function HostSettingsPage() {
 
       <section aria-label="Updates" className="flex flex-col gap-2">
         <h3 className={h}>Updates</h3>
-        <p className="text-xs text-muted">
+        <p className="text-xs text-muted-foreground">
           Version {u?.current ?? '…'}
           {updatesApply && ' · Updates apply to the installed app, not this development daemon.'}
           {u?.error && <span className="text-failed"> · {u.error}</span>}
@@ -121,14 +121,14 @@ export function HostSettingsPage() {
         {v.tokenError ? (
           <div role="alert" className="flex flex-col gap-1 text-xs text-failed">
             <p>Token: cannot be read. {v.tokenError}</p>
-            <p className="text-muted">
+            <p className="text-muted-foreground">
               A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
               on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
               Access, restart the daemon from the tray, and save the token again here.
             </p>
           </div>
         ) : (
-          <p className="text-xs text-muted">Token: {tokenText(v.tokenPresent, u?.token)}</p>
+          <p className="text-xs text-muted-foreground">Token: {tokenText(v.tokenPresent, u?.token)}</p>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <input aria-label="GitHub token" type="password" autoComplete="off" className={field} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
@@ -163,7 +163,7 @@ export function HostSettingsPage() {
 
       <section aria-label="Projects folder" className="flex flex-col gap-2">
         <h3 className={h}>Projects folder</h3>
-        <p className="text-xs text-muted">Where “clone by URL” puts new repositories.</p>
+        <p className="text-xs text-muted-foreground">Where “clone by URL” puts new repositories.</p>
         <input
           key={s.projectsDir ?? ''}
           aria-label="Projects folder"
@@ -178,7 +178,7 @@ export function HostSettingsPage() {
         <h3 className={h}>Checks</h3>
         {checks.data && (['claude', 'codex', 'git', 'tailscale'] as const).map((k) => (
           <p key={k} className={checks.data[k].ok ? 'text-running' : 'text-failed'}>
-            {k}: {checks.data[k].ok ? 'OK' : checks.data[k].found ? 'needs attention' : 'not found'} <span className="text-muted">{checks.data[k].detail}</span>
+            {k}: {checks.data[k].ok ? 'OK' : checks.data[k].found ? 'needs attention' : 'not found'} <span className="text-muted-foreground">{checks.data[k].detail}</span>
           </p>
         ))}
         <div>

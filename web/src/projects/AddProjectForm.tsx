@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 
 const field = 'w-full rounded-pdt border border-border bg-surface px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
-const tab = (on: boolean) => `flex-1 rounded-pdt px-2 py-0.5 text-xs ${on ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2'}`;
+const tab = (on: boolean) => `flex-1 rounded-pdt px-2 py-0.5 text-xs ${on ? 'bg-accent text-fg' : 'text-muted-foreground hover:bg-surface-2'}`;
 
 /** Adds a project from a folder on this host, or by cloning a repository URL into the Projects folder. */
 export function AddProjectForm({ onAdded }: { onAdded?: (p: Project) => void }) {
@@ -43,17 +43,17 @@ export function AddProjectForm({ onAdded }: { onAdded?: (p: Project) => void }) 
       </div>
       {mode === 'path' ? (
         <>
-          <label className="text-xs text-muted">Name<input className={field} required value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label className="text-xs text-muted">Repository path<input className={field} required value={repoPath} onChange={(e) => setRepoPath(e.target.value)} /></label>
+          <label className="text-xs text-muted-foreground">Name<input className={field} required value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <label className="text-xs text-muted-foreground">Repository path<input className={field} required value={repoPath} onChange={(e) => setRepoPath(e.target.value)} /></label>
         </>
       ) : (
         <>
-          <label className="text-xs text-muted">Repository URL<input className={field} required placeholder="https://github.com/owner/repo" value={url} onChange={(e) => setUrl(e.target.value)} /></label>
-          <label className="text-xs text-muted">Into folder<input className={field} placeholder={host.data?.projectsDir ?? '~/work'} value={parentDir} onChange={(e) => setParentDir(e.target.value)} /></label>
-          <label className="text-xs text-muted">Name<input className={field} placeholder="the repository's name" value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <label className="text-xs text-muted-foreground">Repository URL<input className={field} required placeholder="https://github.com/owner/repo" value={url} onChange={(e) => setUrl(e.target.value)} /></label>
+          <label className="text-xs text-muted-foreground">Into folder<input className={field} placeholder={host.data?.projectsDir ?? '~/work'} value={parentDir} onChange={(e) => setParentDir(e.target.value)} /></label>
+          <label className="text-xs text-muted-foreground">Name<input className={field} placeholder="the repository's name" value={name} onChange={(e) => setName(e.target.value)} /></label>
         </>
       )}
-      <label className="text-xs text-muted">Key<input className={`${field} uppercase placeholder:normal-case font-mono`} maxLength={10} placeholder="suggested from the name" value={key} onChange={(e) => setKey(e.target.value)} /></label>
+      <label className="text-xs text-muted-foreground">Key<input className={`${field} uppercase placeholder:normal-case font-mono`} maxLength={10} placeholder="suggested from the name" value={key} onChange={(e) => setKey(e.target.value)} /></label>
       {m.isError && <p role="alert" className="text-xs text-failed">{m.error.message}</p>}
       <Button variant="primary" type="submit" disabled={m.isPending}>
         {mode === 'path' ? 'Add project' : clone.isPending ? 'Cloning…' : 'Clone and add'}

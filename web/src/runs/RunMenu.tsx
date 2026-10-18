@@ -35,7 +35,7 @@ export function RunMenu({ label, choices, value, onChange, disabled, className }
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className={`rounded-pdt bg-surface border border-border text-xs text-muted px-1 py-0.5 ${className ?? ''}`}
+      className={`rounded-pdt bg-surface border border-border text-xs text-muted-foreground px-1 py-0.5 ${className ?? ''}`}
     >
       <option value="">Run…</option>
       {choices.map((c) => (
