@@ -2,7 +2,7 @@
 // Guard rails for the design system (spec 2026-10-17-design-system-ux §5.1): colours come from tokens.css, sizes and
 // layers from the theme, confirmations from useConfirm, and features build on '@ui' rather than the libraries under it.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -17,7 +17,8 @@ function files(dir: string): string[] {
 }
 
 const sources = [...files(join(web, 'src')), ...files(join(web, 'ui'))]
-  .map((path) => ({ path: relative(web, path), text: readFileSync(path, 'utf8') }))
+  // Forward slashes on every OS, so the path checks below work on Windows too.
+  .map((path) => ({ path: relative(web, path).split(sep).join('/'), text: readFileSync(path, 'utf8') }))
   .filter(({ path }) => path !== 'ui/tokens.css' && path !== 'ui/shadcn.css' && path !== 'src/lint.test.ts');
 
 function offenders(pattern: RegExp, only: (path: string) => boolean = () => true) {
