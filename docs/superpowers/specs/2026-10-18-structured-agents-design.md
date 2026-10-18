@@ -360,8 +360,11 @@ needs a re-check and probably an API-key path. Guardrails (amending main spec §
   the default for `-p`.
 - Each session shows its billing source in the composer footer ("Claude plan", "API key", "ChatGPT plan",
   "Devin Enterprise"), with the vendors' own rate-limit events.
-- Stay "ordinary": a host setting caps live conversation processes (default 6; more queue with "Waiting for a slot"),
-  nothing runs unattended in a loop by default, and rate-limit errors back off instead of retrying.
+- **Rate limits stop, never retry.** When an agent reports a hit limit (Claude `rate_limit_event` / a rate-limit
+  `result` error; Codex `account/rateLimits/updated` at 100 % or a rate-limit turn error), the session shows "Rate
+  limited until <reset time>" as a `notice` and in its footer; PDT sends nothing to it automatically, and queued
+  messages stay queued until the user sends again. In Phase 5 nothing else sends messages without the user (Continue
+  is a button, Make ticket is a click).
 - One owner per host: the owner-only Tailscale identity check stays; no sharing sessions with anyone else.
 
 ## 15. Open questions
@@ -375,6 +378,9 @@ needs a re-check and probably an API-key path. Guardrails (amending main spec §
 ## 16. Deferred
 
 - Personas, pdt-mcp, the pipeline (Phase 7) — `OpenSpec` already carries their fields.
+- **Concurrency cap** (Phase 7, when PDT starts work itself): a Host setting limiting agents running a turn at once,
+  counting conversations and agent terminals alike; idle sessions don't count. Pipeline work over the cap waits
+  ("Waiting for a slot"); the loop limit (main spec §6.2) keeps hand-offs from running unattended forever.
 - Forking/rewinding conversations (Claude `rewind_files`, Codex `thread/fork`/`revert`).
 - Background-terminal management for Codex (`thread/backgroundTerminals/*`).
 - Devin (§11).
