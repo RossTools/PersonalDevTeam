@@ -126,7 +126,7 @@ async fn add_busy_session(app: &axum::Router, state: &pdt_api::AppState, tmp: &s
             kind: SessionKind::AgentTui,
             agent: Some(AgentKind::Claude),
             bypass_permissions: false,
-            title: "Claude · feature".into(),
+            title: "feature".into(),
             cwd: repo.to_string_lossy().into(),
             status: SessionStatus::Running,
             exit_code: None,

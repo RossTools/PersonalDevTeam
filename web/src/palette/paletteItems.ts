@@ -5,6 +5,7 @@ import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
 import { itemState, type AgentStateValue } from '../common/AgentState';
 import type { Place } from '../common/PlacePicker';
+import { sessionKindLabel } from '../common/SessionKindIcon';
 import { findTab, itemOf, nextNeedingYou, type Item } from '../workspaces/model';
 import type { ItemInfo } from '../workspaces/useWorkspaces';
 
@@ -112,8 +113,12 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
     if (!info) return [];
     const branch = branchOf(info);
     const project = projectOf(info.projectId);
-    return [project?.key, project?.name, branch].filter((w): w is string => !!w);
+    const kind = info.session ? sessionKindLabel(info.session) : undefined;
+    return [project?.key, project?.name, branch, kind].filter((w): w is string => !!w);
   };
+  // Session titles don't name the agent, so the detail does: "Codex · Alpha".
+  const withKind = (info: ItemInfo | undefined, detail: string) =>
+    info?.session ? `${sessionKindLabel(info.session)} · ${detail}` : detail;
 
   const goTo: PaletteItem[] = [];
   for (const w of workspaces) {
@@ -126,7 +131,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
         id: `tab:${t.id}`,
         label: info?.title ?? 'Untitled',
         group: GO_TO,
-        detail: w.name,
+        detail: withKind(info, w.name),
         keywords: wordsFor(info),
         icon: 'tab',
         ...(info ? { state: itemState(info) } : {}),
@@ -140,7 +145,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       id: `agent:${info.item.id}`,
       label: info.title,
       group: GO_TO,
-      detail: 'no tab',
+      detail: withKind(info, 'no tab'),
       keywords: wordsFor(info),
       icon: 'agent',
       state: itemState(info),
