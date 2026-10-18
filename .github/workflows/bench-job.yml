@@ -1,0 +1,75 @@
+name: bench-job
+# One benchmark job for bench.yml: the CI work for one OS on one runner. Step times are read back from the API.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: linux, macos or windows (picks the work, as in ci.yml)
+        type: string
+        required: true
+      runner:
+        description: runs-on label
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  bench:
+    # Namespace keeps a cache volume per tag: a tag per bench run makes the cold job cold and the warm job reuse it.
+    runs-on: ${{ startsWith(inputs.runner, 'namespace-') && format('{0};overrides.cache-tag=bench-{1}', inputs.runner, github.run_id) || inputs.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show Rust toolchain
+        run: rustup show
+      - name: Cache (Namespace volume)
+        if: startsWith(inputs.runner, 'namespace-')
+        continue-on-error: true
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            pnpm
+      - name: Cache (rust-cache)
+        if: ${{ !startsWith(inputs.runner, 'namespace-') }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Keyed to this bench run: the cold job starts empty and saves, the warm job restores it.
+          key: bench-${{ github.run_id }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: pnpm/action-setup@v6
+        if: inputs.os != 'windows'
+      - uses: actions/setup-node@v7
+        if: inputs.os != 'windows'
+        with:
+          node-version: 24
+          cache: ${{ !startsWith(inputs.runner, 'namespace-') && 'pnpm' || '' }}
+      - name: pnpm install
+        if: inputs.os != 'windows'
+        run: pnpm install --frozen-lockfile
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: nextest
+        run: cargo nextest run --profile ci
+      - name: web typecheck
+        if: inputs.os == 'linux'
+        run: pnpm --dir web typecheck
+      - name: web test
+        if: inputs.os == 'linux'
+        run: pnpm --dir web test
+      - name: web build
+        if: inputs.os != 'windows'
+        run: pnpm --dir web build
+      - name: desktop clippy
+        if: inputs.os == 'macos'
+        run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
+      - name: desktop test
+        if: inputs.os == 'macos'
+        run: cargo test -p pdt-desktop
