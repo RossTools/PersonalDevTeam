@@ -22,7 +22,7 @@ import { canStart, deleteTicket, moveToEntries, ticketMenu, useOpenTicket, useSt
 import { AttemptSection, MergedBanner } from './Attempt';
 import { Board } from './Board';
 import {
-  canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
+  BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
 import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketPages } from './queries';
 import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketTimeline, TicketTitle } from './TicketParts';
@@ -34,14 +34,16 @@ import type { BacklogState } from './useBacklog';
 interface Option<V extends string> { value: V; label: string }
 
 /** A filter chip that opens a checkbox list (several can be picked without reopening it). */
-function MultiChip<V extends string>({ label, options, selected, onChange }: {
+function MultiChip<V extends string>({ label, options, selected, onChange, none }: {
   label: string;
+  /** What an empty selection means, shown on the chip ("Draft, Ready"). */
+  none?: string;
   options: Option<V>[];
   selected: V[];
   onChange: (v: V[]) => void;
 }) {
   const names = options.filter((o) => selected.includes(o.value)).map((o) => o.label);
-  const text = names.length === 0 ? label : names.length <= 2 ? `${label}: ${names.join(', ')}` : `${label}: ${names.length}`;
+  const text = names.length === 0 ? (none ? `${label}: ${none}` : label) : names.length <= 2 ? `${label}: ${names.join(', ')}` : `${label}: ${names.length}`;
   return (
     <Popover
       label={label}
@@ -352,7 +354,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   const empty = (): ReactNode =>
     isDefaultFilter(filters) ? (
       <EmptyState action={<Button size="sm" variant="primary" onClick={() => onNewTicket(project?.id ?? null)}>New ticket</Button>}>
-        No open tickets{project ? ` in ${project.name}` : ''}.
+        No Draft or Ready tickets{project ? ` in ${project.name}` : ''}.
       </EmptyState>
     ) : (
       <EmptyState action={<Button size="sm" onClick={backlog.resetFilters}>Clear filters</Button>}>No tickets match these filters.</EmptyState>
@@ -474,7 +476,11 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
                 // Phones: the view options wrap with the chips instead of pinning to the end.
                 trailing={phone ? undefined : viewOptions}
               >
-                <MultiChip<TicketStage> label="Stage" options={stageOptions} selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
+                <MultiChip<TicketStage>
+                  label="Stage"
+                  none={filters.showClosed ? undefined : BACKLOG_STAGES.map((s) => STAGE_LABEL[s]).join(', ')}
+                  options={stageOptions}
+                  selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
                 <MultiChip<Priority> label="Priority" options={priorityOptions} selected={filters.priorities} onChange={(priorities) => backlog.setFilters({ priorities })} />
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
                 {phone && viewOptions}

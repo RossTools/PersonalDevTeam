@@ -28,7 +28,9 @@ go-ahead).
 - **Merge check on demand** is `POST /api/tickets/{id}/check-merge` (the ticket tab and peek call it when they open),
   not a side effect of GET.
 - **To do stage** (`todo`, between Ready and In progress, added after review): the board shows To do, not Ready, so a
-  backlog of Ready tickets does not crowd it. No migration (stage is free text).
+  backlog of Ready tickets does not crowd it. No migration (stage is free text). The backlog with no Stage filter shows
+  Draft and Ready only, so a ticket moved to the board leaves it. The Start dialog defaults to skipping permission
+  prompts and to a new workspace.
 - **Session titles** for started sessions: `<Agent> · <ticket title>` (the key shows as a chip beside it); sessions carry `ticket {id, key}` for the sidebar.
 
 ## API contract (both helpers code against this)

@@ -69,7 +69,7 @@ describe('backlog', () => {
     expect(first).toHaveTextContent('High');
     expect(first).toHaveTextContent('ui');
     expect(within(grid).getByRole('row', { name: /ALP-3/ })).toHaveTextContent('Blocked');
-    expect(lastList(calls)).toEqual({ limit: '100', stage: 'draft,ready,todo,in_progress' });
+    expect(lastList(calls)).toEqual({ limit: '100', stage: 'draft,ready' });
     expect(screen.getByText(/All projects · 3 tickets/)).toBeInTheDocument();
     // The list column: projects with their open-ticket count.
     expect(await screen.findByLabelText('7 open')).toBeInTheDocument();
@@ -102,11 +102,11 @@ describe('backlog', () => {
   it('shows the empty states: no tickets, and nothing matching the filters', async () => {
     stub({}, () => page([]));
     renderWithQuery(<Harness />);
-    expect(await screen.findByText('No open tickets.')).toBeInTheDocument();
+    expect(await screen.findByText('No Draft or Ready tickets.')).toBeInTheDocument();
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search tickets' }), 'zzz');
     expect(await screen.findByText('No tickets match these filters.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    expect(await screen.findByText('No open tickets.')).toBeInTheDocument();
+    expect(await screen.findByText('No Draft or Ready tickets.')).toBeInTheDocument();
   });
 
   it('switches to the board', async () => {

@@ -224,7 +224,9 @@ grouping and column options).
 - **Peek sheet** and **ticket tab** (Overview: header with StageStepper, description editor with preview, timeline with
   comments, side column with links, areas, overlaps, attempt and sessions; Conversation/Changes tabs shown disabled
   with "Phase 5/6").
-- **Start dialog** with the checks, Start anyway / Wait until clear.
+- **Start dialog** with the checks, Start anyway / Wait until clear. Defaults: skip permission prompts and open in a new
+  workspace (both can be turned off).
+- **Backlog default:** with no Stage filter the backlog shows Draft and Ready (what is not on the board yet).
 - **Palette:** tickets by key and title (Go to), "New ticket", "Start <KEY>-<n>".
 - Sidebar agent rows and tab titles show the ticket key when a session belongs to an attempt.
 

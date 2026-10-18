@@ -55,8 +55,8 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const [agent, setAgentState] = useState<AgentKind>(loadAgent);
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
-  const [bypass, setBypass] = useState(false);
-  const [newWorkspace, setNewWorkspace] = useState(false);
+  const [bypass, setBypass] = useState(true);
+  const [newWorkspace, setNewWorkspace] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The server answered start_blocked: its message, and Start becomes Start anyway.
   const [serverBlocked, setServerBlocked] = useState<string | null>(null);

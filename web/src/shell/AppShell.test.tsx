@@ -781,6 +781,8 @@ describe('tickets', () => {
     await within(await screen.findByRole('main')).findByRole('heading', { name: /Fix login/ });
     await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Start' }));
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    // A new workspace is the default; off here, so the tabs go where the ticket tab is.
+    await userEvent.click(within(dialog).getByRole('switch', { name: 'Open in a new workspace' }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/t1/start')?.body).toMatchObject({
       agent: 'claude', mode: 'check', tab: { workspaceId: 'wa', position: 0 },

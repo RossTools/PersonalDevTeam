@@ -41,7 +41,8 @@ describe('Start dialog', () => {
     await waitFor(() => expect(within(dialog).getByRole('textbox', { name: 'Base branch' })).toHaveAttribute('placeholder', 'trunk'));
     await userEvent.click(within(dialog).getByRole('radio', { name: 'Codex' }));
     await userEvent.type(branch, 'feat/login');
-    await userEvent.click(within(dialog).getByRole('checkbox', { name: /Skip permission prompts/ }));
+    // On by default; turned off here so the placement is used.
+    await userEvent.click(within(dialog).getByRole('switch', { name: 'Open in a new workspace' }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     expect(starts(calls)).toEqual([{
@@ -72,8 +73,10 @@ describe('Start dialog', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     expect(within(dialog).getByText('Schema')).toBeInTheDocument();
     expect(within(dialog).queryByText('Old')).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: /Skip permission prompts/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start anyway' }));
     await waitFor(() => expect(starts(calls)).toHaveLength(1));
+    expect(starts(calls)[0]).not.toHaveProperty('bypassPermissions');
     expect(starts(calls)[0]).toMatchObject({ agent: 'claude', mode: 'force' });
   });
 
@@ -90,14 +93,15 @@ describe('Start dialog', () => {
     expect(starts(calls).map((b) => (b as { mode: string }).mode)).toEqual(['check', 'force']);
   });
 
-  it('opens in a new workspace instead of the placement', async () => {
+  it('defaults to skipping permission prompts and a new workspace instead of the placement', async () => {
     const calls = stub(ready);
     open({ placement: { workspaceId: 'w1', position: 0 } });
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    await userEvent.click(within(dialog).getByRole('switch', { name: 'Open in a new workspace' }));
+    expect(within(dialog).getByRole('checkbox', { name: /Skip permission prompts/ })).toBeChecked();
+    expect(within(dialog).getByRole('switch', { name: 'Open in a new workspace' })).toBeChecked();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)).toHaveLength(1));
-    expect(starts(calls)[0]).toMatchObject({ newWorkspace: true });
+    expect(starts(calls)[0]).toMatchObject({ newWorkspace: true, bypassPermissions: true });
     expect(starts(calls)[0]).not.toHaveProperty('tab');
   });
 
