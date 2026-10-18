@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import { Copy, FolderGit2, GitBranch, PanelLeft, Pencil, Plus, Terminal, X } from 'lucide-react';
 import { Button } from '@ui/Button';
-import { ContextMenu, MenuButton, type MenuEntry } from '@ui/Menu';
+import { ContextMenu, MenuButton, useMenuAt, type MenuEntry } from '@ui/Menu';
+import { List, ListRow } from '@ui/List';
+import { StatusDot } from '@ui/StatusDot';
 import { Popover } from '@ui/Popover';
 import { Sheet } from '@ui/Sheet';
 import { CommandList, type CommandItem } from '@ui/CommandList';
@@ -62,6 +64,26 @@ function MenusDemo() {
       <MenuButton label="Run actions" placement="bottom start" entries={() => tabEntries(log, set)}>
         <Button variant="secondary">Run ▾</Button>
       </MenuButton>
+      <span className="text-meta text-muted-foreground">Last: {last}</span>
+    </Row>
+  );
+}
+
+function MenuAtDemo() {
+  const { last, log, set } = useLog();
+  const { openMenu, menu } = useMenuAt();
+  const agents = ['Claude A', 'Codex B', 'Shell'];
+  return (
+    <Row label="Menu at a point (ListRow onMenu: right-click, long press, Shift+F10)">
+      <div className="w-64 rounded-md border border-border p-1">
+        <List aria-label="Agents" onAction={(id) => set(`Opened ${id}`)}>
+          {agents.map((a) => (
+            <ListRow key={a} id={a} title={a} leading={<StatusDot status="idle" />}
+              onMenu={(at) => openMenu(at, `Agent ${a}`, () => tabEntries(log, set))} />
+          ))}
+        </List>
+      </div>
+      {menu}
       <span className="text-meta text-muted-foreground">Last: {last}</span>
     </Row>
   );
@@ -142,6 +164,7 @@ export const section = {
   render: () => (
     <>
       <MenusDemo />
+      <MenuAtDemo />
       <PopoverDemo />
       <SheetDemo />
       <CommandDemo />

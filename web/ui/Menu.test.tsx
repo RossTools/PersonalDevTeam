@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
-import { ContextMenu, MenuButton, type MenuEntry } from './Menu';
+import { ContextMenu, MenuAt, MenuButton, useMenuAt, type MenuEntry } from './Menu';
+import { List, ListRow } from './List';
 
 function entries(spies: Record<string, () => void> = {}): MenuEntry[] {
   return [
@@ -200,5 +201,61 @@ describe('ContextMenu', () => {
     });
     fireEvent.pointerUp(tab, { pointerType: 'touch', pointerId: 1, button: 0, width: 1, height: 1 });
     expect(screen.getByRole('menu', { name: 'Tab Claude A' })).toBeInTheDocument();
+  });
+});
+
+describe('MenuAt', () => {
+  it('opens at the point, fires an item and closes', async () => {
+    const user = userEvent.setup();
+    const release = vi.fn();
+    const onClose = vi.fn();
+    render(<MenuAt open at={{ x: 120, y: 80 }} label="Agent X" entries={entries({ release })} onClose={onClose} />);
+    const menu = screen.getByRole('menu', { name: 'Agent X' });
+    // Anchored to a zero-size element at the point (jsdom has no layout, so check the anchor, not the menu).
+    const anchor = document.querySelector<HTMLElement>('span[aria-hidden][style*="position: fixed"]');
+    expect(anchor?.style.left).toBe('120px');
+    expect(anchor?.style.top).toBe('80px');
+    await user.click(within(menu).getByRole('menuitem', { name: 'Release' }));
+    expect(release).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('closes on Escape', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<MenuAt open at={{ x: 0, y: 0 }} label="Agent X" entries={() => entries()} onClose={onClose} />);
+    const menu = screen.getByRole('menu', { name: 'Agent X' });
+    await waitFor(() => expect(menu).toContainElement(document.activeElement as HTMLElement));
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('useMenuAt: a ListRow onMenu opens it, focus returns to the row', async () => {
+    const user = userEvent.setup();
+    const close = vi.fn();
+    function Rows() {
+      const { openMenu, menu } = useMenuAt();
+      return (
+        <>
+          <List aria-label="Agents">
+            <ListRow id="a" title="Agent A" onMenu={(at) => openMenu(at, 'Agent A', () => entries({ close }))} />
+            <ListRow id="b" title="Agent B" />
+          </List>
+          {menu}
+        </>
+      );
+    }
+    render(<Rows />);
+    const row = screen.getByRole('row', { name: /Agent A/ });
+    row.focus();
+    fireEvent.contextMenu(row, { clientX: 30, clientY: 40 });
+    const menu = screen.getByRole('menu', { name: 'Agent A' });
+    await waitFor(() => expect(menu).toContainElement(document.activeElement as HTMLElement));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    await waitFor(() => expect(row).toHaveFocus());
+    fireEvent.contextMenu(row, { clientX: 30, clientY: 40 });
+    await user.click(screen.getByRole('menuitem', { name: 'Close tab' }));
+    expect(close).toHaveBeenCalledOnce();
   });
 });

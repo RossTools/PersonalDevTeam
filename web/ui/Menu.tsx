@@ -22,6 +22,7 @@ import {
 import { IconButton } from './IconButton';
 import { Kbd } from './Kbd';
 import { pressableChild } from './lib/pressableChild';
+import type { MenuPoint } from './List';
 
 /** One entry of a menu. Every menu in PDT (right-click, long press, "⋯") is a list of these. */
 export type MenuEntry =
@@ -224,12 +225,6 @@ export function MenuButton({
       </DropdownMenuPopover>
     </MenuTrigger>
   );
-}
-
-/** A point in viewport coordinates (`clientX`/`clientY`), e.g. ListRow's `onMenu` argument. */
-export interface MenuPoint {
-  x: number;
-  y: number;
 }
 
 export interface MenuAtProps {
