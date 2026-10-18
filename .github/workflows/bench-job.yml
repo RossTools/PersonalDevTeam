@@ -25,6 +25,14 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      # GitHub's images have rustup; other providers' may not.
+      - name: Ensure rustup
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
       - name: Show Rust toolchain
         run: rustup show
       - name: Cache (Namespace volume)
