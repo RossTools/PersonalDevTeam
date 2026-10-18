@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
+import { page, summary, ticket } from '../tickets/fixtures';
 import { AppShell } from './AppShell';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -62,7 +63,7 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Files', 'Settings']);
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Tickets', 'Files', 'Settings']);
     for (const name of ['Inbox', 'Board', 'Personas', 'Search']) {
       expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
     }
@@ -649,7 +650,7 @@ describe('phone', () => {
     stubWorkspaces({ 'GET /api/health': health(true, 8512) });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Files', 'Search', 'Settings']);
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Tickets', 'Search', 'Settings']);
     const bar = (await screen.findByRole('button', { name: 'Workspaces and agents' })).parentElement!;
     // Compact on phones (the tabs need the room); the port is in the tooltip.
     expect(await within(bar).findByText('DEV')).toHaveAttribute('title', 'Development instance on port 8512');
@@ -668,5 +669,75 @@ describe('phone', () => {
     await userEvent.click(await within(sheet).findByRole('row', { name: /Alpha/ }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings sections' })).not.toBeInTheDocument());
     expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+  });
+});
+
+describe('tickets', () => {
+  const fixLogin = ticket(1, { projectId: project.id, title: 'Fix login' });
+  const ticketRoutes = {
+    'GET /api/tickets/t1': fixLogin,
+    'GET /api/tickets/t1/events': { items: [], nextCursor: null },
+    [`GET /api/projects/${project.id}/labels`]: [],
+    'GET /api/tickets': page([summary(1, { projectId: project.id, title: 'Fix login' })]),
+  };
+
+  it('opens the backlog with Ctrl+] l', async () => {
+    stubWorkspaces(ticketRoutes);
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}l');
+    expect(screen.getByRole('button', { name: 'Tickets' })).toHaveAttribute('aria-current', 'page');
+    expect(await within(screen.getByRole('main')).findByRole('heading', { name: 'Tickets' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Backlog' })).toBeChecked();
+    expect(screen.getByRole('navigation', { name: 'Ticket lists' })).toBeInTheDocument();
+  });
+
+  it('shows a ticket tab in the strip as "KEY · title" and the ticket in the work area', async () => {
+    localStorage.clear();
+    const workspaces = [{
+      id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1,
+      tabs: [{ id: 'tk', workspaceId: 'wa', sessionId: null, runId: null, ticketId: 't1', position: 0 }],
+    }];
+    stubWorkspaces({ ...ticketRoutes, 'GET /api/workspaces': workspaces });
+    renderWithQuery(<AppShell />);
+    const tab = await screen.findByRole('tab', { name: 'ALP-1 · Fix login' });
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+    expect(await within(screen.getByRole('main')).findByRole('heading', { name: /Fix login/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Overview' })).toBeInTheDocument();
+  });
+
+  it('goes to a ticket by key from the palette, opening its tab in the project workspace', async () => {
+    const calls = stubWorkspaces({ ...ticketRoutes, 'POST /api/workspaces/wa/tabs': { id: 'tk', workspaceId: 'wa', sessionId: null, runId: null, ticketId: 't1', position: 2 } });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Tickets' }));
+    await userEvent.keyboard('{Control>}]{/Control}k');
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await userEvent.keyboard('ALP-1');
+    await userEvent.click(await within(palette).findByRole('menuitem', { name: 'ALP-1 · Fix login' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/workspaces/wa/tabs')?.body).toEqual({ ticketId: 't1' }));
+    expect(calls.some((c) => c.path.startsWith('/api/tickets?') && c.path.includes('q=ALP-1'))).toBe(true);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page'));
+  });
+
+  it('opens the New ticket form from the palette', async () => {
+    stubWorkspaces(ticketRoutes);
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}k');
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await userEvent.click(within(palette).getByRole('menuitem', { name: 'New ticket' }));
+    expect(await screen.findByRole('dialog', { name: 'New ticket' })).toBeInTheDocument();
+  });
+
+  it('opens a ticket here from the new-tab chooser\'s Ticket…', async () => {
+    const calls = stubWorkspaces({ ...ticketRoutes, 'POST /api/workspaces/wa/tabs': { id: 'tk', workspaceId: 'wa', sessionId: null, runId: null, ticketId: 't1', position: 1 } });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    const chooser = screen.getByRole('dialog', { name: 'New tab' });
+    await userEvent.click(within(chooser).getByRole('menuitem', { name: 'Ticket…' }));
+    await userEvent.click(await within(chooser).findByRole('menuitem', { name: /ALP-1 · Fix login/ }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/workspaces/wa/tabs')?.body).toEqual({ ticketId: 't1', position: 1 }));
   });
 });

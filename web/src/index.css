@@ -59,6 +59,8 @@
   --color-bg: var(--pdt-bg);
   --color-surface: var(--pdt-surface);
   --color-surface-2: var(--pdt-surface-2);
+  /* Alternate rows of long lists (DataList `striped`): a faint overlay, below hover and selection. */
+  --color-band: var(--pdt-band);
   --color-border: var(--pdt-border);
   --color-fg: var(--pdt-fg);
   --color-ring: var(--pdt-ring);

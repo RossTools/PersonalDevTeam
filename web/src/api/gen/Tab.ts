@@ -2,6 +2,6 @@
 
 export type Tab = { id: string, workspaceId: string, 
 /**
- * Exactly one of `session_id` and `run_id` is set.
+ * Exactly one of `session_id`, `run_id` and `ticket_id` is set.
  */
-sessionId: string | null, runId: string | null, position: number, };
+sessionId: string | null, runId: string | null, ticketId: string | null, position: number, };

@@ -70,6 +70,7 @@ async fn item_exists(st: &AppState, item: &TabItem) -> Result<bool, ApiError> {
     Ok(match item {
         TabItem::Session(id) => st.store.get_session(id).await?.is_some(),
         TabItem::Run(id) => st.store.get_run(id).await?.is_some(),
+        TabItem::Ticket(id) => st.store.get_ticket_summary(id).await?.is_some(),
     })
 }
 
@@ -81,7 +82,11 @@ pub(crate) async fn open_tab(
     let Json(input) = payload?;
     let item = input.item()?;
     if !item_exists(&st, &item).await? {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "that session or run does not exist"));
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "that session, run or ticket does not exist",
+        ));
     }
     let tab = st
         .store

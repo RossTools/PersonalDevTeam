@@ -7,11 +7,14 @@ pub mod handoff;
 pub mod host;
 pub mod identity;
 pub mod instance;
+pub mod links;
 pub mod project;
+pub mod rank;
 pub mod release;
 pub mod run;
 pub mod runconfig;
 pub mod session;
+pub mod ticket;
 pub mod workspace;
 pub mod worktree;
 

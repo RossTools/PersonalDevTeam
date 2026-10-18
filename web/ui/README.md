@@ -18,7 +18,7 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
 ## Styling rules
 
 - Colours only through these Tailwind names (all aliases of `--pdt-*`):
-  - surfaces: `bg-background` (= `bg-bg`), `bg-card`/`bg-popover` (= `bg-surface`), `bg-surface-2`, `bg-muted`
+  - surfaces: `bg-background` (= `bg-bg`), `bg-card`/`bg-popover` (= `bg-surface`), `bg-surface-2`, `bg-muted`, `bg-band` (striped list rows)
     (a quiet fill), `bg-accent` (the soft selected/hover fill), `bg-primary` (accent blue, primary actions);
   - text: `text-foreground` (= `text-fg`), `text-muted-foreground` (secondary text), `text-primary`,
     `text-primary-foreground` (on `bg-primary`), `text-destructive`;

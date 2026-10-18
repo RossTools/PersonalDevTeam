@@ -6,6 +6,7 @@ use anyhow::Context;
 use pdt_core::project::Project;
 use pdt_core::run::{Run, RunKind, RunState};
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+use pdt_core::ticket::{LinkKind, NewTicket, Priority, TicketStage};
 use pdt_core::worktree::{WORKTREES_DIR, Worktree, worktree_path};
 use pdt_store::Store;
 use std::path::{Path, PathBuf};
@@ -153,7 +154,54 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
     for r in &runs {
         store.insert_run(r).await?;
     }
+    seed_tickets(store, &app.id, now).await?;
     Ok(true)
+}
+
+/// A small backlog for Sample App: every stage, a few priorities and labels, one blocker and a comment.
+async fn seed_tickets(store: &Store, project_id: &str, now: i64) -> anyhow::Result<()> {
+    use Priority::*;
+    use TicketStage::*;
+    let items: &[(&str, &str, TicketStage, Priority, &[&str])] = &[
+        (
+            "Build the login form",
+            "Email and password, with inline errors.\n\n- [x] Layout\n- [ ] Validation\n- [ ] Submit",
+            InProgress,
+            High,
+            &["ui"],
+        ),
+        ("Remember the signed-in user", "Keep the session across reloads.", Ready, Medium, &["auth"]),
+        ("Password reset by email", "Send a one-time link; expire it after an hour.", Ready, Medium, &["auth"]),
+        ("Fix the README typo", "\"recieve\" in the install section.", Ready, Low, &["docs"]),
+        ("Dark mode for the settings page", "", Draft, None, &["ui"]),
+        ("Rate-limit the login endpoint", "Five tries a minute per address.", Draft, Urgent, &["auth", "security"]),
+        ("Add a favicon", "", Draft, Low, &["ui"]),
+        ("Export data as CSV", "From the reports page.", Draft, None, &[]),
+        ("Set up the project", "Repository, CI and a first page.", Done, None, &[]),
+        ("Try a Vue port", "Decided against it.", WontDo, None, &[]),
+    ];
+    let mut ids = Vec::new();
+    // Each new ticket goes to the top of its stage, so create bottom-up to keep this list's order.
+    for (title, description, stage, priority, labels) in items.iter().rev() {
+        let new = NewTicket {
+            title: (*title).into(),
+            description: Some((*description).into()),
+            stage: Some(*stage),
+            priority: Some(*priority),
+            labels: Some(labels.iter().map(|l| (*l).to_string()).collect()),
+            areas: Option::None,
+            before: Option::None,
+            after: Option::None,
+        };
+        let valid = new.validate().context("demo ticket")?;
+        let t = store.create_ticket(&uuid::Uuid::now_v7().to_string(), project_id, &valid, now).await?;
+        ids.push(t.summary.id);
+    }
+    ids.reverse();
+    // "Remember the signed-in user" blocks "Password reset by email".
+    store.add_link(&ids[1], &ids[2], LinkKind::Blocks, now).await?;
+    store.add_comment(&ids[0], "Validation messages should match the design doc.", now).await?;
+    Ok(())
 }
 
 struct DemoRepos {
@@ -249,6 +297,15 @@ mod tests {
         let runs = store.list_runs(&app.id).await.unwrap();
         assert_eq!(runs.len(), 3);
         assert!(store.list_active_runs().await.unwrap().is_empty());
+        let tickets = store
+            .query_tickets(
+                &pdt_core::ticket::TicketQuery { project: Some(app.id.clone()), ..Default::default() }
+                    .validate()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tickets.total, 10);
 
         // A database with projects is left alone.
         assert!(!seed_demo(&store, tmp.path(), 11 * DAY).await.unwrap());

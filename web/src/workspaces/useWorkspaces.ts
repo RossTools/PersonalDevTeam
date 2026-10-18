@@ -7,11 +7,12 @@ import type { Project } from '../api/gen/Project';
 import type { Run } from '../api/gen/Run';
 import type { Session } from '../api/gen/Session';
 import type { Tab } from '../api/gen/Tab';
+import type { Ticket } from '../api/gen/Ticket';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
 import { runDot } from '../runs/runState';
 import { toDot } from '../sessions/status';
-import { findTab, itemOf, resolveCurrent, type CurrentChoice, type Item } from './model';
+import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
 const STORAGE_KEY = 'pdt.workspaces.current';
 
@@ -44,6 +45,7 @@ export interface ItemInfo {
   worktreeId: string | null;
   session?: Session;
   run?: Run;
+  ticket?: Ticket;
   /** When the list holding it was last polled (passed to the terminal views). */
   polledAt: number;
 }
@@ -61,6 +63,17 @@ export function runInfo(r: Run, polledAt: number): ItemInfo {
     status: runDot(r.state), activity: null, unseen: false, projectId: r.projectId, worktreeId: r.worktreeId, run: r, polledAt,
   };
 }
+
+/** A ticket tab: titled `PDT-42 · title`, no agent state (the tab shows a ticket icon). */
+export function ticketInfo(t: Ticket, polledAt: number): ItemInfo {
+  return {
+    item: { kind: 'ticket', id: t.id }, title: `${t.key} · ${t.title}`, status: 'idle', activity: null, unseen: false,
+    projectId: t.projectId, worktreeId: null, ticket: t, polledAt,
+  };
+}
+
+/** How often a ticket tab's title is refreshed (the open ticket's own view polls every 2 s). */
+const TICKET_TAB_POLL = 5000;
 
 /**
  * Workspaces, the per-device choice of workspace and tab, every project's sessions and runs (the same queries the
@@ -86,7 +99,26 @@ export function useWorkspaces() {
     return m;
     // The query result arrays are new objects on every render; their data timestamps say when anything changed.
   }, [sessionQs.map((q) => q.dataUpdatedAt).join(), runQs.map((q) => q.dataUpdatedAt).join()]);
-  const info = useCallback((item: Item) => infos.get(`${item.kind}:${item.id}`) ?? null, [infos]);
+  // Ticket tabs: one query per ticket on a tab (shared with the ticket's own view, ['ticket', id]).
+  const ticketIds = useMemo(
+    () => [...new Set(workspaces.flatMap((w) => w.tabs.flatMap((t) => (t.ticketId ? [t.ticketId] : []))))].sort(),
+    [workspaces],
+  );
+  const ticketQs = useQueries({
+    queries: ticketIds.map((id) => ({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id), refetchInterval: TICKET_TAB_POLL })),
+  });
+  const ticketInfos = useMemo(
+    () => ticketQs.flatMap((q) => (q.data ? [ticketInfo(q.data, q.dataUpdatedAt)] : [])),
+    // As above: the timestamps say when anything changed.
+    [ticketQs.map((q) => q.dataUpdatedAt).join()],
+  );
+  const info = useCallback(
+    (item: Item) =>
+      item.kind === 'ticket'
+        ? ticketInfos.find((i) => i.item.id === item.id) ?? null
+        : infos.get(`${item.kind}:${item.id}`) ?? null,
+    [infos, ticketInfos],
+  );
   const allInfos = useMemo(() => [...infos.values()], [infos]);
 
   const [choice, setChoiceState] = useState<CurrentChoice>(loadChoice);
@@ -117,7 +149,7 @@ export function useWorkspaces() {
         if (!found) {
           const home = fresh.find((w) => w.projectId === projectId);
           if (!home) return;
-          const t = await api.openTab(home.id, item.kind === 'session' ? { sessionId: item.id } : { runId: item.id });
+          const t = await api.openTab(home.id, openTabBody(item));
           await refresh();
           selectTab(t);
           return;
@@ -164,7 +196,7 @@ export function useWorkspaces() {
   const openIn = useCallback(
     async (item: Item, workspaceId: string, position?: number) => {
       const t = await api.openTab(workspaceId, {
-        ...(item.kind === 'session' ? { sessionId: item.id } : { runId: item.id }),
+        ...openTabBody(item),
         ...(position !== undefined ? { position } : {}),
       });
       await refresh();
@@ -188,7 +220,7 @@ export function useWorkspaces() {
 
   return {
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projects: projectList, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos,
+    projects: projectList, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, ticketInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
     currentInfo: tab ? info(itemOf(tab)) : null,
   };

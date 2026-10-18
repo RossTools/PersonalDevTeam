@@ -22,6 +22,11 @@ describe('prefix keys', () => {
     expect(KEY_HELP.find(([k]) => k === 'k')?.[1]).toMatch(/Command palette/);
   });
 
+  it('opens the backlog with l, and lists it in the help', () => {
+    expect(actionFor('l')).toEqual({ type: 'backlog' });
+    expect(KEY_HELP.find(([k]) => k === 'l')?.[1]).toMatch(/Tickets/);
+  });
+
   it('runs the action for the key after the prefix and hides both from the page', () => {
     const onAction = vi.fn();
     const seen = vi.fn();

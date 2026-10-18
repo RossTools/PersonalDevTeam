@@ -7,6 +7,7 @@ export * from './IconButton';
 export * from './Input';
 export * from './Textarea';
 export * from './Select';
+export * from './SuggestInput';
 export * from './Field';
 export * from './Checkbox';
 export * from './Switch';
@@ -36,6 +37,10 @@ export * from './CommandList';
 
 // Lists and layout
 export * from './List';
+export * from './DataList';
+export * from './FilterBar';
+export * from './BulkActionBar';
+export * from './Timeline';
 export * from './TreeView';
 export * from './ViewHeader';
 export * from './Page';

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   ArrowRightLeft, BellRing, Bot, Check, Code, Keyboard, Layers, PanelTop, Pencil, Play, Plus, Server, Settings, Sparkles,
-  SquareTerminal, SunMoon, X,
+  SquareTerminal, SunMoon, Ticket, Files, X,
 } from 'lucide-react';
 import { Button, CommandList, Dialog, Field, Input, type CommandItem } from '@ui';
 import { AgentDot } from '../common/AgentState';
+import { TicketPicker } from '../tickets/TicketPicker';
 import type { PaletteIcon, PaletteItem, PaletteStep } from './paletteItems';
 
 const ICONS: Record<PaletteIcon, ReactNode> = {
@@ -25,6 +26,8 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   keys: <Keyboard aria-hidden />,
   check: <Check aria-hidden />,
   add: <Plus aria-hidden />,
+  ticket: <Ticket aria-hidden />,
+  files: <Files aria-hidden />,
 };
 
 function toCommand(it: PaletteItem): CommandItem {
@@ -67,14 +70,26 @@ function NameStep({ step, onDone }: { step: Extract<PaletteStep, { kind: 'input'
  * runs the highlighted item and closes; an item with a second step (Move tab to workspace…) swaps the list. Escape
  * clears the filter, then goes back a step, then closes; focus returns to what had it.
  */
-export function CommandPalette({ open, onOpenChange, items }: {
+export function CommandPalette({ open, onOpenChange, items, onQueryChange }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: PaletteItem[];
+  /** The first list's filter text (AppShell looks up tickets when it looks like a key). */
+  onQueryChange?: (query: string) => void;
 }) {
   const [steps, setSteps] = useState<PaletteStep[]>([]);
+  const [query, setQuery] = useState('');
+  const changeQuery = (q: string) => {
+    setQuery(q);
+    onQueryChange?.(q);
+  };
   useEffect(() => {
-    if (open) setSteps([]);
+    if (open) {
+      setSteps([]);
+      setQuery('');
+      onQueryChange?.('');
+    }
+    // Only when it opens (onQueryChange is a new function on every render).
   }, [open]);
   const step = steps[steps.length - 1];
   const list = step?.kind === 'list' ? step.items : items;
@@ -110,6 +125,14 @@ export function CommandPalette({ open, onOpenChange, items }: {
       <div onKeyDownCapture={onKeyDownCapture}>
         {step?.kind === 'input' ? (
           <NameStep step={step} onDone={(v) => finish(() => step.run(v))} />
+        ) : step?.kind === 'tickets' ? (
+          <TicketPicker
+            key={steps.length}
+            projectId={step.projectId}
+            label={step.title}
+            onPick={(t) => finish(() => step.run(t))}
+            className="max-h-[60dvh]"
+          />
         ) : (
           <CommandList
             key={steps.length}
@@ -117,6 +140,7 @@ export function CommandPalette({ open, onOpenChange, items }: {
             placeholder={step?.placeholder ?? 'Go to or do anything…'}
             items={list.map(toCommand)}
             onAction={choose}
+            {...(steps.length === 0 ? { query, onQueryChange: changeQuery } : {})}
             className="max-h-[60dvh]"
           />
         )}

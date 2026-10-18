@@ -257,6 +257,18 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/runs/{id}/restart", axum::routing::post(crate::runs::restart))
         .route("/runs/{id}/reset-data", axum::routing::post(crate::runs::reset_data))
         .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
+        .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
+        .route("/projects/{id}/labels", get(crate::tickets::labels))
+        .route("/tickets", get(crate::tickets::list))
+        .route("/tickets/bulk", axum::routing::post(crate::tickets::bulk))
+        .route(
+            "/tickets/{id}",
+            get(crate::tickets::get_one).patch(crate::tickets::update).delete(crate::tickets::remove),
+        )
+        .route("/tickets/{id}/rank", axum::routing::post(crate::tickets::rank))
+        .route("/tickets/{id}/links", axum::routing::post(crate::tickets::add_link).delete(crate::tickets::remove_link))
+        .route("/tickets/{id}/events", get(crate::tickets::events))
+        .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
         .route("/workspaces", get(crate::workspaces::list).post(crate::workspaces::create))
         .route("/workspaces/{id}", axum::routing::patch(crate::workspaces::update).delete(crate::workspaces::remove))
         .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))

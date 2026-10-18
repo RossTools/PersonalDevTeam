@@ -54,7 +54,10 @@ export function Dialog({
       onOpenChange={trigger ? undefined : onOpenChange}
       isDismissable={dismissable}
       dialogProps={description ? { 'aria-describedby': descId } : undefined}
-      className={cn('max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-3', sizes[size], className)}
+      // Header, scrolling body, footer: the rows live on the inner dialog element (the modal box's only child), so the
+      // box is a column that caps the height and the inner grid fills it.
+      className={cn('flex max-h-[calc(100dvh-2rem)] flex-col', sizes[size], className)}
+      innerClassName="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-3"
     >
       <DialogHeader className="pr-8">
         <DialogTitle className="text-sm font-semibold">{title}</DialogTitle>

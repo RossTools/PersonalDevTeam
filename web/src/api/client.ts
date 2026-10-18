@@ -29,6 +29,19 @@ import type { Tab } from './gen/Tab';
 import type { TabPatch } from './gen/TabPatch';
 import type { Workspace } from './gen/Workspace';
 import type { WorkspacePatch } from './gen/WorkspacePatch';
+import type { BulkRequest } from './gen/BulkRequest';
+import type { BulkResult } from './gen/BulkResult';
+import type { EventPage } from './gen/EventPage';
+import type { EventQuery } from './gen/EventQuery';
+import type { NewComment } from './gen/NewComment';
+import type { NewTicket } from './gen/NewTicket';
+import type { RankMove } from './gen/RankMove';
+import type { Ticket } from './gen/Ticket';
+import type { TicketEvent } from './gen/TicketEvent';
+import type { TicketLink } from './gen/TicketLink';
+import type { TicketPage } from './gen/TicketPage';
+import type { TicketPatch } from './gen/TicketPatch';
+import type { TicketQuery } from './gen/TicketQuery';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -53,6 +66,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const enc = encodeURIComponent;
+
+/** `?a=1&b=x` from the defined, non-empty fields (empty string when there are none). */
+function queryString(q: object): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) {
+    if (v !== undefined && v !== null && v !== '') params.set(k, String(v));
+  }
+  const s = params.toString();
+  return s ? `?${s}` : '';
+}
 
 function filesQuery(worktreeId: string | null, path: string): string {
   return new URLSearchParams({ ...(worktreeId ? { worktreeId } : {}), path }).toString();
@@ -92,6 +115,25 @@ export const api = {
     request<Tab>(`/api/workspaces/${enc(workspaceId)}/tabs`, { method: 'POST', body: JSON.stringify(t) }),
   updateTab: (id: string, p: TabPatch) => request<Tab>(`/api/tabs/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
   closeTab: (id: string) => request<void>(`/api/tabs/${enc(id)}`, { method: 'DELETE' }),
+  listTickets: (q: TicketQuery = {}) => request<TicketPage>(`/api/tickets${queryString(q)}`),
+  createTicket: (projectId: string, t: NewTicket) =>
+    request<Ticket>(`/api/projects/${enc(projectId)}/tickets`, { method: 'POST', body: JSON.stringify(t) }),
+  getTicket: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}`),
+  updateTicket: (id: string, p: TicketPatch) =>
+    request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteTicket: (id: string) => request<void>(`/api/tickets/${enc(id)}`, { method: 'DELETE' }),
+  rankTicket: (id: string, m: RankMove) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/rank`, { method: 'POST', body: JSON.stringify(m) }),
+  bulkTickets: (b: BulkRequest) => request<BulkResult>('/api/tickets/bulk', { method: 'POST', body: JSON.stringify(b) }),
+  linkTicket: (id: string, l: TicketLink) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/links`, { method: 'POST', body: JSON.stringify(l) }),
+  unlinkTicket: (id: string, l: TicketLink) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/links`, { method: 'DELETE', body: JSON.stringify(l) }),
+  ticketEvents: (id: string, q: EventQuery = {}) =>
+    request<EventPage>(`/api/tickets/${enc(id)}/events${queryString(q)}`),
+  commentOnTicket: (id: string, body: string) =>
+    request<TicketEvent>(`/api/tickets/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ body } satisfies NewComment) }),
+  projectLabels: (projectId: string) => request<string[]>(`/api/projects/${enc(projectId)}/labels`),
   listRuns: (projectId: string) => request<Run[]>(`/api/projects/${enc(projectId)}/runs`),
   listActiveRuns: () => request<Run[]>('/api/runs'),
   startRun: (projectId: string, r: NewRun) =>

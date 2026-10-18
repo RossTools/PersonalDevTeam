@@ -1,11 +1,23 @@
+import type { OpenTab } from '../api/gen/OpenTab';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
 
 /** What a tab shows. */
-export type Item = { kind: 'session'; id: string } | { kind: 'run'; id: string };
+export type Item = { kind: 'session'; id: string } | { kind: 'run'; id: string } | { kind: 'ticket'; id: string };
 
 export function itemOf(tab: Tab): Item {
-  return tab.sessionId ? { kind: 'session', id: tab.sessionId } : { kind: 'run', id: tab.runId! };
+  if (tab.sessionId) return { kind: 'session', id: tab.sessionId };
+  if (tab.ticketId) return { kind: 'ticket', id: tab.ticketId };
+  return { kind: 'run', id: tab.runId! };
+}
+
+/** The `POST /api/workspaces/{id}/tabs` body naming an item. */
+export function openTabBody(item: Item): OpenTab {
+  switch (item.kind) {
+    case 'session': return { sessionId: item.id };
+    case 'run': return { runId: item.id };
+    case 'ticket': return { ticketId: item.id };
+  }
 }
 
 export const sameItem = (a: Item, b: Item) => a.kind === b.kind && a.id === b.id;

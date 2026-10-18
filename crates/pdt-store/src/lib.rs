@@ -3,11 +3,13 @@ mod host;
 mod migrate;
 mod runs;
 mod sessions;
+mod tickets;
 mod workspaces;
 mod worktrees;
 
 pub use error::StoreError;
 pub use host::ProjectSettings;
+pub use tickets::{DeleteTicket, TicketError};
 pub use workspaces::DeleteWorkspace;
 
 use pdt_core::project::Project;

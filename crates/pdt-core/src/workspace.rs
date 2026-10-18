@@ -1,5 +1,5 @@
 //! Workspaces and tabs (workspaces spec §2, §5). A workspace is an ordered strip of tabs; each tab shows one
-//! session or one run, and a session or run has at most one tab.
+//! session, run or ticket, and each of those has at most one tab.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -28,9 +28,10 @@ pub struct Workspace {
 pub struct Tab {
     pub id: String,
     pub workspace_id: String,
-    /// Exactly one of `session_id` and `run_id` is set.
+    /// Exactly one of `session_id`, `run_id` and `ticket_id` is set.
     pub session_id: Option<String>,
     pub run_id: Option<String>,
+    pub ticket_id: Option<String>,
     pub position: u32,
 }
 
@@ -39,6 +40,7 @@ pub struct Tab {
 pub enum TabItem {
     Session(String),
     Run(String),
+    Ticket(String),
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -72,6 +74,9 @@ pub struct OpenTab {
     #[serde(default)]
     #[ts(optional)]
     pub run_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub ticket_id: Option<String>,
     /// Index in the workspace's tabs (clamped); the end when absent.
     #[serde(default)]
     #[ts(optional)]
@@ -108,7 +113,7 @@ pub enum WorkspaceValidationError {
     EmptyName,
     #[error("workspace name must be at most {MAX_WORKSPACE_NAME} characters")]
     NameTooLong,
-    #[error("a tab shows exactly one session or run")]
+    #[error("a tab shows exactly one session, run or ticket")]
     TabItem,
 }
 
@@ -127,9 +132,10 @@ pub fn valid_workspace_name(name: &str) -> Result<String, WorkspaceValidationErr
 impl OpenTab {
     pub fn item(&self) -> Result<TabItem, WorkspaceValidationError> {
         let nonblank = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
-        match (nonblank(&self.session_id), nonblank(&self.run_id)) {
-            (Some(s), None) => Ok(TabItem::Session(s)),
-            (None, Some(r)) => Ok(TabItem::Run(r)),
+        match (nonblank(&self.session_id), nonblank(&self.run_id), nonblank(&self.ticket_id)) {
+            (Some(s), None, None) => Ok(TabItem::Session(s)),
+            (None, Some(r), None) => Ok(TabItem::Run(r)),
+            (None, None, Some(t)) => Ok(TabItem::Ticket(t)),
             _ => Err(WorkspaceValidationError::TabItem),
         }
     }
@@ -173,15 +179,18 @@ mod tests {
 
     #[test]
     fn a_tab_names_exactly_one_item() {
-        let open = |s: Option<&str>, r: Option<&str>| OpenTab {
+        let open = |s: Option<&str>, r: Option<&str>, t: Option<&str>| OpenTab {
             session_id: s.map(Into::into),
             run_id: r.map(Into::into),
+            ticket_id: t.map(Into::into),
             position: None,
         };
-        assert_eq!(open(Some("s"), None).item(), Ok(TabItem::Session("s".into())));
-        assert_eq!(open(None, Some("r")).item(), Ok(TabItem::Run("r".into())));
-        assert_eq!(open(Some("s"), Some("r")).item(), Err(WorkspaceValidationError::TabItem));
-        assert_eq!(open(None, None).item(), Err(WorkspaceValidationError::TabItem));
-        assert_eq!(open(Some(" "), None).item(), Err(WorkspaceValidationError::TabItem));
+        assert_eq!(open(Some("s"), None, None).item(), Ok(TabItem::Session("s".into())));
+        assert_eq!(open(None, Some("r"), None).item(), Ok(TabItem::Run("r".into())));
+        assert_eq!(open(None, None, Some("t")).item(), Ok(TabItem::Ticket("t".into())));
+        assert_eq!(open(Some("s"), Some("r"), None).item(), Err(WorkspaceValidationError::TabItem));
+        assert_eq!(open(None, Some("r"), Some("t")).item(), Err(WorkspaceValidationError::TabItem));
+        assert_eq!(open(None, None, None).item(), Err(WorkspaceValidationError::TabItem));
+        assert_eq!(open(Some(" "), None, None).item(), Err(WorkspaceValidationError::TabItem));
     }
 }
