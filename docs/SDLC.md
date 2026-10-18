@@ -6,7 +6,7 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 
 ## The loop
 
-1. **Pick the work.** It comes from docs/ROADMAP.md (until Phase 4 brings tickets). Larger work gets a spec in
+1. **Pick the work.** It comes from the project's tickets in the stable PDT (Tickets → Backlog / Board; `GET /api/tickets`). Larger work gets a spec in
    docs/superpowers/specs and a plan in docs/superpowers/plans first.
 2. **Make a worktree** for a new branch (below). Never commit on `main` in the main checkout.
 3. **Build it test-first** in the worktree (TDD for core logic). Run the checks before every push (below).
@@ -22,8 +22,8 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    auto-merge stays on). Don't pass `--delete-branch`: it can't delete a branch whose worktree still exists.
 7. **Release is automatic.** Every push to `main` publishes `v0.1.<run number>`. The stable instance installs it when
    idle, or when the user clicks Update. Agents never update, restart or stop the stable instance.
-8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Update docs/ROADMAP.md in the PR
-   itself when the change finishes or adds a roadmap item.
+8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Move the ticket to Done (or let the
+   merge banner do it) and add tickets for follow-ups the change turned up.
 
 ## Worktrees
 
