@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Skeleton, Switch } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -12,7 +12,10 @@ import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { INITIAL_SIZE } from '../sessions/status';
 import { isClosed, linkRole } from './model';
-import { useTicket } from './queries';
+import { setWaiting } from './actions';
+import { AreaChips } from './Areas';
+import { useProjectAreas, useTicket } from './queries';
+import { SharedFiles } from './TicketParts';
 
 const AGENT_KEY = 'pdt.tickets.startAgent';
 
@@ -44,13 +47,18 @@ export interface StartDialogProps {
 }
 
 /**
- * Start a ticket: agent, branch, base, permission prompts, and where the tabs open. Open blockers are listed first and
- * the primary action becomes "Start anyway" (`mode: force`); the server's own check (`start_blocked`) does the same.
+ * Start a ticket: agent, branch, base, permission prompts, and where the tabs open. Open blockers and overlaps with
+ * active tickets are listed first; then the primary action is **Wait** (wait until clear) and **Start anyway**
+ * (`mode: force`; the danger variant for a conflict) is the other. The server's own check (`start_blocked`) does the
+ * same.
  */
 export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDialogProps) {
   const q = useTicket(ticketId);
+  const qc = useQueryClient();
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
   const t = q.data;
+  const areaConfig = useProjectAreas(t?.projectId ?? null);
+  const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;
   const project = projects.data?.find((p) => p.id === t?.projectId) ?? null;
   const [agent, setAgentState] = useState<AgentKind>(loadAgent);
   const [branch, setBranch] = useState('');
@@ -68,10 +76,46 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     saveAgent(a);
   };
   const blockers = t ? openBlockers(t) : [];
-  const force = blockers.length > 0 || serverBlocked !== null;
+  const overlaps = t?.overlaps ?? [];
+  const conflict = overlaps.some((o) => o.level === 'conflict');
+  // Something stands in the way: Wait or Start anyway instead of Start.
+  const force = blockers.length > 0 || overlaps.length > 0 || serverBlocked !== null;
+  const waiting = !!t?.waiting;
   const active = t?.attempt?.state === 'active';
   const closed = t ? isClosed(t.stage) : false;
   const startable = !!t && !active && !closed;
+
+  const wait = async () => {
+    if (!t || !startable || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await setWaiting(qc, t, true);
+      onClose();
+    } catch (e) {
+      setError(actionError(e));
+      requestAnimationFrame(() => errorRef.current?.focus());
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const stopWaiting = async () => {
+    if (!t || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await setWaiting(qc, t, false);
+    } catch (e) {
+      setError(actionError(e));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  // Enter does the primary action: Wait when something is in the way (and it isn't waiting already), else Start.
+  const offerWait = force && !waiting;
+  const primary = () => void (offerWait ? wait() : submit());
 
   const submit = async () => {
     if (!t || !startable || pending) return;
@@ -113,16 +157,25 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>
-            {force ? 'Start anyway' : 'Start'}
-          </Button>
+          {force ? (
+            <>
+              <Button variant={conflict ? 'danger' : 'secondary'} pending={pending && !offerWait} disabled={!startable} onClick={() => void submit()}>
+                Start anyway
+              </Button>
+              {offerWait && (
+                <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>Wait</Button>
+              )}
+            </>
+          ) : (
+            <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>Start</Button>
+          )}
         </>
       }
     >
       {!t ? (
         q.isPending ? <Skeleton lines={3} label="Loading ticket" /> : <Alert tone="error">{q.error?.message ?? 'Ticket not found.'}</Alert>
       ) : (
-        <form id="start-ticket" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <form id="start-ticket" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); primary(); }}>
           {active && <Alert tone="info">{t.key} already has an active attempt on {t.attempt!.branch}.</Alert>}
           {closed && <Alert tone="info">{t.key} is closed. Move it back to Ready to start it.</Alert>}
           {blockers.length > 0 && (
@@ -137,7 +190,36 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               </ul>
             </Alert>
           )}
-          {serverBlocked && blockers.length === 0 && <Alert tone="warning">{serverBlocked}</Alert>}
+          {overlaps.map((o) => (
+            <Alert
+              key={o.ticketId}
+              tone={o.level === 'conflict' ? 'error' : 'warning'}
+              title={<span className="flex min-w-0 items-center gap-1.5">{o.level === 'conflict' ? 'Conflicts with' : 'Overlaps'} <TicketKey ticketKey={o.key} /></span>}
+            >
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="min-w-0 truncate">{o.title}</span>
+                {o.areas.length > 0 && (
+                  <span className="flex min-w-0 flex-wrap items-center gap-1">Shared areas: <AreaChips areas={o.areas} config={config} /></span>
+                )}
+                {o.files.length > 0 && (
+                  <>
+                    <span>Shared files:</span>
+                    <SharedFiles files={o.files} total={o.filesTotal} />
+                  </>
+                )}
+              </div>
+            </Alert>
+          ))}
+          {serverBlocked && blockers.length === 0 && overlaps.length === 0 && <Alert tone="warning">{serverBlocked}</Alert>}
+          {waiting && startable && (
+            <Alert
+              tone="info"
+              title="Waiting until clear"
+              action={<Button size="sm" variant="secondary" disabled={pending} onClick={() => void stopWaiting()}>Stop waiting</Button>}
+            >
+              {t.clearToStart ? 'Nothing is in the way any more.' : `${t.key} waits for its blockers and overlaps to clear.`}
+            </Alert>
+          )}
           <Field label="Agent">
             <SegmentedControl
               options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }]}

@@ -25,6 +25,10 @@ export interface BacklogFilters {
   /** All of them must match. */
   labels: string[];
   showClosed: boolean;
+  /** true: only blocked tickets; false: only unblocked ones; null: either. */
+  blocked: boolean | null;
+  /** true: only tickets with an overlap or conflict; false: only those with none; null: either. */
+  conflicts: boolean | null;
   group: GroupBy;
   sort: TicketSort;
   /** Search text (FTS prefix words, or a key). */
@@ -32,7 +36,7 @@ export interface BacklogFilters {
 }
 
 export const DEFAULT_FILTERS: BacklogFilters = {
-  stages: [], priorities: [], labels: [], showClosed: false, group: 'none', sort: 'rank', q: '',
+  stages: [], priorities: [], labels: [], showClosed: false, blocked: null, conflicts: null, group: 'none', sort: 'rank', q: '',
 };
 
 /** Rows per page of the backlog. */
@@ -46,6 +50,8 @@ export function toQuery(projectId: string | null, f: BacklogFilters, limit = PAG
   if (stages.length > 0) q.stage = stages.join(',');
   if (f.priorities.length > 0) q.priority = f.priorities.join(',');
   if (f.labels.length > 0) q.label = f.labels.join(',');
+  if (f.blocked !== null) q.blocked = f.blocked;
+  if (f.conflicts !== null) q.conflicts = f.conflicts;
   if (f.q.trim()) q.q = f.q.trim();
   if (f.sort !== 'rank') q.sort = f.sort;
   return q;
@@ -56,7 +62,8 @@ export const canRank = (projectId: string | null, f: BacklogFilters) => !!projec
 
 /** True when nothing narrows the list beyond the default (Draft and Ready tickets). */
 export const isDefaultFilter = (f: BacklogFilters) =>
-  f.stages.length === 0 && f.priorities.length === 0 && f.labels.length === 0 && !f.showClosed && !f.q.trim();
+  f.stages.length === 0 && f.priorities.length === 0 && f.labels.length === 0 && !f.showClosed &&
+  f.blocked === null && f.conflicts === null && !f.q.trim();
 
 // ---------------------------------------------------------------------------------------------------------------
 // Grouping
@@ -100,7 +107,18 @@ export interface SavedFilter {
   /** The project it was saved in; null for all projects. */
   projectId: string | null;
   filters: BacklogFilters;
+  /** Shipped with PDT: always listed, never stored or deleted, and applied to the project on screen. */
+  builtin?: boolean;
 }
+
+/** The built-in saved filter: refined tickets that nothing stands in the way of. */
+export const READY_TO_START: SavedFilter = {
+  id: 'builtin:ready-to-start',
+  name: 'Ready to start',
+  projectId: null,
+  builtin: true,
+  filters: { ...DEFAULT_FILTERS, stages: ['ready'], blocked: false, conflicts: false },
+};
 
 const SAVED_KEY = 'pdt.tickets.savedFilters';
 
@@ -109,7 +127,7 @@ export function loadSavedFilters(): SavedFilter[] {
     const v = JSON.parse(localStorage.getItem(SAVED_KEY) ?? '[]');
     if (!Array.isArray(v)) return [];
     return v
-      .filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && x.filters && typeof x.filters === 'object')
+      .filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && x.filters && typeof x.filters === 'object' && !x.builtin)
       .map((x) => ({ id: x.id, name: x.name, projectId: x.projectId ?? null, filters: { ...DEFAULT_FILTERS, ...x.filters } }));
   } catch {
     return [];
@@ -118,7 +136,7 @@ export function loadSavedFilters(): SavedFilter[] {
 
 export function storeSavedFilters(list: SavedFilter[]) {
   try {
-    localStorage.setItem(SAVED_KEY, JSON.stringify(list));
+    localStorage.setItem(SAVED_KEY, JSON.stringify(list.filter((f) => !f.builtin)));
   } catch {
     // Storage blocked (private window): saved filters last for this page only.
   }
@@ -146,12 +164,14 @@ export function linkCall(selfId: string, otherId: string, role: LinkRole): { fro
 interface LinkData { kind?: string; direction?: string; key?: string }
 interface MovedData { from?: string; to?: string }
 interface EditedData { fields?: string[] }
+interface WaitingData { waiting?: boolean }
+interface OverlapData { files?: string[]; level?: string }
 
 const stageName = (s: string | undefined) => (s && s in STAGE_LABEL ? STAGE_LABEL[s as TicketStage] : s ?? '?');
 
 /** One line for a timeline entry ("Moved from Draft to Ready", "Linked: blocked by PDT-12"). */
 export function eventTitle(e: TicketEvent): string {
-  const data = (e.data ?? {}) as LinkData & MovedData & EditedData;
+  const data = (e.data ?? {}) as LinkData & MovedData & EditedData & WaitingData & OverlapData;
   switch (e.kind) {
     case 'created': return 'Created';
     case 'moved': return `Moved from ${stageName(data.from)} to ${stageName(data.to)}`;
@@ -167,7 +187,12 @@ export function eventTitle(e: TicketEvent): string {
     case 'session': return 'Session';
     case 'merged': return 'Merged';
     case 'abandoned': return 'Abandoned';
-    case 'overlap': return 'Overlap';
+    case 'overlap': {
+      const n = data.files?.length ?? 0;
+      const what = data.level === 'conflict' ? 'Conflicts with' : 'Overlaps';
+      return `${what} ${data.key ?? 'a ticket'}${n > 0 ? `: ${n} shared file${n === 1 ? '' : 's'}` : ''}`;
+    }
+    case 'waiting': return data.waiting === false ? 'Stopped waiting' : 'Waiting until clear';
   }
 }
 

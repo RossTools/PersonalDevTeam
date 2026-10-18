@@ -16,7 +16,11 @@ q?: string, stage?: string, priority?: string, label?: string,
 /**
  * true: only blocked tickets; false: only unblocked ones.
  */
-blocked?: boolean, sort?: TicketSort, 
+blocked?: boolean, 
+/**
+ * true: only tickets with an overlap or conflict; false: only those with none.
+ */
+conflicts?: boolean, sort?: TicketSort, 
 /**
  * Closed tickets only if they were closed at or after this time (ms); open tickets are unaffected.
  */

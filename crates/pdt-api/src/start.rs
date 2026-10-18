@@ -27,8 +27,10 @@ fn conflict(code: &'static str, message: String) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, message)
 }
 
+/// The ticket with its overlaps.
 async fn load_ticket(st: &AppState, id: &str) -> Result<Ticket, ApiError> {
-    st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))
+    let t = st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    crate::overlap::decorate(st, t).await
 }
 
 /// `POST /api/tickets/{id}/start`.
@@ -54,11 +56,17 @@ pub(crate) async fn start(
         .filter(|l| l.kind == LinkKind::Blocks && l.direction == LinkDirection::Incoming && !l.stage.is_closed())
         .map(|l| l.key.clone())
         .collect();
-    if !blockers.is_empty() && v.mode == StartMode::Check {
-        return Err(conflict(
-            "start_blocked",
-            format!("{key} is blocked by {}, which {} not done yet", blockers.join(", "), plural(blockers.len())),
-        ));
+    // Overlap with the project's active tickets: what this one would share once started.
+    let overlaps = ticket.overlaps.clone();
+    if (!blockers.is_empty() || !overlaps.is_empty()) && v.mode == StartMode::Check {
+        let mut why = vec![];
+        if !blockers.is_empty() {
+            why.push(format!("is blocked by {}, which {} not done yet", blockers.join(", "), plural(blockers.len())));
+        }
+        if !overlaps.is_empty() {
+            why.push(crate::overlap::describe(&overlaps));
+        }
+        return Err(conflict("start_blocked", format!("{key} {}", why.join("; it "))));
     }
     if !v.new_workspace {
         crate::workspaces::check_placement(&st, v.tab.as_ref()).await?;
@@ -72,7 +80,14 @@ pub(crate) async fn start(
         Some(w) => w,
         None => crate::worktrees::make_worktree(&st, &project, &branch, &base, true).await?,
     };
-    let extra = if blockers.is_empty() { json!({}) } else { json!({"forced": true, "blockers": blockers}) };
+    let extra = if blockers.is_empty() && overlaps.is_empty() {
+        json!({})
+    } else {
+        let overlaps: Vec<_> =
+            overlaps.iter().map(|o| json!({"key": o.key, "level": o.level, "areas": o.areas})).collect();
+        json!({"forced": true, "blockers": blockers, "overlaps": overlaps,
+               "level": crate::overlap::worst(&ticket.overlaps)})
+    };
     let attempt_id = uuid::Uuid::now_v7().to_string();
     let started = st
         .store

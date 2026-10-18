@@ -47,7 +47,8 @@ function stub(extra: Parameters<typeof stubApi>[0] = {}, list: (c: Call) => unkn
   return stubApi({
     'GET /api/tickets': (c: Call) => (params(c.path).limit === '1' ? page([], null, 7) : list(c)),
     [`GET /api/projects/${project.id}/labels`]: ['backend', 'ui'],
-    'GET /api/tickets/t1': ticket(1, { stage: 'ready', priority: 'high', labels: ['ui'], description: '**Bold** text' }),
+    'GET /api/tickets/t1': ticket(1, { stage: 'ready', priority: 'high', labels: ['ui'], areas: ['web/ui'], description: '**Bold** text' }),
+    [`GET /api/projects/${project.id}/areas`]: { areas: [{ name: 'web/ui', paths: ['web/ui/**'], exclusive: false }], error: null },
     'GET /api/tickets/t1/events': { items: [event('e1')], nextCursor: null },
     ...extra,
   });
@@ -180,7 +181,7 @@ describe('backlog', () => {
     await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/t2/rank')?.body).toEqual({ before: 't1' }));
   });
 
-  it('opens a row in the peek sheet, and Open opens its tab', async () => {
+  it('opens a row in the peek sheet with its details and areas, and Open opens its tab', async () => {
     const onOpen = vi.fn();
     stub();
     renderWithQuery(<Harness onOpen={onOpen} />);
@@ -189,6 +190,7 @@ describe('backlog', () => {
     const sheet = await screen.findByRole('dialog', { name: 'ALP-1 · Ticket 1' });
     expect(within(sheet).getByText('Bold')).toBeInTheDocument();
     expect(within(sheet).getByRole('button', { name: /Stage/ })).toHaveTextContent('Ready');
+    expect(within(within(sheet).getByRole('group', { name: 'Areas' })).getByText('web/ui')).toBeInTheDocument();
     expect(await within(sheet).findByText('Created')).toBeInTheDocument();
     await userEvent.click(within(sheet).getByRole('button', { name: 'Open' }));
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 't1', projectId: project.id }));

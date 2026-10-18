@@ -27,6 +27,24 @@ web     = true
 [[test]]
 name    = "check"
 command = "git status --short"
+
+# Named parts of the app, for overlap between tickets. Only one active ticket at a time should change the styles.
+[[area]]
+name  = "pages"
+paths = ["*.html"]
+
+[[area]]
+name      = "styles"
+paths     = ["*.css"]
+exclusive = true
+
+[[area]]
+name  = "docs"
+paths = ["*.md", "docs/**"]
+
+[[area]]
+name  = "auth"
+paths = ["auth/**"]
 "#;
 
 const LIB_CONFIG: &str = r#"[[test]]
@@ -153,42 +171,59 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
     for r in &runs {
         store.insert_run(r).await?;
     }
-    seed_tickets(store, &app.id, now).await?;
+    seed_tickets(store, &app.id, &wt, now).await?;
     Ok(true)
 }
 
-/// A small backlog for Sample App: every stage, a few priorities and labels, one blocker and a comment.
-async fn seed_tickets(store: &Store, project_id: &str, now: i64) -> anyhow::Result<()> {
+/// A small backlog for Sample App: every stage, a few priorities, labels and areas, one blocker, a comment, and an
+/// active attempt on the login form's worktree (so the tickets sharing its areas show overlap).
+async fn seed_tickets(store: &Store, project_id: &str, wt: &Worktree, now: i64) -> anyhow::Result<()> {
     use Priority::*;
     use TicketStage::*;
-    let items: &[(&str, &str, TicketStage, Priority, &[&str])] = &[
+    type Item<'a> = (&'a str, &'a str, TicketStage, Priority, &'a [&'a str], &'a [&'a str]);
+    let items: &[Item] = &[
         (
             "Build the login form",
             "Email and password, with inline errors.\n\n- [x] Layout\n- [ ] Validation\n- [ ] Submit",
             InProgress,
             High,
             &["ui"],
+            &["pages", "styles"],
         ),
-        ("Remember the signed-in user", "Keep the session across reloads.", Todo, Medium, &["auth"]),
-        ("Password reset by email", "Send a one-time link; expire it after an hour.", Ready, Medium, &["auth"]),
-        ("Fix the README typo", "\"recieve\" in the install section.", Ready, Low, &["docs"]),
-        ("Dark mode for the settings page", "", Draft, None, &["ui"]),
-        ("Rate-limit the login endpoint", "Five tries a minute per address.", Draft, Urgent, &["auth", "security"]),
-        ("Add a favicon", "", Draft, Low, &["ui"]),
-        ("Export data as CSV", "From the reports page.", Draft, None, &[]),
-        ("Set up the project", "Repository, CI and a first page.", Done, None, &[]),
-        ("Try a Vue port", "Decided against it.", WontDo, None, &[]),
+        ("Remember the signed-in user", "Keep the session across reloads.", Todo, Medium, &["auth"], &["auth"]),
+        (
+            "Password reset by email",
+            "Send a one-time link; expire it after an hour.",
+            Ready,
+            Medium,
+            &["auth"],
+            &["auth", "pages"],
+        ),
+        ("Fix the README typo", "\"recieve\" in the install section.", Ready, Low, &["docs"], &["docs"]),
+        ("Dark mode for the settings page", "", Draft, None, &["ui"], &["styles"]),
+        (
+            "Rate-limit the login endpoint",
+            "Five tries a minute per address.",
+            Draft,
+            Urgent,
+            &["auth", "security"],
+            &[],
+        ),
+        ("Add a favicon", "", Draft, Low, &["ui"], &[]),
+        ("Export data as CSV", "From the reports page.", Draft, None, &[], &[]),
+        ("Set up the project", "Repository, CI and a first page.", Done, None, &[], &[]),
+        ("Try a Vue port", "Decided against it.", WontDo, None, &[], &[]),
     ];
     let mut ids = Vec::new();
     // Each new ticket goes to the top of its stage, so create bottom-up to keep this list's order.
-    for (title, description, stage, priority, labels) in items.iter().rev() {
+    for (title, description, stage, priority, labels, areas) in items.iter().rev() {
         let new = NewTicket {
             title: (*title).into(),
             description: Some((*description).into()),
             stage: Some(*stage),
             priority: Some(*priority),
             labels: Some(labels.iter().map(|l| (*l).to_string()).collect()),
-            areas: Option::None,
+            areas: Some(areas.iter().map(|a| (*a).to_string()).collect()),
             before: Option::None,
             after: Option::None,
         };
@@ -200,6 +235,9 @@ async fn seed_tickets(store: &Store, project_id: &str, now: i64) -> anyhow::Resu
     // "Remember the signed-in user" blocks "Password reset by email".
     store.add_link(&ids[1], &ids[2], LinkKind::Blocks, now).await?;
     store.add_comment(&ids[0], "Validation messages should match the design doc.", now).await?;
+    // The login form is being worked on in the feature worktree.
+    let attempt = uuid::Uuid::now_v7().to_string();
+    store.insert_attempt(&attempt, &ids[0], Some(&wt.id), &wt.branch, "main", &wt.base_commit, now - 5 * HOUR).await?;
     Ok(())
 }
 
@@ -305,6 +343,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tickets.total, 10);
+        let with_areas = tickets.items.iter().filter(|t| !t.areas.is_empty()).count();
+        assert_eq!(with_areas, 5);
+        // The login form has an active attempt on the feature worktree, whose changes are in its areas' files.
+        let active = store.list_active_attempts().await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].attempt.branch, "feature/login-form");
+        let files = pdt_git::changed_files(Path::new(active[0].worktree_path.as_ref().unwrap()), "main", "x").unwrap();
+        assert_eq!(files, ["login.css", "login.html"]);
 
         // A database with projects is left alone.
         assert!(!seed_demo(&store, tmp.path(), 11 * DAY).await.unwrap());

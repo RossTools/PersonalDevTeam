@@ -37,6 +37,22 @@ command = "pnpm test"                             # passes when it exits 0; test
 Unknown keys are refused, and so are duplicate names, an entry without a command, and env names that are not
 `[A-Za-z_][A-Za-z0-9_]*`.
 
+### Areas
+
+The same file names the parts of the project, so PDT can warn when two agents would change the same code (tickets
+spec §7). A ticket lists the areas it expects to touch; Start warns when another active ticket shares one, and PDT
+flags files changed by two active branches.
+
+```toml
+[[area]]
+name      = "migrations"                          # required; 1–60 characters, no commas
+paths     = ["crates/pdt-store/migrations/**"]    # required; globs from the checkout root: * stays in a folder, ** crosses
+exclusive = true                                  # only one active ticket at a time (sharing it is a conflict)
+```
+
+Areas are read from the project's **main checkout** (not the branch being worked on) plus the host overrides, merged
+by name like runs. An invalid area makes the whole configuration invalid, as a bad run does.
+
 ## What a run gets
 
 - **Working folder:** the checkout (the worktree, or the main checkout). Relative paths start there.
@@ -86,6 +102,7 @@ The address of PDT is `127.0.0.1:7420` for the stable instance. Agent sessions s
 |---|---|
 | `GET /api/projects` | projects (`id`, `repoPath`, …) |
 | `GET /api/projects/{id}/run-config[?worktreeId=…]` | `file`, `overrides`, the merged `effective` config, or `error` |
+| `GET /api/projects/{id}/areas` | `{ areas: [{ name, paths, exclusive }], error }` from the main checkout and the overrides |
 | `GET /api/projects/{id}/settings` | `{ agentCredentials, effectiveCredentials, runOverrides }` |
 | `PUT /api/projects/{id}/settings` | `{ agentCredentials, runOverrides }`; replaces **both**, so send back the `agentCredentials` you read. An empty `runOverrides` clears them. Text that isn't valid TOML is refused (`invalid_run_config`); check `run-config`'s `error` for the rest |
 | `POST /api/projects/{id}/runs` | `{ name, kind: "run" \| "test", worktreeId? }`; without `worktreeId` (or `branch`) it uses the main checkout. Opens a tab in the project's workspace |

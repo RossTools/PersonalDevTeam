@@ -5,4 +5,8 @@ import type { TicketStage } from "./TicketStage";
 /**
  * Edits a ticket; absent fields are left alone. `labels` and `areas` replace the whole set.
  */
-export type TicketPatch = { title?: string, description?: string, stage?: TicketStage, priority?: Priority, labels?: Array<string>, areas?: Array<string>, };
+export type TicketPatch = { title?: string, description?: string, stage?: TicketStage, priority?: Priority, labels?: Array<string>, areas?: Array<string>, 
+/**
+ * Wait until clear (true; it also goes to the top of its stage) or stop waiting.
+ */
+waiting?: boolean, };
