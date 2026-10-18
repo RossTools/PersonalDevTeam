@@ -36,8 +36,8 @@ env:
 # - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types)
 #   and web (typecheck, vitest, build). None of it depends on the OS. They run on the larger runner named by the
 #   repo variable PDT_LINUX_RUNNER when it is set, else on ubuntu-latest (2 vCPU for this internal repo).
-# - build (macos-latest): every other PR, on the Mac mini's self-hosted runner, only what macOS can break: clippy,
-#   nextest and the desktop crate.
+# - build (macos-latest): every other PR, on GitHub's macOS runner, only what macOS can break: clippy, nextest and the
+#   desktop crate.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
 #   always on main and nightly.
 # - bundles: only with the `bundle` label or a change to what they pack; always on main (releases).
@@ -141,29 +141,17 @@ jobs:
     needs: changes
     # Skipped for docs-only PRs (the skipped check counts as passing).
     if: needs.changes.outputs.code == 'true'
-    # The Mac mini (docs/superpowers/notes/ci.md): its build output stays warm between runs, so a PR rebuilds only what changed.
-    runs-on: [self-hosted, macOS, ARM64, pdt-mini]
+    # GitHub's macOS runner (M1, 3 vCPU), or the one named by the repo variable PDT_MACOS_RUNNER (e.g. macos-latest-xlarge).
+    # The Mac mini's self-hosted runner is no longer used (docs/superpowers/notes/ci.md).
+    runs-on: ${{ vars.PDT_MACOS_RUNNER || 'macos-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # Its own cargo home and target dir, apart from the user's; a cap so the target dir cannot grow forever.
-      - name: Runner build dirs
-        run: |
-          root="$HOME/.cache/pdt-ci"
-          mkdir -p "$root"
-          size_kb="$(du -sk "$root/target" 2>/dev/null | cut -f1)"
-          if [ "${size_kb:-0}" -gt 31457280 ]; then echo "target dir over 30 GB; starting fresh"; rm -rf "$root/target"; fi
-          {
-            echo "CARGO_HOME=$root/cargo-home"
-            echo "CARGO_TARGET_DIR=$root/target"
-            # Leaves cores for the agents working on this machine.
-            echo "CARGO_BUILD_JOBS=6"
-            echo "NEXTEST_TEST_THREADS=6"
-          } >> "$GITHUB_ENV"
-          echo "$root/cargo-home/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Show Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
@@ -174,6 +162,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir web build
       - run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
@@ -200,8 +189,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run --profile ci
 
-  # Releases are built on GitHub's runners, never the Mac mini: a clean machine, and signing never touches its keychain.
-  bundle-macos:
+    bundle-macos:
     name: bundle (macos-latest, app)
     needs: changes
     if: needs.changes.outputs.bundle == 'true' && github.event_name != 'schedule'
