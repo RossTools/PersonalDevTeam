@@ -1,6 +1,7 @@
 import type { ThemePref } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Tab } from '../api/gen/Tab';
+import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
 import { itemState, type AgentStateValue } from '../common/AgentState';
 import type { Place } from '../common/PlacePicker';
@@ -13,12 +14,16 @@ export const ACTIONS = 'Actions';
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
   | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'shell' | 'run' | 'rename' | 'close'
-  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add';
+  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files';
 
-/** A second step: another list (Move tab → workspaces), or a text field (New workspace → its name). */
+/**
+ * A second step: another list (Move tab → workspaces), a text field (New workspace → its name), or a ticket search
+ * (Open ticket… → the API's matches, in one project or all with null).
+ */
 export type PaletteStep =
   | { kind: 'list'; title: string; placeholder: string; items: PaletteItem[] }
-  | { kind: 'input'; title: string; label: string; placeholder?: string; submitLabel: string; run: (value: string) => void };
+  | { kind: 'input'; title: string; label: string; placeholder?: string; submitLabel: string; run: (value: string) => void }
+  | { kind: 'tickets'; title: string; projectId: string | null; run: (ticket: TicketSummary) => void };
 
 export interface PaletteItem {
   id: string;
@@ -59,6 +64,12 @@ export interface PaletteHandlers {
   moveTabToNewWorkspace: (tab: Tab, name: string) => void;
   setTheme: (pref: ThemePref) => void;
   showKeys: () => void;
+  /** The Files view (not in the phone rail). */
+  showFiles: () => void;
+  /** The New ticket form. */
+  newTicket: () => void;
+  /** Opens (or focuses) a ticket's tab. */
+  openTicket: (ticket: { id: string; projectId: string }) => void;
 }
 
 export interface PaletteContext {
@@ -72,6 +83,10 @@ export interface PaletteContext {
   place: Place | null;
   theme: ThemePref;
   handlers: PaletteHandlers;
+  /** Tickets matching the filter text when it looks like a key (AppShell asks the API). */
+  tickets?: TicketSummary[];
+  /** Where "Open ticket…" searches: the backlog's project, or every project (null). */
+  ticketProjectId?: string | null;
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;
@@ -137,6 +152,17 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
     });
   }
   goTo.push({ id: 'settings:host', label: 'Settings · This host', group: GO_TO, icon: 'host', run: h.hostSettings });
+  goTo.push({ id: 'view:files', label: 'Files', group: GO_TO, icon: 'files', keywords: ['folder', 'browse', 'code'], run: h.showFiles });
+  for (const t of ctx.tickets ?? []) {
+    goTo.push({
+      id: `ticket:${t.id}`,
+      label: `${t.key} · ${t.title}`,
+      group: GO_TO,
+      icon: 'ticket',
+      keywords: [t.key, `#${t.number}`, String(t.number)],
+      run: () => h.openTicket(t),
+    });
+  }
 
   const actions: PaletteItem[] = [];
   if (place) {
@@ -145,6 +171,19 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       { id: 'new:claude', label: 'New Claude here', group: ACTIONS, icon: 'claude', keywords: words, run: () => h.newSession('claude', place) },
       { id: 'new:codex', label: 'New Codex here', group: ACTIONS, icon: 'codex', keywords: words, run: () => h.newSession('codex', place) },
       { id: 'new:shell', label: 'New shell here', group: ACTIONS, icon: 'shell', keywords: words, run: () => h.newSession('shell', place) },
+    );
+  }
+  if (projects.length > 0) {
+    actions.push(
+      { id: 'tickets:new', label: 'New ticket', group: ACTIONS, icon: 'add', keywords: ['create', 'issue', 'task'], run: h.newTicket },
+      {
+        id: 'tickets:open',
+        label: 'Open ticket…',
+        group: ACTIONS,
+        icon: 'ticket',
+        keywords: ['find', 'search', 'issue'],
+        next: { kind: 'tickets', title: 'Open ticket', projectId: ctx.ticketProjectId ?? null, run: (t) => h.openTicket(t) },
+      },
     );
   }
   actions.push({ id: 'run', label: 'Run…', group: ACTIONS, icon: 'run', shortcut: key('c'), keywords: ['new tab', 'test'], run: h.openChooser });

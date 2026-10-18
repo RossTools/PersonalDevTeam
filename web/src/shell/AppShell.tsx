@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
@@ -18,6 +18,14 @@ import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
+import { OpenTicketContext } from '../tickets/actions';
+import { looksLikeKey } from '../tickets/model';
+import { NewTicketDialog } from '../tickets/NewTicketDialog';
+import { useTicketSearch } from '../tickets/queries';
+import { TicketsList } from '../tickets/TicketsList';
+import { TicketsView } from '../tickets/TicketsView';
+import { TicketView } from '../tickets/TicketView';
+import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
@@ -35,7 +43,9 @@ import { VIEWS, type ViewId } from './views';
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', codex: 'Codex', shell: 'Shell' };
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
-const LIST_NAME: Record<ViewId, string> = { sessions: 'Workspaces and agents', files: 'Files and folders', settings: 'Settings sections' };
+const LIST_NAME: Record<ViewId, string> = {
+  sessions: 'Workspaces and agents', tickets: 'Projects and filters', files: 'Files and folders', settings: 'Settings sections',
+};
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
@@ -54,6 +64,9 @@ export function AppShell() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  // The New ticket form: its project and the title typed so far.
+  const [newTicket, setNewTicket] = useState<{ projectId: string | null; title: string } | null>(null);
   // Phones: the list column is a sheet from the left, opened from the header.
   const [sheetOpen, setSheetOpen] = useState(false);
   const phone = useMediaQuery(PHONE_QUERY);
@@ -61,6 +74,13 @@ export function AppShell() {
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
   const ws = useWorkspaces();
+  const backlog = useBacklog();
+  const openTicket = useCallback((t: { id: string; projectId: string }) => {
+    setView('sessions');
+    void runAction(() => ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId));
+  }, [ws.focusItem]);
+  const keyQuery = paletteQuery.trim();
+  const ticketHits = useTicketSearch({ q: keyQuery, limit: 5 }, paletteOpen && looksLikeKey(keyQuery));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -80,6 +100,11 @@ export function AppShell() {
     const t = ws.tab;
     if (a.type === 'palette') {
       setPaletteOpen(true);
+      return;
+    }
+    if (a.type === 'backlog') {
+      setView('tickets');
+      backlog.setMode('backlog');
       return;
     }
     setView('sessions');
@@ -141,6 +166,8 @@ export function AppShell() {
   const place: Place | null = current
     ? { projectId: current.projectId, worktreeId: current.worktreeId }
     : ws.workspace?.projectId ? { projectId: ws.workspace.projectId, worktreeId: null } : null;
+  // New tickets go in the backlog's project in the Tickets view, else the current workspace's project.
+  const ticketProjectId = view === 'tickets' ? backlog.projectId : place?.projectId ?? backlog.projectId;
   const handlers: PaletteHandlers = {
     selectWorkspace: (id) => { setView('sessions'); ws.selectWorkspace(id); },
     selectTab: (t) => { setView('sessions'); ws.selectTab(t); },
@@ -170,9 +197,16 @@ export function AppShell() {
     }),
     setTheme,
     showKeys: () => setHelpOpen(true),
+    showFiles: () => setView('files'),
+    newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
+    openTicket,
   };
   const items = paletteOpen
-    ? paletteItems({ workspaces: ws.workspaces, infos: ws.allInfos, projects: ws.projects, tab: ws.tab, place, theme, handlers })
+    ? paletteItems({
+        workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
+        tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
+        ticketProjectId: view === 'tickets' ? backlog.projectId : null,
+      })
     : [];
 
   const list: ReactNode = view === 'sessions' ? (
@@ -190,6 +224,8 @@ export function AppShell() {
         onChoose={() => setSheetOpen(false)}
       />
     </>
+  ) : view === 'tickets' ? (
+    <TicketsList backlog={backlog} projects={ws.projects} onChoose={() => setSheetOpen(false)} />
   ) : view === 'files' ? (
     <>
       <h2 className={listHeading}>{label}</h2>
@@ -218,6 +254,7 @@ export function AppShell() {
   const openList = () => setSheetOpen(true);
 
   return (
+    <OpenTicketContext.Provider value={openTicket}>
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail
         active={view}
@@ -260,7 +297,15 @@ export function AppShell() {
         ) : null}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} />
+        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} onQueryChange={setPaletteQuery} />
+        {newTicket && (
+          <NewTicketDialog
+            projects={ws.projects}
+            projectId={newTicket.projectId}
+            title={newTicket.title}
+            onClose={() => setNewTicket(null)}
+          />
+        )}
         {addingProject && (
           <AddProjectDialog
             onClose={() => setAddingProject(false)}
@@ -281,10 +326,14 @@ export function AppShell() {
         )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {view === 'files' ? (
+            {view === 'tickets' ? (
+              <TicketsView backlog={backlog} projects={ws.projects} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} />
+            ) : view === 'files' ? (
               <FileViewer state={folder} />
             ) : view === 'settings' ? (
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
+            ) : ws.tab?.ticketId ? (
+              <TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} onDeleted={() => void ws.refresh()} />
             ) : current?.run ? (
               <RunView
                 key={current.run.id}
@@ -314,5 +363,6 @@ export function AppShell() {
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
     </div>
+    </OpenTicketContext.Provider>
   );
 }

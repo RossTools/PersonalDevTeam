@@ -27,7 +27,10 @@ export class Reply {
 export interface Call { method: string; path: string; body: unknown }
 type Route = ((call: Call) => unknown) | object | string | number | boolean | null | undefined;
 
-/** Stubs fetch with `"METHOD /path"` routes. `undefined` responds 204; unknown routes respond 404. */
+/**
+ * Stubs fetch with `"METHOD /path"` routes. `undefined` responds 204; unknown routes respond 404. A request with a query
+ * string matches its exact route first, then the route without the query (a function route can read `call.path`).
+ */
 export function stubApi(routes: Record<string, Route>): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -37,8 +40,9 @@ export function stubApi(routes: Record<string, Route>): Call[] {
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     };
     calls.push(call);
-    const key = `${call.method} ${call.path}`;
-    if (!(key in routes)) return new Response(JSON.stringify({ code: 'not_found', message: key }), { status: 404 });
+    const exact = `${call.method} ${call.path}`;
+    const key = exact in routes ? exact : `${call.method} ${call.path.split('?')[0]}`;
+    if (!(key in routes)) return new Response(JSON.stringify({ code: 'not_found', message: exact }), { status: 404 });
     const route = routes[key];
     // A function route may return a promise, to hold the response until the test resolves it.
     const value = await (typeof route === 'function' ? (route as (c: Call) => unknown)(call) : route);

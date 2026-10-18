@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bot, GitBranch, Play, SquareTerminal, TestTube } from 'lucide-react';
+import { ArrowLeft, Bot, GitBranch, Play, SquareTerminal, TestTube, Ticket } from 'lucide-react';
 import { Alert, Button, CommandList, Dialog, Popover, Sheet, Switch, type CommandItem } from '@ui';
 import { api } from '../api/client';
 import type { TabPlacement } from '../api/gen/TabPlacement';
@@ -12,6 +12,7 @@ import { RunBranchForm } from '../runs/RunBranchForm';
 import { choiceLabel, parseChoice, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { newSession, type Choice } from '../sessions/newSession';
+import { TicketPicker } from '../tickets/TicketPicker';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
@@ -69,7 +70,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   const { place, setPicked } = usePlace(ws);
   const [bypass, setBypass] = useState(false);
   const [query, setQuery] = useState('');
-  const [view, setView] = useState<'list' | 'branch'>('list');
+  const [view, setView] = useState<'list' | 'branch' | 'ticket'>('list');
   const workspace = ws.workspace;
   const placement: TabPlacement | undefined = workspace
     ? { workspaceId: workspace.id, position: ws.tab ? ws.tab.position + 1 : workspace.tabs.length }
@@ -106,6 +107,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
           disabled: create.isPending,
         }))
       : []),
+    ...(place && workspace ? [{ id: 'ticket', label: 'Ticket…', group: 'Start here', icon: <Ticket aria-hidden /> }] : []),
     ...(place
       ? choices.map((c) => ({
           id: `choice:${c}`,
@@ -135,6 +137,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     else if (what === 'choice' && place) {
       start.mutate({ ...(place.worktreeId ? { worktreeId: place.worktreeId } : {}), ...parseChoice(value), ...(placement ? { tab: placement } : {}) });
     } else if (what === 'branch') setView('branch');
+    else if (what === 'ticket') setView('ticket');
     else if (what === 'bring') {
       const hit = others.find((o) => `${o.info.item.kind}:${o.info.item.id}` === value);
       if (hit && workspace) void runAction(() => ws.openIn(hit.info.item, workspace.id, placement?.position)).then(onClose);
@@ -178,7 +181,19 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
         ) : (
           <p className="text-sm text-muted-foreground">Add a project first.</p>
         )}
-        {view === 'branch' && project ? (
+        {view === 'ticket' && place && workspace ? (
+          <div className="flex flex-col gap-1">
+            <Button variant="ghost" size="sm" className="self-start" onClick={() => setView('list')}>
+              <ArrowLeft aria-hidden className="size-4" /> Back
+            </Button>
+            <TicketPicker
+              projectId={place.projectId}
+              label="Ticket to open here"
+              onPick={(t) => void runAction(() => ws.openIn({ kind: 'ticket', id: t.id }, workspace.id, placement?.position)).then(onClose)}
+              className="max-h-80"
+            />
+          </div>
+        ) : view === 'branch' && project ? (
           <div className="flex flex-col gap-1">
             <Button variant="ghost" size="sm" className="self-start" onClick={() => setView('list')}>
               <ArrowLeft aria-hidden className="size-4" /> Back

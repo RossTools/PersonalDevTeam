@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
-import { findTab, itemOf, nextNeedingYou, resolveCurrent, sameItem, type Item } from './model';
+import { findTab, itemOf, nextNeedingYou, openTabBody, resolveCurrent, sameItem, type Item } from './model';
 
 const tab = (id: string, workspaceId: string, item: Item, position = 0): Tab => ({
   id,
   workspaceId,
   sessionId: item.kind === 'session' ? item.id : null,
   runId: item.kind === 'run' ? item.id : null,
-  ticketId: null,
+  ticketId: item.kind === 'ticket' ? item.id : null,
   position,
 });
 const ws = (id: string, tabs: Tab[], projectId: string | null = null): Workspace => ({
@@ -16,6 +16,7 @@ const ws = (id: string, tabs: Tab[], projectId: string | null = null): Workspace
 });
 const s = (id: string): Item => ({ kind: 'session', id });
 const r = (id: string): Item => ({ kind: 'run', id });
+const k = (id: string): Item => ({ kind: 'ticket', id });
 
 describe('workspace model', () => {
   it('reads and compares tab items', () => {
@@ -23,6 +24,16 @@ describe('workspace model', () => {
     expect(itemOf(tab('t', 'w', r('b')))).toEqual(r('b'));
     expect(sameItem(s('a'), s('a'))).toBe(true);
     expect(sameItem(s('a'), r('a'))).toBe(false);
+  });
+
+  it('handles ticket tabs', () => {
+    expect(itemOf(tab('t', 'w', k('x')))).toEqual(k('x'));
+    expect(sameItem(k('x'), s('x'))).toBe(false);
+    const list = [ws('w1', [tab('t1', 'w1', s('a')), tab('t2', 'w1', k('x'))])];
+    expect(findTab(list, k('x'))?.tab.id).toBe('t2');
+    expect(openTabBody(k('x'))).toEqual({ ticketId: 'x' });
+    expect(openTabBody(s('a'))).toEqual({ sessionId: 'a' });
+    expect(openTabBody(r('b'))).toEqual({ runId: 'b' });
   });
 
   it('finds the tab and workspace holding an item', () => {

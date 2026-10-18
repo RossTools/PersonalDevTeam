@@ -1,0 +1,31 @@
+// Test data for the ticket screens.
+import type { Project } from '../api/gen/Project';
+import type { Ticket } from '../api/gen/Ticket';
+import type { TicketEvent } from '../api/gen/TicketEvent';
+import type { TicketPage } from '../api/gen/TicketPage';
+import type { TicketSummary } from '../api/gen/TicketSummary';
+
+export const project: Project = {
+  id: 'p1', name: 'Alpha', key: 'ALP', repoPath: '/r', baseBranch: 'main', createdAt: 1, githubRepo: null,
+};
+
+export function summary(n: number, over: Partial<TicketSummary> = {}): TicketSummary {
+  return {
+    id: `t${n}`, projectId: project.id, key: `ALP-${n}`, number: n, title: `Ticket ${n}`, stage: 'draft', priority: 'none',
+    labels: [], areas: [], rank: `a${String(n).padStart(4, '0')}`, waiting: false, blockedBy: 0, attempt: null, overlap: 'none',
+    createdAt: 1, updatedAt: 1, closedAt: null, ...over,
+  };
+}
+
+export function ticket(n: number, over: Partial<Ticket> = {}): Ticket {
+  return { ...summary(n), description: '', links: [], attempts: [], ...over };
+}
+
+export const page = (items: TicketSummary[], nextCursor: string | null = null, total = items.length): TicketPage => ({ items, nextCursor, total });
+
+export function event(id: string, over: Partial<TicketEvent> = {}): TicketEvent {
+  return { id, ticketId: 't1', kind: 'created', actor: 'user', body: null, data: null, createdAt: 1, ...over };
+}
+
+/** The query of a request path, as an object. */
+export const params = (path: string) => Object.fromEntries(new URLSearchParams(path.split('?')[1] ?? ''));

@@ -3,8 +3,9 @@ import type { Project } from '../api/gen/Project';
 import type { Run } from '../api/gen/Run';
 import type { Session } from '../api/gen/Session';
 import type { Tab } from '../api/gen/Tab';
+import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
-import { runInfo, sessionInfo } from '../workspaces/useWorkspaces';
+import { runInfo, sessionInfo, ticketInfo } from '../workspaces/useWorkspaces';
 import { ACTIONS, GO_TO, paletteItems, type PaletteContext, type PaletteHandlers, type PaletteItem } from './paletteItems';
 
 const project = (id: string, name: string, key: string): Project => ({
@@ -45,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(),
   };
 }
 
@@ -181,4 +182,45 @@ describe('paletteItems', () => {
     byId(items, 'run').run!();
     expect(c.handlers.openChooser).toHaveBeenCalled();
   });
+
+  it('goes to Files (the phone rail has no Files item)', () => {
+    const c = ctx();
+    byId(paletteItems(c), 'view:files').run!();
+    expect(c.handlers.showFiles).toHaveBeenCalled();
+  });
+
+  it('offers New ticket and Open ticket… (a ticket search step) when there are projects', () => {
+    const c = ctx({ ticketProjectId: 'p1' });
+    const items = paletteItems(c);
+    byId(items, 'tickets:new').run!();
+    expect(c.handlers.newTicket).toHaveBeenCalled();
+    const open = byId(items, 'tickets:open');
+    if (open.next?.kind !== 'tickets') throw new Error('expected a tickets step');
+    expect(open.next.projectId).toBe('p1');
+    open.next.run(summary);
+    expect(c.handlers.openTicket).toHaveBeenCalledWith(summary);
+    expect(ids(paletteItems(ctx({ projects: [] })))).not.toContain('tickets:new');
+  });
+
+  it('goes to tickets the API matched by key, matching their number too', () => {
+    const c = ctx({ tickets: [summary] });
+    const it = byId(paletteItems(c), `ticket:${summary.id}`);
+    expect(it.label).toBe('PDT-42 · Fix login');
+    expect(it.group).toBe(GO_TO);
+    expect(it.keywords).toEqual(['PDT-42', '#42', '42']);
+    it.run!();
+    expect(c.handlers.openTicket).toHaveBeenCalledWith(summary);
+  });
+
+  it('labels a ticket tab with its key and title', () => {
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
+    const t = { ...summary, description: '', links: [], attempts: [] };
+    const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t, 0)] }));
+    expect(byId(items, 'tab:tk').label).toBe('PDT-42 · Fix login');
+  });
 });
+
+const summary: TicketSummary = {
+  id: 'k42', projectId: 'p1', key: 'PDT-42', number: 42, title: 'Fix login', stage: 'ready', priority: 'high', labels: [],
+  areas: [], rank: 'a', waiting: false, blockedBy: 0, attempt: null, overlap: 'none', createdAt: 0, updatedAt: 0, closedAt: null,
+};

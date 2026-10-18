@@ -1,0 +1,207 @@
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
+import { OpenTicketContext } from './actions';
+import { event, page, project, summary, ticket } from './fixtures';
+import { NewTicketDialog } from './NewTicketDialog';
+import { TicketView } from './TicketView';
+
+beforeEach(() => localStorage.clear());
+afterEach(() => vi.unstubAllGlobals());
+
+const base = ticket(1, {
+  title: 'Fix login',
+  stage: 'draft',
+  description: 'Steps:\n\n- open',
+  links: [
+    { kind: 'blocks', direction: 'incoming', id: 't2', key: 'ALP-2', title: 'Schema', stage: 'ready' },
+    { kind: 'blocks', direction: 'outgoing', id: 't3', key: 'ALP-3', title: 'Deploy', stage: 'draft' },
+    { kind: 'relates', direction: 'outgoing', id: 't4', key: 'ALP-4', title: 'Docs', stage: 'done' },
+  ],
+});
+
+const events = [
+  event('e1'),
+  event('e2', { kind: 'moved', data: { from: 'draft', to: 'ready' }, createdAt: 2 }),
+  event('e3', { kind: 'comment', body: 'Looks **good**', createdAt: 3 }),
+];
+
+function stub(extra: Parameters<typeof stubApi>[0] = {}): Call[] {
+  return stubApi({
+    'GET /api/tickets/t1': base,
+    'PATCH /api/tickets/t1': (c: Call) => ({ ...base, ...(c.body as object) }),
+    // Newest first (the timeline shows them oldest first).
+    'GET /api/tickets/t1/events': { items: [...events].reverse(), nextCursor: null },
+    [`GET /api/projects/${project.id}/labels`]: ['ui'],
+    'GET /api/tickets': page([summary(5, { title: 'Cache' }), summary(1)]),
+    ...extra,
+  });
+}
+
+const view = (onOpen = vi.fn()) =>
+  renderWithQuery(
+    <OpenTicketContext.Provider value={onOpen}>
+      <TicketView ticketId="t1" />
+    </OpenTicketContext.Provider>,
+  );
+
+const patches = (calls: Call[]) => calls.filter((c) => c.method === 'PATCH').map((c) => c.body);
+
+describe('ticket tab', () => {
+  it('shows the header, the Overview with description, activity, details and links, and disabled later tabs', async () => {
+    stub();
+    view();
+    expect(await screen.findByRole('heading', { name: /Fix login/ })).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Stage' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Conversation/ })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: /Changes/ })).toHaveTextContent('Phase 6');
+    expect(screen.getByText('open')).toBeInTheDocument();
+    const activity = await screen.findByRole('list', { name: 'Activity' });
+    const entries = within(activity).getAllByRole('listitem');
+    expect(entries.map((e) => e.textContent)).toEqual([
+      expect.stringContaining('Created'), expect.stringContaining('Moved from Draft to Ready'), expect.stringContaining('Commented'),
+    ]);
+    expect(within(entries[2]).getByText('good').tagName).toBe('STRONG');
+    expect(within(screen.getByRole('list', { name: 'Blocked by' })).getByText('Schema')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Blocks' })).getByText('Deploy')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Related' })).getByText('Docs')).toBeInTheDocument();
+  });
+
+  it('edits the title in place', async () => {
+    const calls = stub();
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit title' }));
+    const input = screen.getByRole('textbox', { name: 'Title' });
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Fix the login{Enter}');
+    await waitFor(() => expect(patches(calls)).toContainEqual({ title: 'Fix the login' }));
+  });
+
+  it('edits the description with a preview, saving only when changed', async () => {
+    const calls = stub();
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    const box = screen.getByRole('textbox', { name: 'Description' });
+    await userEvent.clear(box);
+    await userEvent.type(box, 'New **text**');
+    await userEvent.click(screen.getByRole('radio', { name: 'Preview' }));
+    expect(screen.getByText('text').tagName).toBe('STRONG');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patches(calls)).toContainEqual({ description: 'New **text**' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument());
+  });
+
+  it('changes the stage from Details and submits a draft from the header', async () => {
+    const calls = stub();
+    view();
+    const details = await screen.findByRole('region', { name: 'Details' });
+    await userEvent.click(within(details).getByRole('button', { name: /Stage/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'In progress' }));
+    await waitFor(() => expect(patches(calls)).toContainEqual({ stage: 'in_progress' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(patches(calls)).toContainEqual({ stage: 'ready' }));
+  });
+
+  it('adds and removes labels from Details', async () => {
+    const calls = stub();
+    view();
+    const details = await screen.findByRole('region', { name: 'Details' });
+    await userEvent.type(within(details).getByRole('textbox', { name: 'Add label' }), 'Back End{Enter}');
+    await waitFor(() => expect(patches(calls)).toContainEqual({ labels: ['back end'] }));
+  });
+
+  it('comments from the composer', async () => {
+    const calls = stub({ 'POST /api/tickets/t1/comments': event('e4', { kind: 'comment', body: 'Hi' }) });
+    view();
+    const box = await screen.findByRole('textbox', { name: 'Comment' });
+    await userEvent.type(box, 'Ship it{Control>}{Enter}{/Control}');
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/t1/comments')?.body).toEqual({ body: 'Ship it' }));
+    await waitFor(() => expect(box).toHaveValue(''));
+  });
+
+  it('links a ticket with a kind: blocked by is the other ticket blocking this one', async () => {
+    const calls = stub({ 'POST /api/tickets/t5/links': ticket(5) });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Link ticket…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Link ALP-1 to…' });
+    expect(within(dialog).getByRole('radio', { name: 'Blocked by' })).toBeChecked();
+    // The ticket itself is not offered.
+    await within(dialog).findByRole('menuitem', { name: /ALP-5 · Cache/ });
+    expect(within(dialog).queryByRole('menuitem', { name: /ALP-1 ·/ })).not.toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('menuitem', { name: /ALP-5 · Cache/ }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')).toMatchObject({ path: '/api/tickets/t5/links', body: { to: 't1', kind: 'blocks' } }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Link ALP-1 to…' })).not.toBeInTheDocument());
+  });
+
+  it('shows a refused link (a cycle) in the dialog', async () => {
+    stub({ 'POST /api/tickets/t1/links': new Reply(409, { code: 'link_cycle', message: 'That would make a cycle: ALP-1 → ALP-5 → ALP-1' }) });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Link ticket…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Link ALP-1 to…' });
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Blocks' }));
+    await userEvent.click(await within(dialog).findByRole('menuitem', { name: /ALP-5 · Cache/ }));
+    expect(await within(dialog).findByText('That would make a cycle: ALP-1 → ALP-5 → ALP-1')).toBeInTheDocument();
+  });
+
+  it('removes a link from its menu (an incoming block is removed from the blocker)', async () => {
+    const calls = stub({ 'DELETE /api/tickets/t2/links': ticket(2) });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Link to ALP-2' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Remove link' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'DELETE')).toMatchObject({ path: '/api/tickets/t2/links', body: { to: 't1', kind: 'blocks' } }));
+  });
+
+  it('opens a linked ticket from its key', async () => {
+    const onOpen = vi.fn();
+    stub();
+    view(onOpen);
+    await userEvent.click(await screen.findByRole('button', { name: 'ALP-3' }));
+    expect(onOpen).toHaveBeenCalledWith({ id: 't3', projectId: project.id });
+  });
+
+  it('deletes from ⋯ after confirming', async () => {
+    const calls = stub({ 'DELETE /api/tickets/t1': undefined });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete ALP-1?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Delete ticket' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tickets/t1')).toBe(true));
+  });
+});
+
+describe('new ticket form', () => {
+  it('creates a ticket with description, stage, priority and labels', async () => {
+    const calls = stubApi({
+      [`GET /api/projects/${project.id}/labels`]: [],
+      [`POST /api/projects/${project.id}/tickets`]: ticket(9),
+    });
+    const onClose = vi.fn();
+    renderWithQuery(<NewTicketDialog projects={[project]} projectId={project.id} title="Half typed" onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: 'New ticket' });
+    expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue('Half typed');
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Why');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Priority/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'High' }));
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Add label' }), 'ui{Enter}');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create ticket' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      title: 'Half typed', description: 'Why', stage: 'draft', priority: 'high', labels: ['ui'],
+    }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('shows the error from a refused create', async () => {
+    stubApi({
+      [`GET /api/projects/${project.id}/labels`]: [],
+      [`POST /api/projects/${project.id}/tickets`]: new Reply(400, { code: 'invalid_input', message: 'title is too long' }),
+    });
+    renderWithQuery(<NewTicketDialog projects={[project]} projectId={project.id} title="x" onClose={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Create ticket' }));
+    expect(await screen.findByText('title is too long')).toBeInTheDocument();
+  });
+});

@@ -15,6 +15,7 @@ export type KeyAction =
   | { type: 'rename' }
   | { type: 'needsYou' }
   | { type: 'palette' }
+  | { type: 'backlog' }
   | { type: 'help' };
 
 /** The action for the key pressed after the prefix, or null for an unbound key. */
@@ -29,6 +30,7 @@ export function actionFor(key: string): KeyAction | null {
     case 'r': return { type: 'rename' };
     case 'a': return { type: 'needsYou' };
     case 'k': return { type: 'palette' };
+    case 'l': return { type: 'backlog' };
     case '?': return { type: 'help' };
     default: return null;
   }
@@ -43,6 +45,7 @@ export const KEY_HELP: [string, string][] = [
   ['r', 'Rename the tab'],
   ['a', 'Next session that needs you'],
   ['k', 'Command palette (also ⌘K on a Mac)'],
+  ['l', 'Tickets (backlog)'],
   ['?', 'Show these keys'],
   ['Ctrl+] twice', 'Send Ctrl+] to the terminal'],
 ];

@@ -7,7 +7,8 @@ const item = 'size-9 pointer-coarse:size-11';
 
 /**
  * The views: a column on the left on desktop, a bar along the bottom on phones. `top` sits above the views (the DEV
- * badge on desktop); `onSearch` adds the phone's Search item, which opens the command palette.
+ * badge on desktop); `onSearch` makes it the phone rail: the Search item (opens the command palette) and only the views
+ * meant for phones.
  */
 export function IconRail({ active, onSelect, onSearch, top }: {
   active: ViewId;
@@ -30,7 +31,7 @@ export function IconRail({ active, onSelect, onSearch, top }: {
   return (
     <nav aria-label="Views" className="flex items-center justify-around gap-1 border-t border-border bg-card p-1.5 md:flex-col md:justify-start md:border-t-0 md:border-r">
       {top && <div className="flex justify-center pb-1">{top}</div>}
-      {VIEWS.filter((v) => v !== settings).map(view)}
+      {VIEWS.filter((v) => v !== settings && (!onSearch || v.phone !== false)).map(view)}
       {onSearch && (
         <IconButton label={SEARCH.label} onClick={onSearch} className={cn(item, 'text-muted-foreground')}>
           <SEARCH.icon aria-hidden />
