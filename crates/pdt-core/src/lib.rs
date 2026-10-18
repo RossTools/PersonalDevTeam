@@ -5,6 +5,7 @@ pub mod brand;
 pub mod git_url;
 pub mod handoff;
 pub mod host;
+pub mod host_path;
 pub mod identity;
 pub mod instance;
 pub mod links;

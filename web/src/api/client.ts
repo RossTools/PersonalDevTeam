@@ -8,6 +8,9 @@ import type { NewProject } from './gen/NewProject';
 import type { CloneProject } from './gen/CloneProject';
 import type { FileContent } from './gen/FileContent';
 import type { FileEntry } from './gen/FileEntry';
+import type { FolderEntry } from './gen/FolderEntry';
+import type { FolderListing } from './gen/FolderListing';
+import type { NewFolder } from './gen/NewFolder';
 import type { ProjectPatch } from './gen/ProjectPatch';
 import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
@@ -86,6 +89,9 @@ function filesQuery(worktreeId: string | null, path: string): string {
 
 export const api = {
   health: () => request<Health>('/api/health'),
+  listFolders: (q: { path?: string; hidden?: boolean; nearest?: boolean }) =>
+    request<FolderListing>(`/api/host/folders${queryString({ ...q, hidden: q.hidden || undefined, nearest: q.nearest || undefined })}`),
+  createFolder: (f: NewFolder) => request<FolderEntry>('/api/host/folders', { method: 'POST', body: JSON.stringify(f) }),
   listProjects: () => request<Project[]>('/api/projects'),
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
