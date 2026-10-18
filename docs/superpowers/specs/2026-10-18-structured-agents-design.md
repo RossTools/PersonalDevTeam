@@ -1,6 +1,6 @@
 # Personal Dev Team — Structured Agents (Phase 5) Design
 
-Status: draft, 2026-10-18, awaiting the user's review. Amends the main spec §5 (sessions and adapters) and the UX spec
+Status: accepted, 2026-10-18. Amends the main spec §5 (sessions and adapters) and the UX spec
 §8.2 (conversation view). Builds on Phase 4 (tickets, attempts, Start; docs/superpowers/specs/2026-10-18-tickets-design.md),
 which merges first. Protocol facts it relies on, with what was verified and what wasn't:
 docs/superpowers/notes/phase-5-agent-protocols.md.
