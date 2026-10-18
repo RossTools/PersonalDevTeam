@@ -96,6 +96,8 @@ pub struct AppState {
     /// Which instance this is (profile, port, dev), reported by `/api/health`. `new` makes it a dev instance on port
     /// 0; pdtd sets the real one.
     pub instance: pdt_core::instance::InstanceInfo,
+    /// The home folder the folder picker starts in and writes as `~`. `new` reads it from the OS; tests set it.
+    pub home_dir: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -143,6 +145,7 @@ impl AppState {
             update_token_account,
             checks: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
+            home_dir: std::env::home_dir(),
         }
     }
 }
@@ -237,6 +240,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/install", axum::routing::post(crate::update::post_install))
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
+        .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
         .route("/projects", get(crate::projects::list).post(crate::projects::create))
         .route("/projects/clone", axum::routing::post(crate::projects::clone))
         .route(
