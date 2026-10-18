@@ -589,10 +589,7 @@ paths = ["web/ui/**", " "]
         assert_eq!(get("PDT_PORT"), "8401");
         assert_eq!(get("PDT_ALLOWED_HOSTS"), "box.t.ts.net:8401");
         assert_eq!(c.tests.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["rust", "web"]);
-        let migrations = c.areas.iter().find(|a| a.name == "migrations").unwrap();
-        assert!(migrations.exclusive);
-        let set = crate::overlap::AreaSet::new(&c.areas);
-        assert!(set.is_exclusive_file("crates/pdt-store/migrations/0012_x.sql"));
-        assert!(!set.is_exclusive_file("web/ui/Button.tsx"));
+        // No [[area]] yet: a stable PDT older than 4c refuses the section, and Run → pdt reads this file.
+        assert!(c.areas.is_empty());
     }
 }
