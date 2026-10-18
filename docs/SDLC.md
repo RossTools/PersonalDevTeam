@@ -15,8 +15,11 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
-6. **Merge when the user says so** and CI is green. PRs are squash-merged (the only merge mode on the repo); the PR
-   title becomes the commit subject on `main`, so write it as one.
+6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --squash --auto`. GitHub merges it once the
+   required checks pass, so nobody sits in a shell watching CI. PRs are squash-merged (the only merge mode on the
+   repo); the PR title becomes the commit subject on `main`, so write it as one. The "Main" ruleset requires the
+   branch to be up to date with main: if another PR lands first, run `gh pr update-branch <n>` (CI runs again and
+   auto-merge stays on). Don't pass `--delete-branch`: it can't delete a branch whose worktree still exists.
 7. **Release is automatic.** Every push to `main` publishes `v0.1.<run number>`. The stable instance installs it when
    idle, or when the user clicks Update. Agents never update, restart or stop the stable instance.
 8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Update docs/ROADMAP.md in the PR
@@ -58,7 +61,8 @@ cargo clippy -p pdt-desktop --all-targets -- -D warnings   # only if desktop/ ch
 cargo test -p pdt-desktop                                  # likewise
 ```
 
-**Watching CI:** use the Actions run, not `gh pr checks`. The `gh` token here is fine-grained, and fine-grained tokens
+**Watching CI:** usually unnecessary (auto-merge waits for it). When you do need a result, run the watch in the
+background (or with Monitor), not as a long foreground wait, and use the Actions run, not `gh pr checks`. The `gh` token here is fine-grained, and fine-grained tokens
 cannot read check runs (there is no Checks permission for them), so `gh pr checks` fails with "Resource not
 accessible by personal access token".
 
@@ -70,6 +74,7 @@ gh run watch <run id> --interval 30 --exit-status                          # exi
 A new push starts a new run (the old one is cancelled), so look the run up again after each push.
 
 A fresh worktree needs `pnpm install --frozen-lockfile` once. Its `target/` starts empty, so the first build is slow.
+CI runs `cargo nextest run`; nextest isn't installed on the dev machine, and plain `cargo test` covers the same tests.
 Tests never touch port 7420, the real data folders or the real keychain.
 
 ## Testing a branch in a dev instance
@@ -99,17 +104,21 @@ script without it, never run a built installer, never run `pdt-host install`/`un
 
 ## After merge
 
+Check it merged (`gh pr view <n> --json state` says `MERGED`), stop the branch's runs in PDT, and `cd` out of the
+worktree (a shell whose folder is removed fails every command after). Then, in this order:
+
 ```sh
-git -C <repo> fetch origin && git -C <repo> merge --ff-only origin/main
+git -C <repo> fetch --prune origin && git -C <repo> merge --ff-only origin/main
 git -C <repo> worktree remove .worktrees/<branch>
 git -C <repo> branch -D <branch>                  # -D: squash merges don't look merged to git
 git -C <repo> push origin --delete <branch>       # the repo doesn't delete merged branches itself
 ```
 
-Stop the branch's runs in PDT first. PDT does not yet notice a removed worktree (Phase 6 automates this cleanup), so it
-may still list it.
+Removing it from the project's Settings page (`DELETE /api/worktrees/{id}`) does the worktree step and keeps PDT's list
+right, but the stable PDT may be a release behind main and lack that route (404); check `/api/health`. A worktree
+removed by hand shows as "folder missing" in PDT until it is removed there too.
 
-## Safety rules (from CLAUDE.md)
+## Safety rules (from AGENTS.md)
 
 - Never stop, restart or update the stable instance (7420) or call its `/api/shutdown`. Creating worktrees and
   starting runs through its API is fine.
