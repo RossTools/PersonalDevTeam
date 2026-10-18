@@ -267,7 +267,7 @@ function Backlog() {
 
 const card = (n: number, over: Partial<TicketSummary> = {}): TicketSummary => ({
   id: `g${n}`, projectId: 'gp', key: `PDT-${n}`, number: n, title: 'Board cards show the title on up to two lines, then cut it off with an ellipsis',
-  stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, blockedBy: 0, attempt: null, overlap: 'none',
+  stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [],
   createdAt: NOW, updatedAt: NOW, closedAt: null, ...over,
 });
 const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null };
@@ -282,6 +282,13 @@ function Cards() {
             <BoardCard ticket={card(41, { title: 'Short title' })} onOpen={() => {}} entries={noMenu} draggable />
             <BoardCard ticket={card(42, { priority: 'high', labels: ['web', 'tickets'] })} onOpen={() => {}} entries={noMenu} draggable />
             <BoardCard ticket={card(43, { priority: 'urgent', blockedBy: 2, title: 'Waits for the schema' })} onOpen={() => {}} entries={noMenu} draggable />
+          </ul>
+        </Demo>
+        <Demo label="Overlap, conflict, waiting, clear to start">
+          <ul className="flex flex-col gap-2">
+            <BoardCard ticket={card(48, { overlap: 'overlap', overlapWith: ['PDT-44'], title: 'Shares web/ui with PDT-44' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(49, { overlap: 'conflict', overlapWith: ['PDT-45', 'PDT-44'], waiting: true, title: 'Another migration' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(50, { waiting: true, clearToStart: true, title: 'Nothing in the way any more' })} onOpen={() => {}} entries={noMenu} draggable />
           </ul>
         </Demo>
       </div>
@@ -308,7 +315,7 @@ function Cards() {
 }
 
 const startTicket = (over: Partial<FullTicket> = {}): FullTicket => ({
-  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], ...over,
+  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], overlaps: [], ...over,
 });
 const START_STATES: { label: string; ticket: FullTicket }[] = [
   { label: 'Ready', ticket: startTicket() },
@@ -316,6 +323,18 @@ const START_STATES: { label: string; ticket: FullTicket }[] = [
     label: 'Blocked (Start anyway)',
     ticket: startTicket({ links: [{ kind: 'blocks', direction: 'incoming', id: 'gx', key: 'PDT-12', title: 'Tickets schema', stage: 'in_progress' }] }),
   },
+  {
+    label: 'Conflict and overlap (Wait / Start anyway)',
+    ticket: startTicket({
+      overlaps: [
+        { ticketId: 'g45', key: 'PDT-45', title: 'Merge loop', stage: 'in_progress', level: 'conflict', areas: ['migrations'],
+          files: ['crates/pdt-store/migrations/0010_attempts.sql'], filesTotal: 1 },
+        { ticketId: 'g44', key: 'PDT-44', title: 'Board and Start', stage: 'in_progress', level: 'overlap', areas: ['web/ui', 'old-area'],
+          files: [], filesTotal: 0 },
+      ],
+    }),
+  },
+  { label: 'Waiting', ticket: startTicket({ waiting: true }) },
   { label: 'Active attempt', ticket: startTicket({ stage: 'in_progress', attempt }) },
 ];
 const galleryProject: Project = { id: 'gp', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: NOW, githubRepo: null };
@@ -327,6 +346,10 @@ function StartDemo() {
   const show = (t: FullTicket) => {
     qc.setQueryData(['ticket', t.id], t);
     qc.setQueryData(['projects'], [galleryProject]);
+    qc.setQueryData(['areas', galleryProject.id], {
+      areas: [{ name: 'migrations', paths: ['crates/pdt-store/migrations/**'], exclusive: true }, { name: 'web/ui', paths: ['web/ui/**'], exclusive: false }],
+      error: null,
+    });
     setOpen(t);
   };
   return (

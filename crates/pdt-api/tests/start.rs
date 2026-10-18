@@ -453,3 +453,154 @@ async fn new_sessions_take_an_initial_prompt() {
     assert!(!launches[1].iter().any(|a| a.contains("Say hi") || a.contains("follow it")), "{launches:?}");
     env.state.ptys.shutdown().await;
 }
+
+// Areas and overlap (tickets spec §7).
+
+const AREAS: &str = r#"
+[[area]]
+name = "migrations"
+paths = ["db/**"]
+exclusive = true
+
+[[area]]
+name = "web"
+paths = ["web/**"]
+"#;
+
+fn configure_areas(env: &Env) {
+    std::fs::create_dir_all(env.repo.join(".pdt")).unwrap();
+    std::fs::write(env.repo.join(".pdt/project.toml"), AREAS).unwrap();
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-q", "-m", "areas"]);
+}
+
+async fn list(env: &Env, query: &str) -> Vec<Value> {
+    let (st, v) = call(&env.app, "GET", &format!("/api/tickets?project={}{query}", env.pid), None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    v["items"].as_array().unwrap().clone()
+}
+
+fn by_key<'a>(items: &'a [Value], key: &str) -> &'a Value {
+    items.iter().find(|t| t["key"] == key).unwrap()
+}
+
+fn keys(items: &[Value]) -> Vec<String> {
+    let mut k: Vec<String> = items.iter().map(|t| s(&t["key"]).to_string()).collect();
+    k.sort();
+    k
+}
+
+#[tokio::test]
+async fn areas_make_planned_overlap_and_start_checks_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let (st, v) = call(&env.app, "GET", &format!("/api/projects/{}/areas", env.pid), None).await;
+    assert_eq!((st, v), (StatusCode::OK, json!({"areas": [], "error": null})));
+    configure_areas(&env);
+    let (_, v) = call(&env.app, "GET", &format!("/api/projects/{}/areas", env.pid), None).await;
+    assert_eq!(v["areas"][0], json!({"name": "migrations", "paths": ["db/**"], "exclusive": true}));
+    assert_eq!(v["areas"][1]["exclusive"], false);
+
+    let a = ticket(&env, json!({"title": "A", "areas": ["migrations", "web"]})).await;
+    let b = ticket(&env, json!({"title": "B", "areas": ["migrations"], "stage": "ready"})).await;
+    let c = ticket(&env, json!({"title": "C", "areas": ["web"]})).await;
+    let d = ticket(&env, json!({"title": "D", "areas": ["gone"]})).await;
+    assert!(list(&env, "").await.iter().all(|t| t["overlap"] == "none"), "nothing is active");
+    started(&env, &a, json!({"agent": "claude"})).await;
+
+    let items = list(&env, "").await;
+    assert_eq!(by_key(&items, "PDT-2")["overlap"], "conflict");
+    assert_eq!(by_key(&items, "PDT-2")["overlapWith"], json!(["PDT-1"]));
+    assert_eq!(by_key(&items, "PDT-3")["overlap"], "overlap");
+    assert_eq!(by_key(&items, "PDT-4")["overlap"], "none", "areas not in the config are ignored");
+    assert_eq!(by_key(&items, "PDT-1")["overlap"], "none", "not-started tickets hold no areas");
+    assert_eq!(keys(&list(&env, "&conflicts=true").await), ["PDT-2", "PDT-3"]);
+    assert_eq!(keys(&list(&env, "&conflicts=false").await), ["PDT-1", "PDT-4"]);
+    let t = get_ticket(&env, &b).await;
+    assert_eq!(
+        t["overlaps"],
+        json!([{"ticketId": a, "key": "PDT-1", "title": "A", "stage": "in_progress", "level": "conflict",
+                "areas": ["migrations"], "files": [], "filesTotal": 0}])
+    );
+
+    // Start refuses with the reasons; Wait instead.
+    let (st, v) = start(&env, &b, json!({"agent": "claude"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "start_blocked"), "{v}");
+    assert_eq!(s(&v["message"]), "PDT-2 conflicts with PDT-1 (migrations)");
+    let (st, t) = call(&env.app, "PATCH", &format!("/api/tickets/{b}"), Some(json!({"waiting": true}))).await;
+    assert_eq!(st, StatusCode::OK, "{t}");
+    assert_eq!((t["waiting"].as_bool(), t["clearToStart"].as_bool()), (Some(true), Some(false)));
+    assert_eq!(event_kinds(&env, &b).await.last().map(String::as_str), Some("waiting"));
+
+    // Force starts anyway and records it; the two active tickets now overlap each other.
+    let r = started(&env, &c, json!({"agent": "claude", "mode": "force"})).await;
+    assert_eq!(r["ticket"]["overlapWith"], json!(["PDT-1"]));
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{c}/events"), None).await;
+    let ev = events["items"].as_array().unwrap().iter().find(|e| e["kind"] == "started").unwrap().clone();
+    assert_eq!(ev["data"]["forced"], true);
+    assert_eq!(ev["data"]["overlaps"], json!([{"key": "PDT-1", "level": "overlap", "areas": ["web"]}]));
+    assert_eq!(get_ticket(&env, &a).await["overlapWith"], json!(["PDT-3"]));
+    let (_, v) = start(&env, &d, json!({"agent": "claude"})).await;
+    assert!(v["session"].is_object(), "no findings: starts at once {v}");
+
+    // When the conflicting attempt ends, the waiting ticket is clear to start.
+    let attempt = get_ticket(&env, &a).await["attempt"]["id"].as_str().unwrap().to_string();
+    call(&env.app, "POST", &format!("/api/attempts/{attempt}/abandon"), None).await;
+    let t = get_ticket(&env, &b).await;
+    assert_eq!((t["overlap"].as_str(), t["clearToStart"].as_bool()), (Some("none"), Some(true)));
+    // Starting it clears waiting.
+    let r = started(&env, &b, json!({"agent": "claude"})).await;
+    assert_eq!((r["ticket"]["waiting"].as_bool(), r["ticket"]["clearToStart"].as_bool()), (Some(false), Some(false)));
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn files_changed_by_two_attempts_overlap_and_are_recorded_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    configure_areas(&env);
+    let a = ticket(&env, json!({"title": "A"})).await;
+    let b = ticket(&env, json!({"title": "B"})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    started(&env, &b, json!({"agent": "claude"})).await;
+    let wa = env.repo.join(".worktrees").join("pdt-PDT-1-a");
+    let wb = env.repo.join(".worktrees").join("pdt-PDT-2-b");
+    pdt_api::refresh_overlaps(&env.state).await;
+    assert_eq!(get_ticket(&env, &a).await["overlap"], "none");
+
+    // A commits a.txt; B edits it without committing: an overlap.
+    work_in(&env, "pdt-PDT-1-a", "a.txt");
+    std::fs::write(wb.join("a.txt"), "mine\n").unwrap();
+    pdt_api::refresh_overlaps(&env.state).await;
+    let t = get_ticket(&env, &a).await;
+    assert_eq!(t["overlap"], "overlap");
+    assert_eq!((t["overlaps"][0]["key"].as_str(), &t["overlaps"][0]["files"]), (Some("PDT-2"), &json!(["a.txt"])));
+    assert_eq!(get_ticket(&env, &b).await["overlapWith"], json!(["PDT-1"]));
+    let overlap_events = |id: String| {
+        let app = env.app.clone();
+        async move {
+            let (_, v) = call(&app, "GET", &format!("/api/tickets/{id}/events"), None).await;
+            v["items"].as_array().unwrap().iter().filter(|e| e["kind"] == "overlap").cloned().collect::<Vec<_>>()
+        }
+    };
+    let ev = overlap_events(a.clone()).await;
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0]["data"], json!({"ticketId": b, "key": "PDT-2", "files": ["a.txt"], "level": "overlap"}));
+    pdt_api::refresh_overlaps(&env.state).await;
+    assert_eq!(overlap_events(a.clone()).await.len(), 1, "the same files are not recorded again");
+    assert_eq!(overlap_events(b.clone()).await.len(), 1);
+
+    // Both touch a file in the exclusive area (one untracked): a conflict, recorded as a new file set.
+    std::fs::create_dir_all(wa.join("db")).unwrap();
+    std::fs::create_dir_all(wb.join("db")).unwrap();
+    std::fs::write(wa.join("db/0002.sql"), "a\n").unwrap();
+    std::fs::write(wb.join("db/0002.sql"), "b\n").unwrap();
+    pdt_api::refresh_overlaps(&env.state).await;
+    let t = get_ticket(&env, &b).await;
+    assert_eq!(t["overlap"], "conflict");
+    assert_eq!(t["overlaps"][0]["files"], json!(["a.txt", "db/0002.sql"]));
+    assert_eq!(t["overlaps"][0]["filesTotal"], 2);
+    assert_eq!(overlap_events(b.clone()).await.len(), 2);
+    assert_eq!(keys(&list(&env, "&conflicts=true").await), ["PDT-1", "PDT-2"]);
+    env.state.ptys.shutdown().await;
+}
