@@ -9,7 +9,14 @@ on:
   # Nightly: the Windows checks on main, in case something only Windows sees slipped in.
   schedule:
     - cron: "0 7 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      pr:
+        # Set by update-prs.yml after it brings a PR's branch up to date: its push (made with GITHUB_TOKEN) starts no
+        # pull_request run, so it dispatches this workflow on the branch and `changes` picks jobs as for that PR.
+        description: Pull request whose branch this run checks (picks the jobs as a pull_request run would)
+        required: false
+        default: ""
 
 # A newer commit on the same PR cancels the older run. A running main run is never cancelled, but a main run still
 # queued when a newer push arrives is superseded by it (that only skips a release number).
@@ -47,10 +54,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
         run: |
-          if [ "${{ github.event_name }}" != pull_request ]; then
+          # Main, nightly and plain dispatches run everything; a PR (or a dispatch for one) picks by its changes.
+          if [ -z "$PR" ]; then
             { echo "code=true"; echo "windows=true"; echo "bundle=true"; } >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            LABELS="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')"
           fi
           files="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)"
           printf 'Changed files:\n%s\n' "$files"

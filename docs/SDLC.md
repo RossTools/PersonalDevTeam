@@ -18,8 +18,9 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --squash --auto`. GitHub merges it once the
    required checks pass, so nobody sits in a shell watching CI. PRs are squash-merged (the only merge mode on the
    repo); the PR title becomes the commit subject on `main`, so write it as one. The "Main" ruleset requires the
-   branch to be up to date with main: if another PR lands first, run `gh pr update-branch <n>` (CI runs again and
-   auto-merge stays on). Don't pass `--delete-branch`: it can't delete a branch whose worktree still exists.
+   branch to be up to date with main: when another PR lands first, the `update-prs` workflow merges main into every
+   auto-merge PR that fell behind and starts its CI (auto-merge stays on). Only a conflict needs an agent: the run's
+   summary lists the PR; merge main into the branch by hand, fix and push. Don't pass `--delete-branch`: it can't delete a branch whose worktree still exists.
 7. **Release is automatic.** Every push to `main` publishes `v0.1.<run number>`. The stable instance installs it when
    idle, or when the user clicks Update. Agents never update, restart or stop the stable instance.
 8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Move the ticket to Done (or let the
