@@ -17,12 +17,20 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
   Files view (#16)
 
 ## Now
-- **Phase 4: Tickets and board.** Tickets, board, Start (attempt, worktree, session). This roadmap moves into PDT. Own brainstorm and spec.
+- **Phase 3c: Design system and shell UX** (spec: docs/superpowers/specs/2026-10-17-design-system-ux-design.md, in
+  review; decisions D1–D7 made). 3c-1: tokens, `web/ui` components, gallery, every screen moved onto them. 3c-2:
+  shell fixes (dev badge, view header, ended sessions, settings as a page, command palette, new-tab picker, toasts,
+  phone sidebar sheet).
 
 ## Next (build order)
-1. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
-2. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
-3. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
+The design spec above also fixes the UX and component list of Phases 4–7 (§8); each phase's own spec covers the rest.
+1. **Phase 4: Tickets, backlog and board.** Tickets, a backlog list built for many tickets (search, filters, rank,
+   bulk actions), a board of committed work, blocker links, areas and overlap detection so agents don't make
+   conflicting changes, Start (attempt, worktree, session). This roadmap moves into PDT.
+   Own brainstorm and spec.
+2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
+3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
+4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
 ## Follow-ups (any time)
 - **Folder picker:** browse the host's folders to choose a path (Add project → Folder, Clone URL → Into folder, Host
@@ -30,7 +38,8 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - **Faster CI, next steps** (done: nextest, no debug info, Mac mini runner for PRs, Windows and bundles off the PR
   path; docs/superpowers/notes/ci.md). Next: a single `ci` gate job as the only required check (lets jobs be
   renamed), a Windows runner on the desktop, Dev Drive for hosted Windows.
-- **Phone UI** (parallel workstream): single-column layout, touch terminals.
+- **Phone UI** (parallel workstream): single-column layout, touch terminals. The sidebar sheet is in 3c; the
+  one-handed inbox in Phase 7 (design spec §6.7, §8.4).
 - **Notifications** for needs-you and unseen sessions.
 - **Work laptop install:** separate self-contained install, corporate accounts, no Tailscale, updates by token or by
   hand. Needs remote-access-free use to be smooth.
