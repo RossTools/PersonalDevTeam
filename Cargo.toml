@@ -22,7 +22,7 @@ pdt-host = { path = "crates/pdt-host" }
 tokio = { version = "1.53.3", features = ["full"] }
 axum = { version = "0.8.9", features = ["ws"] }
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.7.1", features = ["fs", "trace"] }
+tower-http = { version = "0.7.1", features = ["fs", "trace", "compression-gzip", "compression-br"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

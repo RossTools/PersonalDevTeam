@@ -344,7 +344,8 @@ pub enum PtyClientMessage {
 #[ts(export)]
 pub enum PtyServerMessage {
     /// Sent once per connection after the scrollback replay (even an empty one). Binary frames before it are
-    /// replay: the client must not answer terminal queries in them again.
+    /// replay: the client must not answer terminal queries in them again. A client that connected with
+    /// `?replay=gzip` gets the replay as one gzip-compressed frame; live output after `ready` is never compressed.
     Ready,
     Exit {
         code: i32,

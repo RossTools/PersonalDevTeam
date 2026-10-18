@@ -139,6 +139,42 @@ async fn call_host(app: &axum::Router, uri: &str, host: Option<&str>) -> (Status
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
+async fn get_with(app: &axum::Router, uri: &str, headers: &[(&str, &str)]) -> axum::http::Response<Body> {
+    let mut req = Request::builder().uri(uri);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn the_web_ui_is_compressed_and_hashed_assets_are_cached_for_good() {
+    let tmp = tempfile::tempdir().unwrap();
+    let web = tmp.path().join("web");
+    std::fs::create_dir_all(web.join("assets")).unwrap();
+    std::fs::write(web.join("index.html"), "<html>PDT</html>").unwrap();
+    let js = "console.log('pdt');\n".repeat(500);
+    std::fs::write(web.join("assets/index-abc123.js"), &js).unwrap();
+    let app = app(tmp.path(), Some(web)).await;
+
+    let res = get_with(&app, "/assets/index-abc123.js", &[("accept-encoding", "gzip")]).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-encoding"], "gzip");
+    assert_eq!(res.headers()["cache-control"], "public, max-age=31536000, immutable");
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.len() < js.len() / 10, "{} bytes", body.len());
+
+    // index.html (also served for app routes) is always revalidated, so a new release is picked up at once.
+    for uri in ["/", "/some/app/route"] {
+        let res = get_with(&app, uri, &[]).await;
+        assert_eq!(res.status(), StatusCode::OK, "{uri}");
+        assert_eq!(res.headers()["cache-control"], "no-cache", "{uri}");
+    }
+    // A client that does not accept gzip gets the plain file.
+    let res = get_with(&app, "/assets/index-abc123.js", &[]).await;
+    assert!(res.headers().get("content-encoding").is_none());
+}
+
 #[tokio::test]
 async fn host_guard_allows_only_listed_hosts() {
     let tmp = tempfile::tempdir().unwrap();
