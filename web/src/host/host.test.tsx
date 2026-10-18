@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
@@ -41,7 +41,7 @@ describe('HostSettingsPage', () => {
     });
     renderWithQuery(<HostSettingsPage />);
     await userEvent.click(await screen.findByRole('button', { name: 'Use me@example.com' }));
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Remote access' }));
+    await userEvent.click(screen.getByRole('switch', { name: 'Remote access' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
     expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ ownerLogin: 'me@example.com' }, { remoteAccess: true }]);
   });
@@ -80,7 +80,7 @@ describe('HostSettingsPage', () => {
       'PUT /api/host/settings': new Reply(400, { code: 'owner_required', message: 'set the owner first' }),
     });
     renderWithQuery(<HostSettingsPage />);
-    await userEvent.click(await screen.findByRole('checkbox', { name: 'Remote access' }));
+    await userEvent.click(await screen.findByRole('switch', { name: 'Remote access' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('set the owner first');
   });
 
@@ -111,7 +111,64 @@ describe('HostSettingsPage', () => {
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Token: cannot be read/)).toBeInTheDocument();
     expect(screen.getByText(/Always Allow/)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: 'Remote access' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Remote access' })).toBeInTheDocument();
+  });
+
+  it('saves the update policy at once and says so', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: /Update policy/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Manual (no checks)' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ updatePolicy: 'manual' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('saves ports and max runs with one Save and shows why it failed', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': new Reply(400, { code: 'invalid_ports', message: 'the port range is empty' }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const runs = await screen.findByRole('region', { name: 'Runs' });
+    const save = within(runs).getByRole('button', { name: 'Save run settings' });
+    expect(save).toBeDisabled();
+    const last = within(runs).getByLabelText('Last run port');
+    await userEvent.clear(last);
+    await userEvent.type(last, '8300');
+    const max = within(runs).getByRole('spinbutton', { name: 'Max concurrent runs' });
+    await userEvent.clear(max);
+    await userEvent.type(max, '6');
+    await userEvent.click(save);
+    expect(await within(runs).findByRole('alert')).toHaveTextContent('the port range is empty');
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ runPorts: { start: 8400, end: 8300 }, maxConcurrentRuns: 6 });
+  });
+
+  it('confirms before removing the token', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView({ tokenPresent: true }),
+      'GET /api/host/update': update({ token: { state: 'valid', expiresAt: null } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'DELETE /api/host/token': undefined,
+    });
+    renderWithQuery(<HostSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove token' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Remove token' }));
+    const ask = await screen.findByRole('alertdialog', { name: 'Remove the GitHub token?' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Remove token' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/host/token')).toBe(true));
   });
 
   it('shows why the settings failed to load instead of loading forever', async () => {
@@ -136,7 +193,10 @@ describe('HostSettingsPage', () => {
     expect(await screen.findByText(/Updates apply to the installed app/)).toBeInTheDocument();
     expect(screen.getByText(/expired or revoked/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument();
-    expect(screen.getByText(/claude: not found/)).toBeInTheDocument();
+    const claude = screen.getByText('claude').closest('li')!;
+    expect(claude).toHaveTextContent('not found');
+    expect(within(claude).getByRole('img', { name: 'not found' })).toHaveAttribute('data-status', 'failed');
+    expect(within(screen.getByText('git').closest('li')!).getByRole('img', { name: 'OK' })).toHaveAttribute('data-status', 'running');
   });
 });
 
@@ -163,12 +223,13 @@ describe('UpdateBanner', () => {
       'POST /api/host/update/install': () =>
         ++n === 1 ? new Reply(409, { code: 'host_busy', message: 'Busy: Claude is working. Update anyway?' }) : update({ state: 'installing' }),
     });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderWithQuery(<UpdateBanner />);
     expect(await screen.findByText(/Update to v0.1.7 available/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Update' }));
+    const ask = await screen.findByRole('alertdialog', { name: 'Update now?' });
+    expect(ask).toHaveTextContent('Busy: Claude is working. Update anyway?');
+    await userEvent.click(within(ask).getByRole('button', { name: 'Update anyway' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2));
-    expect(confirm).toHaveBeenCalledWith('Busy: Claude is working. Update anyway?');
     expect(calls.filter((c) => c.method === 'POST').map((c) => c.body)).toEqual([{ force: false }, { force: true }]);
   });
 
@@ -177,9 +238,9 @@ describe('UpdateBanner', () => {
       'GET /api/host/update': update({ state: 'available', latest: release }),
       'POST /api/host/update/install': new Reply(409, { code: 'host_busy', message: 'Busy: Claude is working. Update anyway?' }),
     });
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderWithQuery(<UpdateBanner />);
     await userEvent.click(await screen.findByRole('button', { name: 'Update' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/host/update').length).toBeGreaterThan(1));
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();

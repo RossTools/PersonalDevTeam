@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button } from '@ui';
+import { Banner, Button, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
+
+// Banner buttons stay 24px on touch screens too: the strip is a fixed h-8 (a 44px button would be clipped, and growing
+// the strip would resize the terminal under it).
+const SMALL = 'pointer-coarse:h-control-sm! pointer-coarse:px-2!';
 
 export function UpdateBanner() {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const status = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus, refetchInterval: 60_000 });
   const refresh = () => qc.invalidateQueries({ queryKey: ['host-update'] });
   const install = useMutation({
@@ -14,8 +19,8 @@ export function UpdateBanner() {
       } catch (e) {
         // A busy host asks for confirmation; declining leaves it alone.
         if (e instanceof ApiError && e.code === 'host_busy') {
-          if (window.confirm(e.message)) return api.installUpdate(true);
-          return null;
+          const { ok } = await confirm({ title: 'Update now?', body: e.message, action: 'Update anyway' });
+          return ok ? api.installUpdate(true) : null;
         }
         throw e;
       }
@@ -33,40 +38,50 @@ export function UpdateBanner() {
   return (
     <>
       {r && (
-        <div role={r.outcome === 'installed' ? 'status' : 'alert'} className={`${STRIP} ${r.outcome === 'installed' ? 'text-running' : 'text-failed'}`}>
-          <span className="min-w-0 truncate" title={r.message}>{r.message}</span>
-          {r.outcome !== 'installed' && r.log && <code className="min-w-0 truncate text-muted-foreground" title={r.log}>{r.log}</code>}
-          <Button variant="ghost" className={SMALL} onClick={() => dismiss.mutate()}>Dismiss</Button>
-        </div>
+        <Banner
+          tone={r.outcome === 'installed' ? 'running' : 'failed'}
+          title={r.message}
+          actions={<Button size="sm" variant="ghost" className={SMALL} onClick={() => dismiss.mutate()}>Dismiss</Button>}
+        >
+          {r.message}
+          {r.outcome !== 'installed' && r.log && <> · <code className="text-muted-foreground" title={r.log}>{r.log}</code></>}
+        </Banner>
       )}
       {s.state === 'available' && s.latest && (
-        <div className={`${STRIP} relative overflow-visible bg-accent`}>
-          <span className="min-w-0 truncate font-medium">Update to v{s.latest.version} available</span>
-          {s.latest.notes && (
-            <Button variant="ghost" className={SMALL} aria-expanded={notesOpen} onClick={() => setNotesOpen((o) => !o)}>
-              Release notes
-            </Button>
-          )}
-          <Button variant="primary" className={SMALL} disabled={install.isPending} onClick={() => install.mutate()}>Update</Button>
-          {install.isError && <span role="alert" className="min-w-0 truncate text-failed" title={install.error.message}>{install.error.message}</span>}
+        <div className="relative shrink-0">
+          <Banner
+            tone="accent"
+            actions={
+              <>
+                {s.latest.notes && (
+                  <Button size="sm" variant="ghost" className={SMALL} aria-expanded={notesOpen} onClick={() => setNotesOpen((o) => !o)}>
+                    Release notes
+                  </Button>
+                )}
+                <Button size="sm" variant="primary" className={SMALL} pending={install.isPending} onClick={() => install.mutate()}>Update</Button>
+              </>
+            }
+          >
+            Update to v{s.latest.version} available
+            {install.isError && <span role="alert" className="text-destructive" title={install.error.message}> · {install.error.message}</span>}
+          </Banner>
           {notesOpen && s.latest.notes && (
-            <div role="region" aria-label="Release notes" className="absolute inset-x-0 top-full z-20 max-h-[50vh] overflow-auto border-b border-border bg-surface p-3 shadow-lg">
-              <pre className="whitespace-pre-wrap font-sans text-xs text-fg">{s.latest.notes}</pre>
-              <Button variant="ghost" className={`${SMALL} mt-2`} onClick={() => setNotesOpen(false)}>Close</Button>
+            <div
+              role="region"
+              aria-label="Release notes"
+              className="absolute inset-x-0 top-full z-(--pdt-z-popover) max-h-[50vh] overflow-auto border-b border-border bg-popover p-3 shadow-popover"
+            >
+              <pre className="font-sans text-xs whitespace-pre-wrap text-foreground">{s.latest.notes}</pre>
+              <Button size="sm" variant="ghost" className="mt-2" onClick={() => setNotesOpen(false)}>Close</Button>
             </div>
           )}
         </div>
       )}
       {(s.state === 'downloading' || s.state === 'installing') && (
-        <div role="status" className={`${STRIP} text-waiting`}>
-          <span className="min-w-0 truncate">
-            {s.state === 'downloading' ? 'Downloading the update…' : 'Installing the update; this page reconnects when the host is back.'}
-          </span>
-        </div>
+        <Banner tone="waiting">
+          {s.state === 'downloading' ? 'Downloading the update…' : 'Installing the update; this page reconnects when the host is back.'}
+        </Banner>
       )}
     </>
   );
 }
-
-const STRIP = 'flex h-8 shrink-0 flex-nowrap items-center gap-2 overflow-hidden whitespace-nowrap border-b border-border px-3 text-xs';
-const SMALL = 'shrink-0 px-2 py-0.5 text-xs';
