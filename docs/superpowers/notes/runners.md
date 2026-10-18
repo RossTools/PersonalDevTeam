@@ -62,6 +62,27 @@ same commit's cache, so the best case). Totals are whole jobs, including setup.
 - Namespace, and GitHub's larger Linux runner, go in the next run: `gh workflow run bench.yml -f runners='[...]'`
   once bench.yml is on main (or push the branch to `bench/<name>` before that).
 
+### Namespace vs GitHub (bench runs 39172517811 and 39175994153, 2026-10-18)
+
+Same work as above. Namespace "warm" means the profile's cache volume already holds a build from an earlier run (the
+steady state). GitHub "warm" is the best case (the same commit's cache).
+
+| Work | GitHub standard, cold → warm | Namespace, cold → warm | Warm steps, GitHub vs Namespace |
+|---|---|---|---|
+| Linux: clippy, nextest, web | `ubuntu-latest` 2 vCPU: 8.9 → 6.4 min | `linux-8` (8×16 x64): 2.1 → **1.8 min** | clippy 15 s vs 6 s, nextest 138 s vs 53 s, vitest 167 s vs 22 s |
+| macOS: clippy, nextest, desktop | `macos-latest` M1 3 vCPU: 6.4 → 3.9 min (2.7 in the first run) | `macos-6` (M4 Pro): 3.0 → **1.4 min** | clippy 21 s vs 4 s, nextest 123 s vs 55 s |
+
+- About 3.5× faster on Linux and 2–3× on macOS. A PR would wait ~2 min instead of ~6.
+- Namespace commits a cache volume only when a job exits cleanly, and the new copy reaches other machines in the
+  background: a job that starts right after the one that filled it can still find it empty.
+- Namespace's Linux image is not GitHub's: no `SHELL`, no zsh. pdtd's terminal tests start `/bin/zsh` when no shell
+  is given, so CI there needs zsh installed with an empty `~/.zshrc` and `skip_global_compinit=1` in `~/.zshenv`
+  (bench-job.yml does this). Its macOS image needed nothing.
+- Windows on Namespace needs the $100/month Team plan, so it was not measured.
+- Cost at ~400 runs/month, if Linux and macOS checks move: Linux ~2–3 min/run × $0.008–0.012 ≈ **$10–15**, macOS
+  ~1.5 min/run × ~$0.06 ≈ **$35–40**, plus cache storage. ⚠ Check the rates on the Namespace billing page; they are
+  from the pricing page, not an invoice.
+
 ## The PDT-24 problem and how each option handles it
 
 The "Main" ruleset requires PRs to be up to date. When main moves, `update-prs.yml` updates each auto-merge PR with
