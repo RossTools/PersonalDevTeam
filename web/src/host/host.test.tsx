@@ -262,6 +262,26 @@ describe('UpdateBanner', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(text);
   });
 
+  it('reloads the page once the host answers with a new version', async () => {
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    let n = 0;
+    stubApi({ 'GET /api/host/update': () => (++n === 1 ? update({ state: 'installing' }) : update({ current: '0.1.7' })) });
+    renderWithQuery(<UpdateBanner />);
+    expect(await screen.findByRole('status')).toHaveTextContent('Installing the update');
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 4_000 });
+  });
+
+  it('does not reload while the version stays the same', async () => {
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    let n = 0;
+    const calls = stubApi({ 'GET /api/host/update': () => update({ state: ++n === 1 ? 'installing' : 'idle' }) });
+    renderWithQuery(<UpdateBanner />);
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1), { timeout: 4_000 });
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('reports a rollback with its log and can be dismissed', async () => {
     const calls = stubApi({
       'GET /api/host/update': update({
