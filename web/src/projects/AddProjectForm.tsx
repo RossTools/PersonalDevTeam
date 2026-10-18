@@ -1,16 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
-import { Button } from '@ui';
+import { useEffect, useId, useState, type FormEvent } from 'react';
+import { Alert, Button, Field, Input, SegmentedControl } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 
-const field = 'w-full rounded-pdt border border-border bg-surface px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
-const tab = (on: boolean) => `flex-1 rounded-pdt px-2 py-0.5 text-xs ${on ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2'}`;
+type Mode = 'path' | 'clone';
+const modes = [
+  { value: 'path' as const, label: 'Folder' },
+  { value: 'clone' as const, label: 'Clone URL' },
+];
 
 /** Adds a project from a folder on this host, or by cloning a repository URL into the Projects folder. */
-export function AddProjectForm({ onAdded }: { onAdded?: (p: Project) => void }) {
+export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: Project) => void; autoFocus?: boolean }) {
   const qc = useQueryClient();
-  const [mode, setMode] = useState<'path' | 'clone'>('path');
+  const errorId = useId();
+  const [mode, setMode] = useState<Mode>('path');
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [repoPath, setRepoPath] = useState('');
@@ -29,6 +33,10 @@ export function AddProjectForm({ onAdded }: { onAdded?: (p: Project) => void }) 
   const add = useMutation({ mutationFn: api.createProject, onSuccess: done });
   const clone = useMutation({ mutationFn: api.cloneProject, onSuccess: done });
   const m = mode === 'path' ? add : clone;
+  // A submit error moves focus to its Alert (spec §6.3).
+  useEffect(() => {
+    if (m.isError) document.getElementById(errorId)?.focus();
+  }, [m.isError, m.error, errorId]);
   const opt = (v: string) => (v.trim() ? v.trim() : undefined);
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -36,26 +44,35 @@ export function AddProjectForm({ onAdded }: { onAdded?: (p: Project) => void }) 
     else clone.mutate({ url, ...(opt(name) ? { name: opt(name) } : {}), ...(opt(key) ? { key: opt(key) } : {}), ...(opt(parentDir) ? { parentDir: opt(parentDir) } : {}) });
   };
   return (
-    <form onSubmit={submit} aria-label="Add project" className="flex flex-col gap-2 p-2">
-      <div role="tablist" aria-label="Add a project" className="flex gap-1">
-        <button type="button" role="tab" aria-selected={mode === 'path'} className={tab(mode === 'path')} onClick={() => setMode('path')}>Folder</button>
-        <button type="button" role="tab" aria-selected={mode === 'clone'} className={tab(mode === 'clone')} onClick={() => setMode('clone')}>Clone URL</button>
-      </div>
+    <form onSubmit={submit} aria-label="Add project" className="flex flex-col gap-3 p-2">
+      <SegmentedControl aria-label="Add a project" size="sm" options={modes} value={mode} onChange={setMode} className="w-full [&>*]:flex-1" />
       {mode === 'path' ? (
         <>
-          <label className="text-xs text-muted">Name<input className={field} required value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label className="text-xs text-muted">Repository path<input className={field} required value={repoPath} onChange={(e) => setRepoPath(e.target.value)} /></label>
+          <Field label="Name">
+            <Input required autoFocus={autoFocus} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Repository path">
+            <Input required mono value={repoPath} onChange={(e) => setRepoPath(e.target.value)} />
+          </Field>
         </>
       ) : (
         <>
-          <label className="text-xs text-muted">Repository URL<input className={field} required placeholder="https://github.com/owner/repo" value={url} onChange={(e) => setUrl(e.target.value)} /></label>
-          <label className="text-xs text-muted">Into folder<input className={field} placeholder={host.data?.projectsDir ?? '~/work'} value={parentDir} onChange={(e) => setParentDir(e.target.value)} /></label>
-          <label className="text-xs text-muted">Name<input className={field} placeholder="the repository's name" value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <Field label="Repository URL">
+            <Input required autoFocus={autoFocus} mono placeholder="https://github.com/owner/repo" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </Field>
+          <Field label="Into folder">
+            <Input mono placeholder={host.data?.projectsDir ?? '~/work'} value={parentDir} onChange={(e) => setParentDir(e.target.value)} />
+          </Field>
+          <Field label="Name">
+            <Input placeholder="the repository's name" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
         </>
       )}
-      <label className="text-xs text-muted">Key<input className={`${field} uppercase placeholder:normal-case font-mono`} maxLength={10} placeholder="suggested from the name" value={key} onChange={(e) => setKey(e.target.value)} /></label>
-      {m.isError && <p role="alert" className="text-xs text-failed">{m.error.message}</p>}
-      <Button variant="primary" type="submit" disabled={m.isPending}>
+      <Field label="Key" hint="2–10 letters and digits">
+        <Input mono className="uppercase placeholder:normal-case placeholder:font-sans" maxLength={10} placeholder="suggested from the name" value={key} onChange={(e) => setKey(e.target.value)} />
+      </Field>
+      {m.isError && <Alert id={errorId} tabIndex={-1} tone="error">{m.error.message}</Alert>}
+      <Button variant="primary" type="submit" pending={m.isPending}>
         {mode === 'path' ? 'Add project' : clone.isPending ? 'Cloning…' : 'Clone and add'}
       </Button>
     </form>

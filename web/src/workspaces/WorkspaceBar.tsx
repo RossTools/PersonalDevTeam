@@ -1,35 +1,19 @@
-import { useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRef, type DragEvent, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
-import { StatusDot } from '@ui';
+import { cn } from '@ui/lib/utils';
+import { ContextMenu, IconButton, Kbd } from '@ui';
 import { api } from '../api/client';
 import type { Tab } from '../api/gen/Tab';
-import { useContextMenu } from './ContextMenu';
+import { AgentDot, itemState } from '../common/AgentState';
+import { InlineRename } from '../common/InlineRename';
+import { runAction } from '../common/useAction';
 import { accepts, dragTab, dropped, type Dropped } from './dnd';
 import { tabMenu } from './menus';
-import { activityStatus, itemOf, worstActivity } from './model';
+import { itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 
-const small = 'rounded-pdt p-0.5 text-muted hover:text-fg hover:bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-ring';
-
-/** Most urgent activity and whether anything is unseen, over some items. */
-export function summarize(infos: (ItemInfo | null)[]) {
-  const present = infos.filter((i): i is ItemInfo => i !== null);
-  return { activity: worstActivity(present.map((i) => i.activity)), unseen: present.some((i) => i.unseen) };
-}
-
-/** A coloured dot for an agent that is working or needs you, plus the unseen dot. */
-export function AttentionDots({ activity, unseen, label }: { activity: ItemInfo['activity']; unseen: boolean; label?: string }) {
-  const status = activityStatus(activity);
-  return (
-    <>
-      {status && activity !== 'idle' && activity !== 'unknown' && (
-        <span title={label} className="inline-flex"><StatusDot status={status} /></span>
-      )}
-      {unseen && <span role="img" aria-label="unseen" className="inline-block size-1.5 rounded-full bg-accent" />}
-    </>
-  );
-}
+const coarsePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
 /** Applies something dropped on a workspace's tab strip (at `index`) or on the workspace itself (the end). */
 export async function applyDrop(ws: WorkspacesApi, d: Dropped, workspaceId: string, index?: number) {
@@ -42,34 +26,7 @@ export async function applyDrop(ws: WorkspacesApi, d: Dropped, workspaceId: stri
   }
 }
 
-function RenameTab({ initial, onDone }: { initial: string; onDone: (title: string | null) => void }) {
-  const [value, setValue] = useState(initial);
-  const done = useRef(false);
-  const finish = (save: boolean) => {
-    if (done.current) return;
-    done.current = true;
-    const t = value.trim();
-    onDone(save && t && t !== initial ? t : null);
-  };
-  return (
-    <input
-      autoFocus
-      aria-label="Tab name"
-      value={value}
-      maxLength={100}
-      onChange={(e) => setValue(e.target.value)}
-      onFocus={(e) => e.currentTarget.select()}
-      onBlur={() => finish(true)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') finish(true);
-        else if (e.key === 'Escape') finish(false);
-      }}
-      className="w-32 px-1 rounded-pdt text-xs bg-surface text-fg border border-border outline-none"
-    />
-  );
-}
-
-function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop, menu }: {
+function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
   ws: WorkspacesApi;
   tab: Tab;
   info: ItemInfo | null;
@@ -77,43 +34,57 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop, men
   renaming: boolean;
   setRenaming: (id: string | null) => void;
   onDrop: (e: DragEvent, index: number) => void;
-  menu: ReturnType<typeof useContextMenu>['bind'];
 }) {
   const qc = useQueryClient();
   const title = info?.title ?? (tab.sessionId ? 'Session' : 'Run');
-  const rename = useMutation({
-    mutationFn: (t: string) => api.renameSession(tab.sessionId!, t),
-    onSettled: () => info && qc.invalidateQueries({ queryKey: ['sessions', info.projectId] }),
-  });
+  const rename = (t: string) =>
+    void runAction(async () => {
+      try {
+        await api.renameSession(tab.sessionId!, t);
+      } finally {
+        if (info) void qc.invalidateQueries({ queryKey: ['sessions', info.projectId] });
+      }
+    });
   return (
     <div
-      className={`relative flex shrink-0 items-center gap-1 rounded-pdt pl-2 pr-0.5 py-0.5 ${selected ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2'}`}
+      className={cn(
+        'relative flex shrink-0 items-center gap-1 rounded-md py-0.5 pr-0.5 pl-2',
+        selected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted',
+      )}
       onDragOver={(e) => { if (accepts(e)) e.preventDefault(); }}
       onDrop={(e) => onDrop(e, tab.position)}
-      {...menu(`Tab ${title}`, () => tabMenu(ws, tab, () => setRenaming(tab.id)))}
     >
       {renaming && tab.sessionId ? (
-        <RenameTab initial={title} onDone={(t) => { setRenaming(null); if (t) rename.mutate(t); }} />
+        <InlineRename
+          label="Tab name"
+          initial={title}
+          size="sm"
+          className="w-32 text-xs"
+          onCommit={(t) => { setRenaming(null); rename(t); }}
+          onCancel={() => setRenaming(null)}
+        />
       ) : (
-        <button
-          type="button"
-          role="tab"
-          aria-selected={selected}
-          draggable
-          onDragStart={(e) => dragTab(e, tab.id)}
-          onClick={() => ws.selectTab(tab)}
-          onDoubleClick={() => tab.sessionId && setRenaming(tab.id)}
-          title="Right-click for more"
-          className="flex items-center gap-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-pdt"
-        >
-          {info && <StatusDot status={info.status} />}
-          <span className={`max-w-48 truncate ${info?.unseen ? 'font-semibold' : ''}`}>{title}</span>
-          {info && <AttentionDots activity={info.activity} unseen={info.unseen} label={info.activity ?? undefined} />}
-        </button>
+        <ContextMenu label={`Tab ${title}`} entries={() => tabMenu(ws, tab, () => setRenaming(tab.id))}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            // Touch screens move tabs from the long-press menu (workspaces spec §4.6): a natively draggable element turns
+            // Android's long press into a drag, so the menu would never open.
+            draggable={!coarsePointer()}
+            onDragStart={(e) => dragTab(e, tab.id)}
+            onClick={() => ws.selectTab(tab)}
+            onDoubleClick={() => tab.sessionId && setRenaming(tab.id)}
+            className="flex items-center gap-1.5 rounded-md text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {info && <AgentDot state={itemState(info)} />}
+            <span className={cn('max-w-48 truncate', info?.unseen && 'font-semibold')}>{title}</span>
+          </button>
+        </ContextMenu>
       )}
-      <button type="button" aria-label={`Close ${title}`} className={small} onClick={() => void ws.closeTab(tab)}>
-        <X size={12} aria-hidden />
-      </button>
+      <IconButton label={`Close ${title}`} size="sm" noTooltip className="size-5" onClick={() => void runAction(() => ws.closeTab(tab))}>
+        <X aria-hidden />
+      </IconButton>
     </div>
   );
 }
@@ -127,7 +98,6 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
   trailing?: ReactNode;
 }) {
   const w = ws.workspace;
-  const { bind, menu } = useContextMenu();
   const touch = useRef<{ x: number; y: number } | null>(null);
   const step = (by: number) => {
     if (!w || !ws.tab) return;
@@ -137,12 +107,13 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
   const drop = (e: DragEvent, index?: number) => {
     e.preventDefault();
     e.stopPropagation();
-    if (w) void applyDrop(ws, dropped(e), w.id, index);
+    const d = dropped(e);
+    if (w) void runAction(() => applyDrop(ws, d, w.id, index));
   };
 
   return (
     <div
-      className="flex items-center gap-1 border-b border-border px-2 py-1 min-w-0"
+      className="flex min-w-0 items-center gap-1 border-b border-border px-2 py-1"
       onTouchStart={(e) => { const t = e.touches[0]; touch.current = { x: t.clientX, y: t.clientY }; }}
       onTouchEnd={(e) => {
         const start = touch.current;
@@ -153,12 +124,12 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
         if (Math.abs(dx) > 60 && Math.abs(t.clientY - start.y) < 40) step(dx < 0 ? 1 : -1);
       }}
     >
-      <span className="shrink-0 max-w-32 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? 'No workspace'}</span>
-      <button type="button" aria-label="Previous tab" className={`${small} md:hidden`} onClick={() => step(-1)}><ChevronLeft size={14} aria-hidden /></button>
+      <span className="max-w-32 shrink-0 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? 'No workspace'}</span>
+      <IconButton label="Previous tab" size="sm" className="md:hidden" onClick={() => step(-1)}><ChevronLeft aria-hidden /></IconButton>
       <div
         role="tablist"
         aria-label="Tabs"
-        className="flex flex-1 min-w-0 items-center gap-1 overflow-x-auto"
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
         onDragOver={(e) => { if (accepts(e)) e.preventDefault(); }}
         onDrop={(e) => drop(e)}
       >
@@ -172,16 +143,14 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
             renaming={renamingTabId === t.id}
             setRenaming={setRenamingTabId}
             onDrop={drop}
-            menu={bind}
           />
         ))}
-        <button type="button" aria-label="New tab" title="New tab (Ctrl+] c)" className={small} disabled={!w} onClick={onNewTab}>
-          <Plus size={14} aria-hidden />
-        </button>
+        <IconButton label="New tab" size="sm" shortcut={<Kbd keys={['Ctrl', ']', 'c']} />} disabled={!w} onClick={onNewTab}>
+          <Plus aria-hidden />
+        </IconButton>
       </div>
-      <button type="button" aria-label="Next tab" className={`${small} md:hidden`} onClick={() => step(1)}><ChevronRight size={14} aria-hidden /></button>
+      <IconButton label="Next tab" size="sm" className="md:hidden" onClick={() => step(1)}><ChevronRight aria-hidden /></IconButton>
       {trailing}
-      {menu}
     </div>
   );
 }

@@ -2,10 +2,19 @@ import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
+import { ConfirmProvider, Toaster } from '@ui';
 
 export function renderWithQuery(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const wrap = (node: ReactNode) => <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+  // The same providers as main.tsx: confirm dialogs and toasts.
+  const wrap = (node: ReactNode) => (
+    <QueryClientProvider client={qc}>
+      <ConfirmProvider>
+        {node}
+        <Toaster />
+      </ConfirmProvider>
+    </QueryClientProvider>
+  );
   const result = render(wrap(ui));
   return { ...result, rerender: (node: ReactNode) => result.rerender(wrap(node)) };
 }

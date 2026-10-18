@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button, StatusDot } from '@ui';
+import { Alert, Button, Link, useConfirm, ViewHeader } from '@ui';
 import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
+import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { TerminalView } from '../terminal/TerminalView';
-import { ActivityBadge } from './ActivityBadge';
-import { INITIAL_SIZE, toDot } from './status';
+import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
 
 export function SessionView({ session, polledAt, onRemoved, branchLink }: {
@@ -17,6 +17,7 @@ export function SessionView({ session, polledAt, onRemoved, branchLink }: {
 }) {
   useViewTracking(session.id, polledAt);
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [composing, setComposing] = useState(false);
   const refresh = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const kill = useMutation({ mutationFn: () => api.killSession(session.id), onSuccess: refresh });
@@ -32,30 +33,52 @@ export function SessionView({ session, polledAt, onRemoved, branchLink }: {
   const error = kill.error ?? restart.error ?? remove.error;
   // One action at a time: the daemon serializes them anyway, and a second click would only fail.
   const busy = kill.isPending || restart.isPending || remove.isPending;
+  const state = agentState({ kind: session.kind, status: session.status, activity: session.activity, unseen: session.unseen });
+
+  const askRemove = async () => {
+    const { ok } = await confirm({
+      title: `Remove ${session.title}?`,
+      body:
+        session.kind === 'agent_tui'
+          ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
+          : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.',
+      action: 'Remove session',
+      danger: true,
+    });
+    if (ok) remove.mutate();
+  };
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
-      <header className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-sm">
-        <StatusDot status={toDot(session.status)} />
-        <span className="font-medium">{session.title}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted" title={session.cwd}>{session.cwd}</span>
-        <ActivityBadge activity={session.activity} unseen={session.unseen} />
-        {branchLink && <a href={branchLink} target="_blank" rel="noreferrer" className="text-xs text-accent underline">GitHub</a>}
-        {running && (
-          <Button variant="ghost" aria-pressed={composing} onClick={() => setComposing((c) => !c)}>Compose</Button>
-        )}
-        {running ? (
-          <Button variant="ghost" disabled={busy} onClick={() => kill.mutate()}>Stop</Button>
-        ) : (
+      <ViewHeader
+        leading={<AgentDot state={state} />}
+        title={session.title}
+        meta={
           <>
-            <Button variant="ghost" disabled={busy} onClick={() => restart.mutate()}>Restart</Button>
-            <Button variant="ghost" disabled={busy} onClick={() => remove.mutate()}>Remove</Button>
+            <span className="min-w-0 truncate" title={session.cwd}>{session.cwd}</span>
+            <AgentLabel state={state} className="shrink-0" />
+            {branchLink && <Link href={branchLink} external className="shrink-0">GitHub</Link>}
           </>
-        )}
-      </header>
-      {error && <p role="alert" className="px-3 py-1 text-xs text-failed">{error.message}</p>}
+        }
+        actions={
+          <>
+            {running && (
+              <Button variant="ghost" size="sm" aria-pressed={composing} onClick={() => setComposing((c) => !c)}>Compose</Button>
+            )}
+            {running ? (
+              <Button variant="ghost" size="sm" disabled={busy} pending={kill.isPending} onClick={() => kill.mutate()}>Stop</Button>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" disabled={busy} pending={restart.isPending} onClick={() => restart.mutate()}>Restart</Button>
+                <Button variant="ghost" size="sm" disabled={busy} pending={remove.isPending} onClick={() => void askRemove()}>Remove</Button>
+              </>
+            )}
+          </>
+        }
+      />
+      {error && <div className="px-3 py-1.5"><Alert tone="error">{error.message}</Alert></div>}
       {session.status === 'interrupted' ? (
-        <p className="p-4 text-sm text-muted">
+        <p className="p-4 text-sm text-muted-foreground">
           This session stopped when the daemon shut down. Restart it to continue
           {session.kind === 'agent_tui' ? '; the agent resumes its last conversation' : ''}.
         </p>

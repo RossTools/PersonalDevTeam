@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -173,7 +173,7 @@ describe('TerminalView', () => {
     expect(h.sock!.sent).toEqual(['\x1b\r']);
   });
 
-  it('sends a composed prompt as one paste followed by Enter', () => {
+  it('sends a composed prompt as one paste followed by Enter', async () => {
     const onClose = vi.fn();
     render(<TerminalView sessionId="s1" composing onComposeClose={onClose} />);
     const box = screen.getByRole('textbox', { name: 'Prompt' });
@@ -181,7 +181,7 @@ describe('TerminalView', () => {
     fireEvent.change(box, { target: { value: 'fix it\nthen test' } });
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
     expect(h.sock!.sent).toEqual(['\x1b[200~fix it\rthen test\x1b[201~\r']);
-    expect(box).toHaveValue('');
+    await waitFor(() => expect(box).toHaveValue(''));
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
