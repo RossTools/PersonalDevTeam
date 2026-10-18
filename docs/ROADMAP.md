@@ -33,7 +33,10 @@ The design spec above also fixes the UX and component list of Phases 4–7 (§8)
 1. **Phase 4b: Start and the board.** Start (attempt, worktree, session with the ticket as first prompt), merge
    detection, the board of committed work; then this roadmap is imported into PDT.
    **Phase 4c: areas and overlap** so agents don't make conflicting changes.
-2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
+2. **Phase 5: Structured agents.** Conversations replace raw agent terminals as the default: Claude (`claude -p`
+   stream-json) and Codex (`codex app-server`) adapters, event log, conversation view, approvals/questions/plans,
+   switch to the real TUI, scratch chats. Spec: docs/superpowers/specs/2026-10-18-structured-agents-design.md;
+   protocol facts: docs/superpowers/notes/phase-5-agent-protocols.md. Devin (ACP adapter) researched, built later.
 3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
 4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
