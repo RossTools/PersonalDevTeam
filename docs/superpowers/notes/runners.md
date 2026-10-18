@@ -38,6 +38,30 @@ On Windows, vitest's time is spread across tests, jsdom setup and imports (46/25
 file-system work on a 2-vCPU Windows VM, not a single bad test. The web code is the same on every OS. The slowest
 Rust tests on Windows are 5–9 s each (pdt-host supervise, activity, migrations).
 
+## Measured: bench run 39170194892 (2026-10-18)
+
+`.github/workflows/bench.yml` runs the CI work for each OS on a list of runners, cold (empty cache) then warm (the
+same commit's cache, so the best case). Totals are whole jobs, including setup.
+
+| Runner | Work | Cold | Warm | clippy (warm) | nextest (warm) | $/min | Warm run cost |
+|---|---|---|---|---|---|---|---|
+| `ubuntu-latest` (2 vCPU) | clippy, nextest, web | 5.4 min ✗ | 4.7 min ✗ | 92 s | 160 s | included | — |
+| `macos-latest` (M1, 3 vCPU) | clippy, nextest, desktop | 6.0 min | 2.7 min | 10 s | 84 s | included ($0.062) | ($0.19) |
+| `macos-latest-xlarge` (M2 Pro, 5 CPU) | same | 2.7 min | 1.7 min | 7 s | 50 s | $0.102 | $0.20 |
+| `windows-latest` (2 vCPU) | clippy, nextest | 14.5 min | 5.2 min | 25 s | 239 s | included | — |
+
+- ✗ Linux failed on timing-sensitive tests (a different one each round:
+  `pdt-api::activity codex_activity_follows_its_approval_screen_and_input`,
+  `pdt-store tickets::tests::links_refuse_cycles_and_show_on_both_tickets`). Both passed in PR CI. Its times are
+  still representative.
+- `macos-latest-xlarge` costs about the same per run as a paid standard macOS run, because it finishes sooner
+  (GitHub bills whole minutes). Standard macOS is covered by the included minutes and xlarge never is: about
+  $80/month at 400 runs.
+- Warm Linux barely beats cold: rust-cache keeps dependencies but not the workspace crates, which are most of the
+  work. A cache that keeps all of `target/` (Namespace cache volumes) is what would change that.
+- Namespace, and GitHub's larger Linux runner, go in the next run: `gh workflow run bench.yml -f runners='[...]'`
+  once bench.yml is on main (or push the branch to `bench/<name>` before that).
+
 ## The PDT-24 problem and how each option handles it
 
 The "Main" ruleset requires PRs to be up to date. When main moves, `update-prs.yml` updates each auto-merge PR with
