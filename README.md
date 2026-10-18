@@ -23,7 +23,7 @@ instances of it.
 - **Updates.** The `pdt-host` supervisor keeps the daemon running, installs new GitHub releases when idle, health
   checks them and rolls back on failure. An optional tray app opens the UI.
 
-Coming next (docs/ROADMAP.md): tickets and a board, structured agent views, code review, and a pipeline of agent
+Coming next (tracked as tickets in PDT itself): tickets and a board, structured agent views, code review, and a pipeline of agent
 personas that hand work to each other.
 
 ## Install
@@ -78,7 +78,7 @@ memory when `PDT_SECRET_STORE=memory`.
 
 - [AGENTS.md](AGENTS.md): the working guide for coding agents (and the most complete description of how PDT behaves)
 - [docs/SDLC.md](docs/SDLC.md): how a change goes from worktree to release
-- [docs/ROADMAP.md](docs/ROADMAP.md): what is done and what comes next
+- [docs/ROADMAP.md](docs/ROADMAP.md): where the roadmap lives now (PDT's own tickets)
 - [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it
 - [docs/superpowers/specs](docs/superpowers/specs): designs; [plans](docs/superpowers/plans): build plans;
   [notes](docs/superpowers/notes): CI layout, carry-overs, incident notes

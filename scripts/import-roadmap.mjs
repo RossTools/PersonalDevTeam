@@ -97,8 +97,9 @@ async function main(argv) {
   const project = arg('--project');
   if (!base || !project) throw new Error('--apply needs --base and --project');
   let made = 0;
+  // One ranked list: Next first, then the follow-ups below it.
+  let after;
   for (const g of groups) {
-    let after;
     for (const t of g.items) {
       // Each one below the previous, so the backlog keeps the roadmap's order.
       const body = { title: t.title, stage: g.stage, ...(t.description ? { description: t.description } : {}), ...(after ? { after } : {}) };
