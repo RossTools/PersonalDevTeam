@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use pdt_core::project::Project;
 use pdt_core::worktree::{NewWorktree, WORKTREES_DIR, Worktree, worktree_path};
 use serde::Deserialize;
 use std::path::{Path as FsPath, PathBuf};
@@ -37,32 +38,53 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let valid = input.validate()?;
     let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let repo = PathBuf::from(&project.repo_path);
-    let path = worktree_path(&repo, &valid.branch);
     let base = valid.base.unwrap_or_else(|| project.base_branch.clone());
-    let (branch, target) = (valid.branch.clone(), path.clone());
-    let base_commit = tokio::task::spawn_blocking(move || {
+    let wt = make_worktree(&st, &project, &valid.branch, &base, false).await?;
+    Ok((StatusCode::CREATED, Json(wt)))
+}
+
+/// Makes `.worktrees/<branch>` on a new branch from `base` and records it. A worktree git already has there for
+/// `branch` (made outside PDT) is adopted; any other folder there is `worktree_path_taken`. With `existing_branch`,
+/// a branch that already exists is checked out instead of refused (`branch_exists`).
+pub(crate) async fn make_worktree(
+    st: &AppState,
+    project: &Project,
+    branch: &str,
+    base: &str,
+    existing_branch: bool,
+) -> Result<Worktree, ApiError> {
+    let repo = PathBuf::from(&project.repo_path);
+    let path = worktree_path(&repo, branch);
+    let (b, target, base) = (branch.to_string(), path.clone(), base.to_string());
+    let base_commit = tokio::task::spawn_blocking(move || -> Result<String, ApiError> {
         pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
-        if target.exists()
-            && let Some(head) = adoptable(&repo, &target, &branch)
-        {
-            return Ok(head);
+        if target.exists() {
+            return adoptable(&repo, &target, &b).ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "worktree_path_taken",
+                    format!("the worktree folder {} is already in use (by another branch?)", target.display()),
+                )
+            });
         }
-        pdt_git::add_worktree(&repo, &target, &branch, &base)
+        if existing_branch && pdt_git::branch_exists(&repo, &b) {
+            return Ok(pdt_git::add_worktree_for_branch(&repo, &target, &b)?);
+        }
+        Ok(pdt_git::add_worktree(&repo, &target, &b, &base)?)
     })
     .await
     .map_err(ApiError::internal)??;
     let wt = Worktree {
         id: uuid::Uuid::now_v7().to_string(),
-        project_id: project.id,
-        branch: valid.branch,
+        project_id: project.id.clone(),
+        branch: branch.to_string(),
         path: path.to_string_lossy().into_owned(),
         base_commit,
         created_at: now_ms(),
         missing: false,
     };
     st.store.insert_worktree(&wt).await?;
-    Ok((StatusCode::CREATED, Json(wt)))
+    Ok(wt)
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -1,0 +1,453 @@
+//! Ticket Start, attempts and merge detection (tickets spec §5, §6), with stand-in agents.
+
+mod common;
+
+use axum::http::StatusCode;
+use common::{argv_agent, call, git, recorded_launches};
+use pdt_api::{AppState, router};
+use pdt_store::Store;
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+
+struct Env {
+    app: axum::Router,
+    state: AppState,
+    pid: String,
+    repo: PathBuf,
+    bin: PathBuf,
+}
+
+/// A project "Personal Dev Team" (key PDT) whose repo has one commit on main, with stand-in `claude` and `codex`.
+async fn setup(tmp: &Path) -> Env {
+    let repo = tmp.join("my repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "init"]);
+    let bin = tmp.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
+    let mut state = AppState::new(store, tmp.join("data"));
+    state.platform.codex_home = Some(tmp.join("codex-home"));
+    state.platform.claude_config_dir = Some(tmp.join("claude-config"));
+    state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
+    state.platform.codex_program = argv_agent(&bin, "fakecodex").to_string_lossy().into_owned();
+    state.codex_spawn_spacing = std::time::Duration::from_millis(10);
+    let app = router(state.clone(), None);
+    let body = json!({"name": "Personal Dev Team", "repoPath": repo.to_string_lossy()});
+    let (s, p) = call(&app, "POST", "/api/projects", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    Env { app, state, pid: p["id"].as_str().unwrap().to_string(), repo, bin }
+}
+
+async fn ticket(env: &Env, body: Value) -> String {
+    let (s, v) = call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.pid), Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    v["id"].as_str().unwrap().to_string()
+}
+
+async fn start(env: &Env, id: &str, body: Value) -> (StatusCode, Value) {
+    call(&env.app, "POST", &format!("/api/tickets/{id}/start"), Some(body)).await
+}
+
+async fn started(env: &Env, id: &str, body: Value) -> Value {
+    let (s, v) = start(env, id, body).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    v
+}
+
+async fn get_ticket(env: &Env, id: &str) -> Value {
+    let (s, v) = call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v
+}
+
+async fn event_kinds(env: &Env, id: &str) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{id}/events"), None).await;
+    v["items"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect()
+}
+
+async fn workspaces(env: &Env) -> Vec<Value> {
+    call(&env.app, "GET", "/api/workspaces", None).await.1.as_array().unwrap().clone()
+}
+
+/// The (kind, id) of each tab in a workspace, in order.
+fn tabs(ws: &Value) -> Vec<(&'static str, String)> {
+    ws["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            if let Some(s) = t["sessionId"].as_str() {
+                ("session", s.to_string())
+            } else if let Some(r) = t["runId"].as_str() {
+                ("run", r.to_string())
+            } else {
+                ("ticket", t["ticketId"].as_str().unwrap().to_string())
+            }
+        })
+        .collect()
+}
+
+fn s(v: &Value) -> &str {
+    v.as_str().unwrap()
+}
+
+/// The prompt the agent received: its last argument (on Windows, where the stand-in is a `.cmd` shim, the short
+/// prompt naming the prompt file, checked separately).
+fn last_arg(launch: &[String]) -> &str {
+    launch.last().map(String::as_str).unwrap_or("")
+}
+
+#[tokio::test]
+async fn start_makes_the_branch_attempt_session_and_tabs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id =
+        ticket(&env, json!({"title": "Fix the login", "description": "Steps & notes:\n1. open", "stage": "ready"}))
+            .await;
+    assert_eq!(get_ticket(&env, &id).await["defaultBranch"], "pdt/PDT-1-fix-the-login");
+
+    let r = started(&env, &id, json!({"agent": "claude", "cols": 100, "rows": 40})).await;
+    let (t, attempt, session) = (&r["ticket"], &r["attempt"], &r["session"]);
+    assert_eq!(t["stage"], "in_progress");
+    assert_eq!((s(&attempt["branch"]), s(&attempt["state"])), ("pdt/PDT-1-fix-the-login", "active"));
+    assert_eq!(attempt["baseBranch"], "main");
+    assert_eq!(attempt["lastHead"], Value::Null);
+    assert_eq!(s(&session["title"]), "Claude · PDT-1");
+    assert_eq!(session["attemptId"], attempt["id"]);
+    assert_eq!(session["ticket"], json!({"id": id, "key": "PDT-1"}));
+    assert_eq!(session["status"], "running");
+    assert_eq!(t["attempt"]["id"], attempt["id"]);
+    assert_eq!(t["sessions"][0]["id"], session["id"]);
+    assert_eq!(t["sessions"][0]["attemptId"], attempt["id"]);
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-fix-the-login");
+    assert!(wt.join("a.txt").is_file(), "the worktree is checked out");
+    assert_eq!(attempt["worktreeId"], session["worktreeId"]);
+
+    // The agent got the ticket as its first prompt, after its flags (and after --settings for Claude).
+    let launch = recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0);
+    let sid = s(&session["id"]).to_string();
+    if cfg!(windows) {
+        let file = env.state.data_dir.join("sessions").join(&sid).join("prompt.md");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.starts_with("PDT-1: Fix the login\n\nSteps & notes:"), "{text}");
+        assert!(launch[0].contains("PDT-1"), "{launch:?}");
+    } else {
+        assert_eq!(launch[..2], ["--session-id".to_string(), sid.clone()]);
+        assert_eq!(launch[launch.len() - 3], "--settings");
+        assert_eq!(
+            last_arg(&launch),
+            "PDT-1: Fix the login\n\nSteps & notes:\n1. open\n\n(Ticket PDT-1 in PDT. Work in this worktree on \
+             branch pdt/PDT-1-fix-the-login.)"
+        );
+    }
+
+    // Timeline: moved to In progress, started, the session.
+    assert_eq!(event_kinds(&env, &id).await, ["created", "moved", "started", "session"]);
+    // The sessions list carries the ticket.
+    let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.pid), None).await;
+    assert_eq!(list[0]["ticket"]["key"], "PDT-1");
+    // Tabs: the ticket, then the session, at the end of the project's workspace.
+    let ws = workspaces(&env).await;
+    assert_eq!(tabs(&ws[0]), [("ticket", id.clone()), ("session", sid.clone())]);
+
+    // One active attempt at a time.
+    let (st, v) = start(&env, &id, json!({"agent": "codex"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "ticket_active"), "{v}");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn codex_gets_the_prompt_after_its_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = ticket(&env, json!({"title": "Add -v flag"})).await;
+    let r = started(&env, &id, json!({"agent": "codex", "bypassPermissions": true, "branch": "feature/v"})).await;
+    assert_eq!(r["attempt"]["branch"], "feature/v");
+    assert_eq!(r["session"]["title"], "Codex · PDT-1");
+    assert_eq!(r["session"]["bypassPermissions"], true);
+    let launch = recorded_launches(&env.bin, "fakecodex", 1).await.remove(0);
+    if !cfg!(windows) {
+        let n = launch.len();
+        assert_eq!(launch[n - 2], "--dangerously-bypass-approvals-and-sandbox");
+        assert_eq!(
+            launch[n - 1],
+            "PDT-1: Add -v flag\n\n(Ticket PDT-1 in PDT. Work in this worktree on branch feature/v.)"
+        );
+    }
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn blockers_refuse_a_check_start_and_force_records_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let a = ticket(&env, json!({"title": "A"})).await;
+    let b = ticket(&env, json!({"title": "B"})).await;
+    let (st, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{a}/links"), Some(json!({"to": b, "kind": "blocks"}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+
+    let (st, v) = start(&env, &b, json!({"agent": "claude"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "start_blocked"), "{v}");
+    assert!(s(&v["message"]).contains("PDT-1"), "{v}");
+    assert!(!env.repo.join(".worktrees").join("pdt-PDT-2-b").exists(), "nothing was made");
+    assert_eq!(get_ticket(&env, &b).await["stage"], "draft");
+
+    let r = started(&env, &b, json!({"agent": "claude", "mode": "force"})).await;
+    assert_eq!(r["ticket"]["stage"], "in_progress");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{b}/events"), None).await;
+    let started_event = events["items"].as_array().unwrap().iter().find(|e| e["kind"] == "started").unwrap().clone();
+    assert_eq!(started_event["data"]["forced"], true);
+    assert_eq!(started_event["data"]["blockers"], json!(["PDT-1"]));
+
+    // A done blocker no longer blocks.
+    let (st, _) = call(&env.app, "PATCH", &format!("/api/tickets/{a}"), Some(json!({"stage": "done"}))).await;
+    assert_eq!(st, StatusCode::OK);
+    let c = ticket(&env, json!({"title": "C"})).await;
+    call(&env.app, "POST", &format!("/api/tickets/{a}/links"), Some(json!({"to": c, "kind": "blocks"}))).await;
+    started(&env, &c, json!({"agent": "claude"})).await;
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn closed_unknown_and_invalid_starts_are_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let done = ticket(&env, json!({"title": "Done", "stage": "done"})).await;
+    let wont = ticket(&env, json!({"title": "Nope", "stage": "wont_do"})).await;
+    for id in [&done, &wont] {
+        let (st, v) = start(&env, id, json!({"agent": "claude"})).await;
+        assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "ticket_closed"), "{v}");
+    }
+    let open = ticket(&env, json!({"title": "Open"})).await;
+    for body in [
+        json!({"agent": "claude", "branch": "a b"}),
+        json!({"agent": "claude", "cols": 5}),
+        json!({"agent": "gemini"}),
+        json!({"agent": "claude", "mode": "wait"}),
+        json!({"agent": "claude", "tab": {"workspaceId": "nope"}}),
+    ] {
+        let (st, v) = start(&env, &open, body.clone()).await;
+        assert_eq!(st.as_u16() / 100, 4, "{body} {v}");
+        assert_eq!(s(&v["code"]), "invalid_input", "{body} {v}");
+    }
+    let (st, v) = start(&env, "nope", json!({"agent": "claude"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::NOT_FOUND, "not_found"));
+
+    // A folder in the worktree's place that is not that branch's worktree.
+    std::fs::create_dir_all(env.repo.join(".worktrees").join("pdt-PDT-3-open")).unwrap();
+    let (st, v) = start(&env, &open, json!({"agent": "claude"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "worktree_path_taken"), "{v}");
+    assert_eq!(get_ticket(&env, &open).await["stage"], "draft");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn tabs_open_in_a_new_workspace_or_where_asked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let a = ticket(&env, json!({"title": "A"})).await;
+    let r = started(&env, &a, json!({"agent": "claude", "newWorkspace": true})).await;
+    let sid = s(&r["session"]["id"]).to_string();
+    let ws = workspaces(&env).await;
+    let mine = ws.iter().find(|w| w["name"] == "PDT-1").expect("a workspace named after the ticket");
+    assert_eq!(mine["projectId"], Value::Null);
+    assert_eq!(tabs(mine), [("ticket", a.clone()), ("session", sid)]);
+    assert!(tabs(&ws[0]).is_empty(), "nothing in the project's workspace");
+
+    // At a placement: the ticket's tab there, the session's right after it.
+    let (_, free) = call(&env.app, "POST", "/api/workspaces", Some(json!({"name": "Free"}))).await;
+    let free_id = s(&free["id"]).to_string();
+    let other = ticket(&env, json!({"title": "Other"})).await;
+    call(&env.app, "POST", &format!("/api/workspaces/{free_id}/tabs"), Some(json!({"ticketId": other}))).await;
+    let b = ticket(&env, json!({"title": "B"})).await;
+    let r = started(&env, &b, json!({"agent": "claude", "tab": {"workspaceId": free_id, "position": 0}})).await;
+    let sid = s(&r["session"]["id"]).to_string();
+    let ws = workspaces(&env).await;
+    let free = ws.iter().find(|w| w["id"] == free_id.as_str()).unwrap();
+    assert_eq!(tabs(free), [("ticket", b.clone()), ("session", sid), ("ticket", other)]);
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut env = setup(tmp.path()).await;
+    let good = env.state.platform.claude_program.clone();
+    env.state.platform.claude_program = "pdt-no-such-claude-xyz".into();
+    env.app = router(env.state.clone(), None);
+    let id = ticket(&env, json!({"title": "Retry me", "stage": "ready"})).await;
+    let (st, v) = start(&env, &id, json!({"agent": "claude"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::BAD_REQUEST, "program_not_found"), "{v}");
+    let t = get_ticket(&env, &id).await;
+    assert_eq!(t["stage"], "ready");
+    assert_eq!(t["attempts"], json!([]));
+    assert_eq!(event_kinds(&env, &id).await, ["created"]);
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-retry-me");
+    assert!(wt.is_dir(), "the worktree is kept");
+
+    env.state.platform.claude_program = good;
+    env.app = router(env.state.clone(), None);
+    let r = started(&env, &id, json!({"agent": "claude"})).await;
+    assert_eq!(r["attempt"]["state"], "active");
+    let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
+    assert_eq!(wts.as_array().unwrap().len(), 1, "the kept worktree is reused: {wts}");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn abandon_ends_the_attempt_and_keeps_the_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = ticket(&env, json!({"title": "Give up"})).await;
+    let r = started(&env, &id, json!({"agent": "claude"})).await;
+    let aid = s(&r["attempt"]["id"]).to_string();
+    let (st, t) = call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
+    assert_eq!(st, StatusCode::OK, "{t}");
+    assert_eq!(t["attempts"][0]["state"], "abandoned");
+    assert!(t["attempts"][0]["endedAt"].is_number());
+    assert_eq!(event_kinds(&env, &id).await.last().map(String::as_str), Some("abandoned"));
+    assert!(env.repo.join(".worktrees").join("pdt-PDT-1-give-up").is_dir());
+    // Again: nothing changes.
+    let (st, _) = call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(event_kinds(&env, &id).await.iter().filter(|k| *k == "abandoned").count(), 1);
+    let (st, _) = call(&env.app, "POST", "/api/attempts/nope/abandon", None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // A new attempt can start, on the same worktree.
+    let r = started(&env, &id, json!({"agent": "claude"})).await;
+    assert_eq!(r["ticket"]["attempts"].as_array().unwrap().len(), 2);
+    env.state.ptys.shutdown().await;
+}
+
+/// Commits a change in the attempt's worktree; returns the worktree.
+fn work_in(env: &Env, folder: &str, file: &str) -> PathBuf {
+    let wt = env.repo.join(".worktrees").join(folder);
+    std::fs::write(wt.join(file), "work\n").unwrap();
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-q", "-m", "work"]);
+    wt
+}
+
+#[tokio::test]
+async fn merges_are_detected_on_demand_and_by_the_loop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let a = ticket(&env, json!({"title": "Merge me"})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    work_in(&env, "pdt-PDT-1-merge-me", "m.txt");
+
+    // Not merged yet: still active, and the head is remembered.
+    let (st, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(st, StatusCode::OK, "{t}");
+    assert_eq!(t["attempts"][0]["state"], "active");
+    assert!(t["attempts"][0]["lastHead"].is_string());
+
+    git(&env.repo, &["merge", "-q", "--no-ff", "-m", "merge", "pdt/PDT-1-merge-me"]);
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "merged");
+    assert_eq!(t["stage"], "in_progress", "the ticket never moves to Done by itself");
+    assert_eq!(event_kinds(&env, &a).await.last().map(String::as_str), Some("merged"));
+
+    // The 60 s loop: a squash merge, then the branch deleted.
+    let b = ticket(&env, json!({"title": "Squash me"})).await;
+    started(&env, &b, json!({"agent": "claude"})).await;
+    work_in(&env, "pdt-PDT-2-squash-me", "s.txt");
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "active");
+    git(&env.repo, &["merge", "-q", "--squash", "pdt/PDT-2-squash-me"]);
+    git(&env.repo, &["commit", "-q", "-m", "squashed"]);
+    git(&env.repo, &["worktree", "remove", "--force", ".worktrees/pdt-PDT-2-squash-me"]);
+    git(&env.repo, &["branch", "-q", "-D", "pdt/PDT-2-squash-me"]);
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "merged");
+    let (_, check) = call(&env.app, "POST", "/api/tickets/nope/check-merge", None).await;
+    assert_eq!(check["code"], "not_found");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn closing_a_ticket_ends_its_attempt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    // Unmerged work: abandoned.
+    let a = ticket(&env, json!({"title": "Drop"})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    let (st, t) = call(&env.app, "PATCH", &format!("/api/tickets/{a}"), Some(json!({"stage": "wont_do"}))).await;
+    assert_eq!(st, StatusCode::OK, "{t}");
+    assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("wont_do", "abandoned"));
+    let kinds = event_kinds(&env, &a).await;
+    assert_eq!(kinds[kinds.len() - 2..], ["abandoned".to_string(), "moved".to_string()]);
+
+    // Merged work: merged.
+    let b = ticket(&env, json!({"title": "Ship"})).await;
+    started(&env, &b, json!({"agent": "claude"})).await;
+    work_in(&env, "pdt-PDT-2-ship", "ship.txt");
+    git(&env.repo, &["merge", "-q", "--ff-only", "pdt/PDT-2-ship"]);
+    let (_, t) = call(&env.app, "PATCH", &format!("/api/tickets/{b}"), Some(json!({"stage": "done"}))).await;
+    assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("done", "merged"));
+
+    // Bulk close too.
+    let c = ticket(&env, json!({"title": "Bulk"})).await;
+    started(&env, &c, json!({"agent": "claude"})).await;
+    let (st, v) =
+        call(&env.app, "POST", "/api/tickets/bulk", Some(json!({"ids": [c], "action": "stage", "value": "done"})))
+            .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(get_ticket(&env, &c).await["attempts"][0]["state"], "abandoned");
+
+    // The board's Done column: recently closed tickets.
+    let (_, page) =
+        call(&env.app, "GET", &format!("/api/tickets?project={}&stage=done&closedAfter=1", env.pid), None).await;
+    assert_eq!(page["total"], 2);
+    let (_, page) =
+        call(&env.app, "GET", &format!("/api/tickets?project={}&closedAfter=99999999999999", env.pid), None).await;
+    assert_eq!(page["total"], 0, "every ticket here is closed, none that recently");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn new_sessions_take_an_initial_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let body = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24,
+                      "initialPrompt": "Say hi\nthen stop"});
+    let (st, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!((&v["attemptId"], &v["ticket"]), (&Value::Null, &Value::Null));
+    let id = s(&v["id"]).to_string();
+    let launch = recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0);
+    if cfg!(windows) {
+        let file = env.state.data_dir.join("sessions").join(s(&v["id"])).join("prompt.md");
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "Say hi\nthen stop");
+        assert!(launch[0].contains("and follow it."), "{launch:?}");
+    } else {
+        assert_eq!(last_arg(&launch), "Say hi\nthen stop");
+    }
+    let shell = json!({"projectId": env.pid, "kind": "shell", "cols": 80, "rows": 24, "initialPrompt": "ls"});
+    let (st, v) = call(&env.app, "POST", "/api/sessions", Some(shell)).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::BAD_REQUEST, "invalid_input"));
+    let blank = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24,
+                       "initialPrompt": "  "});
+    let (st, _) = call(&env.app, "POST", "/api/sessions", Some(blank)).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // A restart never repeats the prompt.
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    for _ in 0..100 {
+        if call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1["status"] == "finished" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let (st, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{id}/restart"), Some(json!({"cols": 80, "rows": 24}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let launches = recorded_launches(&env.bin, "fakeclaude", 2).await;
+    assert_eq!(launches.len(), 2);
+    assert!(!launches[1].iter().any(|a| a.contains("Say hi") || a.contains("follow it")), "{launches:?}");
+    env.state.ptys.shutdown().await;
+}

@@ -95,6 +95,8 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         attention_at: None,
         last_viewed_at: None,
         unseen: false,
+        attempt_id: None,
+        ticket: None,
     };
     let sessions = [
         session(&app, None, None, "Shell · main", 3 * DAY - HOUR),

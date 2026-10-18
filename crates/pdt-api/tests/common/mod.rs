@@ -35,3 +35,56 @@ pub fn git(dir: &std::path::Path, args: &[&str]) {
         .success();
     assert!(ok, "git {args:?}");
 }
+
+/// A stand-in agent program that records each launch's arguments in `<dir>/<name>.args` and then waits for input.
+/// On Unix every argument is followed by a `<<END>>` line and every launch by a `<<LAUNCH>>` line (see
+/// [`recorded_launches`]); on Windows (a `.cmd` shim, run through cmd.exe) each launch is one `echo %*` line.
+pub fn argv_agent(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let args_file = dir.join(format!("{name}.args"));
+    let (file, body) = if cfg!(windows) {
+        (
+            format!("{name}.cmd"),
+            format!(
+                "@echo off\r\n:again\r\n(echo(%* >> \"{}\") 2>nul || goto again\r\nset /p x=\r\n",
+                args_file.display()
+            ),
+        )
+    } else {
+        (
+            name.to_string(),
+            format!(
+                "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n<<END>>\\n' \"$a\"; done >> \"{f}\"\nprintf '<<LAUNCH>>\\n' >> \"{f}\"\nread x\n",
+                f = args_file.display()
+            ),
+        )
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+/// The launches [`argv_agent`] recorded, each as its arguments (on Windows: one string, the raw `%*` line). Waits up
+/// to 10 s for `want` of them.
+pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -> Vec<Vec<String>> {
+    let mut found = vec![];
+    for _ in 0..100 {
+        let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
+        found = if cfg!(windows) {
+            text.lines().map(|l| vec![l.trim().to_string()]).collect()
+        } else {
+            text.split_terminator("<<LAUNCH>>\n")
+                .map(|l| l.split_terminator("\n<<END>>\n").map(String::from).collect())
+                .collect()
+        };
+        if found.len() >= want {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    found
+}

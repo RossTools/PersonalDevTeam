@@ -1,12 +1,17 @@
 use crate::{Store, StoreError};
 use pdt_core::activity::Activity;
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+use pdt_core::ticket::{SessionTicket, format_key};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-const COLUMNS: &str = "id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, \
-                       created_at, ended_at, external_session_id, fresh_started_at, activity, attention_at, \
-                       last_viewed_at";
+/// Sessions with their attempt's ticket (id and key), for `WHERE s.…` clauses.
+const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent, s.bypass_permissions, s.title, s.cwd, \
+                      s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
+                      s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, t.id AS ticket_id, \
+                      COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
+                      FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
+                      LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN projects p ON p.id = t.project_id";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
@@ -16,6 +21,15 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let attention_at: Option<i64> = r.try_get("attention_at")?;
     let last_viewed_at: Option<i64> = r.try_get("last_viewed_at")?;
     let corrupt = |what: &str, v: &str| StoreError::Corrupt(format!("unknown session {what} {v:?}"));
+    let ticket_id: Option<String> = r.try_get("ticket_id")?;
+    let ticket = match ticket_id {
+        Some(id) => {
+            let pkey: String = r.try_get("ticket_pkey")?;
+            let number = u32::try_from(r.try_get::<i64, _>("ticket_number")?).unwrap_or(0);
+            Some(SessionTicket { id, key: format_key(&pkey, number) })
+        }
+        None => None,
+    };
     Ok(Session {
         id: r.try_get("id")?,
         project_id: r.try_get("project_id")?,
@@ -41,6 +55,8 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         attention_at,
         last_viewed_at,
         unseen: pdt_core::activity::is_unseen(attention_at, last_viewed_at),
+        attempt_id: r.try_get("attempt_id")?,
+        ticket,
     })
 }
 
@@ -48,8 +64,8 @@ impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
-             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -68,26 +84,27 @@ impl Store {
         .bind(s.activity.map(Activity::as_str))
         .bind(s.attention_at)
         .bind(s.last_viewed_at)
+        .bind(&s.attempt_id)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn list_sessions(&self, project_id: &str) -> Result<Vec<Session>, StoreError> {
-        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE project_id = ? ORDER BY created_at, id");
+        let sql = format!("{SELECT} WHERE s.project_id = ? ORDER BY s.created_at, s.id");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(project_id).fetch_all(&self.pool).await?;
         rows.iter().map(to_session).collect()
     }
 
     /// Sessions with the given status, oldest first.
     pub async fn list_sessions_by_status(&self, status: SessionStatus) -> Result<Vec<Session>, StoreError> {
-        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE status = ? ORDER BY created_at, id");
+        let sql = format!("{SELECT} WHERE s.status = ? ORDER BY s.created_at, s.id");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(status.as_str()).fetch_all(&self.pool).await?;
         rows.iter().map(to_session).collect()
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>, StoreError> {
-        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE id = ?");
+        let sql = format!("{SELECT} WHERE s.id = ?");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
         row.as_ref().map(to_session).transpose()
     }
@@ -133,7 +150,7 @@ impl Store {
 
     /// Every Codex session, whatever its status.
     pub async fn list_codex_sessions(&self) -> Result<Vec<Session>, StoreError> {
-        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE agent = 'codex' ORDER BY created_at, id");
+        let sql = format!("{SELECT} WHERE s.agent = 'codex' ORDER BY s.created_at, s.id");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         rows.iter().map(to_session).collect()
     }
@@ -244,6 +261,8 @@ mod tests {
             attention_at: None,
             last_viewed_at: None,
             unseen: false,
+            attempt_id: None,
+            ticket: None,
         }
     }
 

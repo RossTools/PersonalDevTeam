@@ -206,9 +206,24 @@ fn login_path_from(shell: &str, args: &[&str], timeout: Duration) -> Option<Stri
     (status.success() && !path.is_empty()).then_some(path)
 }
 
+/// A program ready to spawn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedLaunch {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    /// It runs through `cmd.exe` (a Windows `.cmd`/`.bat` shim), which interprets `&`, `|`, `%`, newlines and more
+    /// in the arguments: free text such as a prompt must not be passed as an argument then.
+    pub via_cmd: bool,
+}
+
 /// Finds `program` on `search_path` (default: pdtd's PATH), or accepts a path. On Windows, `.cmd`/`.bat` shims
 /// such as npm-installed CLIs cannot be started directly in a PTY, so they run through `%ComSpec% /d /c`.
 pub fn resolve(program: &str, args: &[String], search_path: Option<&str>) -> Result<(PathBuf, Vec<String>), PtyError> {
+    resolve_launch(program, args, search_path).map(|r| (r.program, r.args))
+}
+
+/// [`resolve`], also saying whether the program goes through `cmd.exe`.
+pub fn resolve_launch(program: &str, args: &[String], search_path: Option<&str>) -> Result<ResolvedLaunch, PtyError> {
     let not_found = || PtyError::ProgramNotFound(program.to_string());
     let paths = search_path.map(std::ffi::OsString::from).or_else(|| std::env::var_os("PATH"));
     let cwd = std::env::current_dir().map_err(|_| not_found())?;
@@ -222,9 +237,9 @@ pub fn resolve(program: &str, args: &[String], search_path: Option<&str>) -> Res
         let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
         let mut all = vec!["/d".to_string(), "/c".to_string(), path.to_string_lossy().into_owned()];
         all.extend(args.iter().cloned());
-        return Ok((PathBuf::from(comspec), all));
+        return Ok(ResolvedLaunch { program: PathBuf::from(comspec), args: all, via_cmd: true });
     }
-    Ok((path, args.to_vec()))
+    Ok(ResolvedLaunch { program: path, args: args.to_vec(), via_cmd: false })
 }
 
 #[cfg(test)]
@@ -259,6 +274,9 @@ mod tests {
         let search = std::env::join_paths([dir.path()]).unwrap().into_string().unwrap();
         let (program, args) = resolve(name, &["--version".into()], Some(&search)).unwrap();
         let found = if cfg!(windows) { PathBuf::from(&args[2]) } else { program };
+        let r = resolve_launch(name, &["--version".into()], Some(&search)).unwrap();
+        assert_eq!(r.via_cmd, cfg!(windows), "a .cmd shim goes through cmd.exe");
+        assert!(!resolve_launch("git", &[], None).unwrap().via_cmd);
         assert_eq!(std::fs::canonicalize(found).unwrap(), std::fs::canonicalize(&file).unwrap());
         assert_eq!(args.last().unwrap(), "--version");
         assert!(matches!(resolve(name, &[], None), Err(PtyError::ProgramNotFound(_))), "not on the process PATH");
