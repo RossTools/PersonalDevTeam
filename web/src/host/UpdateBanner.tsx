@@ -1,11 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@ui';
 import { api, ApiError } from '../api/client';
 
 export function UpdateBanner() {
   const qc = useQueryClient();
-  const status = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus, refetchInterval: 60_000 });
+  const status = useQuery({
+    queryKey: ['host-update'],
+    queryFn: api.updateStatus,
+    // While an update is underway, poll fast so the page reloads soon after the new version answers.
+    refetchInterval: (q) => (q.state.data && BUSY.includes(q.state.data.state) ? 2_000 : 60_000),
+  });
+  useReloadOnNewVersion(status.data?.current);
   const refresh = () => qc.invalidateQueries({ queryKey: ['host-update'] });
   const install = useMutation({
     mutationFn: async () => {
@@ -19,6 +25,9 @@ export function UpdateBanner() {
         }
         throw e;
       }
+    },
+    onSuccess: (next) => {
+      if (next) qc.setQueryData(['host-update'], next);
     },
     onSettled: refresh,
   });
@@ -60,12 +69,25 @@ export function UpdateBanner() {
       {(s.state === 'downloading' || s.state === 'installing') && (
         <div role="status" className={`${STRIP} text-waiting`}>
           <span className="min-w-0 truncate">
-            {s.state === 'downloading' ? 'Downloading the update…' : 'Installing the update; this page reconnects when the host is back.'}
+            {s.state === 'downloading' ? 'Downloading the update…' : 'Installing the update; this page reloads when the host is back.'}
           </span>
         </div>
       )}
     </>
   );
+}
+
+const BUSY: string[] = ['downloading', 'installing'];
+
+/** Reloads the page once pdtd reports a different version than the one this page loaded against (an update installed
+ * from here, the tray or another device), so the browser never runs an old UI against a new daemon. */
+function useReloadOnNewVersion(current: string | undefined) {
+  const loaded = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!current) return;
+    if (loaded.current === undefined) loaded.current = current;
+    else if (current !== loaded.current) location.reload();
+  }, [current]);
 }
 
 const STRIP = 'flex h-8 shrink-0 flex-nowrap items-center gap-2 overflow-hidden whitespace-nowrap border-b border-border px-3 text-xs';
