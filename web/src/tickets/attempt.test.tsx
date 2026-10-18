@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const attempt = (over: Partial<AttemptSummary> = {}): AttemptSummary => ({
   id: 'a1', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: 'w1', state: 'active', createdAt: 1, endedAt: null,
-  lastHead: null, ...over,
+  lastHead: null, workspaceId: null, ...over,
 });
 
 const sessions = [
@@ -146,14 +146,26 @@ describe('merged banner', () => {
     expect(await screen.findByText('ALP-1 is done and its worktree is removed.')).toBeInTheDocument();
   });
 
-  it('keeps the worktree when the stop is declined', async () => {
-    const calls = stub(merged, { 'DELETE /api/worktrees/w1': new Reply(409, { code: 'worktree_busy', message: 'busy' }) });
+  it('removes the workspace Start made along with the worktree', async () => {
+    const withWs = { ...merged, attempt: attempt({ state: 'merged', workspaceId: 'ws1' }) };
+    const calls = stub(withWs, { 'DELETE /api/worktrees/w1': undefined, 'DELETE /api/workspaces/ws1': undefined });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Move to Done and remove the worktree' }));
+    expect(await screen.findByText('ALP-1 is done and its worktree and workspace are removed.')).toBeInTheDocument();
+    const deletes = calls.filter((c) => c.method === 'DELETE').map((c) => c.path);
+    expect(deletes.findIndex((p) => p.startsWith('/api/worktrees/w1'))).toBeLessThan(deletes.indexOf('/api/workspaces/ws1'));
+  });
+
+  it('keeps the worktree and the workspace when the stop is declined', async () => {
+    const withWs = { ...merged, attempt: attempt({ state: 'merged', workspaceId: 'ws1' }) };
+    const calls = stub(withWs, { 'DELETE /api/worktrees/w1': new Reply(409, { code: 'worktree_busy', message: 'busy' }) });
     view();
     await userEvent.click(await screen.findByRole('button', { name: 'Move to Done and remove the worktree' }));
     const busy = await screen.findByRole('alertdialog', { name: 'The worktree is in use' });
     await userEvent.click(within(busy).getByRole('button', { name: 'Cancel' }));
     expect(await screen.findByText('ALP-1 moved to Done; the worktree was kept.')).toBeInTheDocument();
     expect(count(calls, 'POST', '/api/sessions/s1/kill')).toBe(0);
+    expect(count(calls, 'DELETE', '/api/workspaces/ws1')).toBe(0);
   });
 
   it('is not shown once the ticket is Done', async () => {

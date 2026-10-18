@@ -8,4 +8,9 @@ export type AttemptSummary = { id: string, branch: string, baseBranch: string, w
 /**
  * The branch head when merge detection last looked (so a merged branch deleted afterwards is still recognised).
  */
-lastHead: string | null, };
+lastHead: string | null, 
+/**
+ * The workspace Start made for this attempt (gone with it when the ticket is finished); None when its tabs went
+ * into an existing workspace or the workspace was deleted.
+ */
+workspaceId: string | null, };

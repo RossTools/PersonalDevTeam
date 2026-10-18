@@ -142,18 +142,33 @@ export async function abandonAttempt(confirm: Confirm, qc: QueryClient, t: Pick<
 const isCode = (e: unknown, code: string) => e instanceof ApiError && e.code === code;
 
 /**
- * The merged banner's action: moves the ticket to Done, then removes the attempt's worktree. A busy worktree asks to
- * stop the attempt's running sessions first; a dirty one asks to discard its changes. Results toast.
+ * The merged banner's action: moves the ticket to Done, then removes the attempt's worktree and the workspace Start made
+ * for it (its remaining tabs go back to their project's workspace). A busy worktree asks to stop the attempt's running
+ * sessions first; a dirty one asks to discard its changes. Results toast.
  */
 const BUSY_RETRIES = 10;
 const BUSY_RETRY_MS = 300;
+
+/** Deletes the workspace Start made for the attempt; false when there is none (or it was already deleted). */
+async function removeAttemptWorkspace(attempt: Pick<AttemptSummary, 'workspaceId'>): Promise<boolean> {
+  if (!attempt.workspaceId) return false;
+  try {
+    await api.deleteWorkspace(attempt.workspaceId);
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return false;
+    throw e;
+  }
+}
 
 export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket) {
   const attempt = t.attempt;
   await patchTicket(qc, t.id, { stage: 'done' });
   const worktreeId = attempt?.worktreeId;
   if (!attempt || !worktreeId) {
-    toast.success(`${t.key} moved to Done.`);
+    const removed = attempt ? await removeAttemptWorkspace(attempt) : false;
+    if (removed) void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    toast.success(`${t.key} moved to Done${removed ? ' and its workspace is removed' : ''}.`);
     return;
   }
   let force = false;
@@ -197,8 +212,9 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
       throw e;
     }
   }
+  const workspaceRemoved = await removeAttemptWorkspace(attempt);
   void qc.invalidateQueries({ queryKey: ['worktrees', t.projectId] });
   void qc.invalidateQueries({ queryKey: ['sessions', t.projectId] });
   void qc.invalidateQueries({ queryKey: ['workspaces'] });
-  toast.success(`${t.key} is done and its worktree is removed.`);
+  toast.success(`${t.key} is done and its worktree${workspaceRemoved ? ' and workspace are' : ' is'} removed.`);
 }

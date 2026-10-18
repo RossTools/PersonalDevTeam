@@ -109,7 +109,7 @@ pub(crate) async fn start(
     if let Err(e) = st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await {
         tracing::warn!(ticket = %id, error = %e, "could not record the started session on the timeline");
     }
-    open_tabs(&st, &project.id, &key, &id, &session.id, &v).await;
+    open_tabs(&st, &project.id, &key, &id, &attempt_id, &session.id, &v).await;
     let ticket = load_ticket(&st, &id).await?;
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
@@ -121,8 +121,16 @@ fn plural(n: usize) -> &'static str {
 }
 
 /// The ticket's tab, then the session's right after it: in a new workspace named after the ticket, where asked, or
-/// at the end of the project's workspace. A failure is logged: the session runs and can be opened from the sidebar.
-async fn open_tabs(st: &AppState, project_id: &str, key: &str, ticket_id: &str, session_id: &str, v: &ValidStart) {
+/// at the end of the project's workspace (the attempt remembers a new workspace). A failure is logged: the session runs and can be opened from the sidebar.
+async fn open_tabs(
+    st: &AppState,
+    project_id: &str,
+    key: &str,
+    ticket_id: &str,
+    attempt_id: &str,
+    session_id: &str,
+    v: &ValidStart,
+) {
     let target = if v.new_workspace {
         let w = Workspace {
             id: uuid::Uuid::now_v7().to_string(),
@@ -133,7 +141,13 @@ async fn open_tabs(st: &AppState, project_id: &str, key: &str, ticket_id: &str, 
             tabs: vec![],
         };
         match st.store.insert_workspace(&w).await {
-            Ok(()) => Some((w.id, Some(0))),
+            Ok(()) => {
+                // Finishing the ticket removes the workspace with the worktree.
+                if let Err(e) = st.store.set_attempt_workspace(attempt_id, &w.id).await {
+                    tracing::warn!(error = %e, "could not remember the ticket's workspace");
+                }
+                Some((w.id, Some(0)))
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "could not make the ticket's workspace");
                 None
