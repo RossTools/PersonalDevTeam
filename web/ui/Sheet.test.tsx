@@ -12,6 +12,8 @@ describe('Sheet', () => {
         <a href="#x">Release</a>
       </Sheet>,
     );
+    // The sheet loads lazily; until then its trigger is shown as a plain placeholder.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-expanded', 'false'));
     const trigger = screen.getByRole('button', { name: 'Alpha' });
     await user.click(trigger);
     const sheet = await screen.findByRole('dialog', { name: 'Workspaces' });

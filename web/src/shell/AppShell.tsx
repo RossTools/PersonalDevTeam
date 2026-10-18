@@ -244,7 +244,7 @@ export function AppShell() {
             setRenamingTabId={setRenamingTabId}
             onNewTab={() => setChooserOpen(true)}
             plusRef={plusRef}
-            {...(phone ? { onOpenList: openList, leading: <InstanceBadge /> } : {})}
+            {...(phone ? { onOpenList: openList, leading: <InstanceBadge compact /> } : {})}
             trailing={
               <IconButton label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
                 <PanelBottom aria-hidden />
@@ -256,7 +256,7 @@ export function AppShell() {
             <Button variant="ghost" size="sm" aria-label={LIST_NAME[view]} aria-haspopup="dialog" onClick={openList} className="font-medium">
               {label} <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
             </Button>
-            <InstanceBadge />
+            <InstanceBadge compact />
           </div>
         ) : null}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}

@@ -59,11 +59,11 @@ describe('NewTabChooser', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('is a bottom sheet on a phone', () => {
+  it('is a bottom sheet on a phone', async () => {
     setNarrow(true);
     stubApi(routes);
     renderWithQuery(<Anchored onClose={() => {}} />);
-    const panel = screen.getByRole('dialog', { name: 'New tab' });
+    const panel = await screen.findByRole('dialog', { name: 'New tab' });
     expect(panel.closest('[data-slot=popover-content]')).toBeNull();
     expect(within(panel).getByRole('menuitem', { name: /^Codex/ })).toBeInTheDocument();
   });

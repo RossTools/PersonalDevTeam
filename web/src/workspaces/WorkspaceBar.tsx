@@ -1,4 +1,4 @@
-import { useRef, type DragEvent, type ReactNode, type Ref } from 'react';
+import { useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -105,6 +105,13 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
   plusRef?: Ref<HTMLButtonElement>;
 }) {
   const w = ws.workspace;
+  // Keep the current tab in view when it changes from elsewhere (sidebar, palette, keys): on a phone the strip
+  // shows about one tab.
+  const strip = useRef<HTMLDivElement>(null);
+  const currentTabId = ws.tab?.id;
+  useEffect(() => {
+    strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [currentTabId]);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const step = (by: number) => {
     if (!w || !ws.tab) return;
@@ -148,6 +155,7 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
       {leading}
       <IconButton label="Previous tab" size="sm" className="md:hidden" onClick={() => step(-1)}><ChevronLeft aria-hidden /></IconButton>
       <div
+        ref={strip}
         role="tablist"
         aria-label="Tabs"
         className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"

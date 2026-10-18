@@ -295,7 +295,11 @@ Two PRs, behaviour otherwise unchanged:
 **3c-1 — Library and migration.** Tokens (§4), the 3c components (§5.2), the gallery, the lint check; every existing
 screen moved onto them. Screens look the same or tidier; no flow changes except the `useConfirm`/toast fixes.
 
-**3c-2 — Shell UX.** The fixes from the audit:
+**3c-2 — Shell UX.** The fixes from the audit. Built as planned in docs/superpowers/plans/2026-10-17-phase-3c-2-shell.md,
+with these changes: the badge shows for the dev profile or any non-stable port; the palette opens with Ctrl+] k or ⌘K
+(never Ctrl+K, the terminal's kill-line); the phone rail keeps Settings (Sessions, Files, Search, Settings) and the
+badge is a compact DEV there; Add project is a "+" in the settings nav and a dialog; the sheet's Base UI drawer loads
+lazily so desktop users don't download it.
 
 1. **Instance identity.** `/api/health` gains `profile` and `port`. A non-stable instance shows a `DEV · 8512` badge
    at the top of the rail (amber outline, not the status amber fill), and the browser title gets a `[dev]` prefix.

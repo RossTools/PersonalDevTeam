@@ -32,7 +32,7 @@ describe('InstanceBadge', () => {
     stubApi({ 'GET /api/health': health(true, 8512) });
     renderWithQuery(<InstanceBadge />);
     const badge = await screen.findByText('DEV · 8512');
-    expect(badge).toHaveAttribute('title', 'Development instance');
+    expect(badge).toHaveAttribute('title', 'Development instance on port 8512');
   });
 
   it('renders nothing on the stable instance', async () => {

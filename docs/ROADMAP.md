@@ -16,13 +16,12 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Phase 3a: workspaces and tabs, herdr-style sidebar, Ctrl+] keys, right-click menus (#11)
 - Phase 3b: git integration: project keys, clone by URL, GitHub links, worktree adopt/remove, remove projects,
   Files view (#16)
+- Phase 3c-1: design system library (shadcn/ui on React Aria, `web/ui`), every screen moved onto it (#20)
 
 ## Now
-- **Phase 3c: Design system and shell UX** (spec: docs/superpowers/specs/2026-10-17-design-system-ux-design.md, in
-  review; decisions D1–D7 made). 3c-1 (in review): tokens, `web/ui` components (shadcn/ui on React Aria), gallery,
-  every screen moved onto them. 3c-2:
-  shell fixes (dev badge, view header, ended sessions, settings as a page, command palette, new-tab picker, toasts,
-  phone sidebar sheet).
+- **Phase 3c-2: Shell UX** (in review; plan docs/superpowers/plans/2026-10-17-phase-3c-2-shell.md): DEV badge,
+  shared view header with a ⋯ menu, ended-session bar, settings as a page, command palette, new-tab picker, phone
+  sidebar sheet.
 
 ## Next (build order)
 The design spec above also fixes the UX and component list of Phases 4–7 (§8); each phase's own spec covers the rest.

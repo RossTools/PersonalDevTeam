@@ -75,7 +75,7 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/health': health(true, 8512) });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    const badge = await within(rail).findByTitle('Development instance');
+    const badge = await within(rail).findByTitle(/^Development instance/);
     expect(badge).toHaveTextContent('DEV8512');
   });
 
@@ -84,7 +84,7 @@ describe('AppShell', () => {
     renderWithQuery(<AppShell />);
     await waitFor(() => expect(calls.some((c) => c.path === '/api/health')).toBe(true));
     await act(async () => {});
-    expect(screen.queryByTitle('Development instance')).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/^Development instance/)).not.toBeInTheDocument();
   });
 
   it('shows the host settings in the Settings view', async () => {
@@ -166,6 +166,21 @@ describe('workspaces', () => {
     await waitFor(() => expect(document.title).toBe('(1) PDT'));
   });
 
+  it('scrolls the tab strip to the current tab when it changes from the sidebar', async () => {
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      stubWorkspaces({});
+      renderWithQuery(<AppShell />);
+      const agents = await screen.findByRole('region', { name: 'Agents' });
+      await userEvent.click(await within(agents).findByRole('row', { name: /Codex B/ }));
+      await waitFor(() => expect(scroll.mock.contexts.some((el) => (el as HTMLElement).getAttribute('aria-selected') === 'true'
+        && (el as HTMLElement).textContent?.includes('Codex B'))).toBe(true));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
   it('lists agents in the sidebar; clicking one focuses its tab, or opens one when it has none', async () => {
     const calls = stubWorkspaces({ 'POST /api/workspaces/wa/tabs': tabOf('td', 'wa', 'd', 2) });
     renderWithQuery(<AppShell />);
@@ -643,8 +658,9 @@ describe('phone', () => {
     const rail = screen.getByRole('navigation', { name: 'Views' });
     expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Files', 'Search', 'Settings']);
     const bar = (await screen.findByRole('button', { name: 'Workspaces and agents' })).parentElement!;
-    expect(await within(bar).findByText('DEV · 8512')).toBeInTheDocument();
-    expect(within(rail).queryByTitle('Development instance')).not.toBeInTheDocument();
+    // Compact on phones (the tabs need the room); the port is in the tooltip.
+    expect(await within(bar).findByText('DEV')).toHaveAttribute('title', 'Development instance on port 8512');
+    expect(within(rail).queryByTitle(/^Development instance/)).not.toBeInTheDocument();
     await userEvent.click(within(rail).getByRole('button', { name: 'Search' }));
     expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
   });

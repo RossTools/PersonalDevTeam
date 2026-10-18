@@ -5,6 +5,10 @@ Spec: docs/superpowers/specs/2026-10-17-design-system-ux-design.md §6 (patterns
 Mockups: the "PDT UX pass" canvas, 3c row: Sessions, New tab chooser / command palette, Settings as a page, Phone
 sidebar sheet (https://claude.ai/artifact/1EKGuHdvGce3SNSFKFgNqY).
 
+**Status (2026-10-18):** done. Notes: the `Sheet` implementation (Base UI drawer, ~31 kB gzipped) loads lazily and is
+preloaded when the app is idle, keeping the main bundle at 328 kB gzipped (3c-1: 322); `CommandList` items gained a
+`detail` line; the tab strip scrolls the current tab into view (on a phone it shows about one tab).
+
 **Goal:** the shell fixes from the audit, built on the 3c-1 library: a dev instance is recognisable, views share one
 header with a ⋯ menu, an ended session says so and offers Restart, Settings is a page, a command palette reaches
 everything, the new-tab chooser is one searchable list, and on a phone the sidebar is a sheet. Toasts for failed

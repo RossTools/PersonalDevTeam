@@ -135,7 +135,7 @@ function CommandList<T extends object>({ className, ...props }: MenuProps<T>) {
       {...props}
       data-slot="command-list"
       className={cn(
-        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+        "max-h-[min(60vh,28rem)] scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
         className
       )}
     />
