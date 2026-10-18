@@ -29,6 +29,8 @@ const buttonVariants = cva(
       size: {
         default: "h-control-md px-2.5 pointer-coarse:h-control-touch pointer-coarse:px-3",
         xs: "h-control-sm gap-1 px-2 text-xs pointer-coarse:h-control-touch pointer-coarse:px-3",
+        compact: "h-control-sm gap-1 px-2 text-xs",
+        "icon-compact": "size-control-sm",
         sm: "h-control-sm gap-1 px-2 text-xs pointer-coarse:h-control-touch pointer-coarse:px-3",
         lg: "h-9 px-3 pointer-coarse:h-control-touch",
         icon: "size-control-md pointer-coarse:size-control-touch [&_svg:not([class*='size-'])]:size-4",

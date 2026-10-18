@@ -5,7 +5,6 @@ import { api, ApiError } from '../api/client';
 
 // Banner buttons stay 24px on touch screens too: the strip is a fixed h-8 (a 44px button would be clipped, and growing
 // the strip would resize the terminal under it).
-const SMALL = 'pointer-coarse:h-control-sm! pointer-coarse:px-2!';
 
 export function UpdateBanner() {
   const qc = useQueryClient();
@@ -41,7 +40,7 @@ export function UpdateBanner() {
         <Banner
           tone={r.outcome === 'installed' ? 'running' : 'failed'}
           title={r.message}
-          actions={<Button size="sm" variant="ghost" className={SMALL} onClick={() => dismiss.mutate()}>Dismiss</Button>}
+          actions={<Button size="sm" variant="ghost" compact onClick={() => dismiss.mutate()}>Dismiss</Button>}
         >
           {r.message}
           {r.outcome !== 'installed' && r.log && <> · <code className="text-muted-foreground" title={r.log}>{r.log}</code></>}
@@ -54,11 +53,11 @@ export function UpdateBanner() {
             actions={
               <>
                 {s.latest.notes && (
-                  <Button size="sm" variant="ghost" className={SMALL} aria-expanded={notesOpen} onClick={() => setNotesOpen((o) => !o)}>
+                  <Button size="sm" variant="ghost" compact aria-expanded={notesOpen} onClick={() => setNotesOpen((o) => !o)}>
                     Release notes
                   </Button>
                 )}
-                <Button size="sm" variant="primary" className={SMALL} pending={install.isPending} onClick={() => install.mutate()}>Update</Button>
+                <Button size="sm" variant="primary" compact pending={install.isPending} onClick={() => install.mutate()}>Update</Button>
               </>
             }
           >

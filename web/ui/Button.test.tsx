@@ -129,3 +129,12 @@ describe('Button', () => {
     expect(screen.getByRole('button', { name: 'New' })).toContainElement(screen.getByTestId('icon'));
   });
 });
+
+describe('Button compact', () => {
+  it('stays 24px on touch screens', () => {
+    render(<Button compact>Dismiss</Button>);
+    const b = screen.getByRole('button', { name: 'Dismiss' });
+    expect(b.className).toContain('h-control-sm');
+    expect(b.className).not.toContain('pointer-coarse:h-control-touch');
+  });
+});

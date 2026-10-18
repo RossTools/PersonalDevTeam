@@ -23,6 +23,8 @@ export interface ButtonBaseProps extends AriaAttributes {
   size?: ButtonSize;
   /** Shows a spinner in place of the content (same width) and ignores presses until it clears. */
   pending?: boolean;
+  /** 24px even on touch screens, for fixed-height strips (Banner) where a 44px target would resize the page. */
+  compact?: boolean;
   disabled?: boolean;
   /** Called on press: mouse, touch, pen, keyboard, and `click()`. */
   onClick?: (e: PressEvent) => void;
@@ -51,6 +53,7 @@ export function renderButton({
   variant = 'secondary',
   size = 'md',
   pending = false,
+  compact = false,
   disabled,
   onClick,
   type = 'button',
@@ -64,7 +67,7 @@ export function renderButton({
     <ButtonPrimitive
       {...rest}
       variant={variantMap[variant]}
-      size={icon ? iconSizeMap[size] : sizeMap[size]}
+      size={compact ? (icon ? 'icon-compact' : 'compact') : icon ? iconSizeMap[size] : sizeMap[size]}
       type={type}
       isDisabled={disabled}
       isPending={pending}
