@@ -111,8 +111,10 @@ worktree (a shell whose folder is removed fails every command after). Then, in t
 git -C <repo> fetch --prune origin && git -C <repo> merge --ff-only origin/main
 git -C <repo> worktree remove .worktrees/<branch>
 git -C <repo> branch -D <branch>                  # -D: squash merges don't look merged to git
-git -C <repo> push origin --delete <branch>       # the repo doesn't delete merged branches itself
 ```
+
+GitHub deletes the remote branch when the PR merges (the repo setting is on); `fetch --prune` drops its local
+tracking ref.
 
 Removing it from the project's Settings page (`DELETE /api/worktrees/{id}`) does the worktree step and keeps PDT's list
 right, but the stable PDT may be a release behind main and lack that route (404); check `/api/health`. A worktree
