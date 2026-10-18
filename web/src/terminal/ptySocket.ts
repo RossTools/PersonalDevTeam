@@ -29,6 +29,12 @@ export interface PtyHandlers {
 }
 
 export interface PtySocketOptions {
+  /**
+   * Decodes a gzipped scrollback replay. When set, the socket asks the server for one (`?replay=gzip`): over a remote
+   * link the replay (up to 512 KB) is most of what opening a terminal costs, and terminal output gzips ~10-30×.
+   * `null` asks for the raw replay.
+   */
+  gunzip: ((bytes: Uint8Array) => Promise<Uint8Array>) | null;
   baseDelayMs: number;
   maxDelayMs: number;
   /** A connection must stay open this long before the backoff starts over (so a flapping one keeps backing off). */
@@ -36,7 +42,21 @@ export interface PtySocketOptions {
 }
 
 const OPEN = 1;
-const DEFAULTS: PtySocketOptions = { baseDelayMs: 500, maxDelayMs: 5000, stableMs: 5000 };
+/** gunzip with the browser's DecompressionStream, or null where there is none (then the replay comes raw). */
+export const browserGunzip: PtySocketOptions['gunzip'] =
+  typeof DecompressionStream === 'undefined'
+    ? null
+    : async (bytes) => {
+        const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('gzip'));
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+      };
+
+const DEFAULTS: PtySocketOptions = { gunzip: browserGunzip, baseDelayMs: 500, maxDelayMs: 5000, stableMs: 5000 };
+
+/** Adds `replay=gzip` to a PTY WebSocket URL. */
+export function withGzipReplay(url: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}replay=gzip`;
+}
 
 export function ptyUrl(sessionId: string, loc: Pick<Location, 'protocol' | 'host'> = window.location): string {
   const scheme = loc.protocol === 'https:' ? 'wss' : 'ws';
@@ -81,17 +101,30 @@ export class PtySocket {
     if (this.disposed || this.exited || this.ended) return;
     if (!this.started) this.h.onStatus?.('connecting');
     this.started = true;
-    const s = this.factory(this.url);
+    const gunzip = this.opts.gunzip;
+    const s = this.factory(gunzip ? withGzipReplay(this.url) : this.url);
     s.binaryType = 'arraybuffer';
     let openedAt: number | null = null;
     let ready = false;
+    // Messages are handled in arrival order. Decoding the gzipped replay is asynchronous, so while it runs, later
+    // messages (`ready`, live output) wait behind it; otherwise everything is handled at once.
+    let pending: Promise<void> | null = null;
+    const inOrder = (f: () => void | Promise<void>) => {
+      const run = () => (this.sock === s ? f() : undefined);
+      const next = pending ? pending.then(run) : run();
+      if (!next) return;
+      const p: Promise<void> = next.catch(() => {}).finally(() => {
+        if (pending === p) pending = null;
+      });
+      pending = p;
+    };
     s.onopen = () => {
       openedAt = Date.now();
       this.h.onReset();
       this.h.onStatus?.('open');
       if (this.size) this.control({ type: 'resize', ...this.size });
     };
-    s.onmessage = (ev) => {
+    s.onmessage = (ev) => inOrder(() => {
       if (typeof ev.data === 'string') {
         const msg = JSON.parse(ev.data) as PtyServerMessage;
         if (msg.type === 'ready') {
@@ -112,8 +145,20 @@ export class PtySocket {
         }
         return;
       }
-      this.h.onData(new Uint8Array(ev.data as ArrayBuffer), !ready);
-    };
+      const bytes = new Uint8Array(ev.data as ArrayBuffer);
+      if (ready || !gunzip) {
+        this.h.onData(bytes, !ready);
+        return;
+      }
+      return gunzip(bytes).then(
+        (raw) => {
+          if (this.sock === s) this.h.onData(raw, true);
+        },
+        () => {
+          // A replay that does not decode is dropped; live output still follows.
+        },
+      );
+    });
     s.onclose = () => {
       // Not the current socket: it was replaced (retry) or ended on purpose.
       if (this.sock !== s) return;

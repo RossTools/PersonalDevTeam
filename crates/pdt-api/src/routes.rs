@@ -271,10 +271,28 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         Some(dir) => {
             let index = dir.join("index.html");
             app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+                .layer(axum::middleware::from_fn(web_cache_headers))
         }
         None => app,
     };
-    app.layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+    // Over a remote link (Tailscale) the UI bundle and the JSON polls are worth compressing; WebSocket upgrades and
+    // tiny bodies are left alone. Quality 4 keeps it fast on every response.
+    let compression =
+        tower_http::compression::CompressionLayer::new().quality(tower_http::compression::CompressionLevel::Precise(4));
+    app.layer(compression).layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+}
+
+/// Vite names every file in `/assets/` by its content hash, so browsers may keep them for good; everything else the
+/// web dir serves is index.html (for any app route), which must be revalidated so a new release is picked up.
+async fn web_cache_headers(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let path = req.uri().path().to_owned();
+    let mut res = next.run(req).await;
+    if path.starts_with("/api/") || !res.status().is_success() {
+        return res;
+    }
+    let value = if path.starts_with("/assets/") { "public, max-age=31536000, immutable" } else { "no-cache" };
+    res.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static(value));
+    res
 }
 
 async fn health() -> Json<Health> {

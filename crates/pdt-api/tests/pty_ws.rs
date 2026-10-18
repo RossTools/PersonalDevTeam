@@ -129,6 +129,42 @@ async fn shell_streams_input_output_and_exit() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_client_that_asks_gets_the_scrollback_gzipped() {
+    use std::io::Read;
+    let tmp = tempfile::tempdir().unwrap();
+    let (port, state) = serve(tmp.path()).await;
+    let id = shell_session(tmp.path(), port).await;
+    let url = format!("ws://127.0.0.1:{port}/api/sessions/{id}/pty");
+    let (mut ws, _) = connect_async(&url).await.unwrap();
+    ws.send(Message::Binary(PROBE.as_bytes().to_vec().into())).await.unwrap();
+    read_until(&mut ws, "6021").await;
+
+    let (mut gz, _) = connect_async(format!("{url}?replay=gzip")).await.unwrap();
+    let mut frames = Vec::new();
+    let ready = tokio::time::timeout(WAIT, async {
+        loop {
+            match gz.next().await.unwrap().unwrap() {
+                Message::Binary(b) => frames.push(b.to_vec()),
+                Message::Text(t) => return t.to_string(),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(ready, r#"{"type":"ready"}"#);
+    assert_eq!(frames.len(), 1, "the replay is one gzip frame");
+    let mut replay = String::new();
+    flate2::read::GzDecoder::new(&frames[0][..]).read_to_string(&mut replay).unwrap();
+    assert!(replay.contains("6021"), "{replay:?}");
+
+    // Live output after `ready` is never compressed.
+    gz.send(Message::Binary(PROBE.as_bytes().to_vec().into())).await.unwrap();
+    read_until(&mut gz, "6021").await;
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn websocket_rejects_foreign_origin_and_unknown_sessions() {
     let tmp = tempfile::tempdir().unwrap();
     let (port, state) = serve(tmp.path()).await;
