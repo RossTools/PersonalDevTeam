@@ -3,6 +3,7 @@ import type { Activity } from "./Activity";
 import type { AgentKind } from "./AgentKind";
 import type { SessionKind } from "./SessionKind";
 import type { SessionStatus } from "./SessionStatus";
+import type { SessionTicket } from "./SessionTicket";
 
 export type Session = { id: string, projectId: string, 
 /**
@@ -44,4 +45,12 @@ lastViewedAt: number | null,
 /**
  * Computed: became idle or needs_you after the user last viewed it (on any device).
  */
-unseen: boolean, };
+unseen: boolean, 
+/**
+ * The ticket attempt this session works on (sessions made by Start).
+ */
+attemptId: string | null, 
+/**
+ * The attempt's ticket.
+ */
+ticket: SessionTicket | null, };

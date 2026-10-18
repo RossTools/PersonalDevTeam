@@ -4,4 +4,8 @@ import type { AttemptState } from "./AttemptState";
 /**
  * A ticket's attempt (a branch + worktree + sessions working on it; Phase 4b creates them).
  */
-export type AttemptSummary = { id: string, branch: string, baseBranch: string, worktreeId: string | null, state: AttemptState, createdAt: number, endedAt: number | null, };
+export type AttemptSummary = { id: string, branch: string, baseBranch: string, worktreeId: string | null, state: AttemptState, createdAt: number, endedAt: number | null, 
+/**
+ * The branch head when merge detection last looked (so a merged branch deleted afterwards is still recognised).
+ */
+lastHead: string | null, };
