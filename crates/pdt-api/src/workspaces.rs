@@ -4,7 +4,7 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::workspace::{
     NewWorkspace, OpenTab, Tab, TabItem, TabPatch, TabPlacement, Workspace, WorkspacePatch, valid_workspace_name,
@@ -54,8 +54,19 @@ pub(crate) async fn update(
     Ok(Json(st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?))
 }
 
-pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    match st.store.delete_workspace(&id).await? {
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct RemoveQuery {
+    /// Close the workspace's tabs instead of moving them to their projects' workspaces.
+    close_tabs: bool,
+}
+
+pub(crate) async fn remove(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<RemoveQuery>,
+) -> Result<StatusCode, ApiError> {
+    match st.store.delete_workspace(&id, q.close_tabs).await? {
         DeleteWorkspace::Deleted => Ok(StatusCode::NO_CONTENT),
         DeleteWorkspace::NotFound => Err(unknown_workspace()),
         DeleteWorkspace::ProjectWorkspace => Err(ApiError::new(

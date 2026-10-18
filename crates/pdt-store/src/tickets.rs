@@ -1731,7 +1731,7 @@ mod tests {
         };
         store.insert_workspace(&free).await.unwrap();
         store.move_tab("ta", Some("f"), None).await.unwrap().unwrap();
-        store.delete_workspace("f").await.unwrap();
+        store.delete_workspace("f", false).await.unwrap();
         assert_eq!(store.get_workspace(&home).await.unwrap().unwrap().tabs.len(), 2);
 
         assert_eq!(store.delete_ticket("b").await.unwrap(), DeleteTicket::Deleted);
@@ -1840,7 +1840,7 @@ mod tests {
         assert!(store.set_attempt_workspace("at1", "ws").await.unwrap());
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id.as_deref(), Some("ws"));
         assert_eq!(store.get_ticket("a").await.unwrap().unwrap().attempts[0].workspace_id.as_deref(), Some("ws"));
-        store.delete_workspace("ws").await.unwrap();
+        store.delete_workspace("ws", false).await.unwrap();
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
 
         assert_eq!(
