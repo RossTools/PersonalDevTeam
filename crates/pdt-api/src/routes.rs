@@ -70,6 +70,9 @@ pub struct AppState {
     /// Serializes run starts (limit check, port choice, worktree and row creation), so concurrent starts can neither
     /// exceed the run limit nor pick the same port.
     pub(crate) run_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes ticket Starts up to the attempt row (checks, worktree, attempt), so two Starts of one ticket can't
+    /// both make a worktree.
+    pub(crate) ticket_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
     pub run_stop_wait: std::time::Duration,
     /// The program agent hooks run (`<this pdtd> hook …`).
@@ -124,6 +127,7 @@ impl AppState {
             remote_applied: Default::default(),
             run_controls: Default::default(),
             run_start_lock: Default::default(),
+            ticket_start_lock: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),
             hook_program: std::env::current_exe().unwrap_or_default(),
             activity: Default::default(),
@@ -269,6 +273,9 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/links", axum::routing::post(crate::tickets::add_link).delete(crate::tickets::remove_link))
         .route("/tickets/{id}/events", get(crate::tickets::events))
         .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
+        .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
+        .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
+        .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
         .route("/workspaces", get(crate::workspaces::list).post(crate::workspaces::create))
         .route("/workspaces/{id}", axum::routing::patch(crate::workspaces::update).delete(crate::workspaces::remove))
         .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))

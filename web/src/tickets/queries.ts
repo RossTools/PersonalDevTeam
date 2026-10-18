@@ -1,5 +1,8 @@
-import { keepPreviousData, useInfiniteQuery, useQuery, type QueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef } from 'react';
+import { keepPreviousData, useInfiniteQuery, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import type { Session } from '../api/gen/Session';
+import type { Ticket } from '../api/gen/Ticket';
 import type { TicketQuery } from '../api/gen/TicketQuery';
 
 /** How often what's on screen refetches (like sessions). */
@@ -29,9 +32,10 @@ export function invalidateTickets(qc: QueryClient, ids: string[] = []) {
 /**
  * The backlog: pages over the cursor. Loaded pages refetch every 2 s (every 15 s once more than two are loaded), and the previous filter's rows stay on screen while a new filter loads.
  */
-export function useTicketPages(q: TicketQuery) {
+export function useTicketPages(q: TicketQuery, enabled = true) {
   return useInfiniteQuery({
     queryKey: ticketKeys.list(q),
+    enabled,
     queryFn: ({ pageParam }) => api.listTickets({ ...q, ...(pageParam ? { cursor: pageParam } : {}) }),
     initialPageParam: '' as string,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
@@ -69,4 +73,37 @@ export function useTicketSearch(q: TicketQuery, enabled = true) {
     placeholderData: keepPreviousData,
     staleTime: 2000,
   });
+}
+
+/** Every project's sessions (the same queries the workspaces poll), for the attempt and board activity dots. */
+export function useAllSessions(): Session[] {
+  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const qs = useQueries({
+    queries: (projects.data ?? []).map((p) => ({ queryKey: ['sessions', p.id], queryFn: () => api.listSessions(p.id), refetchInterval: POLL })),
+  });
+  const stamp = qs.map((q) => q.dataUpdatedAt).join();
+  // The result arrays are new on every render; their timestamps say when anything changed.
+  return useMemo(() => qs.flatMap((q) => q.data ?? []), [stamp]);
+}
+
+/**
+ * Asks pdtd to check now whether the ticket's active attempt is merged (once per ticket per mount: the 60 s loop does
+ * the rest) and keeps the answer in the ticket's cache.
+ */
+export function useCheckMerge(t: Pick<Ticket, 'id' | 'attempt'> | undefined) {
+  const qc = useQueryClient();
+  const checked = useRef(new Set<string>());
+  const id = t?.id;
+  const active = t?.attempt?.state === 'active';
+  useEffect(() => {
+    if (!id || !active || checked.current.has(id)) return;
+    checked.current.add(id);
+    api.checkMerge(id).then(
+      (fresh) => {
+        qc.setQueryData(ticketKeys.one(id), fresh);
+        if (fresh.attempt?.state !== 'active') invalidateTickets(qc, [id]);
+      },
+      () => { /* The 60 s loop checks again; nothing to tell the user. */ },
+    );
+  }, [id, active, qc]);
 }

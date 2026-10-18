@@ -5,6 +5,8 @@
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";
+/// The short name agents and prompts use for the product (ticket prompts: "Ticket PDT-4 in PDT").
+pub const SHORT_NAME: &str = "PDT";
 pub const DAEMON_BIN: &str = "pdtd";
 pub const STABLE_PORT: u16 = 7420;
 pub const DEV_PORT: u16 = 7421;

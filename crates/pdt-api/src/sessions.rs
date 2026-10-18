@@ -6,9 +6,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::{PtyError, SpawnSpec};
 use pdt_core::session::{
-    AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, clean_title, default_title,
-    is_scrubbed, launch,
+    AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
+    default_title, is_scrubbed, launch, prompt_arg, shim_prompt,
 };
+use pdt_core::workspace::TabPlacement;
 use pdt_store::Store;
 use std::collections::HashSet;
 use std::path::{Path as FsPath, PathBuf};
@@ -32,8 +33,28 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Session>), ApiError> {
     let Json(input) = payload?;
     let valid = input.validate()?;
-    let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
+    let req = CreateSession { valid, title: None, attempt_id: None, ticket_key: None, tab: Some(input.tab) };
+    Ok((StatusCode::CREATED, Json(create_session(&st, req).await?)))
+}
+
+/// What `create_session` makes.
+pub(crate) struct CreateSession {
+    pub valid: ValidSession,
+    /// The default title (`<Kind> · <branch or project>`) when None.
+    pub title: Option<String>,
+    pub attempt_id: Option<String>,
+    /// The attempt's ticket key, for the short prompt a Windows `.cmd` shim gets.
+    pub ticket_key: Option<String>,
+    /// Some: open the session's tab there (None inside: the end of its project's workspace). None: the caller opens it.
+    pub tab: Option<Option<TabPlacement>>,
+}
+
+/// Makes a session and starts its process (`POST /api/sessions` and ticket Start): the row, the terminal (with the
+/// first prompt, if any), activity tracking and, if asked, its tab. Nothing is left behind if the process can't start.
+pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<Session, ApiError> {
+    let valid = req.valid;
+    let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let (worktree_id, cwd, place) = match &valid.worktree_id {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
@@ -45,7 +66,7 @@ pub(crate) async fn create(
     };
     // A fresh Codex launch is matched to its conversation by start time, so launches in a folder are spaced out.
     let codex = valid.kind == SessionKind::AgentTui && valid.agent == Some(AgentKind::Codex);
-    let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(&st, &cwd).await) } else { None };
+    let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(st, &cwd).await) } else { None };
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),
         project_id: project.id,
@@ -53,7 +74,7 @@ pub(crate) async fn create(
         kind: valid.kind,
         agent: valid.agent,
         bypass_permissions: valid.bypass_permissions,
-        title: default_title(valid.kind, valid.agent, &place),
+        title: req.title.unwrap_or_else(|| default_title(valid.kind, valid.agent, &place)),
         cwd,
         status: SessionStatus::Running,
         exit_code: None,
@@ -65,19 +86,31 @@ pub(crate) async fn create(
         attention_at: None,
         last_viewed_at: None,
         unseen: false,
+        attempt_id: req.attempt_id,
+        ticket: None,
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
-    let creds = credentials_for(&st, &session.project_id).await?;
+    let creds = credentials_for(st, &session.project_id).await?;
     st.store.insert_session(&session).await?;
-    if let Err(e) = start_pty(&st, &session, valid.size, &Resume::Fresh, creds) {
+    let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket_key });
+    if let Err(e) = start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref()) {
         st.store.delete_session(&session.id).await?;
-        let _ = std::fs::remove_dir_all(session_data_dir(&st, &session.id));
+        let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
         return Err(e.into());
     }
-    crate::activity::track(&st, &session).await;
-    let item = pdt_core::workspace::TabItem::Session(session.id.clone());
-    crate::workspaces::open_for_new(&st, &session.project_id, item, input.tab.as_ref()).await;
-    Ok((StatusCode::CREATED, Json(load(&st, &session.id).await?)))
+    crate::activity::track(st, &session).await;
+    if let Some(tab) = req.tab {
+        let item = pdt_core::workspace::TabItem::Session(session.id.clone());
+        crate::workspaces::open_for_new(st, &session.project_id, item, tab.as_ref()).await;
+    }
+    load(st, &session.id).await
+}
+
+/// A new session's first prompt.
+pub(crate) struct InitialPrompt {
+    pub text: String,
+    /// The ticket it is about (`PDT-4`), if any.
+    pub ticket_key: Option<String>,
 }
 
 /// The credential policy for agents in this project (project override, else host setting).
@@ -202,18 +235,38 @@ async fn bind_codex_with(
     None
 }
 
-/// Spawns the session's process and records its exit when it ends.
+/// Spawns the session's process and records its exit when it ends. An agent's first prompt (fresh launches at
+/// creation only) is its last argument; an agent run through `cmd.exe` (a Windows `.cmd` shim, which would interpret
+/// the prompt's text) gets the prompt in `<session dir>/prompt.md` and a short prompt naming that file instead.
 fn start_pty(
     st: &AppState,
     s: &Session,
     size: TerminalSize,
     resume: &Resume,
     creds: pdt_core::host::CredentialPolicy,
+    prompt: Option<&InitialPrompt>,
 ) -> Result<(), PtyError> {
     let l = launch(s.kind, s.agent, &st.platform, resume, &s.id, s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args)?;
-    let (program, args) = pdt_agents::launch::resolve(&l.program, &launch_args, login_path)?;
+    let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;
+    let (program, mut args) = (resolved.program, resolved.args);
+    if let Some(p) = prompt.filter(|_| s.kind == SessionKind::AgentTui) {
+        if resolved.via_cmd {
+            let dir = session_data_dir(st, &s.id);
+            let file = dir.join("prompt.md");
+            std::fs::create_dir_all(&dir)
+                .and_then(|_| std::fs::write(&file, &p.text))
+                .map_err(|e| PtyError::Spawn(format!("writing the session's prompt file: {e}")))?;
+            match shim_prompt(p.ticket_key.as_deref(), &file.to_string_lossy()) {
+                Some(short) => args.push(short),
+                None => tracing::warn!(session = %s.id, file = %file.display(),
+                    "the prompt file's path is unsafe on a cmd.exe command line; starting without the prompt"),
+            }
+        } else {
+            args.push(prompt_arg(&p.text));
+        }
+    }
     let mut env = pdt_core::session::terminal_env();
     if let Some(path) = login_path {
         // So `#!/usr/bin/env node` shebangs and the agents' own child processes find the user's tools.
@@ -362,7 +415,7 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
     }
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
-    if let Err(e) = start_pty(st, &session, size, &resume, creds) {
+    if let Err(e) = start_pty(st, &session, size, &resume, creds, None) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
             st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;

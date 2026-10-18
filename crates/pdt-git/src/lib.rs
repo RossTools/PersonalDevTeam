@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod manage;
+mod merge;
 pub use manage::*;
+pub use merge::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoInfo {

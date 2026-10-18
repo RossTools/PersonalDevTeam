@@ -42,6 +42,8 @@ import type { TicketLink } from './gen/TicketLink';
 import type { TicketPage } from './gen/TicketPage';
 import type { TicketPatch } from './gen/TicketPatch';
 import type { TicketQuery } from './gen/TicketQuery';
+import type { StartResult } from './gen/StartResult';
+import type { StartTicket } from './gen/StartTicket';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -133,6 +135,10 @@ export const api = {
     request<EventPage>(`/api/tickets/${enc(id)}/events${queryString(q)}`),
   commentOnTicket: (id: string, body: string) =>
     request<TicketEvent>(`/api/tickets/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ body } satisfies NewComment) }),
+  startTicket: (id: string, b: StartTicket) =>
+    request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }),
+  checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
+  abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
   projectLabels: (projectId: string) => request<string[]>(`/api/projects/${enc(projectId)}/labels`),
   listRuns: (projectId: string) => request<Run[]>(`/api/projects/${enc(projectId)}/runs`),
   listActiveRuns: () => request<Run[]>('/api/runs'),

@@ -35,11 +35,13 @@ macro_rules! str_enum {
 pub enum TicketStage {
     Draft,
     Ready,
+    /// Picked to be worked on next: on the board. Ready tickets wait in the backlog.
+    Todo,
     InProgress,
     Done,
     WontDo,
 }
-str_enum!(TicketStage { Draft => "draft", Ready => "ready", InProgress => "in_progress", Done => "done", WontDo => "wont_do" });
+str_enum!(TicketStage { Draft => "draft", Ready => "ready", Todo => "todo", InProgress => "in_progress", Done => "done", WontDo => "wont_do" });
 
 impl TicketStage {
     /// Done and Won't do are closed: hidden like done, and they no longer block anything.
@@ -176,6 +178,30 @@ pub struct AttemptSummary {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub ended_at: Option<i64>,
+    /// The branch head when merge detection last looked (so a merged branch deleted afterwards is still recognised).
+    pub last_head: Option<String>,
+}
+
+/// The ticket a session works on (through its attempt), for the sidebar and tab titles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionTicket {
+    pub id: String,
+    /// `PDT-42`.
+    pub key: String,
+}
+
+/// A session of one of a ticket's attempts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AttemptSession {
+    pub id: String,
+    pub title: String,
+    pub status: crate::session::SessionStatus,
+    pub agent: Option<crate::session::AgentKind>,
+    pub attempt_id: String,
 }
 
 /// A row of the backlog.
@@ -240,6 +266,10 @@ pub struct Ticket {
     pub links: Vec<LinkedTicket>,
     /// Newest first.
     pub attempts: Vec<AttemptSummary>,
+    /// The branch Start uses unless told otherwise: `pdt/<KEY>-<n>-<slug of the title>`.
+    pub default_branch: String,
+    /// The sessions of all its attempts, newest first.
+    pub sessions: Vec<AttemptSession>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, TS)]
@@ -422,6 +452,10 @@ pub struct TicketQuery {
     #[serde(default)]
     #[ts(optional)]
     pub sort: Option<TicketSort>,
+    /// Closed tickets only if they were closed at or after this time (ms); open tickets are unaffected.
+    #[serde(default)]
+    #[ts(optional, type = "number")]
+    pub closed_after: Option<i64>,
     #[serde(default)]
     #[ts(optional)]
     pub cursor: Option<String>,
@@ -441,6 +475,7 @@ pub struct TicketFilter {
     pub labels: Vec<String>,
     pub blocked: Option<bool>,
     pub sort: TicketSort,
+    pub closed_after: Option<i64>,
     pub cursor: Option<String>,
     pub limit: u32,
 }
@@ -709,6 +744,7 @@ impl TicketQuery {
             labels,
             blocked: self.blocked,
             sort: self.sort.unwrap_or_default(),
+            closed_after: self.closed_after,
             cursor: nonblank(&self.cursor),
             limit,
         })
@@ -805,7 +841,8 @@ mod tests {
         }
         assert!(TicketStage::Done.is_closed() && TicketStage::WontDo.is_closed());
         assert!(!TicketStage::Draft.is_closed() && !TicketStage::Ready.is_closed());
-        assert!(!TicketStage::InProgress.is_closed());
+        assert!(!TicketStage::Todo.is_closed() && !TicketStage::InProgress.is_closed());
+        assert_eq!(TicketStage::parse("todo"), Some(TicketStage::Todo));
         assert_eq!(TicketStage::parse("wont_do"), Some(TicketStage::WontDo));
         assert_eq!(TicketStage::parse("Done"), None);
         for e in EventKind::ALL {
@@ -924,11 +961,20 @@ mod tests {
             updated_at: 2,
             closed_at: None,
         };
-        let t = Ticket { summary: s, description: "d".into(), links: vec![], attempts: vec![] };
+        let t = Ticket {
+            summary: s,
+            description: "d".into(),
+            links: vec![],
+            attempts: vec![],
+            default_branch: "pdt/PDT-1-t".into(),
+            sessions: vec![],
+        };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["key"], "PDT-1");
         assert_eq!(v["stage"], "in_progress");
         assert_eq!(v["blockedBy"], 0);
         assert_eq!(v["description"], "d");
+        assert_eq!(v["defaultBranch"], "pdt/PDT-1-t");
+        assert_eq!(v["sessions"], serde_json::json!([]));
     }
 }

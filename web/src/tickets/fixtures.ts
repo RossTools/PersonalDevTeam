@@ -18,7 +18,7 @@ export function summary(n: number, over: Partial<TicketSummary> = {}): TicketSum
 }
 
 export function ticket(n: number, over: Partial<Ticket> = {}): Ticket {
-  return { ...summary(n), description: '', links: [], attempts: [], ...over };
+  return { ...summary(n), description: '', links: [], attempts: [], defaultBranch: `pdt/ALP-${n}-ticket-${n}`, sessions: [], ...over };
 }
 
 export const page = (items: TicketSummary[], nextCursor: string | null = null, total = items.length): TicketPage => ({ items, nextCursor, total });

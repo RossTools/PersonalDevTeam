@@ -343,6 +343,8 @@ mod tests {
             attention_at: None,
             last_viewed_at: None,
             unseen: false,
+            attempt_id: None,
+            ticket: None,
         }
     }
 

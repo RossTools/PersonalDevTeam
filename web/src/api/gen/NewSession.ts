@@ -11,4 +11,9 @@ bypassPermissions?: boolean, cols: number, rows: number,
 /**
  * Where the session's tab opens; the end of its project's workspace when absent.
  */
-tab?: TabPlacement, };
+tab?: TabPlacement, 
+/**
+ * Agents only: the first prompt, given after the agent's flags when the session is created (restarts resume the
+ * conversation and never repeat it). At most 16 KB.
+ */
+initialPrompt?: string, };

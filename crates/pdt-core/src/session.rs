@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub const MAX_TERMINAL_DIM: u16 = 1000;
+/// The longest first prompt a new agent session takes, in bytes.
+pub const MAX_INITIAL_PROMPT: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +111,10 @@ pub struct Session {
     pub last_viewed_at: Option<i64>,
     /// Computed: became idle or needs_you after the user last viewed it (on any device).
     pub unseen: bool,
+    /// The ticket attempt this session works on (sessions made by Start).
+    pub attempt_id: Option<String>,
+    /// The attempt's ticket.
+    pub ticket: Option<crate::ticket::SessionTicket>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -147,6 +153,11 @@ pub struct NewSession {
     #[serde(default)]
     #[ts(optional)]
     pub tab: Option<crate::workspace::TabPlacement>,
+    /// Agents only: the first prompt, given after the agent's flags when the session is created (restarts resume the
+    /// conversation and never repeat it). At most 16 KB.
+    #[serde(default)]
+    #[ts(optional)]
+    pub initial_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,6 +168,7 @@ pub struct ValidSession {
     pub agent: Option<AgentKind>,
     pub bypass_permissions: bool,
     pub size: TerminalSize,
+    pub initial_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -169,6 +181,10 @@ pub enum SessionValidationError {
     UnexpectedAgent,
     #[error("terminal size must be between 1 and 1000 columns and rows")]
     BadSize,
+    #[error("only an agent session takes an initial prompt")]
+    PromptForShell,
+    #[error("an initial prompt must not be blank and at most 16 KB")]
+    BadPrompt,
 }
 
 impl NewSession {
@@ -186,6 +202,14 @@ impl NewSession {
         let size = TerminalSize { cols: self.cols, rows: self.rows }.validate()?;
         // Bypass only applies to agents; a shell never carries it.
         let bypass_permissions = self.kind == SessionKind::AgentTui && self.bypass_permissions.unwrap_or(false);
+        let initial_prompt = match &self.initial_prompt {
+            None => None,
+            Some(_) if self.kind != SessionKind::AgentTui => return Err(SessionValidationError::PromptForShell),
+            Some(p) if p.trim().is_empty() || p.len() > MAX_INITIAL_PROMPT => {
+                return Err(SessionValidationError::BadPrompt);
+            }
+            Some(p) => Some(p.clone()),
+        };
         Ok(ValidSession {
             project_id: project_id.into(),
             worktree_id,
@@ -193,6 +217,7 @@ impl NewSession {
             agent: self.agent,
             bypass_permissions,
             size,
+            initial_prompt,
         })
     }
 }
@@ -270,6 +295,29 @@ pub fn launch(
             }
             Launch { program: platform.claude_program.clone(), args: a }
         }
+    }
+}
+
+/// The first prompt as the agent's last argument. Both agents take a prompt after their flags; one that starts with
+/// `-` gets a leading space so it is never read as a flag.
+pub fn prompt_arg(prompt: &str) -> String {
+    if prompt.starts_with('-') { format!(" {prompt}") } else { prompt.to_string() }
+}
+
+/// Characters `cmd.exe` would interpret in an argument (npm-installed agents on Windows are `.cmd` shims run through
+/// it), so a file path containing one is never put on such a command line.
+const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\n', '\r'];
+
+/// The short prompt given instead of the real one when the agent is a `.cmd` shim: the real prompt is in
+/// `prompt_file`. For a ticket (`ticket_key`, e.g. `PDT-4`) it names the ticket and the file, or only the ticket
+/// when the path is unsafe for cmd. Without a ticket it names the file; None (no prompt) when the path is unsafe.
+pub fn shim_prompt(ticket_key: Option<&str>, prompt_file: &str) -> Option<String> {
+    let safe = !prompt_file.contains(CMD_METACHARACTERS);
+    match (ticket_key, safe) {
+        (Some(key), true) => Some(format!("{key}: read {prompt_file} for the ticket, then start.")),
+        (Some(key), false) => Some(format!("Start on ticket {key} (see {}).", crate::brand::SHORT_NAME)),
+        (None, true) => Some(format!("Read {prompt_file} and follow it.")),
+        (None, false) => None,
     }
 }
 
@@ -600,6 +648,7 @@ mod tests {
             cols,
             rows,
             tab: None,
+            initial_prompt: None,
         }
     }
 
@@ -629,6 +678,71 @@ mod tests {
         let mut blank = new(SessionKind::Shell, None, 80, 24);
         blank.project_id = " ".into();
         assert_eq!(blank.validate().unwrap_err(), SessionValidationError::EmptyProject);
+    }
+
+    #[test]
+    fn initial_prompts_are_for_agents_and_bounded() {
+        let mut agent = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24);
+        agent.initial_prompt = Some("Fix it\nplease".into());
+        assert_eq!(agent.validate().unwrap().initial_prompt.as_deref(), Some("Fix it\nplease"));
+        agent.initial_prompt = Some(" \n ".into());
+        assert_eq!(agent.validate().unwrap_err(), SessionValidationError::BadPrompt);
+        agent.initial_prompt = Some("x".repeat(MAX_INITIAL_PROMPT));
+        assert!(agent.validate().is_ok());
+        agent.initial_prompt = Some("x".repeat(MAX_INITIAL_PROMPT + 1));
+        assert_eq!(agent.validate().unwrap_err(), SessionValidationError::BadPrompt);
+        let mut shell = new(SessionKind::Shell, None, 80, 24);
+        shell.initial_prompt = Some("ls".into());
+        assert_eq!(shell.validate().unwrap_err(), SessionValidationError::PromptForShell);
+    }
+
+    #[test]
+    fn the_prompt_is_the_last_argument_after_the_agent_flags() {
+        let p = platform(false, false, None);
+        let mut l = launch(SessionKind::AgentTui, Some(AgentKind::Claude), &p, &Resume::Fresh, SID, true);
+        l.args.extend(["--settings".to_string(), "/d/s.json".to_string()]);
+        l.args.push(prompt_arg("PDT-4: Fix login\n\nSteps & more"));
+        assert_eq!(
+            l.args,
+            [
+                "--session-id",
+                SID,
+                "--dangerously-skip-permissions",
+                "--settings",
+                "/d/s.json",
+                "PDT-4: Fix login\n\nSteps & more"
+            ]
+        );
+        let mut l = launch(SessionKind::AgentTui, Some(AgentKind::Codex), &p, &Resume::Fresh, SID, true);
+        l.args.push(prompt_arg("--help me"));
+        assert_eq!(l.args, ["--dangerously-bypass-approvals-and-sandbox", " --help me"]);
+    }
+
+    #[test]
+    fn cmd_shims_get_a_short_prompt_naming_the_file() {
+        let file = r"C:\Users\me\AppData\Local\pdt\sessions\0199\prompt.md";
+        assert_eq!(
+            shim_prompt(Some("PDT-4"), file).unwrap(),
+            format!("PDT-4: read {file} for the ticket, then start.")
+        );
+        assert_eq!(shim_prompt(None, file).unwrap(), format!("Read {file} and follow it."));
+        for bad in [
+            "C:\\a&b\\p.md",
+            "C:\\a|b",
+            "C:\\a<b",
+            "C:\\a>b",
+            "C:\\a^b",
+            "C:\\100%\\p",
+            "C:\\a!b",
+            "C:\\\"q\"",
+            "C:\\(x)",
+            "a\nb",
+        ] {
+            assert_eq!(shim_prompt(Some("PDT-4"), bad).unwrap(), "Start on ticket PDT-4 (see PDT).", "{bad:?}");
+            assert_eq!(shim_prompt(None, bad), None, "{bad:?}");
+        }
+        // Spaces are fine: cmd passes a quoted argument through.
+        assert!(shim_prompt(None, r"C:\Users\Ross West\p.md").unwrap().contains("Ross West"));
     }
 
     #[test]

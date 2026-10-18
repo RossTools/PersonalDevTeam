@@ -18,7 +18,10 @@ import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
-import { OpenTicketContext } from '../tickets/actions';
+import { OpenSessionContext, OpenTicketContext, StartTicketContext } from '../tickets/actions';
+import { invalidateTickets } from '../tickets/queries';
+import type { StartResult } from '../api/gen/StartResult';
+import type { TabPlacement } from '../api/gen/TabPlacement';
 import { looksLikeKey } from '../tickets/model';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
@@ -55,6 +58,7 @@ function useAttentionTitle(count: number) {
 const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
 const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
+const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
 
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
@@ -69,6 +73,8 @@ export function AppShell() {
   const [paletteQuery, setPaletteQuery] = useState('');
   // The New ticket form: its project and the title typed so far.
   const [newTicket, setNewTicket] = useState<{ projectId: string | null; title: string } | null>(null);
+  // The Start dialog: the ticket, and where its tabs open (undefined: the end of the project workspace).
+  const [starting, setStarting] = useState<{ ticketId: string; placement?: TabPlacement } | null>(null);
   // Phones: the list column is a sheet from the left, opened from the header.
   const [sheetOpen, setSheetOpen] = useState(false);
   const phone = useMediaQuery(PHONE_QUERY);
@@ -81,6 +87,32 @@ export function AppShell() {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId));
   }, [ws.focusItem]);
+  const openSession = useCallback((s: { id: string; projectId: string }) => {
+    setView('sessions');
+    void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
+  }, [ws.focusItem]);
+  // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
+  // otherwise the server puts them at the end of the project workspace.
+  const startTicket = useCallback((t: { id: string; projectId: string }, opts?: { here?: boolean }) => {
+    const w = ws.workspace;
+    const cur = ws.tab;
+    let placement: TabPlacement | undefined;
+    if (opts?.here && w) {
+      placement = { workspaceId: w.id, position: cur ? (cur.ticketId === t.id ? cur.position : cur.position + 1) : w.tabs.length };
+    }
+    setStarting({ ticketId: t.id, ...(placement ? { placement } : {}) });
+  }, [ws.workspace, ws.tab]);
+  const onStarted = (r: StartResult) => {
+    invalidateTickets(qc, [r.ticket.id]);
+    qc.setQueryData(['ticket', r.ticket.id], r.ticket);
+    void qc.invalidateQueries({ queryKey: ['sessions', r.session.projectId] });
+    void qc.invalidateQueries({ queryKey: ['worktrees', r.session.projectId] });
+    setView('sessions');
+    void runAction(async () => {
+      await ws.refresh();
+      await ws.focusItem({ kind: 'session', id: r.session.id }, r.session.projectId);
+    });
+  };
   const keyQuery = paletteQuery.trim();
   const ticketHits = useTicketSearch({ q: keyQuery, limit: 5 }, paletteOpen && looksLikeKey(keyQuery));
 
@@ -104,9 +136,9 @@ export function AppShell() {
       setPaletteOpen(true);
       return;
     }
-    if (a.type === 'backlog') {
+    if (a.type === 'backlog' || a.type === 'board') {
       setView('tickets');
-      backlog.setMode('backlog');
+      backlog.setMode(a.type);
       return;
     }
     setView('sessions');
@@ -202,6 +234,7 @@ export function AppShell() {
     showFiles: () => setView('files'),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
+    startTicket: (t, here) => startTicket(t, { here }),
   };
   const items = paletteOpen
     ? paletteItems({
@@ -257,6 +290,8 @@ export function AppShell() {
 
   return (
     <OpenTicketContext.Provider value={openTicket}>
+    <OpenSessionContext.Provider value={openSession}>
+    <StartTicketContext.Provider value={startTicket}>
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail
         active={view}
@@ -306,6 +341,14 @@ export function AppShell() {
             projectId={newTicket.projectId}
             title={newTicket.title}
             onClose={() => setNewTicket(null)}
+          /></Suspense>
+        )}
+        {starting && (
+          <Suspense fallback={null}><StartDialog
+            ticketId={starting.ticketId}
+            placement={starting.placement}
+            onClose={() => setStarting(null)}
+            onStarted={onStarted}
           /></Suspense>
         )}
         {addingProject && (
@@ -365,6 +408,8 @@ export function AppShell() {
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
     </div>
+    </StartTicketContext.Provider>
+    </OpenSessionContext.Provider>
     </OpenTicketContext.Provider>
   );
 }

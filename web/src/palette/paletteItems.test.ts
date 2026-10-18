@@ -15,7 +15,7 @@ const project = (id: string, name: string, key: string): Project => ({
 const session = (over: Partial<Session> & { id: string }): Session => ({
   projectId: 'p1', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: over.id,
   cwd: '/r/p1', status: 'running', exitCode: null, createdAt: 0, endedAt: null, externalSessionId: null,
-  freshStartedAt: null, activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, ...over,
+  freshStartedAt: null, activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, ...over,
 });
 
 const run: Run = {
@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(),
   };
 }
 
@@ -214,9 +214,29 @@ describe('paletteItems', () => {
 
   it('labels a ticket tab with its key and title', () => {
     const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
-    const t = { ...summary, description: '', links: [], attempts: [] };
+    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [] };
     const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t, 0)] }));
     expect(byId(items, 'tab:tk').label).toBe('PDT-42 · Fix login');
+  });
+
+  it('starts the ticket on screen, and picks a ticket to start', () => {
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
+    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [] };
+    const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)], ticketProjectId: 'p1' });
+    const items = paletteItems(c);
+    const here = byId(items, 'tickets:start-open');
+    expect(here.label).toBe('Start PDT-42');
+    here.run!();
+    expect(c.handlers.startTicket).toHaveBeenCalledWith(t, true);
+    const pick = byId(items, 'tickets:start');
+    if (pick.next?.kind !== 'tickets') throw new Error('expected a tickets step');
+    expect(pick.next.projectId).toBe('p1');
+    pick.next.run(summary);
+    expect(c.handlers.startTicket).toHaveBeenCalledWith(summary, false);
+    // Not for a ticket already being worked on, nor without a ticket tab on screen.
+    const busy = { ...t, stage: 'in_progress' as const };
+    expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(busy, 0)] })))).not.toContain('tickets:start-open');
+    expect(ids(paletteItems(ctx()))).not.toContain('tickets:start-open');
   });
 });
 

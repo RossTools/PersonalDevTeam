@@ -14,7 +14,7 @@ vi.mock('../terminal/TerminalView', () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', githubRepo: 'o/alpha' };
-const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false };
+const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null };
 
 // The shell always renders the update banner; a fully set-up host shows none.
 const hostTool = { found: true, ok: true, detail: 'ok' };
@@ -728,6 +728,67 @@ describe('tickets', () => {
     const palette = await screen.findByRole('dialog', { name: 'Command palette' });
     await userEvent.click(within(palette).getByRole('menuitem', { name: 'New ticket' }));
     expect(await screen.findByRole('dialog', { name: 'New ticket' })).toBeInTheDocument();
+  });
+
+  it('opens the board with Ctrl+] b', async () => {
+    stubWorkspaces(ticketRoutes);
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}b');
+    expect(screen.getByRole('button', { name: 'Tickets' })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByRole('radio', { name: 'Board' })).toBeChecked();
+    expect(await screen.findByRole('region', { name: 'In progress' })).toBeInTheDocument();
+  });
+
+  it('shows the ticket key on a started session\'s agent row and tab; the key opens the ticket', async () => {
+    const started = sess('a', 'Claude · ALP-1', { kind: 'agent_tui', agent: 'claude', activity: 'working', attemptId: 'at', ticket: { id: 't1', key: 'ALP-1' } });
+    const calls = stubWorkspaces({
+      ...ticketRoutes,
+      [`GET /api/projects/${project.id}/sessions`]: [started, sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex' })],
+      'POST /api/workspaces/wa/tabs': { id: 'tk', workspaceId: 'wa', sessionId: null, runId: null, ticketId: 't1', position: 2 },
+    });
+    renderWithQuery(<AppShell />);
+    const tabs = await screen.findByRole('tablist', { name: 'Tabs' });
+    await within(tabs).findByRole('tab', { name: /Claude · ALP-1/ });
+    const agents = await screen.findByRole('region', { name: 'Agents' });
+    const row = await within(agents).findByRole('row', { name: /Claude · ALP-1/ });
+    expect(within(within(agents).getByRole('row', { name: /Codex B/ })).queryByRole('button', { name: /ALP-/ })).not.toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: 'ALP-1' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/workspaces/wa/tabs')?.body).toEqual({ ticketId: 't1' }));
+    expect(within(tabs).getByRole('button', { name: 'ALP-1' })).toBeInTheDocument();
+  });
+
+  it('starts a ticket from its tab: the tabs open where it is and the session becomes current', async () => {
+    localStorage.clear();
+    const ready = ticket(1, { projectId: project.id, title: 'Fix login', stage: 'ready' });
+    const ticketTab = { id: 'tk', workspaceId: 'wa', sessionId: null, runId: null, ticketId: 't1', position: 0 };
+    const sessionTab = { id: 'tn', workspaceId: 'wa', sessionId: 'n', runId: null, ticketId: null, position: 1 };
+    let workspaces = [{ id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [ticketTab] as object[] }];
+    const newSession = sess('n', 'Claude · ALP-1', { kind: 'agent_tui', agent: 'claude', attemptId: 'at', ticket: { id: 't1', key: 'ALP-1' } });
+    let sessions: unknown[] = [];
+    const calls = stubWorkspaces({
+      ...ticketRoutes,
+      'GET /api/tickets/t1': ready,
+      'GET /api/workspaces': () => workspaces,
+      [`GET /api/projects/${project.id}/sessions`]: () => sessions,
+      'POST /api/tickets/t1/start': () => {
+        workspaces = [{ ...workspaces[0], tabs: [ticketTab, sessionTab] }];
+        sessions = [newSession];
+        return { ticket: { ...ready, stage: 'in_progress' }, attempt: { id: 'at' }, session: newSession };
+      },
+    });
+    renderWithQuery(<AppShell />);
+    await within(await screen.findByRole('main')).findByRole('heading', { name: /Fix login/ });
+    await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Start' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    // A new workspace is the default; off here, so the tabs go where the ticket tab is.
+    await userEvent.click(within(dialog).getByRole('switch', { name: 'Open in a new workspace' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/t1/start')?.body).toMatchObject({
+      agent: 'claude', mode: 'check', tab: { workspaceId: 'wa', position: 0 },
+    }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Claude · ALP-1/ })).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.queryByRole('dialog', { name: 'Start ALP-1' })).not.toBeInTheDocument();
   });
 
   it('opens a ticket here from the new-tab chooser\'s Ticket…', async () => {

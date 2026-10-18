@@ -7,8 +7,8 @@ mod shutdown;
 
 use anyhow::Context;
 use pdt_api::{
-    AppState, apply_remote_access, plan_resume_interrupted, resume_runs, router, run_activity_ticker, sweep_gone_runs,
-    with_host_guard,
+    AppState, apply_remote_access, check_merges, plan_resume_interrupted, resume_runs, router, run_activity_ticker,
+    sweep_gone_runs, with_host_guard,
 };
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
@@ -143,6 +143,8 @@ async fn run() -> anyhow::Result<()> {
                     break;
                 }
                 sweep_gone_runs(&st).await;
+                // Ticket attempts whose branch was merged (tickets spec §6).
+                check_merges(&st).await;
             }
         });
     }

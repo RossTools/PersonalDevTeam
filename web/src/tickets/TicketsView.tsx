@@ -18,11 +18,13 @@ import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { deleteTicket, moveToEntries, ticketMenu, useOpenTicket } from './actions';
+import { canStart, deleteTicket, moveToEntries, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { AttemptSection, MergedBanner } from './Attempt';
+import { Board } from './Board';
 import {
-  canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
+  BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
-import { invalidateTickets, ticketKeys, useLabels, useTicket, useTicketPages } from './queries';
+import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketPages } from './queries';
 import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
 
@@ -32,14 +34,16 @@ import type { BacklogState } from './useBacklog';
 interface Option<V extends string> { value: V; label: string }
 
 /** A filter chip that opens a checkbox list (several can be picked without reopening it). */
-function MultiChip<V extends string>({ label, options, selected, onChange }: {
+function MultiChip<V extends string>({ label, options, selected, onChange, none }: {
   label: string;
+  /** What an empty selection means, shown on the chip ("Draft, Ready"). */
+  none?: string;
   options: Option<V>[];
   selected: V[];
   onChange: (v: V[]) => void;
 }) {
   const names = options.filter((o) => selected.includes(o.value)).map((o) => o.label);
-  const text = names.length === 0 ? label : names.length <= 2 ? `${label}: ${names.join(', ')}` : `${label}: ${names.length}`;
+  const text = names.length === 0 ? (none ? `${label}: ${none}` : label) : names.length <= 2 ? `${label}: ${names.join(', ')}` : `${label}: ${names.length}`;
   return (
     <Popover
       label={label}
@@ -200,7 +204,9 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
   const qc = useQueryClient();
   const confirm = useConfirm();
   const open = useOpenTicket();
+  const start = useStartTicket();
   const t = q.data;
+  useCheckMerge(t);
   return (
     <Sheet
       side="right"
@@ -222,6 +228,7 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
               { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
             ]}
           />
+          {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
           <Button variant="primary" onClick={() => { onClose(); open(t); }}>Open</Button>
         </>
       )}
@@ -235,8 +242,10 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
             <TicketKey ticketKey={t.key} className="self-start" />
             <TicketTitle ticket={t} className="text-base font-semibold" />
             <StageStepper stage={t.stage} compact />
+            <MergedBanner ticket={t} className="rounded-md border" />
           </div>
           <TicketDetails ticket={t} />
+          {t.attempt && <AttemptSection ticket={t} compact />}
           <TicketDescription key={t.id} ticket={t} />
           <TicketLinks ticket={t} />
           <TicketTimeline ticketId={t.id} recent={5} />
@@ -262,10 +271,11 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   const qc = useQueryClient();
   const confirm = useConfirm();
   const open = useOpenTicket();
+  const start = useStartTicket();
   const { projectId, filters, mode } = backlog;
   const project = projects.find((p) => p.id === projectId) ?? null;
   const query = useMemo(() => toQuery(project?.id ?? null, filters), [project?.id, filters]);
-  const pages = useTicketPages(query);
+  const pages = useTicketPages(query, mode === 'backlog');
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const total = pages.data?.pages[0]?.total;
   const labels = useLabels(project?.id ?? null);
@@ -333,7 +343,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
 
   const rowMenu = (t: TicketSummary) => (at: { x: number; y: number }) =>
     openMenu(at, `Ticket ${t.key}`, () =>
-      ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), rank: rankable, onDeleted: () => setPeekId((p) => (p === t.id ? null : p)) }),
+      ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => setPeekId((p) => (p === t.id ? null : p)) }),
     );
 
   const stageOptions = STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }));
@@ -344,7 +354,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   const empty = (): ReactNode =>
     isDefaultFilter(filters) ? (
       <EmptyState action={<Button size="sm" variant="primary" onClick={() => onNewTicket(project?.id ?? null)}>New ticket</Button>}>
-        No open tickets{project ? ` in ${project.name}` : ''}.
+        No Draft or Ready tickets{project ? ` in ${project.name}` : ''}.
       </EmptyState>
     ) : (
       <EmptyState action={<Button size="sm" onClick={backlog.resetFilters}>Clear filters</Button>}>No tickets match these filters.</EmptyState>
@@ -361,10 +371,10 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   );
 
   let body: ReactNode;
-  if (mode === 'board') {
-    body = <EmptyState>The board arrives with Start (Phase 4b).</EmptyState>;
-  } else if (projects.length === 0) {
+  if (projects.length === 0) {
     body = <EmptyState>Add a project in Settings to start writing tickets.</EmptyState>;
+  } else if (mode === 'board') {
+    body = <Board projectId={project?.id ?? null} onPeek={setPeekId} phone={phone} />;
   } else if (pages.isPending) {
     body = <div className="p-3"><Skeleton lines={3} label="Loading tickets" /></div>;
   } else if (pages.isError && !pages.data) {
@@ -444,6 +454,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
             {selected.length > 0 ? (
               <BulkActionBar count={selected.length} noun={selected.length === 1 ? 'ticket' : 'tickets'} onClear={() => setSelection(new Set())}>
                 <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'ready')}>Move to Ready</Button>
+                <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'todo')}>Move to To do</Button>
                 <MenuButton
                   label="Set priority"
                   placement="bottom start"
@@ -465,7 +476,11 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
                 // Phones: the view options wrap with the chips instead of pinning to the end.
                 trailing={phone ? undefined : viewOptions}
               >
-                <MultiChip<TicketStage> label="Stage" options={stageOptions} selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
+                <MultiChip<TicketStage>
+                  label="Stage"
+                  none={filters.showClosed ? undefined : BACKLOG_STAGES.map((s) => STAGE_LABEL[s]).join(', ')}
+                  options={stageOptions}
+                  selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
                 <MultiChip<Priority> label="Priority" options={priorityOptions} selected={filters.priorities} onChange={(priorities) => backlog.setFilters({ priorities })} />
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
                 {phone && viewOptions}

@@ -42,6 +42,8 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
                 attention_at: None,
                 last_viewed_at: None,
                 unseen: false,
+                attempt_id: None,
+                ticket: None,
             })
             .await
             .unwrap();

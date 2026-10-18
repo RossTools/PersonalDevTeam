@@ -14,6 +14,7 @@ pub mod release;
 pub mod run;
 pub mod runconfig;
 pub mod session;
+pub mod start;
 pub mod ticket;
 pub mod workspace;
 pub mod worktree;

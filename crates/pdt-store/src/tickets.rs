@@ -4,10 +4,12 @@
 use crate::{Store, StoreError};
 use pdt_core::links::would_cycle;
 use pdt_core::rank;
+use pdt_core::session::{AgentKind, SessionStatus};
+use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
-    Actor, AttemptState, AttemptSummary, EventKind, EventPage, LinkDirection, LinkKind, LinkedTicket, MAX_LABELS,
-    OverlapLevel, Priority, RankEdge, Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort, TicketStage,
-    TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
+    Actor, AttemptSession, AttemptState, AttemptSummary, EventKind, EventPage, LinkDirection, LinkKind, LinkedTicket,
+    MAX_LABELS, OverlapLevel, Priority, RankEdge, Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort,
+    TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
 };
 use serde_json::json;
 use sqlx::sqlite::SqliteRow;
@@ -45,6 +47,51 @@ pub enum DeleteTicket {
     NotFound,
     /// It has an active attempt.
     Active,
+}
+
+/// What `start_attempt` changed, so `undo_start` can take it back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StartedAttempt {
+    pub attempt: AttemptSummary,
+    pub ticket_id: String,
+    prev_stage: TicketStage,
+    prev_updated_at: i64,
+    event_ids: Vec<String>,
+}
+
+/// An attempt with its ticket, project and worktree: what Start's rollback, abandon and merge detection need.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttemptInfo {
+    pub attempt: AttemptSummary,
+    pub ticket_id: String,
+    /// `PDT-42`.
+    pub ticket_key: String,
+    pub project_id: String,
+    pub repo_path: String,
+    pub base_commit: String,
+    /// None when the worktree record is gone.
+    pub worktree_path: Option<String>,
+}
+
+const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
+                              a.ended_at, a.last_head FROM attempts a";
+const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
+                                   a.created_at, a.ended_at, a.last_head, a.base_commit, t.project_id, \
+                                   COALESCE(p.key, '') AS pkey, t.number, p.repo_path, w.path AS worktree_path \
+                                   FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
+                                   JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
+
+fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
+    let pkey: String = r.try_get("pkey")?;
+    Ok(AttemptInfo {
+        attempt: to_attempt(r)?,
+        ticket_id: r.try_get("ticket_id")?,
+        ticket_key: format_key(&pkey, u32::try_from(r.try_get::<i64, _>("number")?).unwrap_or(0)),
+        project_id: r.try_get("project_id")?,
+        repo_path: r.try_get("repo_path")?,
+        base_commit: r.try_get("base_commit")?,
+        worktree_path: r.try_get("worktree_path")?,
+    })
 }
 
 /// Priority as a number (higher is more urgent), for sorting.
@@ -105,6 +152,7 @@ fn to_attempt(r: &SqliteRow) -> Result<AttemptSummary, StoreError> {
         state: AttemptState::parse(&state).ok_or_else(|| corrupt("attempt state", &state))?,
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
+        last_head: r.try_get("last_head")?,
     })
 }
 
@@ -141,7 +189,7 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
     let mut attempts: HashMap<String, AttemptSummary> = HashMap::new();
     for chunk in ids.chunks(500) {
         let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at FROM attempts \
+            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head FROM attempts \
              WHERE ticket_id IN ",
         );
         push_in(&mut qb, chunk);
@@ -196,6 +244,9 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, f: &TicketFilter) {
         qb.push(" AND EXISTS (SELECT 1 FROM ticket_labels tl WHERE tl.ticket_id = t.id AND tl.label = ")
             .push_bind(l.clone())
             .push(")");
+    }
+    if let Some(after) = f.closed_after {
+        qb.push(" AND (t.closed_at IS NULL OR t.closed_at >= ").push_bind(after).push(")");
     }
     match f.blocked {
         Some(true) => {
@@ -596,7 +647,7 @@ impl Store {
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         let attempts = sqlx::query(
-            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at FROM attempts \
+            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head FROM attempts \
              WHERE ticket_id = ? ORDER BY created_at DESC, id DESC",
         )
         .bind(id)
@@ -605,7 +656,29 @@ impl Store {
         .iter()
         .map(to_attempt)
         .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(Ticket { summary: s, description, links, attempts }))
+        let sessions = sqlx::query(
+            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id FROM sessions s \
+             JOIN attempts a ON a.id = s.attempt_id WHERE a.ticket_id = ? ORDER BY s.created_at DESC, s.id DESC",
+        )
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .map(|r| {
+            let status: String = r.try_get("status")?;
+            let agent: Option<String> = r.try_get("agent")?;
+            Ok(AttemptSession {
+                id: r.try_get("id")?,
+                title: r.try_get("title")?,
+                status: SessionStatus::parse(&status).ok_or_else(|| corrupt("session status", &status))?,
+                agent: agent.map(|a| AgentKind::parse(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
+                attempt_id: r.try_get("attempt_id")?,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+        let pkey = s.key.rsplit_once('-').map(|(k, _)| k).unwrap_or("");
+        let default_branch = attempt_branch(pkey, s.number, &s.title);
+        Ok(Some(Ticket { summary: s, description, links, attempts, default_branch, sessions }))
     }
 
     /// The backlog: filtered, searched, sorted and paged with a keyset cursor, plus the total that match.
@@ -845,6 +918,174 @@ impl Store {
         .bind(now)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Starts an attempt on a ticket in one transaction: the attempt row (active), the ticket moved to In progress
+    /// (with a `moved` event when that changes it) and a `started` event whose data is `{attemptId, branch,
+    /// baseBranch}` plus `extra`'s fields. `Active` if the ticket already has an active attempt; NotFound("ticket").
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_attempt(
+        &self,
+        id: &str,
+        ticket_id: &str,
+        worktree_id: Option<&str>,
+        branch: &str,
+        base_branch: &str,
+        base_commit: &str,
+        extra: serde_json::Value,
+        now: i64,
+    ) -> TResult<StartedAttempt> {
+        let mut tx = self.pool.begin().await?;
+        let Some((_, key, stage)) = ticket_head(&mut tx, ticket_id).await? else {
+            return Err(TicketError::NotFound("ticket"));
+        };
+        if has_active_attempt(&mut tx, ticket_id).await? {
+            return Err(TicketError::Active(key));
+        }
+        let (prev_updated_at,): (i64,) =
+            sqlx::query_as("SELECT updated_at FROM tickets WHERE id = ?").bind(ticket_id).fetch_one(&mut *tx).await?;
+        // Events made from here on (in this transaction) are this start's, for `undo_start`.
+        let marker = uuid::Uuid::now_v7().to_string();
+        let inserted = sqlx::query(
+            "INSERT INTO attempts (id, ticket_id, worktree_id, branch, base_branch, base_commit, state, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, 'active', ?)",
+        )
+        .bind(id)
+        .bind(ticket_id)
+        .bind(worktree_id)
+        .bind(branch)
+        .bind(base_branch)
+        .bind(base_commit)
+        .bind(now)
+        .execute(&mut *tx)
+        .await;
+        match inserted {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(e)) if e.is_unique_violation() => return Err(TicketError::Active(key)),
+            Err(e) => return Err(e.into()),
+        }
+        if stage != TicketStage::InProgress {
+            change_stage(&mut tx, ticket_id, stage, TicketStage::InProgress, now).await?;
+        }
+        let mut data = json!({"attemptId": id, "branch": branch, "baseBranch": base_branch});
+        if let (Some(d), serde_json::Value::Object(extra)) = (data.as_object_mut(), extra) {
+            d.extend(extra);
+        }
+        insert_event(&mut tx, ticket_id, EventKind::Started, Actor::User, None, Some(data), now).await?;
+        touch(&mut tx, ticket_id, now).await?;
+        let event_ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM ticket_events WHERE ticket_id = ? AND id > ?")
+            .bind(ticket_id)
+            .bind(&marker)
+            .fetch_all(&mut *tx)
+            .await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{ATTEMPT_SELECT} WHERE a.id = ?")))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let attempt = to_attempt(&row)?;
+        tx.commit().await?;
+        Ok(StartedAttempt {
+            attempt,
+            ticket_id: ticket_id.to_string(),
+            prev_stage: stage,
+            prev_updated_at,
+            event_ids: event_ids.into_iter().map(|(e,)| e).collect(),
+        })
+    }
+
+    /// Takes back a `start_attempt` whose session could not be made: the attempt, its events and the stage change go;
+    /// the ticket is as it was (the worktree is the caller's).
+    pub async fn undo_start(&self, started: &StartedAttempt) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM attempts WHERE id = ?").bind(&started.attempt.id).execute(&mut *tx).await?;
+        for e in &started.event_ids {
+            sqlx::query("DELETE FROM ticket_events WHERE id = ?").bind(e).execute(&mut *tx).await?;
+        }
+        sqlx::query("UPDATE tickets SET stage = ?, updated_at = ? WHERE id = ?")
+            .bind(started.prev_stage.as_str())
+            .bind(started.prev_updated_at)
+            .bind(&started.ticket_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Ends an active attempt as `state` (merged or abandoned) with its event. Returns its ticket's id, or None when
+    /// there is no such active attempt (already ended, or unknown).
+    pub async fn end_attempt(
+        &self,
+        id: &str,
+        state: AttemptState,
+        actor: Actor,
+        now: i64,
+    ) -> Result<Option<String>, StoreError> {
+        let kind = match state {
+            AttemptState::Merged => EventKind::Merged,
+            AttemptState::Abandoned => EventKind::Abandoned,
+            AttemptState::Active => return Ok(None),
+        };
+        let mut tx = self.pool.begin().await?;
+        let row: Option<(String, String, String)> = sqlx::query_as(
+            "UPDATE attempts SET state = ?, ended_at = ? WHERE id = ? AND state = 'active' \
+             RETURNING ticket_id, branch, base_branch",
+        )
+        .bind(state.as_str())
+        .bind(now)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((ticket_id, branch, base_branch)) = row else { return Ok(None) };
+        let data = json!({"attemptId": id, "branch": branch, "baseBranch": base_branch});
+        insert_event(&mut tx, &ticket_id, kind, actor, None, Some(data), now).await?;
+        touch(&mut tx, &ticket_id, now).await?;
+        tx.commit().await?;
+        Ok(Some(ticket_id))
+    }
+
+    /// Remembers the attempt's branch head (merge detection).
+    pub async fn set_attempt_head(&self, id: &str, head: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET last_head = ? WHERE id = ?")
+            .bind(head)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    pub async fn get_attempt(&self, id: &str) -> Result<Option<AttemptInfo>, StoreError> {
+        let sql = format!("{ATTEMPT_INFO_SELECT} WHERE a.id = ?");
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_attempt_info).transpose()
+    }
+
+    /// The ticket's active attempt, if any.
+    pub async fn active_attempt(&self, ticket_id: &str) -> Result<Option<AttemptInfo>, StoreError> {
+        let sql = format!("{ATTEMPT_INFO_SELECT} WHERE a.ticket_id = ? AND a.state = 'active'");
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_attempt_info).transpose()
+    }
+
+    /// Every active attempt, oldest first.
+    pub async fn list_active_attempts(&self) -> Result<Vec<AttemptInfo>, StoreError> {
+        let sql = format!("{ATTEMPT_INFO_SELECT} WHERE a.state = 'active' ORDER BY a.created_at, a.id");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
+        rows.iter().map(to_attempt_info).collect()
+    }
+
+    /// Adds an event to a ticket's timeline (e.g. `session` when Start made one).
+    pub async fn add_ticket_event(
+        &self,
+        ticket_id: &str,
+        kind: EventKind,
+        actor: Actor,
+        body: Option<&str>,
+        data: Option<serde_json::Value>,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.pool.acquire().await?;
+        insert_event(&mut conn, ticket_id, kind, actor, body, data, now).await?;
         Ok(())
     }
 
@@ -1485,5 +1726,164 @@ mod tests {
         assert_eq!(store.delete_ticket("b").await.unwrap(), DeleteTicket::Deleted);
         let tabs = store.get_workspace(&home).await.unwrap().unwrap().tabs;
         assert_eq!(tabs.iter().map(|t| (t.id.as_str(), t.position)).collect::<Vec<_>>(), [("ta", 0)]);
+    }
+
+    fn agent_session(id: &str, attempt: Option<&str>, created_at: i64) -> pdt_core::session::Session {
+        use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+        Session {
+            id: id.into(),
+            project_id: "p".into(),
+            worktree_id: None,
+            kind: SessionKind::AgentTui,
+            agent: Some(AgentKind::Claude),
+            bypass_permissions: false,
+            title: format!("Claude · {id}"),
+            cwd: "/r".into(),
+            status: SessionStatus::Running,
+            exit_code: None,
+            created_at,
+            ended_at: None,
+            external_session_id: None,
+            fresh_started_at: None,
+            activity: None,
+            attention_at: None,
+            last_viewed_at: None,
+            unseen: false,
+            attempt_id: attempt.map(Into::into),
+            ticket: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn starting_an_attempt_moves_the_ticket_and_can_be_undone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let t = add(&store, "a", ValidNewTicket { stage: TicketStage::Ready, ..new("Fix the login") }).await;
+        assert_eq!(t.default_branch, "pdt/PX-1-fix-the-login");
+        let before = store.get_ticket("a").await.unwrap().unwrap();
+
+        let started = store
+            .start_attempt("at1", "a", None, "pdt/PX-1-fix-the-login", "main", "abc", json!({"forced": true}), 5)
+            .await
+            .unwrap();
+        assert_eq!((started.attempt.state, started.attempt.last_head.as_deref()), (AttemptState::Active, None));
+        let t = store.get_ticket("a").await.unwrap().unwrap();
+        assert_eq!(t.summary.stage, TicketStage::InProgress);
+        assert_eq!(t.attempts.len(), 1);
+        assert_eq!(events(&store, "a").await, [EventKind::Created, EventKind::Moved, EventKind::Started]);
+        let page = store.list_events("a", None, 10, true).await.unwrap().unwrap();
+        let data = page.items[0].data.clone().unwrap();
+        assert_eq!((data["attemptId"].as_str(), data["forced"].as_bool()), (Some("at1"), Some(true)));
+
+        // One active attempt per ticket.
+        let again = store.start_attempt("at2", "a", None, "b", "main", "abc", json!({}), 6).await;
+        assert!(matches!(again, Err(TicketError::Active(k)) if k == "PX-1"));
+        assert!(matches!(
+            store.start_attempt("at2", "nope", None, "b", "main", "abc", json!({}), 6).await,
+            Err(TicketError::NotFound("ticket"))
+        ));
+
+        // Undo puts everything back.
+        store.undo_start(&started).await.unwrap();
+        let t = store.get_ticket("a").await.unwrap().unwrap();
+        assert_eq!((t.summary.stage, t.summary.updated_at), (TicketStage::Ready, before.summary.updated_at));
+        assert!(t.attempts.is_empty());
+        assert_eq!(events(&store, "a").await, [EventKind::Created]);
+
+        // A ticket already in progress gets no `moved` event.
+        add(&store, "b", ValidNewTicket { stage: TicketStage::InProgress, ..new("B") }).await;
+        store.start_attempt("bt1", "b", None, "x", "main", "abc", json!({}), 7).await.unwrap();
+        assert_eq!(events(&store, "b").await, [EventKind::Created, EventKind::Started]);
+    }
+
+    #[tokio::test]
+    async fn attempts_end_once_and_remember_their_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "a", new("A")).await;
+        store.start_attempt("at1", "a", None, "br", "main", "abc", json!({}), 5).await.unwrap();
+        let active = store.list_active_attempts().await.unwrap();
+        assert_eq!(active.len(), 1);
+        let info = &active[0];
+        assert_eq!(
+            (info.ticket_key.as_str(), info.repo_path.as_str(), info.base_commit.as_str()),
+            ("PX-1", "/r", "abc")
+        );
+        assert_eq!(info.worktree_path, None);
+        assert_eq!(store.active_attempt("a").await.unwrap().map(|a| a.attempt.id), Some("at1".into()));
+
+        assert!(store.set_attempt_head("at1", "def").await.unwrap());
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.last_head.as_deref(), Some("def"));
+
+        assert_eq!(
+            store.end_attempt("at1", AttemptState::Merged, Actor::System, 9).await.unwrap().as_deref(),
+            Some("a")
+        );
+        assert_eq!(store.end_attempt("at1", AttemptState::Abandoned, Actor::User, 10).await.unwrap(), None);
+        let a = store.get_attempt("at1").await.unwrap().unwrap().attempt;
+        assert_eq!((a.state, a.ended_at), (AttemptState::Merged, Some(9)));
+        assert!(store.list_active_attempts().await.unwrap().is_empty());
+        assert!(store.active_attempt("a").await.unwrap().is_none());
+        assert_eq!(
+            events(&store, "a").await,
+            [EventKind::Created, EventKind::Moved, EventKind::Started, EventKind::Merged]
+        );
+        // A new attempt can start after the last one ended.
+        store.start_attempt("at2", "a", None, "br", "main", "abc", json!({}), 11).await.unwrap();
+        assert_eq!(
+            store.end_attempt("at2", AttemptState::Abandoned, Actor::User, 12).await.unwrap().as_deref(),
+            Some("a")
+        );
+        assert_eq!(events(&store, "a").await.last(), Some(&EventKind::Abandoned));
+    }
+
+    #[tokio::test]
+    async fn sessions_carry_their_ticket_and_tickets_list_their_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "a", new("A")).await;
+        store.start_attempt("at1", "a", None, "br", "main", "abc", json!({}), 5).await.unwrap();
+        store.insert_session(&agent_session("s1", Some("at1"), 1)).await.unwrap();
+        store.insert_session(&agent_session("s2", Some("at1"), 2)).await.unwrap();
+        store.insert_session(&agent_session("plain", None, 3)).await.unwrap();
+
+        let s = store.get_session("s1").await.unwrap().unwrap();
+        assert_eq!(s.attempt_id.as_deref(), Some("at1"));
+        let t = s.ticket.unwrap();
+        assert_eq!((t.id.as_str(), t.key.as_str()), ("a", "PX-1"));
+        let plain = store.get_session("plain").await.unwrap().unwrap();
+        assert_eq!((plain.attempt_id, plain.ticket), (None, None));
+        let listed = store.list_sessions("p").await.unwrap();
+        assert_eq!(listed.iter().filter(|s| s.ticket.is_some()).count(), 2);
+
+        let ticket = store.get_ticket("a").await.unwrap().unwrap();
+        let ids: Vec<&str> = ticket.sessions.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["s2", "s1"], "newest first");
+        assert_eq!(ticket.sessions[0].attempt_id, "at1");
+
+        // Deleting the ticket (here directly: the API refuses while the attempt is active) drops the attempt; its
+        // sessions lose the link.
+        assert_eq!(store.delete_ticket("a").await.unwrap(), DeleteTicket::Active);
+        sqlx::query("DELETE FROM tickets WHERE id = 'a'").execute(&store.pool).await.unwrap();
+        let s = store.get_session("s1").await.unwrap().unwrap();
+        assert_eq!((s.attempt_id, s.ticket), (None, None));
+    }
+
+    #[tokio::test]
+    async fn closed_after_keeps_open_tickets_and_recently_closed_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "open", new("Open")).await;
+        add(&store, "old", new("Old")).await;
+        add(&store, "recent", new("Recent")).await;
+        let done = ValidPatch { stage: Some(TicketStage::Done), ..Default::default() };
+        store.patch_ticket("old", &done, 100).await.unwrap();
+        store.patch_ticket("recent", &done, 200).await.unwrap();
+        let mut got = ids(&store, TicketQuery { closed_after: Some(150), ..in_project() }).await;
+        got.sort();
+        assert_eq!(got, ["open", "recent"]);
+        let mut got = ids(&store, TicketQuery { closed_after: Some(100), ..in_project() }).await;
+        got.sort();
+        assert_eq!(got, ["old", "open", "recent"]);
     }
 }

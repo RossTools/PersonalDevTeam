@@ -21,14 +21,14 @@ which active tickets would change the same code, so two agents don't make confli
 
 ## 2. Decisions (made with the user, 2026-10-18)
 
-- **Stages:** Draft, Ready, In progress, Done, plus **Won't do** (closed, hidden like Done). Phase 7 splits In progress
+- **Stages:** Draft, Ready, To do, In progress, Done, plus **Won't do** (closed, hidden like Done). Phase 7 splits In progress
   into the pipeline stages.
 - **Start** launches Claude or Codex in the new worktree with the ticket as its **first prompt**.
 - **Attempts end** when PDT sees the branch merged into the base branch (git only; no GitHub API) — it marks the
   attempt merged and offers "Move to Done and remove the worktree" — or when the ticket is moved to Done/Won't do or
   the attempt is abandoned.
 - **Roadmap:** imported once when Phase 4 ships; `docs/ROADMAP.md` becomes a pointer.
-- From the UX spec: backlog and board share the Tickets view (D6); the board shows Ready / In progress / Done (D3);
+- From the UX spec: backlog and board share the Tickets view (D6); the board shows To do / In progress / Done (D3; To do was added in 4b so Ready tickets can wait in the backlog without crowding the board);
   a ticket is a tab (D5); links and areas with planned and actual overlap (D7).
 
 ### Decided while planning and building 4a
@@ -42,6 +42,20 @@ which active tickets would change the same code, so two agents don't make confli
 - **Markdown:** react-markdown + remark-gfm + rehype-sanitize. **Saved filters:** per browser (localStorage).
 - **Board:** a placeholder until 4b. The peek sheet is non-modal on desktop (the list stays usable) and full screen
   on phones. A touch long press on a row opens its menu and does not select it.
+
+### Decided while planning and building 4b
+- **Squash merges** are detected by patch identity (`git commit-tree <head>^{tree} -p <merge-base>` then `git cherry
+  <base> <commit>`), not `git diff --quiet base...branch` (which still shows the branch's changes after a squash).
+- **Remote merges:** the merge loop fetches each project's base (`origin` only, `GIT_TERMINAL_PROMPT=0`, timeout) and
+  tests `<base>` and `origin/<base>`; closing a ticket checks without fetching so the PATCH stays fast.
+- **Deleted branches:** `attempts.last_head` (migration 0011) keeps the last seen head.
+- **Windows `.cmd` shims:** the prompt goes to a file and the agent gets a short prompt naming it (cmd.exe would
+  interpret `&`, `|`, `%` and newlines).
+- **The first prompt is not stored**; restarts resume the conversation. Started sessions are titled
+  `<Agent> · <ticket title>`; the ticket key shows as a chip beside them.
+- **Start checks in 4b** are blockers only (`check | force`); `wait` and the area checks arrive with 4c.
+- Abandon is idempotent; bulk moves to Done/Won't do also end attempts; an existing branch without a worktree is
+  checked out rather than refused.
 
 ## 3. Model
 
@@ -206,11 +220,13 @@ grouping and column options).
 - **Tickets view** (rail: Tickets, between Sessions and Files; Ctrl+] l backlog, Ctrl+] b board): Backlog | Board.
 - **Backlog:** the paged list (§4), quick add, filters (saved filters in localStorage for Phase 4), bulk actions, rank
   drag (handle; Alt+↑/↓), group by stage/priority/label.
-- **Board:** Ready / In progress / Done (last two weeks), drag between columns (desktop) or "Move to ›" (menu).
+- **Board:** To do / In progress / Done (last two weeks), drag between columns (desktop) or "Move to ›" (menu).
 - **Peek sheet** and **ticket tab** (Overview: header with StageStepper, description editor with preview, timeline with
   comments, side column with links, areas, overlaps, attempt and sessions; Conversation/Changes tabs shown disabled
   with "Phase 5/6").
-- **Start dialog** with the checks, Start anyway / Wait until clear.
+- **Start dialog** with the checks, Start anyway / Wait until clear. Defaults: skip permission prompts and open in a new
+  workspace (both can be turned off).
+- **Backlog default:** with no Stage filter the backlog shows Draft and Ready (what is not on the board yet).
 - **Palette:** tickets by key and title (Go to), "New ticket", "Start <KEY>-<n>".
 - Sidebar agent rows and tab titles show the ticket key when a session belongs to an attempt.
 

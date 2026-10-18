@@ -10,5 +10,7 @@ export default defineConfig({
   resolve: { alias: { '@ui': fileURLToPath(new URL('./ui', import.meta.url)) } },
   // Dev server talks to the *dev* daemon (PDT_PROFILE=dev → port 7421).
   server: { proxy: { '/api': { target: 'http://127.0.0.1:7421', ws: true } } },
-  test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], css: false },
+  // CI's Windows runner is several times slower than a dev machine: tests there get more time (src/test-setup.ts
+  // does the same for Testing Library's waits).
+  test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], css: false, testTimeout: process.env.CI ? 30_000 : 10_000 },
 });

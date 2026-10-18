@@ -10,14 +10,16 @@ import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 
-export const STAGES: TicketStage[] = ['draft', 'ready', 'in_progress', 'done', 'wont_do'];
-export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'in_progress'];
+export const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done', 'wont_do'];
+export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress'];
+/** What the backlog shows with no stage filter: tickets not on the board yet. */
+export const BACKLOG_STAGES: TicketStage[] = ['draft', 'ready'];
 export const isClosed = (s: TicketStage) => s === 'done' || s === 'wont_do';
 
 export type GroupBy = 'none' | 'stage' | 'priority' | 'label';
 
 export interface BacklogFilters {
-  /** Empty: every open stage (every stage with `showClosed`). */
+  /** Empty: Draft and Ready, the tickets not on the board (every stage with `showClosed`). */
   stages: TicketStage[];
   priorities: Priority[];
   /** All of them must match. */
@@ -38,7 +40,7 @@ export const PAGE_SIZE = 100;
 
 /** The `GET /api/tickets` query for a scope (one project, or every project with null) and filters. */
 export function toQuery(projectId: string | null, f: BacklogFilters, limit = PAGE_SIZE): TicketQuery {
-  const stages = f.stages.length > 0 ? f.stages : f.showClosed ? [] : OPEN_STAGES;
+  const stages = f.stages.length > 0 ? f.stages : f.showClosed ? [] : BACKLOG_STAGES;
   const q: TicketQuery = { limit };
   if (projectId) q.project = projectId;
   if (stages.length > 0) q.stage = stages.join(',');
@@ -52,7 +54,7 @@ export function toQuery(projectId: string | null, f: BacklogFilters, limit = PAG
 /** Ranks are per project: drag and Alt+↑/↓ only make sense in one project's list, sorted by rank, not grouped. */
 export const canRank = (projectId: string | null, f: BacklogFilters) => !!projectId && f.sort === 'rank' && f.group === 'none';
 
-/** True when nothing narrows the list beyond the default (open tickets). */
+/** True when nothing narrows the list beyond the default (Draft and Ready tickets). */
 export const isDefaultFilter = (f: BacklogFilters) =>
   f.stages.length === 0 && f.priorities.length === 0 && f.labels.length === 0 && !f.showClosed && !f.q.trim();
 

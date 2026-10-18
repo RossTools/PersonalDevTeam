@@ -395,6 +395,8 @@ async fn seed_with(
         attention_at: None,
         last_viewed_at: None,
         unseen: false,
+        attempt_id: None,
+        ticket: None,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {

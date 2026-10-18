@@ -16,4 +16,8 @@ q?: string, stage?: string, priority?: string, label?: string,
 /**
  * true: only blocked tickets; false: only unblocked ones.
  */
-blocked?: boolean, sort?: TicketSort, cursor?: string, limit?: number, };
+blocked?: boolean, sort?: TicketSort, 
+/**
+ * Closed tickets only if they were closed at or after this time (ms); open tickets are unaffected.
+ */
+closedAfter?: number, cursor?: string, limit?: number, };

@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Play } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Button, EmptyState, MenuButton, Skeleton, useConfirm, ViewHeader } from '@ui';
 import type { Ticket } from '../api/gen/Ticket';
+import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
-import { useAction } from '../common/useAction';
-import { deleteTicket, moveToEntries, patchTicket } from './actions';
-import { useTicket } from './queries';
+import { runAction } from '../common/useAction';
+import { AttemptSection, MergedBanner } from './Attempt';
+import { abandonAttempt, canStart, deleteTicket, moveToEntries, useStartTicket } from './actions';
+import { useCheckMerge, useTicket } from './queries';
 import { LabelChips, TicketAreas, TicketDescription, TicketDetails, TicketLinks, TicketTimeline, TicketTitle } from './TicketParts';
 
 type HubTab = 'overview' | 'conversation' | 'changes';
@@ -49,6 +52,8 @@ function HubTabs({ value }: { value: HubTab }) {
 export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const start = useStartTicket();
+  const attempt = ticket.attempt;
   return (
     <ViewHeader
       leading={<TicketKey ticketKey={ticket.key} />}
@@ -59,21 +64,32 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           <StageStepper stage={ticket.stage} compact />
           <PriorityIcon priority={ticket.priority} />
           <LabelChips labels={ticket.labels} className="hidden sm:flex" />
+          {attempt && <BranchChip branch={attempt.branch} base={attempt.baseBranch} className="hidden max-w-60 md:inline-flex" />}
         </>
       }
       actions={
-        <MenuButton
-          label="Ticket actions"
-          entries={() => [
-            { submenu: 'Move to', entries: moveToEntries(qc, ticket) },
-            { separator: true },
-            {
-              label: 'Delete…',
-              danger: true,
-              onSelect: () => void deleteTicket(confirm, qc, ticket).then((ok) => { if (ok) onDeleted?.(); }),
-            },
-          ]}
-        />
+        <>
+          {canStart(ticket) && (
+            <Button variant="primary" size="sm" onClick={() => start(ticket, { here: true })}>
+              <Play aria-hidden /> Start
+            </Button>
+          )}
+          <MenuButton
+            label="Ticket actions"
+            entries={() => [
+              { submenu: 'Move to', entries: moveToEntries(qc, ticket) },
+              ...(attempt?.state === 'active'
+                ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
+                : []),
+              { separator: true },
+              {
+                label: 'Delete…',
+                danger: true,
+                onSelect: () => void deleteTicket(confirm, qc, ticket).then((ok) => { if (ok) onDeleted?.(); }),
+              },
+            ]}
+          />
+        </>
       }
     />
   );
@@ -83,6 +99,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
 export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDeleted?: () => void }) {
   const q = useTicket(ticketId);
   const [tab] = useState<HubTab>('overview');
+  useCheckMerge(q.data);
   if (q.isPending) return <div className="p-4"><Skeleton lines={3} label="Loading ticket" /></div>;
   if (!q.data) {
     return (
@@ -95,6 +112,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
+      <MergedBanner ticket={t} />
       <HubTabs value={tab} />
       <div role="tabpanel" aria-label="Overview" className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
@@ -104,6 +122,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
           </div>
           <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
             <TicketDetails ticket={t} />
+            <AttemptSection ticket={t} />
             <TicketLinks ticket={t} />
             <TicketAreas ticket={t} />
           </aside>

@@ -49,6 +49,10 @@ pub(crate) async fn update(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(patch) = payload?;
     let patch = patch.validate()?;
+    if patch.stage.is_some_and(|s| s.is_closed()) {
+        // Closing a ticket ends its attempt (tickets spec §6).
+        crate::start::end_for_close(&st, &id).await?;
+    }
     Ok(Json(st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?))
 }
 
@@ -82,6 +86,13 @@ pub(crate) async fn bulk(
     let Json(req) = payload?;
     let action = req.validate()?;
     let count = st.store.bulk_tickets(&req.ids, &action, now_ms()).await?;
+    if let pdt_core::ticket::ValidBulk::Stage(stage) = action
+        && stage.is_closed()
+    {
+        for id in &req.ids {
+            crate::start::end_for_close(&st, id).await?;
+        }
+    }
     Ok(Json(BulkResult { count }))
 }
 

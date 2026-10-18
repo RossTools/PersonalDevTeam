@@ -1,0 +1,163 @@
+import { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Skeleton, Switch } from '@ui';
+import { api, ApiError } from '../api/client';
+import type { AgentKind } from '../api/gen/AgentKind';
+import type { StartMode } from '../api/gen/StartMode';
+import type { StartResult } from '../api/gen/StartResult';
+import type { StartTicket } from '../api/gen/StartTicket';
+import type { TabPlacement } from '../api/gen/TabPlacement';
+import type { Ticket } from '../api/gen/Ticket';
+import { TicketKey } from '../common/TicketKey';
+import { actionError } from '../common/useAction';
+import { INITIAL_SIZE } from '../sessions/status';
+import { isClosed, linkRole } from './model';
+import { useTicket } from './queries';
+
+const AGENT_KEY = 'pdt.tickets.startAgent';
+
+function loadAgent(): AgentKind {
+  try {
+    return localStorage.getItem(AGENT_KEY) === 'codex' ? 'codex' : 'claude';
+  } catch {
+    return 'claude';
+  }
+}
+
+function saveAgent(a: AgentKind) {
+  try {
+    localStorage.setItem(AGENT_KEY, a);
+  } catch {
+    // Storage blocked: remembered for this page only.
+  }
+}
+
+/** The tickets that block this one and aren't Done or Won't do. */
+export const openBlockers = (t: Pick<Ticket, 'links'>) => t.links.filter((l) => linkRole(l) === 'blockedBy' && !isClosed(l.stage));
+
+export interface StartDialogProps {
+  ticketId: string;
+  /** Where the ticket and session tabs open; the end of the project workspace when absent. */
+  placement?: TabPlacement;
+  onClose: () => void;
+  onStarted: (r: StartResult) => void;
+}
+
+/**
+ * Start a ticket: agent, branch, base, permission prompts, and where the tabs open. Open blockers are listed first and
+ * the primary action becomes "Start anyway" (`mode: force`); the server's own check (`start_blocked`) does the same.
+ */
+export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDialogProps) {
+  const q = useTicket(ticketId);
+  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const t = q.data;
+  const project = projects.data?.find((p) => p.id === t?.projectId) ?? null;
+  const [agent, setAgentState] = useState<AgentKind>(loadAgent);
+  const [branch, setBranch] = useState('');
+  const [base, setBase] = useState('');
+  const [bypass, setBypass] = useState(true);
+  const [newWorkspace, setNewWorkspace] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  // The server answered start_blocked: its message, and Start becomes Start anyway.
+  const [serverBlocked, setServerBlocked] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  const setAgent = (a: AgentKind) => {
+    setAgentState(a);
+    saveAgent(a);
+  };
+  const blockers = t ? openBlockers(t) : [];
+  const force = blockers.length > 0 || serverBlocked !== null;
+  const active = t?.attempt?.state === 'active';
+  const closed = t ? isClosed(t.stage) : false;
+  const startable = !!t && !active && !closed;
+
+  const submit = async () => {
+    if (!t || !startable || pending) return;
+    setPending(true);
+    setError(null);
+    const mode: StartMode = force ? 'force' : 'check';
+    const body: StartTicket = {
+      agent,
+      ...(branch.trim() ? { branch: branch.trim() } : {}),
+      ...(base.trim() ? { base: base.trim() } : {}),
+      ...(bypass ? { bypassPermissions: true } : {}),
+      ...(newWorkspace ? { newWorkspace: true } : placement ? { tab: placement } : {}),
+      mode,
+      ...INITIAL_SIZE,
+    };
+    try {
+      const r = await api.startTicket(t.id, body);
+      onStarted(r);
+      onClose();
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'start_blocked') {
+        setServerBlocked(e.message);
+      } else {
+        setError(actionError(e));
+        requestAnimationFrame(() => errorRef.current?.focus());
+      }
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={t ? `Start ${t.key}` : 'Start ticket'}
+      description={t?.title}
+      size="md"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>
+            {force ? 'Start anyway' : 'Start'}
+          </Button>
+        </>
+      }
+    >
+      {!t ? (
+        q.isPending ? <Skeleton lines={3} label="Loading ticket" /> : <Alert tone="error">{q.error?.message ?? 'Ticket not found.'}</Alert>
+      ) : (
+        <form id="start-ticket" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+          {active && <Alert tone="info">{t.key} already has an active attempt on {t.attempt!.branch}.</Alert>}
+          {closed && <Alert tone="info">{t.key} is closed. Move it back to Ready to start it.</Alert>}
+          {blockers.length > 0 && (
+            <Alert tone="warning" title={`Blocked by ${blockers.length === 1 ? 'an open ticket' : `${blockers.length} open tickets`}`}>
+              <ul className="mt-1 flex flex-col gap-1">
+                {blockers.map((b) => (
+                  <li key={b.id} className="flex min-w-0 items-center gap-2">
+                    <TicketKey ticketKey={b.key} />
+                    <span className="min-w-0 truncate">{b.title}</span>
+                  </li>
+                ))}
+              </ul>
+            </Alert>
+          )}
+          {serverBlocked && blockers.length === 0 && <Alert tone="warning">{serverBlocked}</Alert>}
+          <Field label="Agent">
+            <SegmentedControl
+              options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }]}
+              value={agent}
+              onChange={setAgent}
+            />
+          </Field>
+          <Field label="Branch" hint="Made from the base with a worktree; an existing .worktrees folder for it is reused.">
+            <Input mono value={branch} placeholder={t.defaultBranch} maxLength={200} onChange={(e) => setBranch(e.target.value)} />
+          </Field>
+          <Field label="Base branch">
+            <Input mono value={base} placeholder={project?.baseBranch ?? 'main'} maxLength={200} onChange={(e) => setBase(e.target.value)} />
+          </Field>
+          <Checkbox checked={bypass} onChange={setBypass}>Skip permission prompts (dangerous)</Checkbox>
+          <Switch size="sm" checked={newWorkspace} onChange={setNewWorkspace} className="text-xs">
+            Open in a new workspace
+          </Switch>
+          {error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{error}</Alert></div>}
+        </form>
+      )}
+    </Dialog>
+  );
+}

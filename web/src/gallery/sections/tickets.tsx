@@ -12,6 +12,13 @@ import { Markdown } from '../../common/Markdown';
 import { StageStepper, STAGE_LABEL, type TicketStage } from '../../common/StageStepper';
 import { TicketKey } from '../../common/TicketKey';
 import { PriorityIcon, PRIORITIES, type Priority } from '../../common/PriorityIcon';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { agentState } from '../../common/AgentState';
+import type { Project } from '../../api/gen/Project';
+import type { Ticket as FullTicket } from '../../api/gen/Ticket';
+import type { TicketSummary } from '../../api/gen/TicketSummary';
+import { BoardCard } from '../../tickets/Board';
+import { StartDialog } from '../../tickets/StartDialog';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -117,7 +124,7 @@ interface Ticket {
 }
 
 const WORDS = ['fix', 'login', 'redirect', 'tickets', 'schema', 'board', 'drag', 'rank', 'palette', 'terminal', 'resize', 'update', 'remote', 'tailscale', 'search', 'filter', 'sheet', 'peek'];
-const STAGES: TicketStage[] = ['draft', 'ready', 'in_progress', 'done'];
+const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done'];
 const LABELS = ['ui', 'api', 'bug', 'perf', 'docs'];
 
 function makeTickets(n: number, from = 0): Ticket[] {
@@ -127,7 +134,7 @@ function makeTickets(n: number, from = 0): Ticket[] {
       id: `t${i}`,
       key: `PDT-${i + 1}`,
       title: `${WORDS[i % WORDS.length]} ${WORDS[(i * 7) % WORDS.length]} ${WORDS[(i * 13) % WORDS.length]}`,
-      stage: STAGES[(i * 3) % 4],
+      stage: STAGES[(i * 3) % STAGES.length],
       priority: PRIORITIES[(i * 2 + Math.floor(i / 5)) % 5],
       labels: i % 3 ? [LABELS[i % 5]] : [],
       updated: NOW - i * 17 * MIN,
@@ -256,6 +263,82 @@ function Backlog() {
   );
 }
 
+// --- Board cards and the Start dialog ----------------------------------------------------------------------------
+
+const card = (n: number, over: Partial<TicketSummary> = {}): TicketSummary => ({
+  id: `g${n}`, projectId: 'gp', key: `PDT-${n}`, number: n, title: 'Board cards show the title on up to two lines, then cut it off with an ellipsis',
+  stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, blockedBy: 0, attempt: null, overlap: 'none',
+  createdAt: NOW, updatedAt: NOW, closedAt: null, ...over,
+});
+const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null };
+const noMenu = () => [{ label: 'Open', onSelect: () => {} }, { label: 'Start…', onSelect: () => {} }];
+
+function Cards() {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      <div className="flex flex-col gap-2 rounded-md bg-surface-2 p-2">
+        <Demo label="Ready · plain, labelled, blocked">
+          <ul className="flex flex-col gap-2">
+            <BoardCard ticket={card(41, { title: 'Short title' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(42, { priority: 'high', labels: ['web', 'tickets'] })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(43, { priority: 'urgent', blockedBy: 2, title: 'Waits for the schema' })} onOpen={() => {}} entries={noMenu} draggable />
+          </ul>
+        </Demo>
+      </div>
+      <div className="flex flex-col gap-2 rounded-md bg-surface-2 p-2">
+        <Demo label="In progress · working, needs you (unseen), no session">
+          <ul className="flex flex-col gap-2">
+            <BoardCard ticket={card(44, { stage: 'in_progress', attempt, title: 'Board and Start' })}
+              activity={agentState({ kind: 'agent_tui', status: 'running', activity: 'working' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(45, { stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-45-merge-loop' }, priority: 'medium' })}
+              activity={agentState({ kind: 'agent_tui', status: 'running', activity: 'needs_you', unseen: true })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(46, { stage: 'in_progress', attempt: { ...attempt, branch: 'feat/no-agent' }, title: 'Its session ended' })} onOpen={() => {}} entries={noMenu} draggable />
+          </ul>
+        </Demo>
+      </div>
+      <div className="flex flex-col gap-2 rounded-md bg-surface-2 p-2">
+        <Demo label="Done · merged attempt">
+          <ul className="flex flex-col gap-2">
+            <BoardCard ticket={card(40, { stage: 'done', attempt: { ...attempt, state: 'merged', branch: 'pdt/PDT-40-tickets-core' }, title: 'Tickets core' })} onOpen={() => {}} entries={noMenu} draggable />
+          </ul>
+        </Demo>
+      </div>
+    </div>
+  );
+}
+
+const startTicket = (over: Partial<FullTicket> = {}): FullTicket => ({
+  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], ...over,
+});
+const START_STATES: { label: string; ticket: FullTicket }[] = [
+  { label: 'Ready', ticket: startTicket() },
+  {
+    label: 'Blocked (Start anyway)',
+    ticket: startTicket({ links: [{ kind: 'blocks', direction: 'incoming', id: 'gx', key: 'PDT-12', title: 'Tickets schema', stage: 'in_progress' }] }),
+  },
+  { label: 'Active attempt', ticket: startTicket({ stage: 'in_progress', attempt }) },
+];
+const galleryProject: Project = { id: 'gp', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: NOW, githubRepo: null };
+
+/** The dialog over seeded data (there is no API here: Start shows the error state). */
+function StartDemo() {
+  const [open, setOpen] = useState<FullTicket | null>(null);
+  const qc = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }), []);
+  const show = (t: FullTicket) => {
+    qc.setQueryData(['ticket', t.id], t);
+    qc.setQueryData(['projects'], [galleryProject]);
+    setOpen(t);
+  };
+  return (
+    <QueryClientProvider client={qc}>
+      <div className="flex flex-wrap gap-2">
+        {START_STATES.map((s) => <Button key={s.label} size="sm" onClick={() => show({ ...s.ticket, id: `start-${s.label}` })}>{s.label}</Button>)}
+      </div>
+      {open && <StartDialog key={open.id} ticketId={open.id} onClose={() => setOpen(null)} onStarted={() => setOpen(null)} />}
+    </QueryClientProvider>
+  );
+}
+
 export const section = {
   title: 'Tickets',
   order: 45,
@@ -264,6 +347,8 @@ export const section = {
       <Pieces />
       <Writing />
       <Demo label="DataList · FilterBar ⇄ BulkActionBar (2,000 rows, virtualised)"><Backlog /></Demo>
+      <Demo label="Board cards (drag, right-click, ⋯)"><Cards /></Demo>
+      <Demo label="Start dialog · open it in each state"><StartDemo /></Demo>
     </div>
   ),
 };
