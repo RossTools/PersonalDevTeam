@@ -1,16 +1,23 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { toast } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import { SessionView } from './SessionView';
 
 vi.mock('../terminal/TerminalView', () => ({
-  TerminalView: ({ sessionId }: { sessionId: string }) => <div data-testid="terminal-view">{sessionId}</div>,
+  TerminalView: ({ sessionId, dimmed }: { sessionId: string; dimmed?: boolean }) => (
+    <div data-testid="terminal-view" data-dimmed={dimmed ? 'true' : 'false'}>{sessionId}</div>
+  ),
 }));
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  act(() => { toast.dismiss(); });
+});
 
 const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null };
 const session = (over: Partial<Session>): Session => ({
@@ -19,72 +26,143 @@ const session = (over: Partial<Session>): Session => ({
   externalSessionId: null, freshStartedAt: 1,
   activity: null, attentionAt: null, lastViewedAt: null, unseen: false, ...over,
 });
-const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1 };
+const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1, missing: false };
 
-describe('SessionView', () => {
-  it('stops a running session', async () => {
-    const calls = stubApi({ 'POST /api/sessions/s1/kill': undefined, 'GET /api/projects/p/sessions': [] });
-    renderWithQuery(<SessionView session={session({})} onRemoved={() => {}} />);
-    expect(screen.getByTestId('terminal-view')).toHaveTextContent('s1');
-    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions/s1/kill')).toBe(true));
+const header = () => screen.getByRole('banner');
+async function openMenu() {
+  await userEvent.click(within(header()).getByRole('button', { name: 'Session actions' }));
+  return screen.findByRole('menu', { name: 'Session actions' });
+}
+async function choose(item: string | RegExp) {
+  const menu = await openMenu();
+  await userEvent.click(within(menu).getByRole('menuitem', { name: item }));
+}
+
+describe('SessionView header', () => {
+  it('shows the dot, title, project key for the main checkout and the label; the path only in the tooltip', async () => {
+    stubApi({ 'GET /api/projects': [project], 'POST /api/sessions/s1/view': undefined });
+    renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', title: 'Claude', activity: 'needs_you', unseen: true })} onRemoved={() => {}} />);
+    const h = header();
+    expect(within(h).getByRole('img', { name: 'Needs you' })).toHaveAttribute('data-status', 'waiting');
+    expect(within(h).getByText('Needs you')).toBeInTheDocument();
+    expect(within(h).getByRole('img', { name: 'unseen' })).toBeInTheDocument();
+    expect(within(h).getByRole('heading', { name: 'Claude' })).toHaveAttribute('title', 'Claude · /r');
+    expect(await within(h).findByText('PDT')).toBeInTheDocument();
+    expect(within(h).queryByText('/r')).not.toBeInTheDocument();
+    // Running: no primary action, only the menu.
+    expect(within(h).queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
   });
 
-  it('offers restart for an interrupted agent and shows no terminal', async () => {
-    const calls = stubApi({
-      'POST /api/sessions/s1/restart': session({ kind: 'agent_tui', agent: 'claude' }),
-      'GET /api/projects/p/sessions': [],
+  it('shows the worktree branch as a chip with GitHub links', async () => {
+    stubApi({
+      'GET /api/projects': [{ ...project, githubRepo: 'o/r' }],
+      'GET /api/projects/p/worktrees': [worktree],
+      'POST /api/sessions/s1/view': undefined,
     });
-    renderWithQuery(<SessionView session={session({ status: 'interrupted', kind: 'agent_tui', agent: 'claude', title: 'Claude' })} onRemoved={() => {}} />);
-    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
-    expect(screen.getByText(/resumes its last conversation/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    renderWithQuery(<SessionView session={session({ worktreeId: 'w', cwd: '/r/.worktrees/feature-x' })} onRemoved={() => {}} />);
+    expect(await within(header()).findByRole('button', { name: 'Branch feature/x' })).toBeInTheDocument();
+    expect(within(header()).queryByText('PDT')).not.toBeInTheDocument();
+    const menu = await openMenu();
+    expect(within(menu).getByRole('menuitem', { name: 'Open on GitHub' })).toBeInTheDocument();
+  });
+
+  it('takes the branch and repo from props', () => {
+    stubApi({ 'POST /api/sessions/s1/view': undefined });
+    renderWithQuery(<SessionView session={session({ worktreeId: 'w' })} branch="feature/y" repo={null} baseBranch="main" projectKey="PDT" onRemoved={() => {}} />);
+    expect(within(header()).getByText('feature/y')).toBeInTheDocument();
+  });
+});
+
+describe('SessionView actions', () => {
+  it('stops an idle session without asking', async () => {
+    const calls = stubApi({ 'POST /api/sessions/s1/kill': undefined, 'GET /api/projects/p/sessions': [] });
+    renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', activity: 'idle' })} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-dimmed', 'false');
+    await choose('Stop');
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions/s1/kill')).toBe(true));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('asks before stopping a working agent', async () => {
+    const calls = stubApi({ 'POST /api/sessions/s1/kill': undefined, 'GET /api/projects/p/sessions': [] });
+    renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', title: 'Claude', activity: 'working' })} onRemoved={() => {}} />);
+    await choose('Stop');
+    const dialog = await screen.findByRole('alertdialog', { name: 'Stop Claude?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.path === '/api/sessions/s1/kill')).toBe(false);
+    await choose('Stop');
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop agent' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/sessions/s1/kill')).toBe(true));
+  });
+
+  it('copies the path and says so', async () => {
+    stubApi({});
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderWithQuery(<SessionView session={session({ cwd: '/r/sub' })} onRemoved={() => {}} />);
+    await choose('Copy path');
+    expect(writeText).toHaveBeenCalledWith('/r/sub');
+    expect(await screen.findByText('Path copied')).toBeInTheDocument();
+  });
+
+  it('toasts a failed action', async () => {
+    stubApi({ 'POST /api/sessions/s1/kill': new Reply(500, { code: 'internal', message: 'kill failed' }), 'GET /api/projects/p/sessions': [] });
+    renderWithQuery(<SessionView session={session({})} onRemoved={() => {}} />);
+    await choose('Stop');
+    expect(await screen.findByText('kill failed')).toBeInTheDocument();
+  });
+});
+
+describe('SessionView ended', () => {
+  it('keeps the terminal, dimmed, under a bar that restarts', async () => {
+    const calls = stubApi({ 'POST /api/sessions/s1/restart': session({}), 'GET /api/projects/p/sessions': [] });
+    renderWithQuery(<SessionView session={session({ status: 'finished', exitCode: 0 })} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-dimmed', 'true');
+    const bar = screen.getByRole('group', { name: 'Session ended' });
+    expect(within(bar).getByRole('button', { name: 'Remove…' })).toBeInTheDocument();
+    expect(within(header()).getByRole('button', { name: 'Restart' })).toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/restart')?.body).toEqual({ cols: 120, rows: 32 }));
   });
 
-  it('disables the session actions while one is in flight', async () => {
+  it('offers Resume for an interrupted agent, with the terminal still shown', async () => {
+    const calls = stubApi({ 'POST /api/sessions/s1/restart': session({ kind: 'agent_tui', agent: 'claude' }), 'GET /api/projects/p/sessions': [] });
+    renderWithQuery(<SessionView session={session({ status: 'interrupted', kind: 'agent_tui', agent: 'claude', title: 'Claude' })} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-dimmed', 'true');
+    const bar = screen.getByRole('group', { name: 'Interrupted when the daemon stopped' });
+    expect(bar).toHaveTextContent(/resumes its last conversation/);
+    expect(within(bar).queryByRole('button', { name: 'Remove…' })).not.toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Resume' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/sessions/s1/restart')).toBe(true));
+  });
+
+  it('disables the actions while one is in flight', async () => {
     let respond!: (v: Session) => void;
     stubApi({
       'POST /api/sessions/s1/restart': () => new Promise<Session>((r) => { respond = r; }),
       'GET /api/projects/p/sessions': [],
     });
     renderWithQuery(<SessionView session={session({ status: 'finished', exitCode: 0 })} onRemoved={() => {}} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restart' })).toBeDisabled());
-    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled();
+    const bar = screen.getByRole('group', { name: 'Session ended' });
+    await userEvent.click(within(header()).getByRole('button', { name: 'Restart' }));
+    await waitFor(() => expect(within(bar).getByRole('button', { name: 'Remove…' })).toBeDisabled());
     respond(session({}));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restart' })).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'Remove' })).toBeEnabled();
+    await waitFor(() => expect(within(bar).getByRole('button', { name: 'Remove…' })).toBeEnabled());
   });
 
   it('removes an ended session after asking, naming what is lost', async () => {
     const calls = stubApi({ 'DELETE /api/sessions/s1': undefined, 'GET /api/projects/p/sessions': [] });
     const onRemoved = vi.fn();
     renderWithQuery(<SessionView session={session({ status: 'finished', exitCode: 0 })} onRemoved={onRemoved} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await choose('Remove…');
     const dialog = await screen.findByRole('alertdialog', { name: 'Remove Shell?' });
     expect(dialog).toHaveTextContent(/terminal history is deleted/);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
-    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Session ended' })).getByRole('button', { name: 'Remove…' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Remove session' }));
     await waitFor(() => expect(onRemoved).toHaveBeenCalled());
-  });
-
-  it('shows a failed action\'s error', async () => {
-    stubApi({ 'POST /api/sessions/s1/kill': new Reply(500, { code: 'internal', message: 'kill failed' }), 'GET /api/projects/p/sessions': [] });
-    renderWithQuery(<SessionView session={session({})} onRemoved={() => {}} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('kill failed');
-  });
-
-  it('shows the agent state in one vocabulary: dot, label and unseen', () => {
-    stubApi({ 'POST /api/sessions/s1/view': undefined });
-    renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', activity: 'needs_you', unseen: true })} onRemoved={() => {}} />);
-    const header = screen.getByRole('banner');
-    expect(within(header).getByRole('img', { name: 'Needs you' })).toHaveAttribute('data-status', 'waiting');
-    expect(within(header).getByText('Needs you')).toBeInTheDocument();
-    expect(within(header).getByRole('img', { name: 'unseen' })).toBeInTheDocument();
   });
 });
