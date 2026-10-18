@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { actionFor, usePrefixKeys } from './keys';
+import { actionFor, KEY_HELP, usePrefixKeys } from './keys';
 
 const press = (key: string, init: KeyboardEventInit = {}) => {
   const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
@@ -15,6 +15,11 @@ describe('prefix keys', () => {
     expect(actionFor('0')).toBeNull();
     expect(actionFor('w')).toEqual({ type: 'switcher' });
     expect(actionFor('z')).toBeNull();
+  });
+
+  it('opens the command palette with k, and lists it in the help', () => {
+    expect(actionFor('k')).toEqual({ type: 'palette' });
+    expect(KEY_HELP.find(([k]) => k === 'k')?.[1]).toMatch(/Command palette/);
   });
 
   it('runs the action for the key after the prefix and hides both from the page', () => {
