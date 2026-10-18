@@ -17,7 +17,7 @@ import {
   type Selection,
 } from 'react-aria-components';
 import { cn } from './lib/utils';
-import { RowMenus, openFocusedRowMenu, useRowMenu, type MenuPoint } from './lib/rowMenu';
+import { RowLongPress, RowMenus, openFocusedRowMenu, useRowMenu, type MenuPoint } from './lib/rowMenu';
 import { Checkbox as CheckboxPrimitive } from './primitives/checkbox';
 import { Spinner } from './Spinner';
 import { dragData } from './List';
@@ -81,6 +81,7 @@ export interface DataListProps<T extends { id: string }> {
 
 const EMPTY: ReadonlySet<string> = new Set();
 /** Rows are at least 44px on touch screens (`pointer-coarse:min-h-control-touch`); fixed heights follow. */
+const LONG_PRESS_SLACK_MS = 400;
 const TOUCH_ROW = 44;
 
 function useCoarsePointer(): boolean {
@@ -145,10 +146,32 @@ export function DataList<T extends { id: string }>({
     return order.slice(Math.min(a, b), Math.max(a, b) + 1);
   };
 
+  // A touch long press opens the row's menu; React Aria also toggles the row's selection on it, within a few ms
+  // either side of our timer. Whichever comes second undoes the toggle.
+  const longPress = useRef<{ id: string; at: number } | null>(null);
+  const lastToggle = useRef<{ id: string; at: number; before: ReadonlySet<string> } | null>(null);
+  const onLongPress = (id: string) => {
+    const t = lastToggle.current;
+    if (t && t.id === id && Date.now() - t.at < LONG_PRESS_SLACK_MS) {
+      lastToggle.current = null;
+      setSelected(new Set(t.before));
+      return;
+    }
+    longPress.current = { id, at: Date.now() };
+  };
   const onRacSelection = (keys: Selection) => {
     const next = keys === 'all' ? new Set(order) : new Set([...keys].map(String));
     const added = [...next].filter((k) => !selected.has(k));
     const removed = [...selected].filter((k) => !next.has(k));
+    if (added.length + removed.length === 1) {
+      const id = added[0] ?? removed[0];
+      const lp = longPress.current;
+      if (lp && lp.id === id && Date.now() - lp.at < LONG_PRESS_SLACK_MS) {
+        longPress.current = null;
+        return;
+      }
+      lastToggle.current = { id, at: Date.now(), before: selected };
+    }
     // React Aria's checkbox only toggles; a Shift-click on one extends from the last toggled row.
     if (shift.current && added.length === 1 && removed.length === 0 && anchor.current && anchor.current !== added[0]) {
       for (const k of range(anchor.current, added[0])) next.add(k);
@@ -200,73 +223,75 @@ export function DataList<T extends { id: string }>({
 
   return (
     <RowMenus.Provider value={menus}>
-      <div
-        className="contents"
-        onPointerDownCapture={(e) => { shift.current = e.shiftKey; }}
-        onKeyDownCapture={(e) => {
-          shift.current = false;
-          if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-          const handler = e.key === 'ArrowUp' ? onMoveUp : onMoveDown;
-          const row = (e.target as HTMLElement).closest<HTMLElement>('[role="row"][data-key]');
-          if (!handler || !row?.dataset.key) return;
-          e.preventDefault();
-          e.stopPropagation();
-          handler(row.dataset.key);
-        }}
-        onKeyDown={(e) => openFocusedRowMenu(e, menus)}
-      >
-        <Virtualizer
-          layout={ListLayout}
-          layoutOptions={
-            fixedHeight
-              ? { rowHeight: fixedHeight, headingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
-              : { estimatedRowHeight: coarse ? TOUCH_ROW : 36, estimatedHeadingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
-          }
+      <RowLongPress.Provider value={onLongPress}>
+        <div
+          className="contents"
+          onPointerDownCapture={(e) => { shift.current = e.shiftKey; }}
+          onKeyDownCapture={(e) => {
+            shift.current = false;
+            if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+            const handler = e.key === 'ArrowUp' ? onMoveUp : onMoveDown;
+            const row = (e.target as HTMLElement).closest<HTMLElement>('[role="row"][data-key]');
+            if (!handler || !row?.dataset.key) return;
+            e.preventDefault();
+            e.stopPropagation();
+            handler(row.dataset.key);
+          }}
+          onKeyDown={(e) => openFocusedRowMenu(e, menus)}
         >
-          <GridList
-            aria-label={ariaLabel}
-            layout="stack"
-            selectionMode={selectable ? 'multiple' : 'none'}
-            selectionBehavior="toggle"
-            selectedKeys={selectable ? selected : undefined}
-            onSelectionChange={selectable ? onRacSelection : undefined}
-            onAction={
-              onAction || selectable
-                ? (key: Key) => {
-                    const id = String(key);
-                    // Shift-click with nothing selected starts a selection rather than opening the row.
-                    if (selectable && shift.current) {
-                      const next = new Set(selected);
-                      for (const k of anchor.current ? range(anchor.current, id) : [id]) next.add(k);
-                      anchor.current ??= id;
-                      setSelected(next);
-                      return;
-                    }
-                    onAction?.(id);
-                  }
-                : undefined
+          <Virtualizer
+            layout={ListLayout}
+            layoutOptions={
+              fixedHeight
+                ? { rowHeight: fixedHeight, headingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
+                : { estimatedRowHeight: coarse ? TOUCH_ROW : 36, estimatedHeadingHeight: coarse ? TOUCH_ROW : 32, loaderHeight: 32, dropIndicatorThickness: 2 }
             }
-            renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
-            dragAndDropHooks={dragKind ? dragAndDropHooks : undefined}
-            className={cn('relative overflow-auto outline-none', className)}
           >
-            {sections ? (
-              <Collection items={sections} dependencies={dependencies ? [...dependencies] : undefined}>
-                {renderSection}
-              </Collection>
-            ) : (
-              <Collection items={items ?? []} dependencies={dependencies ? [...dependencies] : undefined}>
-                {children}
-              </Collection>
-            )}
-            {onEndReached && (
-              <GridListLoadMoreItem onLoadMore={() => { if (!loadingMore) onEndReached(); }} isLoading={loadingMore} className="flex h-8 items-center justify-center">
-                <Spinner />
-              </GridListLoadMoreItem>
-            )}
-          </GridList>
-        </Virtualizer>
-      </div>
+            <GridList
+              aria-label={ariaLabel}
+              layout="stack"
+              selectionMode={selectable ? 'multiple' : 'none'}
+              selectionBehavior="toggle"
+              selectedKeys={selectable ? selected : undefined}
+              onSelectionChange={selectable ? onRacSelection : undefined}
+              onAction={
+                onAction || selectable
+                  ? (key: Key) => {
+                      const id = String(key);
+                      // Shift-click with nothing selected starts a selection rather than opening the row.
+                      if (selectable && shift.current) {
+                        const next = new Set(selected);
+                        for (const k of anchor.current ? range(anchor.current, id) : [id]) next.add(k);
+                        anchor.current ??= id;
+                        setSelected(next);
+                        return;
+                      }
+                      onAction?.(id);
+                    }
+                  : undefined
+              }
+              renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
+              dragAndDropHooks={dragKind ? dragAndDropHooks : undefined}
+              className={cn('relative overflow-auto outline-none', className)}
+            >
+              {sections ? (
+                <Collection items={sections} dependencies={dependencies ? [...dependencies] : undefined}>
+                  {renderSection}
+                </Collection>
+              ) : (
+                <Collection items={items ?? []} dependencies={dependencies ? [...dependencies] : undefined}>
+                  {children}
+                </Collection>
+              )}
+              {onEndReached && (
+                <GridListLoadMoreItem onLoadMore={() => { if (!loadingMore) onEndReached(); }} isLoading={loadingMore} className="flex h-8 items-center justify-center">
+                  <Spinner />
+                </GridListLoadMoreItem>
+              )}
+            </GridList>
+          </Virtualizer>
+        </div>
+      </RowLongPress.Provider>
     </RowMenus.Provider>
   );
 }

@@ -196,3 +196,36 @@ describe('DataList', () => {
     expect(onMenu).toHaveBeenCalledWith({ x: 5, y: 6 });
   });
 });
+
+describe('DataList touch long press', () => {
+  it('opens the row menu without selecting the row', () => {
+    vi.useFakeTimers();
+    try {
+      const onMenu = vi.fn();
+      const changes: Set<string>[] = [];
+      function MenuRows() {
+        const [keys, setKeys] = useState<Set<string>>(new Set());
+        return (
+          <DataList aria-label="Tickets" rowHeight={36} items={many(3)} selectable selectedKeys={keys} onSelectionChange={(k) => { changes.push(k); setKeys(k); }} onAction={() => {}}>
+            {(r) => (
+              <DataListRow id={r.id} textValue={r.title} onMenu={onMenu}>
+                <span>{r.title}</span>
+              </DataListRow>
+            )}
+          </DataList>
+        );
+      }
+      render(<MenuRows />);
+      const target = row('Ticket 1');
+      const touch = { pointerType: 'touch', pointerId: 1, button: 0, width: 1, height: 1, clientX: 5, clientY: 6 };
+      fireEvent.pointerDown(target, touch);
+      act(() => { vi.advanceTimersByTime(800); });
+      fireEvent.pointerUp(target, touch);
+      expect(onMenu).toHaveBeenCalledTimes(1);
+      expect(changes.at(-1)?.size ?? 0).toBe(0);
+      expect(target).not.toHaveAttribute('aria-selected', 'true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

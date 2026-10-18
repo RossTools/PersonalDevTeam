@@ -116,7 +116,7 @@ describe('backlog', () => {
     expect(screen.getByText('The board arrives with Start (Phase 4b).')).toBeInTheDocument();
   });
 
-  it('quick-adds a Draft at the top with Enter; Shift+Enter opens the full form with the title', async () => {
+  it('quick-adds a Draft above the first row with Enter; Shift+Enter opens the full form with the title', async () => {
     const onNewTicket = vi.fn();
     const calls = stub({ [`POST /api/projects/${project.id}/tickets`]: ticket(9) });
     renderWithQuery(<Harness onNewTicket={onNewTicket} />);
@@ -125,7 +125,7 @@ describe('backlog', () => {
     await pickProject();
     const input = await screen.findByRole('textbox', { name: 'New ticket title' });
     await userEvent.type(input, 'Write docs{Enter}');
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ title: 'Write docs' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ title: 'Write docs', before: 't1' }));
     await waitFor(() => expect(input).toHaveValue(''));
     await userEvent.type(input, 'Bigger one{Shift>}{Enter}{/Shift}');
     expect(onNewTicket).toHaveBeenCalledWith(project.id, 'Bigger one');

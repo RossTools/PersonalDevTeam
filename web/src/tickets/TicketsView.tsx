@@ -150,7 +150,9 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
 // ---------------------------------------------------------------------------------------------------------------
 // Quick add
 
-function QuickAdd({ projectId, onDetails }: { projectId: string; onDetails: (title: string) => void }) {
+/** `before`: the first row of a flat rank-ordered list, so the new ticket shows up where it was typed (without it the
+ *  server puts it at the top of Draft, which may be far down). */
+function QuickAdd({ projectId, before, phone, onDetails }: { projectId: string; before?: string; phone: boolean; onDetails: (title: string) => void }) {
   const qc = useQueryClient();
   const [title, setTitle] = useState('');
   const [pending, setPending] = useState(false);
@@ -165,7 +167,7 @@ function QuickAdd({ projectId, onDetails }: { projectId: string; onDetails: (tit
     const t = title.trim();
     if (!t || pending) return;
     setPending(true);
-    const created = await runAction(() => api.createTicket(projectId, { title: t }));
+    const created = await runAction(() => api.createTicket(projectId, before ? { title: t, before } : { title: t }));
     setPending(false);
     if (created) {
       setTitle('');
@@ -177,7 +179,7 @@ function QuickAdd({ projectId, onDetails }: { projectId: string; onDetails: (tit
       <Plus aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <Input
         aria-label="New ticket title"
-        placeholder="New ticket title… Enter to add, Shift+Enter for details"
+        placeholder={phone ? 'New ticket title' : 'New ticket title… Enter to add, Shift+Enter for details'}
         value={title}
         disabled={pending}
         maxLength={200}
@@ -205,6 +207,8 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
       title={t ? `${t.key} · ${t.title}` : 'Ticket'}
       hideTitle
       open={ticketId !== null}
+      // On desktop the backlog stays usable beside the peek (UX spec §8.1).
+      modal={phone}
       onOpenChange={(o) => !o && onClose()}
       className={phone ? 'w-full max-w-full' : 'w-[32rem] max-w-[90vw]'}
       footer={t && (
@@ -466,7 +470,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
               </FilterBar>
             )}
           </div>
-          {project && <QuickAdd projectId={project.id} onDetails={(title) => onNewTicket(project.id, title)} />}
+          {project && <QuickAdd projectId={project.id} phone={phone} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
         </>
       )}
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>

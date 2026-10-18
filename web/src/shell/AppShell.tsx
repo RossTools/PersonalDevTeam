@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
-import { Button, EmptyState, IconButton, List, ListRow, Sheet, useThemePref } from '@ui';
+import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useThemePref } from '@ui';
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
@@ -20,11 +20,8 @@ import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
 import { OpenTicketContext } from '../tickets/actions';
 import { looksLikeKey } from '../tickets/model';
-import { NewTicketDialog } from '../tickets/NewTicketDialog';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
-import { TicketsView } from '../tickets/TicketsView';
-import { TicketView } from '../tickets/TicketView';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
 import { KeyHelp } from '../workspaces/KeyHelp';
@@ -53,6 +50,11 @@ const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted
 function useAttentionTitle(count: number) {
   useDevTitle(count);
 }
+
+// The ticket screens (and the Markdown libraries they use) load the first time they're shown.
+const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
+const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
+const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
 
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
@@ -299,12 +301,12 @@ export function AppShell() {
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} onQueryChange={setPaletteQuery} />
         {newTicket && (
-          <NewTicketDialog
+          <Suspense fallback={null}><NewTicketDialog
             projects={ws.projects}
             projectId={newTicket.projectId}
             title={newTicket.title}
             onClose={() => setNewTicket(null)}
-          />
+          /></Suspense>
         )}
         {addingProject && (
           <AddProjectDialog
@@ -327,13 +329,13 @@ export function AppShell() {
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             {view === 'tickets' ? (
-              <TicketsView backlog={backlog} projects={ws.projects} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} />
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketsView backlog={backlog} projects={ws.projects} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></Suspense>
             ) : view === 'files' ? (
               <FileViewer state={folder} />
             ) : view === 'settings' ? (
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
-              <TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} onDeleted={() => void ws.refresh()} />
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : current?.run ? (
               <RunView
                 key={current.run.id}

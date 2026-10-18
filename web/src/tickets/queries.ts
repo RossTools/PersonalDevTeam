@@ -27,8 +27,7 @@ export function invalidateTickets(qc: QueryClient, ids: string[] = []) {
 }
 
 /**
- * The backlog: pages over the cursor. Every loaded page refetches every 2 s (TanStack Query refetches an infinite
- * query page by page), and the previous filter's rows stay on screen while a new filter loads.
+ * The backlog: pages over the cursor. Loaded pages refetch every 2 s (every 15 s once more than two are loaded), and the previous filter's rows stay on screen while a new filter loads.
  */
 export function useTicketPages(q: TicketQuery) {
   return useInfiniteQuery({
@@ -36,7 +35,9 @@ export function useTicketPages(q: TicketQuery) {
     queryFn: ({ pageParam }) => api.listTickets({ ...q, ...(pageParam ? { cursor: pageParam } : {}) }),
     initialPageParam: '' as string,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
-    refetchInterval: POLL,
+    // TanStack refetches every loaded page; past two pages (long scroll-backs) poll less often so a 1,000-row backlog
+    // isn't ten requests every 2 s.
+    refetchInterval: (query) => ((query.state.data?.pages.length ?? 0) > 2 ? 15_000 : POLL),
     placeholderData: keepPreviousData,
   });
 }

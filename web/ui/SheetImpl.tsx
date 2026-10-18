@@ -30,6 +30,9 @@ export interface SheetProps {
   trigger?: ReactElement;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Default true: a backdrop, focus kept inside. False leaves the page beside it usable (the ticket peek on desktop:
+   *  the backlog stays live next to it); Escape and the close button still close it. */
+  modal?: boolean;
   className?: string;
 }
 
@@ -39,6 +42,7 @@ export interface SheetProps {
  * focus returns to what opened it.
  */
 export function Sheet({
+  modal = true,
   side = 'right',
   title,
   hideTitle,
@@ -57,7 +61,7 @@ export function Sheet({
     onOpenChange?.(v);
   };
   const drawer = (
-    <Drawer open={isOpen} onOpenChange={(v) => setOpen(v)} swipeDirection={swipe[side]} showSwipeHandle={side === 'bottom'}>
+    <Drawer modal={modal} open={isOpen} onOpenChange={(v) => setOpen(v)} swipeDirection={swipe[side]} showSwipeHandle={side === 'bottom'}>
       <DrawerContent className={cn('bg-surface', className)}>
         <DrawerHeader className={cn('relative p-3 pr-10 text-left', hideTitle && 'sr-only')}>
           <DrawerTitle className="text-sm font-semibold">{title}</DrawerTitle>

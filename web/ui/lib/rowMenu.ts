@@ -27,9 +27,13 @@ const LONG_PRESS_MS = 500;
 /** The open-menu callbacks of a list's rows, by row id (the list provides it; Shift+F10 looks rows up in it). */
 export const RowMenus = createContext<Map<string, (p: MenuPoint) => void> | null>(null);
 
+/** Told when a touch long press opened a row's menu (React Aria also selects the row on a long press; the list undoes that). */
+export const RowLongPress = createContext<((id: string) => void) | null>(null);
+
 /** Right-click and long-press (touch) handlers for a row with a menu; registers it for Shift+F10. */
 export function useRowMenu(id: string, onMenu: ((p: MenuPoint) => void) | undefined) {
   const menus = useContext(RowMenus);
+  const longPressed = useContext(RowLongPress);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fired = useRef(false);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -60,6 +64,7 @@ export function useRowMenu(id: string, onMenu: ((p: MenuPoint) => void) | undefi
       timer.current = setTimeout(() => {
         timer.current = null;
         fired.current = true;
+        longPressed?.(id);
         onMenu(at);
       }, LONG_PRESS_MS);
     },
