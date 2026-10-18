@@ -1,3 +1,43 @@
-export { Button } from './Button';
-export { StatusDot, type Status } from './StatusDot';
+// The public component library. Features import from '@ui' only (never ./primitives or react-aria-components);
+// src/lint.test.ts enforces it. Conventions: ./README.md.
+
+// Controls
+export * from './Button';
+export * from './IconButton';
+export * from './Input';
+export * from './Textarea';
+export * from './Select';
+export * from './Field';
+export * from './Checkbox';
+export * from './Switch';
+export * from './SegmentedControl';
+export * from './Kbd';
+export * from './Link';
+export * from './Spinner';
+export * from './Skeleton';
+export * from './Tooltip';
+
+// Status and feedback
+export * from './StatusDot';
+export * from './Badge';
+export * from './Chip';
+export * from './Alert';
+export * from './Banner';
+export * from './EmptyState';
+export * from './Toaster';
+export * from './Dialog';
+export * from './Confirm';
+
+// Menus and overlays
+export * from './Menu';
+export * from './Popover';
+export * from './Sheet';
+export * from './CommandList';
+
+// Lists and layout
+export * from './List';
+export * from './TreeView';
+export * from './ViewHeader';
+export * from './Page';
+
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';

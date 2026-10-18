@@ -7,18 +7,30 @@ import {
   Input as InputPrimitive,
 } from "react-aria-components"
 
+/** Shared look of text controls (Input, Textarea, Select trigger): Graphite density, tokens only. */
+const fieldControlClass =
+  "w-full min-w-0 rounded-md border border-input bg-card text-sm text-foreground transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive/30 data-invalid:border-destructive motion-reduce:transition-none"
+
+const inputSizeClass = {
+  sm: "h-control-sm px-2 text-xs pointer-coarse:h-control-touch pointer-coarse:text-base",
+  md: "h-control-md px-2 pointer-coarse:h-control-touch pointer-coarse:text-base",
+} as const
+
 function Input({
   className,
   type,
+  size = "md",
   ...props
-}: React.ComponentProps<typeof InputPrimitive>) {
+}: Omit<React.ComponentProps<typeof InputPrimitive>, "size"> & { size?: "sm" | "md" }) {
   return (
     <InputPrimitive
       type={type}
       data-slot="input"
       className={composeRenderProps(className, (className) =>
         cn(
-          "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
+          fieldControlClass,
+          inputSizeClass[size],
+          "py-0 file:inline-flex file:h-5 file:border-0 file:bg-transparent file:text-xs file:font-medium file:text-foreground",
           className
         )
       )}
@@ -27,4 +39,4 @@ function Input({
   )
 }
 
-export { Input }
+export { Input, fieldControlClass, inputSizeClass }

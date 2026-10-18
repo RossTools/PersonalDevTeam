@@ -35,11 +35,19 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
           "--border-radius": "var(--radius)",
+          // Above dialogs and menus (tokens.css layers); inline so it beats Sonner's own z-index.
+          zIndex: "var(--pdt-z-toast)",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          toast: "cn-toast font-sans text-sm shadow-popover",
+          description: "text-meta text-muted-foreground",
+          success: "[&_[data-icon]]:text-running",
+          error: "[&_[data-icon]]:text-failed",
+          info: "[&_[data-icon]]:text-primary",
+          warning: "[&_[data-icon]]:text-waiting",
+          actionButton: "bg-primary! text-primary-foreground!",
         },
       }}
       {...props}
