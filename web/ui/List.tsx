@@ -1,13 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  type KeyboardEvent,
-  type MouseEvent,
-  type PointerEvent,
-  type ReactNode,
-} from 'react';
+import { useRef, type ReactNode } from 'react';
 import { GripVertical } from 'lucide-react';
 import {
   Button as AriaButton,
@@ -21,6 +12,7 @@ import {
   type Selection,
 } from 'react-aria-components';
 import { cn } from './lib/utils';
+import { RowMenus, openFocusedRowMenu, useRowMenu, type MenuPoint } from './lib/rowMenu';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Drag data: text/plain `pdt:<kind>:<id>` (Android Chrome drops custom MIME types; touch spike, 2026-10-17).
@@ -51,58 +43,7 @@ export interface ListDropEvent {
 // ---------------------------------------------------------------------------------------------------------------
 // Row menus: right-click, long press (touch) and Shift+F10 / the Menu key all call a row's `onMenu`.
 
-/** Where to open a row's menu (viewport coordinates). */
-export interface MenuPoint {
-  x: number;
-  y: number;
-}
-
-const LONG_PRESS_MS = 500;
-const RowMenus = createContext<Map<string, (p: MenuPoint) => void> | null>(null);
-
-function useRowMenu(id: string, onMenu: ((p: MenuPoint) => void) | undefined) {
-  const menus = useContext(RowMenus);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fired = useRef(false);
-  const start = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (!menus || !onMenu) return;
-    menus.set(id, onMenu);
-    return () => { if (menus.get(id) === onMenu) menus.delete(id); };
-  }, [menus, id, onMenu]);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  if (!onMenu) return {};
-  const cancel = () => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-  };
-  return {
-    onContextMenu: (e: MouseEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      // Android Chrome also fires contextmenu on a long press; the timer already opened the menu.
-      if (fired.current) { fired.current = false; return; }
-      onMenu({ x: e.clientX, y: e.clientY });
-    },
-    onPointerDown: (e: PointerEvent<HTMLDivElement>) => {
-      fired.current = false;
-      if (e.pointerType !== 'touch') return;
-      const at = { x: e.clientX, y: e.clientY };
-      start.current = at;
-      cancel();
-      timer.current = setTimeout(() => {
-        timer.current = null;
-        fired.current = true;
-        onMenu(at);
-      }, LONG_PRESS_MS);
-    },
-    onPointerMove: (e: PointerEvent<HTMLDivElement>) => {
-      const s = start.current;
-      if (timer.current && s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) cancel();
-    },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
-  };
-}
+export type { MenuPoint } from './lib/rowMenu';
 
 // ---------------------------------------------------------------------------------------------------------------
 // List
@@ -134,7 +75,6 @@ export interface ListProps<T extends object> {
   id?: string;
 }
 
-const isKeyMenu = (e: KeyboardEvent) => e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
 
 /** A keyboard-navigable list of `ListRow`s (React Aria GridList): Up/Down, Home/End, typeahead, Enter. */
 export function List<T extends object>({
@@ -198,15 +138,7 @@ export function List<T extends object>({
       {/* Shift+F10 / the Menu key on the focused row open its menu (rows can't take key handlers themselves). */}
       <div
         className="contents"
-        onKeyDown={(e) => {
-          if (!isKeyMenu(e)) return;
-          const row = (e.target as HTMLElement).closest<HTMLElement>('[data-key]');
-          const open = row && menus.get(row.dataset.key ?? '');
-          if (!row || !open) return;
-          e.preventDefault();
-          const r = row.getBoundingClientRect();
-          open({ x: r.left + 8, y: r.bottom });
-        }}
+        onKeyDown={(e) => openFocusedRowMenu(e, menus)}
       >
         <GridList<T>
           {...rest}
