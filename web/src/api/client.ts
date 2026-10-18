@@ -39,6 +39,7 @@ import type { EventQuery } from './gen/EventQuery';
 import type { NewComment } from './gen/NewComment';
 import type { NewTicket } from './gen/NewTicket';
 import type { RankMove } from './gen/RankMove';
+import type { ProjectAreas } from './gen/ProjectAreas';
 import type { Ticket } from './gen/Ticket';
 import type { TicketEvent } from './gen/TicketEvent';
 import type { TicketLink } from './gen/TicketLink';
@@ -146,6 +147,8 @@ export const api = {
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
   projectLabels: (projectId: string) => request<string[]>(`/api/projects/${enc(projectId)}/labels`),
+  /** The areas `.pdt/project.toml` (and the host overrides) declare, or why there are none. */
+  getProjectAreas: (projectId: string) => request<ProjectAreas>(`/api/projects/${enc(projectId)}/areas`),
   listRuns: (projectId: string) => request<Run[]>(`/api/projects/${enc(projectId)}/runs`),
   listActiveRuns: () => request<Run[]>('/api/runs'),
   startRun: (projectId: string, r: NewRun) =>

@@ -21,6 +21,19 @@ the Mac mini the build output stays warm; a small change re-checks in about a mi
 the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
 platform-specific code (`cfg(windows)`, process spawning, paths).
 
+## Merge queue
+
+The "Main" ruleset merges through a merge queue (squash, one PR per group) instead of requiring branches to be up
+to date with main. A PR joins the queue when its checks pass and auto-merge is on; GitHub then makes
+`gh-readonly-queue/main/pr-<n>-<sha>` (main plus the PR) and runs `ci.yml` on it with the `merge_group` event. The
+`changes` job picks jobs for it as for a PR: the files come from comparing the group's base and head (more than 300
+files runs everything), the labels from PR `<n>` in the queue branch's name, which is why the group size stays 1.
+The required checks report on the queue run the same way they do on a PR (skipped counts as passing), and the PR
+merges when they pass. A PR that conflicts with main or fails there leaves the queue.
+
+So each merge runs CI on the PR, in the queue, and on main (the release). The queue runs only once a PR is ready,
+and the Mac mini's warm build keeps the macOS check about a minute.
+
 ## The Mac mini runner
 - Lives in `~/actions-runner-pdt`, runs as the user (LaunchAgent `actions.runner.ross-game-tools-PersonalDevTeam.*`,
   installed with `./svc.sh install`), labels `self-hosted, macOS, ARM64, pdt-mini`. One job at a time.

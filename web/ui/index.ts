@@ -22,6 +22,7 @@ export * from './Tooltip';
 export * from './StatusDot';
 export * from './Badge';
 export * from './Chip';
+export * from './OverlapBadge';
 export * from './Alert';
 export * from './Banner';
 export * from './EmptyState';

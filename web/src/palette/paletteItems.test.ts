@@ -77,15 +77,15 @@ describe('paletteItems', () => {
     expect(groups.lastIndexOf(GO_TO)).toBeLessThan(groups.indexOf(ACTIONS));
   });
 
-  it('goes to every workspace and every tab, tabs with their workspace, state, project key and branch', () => {
+  it('goes to every workspace and every tab, tabs with their agent, workspace, state, project key and branch', () => {
     const c = ctx();
     const items = paletteItems(c);
     expect(byId(items, 'workspace:w2').label).toBe('Workspace · Scratch');
     const t1 = byId(items, 'tab:t1');
-    expect(t1).toMatchObject({ label: 'fix login', detail: 'PersonalDevTeam', group: GO_TO });
-    expect(t1.keywords).toEqual(expect.arrayContaining(['PDT', 'fix-login']));
+    expect(t1).toMatchObject({ label: 'fix login', detail: 'Claude · PersonalDevTeam', group: GO_TO });
+    expect(t1.keywords).toEqual(expect.arrayContaining(['PDT', 'fix-login', 'Claude']));
     expect(t1.state?.label).toBe('Idle');
-    expect(byId(items, 'tab:t2')).toMatchObject({ label: 'pdt · feature-x', keywords: expect.arrayContaining(['feature-x']) });
+    expect(byId(items, 'tab:t2')).toMatchObject({ label: 'pdt · feature-x', detail: 'PersonalDevTeam', keywords: expect.arrayContaining(['feature-x']) });
     expect(byId(items, 'tab:t3').state?.label).toBe('Needs you');
     byId(items, 'tab:t3').run!();
     expect(c.handlers.selectTab).toHaveBeenCalledWith(workspaces[1].tabs[0]);
@@ -214,14 +214,14 @@ describe('paletteItems', () => {
 
   it('labels a ticket tab with its key and title', () => {
     const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
-    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [] };
+    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [] };
     const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t, 0)] }));
     expect(byId(items, 'tab:tk').label).toBe('PDT-42 · Fix login');
   });
 
   it('starts the ticket on screen, and picks a ticket to start', () => {
     const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
-    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [] };
+    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [] };
     const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)], ticketProjectId: 'p1' });
     const items = paletteItems(c);
     const here = byId(items, 'tickets:start-open');
@@ -242,5 +242,5 @@ describe('paletteItems', () => {
 
 const summary: TicketSummary = {
   id: 'k42', projectId: 'p1', key: 'PDT-42', number: 42, title: 'Fix login', stage: 'ready', priority: 'high', labels: [],
-  areas: [], rank: 'a', waiting: false, blockedBy: 0, attempt: null, overlap: 'none', createdAt: 0, updatedAt: 0, closedAt: null,
+  areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [], createdAt: 0, updatedAt: 0, closedAt: null,
 };

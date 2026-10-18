@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import {
-  DEFAULT_FILTERS, loadSavedFilters, storeSavedFilters, type BacklogFilters, type SavedFilter,
+  DEFAULT_FILTERS, loadSavedFilters, READY_TO_START, storeSavedFilters, type BacklogFilters, type SavedFilter,
 } from './model';
 
 export type TicketsMode = 'backlog' | 'board';
@@ -69,6 +69,7 @@ export function useBacklog() {
     });
   }, [state.projectId, state.filters]);
   const deleteFilter = useCallback((id: string) => {
+    if (id === READY_TO_START.id) return;
     setSaved((list) => {
       const next = list.filter((f) => f.id !== id);
       storeSavedFilters(next);
@@ -76,14 +77,16 @@ export function useBacklog() {
     });
   }, []);
   const applyFilter = useCallback(
-    (f: SavedFilter) => update((s) => ({ ...s, projectId: f.projectId, filters: { ...DEFAULT_FILTERS, ...f.filters } })),
+    (f: SavedFilter) =>
+      update((s) => ({ ...s, projectId: f.builtin ? s.projectId : f.projectId, filters: { ...DEFAULT_FILTERS, ...f.filters } })),
     [update],
   );
 
   return {
     ...state,
     setProjectId, setMode, setFilters, resetFilters,
-    saved, saveFilter, deleteFilter, applyFilter,
+    // The built-in filter comes first; the browser's own follow.
+    saved: [READY_TO_START, ...saved], saveFilter, deleteFilter, applyFilter,
   };
 }
 

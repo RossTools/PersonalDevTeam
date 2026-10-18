@@ -94,6 +94,23 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
     })
 }
 
+/// An open ticket for overlap detection (see `Store::overlap_rows`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverlapRow {
+    pub ticket_id: String,
+    pub project_id: String,
+    pub key: String,
+    pub number: u32,
+    pub title: String,
+    pub stage: TicketStage,
+    /// Its active attempt, if any.
+    pub attempt_id: Option<String>,
+    /// The active attempt's worktree.
+    pub worktree_id: Option<String>,
+    /// Sorted.
+    pub areas: Vec<String>,
+}
+
 /// Priority as a number (higher is more urgent), for sorting.
 const PRIORITY_WEIGHT: &str = "(CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 \
                                WHEN 'low' THEN 1 ELSE 0 END)";
@@ -133,9 +150,11 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         areas: vec![],
         rank: r.try_get("rank")?,
         waiting: r.try_get::<i64, _>("waiting")? != 0,
+        clear_to_start: false,
         blocked_by: u32::try_from(r.try_get::<i64, _>("blocked_by")?).unwrap_or(0),
         attempt: None,
         overlap: OverlapLevel::None,
+        overlap_with: vec![],
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
         closed_at: r.try_get("closed_at")?,
@@ -244,6 +263,18 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, f: &TicketFilter) {
         qb.push(" AND EXISTS (SELECT 1 FROM ticket_labels tl WHERE tl.ticket_id = t.id AND tl.label = ")
             .push_bind(l.clone())
             .push(")");
+    }
+    if let Some(ids) = &f.only_ids {
+        if ids.is_empty() {
+            qb.push(" AND 0");
+        } else {
+            qb.push(" AND t.id IN ");
+            push_in(qb, ids);
+        }
+    }
+    if !f.except_ids.is_empty() {
+        qb.push(" AND t.id NOT IN ");
+        push_in(qb, &f.except_ids);
     }
     if let Some(after) = f.closed_after {
         qb.push(" AND (t.closed_at IS NULL OR t.closed_at >= ").push_bind(after).push(")");
@@ -490,14 +521,17 @@ async fn change_stage(
     now: i64,
 ) -> Result<(), StoreError> {
     let closed_at = if to.is_closed() { Some(now) } else { None };
+    // A closed ticket no longer waits to start.
     sqlx::query(
         "UPDATE tickets SET stage = ?, updated_at = ?, \
-         closed_at = CASE WHEN ? THEN COALESCE(closed_at, ?) ELSE NULL END WHERE id = ?",
+         closed_at = CASE WHEN ? THEN COALESCE(closed_at, ?) ELSE NULL END, \
+         waiting = CASE WHEN ? THEN 0 ELSE waiting END WHERE id = ?",
     )
     .bind(to.as_str())
     .bind(now)
     .bind(closed_at.is_some())
     .bind(now)
+    .bind(closed_at.is_some())
     .bind(id)
     .execute(&mut *conn)
     .await?;
@@ -678,7 +712,7 @@ impl Store {
         .collect::<Result<Vec<_>, StoreError>>()?;
         let pkey = s.key.rsplit_once('-').map(|(k, _)| k).unwrap_or("");
         let default_branch = attempt_branch(pkey, s.number, &s.title);
-        Ok(Some(Ticket { summary: s, description, links, attempts, default_branch, sessions }))
+        Ok(Some(Ticket { summary: s, description, links, attempts, default_branch, sessions, overlaps: vec![] }))
     }
 
     /// The backlog: filtered, searched, sorted and paged with a keyset cursor, plus the total that match.
@@ -741,8 +775,42 @@ impl Store {
             insert_event(&mut tx, id, EventKind::Edited, Actor::User, None, Some(json!({"fields": fields})), now)
                 .await?;
         }
-        if let Some(stage) = p.stage.filter(|s| *s != cur.stage) {
+        let stage = p.stage.unwrap_or(cur.stage);
+        if stage != cur.stage {
             change_stage(&mut tx, id, cur.stage, stage, now).await?;
+        }
+        if let Some(waiting) = p.waiting {
+            if waiting && stage.is_closed() {
+                return Err(TicketError::Invalid(format!("{} is closed, so it can't wait to start", cur.key)));
+            }
+            if waiting && has_active_attempt(&mut tx, id).await? {
+                return Err(TicketError::Invalid(format!("{} has already started", cur.key)));
+            }
+            let (now_waiting,): (i64,) =
+                sqlx::query_as("SELECT waiting FROM tickets WHERE id = ?").bind(id).fetch_one(&mut *tx).await?;
+            if (now_waiting != 0) != waiting {
+                sqlx::query("UPDATE tickets SET waiting = ?, updated_at = ? WHERE id = ?")
+                    .bind(waiting)
+                    .bind(now)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                insert_event(
+                    &mut tx,
+                    id,
+                    EventKind::Waiting,
+                    Actor::User,
+                    None,
+                    Some(json!({"waiting": waiting})),
+                    now,
+                )
+                .await?;
+                if waiting {
+                    // A waiting ticket sits at the top of its stage.
+                    let key = rank_for(&mut tx, &cur.project_id, Some(id), &Place::Edge(RankEdge::Top, stage)).await?;
+                    set_rank(&mut tx, &cur.project_id, id, &key).await?;
+                }
+            }
         }
         tx.commit().await?;
         Ok(self.get_ticket(id).await?)
@@ -968,6 +1036,8 @@ impl Store {
         if stage != TicketStage::InProgress {
             change_stage(&mut tx, ticket_id, stage, TicketStage::InProgress, now).await?;
         }
+        // Started: no longer waiting (undo_start does not restore it; Wait can be chosen again).
+        sqlx::query("UPDATE tickets SET waiting = 0 WHERE id = ?").bind(ticket_id).execute(&mut *tx).await?;
         let mut data = json!({"attemptId": id, "branch": branch, "baseBranch": base_branch});
         if let (Some(d), serde_json::Value::Object(extra)) = (data.as_object_mut(), extra) {
             d.extend(extra);
@@ -1072,6 +1142,83 @@ impl Store {
         let sql = format!("{ATTEMPT_INFO_SELECT} WHERE a.state = 'active' ORDER BY a.created_at, a.id");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         rows.iter().map(to_attempt_info).collect()
+    }
+
+    /// The open tickets that take part in overlap detection, in projects that have an active attempt (all projects,
+    /// or just `project`): those with an active attempt and those that list areas.
+    pub async fn overlap_rows(&self, project: Option<&str>) -> Result<Vec<OverlapRow>, StoreError> {
+        let mut conn = self.pool.acquire().await?;
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "SELECT t.id, t.project_id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, \
+             (SELECT a.id FROM attempts a WHERE a.ticket_id = t.id AND a.state = 'active') AS attempt_id, \
+             (SELECT a.worktree_id FROM attempts a WHERE a.ticket_id = t.id AND a.state = 'active') AS worktree_id \
+             FROM tickets t JOIN projects p ON p.id = t.project_id \
+             WHERE t.stage NOT IN ('done', 'wont_do') \
+             AND EXISTS (SELECT 1 FROM attempts a JOIN tickets o ON o.id = a.ticket_id \
+                         WHERE a.state = 'active' AND o.project_id = t.project_id) \
+             AND (EXISTS (SELECT 1 FROM ticket_areas ta WHERE ta.ticket_id = t.id) \
+                  OR EXISTS (SELECT 1 FROM attempts a WHERE a.ticket_id = t.id AND a.state = 'active'))",
+        );
+        if let Some(p) = project {
+            qb.push(" AND t.project_id = ").push_bind(p.to_string());
+        }
+        qb.push(" ORDER BY t.project_id, t.number");
+        let mut rows = qb
+            .build()
+            .fetch_all(&mut *conn)
+            .await?
+            .iter()
+            .map(|r| {
+                let pkey: String = r.try_get("pkey")?;
+                let number = u32::try_from(r.try_get::<i64, _>("number")?).unwrap_or(0);
+                Ok(OverlapRow {
+                    ticket_id: r.try_get("id")?,
+                    project_id: r.try_get("project_id")?,
+                    key: format_key(&pkey, number),
+                    number,
+                    title: r.try_get("title")?,
+                    stage: stage_of(&r.try_get::<String, _>("stage")?)?,
+                    attempt_id: r.try_get("attempt_id")?,
+                    worktree_id: r.try_get("worktree_id")?,
+                    areas: vec![],
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let ids: Vec<String> = rows.iter().map(|r| r.ticket_id.clone()).collect();
+        let mut areas: HashMap<String, Vec<String>> = HashMap::new();
+        for chunk in ids.chunks(500) {
+            let mut qb = QueryBuilder::<Sqlite>::new("SELECT ticket_id, area FROM ticket_areas WHERE ticket_id IN ");
+            push_in(&mut qb, chunk);
+            qb.push(" ORDER BY 1, 2");
+            for r in qb.build().fetch_all(&mut *conn).await? {
+                areas.entry(r.try_get(0)?).or_default().push(r.try_get(1)?);
+            }
+        }
+        for r in rows.iter_mut() {
+            r.areas = areas.remove(&r.ticket_id).unwrap_or_default();
+        }
+        Ok(rows)
+    }
+
+    /// The files of the ticket's latest `overlap` event with `other` (a ticket id), if it has one.
+    pub async fn last_overlap_files(&self, ticket_id: &str, other: &str) -> Result<Option<Vec<String>>, StoreError> {
+        let rows: Vec<(Option<String>,)> = sqlx::query_as(
+            "SELECT data FROM ticket_events WHERE ticket_id = ? AND kind = 'overlap' ORDER BY created_at DESC, id DESC",
+        )
+        .bind(ticket_id)
+        .fetch_all(&self.pool)
+        .await?;
+        for (data,) in rows {
+            let Some(v) = data.and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok()) else { continue };
+            if v.get("ticketId").and_then(|t| t.as_str()) == Some(other) {
+                let files = v
+                    .get("files")
+                    .and_then(|f| f.as_array())
+                    .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect::<Vec<_>>());
+                return Ok(Some(files.unwrap_or_default()));
+            }
+        }
+        Ok(None)
     }
 
     /// Adds an event to a ticket's timeline (e.g. `session` when Start made one).
@@ -1737,7 +1884,7 @@ mod tests {
             kind: SessionKind::AgentTui,
             agent: Some(AgentKind::Claude),
             bypass_permissions: false,
-            title: format!("Claude · {id}"),
+            title: format!("session {id}"),
             cwd: "/r".into(),
             status: SessionStatus::Running,
             exit_code: None,
@@ -1885,5 +2032,98 @@ mod tests {
         let mut got = ids(&store, TicketQuery { closed_after: Some(100), ..in_project() }).await;
         got.sort();
         assert_eq!(got, ["old", "open", "recent"]);
+    }
+
+    fn patch() -> ValidPatch {
+        ValidPatch::default()
+    }
+
+    #[tokio::test]
+    async fn waiting_goes_to_the_top_and_ends_when_started_or_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "a", ValidNewTicket { stage: TicketStage::Ready, ..new("A") }).await;
+        add(&store, "b", ValidNewTicket { stage: TicketStage::Ready, ..new("B") }).await;
+        assert_eq!(ids(&store, in_project()).await, ["b", "a"]);
+
+        let t = store.patch_ticket("a", &ValidPatch { waiting: Some(true), ..patch() }, 5).await.unwrap().unwrap();
+        assert!(t.summary.waiting);
+        assert_eq!(ids(&store, in_project()).await, ["a", "b"], "a waiting ticket sits at the top of its stage");
+        assert_eq!(events(&store, "a").await.last(), Some(&EventKind::Waiting));
+        // Setting it again changes nothing.
+        store.patch_ticket("a", &ValidPatch { waiting: Some(true), ..patch() }, 6).await.unwrap();
+        assert_eq!(events(&store, "a").await.iter().filter(|e| **e == EventKind::Waiting).count(), 1);
+        let t = store.patch_ticket("a", &ValidPatch { waiting: Some(false), ..patch() }, 7).await.unwrap().unwrap();
+        assert!(!t.summary.waiting);
+
+        store.patch_ticket("a", &ValidPatch { waiting: Some(true), ..patch() }, 8).await.unwrap();
+        store.start_attempt("at1", "a", None, "x", "main", "abc", json!({}), 9).await.unwrap();
+        assert!(!store.get_ticket_summary("a").await.unwrap().unwrap().waiting, "started");
+        let r = store.patch_ticket("a", &ValidPatch { waiting: Some(true), ..patch() }, 10).await;
+        assert!(matches!(r, Err(TicketError::Invalid(_))), "an active ticket can't wait");
+
+        store.patch_ticket("b", &ValidPatch { waiting: Some(true), ..patch() }, 11).await.unwrap();
+        let closed = ValidPatch { stage: Some(TicketStage::WontDo), ..patch() };
+        let t = store.patch_ticket("b", &closed, 12).await.unwrap().unwrap();
+        assert!(!t.summary.waiting, "closed");
+        let r = store.patch_ticket("b", &ValidPatch { waiting: Some(true), ..patch() }, 13).await;
+        assert!(matches!(r, Err(TicketError::Invalid(_))), "a closed ticket can't wait");
+    }
+
+    #[tokio::test]
+    async fn id_filters_narrow_the_list_and_its_total() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for id in ["a", "b", "c"] {
+            add(&store, id, new(id)).await;
+        }
+        let mut f = filter(in_project());
+        f.only_ids = Some(vec!["a".into(), "c".into()]);
+        let page = store.query_tickets(&f).await.unwrap();
+        assert_eq!((page.total, page.items.len()), (2, 2));
+        f.only_ids = Some(vec![]);
+        assert_eq!(store.query_tickets(&f).await.unwrap().total, 0);
+        f.only_ids = None;
+        f.except_ids = vec!["b".into()];
+        let got: Vec<String> = store.query_tickets(&f).await.unwrap().items.into_iter().map(|t| t.id).collect();
+        assert_eq!(got, ["c", "a"]);
+    }
+
+    #[tokio::test]
+    async fn overlap_rows_are_open_tickets_with_areas_or_attempts_where_work_is_active() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let areas = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        add(&store, "a", ValidNewTicket { areas: areas(&["web", "db"]), ..new("A") }).await;
+        add(&store, "b", ValidNewTicket { areas: areas(&["web"]), ..new("B") }).await;
+        add(&store, "c", new("C")).await;
+        add(&store, "d", ValidNewTicket { areas: areas(&["web"]), stage: TicketStage::Done, ..new("D") }).await;
+        assert!(store.overlap_rows(None).await.unwrap().is_empty(), "nothing is active");
+
+        store.start_attempt("at1", "c", None, "x", "main", "abc", json!({}), 5).await.unwrap();
+        let rows = store.overlap_rows(Some("p")).await.unwrap();
+        let got: Vec<(&str, Option<&str>, Vec<String>)> =
+            rows.iter().map(|r| (r.ticket_id.as_str(), r.attempt_id.as_deref(), r.areas.clone())).collect();
+        assert_eq!(got, [("a", None, areas(&["db", "web"])), ("b", None, areas(&["web"])), ("c", Some("at1"), vec![])]);
+        assert_eq!(rows[2].key, "PX-3");
+        assert!(store.overlap_rows(Some("other")).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_last_overlap_event_with_a_ticket_is_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "a", new("A")).await;
+        assert_eq!(store.last_overlap_files("a", "b").await.unwrap(), None);
+        let ev = |other: &str, files: &[&str], now| {
+            let data = json!({"ticketId": other, "key": "PX-9", "files": files, "level": "overlap"});
+            let store = store.clone();
+            async move { store.add_ticket_event("a", EventKind::Overlap, Actor::System, None, Some(data), now).await }
+        };
+        ev("b", &["x"], 2).await.unwrap();
+        ev("c", &["y"], 3).await.unwrap();
+        ev("b", &["x", "z"], 4).await.unwrap();
+        assert_eq!(store.last_overlap_files("a", "b").await.unwrap(), Some(vec!["x".into(), "z".into()]));
+        assert_eq!(store.last_overlap_files("a", "c").await.unwrap(), Some(vec!["y".into()]));
     }
 }

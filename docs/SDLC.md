@@ -15,11 +15,13 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
-6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --squash --auto`. GitHub merges it once the
-   required checks pass, so nobody sits in a shell watching CI. PRs are squash-merged (the only merge mode on the
-   repo); the PR title becomes the commit subject on `main`, so write it as one. The "Main" ruleset requires the
-   branch to be up to date with main: if another PR lands first, run `gh pr update-branch <n>` (CI runs again and
-   auto-merge stays on). Don't pass `--delete-branch`: it can't delete a branch whose worktree still exists.
+6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --squash --auto`. Once the PR's required
+   checks pass it joins main's **merge queue**: GitHub builds main plus the PR on a temporary branch, runs CI on it
+   and squash-merges the PR when that passes, so nobody sits in a shell watching CI and nobody updates the branch
+   with main. PRs are squash-merged (the only merge mode on the repo); the PR title becomes the commit subject on
+   `main`, so write it as one. The queue drops a PR that conflicts with main or fails its queue run: fix the branch
+   (merge main in for a conflict), push, and merge again. Don't pass `--delete-branch`: it can't delete a branch
+   whose worktree still exists.
 7. **Release is automatic.** Every push to `main` publishes `v0.1.<run number>`. The stable instance installs it when
    idle, or when the user clicks Update. Agents never update, restart or stop the stable instance.
 8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Move the ticket to Done (or let the

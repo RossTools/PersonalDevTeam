@@ -11,4 +11,5 @@ ts-rs.workspace = true
 thiserror.workspace = true
 toml = "1.1.8"
 serde_json.workspace = true
+globset = "0.4.20"
 

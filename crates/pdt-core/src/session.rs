@@ -321,14 +321,19 @@ pub fn shim_prompt(ticket_key: Option<&str>, prompt_file: &str) -> Option<String
     }
 }
 
-/// `<Kind> · <where>`: where is the worktree's branch, or the project name for the main checkout.
-pub fn default_title(kind: SessionKind, agent: Option<AgentKind>, place: &str) -> String {
-    let label = match (kind, agent) {
+/// Where the session runs: the worktree's branch, or the project name for the main checkout. The kind and agent are
+/// not in the title; the UI shows them with an icon.
+pub fn default_title(place: &str) -> String {
+    place.to_string()
+}
+
+/// What a session runs, for messages that name it: "Claude", "Codex" or "Shell".
+pub fn kind_label(kind: SessionKind, agent: Option<AgentKind>) -> &'static str {
+    match (kind, agent) {
         (SessionKind::Shell, _) => "Shell",
         (SessionKind::AgentTui, Some(AgentKind::Codex)) => "Codex",
         (SessionKind::AgentTui, _) => "Claude",
-    };
-    format!("{label} · {place}")
+    }
 }
 
 pub const MAX_TITLE_CHARS: usize = 100;
@@ -756,9 +761,10 @@ mod tests {
 
     #[test]
     fn titles() {
-        assert_eq!(default_title(SessionKind::Shell, None, "ai-dev-shop"), "Shell · ai-dev-shop");
-        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Claude), "feature-x"), "Claude · feature-x");
-        assert_eq!(default_title(SessionKind::AgentTui, Some(AgentKind::Codex), "p"), "Codex · p");
+        assert_eq!(kind_label(SessionKind::Shell, None), "Shell");
+        assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Codex)), "Codex");
+        assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Claude)), "Claude");
+        assert_eq!(default_title("feature-x"), "feature-x");
     }
 
     #[test]

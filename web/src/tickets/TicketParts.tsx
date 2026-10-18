@@ -1,7 +1,7 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
 import { useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Link2, MessageSquare, Pencil } from 'lucide-react';
+import { ArrowRight, Clock, Link2, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
   Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline,
@@ -12,6 +12,7 @@ import type { LinkedTicket } from '../api/gen/LinkedTicket';
 import type { Priority } from '../api/gen/Priority';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketEvent } from '../api/gen/TicketEvent';
+import type { TicketOverlap } from '../api/gen/TicketOverlap';
 import type { TicketStage } from '../api/gen/TicketStage';
 import { Composer } from '../common/Composer';
 import { InlineRename } from '../common/InlineRename';
@@ -22,7 +23,8 @@ import { TicketKey } from '../common/TicketKey';
 import { actionError, useAction } from '../common/useAction';
 import { patchTicket, useOpenTicket } from './actions';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
-import { invalidateTickets, POLL, ticketKeys, useLabels } from './queries';
+import { invalidateTickets, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
+import { AreaChips, AreasEditor } from './Areas';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
 
@@ -166,7 +168,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-/** Stage, priority and labels; each change saves at once. */
+/** Stage, priority, labels and areas; each change saves at once. Shown in the ticket tab and the peek. */
 export function TicketDetails({ ticket }: { ticket: Ticket }) {
   const qc = useQueryClient();
   const labels = useLabels(ticket.projectId);
@@ -184,17 +186,63 @@ export function TicketDetails({ ticket }: { ticket: Ticket }) {
       <DetailRow label="Labels">
         <LabelsEditor labels={ticket.labels} suggestions={labels.data ?? []} onChange={(l) => void save({ labels: l })} />
       </DetailRow>
+      {/* The parts of the project the ticket expects to touch: overlap is checked on the ones .pdt/project.toml declares. */}
+      <DetailRow label="Areas">
+        <div role="group" aria-label="Areas">
+          <AreasEditor projectId={ticket.projectId} areas={ticket.areas} onChange={(areas) => void save({ areas })} />
+        </div>
+      </DetailRow>
     </OverviewSection>
   );
 }
 
-/** The parts of the project the ticket expects to touch (free names in Phase 4a; 4c checks them for overlap). */
-export function TicketAreas({ ticket }: { ticket: Pick<Ticket, 'id' | 'areas'> }) {
-  const qc = useQueryClient();
-  const [save] = useAction((areas: string[]) => patchTicket(qc, ticket.id, { areas }));
+// ---------------------------------------------------------------------------------------------------------------
+// Overlaps
+
+/** Shared files listed before "and N more". */
+export const OVERLAP_FILES_SHOWN = 5;
+
+/** The files two tickets' attempts both changed: the first few, then "and N more" (of `total`). */
+export function SharedFiles({ files, total, className }: { files: string[]; total: number; className?: string }) {
+  if (files.length === 0) return null;
+  const shown = files.slice(0, OVERLAP_FILES_SHOWN);
+  const more = Math.max(total, files.length) - shown.length;
   return (
-    <OverviewSection title="Areas">
-      <LabelsEditor noun="Area" labels={ticket.areas} onChange={(a) => void save(a)} />
+    <ul aria-label="Shared files" className={cn('flex min-w-0 flex-col gap-0.5 font-mono text-meta', className)}>
+      {shown.map((f) => <li key={f} className="min-w-0 truncate" title={f}>{f}</li>)}
+      {more > 0 && <li className="font-sans text-muted-foreground">and {more} more</li>}
+    </ul>
+  );
+}
+
+function OverlapRow({ ticket, overlap: o }: { ticket: Ticket; overlap: TicketOverlap }) {
+  const open = useOpenTicket();
+  const areas = useProjectAreas(ticket.projectId);
+  const config = areas.data && !areas.data.error ? areas.data.areas : undefined;
+  return (
+    <li aria-label={`${o.key} ${o.title}`} className="flex min-w-0 flex-col gap-1 text-xs">
+      <div className="flex min-w-0 items-center gap-2">
+        <TicketKey ticketKey={o.key} title={o.title} onClick={() => open({ id: o.ticketId, projectId: ticket.projectId })} />
+        <span className="min-w-0 flex-1 truncate">{o.title}</span>
+        <Badge tone={o.level === 'conflict' ? 'failed' : 'waiting'}>{o.level === 'conflict' ? 'Conflict' : 'Overlap'}</Badge>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-1 pl-1 text-meta text-muted-foreground">
+        <span>{STAGE_LABEL[o.stage]}</span>
+        {o.areas.length > 0 && <><span aria-hidden>·</span><AreaChips areas={o.areas} config={config} /></>}
+      </div>
+      <SharedFiles files={o.files} total={o.filesTotal} className="pl-1" />
+    </li>
+  );
+}
+
+/** The project's active tickets this one shares areas or changed files with, conflicts first (only when there are any). */
+export function TicketOverlaps({ ticket }: { ticket: Ticket }) {
+  if (ticket.overlaps.length === 0) return null;
+  return (
+    <OverviewSection title="Overlaps">
+      <ul aria-label="Overlaps" className="flex flex-col gap-3">
+        {ticket.overlaps.map((o) => <OverlapRow key={o.ticketId} ticket={ticket} overlap={o} />)}
+      </ul>
     </OverviewSection>
   );
 }
@@ -317,6 +365,8 @@ function iconFor(e: TicketEvent) {
   if (e.kind === 'comment') return <MessageSquare aria-hidden />;
   if (e.kind === 'moved') return <ArrowRight aria-hidden />;
   if (e.kind === 'linked' || e.kind === 'unlinked') return <Link2 aria-hidden />;
+  if (e.kind === 'waiting') return <Clock aria-hidden />;
+  if (e.kind === 'overlap') return <TriangleAlert aria-hidden />;
   return undefined;
 }
 

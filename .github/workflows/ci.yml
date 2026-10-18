@@ -9,6 +9,9 @@ on:
   # Nightly: the Windows checks on main, in case something only Windows sees slipped in.
   schedule:
     - cron: "0 7 * * *"
+  # The merge queue (the "Main" ruleset): each queued PR is checked on main plus the PR before it is merged.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch: {}
 
 # A newer commit on the same PR cancels the older run. A running main run is never cancelled, but a main run still
@@ -24,7 +27,7 @@ env:
   # CI never debugs its builds: no debug info makes compiling, linking and the cache much smaller and faster.
   CARGO_PROFILE_DEV_DEBUG: "0"
 
-# What a pull request waits for (docs/superpowers/notes/ci.md):
+# What a pull request, and its run in the merge queue, waits for (docs/superpowers/notes/ci.md):
 # - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`): every other job is skipped.
 # - build (macos-latest): every other PR, on the Mac mini's self-hosted runner (warm build, about a minute).
 # - build (windows-latest): only with the `windows` label or a change to Windows-specific files; always on main
@@ -48,11 +51,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR: ${{ github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
         run: |
-          if [ "${{ github.event_name }}" != pull_request ]; then
-            { echo "code=true"; echo "windows=true"; echo "bundle=true"; } >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          files="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)"
+          all() { { echo "code=true"; echo "windows=true"; echo "bundle=true"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          case "$EVENT" in
+            pull_request)
+              files="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)" ;;
+            merge_group)
+              # Everything the queued group adds to main. Labels come from the PR the queue branch is named after
+              # (refs/heads/gh-readonly-queue/main/pr-<n>-<sha>); the ruleset's group size of 1 makes that the PR.
+              files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$QUEUE_BASE...$QUEUE_HEAD" --jq '.files[].filename')" || all
+              # The compare API lists at most 300 files: past that, run everything.
+              [ "$(printf '%s\n' "$files" | grep -c .)" -ge 300 ] && all
+              n="$(printf '%s' "$QUEUE_REF" | sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p')"
+              LABELS='[]'
+              if [ -n "$n" ]; then LABELS="$(gh pr view "$n" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')"; fi ;;
+            # Main, nightly and dispatches run everything.
+            *) all ;;
+          esac
           printf 'Changed files:\n%s\n' "$files"
           has() { printf '%s' "$LABELS" | grep -q "\"$1\""; }
           # Docs only: every changed file is under docs/ or a Markdown file (no code reads any .md). An empty list

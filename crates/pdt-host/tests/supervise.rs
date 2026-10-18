@@ -1,3 +1,6 @@
+#[path = "../../../test-support/port_blocks.rs"]
+mod port_blocks;
+
 use pdt_core::handoff::{
     DB_FILE, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, db_snapshot_dir, request_path, result_path,
     skip_path,
@@ -5,6 +8,7 @@ use pdt_core::handoff::{
 use pdt_host::config::HostConfig;
 use pdt_host::health::{Probe, probe, request_shutdown};
 use pdt_host::install::{CopyDirInstaller, Installer, NsisInstaller, Unsupported, host_installer};
+use pdt_host::log::log_path;
 use pdt_host::supervise::{Backoff, marker_path, run};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,8 +18,10 @@ use std::time::{Duration, Instant};
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 
+/// A port no other test holds, below the OS's ephemeral range: a port from `bind(0)` can be handed to another
+/// test's outgoing connection while pdtd restarts, and the new pdtd then cannot bind it.
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    port_blocks::claim(40000, 250, 1)
 }
 
 /// A folder holding the fake pdtd (as `pdtd[.exe]`) and its `fake.json`.
@@ -57,13 +63,20 @@ fn fake_installer(dir: &Path, behaviour: &str) -> PathBuf {
     exe
 }
 
-fn config(install: &Path, data: &Path, port: u16, health: Duration) -> HostConfig {
+/// A failing health check fails fast enough for a test, while a pdtd started on a loaded machine still has time to
+/// answer.
+const FAIL_FAST: Duration = Duration::from_secs(5);
+
+/// Generous health timeout (a fresh copy of the fake pdtd can take seconds to start under load) and a short watch
+/// window, which starts only once the new version answers.
+fn config(install: &Path, data: &Path, port: u16) -> HostConfig {
     HostConfig {
         install_dir: install.to_path_buf(),
         data_dir: data.to_path_buf(),
         port,
         dev: true,
-        health_timeout: health,
+        health_timeout: Duration::from_secs(30),
+        watch: Duration::from_secs(3),
         backoff: Backoff {
             initial: Duration::from_millis(100),
             max: Duration::from_millis(500),
@@ -165,10 +178,34 @@ fn update_request(version: &str, asset: &Path) -> UpdateRequest {
     }
 }
 
+/// Writes the request as pdtd does: atomically, since pdt-host may read it at any moment.
 fn request(data: &Path, version: &str, asset: &Path) {
     let p = request_path(data);
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, serde_json::to_vec(&update_request(version, asset)).unwrap()).unwrap();
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&update_request(version, asset)).unwrap()).unwrap();
+    std::fs::rename(tmp, p).unwrap();
+}
+
+/// Asks the running pdtd to hand over the update just requested. A refused shutdown is fine: pdt-host may have just
+/// replaced a pdtd that was slow to answer, and then takes the request itself.
+fn hand_over(port: u16) {
+    let _ = request_shutdown(port);
+}
+
+/// Waits for pdt-host to log `needle` (the signal that it reached a step).
+fn wait_log(cfg: &HostConfig, needle: &str) {
+    let end = Instant::now() + Duration::from_secs(60);
+    while !read(&log_path(cfg)).contains(needle) {
+        let launch = cfg.data_dir.join("logs").join("pdtd-launch.log");
+        assert!(
+            Instant::now() < end,
+            "pdt-host never logged {needle:?}:\n{}\npdtd's output:\n{}",
+            read(&log_path(cfg)),
+            read(&launch)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn read(path: &Path) -> String {
@@ -209,8 +246,7 @@ fn starts_pdtd_supervised_and_restarts_it_after_a_crash() {
     let tmp = tempfile::tempdir().unwrap();
     let install = fake_install(&tmp.path().join("app"), "0.1.5", "crash_once");
     let port = free_port();
-    let _h =
-        supervise(config(&install, &tmp.path().join("data"), port, Duration::from_secs(10)), tmp.path().join("backup"));
+    let _h = supervise(config(&install, &tmp.path().join("data"), port), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     assert!(install.join("crashed-once").exists(), "the first start crashed");
     assert_eq!(read(&install.join("env.txt")), "1", "PDT_SUPERVISED is set");
@@ -227,7 +263,7 @@ fn pdtd_is_started_with_exactly_the_host_s_variables() {
     let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
     let data = tmp.path().join("data");
     let port = free_port();
-    let mut cfg = config(&install, &data, port, Duration::from_secs(10));
+    let mut cfg = config(&install, &data, port);
     cfg.forward_env = vec![("PDT_WEB_DIR".into(), "/web".into()), ("PDT_CLAUDE_PROGRAM".into(), "x".into())];
     let _h = supervise(cfg, tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
@@ -255,10 +291,10 @@ fn installs_an_update_and_reports_it() {
     let data = tmp.path().join("data");
     let port = free_port();
     write_skip(&data, "0.1.4");
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    let _h = supervise(config(&install, &data, port), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     wait_version(port, "0.1.6", Duration::from_secs(30));
     assert_eq!(read(&install.join("seen-result.txt")), "installed", "the new pdtd saw the result at startup");
     let r = read_result(&data);
@@ -274,10 +310,12 @@ fn rolls_back_when_the_new_version_fails_its_health_check() {
     let asset = fake_install(&tmp.path().join("release"), "0.1.6", "unhealthy");
     let data = tmp.path().join("data");
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    let mut cfg = config(&install, &data, port);
+    cfg.health_timeout = FAIL_FAST;
+    let _h = supervise(cfg, tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     assert!(r.message.contains("0.1.6"));
@@ -296,10 +334,12 @@ fn a_rollback_restores_the_database_the_new_version_migrated() {
     let data = tmp.path().join("data");
     old_database(&data);
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    let mut cfg = config(&install, &data, port);
+    cfg.health_timeout = FAIL_FAST;
+    let _h = supervise(cfg, tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     wait_version(port, "0.1.5", Duration::from_secs(30));
@@ -314,10 +354,10 @@ fn a_successful_update_keeps_the_migrated_database() {
     let data = tmp.path().join("data");
     old_database(&data);
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    let _h = supervise(config(&install, &data, port), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     wait_version(port, "0.1.6", Duration::from_secs(30));
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::Installed, "{}", r.message);
@@ -333,10 +373,12 @@ fn a_rollback_without_a_database_before_removes_the_new_one() {
     let asset = fake_migrating_install(&tmp.path().join("release"), "0.1.6", "unhealthy");
     let data = tmp.path().join("data");
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(3)), tmp.path().join("backup"));
+    let mut cfg = config(&install, &data, port);
+    cfg.health_timeout = FAIL_FAST;
+    let _h = supervise(cfg, tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     for suffix in ["", "-wal", "-shm"] {
@@ -351,10 +393,10 @@ fn rolls_back_a_new_version_that_exits_soon_after_becoming_healthy() {
     let asset = fake_install(&tmp.path().join("release"), "0.1.6", "die_soon");
     let data = tmp.path().join("data");
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(5)), tmp.path().join("backup"));
+    let _h = supervise(config(&install, &data, port), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     wait_version(port, "0.1.5", Duration::from_secs(30));
@@ -373,10 +415,10 @@ fn a_failed_installer_is_rolled_back() {
         backup: tmp.path().join("backup"),
         timeout: Duration::from_secs(30),
     };
-    let _h = supervise_with(config(&install, &data, port, Duration::from_secs(5)), Box::new(installer));
+    let _h = supervise_with(config(&install, &data, port), Box::new(installer));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &setup);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     assert!(r.message.contains("installer failed"), "{}", r.message);
@@ -397,10 +439,10 @@ fn a_hanging_installer_times_out_and_is_rolled_back() {
         backup: tmp.path().join("backup"),
         timeout: Duration::from_secs(1),
     };
-    let _h = supervise_with(config(&install, &data, port, Duration::from_secs(5)), Box::new(installer));
+    let _h = supervise_with(config(&install, &data, port), Box::new(installer));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &setup);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     assert!(r.message.contains("timed out"), "{}", r.message);
@@ -416,10 +458,10 @@ fn refuses_updates_it_cannot_install_and_keeps_supervising() {
     let data = tmp.path().join("data");
     let port = free_port();
     let reason = "pdt-host is not installed from an .app bundle".to_string();
-    let _h = supervise_with(config(&install, &data, port, Duration::from_secs(10)), Box::new(Unsupported { reason }));
+    let _h = supervise_with(config(&install, &data, port), Box::new(Unsupported { reason }));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::Failed, "{}", r.message);
     assert!(r.message.contains("0.1.6") && r.message.contains(".app bundle"), "{}", r.message);
@@ -434,14 +476,14 @@ fn a_dev_host_never_runs_an_installer() {
     let setup = fake_installer(&tmp.path().join("release"), "fail_partial");
     let data = tmp.path().join("data");
     let port = free_port();
-    let cfg = config(&install, &data, port, Duration::from_secs(10));
+    let cfg = config(&install, &data, port);
     assert!(cfg.dev);
     let installer = host_installer(&cfg);
     assert_eq!(installer.backup_path(), None, "a dev host keeps no backup: it never installs");
     let _h = supervise_with(cfg, installer);
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &setup);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::Failed, "{}", r.message);
     assert!(r.message.contains("dev profile never installs updates"), "{}", r.message);
@@ -457,11 +499,11 @@ fn a_malformed_request_is_reported_and_pdtd_restarted() {
     let data = tmp.path().join("data");
     let port = free_port();
     write_skip(&data, "0.1.4");
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(10)), tmp.path().join("backup"));
+    let _h = supervise(config(&install, &data, port), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     std::fs::create_dir_all(request_path(&data).parent().unwrap()).unwrap();
     std::fs::write(request_path(&data), "{garbage").unwrap();
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::Failed, "{}", r.message);
     assert!(r.message.contains("could not be read"), "{}", r.message);
@@ -478,8 +520,8 @@ fn nothing_is_installed_while_pdtd_keeps_running() {
     let data = tmp.path().join("data");
     let port = free_port();
     let _outside = Outside::start(&install, port);
-    wait_version(port, "0.1.5", Duration::from_secs(10));
-    let mut cfg = config(&install, &data, port, Duration::from_secs(10));
+    wait_version(port, "0.1.5", Duration::from_secs(30));
+    let mut cfg = config(&install, &data, port);
     cfg.stop_timeout = Duration::from_secs(1);
     let _h = supervise(cfg, tmp.path().join("backup"));
     request(&data, "0.1.6", &asset);
@@ -496,7 +538,7 @@ fn an_interrupted_install_is_rolled_back_at_startup() {
     let tmp = tempfile::tempdir().unwrap();
     let (backup, install, data) = interrupted_install(tmp.path(), "healthy");
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(10)), backup);
+    let _h = supervise(config(&install, &data, port), backup);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     assert!(r.message.contains("0.1.6") && r.message.contains("interrupted"), "{}", r.message);
@@ -517,7 +559,7 @@ fn an_interrupted_install_restores_the_database() {
     std::fs::write(data.join(DB_FILE), "migrated by 0.1.6").unwrap();
     std::fs::write(data.join(format!("{DB_FILE}-shm")), "new").unwrap();
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(10)), backup);
+    let _h = supervise(config(&install, &data, port), backup);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     wait_version(port, "0.1.5", Duration::from_secs(20));
@@ -532,7 +574,7 @@ fn a_missing_pdtd_is_restored_from_the_backup() {
     let install = tmp.path().join("app");
     std::fs::create_dir_all(&install).unwrap();
     let port = free_port();
-    let _h = supervise(config(&install, &tmp.path().join("data"), port, Duration::from_secs(10)), backup);
+    let _h = supervise(config(&install, &tmp.path().join("data"), port), backup);
     wait_version(port, "0.1.5", Duration::from_secs(20));
 }
 
@@ -543,8 +585,7 @@ fn with_nothing_to_run_it_keeps_trying() {
     let install = tmp.path().join("app");
     std::fs::create_dir_all(&install).unwrap();
     let port = free_port();
-    let h =
-        supervise(config(&install, &tmp.path().join("data"), port, Duration::from_secs(10)), tmp.path().join("none"));
+    let h = supervise(config(&install, &tmp.path().join("data"), port), tmp.path().join("none"));
     std::thread::sleep(Duration::from_secs(1));
     assert!(h.is_running(), "pdt-host did not give up");
     fake_install(&install, "0.1.5", "healthy");
@@ -557,9 +598,8 @@ fn adopts_a_running_pdtd_and_takes_over_when_it_stops() {
     let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
     let port = free_port();
     let mut outside = Outside::start(&install, port);
-    wait_version(port, "0.1.5", Duration::from_secs(10));
-    let _h =
-        supervise(config(&install, &tmp.path().join("data"), port, Duration::from_secs(10)), tmp.path().join("backup"));
+    wait_version(port, "0.1.5", Duration::from_secs(30));
+    let _h = supervise(config(&install, &tmp.path().join("data"), port), tmp.path().join("backup"));
     std::thread::sleep(Duration::from_secs(1));
     assert_eq!(read(&install.join("env.txt")), "", "the running pdtd was adopted, not replaced");
     request_shutdown(port).unwrap();
@@ -575,11 +615,13 @@ fn a_result_dismissed_during_the_health_window_stays_dismissed() {
     let asset = fake_install(&tmp.path().join("release"), "0.1.6", "healthy");
     let data = tmp.path().join("data");
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(4)), tmp.path().join("backup"));
+    let mut cfg = config(&install, &data, port);
+    cfg.watch = Duration::from_secs(10); // the test acts inside it, then waits for it to end
+    let _h = supervise(cfg.clone(), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
-    wait_version(port, "0.1.6", Duration::from_secs(30));
+    hand_over(port);
+    wait_log(&cfg, "v0.1.6 answered its health check");
     assert!(marker_path(&data).exists(), "still inside the health window");
     std::fs::remove_file(result_path(&data)).unwrap(); // what Dismiss does
     wait_for_marker_gone(&data);
@@ -594,12 +636,13 @@ fn a_clean_shutdown_inside_the_health_window_is_not_rolled_back() {
     let asset = fake_install(&tmp.path().join("release"), "0.1.6", "healthy");
     let data = tmp.path().join("data");
     let port = free_port();
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(5)), tmp.path().join("backup"));
+    let mut cfg = config(&install, &data, port);
+    cfg.watch = Duration::from_secs(60); // ends early on the clean exit
+    let _h = supervise(cfg.clone(), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &asset);
-    request_shutdown(port).unwrap();
-    wait_version(port, "0.1.6", Duration::from_secs(30));
-    std::thread::sleep(Duration::from_secs(1)); // pdt-host's own health poll (every 200 ms) has seen it too
+    hand_over(port);
+    wait_log(&cfg, "v0.1.6 answered its health check");
     assert!(marker_path(&data).exists(), "still inside the health window");
     request_shutdown(port).unwrap();
     let r = read_result(&data);
@@ -618,12 +661,12 @@ fn a_timed_out_installer_is_stopped_with_its_children() {
     let installer = NsisInstaller {
         install_dir: install.clone(),
         backup: tmp.path().join("backup"),
-        timeout: Duration::from_secs(2),
+        timeout: Duration::from_secs(30), // the installer and its child must start before it, even under load
     };
-    let _h = supervise_with(config(&install, &data, port, Duration::from_secs(5)), Box::new(installer));
+    let _h = supervise_with(config(&install, &data, port), Box::new(installer));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     request(&data, "0.1.6", &setup);
-    request_shutdown(port).unwrap();
+    hand_over(port);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     let pid: u32 = read(&tmp.path().join("release").join("grandchild.pid")).trim().parse().expect("the child started");
@@ -652,8 +695,8 @@ fn recovery_stops_a_running_pdtd_first() {
     let (backup, install, data) = interrupted_install(tmp.path(), "healthy");
     let port = free_port();
     let mut outside = Outside::start(&install, port);
-    wait_version(port, "0.1.6", Duration::from_secs(10));
-    let _h = supervise(config(&install, &data, port, Duration::from_secs(10)), backup);
+    wait_version(port, "0.1.6", Duration::from_secs(30));
+    let _h = supervise(config(&install, &data, port), backup);
     let _ = outside.0.wait();
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
@@ -667,8 +710,8 @@ fn recovery_waits_for_a_pdtd_that_will_not_stop() {
     let (backup, install, data) = interrupted_install(tmp.path(), "stubborn");
     let port = free_port();
     let outside = Outside::start(&install, port);
-    wait_version(port, "0.1.6", Duration::from_secs(10));
-    let mut cfg = config(&install, &data, port, Duration::from_secs(10));
+    wait_version(port, "0.1.6", Duration::from_secs(30));
+    let mut cfg = config(&install, &data, port);
     cfg.stop_timeout = Duration::from_secs(1);
     let _h = supervise(cfg, backup);
     std::thread::sleep(Duration::from_secs(3));

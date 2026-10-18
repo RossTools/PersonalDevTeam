@@ -9,6 +9,7 @@ pub mod host_path;
 pub mod identity;
 pub mod instance;
 pub mod links;
+pub mod overlap;
 pub mod project;
 pub mod rank;
 pub mod release;

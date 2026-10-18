@@ -288,9 +288,10 @@ pub(crate) async fn busy_reasons(st: &AppState) -> Vec<String> {
     match st.store.list_sessions_by_status(SessionStatus::Running).await {
         Ok(sessions) => {
             for s in sessions {
+                let name = format!("{} · {}", pdt_core::session::kind_label(s.kind, s.agent), s.title);
                 match s.activity {
-                    Some(Activity::Working) => out.push(format!("{} is working", s.title)),
-                    Some(Activity::Unknown) => out.push(format!("{} may be working (activity unknown)", s.title)),
+                    Some(Activity::Working) => out.push(format!("{name} is working")),
+                    Some(Activity::Unknown) => out.push(format!("{name} may be working (activity unknown)")),
                     _ => {}
                 }
             }

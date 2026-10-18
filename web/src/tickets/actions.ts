@@ -21,6 +21,8 @@ export interface TicketRef {
   title: string;
   stage: TicketStage;
   priority: Priority;
+  /** Start chose "Wait until clear". */
+  waiting?: boolean;
 }
 
 /** Opens (or focuses) a ticket's tab in its project's workspace. AppShell provides it. */
@@ -50,6 +52,19 @@ export async function patchTicket(qc: QueryClient, id: string, patch: TicketPatc
   void qc.invalidateQueries({ queryKey: ['workspaces'] });
   return t;
 }
+
+/** "Wait until clear" (Start's Wait) or stop waiting; the result toasts. */
+export async function setWaiting(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>, waiting: boolean) {
+  const fresh = await patchTicket(qc, t.id, { waiting });
+  toast.success(waiting ? `${t.key} will wait until clear` : `${t.key} stopped waiting`);
+  return fresh;
+}
+
+/** "Stop waiting", for menus of a waiting ticket. */
+export const stopWaitingEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>): MenuEntry => ({
+  label: 'Stop waiting',
+  onSelect: () => void runAction(() => setWaiting(qc, t, false)),
+});
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
@@ -86,7 +101,8 @@ export function priorityEntries(qc: QueryClient, t: TicketRef): MenuEntry[] {
 }
 
 /**
- * A ticket's menu (backlog row right-click / long press, the peek's and the tab's ⋯): Open, Move to ›, Priority ›,
+ * A ticket's menu (backlog row right-click / long press, the peek's and the tab's ⋯): Open, Start…, Stop waiting,
+ * Move to ›, Priority ›,
  * optionally Move to top / bottom (backlog), Delete….
  */
 export function ticketMenu(opts: {
@@ -109,6 +125,7 @@ export function ticketMenu(opts: {
   return [
     ...(opts.onOpen ? [{ label: 'Open', onSelect: opts.onOpen }] : []),
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
+    ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },
     ...(opts.rank

@@ -9,7 +9,7 @@ mod worktrees;
 
 pub use error::StoreError;
 pub use host::ProjectSettings;
-pub use tickets::{AttemptInfo, DeleteTicket, StartedAttempt, TicketError};
+pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, StartedAttempt, TicketError};
 pub use workspaces::DeleteWorkspace;
 
 use pdt_core::project::Project;

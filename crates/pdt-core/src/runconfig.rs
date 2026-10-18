@@ -13,6 +13,28 @@ pub struct ConfigFile {
     pub runs: Vec<EntryFile>,
     #[serde(default, rename = "test")]
     pub tests: Vec<EntryFile>,
+    #[serde(default, rename = "area")]
+    pub areas: Vec<AreaFile>,
+}
+
+/// An `[[area]]` as written (tickets spec §3): a named part of the project, for overlap detection.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AreaFile {
+    pub name: String,
+    pub paths: Option<Vec<String>>,
+    pub exclusive: Option<bool>,
+}
+
+/// A named part of the project: the files its `paths` globs match (relative to the checkout; `*` stays within a
+/// folder, `**` crosses folders). Only one active ticket at a time should touch an `exclusive` area.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AreaDef {
+    pub name: String,
+    pub paths: Vec<String>,
+    pub exclusive: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -38,12 +60,23 @@ pub struct RunDef {
     pub env: BTreeMap<String, String>,
 }
 
+/// `GET /api/projects/{id}/areas`: the areas the project's main checkout and the host overrides declare.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProjectAreas {
+    pub areas: Vec<AreaDef>,
+    /// Why there are none when the configuration is invalid.
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RunConfig {
     pub runs: Vec<RunDef>,
     pub tests: Vec<RunDef>,
+    pub areas: Vec<AreaDef>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +113,14 @@ pub enum RunConfigError {
     BadEnvName(String),
     #[error("test \"{0}\" cannot be a web run")]
     WebTest(String),
+    #[error("\"{0}\" cannot be an area name: it must be 1–{max} characters with no commas", max = crate::ticket::MAX_AREA)]
+    BadAreaName(String),
+    #[error("the area name \"{0}\" is used twice")]
+    DuplicateArea(String),
+    #[error("area \"{0}\" needs at least one path")]
+    NoAreaPaths(String),
+    #[error("area \"{area}\" has a path that is not a valid pattern ({path:?}): {message}")]
+    BadGlob { area: String, path: String, message: String },
 }
 
 pub fn parse(text: &str, origin: Source) -> Result<ConfigFile, RunConfigError> {
@@ -150,13 +191,61 @@ fn finish(e: EntryFile, test: bool) -> Result<RunDef, RunConfigError> {
     Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), env })
 }
 
+/// Areas merge by name like runs: an override's fields replace the file's.
+fn merge_areas(base: Vec<AreaFile>, over: Vec<AreaFile>) -> Result<Vec<AreaDef>, RunConfigError> {
+    let mut out: Vec<AreaFile> = Vec::new();
+    for a in base {
+        if out.iter().any(|o| o.name.trim() == a.name.trim()) {
+            return Err(RunConfigError::DuplicateArea(a.name.trim().into()));
+        }
+        out.push(a);
+    }
+    let mut seen_over: Vec<String> = Vec::new();
+    for o in over {
+        let name = o.name.trim().to_string();
+        if seen_over.contains(&name) {
+            return Err(RunConfigError::DuplicateArea(name));
+        }
+        seen_over.push(name.clone());
+        match out.iter_mut().find(|b| b.name.trim() == name) {
+            Some(b) => {
+                b.paths = o.paths.or(b.paths.take());
+                b.exclusive = o.exclusive.or(b.exclusive);
+            }
+            None => out.push(o),
+        }
+    }
+    out.into_iter().map(finish_area).collect()
+}
+
+fn finish_area(a: AreaFile) -> Result<AreaDef, RunConfigError> {
+    let name = crate::ticket::normalize_areas(std::slice::from_ref(&a.name))
+        .ok()
+        .and_then(|v| v.into_iter().next())
+        .ok_or_else(|| RunConfigError::BadAreaName(a.name.clone()))?;
+    let paths: Vec<String> =
+        a.paths.unwrap_or_default().iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+    if paths.is_empty() {
+        return Err(RunConfigError::NoAreaPaths(name));
+    }
+    for p in &paths {
+        crate::overlap::glob(p).map_err(|message| RunConfigError::BadGlob {
+            area: name.clone(),
+            path: p.clone(),
+            message,
+        })?;
+    }
+    Ok(AreaDef { name, paths, exclusive: a.exclusive.unwrap_or(false) })
+}
+
 /// The effective configuration: `file` with `overrides` merged over it (either may be absent).
 pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<RunConfig, RunConfigError> {
     let file = file.unwrap_or_default();
     let over = overrides.unwrap_or_default();
     let runs = merge_list(file.runs, over.runs)?.into_iter().map(|e| finish(e, false)).collect::<Result<_, _>>()?;
     let tests = merge_list(file.tests, over.tests)?.into_iter().map(|e| finish(e, true)).collect::<Result<_, _>>()?;
-    Ok(RunConfig { runs, tests })
+    let areas = merge_areas(file.areas, over.areas)?;
+    Ok(RunConfig { runs, tests, areas })
 }
 
 /// The values PDT provides to a run (spec §4.2 "Variables PDT sets").
@@ -435,6 +524,55 @@ command = "cargo run"
     }
 
     #[test]
+    fn areas_parse_merge_and_validate() {
+        let file = parse(
+            r#"
+[[area]]
+name = " migrations "
+paths = ["crates/pdt-store/migrations/**"]
+exclusive = true
+
+[[area]]
+name = "web/ui"
+paths = ["web/ui/**", " "]
+"#,
+            Source::File,
+        )
+        .unwrap();
+        let c = merge(Some(file.clone()), None).unwrap();
+        assert_eq!(
+            c.areas,
+            [
+                AreaDef {
+                    name: "migrations".into(),
+                    paths: vec!["crates/pdt-store/migrations/**".into()],
+                    exclusive: true
+                },
+                AreaDef { name: "web/ui".into(), paths: vec!["web/ui/**".into()], exclusive: false },
+            ]
+        );
+        let over = parse(
+            "[[area]]\nname = \"web/ui\"\nexclusive = true\n[[area]]\nname = \"docs\"\npaths = [\"docs/**\"]\n",
+            Source::Overrides,
+        )
+        .unwrap();
+        let c = merge(Some(file), Some(over)).unwrap();
+        assert_eq!(c.areas[1], AreaDef { name: "web/ui".into(), paths: vec!["web/ui/**".into()], exclusive: true });
+        assert_eq!(c.areas[2].name, "docs");
+
+        let bad = |text: &str| merge(Some(parse(text, Source::File).unwrap()), None).unwrap_err();
+        assert_eq!(bad("[[area]]\nname = \"a\"\n"), RunConfigError::NoAreaPaths("a".into()));
+        assert_eq!(bad("[[area]]\nname = \"a,b\"\npaths = [\"x\"]\n"), RunConfigError::BadAreaName("a,b".into()));
+        assert_eq!(bad("[[area]]\nname = \" \"\npaths = [\"x\"]\n"), RunConfigError::BadAreaName(" ".into()));
+        assert_eq!(
+            bad("[[area]]\nname = \"a\"\npaths = [\"x\"]\n[[area]]\nname = \"a\"\npaths = [\"y\"]\n"),
+            RunConfigError::DuplicateArea("a".into())
+        );
+        assert!(matches!(bad("[[area]]\nname = \"a\"\npaths = [\"src/[\"]\n"), RunConfigError::BadGlob { .. }));
+        assert!(parse("[[area]]\nname = \"a\"\npaths = [\"x\"]\nexclusiv = true\n", Source::File).is_err());
+    }
+
+    #[test]
     fn pdts_own_configuration_is_valid() {
         let c = merge(Some(parse(include_str!("../../../.pdt/project.toml"), Source::File).unwrap()), None).unwrap();
         let pdt = &c.runs[0];
@@ -451,5 +589,7 @@ command = "cargo run"
         assert_eq!(get("PDT_PORT"), "8401");
         assert_eq!(get("PDT_ALLOWED_HOSTS"), "box.t.ts.net:8401");
         assert_eq!(c.tests.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["rust", "web"]);
+        // No [[area]] yet: a stable PDT older than 4c refuses the section, and Run → pdt reads this file.
+        assert!(c.areas.is_empty());
     }
 }
