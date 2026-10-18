@@ -158,7 +158,11 @@ fn wait_healthy(cfg: &HostConfig, child: &mut Option<Child>, version: Option<&st
         {
             return true;
         }
-        if reap(child) {
+        if let Some(c) = child
+            && let Ok(Some(status)) = c.try_wait()
+        {
+            *child = None;
+            log(cfg, &format!("pdtd exited before answering its health check ({status})"));
             return false;
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -354,7 +358,6 @@ fn handle_update(
     }
     // The new pdtd reads the result at startup; it is overwritten if the new version is rolled back.
     write_result(cfg, &update_result(cfg, UpdateOutcome::Installed, &req.from_version, v, format!("Updated to v{v}")));
-    let started = Instant::now();
     *child = match spawn_pdtd(cfg) {
         Ok(c) => Some(c),
         Err(e) => {
@@ -364,10 +367,10 @@ fn handle_update(
     };
     let failure = if !wait_healthy(cfg, child, Some(v), stop) {
         Some("it failed its health check")
-    } else if !stays_up(child, started + cfg.health_timeout, stop) {
-        Some("it exited soon after starting")
     } else {
-        None
+        // The watch window starts here, so a slow start does not use it up.
+        log(cfg, &format!("v{v} answered its health check; watching it for {:?}", cfg.watch));
+        (!stays_up(child, Instant::now() + cfg.watch, stop)).then_some("it exited soon after starting")
     };
     if let Some(why) = failure {
         kill(child);

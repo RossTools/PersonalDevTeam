@@ -16,9 +16,11 @@ pub struct HostConfig {
     pub data_dir: PathBuf,
     pub port: u16,
     pub dev: bool,
-    /// How long a (new) pdtd gets to answer /api/health (spec §3.4: 60 s). A new version that exits within this
-    /// time of being installed also counts as failed.
+    /// How long a (new) pdtd gets to answer /api/health (spec §3.4: 60 s).
     pub health_timeout: Duration,
+    /// How long a new version must keep running once it has answered its health check: one that crashes within
+    /// this time counts as failed and is rolled back.
+    pub watch: Duration,
     pub backoff: Backoff,
     /// How often a running pdtd is checked.
     pub poll: Duration,
@@ -54,6 +56,7 @@ impl HostConfig {
             port,
             dev: profile == Profile::Dev,
             health_timeout: Duration::from_secs(60),
+            watch: Duration::from_secs(60),
             backoff: Backoff::default(),
             poll: Duration::from_secs(2),
             stop_timeout: Duration::from_secs(30),
