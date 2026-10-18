@@ -90,7 +90,7 @@ pub(crate) async fn start(
             size: v.size,
             initial_prompt: Some(ticket_prompt(&key, &ticket.summary.title, &ticket.description, &branch)),
         },
-        title: Some(started_session_title(v.agent, &key)),
+        title: Some(started_session_title(v.agent, &ticket.summary.title)),
         attempt_id: Some(attempt_id.clone()),
         ticket_key: Some(key.clone()),
         tab: None,

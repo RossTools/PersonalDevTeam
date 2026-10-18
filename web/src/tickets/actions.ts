@@ -145,6 +145,9 @@ const isCode = (e: unknown, code: string) => e instanceof ApiError && e.code ===
  * The merged banner's action: moves the ticket to Done, then removes the attempt's worktree. A busy worktree asks to
  * stop the attempt's running sessions first; a dirty one asks to discard its changes. Results toast.
  */
+const BUSY_RETRIES = 10;
+const BUSY_RETRY_MS = 300;
+
 export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket) {
   const attempt = t.attempt;
   await patchTicket(qc, t.id, { stage: 'done' });
@@ -155,6 +158,8 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
   }
   let force = false;
   let stopped = false;
+  // A stopped session's process takes a moment to exit, and the worktree stays busy until it has.
+  let busyRetries = 0;
   for (;;) {
     try {
       await api.removeWorktree(worktreeId, { force });
@@ -171,6 +176,11 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
         stopped = true;
         const running = t.sessions.filter((s) => s.attemptId === attempt.id && s.status === 'running');
         for (const s of running) await api.killSession(s.id);
+        continue;
+      }
+      if (isCode(e, 'worktree_busy') && stopped && busyRetries < BUSY_RETRIES) {
+        busyRetries += 1;
+        await new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
         continue;
       }
       if (isCode(e, 'worktree_dirty') && !force) {

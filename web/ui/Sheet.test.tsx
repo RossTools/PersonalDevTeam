@@ -13,10 +13,11 @@ describe('Sheet', () => {
       </Sheet>,
     );
     // The sheet loads lazily; until then its trigger is shown as a plain placeholder.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-expanded', 'false'));
+    // A generous timeout: under a full parallel test run the lazy chunk can take over a second to load.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-expanded', 'false'), { timeout: 5000 });
     const trigger = screen.getByRole('button', { name: 'Alpha' });
     await user.click(trigger);
-    const sheet = await screen.findByRole('dialog', { name: 'Workspaces' });
+    const sheet = await screen.findByRole('dialog', { name: 'Workspaces' }, { timeout: 5000 });
     expect(within(sheet).getByRole('link', { name: 'Release' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

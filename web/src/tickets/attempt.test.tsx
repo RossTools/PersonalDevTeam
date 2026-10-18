@@ -116,8 +116,9 @@ describe('merged banner', () => {
     const calls = stub(merged, {
       'DELETE /api/worktrees/w1': () => {
         removals += 1;
-        if (removals === 1) return new Reply(409, { code: 'worktree_busy', message: 'busy' });
-        if (removals === 2) return new Reply(409, { code: 'worktree_dirty', message: 'dirty' });
+        // Busy, then still busy while the stopped session exits, then dirty.
+        if (removals <= 2) return new Reply(409, { code: 'worktree_busy', message: 'busy' });
+        if (removals === 3) return new Reply(409, { code: 'worktree_dirty', message: 'dirty' });
         return undefined;
       },
       'POST /api/sessions/s1/kill': undefined,
@@ -136,10 +137,12 @@ describe('merged banner', () => {
 
     const dirty = await screen.findByRole('alertdialog', { name: 'The worktree has uncommitted changes' });
     await userEvent.click(within(dirty).getByRole('button', { name: 'Discard and remove' }));
-    await waitFor(() => expect(removals).toBe(3));
+    await waitFor(() => expect(removals).toBe(4));
     const deletes = calls.filter((c) => c.method === 'DELETE').map((c) => c.path);
     expect(deletes[0]).toContain('force=false');
-    expect(deletes[2]).toContain('force=true');
+    expect(deletes[3]).toContain('force=true');
+    // The busy question is asked once; the second busy answer is waited out.
+    expect(screen.queryByRole('alertdialog', { name: 'The worktree is in use' })).not.toBeInTheDocument();
     expect(await screen.findByText('ALP-1 is done and its worktree is removed.')).toBeInTheDocument();
   });
 

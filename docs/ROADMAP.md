@@ -19,17 +19,17 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Phase 3c-1: design system library (shadcn/ui on React Aria, `web/ui`), every screen moved onto it (#20)
 - Phase 3c-2: shell UX: DEV badge, view header, ended-session bar, settings page, command palette, new-tab picker,
   phone sidebar sheet (#24)
+- Phase 4a: tickets core and the backlog (#25)
 
 ## Now
-- **Phase 4a: Tickets core and the backlog** (in review; spec docs/superpowers/specs/2026-10-18-tickets-design.md,
-  plan docs/superpowers/plans/2026-10-18-phase-4a-tickets-core.md): tickets, rank, search, filters, bulk actions,
-  links, comments, peek sheet, ticket tabs.
+- **Phase 4b: Start, attempts and the board** (in review; plan docs/superpowers/plans/2026-10-18-phase-4b-start-board.md):
+  Start (attempt, worktree, agent session with the ticket as its first prompt), merge detection with the "Move to
+  Done and remove the worktree" banner, the Board, ticket keys on sessions, and scripts/import-roadmap.mjs (run once
+  after this ships, with the user's go-ahead, to move this roadmap into PDT).
 
 ## Next (build order)
 The design spec above also fixes the UX and component list of Phases 4–7 (§8); each phase's own spec covers the rest.
-1. **Phase 4b: Start and the board.** Start (attempt, worktree, session with the ticket as first prompt), merge
-   detection, the board of committed work; then this roadmap is imported into PDT.
-   **Phase 4c: areas and overlap** so agents don't make conflicting changes.
+1. **Phase 4c: areas and overlap** so agents don't make conflicting changes.
 2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
 3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
 4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.

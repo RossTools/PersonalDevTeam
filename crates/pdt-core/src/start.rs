@@ -164,13 +164,20 @@ pub struct StartResult {
     pub session: Session,
 }
 
-/// `<Agent> · <KEY>-<n>`.
-pub fn started_session_title(agent: AgentKind, key: &str) -> String {
+/// `<Agent> · <ticket title>`, within the session title limit (the sidebar and tabs show the ticket key beside it).
+pub fn started_session_title(agent: AgentKind, ticket_title: &str) -> String {
     let label = match agent {
         AgentKind::Claude => "Claude",
         AgentKind::Codex => "Codex",
     };
-    format!("{label} · {key}")
+    let full = format!("{label} · {}", ticket_title.trim());
+    let max = crate::session::MAX_TITLE_CHARS;
+    if full.chars().count() <= max {
+        return full;
+    }
+    let mut cut: String = full.chars().take(max - 1).collect();
+    cut.push('…');
+    cut
 }
 
 #[cfg(test)]
@@ -269,7 +276,10 @@ mod tests {
 
     #[test]
     fn started_sessions_are_titled_by_agent_and_key() {
-        assert_eq!(started_session_title(AgentKind::Claude, "PDT-4"), "Claude · PDT-4");
-        assert_eq!(started_session_title(AgentKind::Codex, "PDT-4"), "Codex · PDT-4");
+        assert_eq!(started_session_title(AgentKind::Claude, " Fix login "), "Claude · Fix login");
+        assert_eq!(started_session_title(AgentKind::Codex, "Fix login"), "Codex · Fix login");
+        let long = started_session_title(AgentKind::Claude, &"x".repeat(300));
+        assert_eq!(long.chars().count(), crate::session::MAX_TITLE_CHARS);
+        assert!(long.ends_with('…'));
     }
 }

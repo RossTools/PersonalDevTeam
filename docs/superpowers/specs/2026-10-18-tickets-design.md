@@ -43,6 +43,20 @@ which active tickets would change the same code, so two agents don't make confli
 - **Board:** a placeholder until 4b. The peek sheet is non-modal on desktop (the list stays usable) and full screen
   on phones. A touch long press on a row opens its menu and does not select it.
 
+### Decided while planning and building 4b
+- **Squash merges** are detected by patch identity (`git commit-tree <head>^{tree} -p <merge-base>` then `git cherry
+  <base> <commit>`), not `git diff --quiet base...branch` (which still shows the branch's changes after a squash).
+- **Remote merges:** the merge loop fetches each project's base (`origin` only, `GIT_TERMINAL_PROMPT=0`, timeout) and
+  tests `<base>` and `origin/<base>`; closing a ticket checks without fetching so the PATCH stays fast.
+- **Deleted branches:** `attempts.last_head` (migration 0011) keeps the last seen head.
+- **Windows `.cmd` shims:** the prompt goes to a file and the agent gets a short prompt naming it (cmd.exe would
+  interpret `&`, `|`, `%` and newlines).
+- **The first prompt is not stored**; restarts resume the conversation. Started sessions are titled
+  `<Agent> · <ticket title>`; the ticket key shows as a chip beside them.
+- **Start checks in 4b** are blockers only (`check | force`); `wait` and the area checks arrive with 4c.
+- Abandon is idempotent; bulk moves to Done/Won't do also end attempts; an existing branch without a worktree is
+  checked out rather than refused.
+
 ## 3. Model
 
 New tables in one migration, `0010_tickets.sql` (existing migrations untouched).
