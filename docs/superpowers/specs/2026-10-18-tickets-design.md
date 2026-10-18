@@ -31,6 +31,18 @@ which active tickets would change the same code, so two agents don't make confli
 - From the UX spec: backlog and board share the Tickets view (D6); the board shows Ready / In progress / Done (D3);
   a ticket is a tab (D5); links and areas with planned and actual overlap (D7).
 
+### Decided while planning and building 4a
+- **Numbers never repeat:** `projects.next_ticket_number`, bumped in the insert's transaction.
+- **FTS key:** `tickets_fts` is keyed by `tickets.seq` (an integer column, unique), not the implicit rowid, so a table
+  rebuild can never re-pair search rows with the wrong ticket.
+- **List filters** (`stage`, `priority`, `label`) are comma-separated values; labels and areas may not contain commas.
+- **Rank moves** take `{before?, after?, to?: "top" | "bottom"}` (top/bottom of the ticket's stage).
+- **New tickets** go to the top of their stage; the backlog's quick add passes `before` = the first row when the list
+  is a flat rank order, so the ticket appears where it was typed.
+- **Markdown:** react-markdown + remark-gfm + rehype-sanitize. **Saved filters:** per browser (localStorage).
+- **Board:** a placeholder until 4b. The peek sheet is non-modal on desktop (the list stays usable) and full screen
+  on phones. A touch long press on a row opens its menu and does not select it.
+
 ## 3. Model
 
 New tables in one migration, `0010_tickets.sql` (existing migrations untouched).

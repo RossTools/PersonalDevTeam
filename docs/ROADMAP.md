@@ -17,18 +17,19 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 - Phase 3b: git integration: project keys, clone by URL, GitHub links, worktree adopt/remove, remove projects,
   Files view (#16)
 - Phase 3c-1: design system library (shadcn/ui on React Aria, `web/ui`), every screen moved onto it (#20)
+- Phase 3c-2: shell UX: DEV badge, view header, ended-session bar, settings page, command palette, new-tab picker,
+  phone sidebar sheet (#24)
 
 ## Now
-- **Phase 3c-2: Shell UX** (in review; plan docs/superpowers/plans/2026-10-17-phase-3c-2-shell.md): DEV badge,
-  shared view header with a ⋯ menu, ended-session bar, settings as a page, command palette, new-tab picker, phone
-  sidebar sheet.
+- **Phase 4a: Tickets core and the backlog** (in review; spec docs/superpowers/specs/2026-10-18-tickets-design.md,
+  plan docs/superpowers/plans/2026-10-18-phase-4a-tickets-core.md): tickets, rank, search, filters, bulk actions,
+  links, comments, peek sheet, ticket tabs.
 
 ## Next (build order)
 The design spec above also fixes the UX and component list of Phases 4–7 (§8); each phase's own spec covers the rest.
-1. **Phase 4: Tickets, backlog and board.** Tickets, a backlog list built for many tickets (search, filters, rank,
-   bulk actions), a board of committed work, blocker links, areas and overlap detection so agents don't make
-   conflicting changes, Start (attempt, worktree, session). This roadmap moves into PDT.
-   Own brainstorm and spec.
+1. **Phase 4b: Start and the board.** Start (attempt, worktree, session with the ticket as first prompt), merge
+   detection, the board of committed work; then this roadmap is imported into PDT.
+   **Phase 4c: areas and overlap** so agents don't make conflicting changes.
 2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
 3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
 4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
