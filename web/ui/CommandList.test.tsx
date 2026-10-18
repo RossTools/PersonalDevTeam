@@ -49,6 +49,19 @@ describe('CommandList', () => {
     expect(onAction).toHaveBeenCalledWith('demo-main');
   });
 
+  it('shows an item\'s detail after its label and filters on it', async () => {
+    const user = userEvent.setup();
+    const withDetail: CommandItem[] = [
+      { id: 'a', label: 'Claude A', detail: 'Release' },
+      { id: 'b', label: 'Codex B', detail: 'Alpha' },
+    ];
+    render(<CommandList label="Tabs" items={withDetail} onAction={() => {}} />);
+    const a = screen.getByRole('menuitem', { name: 'Claude A Release' });
+    expect(within(a).getByText('Release')).toHaveClass('text-muted-foreground');
+    await user.keyboard('alpha');
+    expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Codex B Alpha']);
+  });
+
   it('takes a controlled query', async () => {
     const user = userEvent.setup();
     function Controlled() {

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
@@ -33,6 +33,19 @@ const hostRoutes = {
   'GET /api/host/whoami': { caller: 'local', login: null },
 };
 
+const health = (dev: boolean, port: number) => ({
+  status: 'ok', name: 'Personal Dev Team', version: '0.1.0-local', profile: dev ? 'dev' : 'stable', port, dev,
+});
+
+/** Below the md breakpoint: every max-width media query matches (the phone layout). */
+const stubPhone = () =>
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('max-width'),
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+
 function stubAlpha() {
   stubApi({
     ...hostRoutes,
@@ -45,14 +58,33 @@ function stubAlpha() {
 }
 
 describe('AppShell', () => {
-  it('renders the six rail views and marks the active one', async () => {
+  it('shows only the views that exist in the rail, and marks the active one', async () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
-    for (const name of ['Inbox', 'Board', 'Sessions', 'Personas', 'Files', 'Settings']) {
-      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    const rail = screen.getByRole('navigation', { name: 'Views' });
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Files', 'Settings']);
+    for (const name of ['Inbox', 'Board', 'Personas', 'Search']) {
+      expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
     }
-    await userEvent.click(screen.getByRole('button', { name: 'Board' }));
-    expect(screen.getByRole('button', { name: 'Board' })).toHaveAttribute('aria-current', 'page');
+    await userEvent.click(within(rail).getByRole('button', { name: 'Files' }));
+    expect(within(rail).getByRole('button', { name: 'Files' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByText(/arrives with/)).not.toBeInTheDocument();
+  });
+
+  it('shows the DEV badge at the top of the rail when /api/health says dev', async () => {
+    stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/health': health(true, 8512) });
+    renderWithQuery(<AppShell />);
+    const rail = screen.getByRole('navigation', { name: 'Views' });
+    const badge = await within(rail).findByTitle('Development instance');
+    expect(badge).toHaveTextContent('DEV8512');
+  });
+
+  it('shows no DEV badge on the stable instance', async () => {
+    const calls = stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/health': health(false, 7420) });
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/health')).toBe(true));
+    await act(async () => {});
+    expect(screen.queryByTitle('Development instance')).not.toBeInTheDocument();
   });
 
   it('shows the host settings in the Settings view', async () => {
@@ -140,7 +172,6 @@ describe('workspaces', () => {
     const agents = await screen.findByRole('region', { name: 'Agents' });
     const b = await within(agents).findByRole('row', { name: /Codex B/ });
     expect(b).toHaveTextContent('Needs you');
-    expect(b).toHaveTextContent('Alpha');
     expect(within(agents).queryByRole('row', { name: /Shell C/ })).not.toBeInTheDocument();
     await userEvent.click(b);
     expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
@@ -150,6 +181,29 @@ describe('workspaces', () => {
     await userEvent.click(d);
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wa/tabs', body: { sessionId: 'd' } }));
   });
+  it('shows each agent\'s branch, and its workspace only when it is not the current one', async () => {
+    stubWorkspaces({
+      [`GET /api/projects/${project.id}/worktrees`]: [{ id: 'wt1', projectId: project.id, branch: 'feat/login', path: '/r/.worktrees/feat-login', baseCommit: 'x', createdAt: 2 }],
+      [`GET /api/projects/${project.id}/sessions`]: [
+        sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working' }),
+        sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', worktreeId: 'wt1', cwd: '/r/.worktrees/feat-login' }),
+        sess('d', 'Claude D', { kind: 'agent_tui', agent: 'claude' }),
+      ],
+    });
+    renderWithQuery(<AppShell />);
+    const agents = await screen.findByRole('region', { name: 'Agents' });
+    const secondary = (name: RegExp) => within(agents).getByRole('row', { name }).querySelector('[data-slot=list-secondary]')?.textContent ?? null;
+    await within(agents).findByRole('row', { name: /Codex B/ });
+    // In the current workspace (Alpha): the main checkout says nothing, a worktree its branch.
+    await waitFor(() => expect(secondary(/Codex B/)).toBe('feat/login'));
+    expect(secondary(/Claude A/)).toBeNull();
+    expect(secondary(/Claude D/)).toBe('no tab');
+    // From another workspace, the agents' workspace follows.
+    await userEvent.click(within(screen.getByRole('region', { name: 'Workspaces' })).getByRole('row', { name: /Release/ }));
+    await waitFor(() => expect(secondary(/Codex B/)).toBe('feat/login · Alpha'));
+    expect(secondary(/Claude A/)).toBe('Alpha');
+  });
+
   it('keeps the agents list a plain view: no drag handles, and a menu without tab movement', async () => {
     stubWorkspaces({});
     renderWithQuery(<AppShell />);
@@ -225,7 +279,7 @@ describe('workspaces', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
     const choices = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('menu', { name: 'New tab choices' });
     // Its workspace follows the title.
-    await userEvent.click(within(choices).getByRole('menuitem', { name: /Claude A · Alpha/ }));
+    await userEvent.click(within(choices).getByRole('menuitem', { name: /Claude A Alpha/ }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wr/tabs', body: { sessionId: 'a', position: 0 } }));
   });
   it('creates, renames and deletes workspaces from the sidebar', async () => {
@@ -484,5 +538,126 @@ describe('new-tab chooser', () => {
     const chooser = await open();
     await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Claude/ }));
     expect(await within(chooser).findByText('claude not found')).toBeInTheDocument();
+  });
+});
+
+describe('command palette', () => {
+  it('opens with Ctrl+] k and runs the chosen item', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}k');
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await waitFor(() => expect(within(palette).getByRole('searchbox')).toHaveFocus());
+    await userEvent.keyboard('Release');
+    await userEvent.click(within(palette).getByRole('menuitem', { name: 'Workspace · Release' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument());
+    expect(within(screen.getByRole('region', { name: 'Workspaces' })).getByRole('row', { name: /Release/ })).toHaveAttribute('data-current', 'true');
+  });
+
+  it('closes the current tab through the workspaces API', async () => {
+    const calls = stubWorkspaces({ 'DELETE /api/tabs/ta': undefined });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}k');
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await userEvent.click(within(palette).getByRole('menuitem', { name: /Close tab/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/ta')).toBe(true));
+  });
+
+  it('switches to Settings for a project\'s settings', async () => {
+    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}k');
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await userEvent.click(within(palette).getByRole('menuitem', { name: 'Settings · Alpha' }));
+    expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page');
+    expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+  });
+});
+
+describe('settings page', () => {
+  it('opens the add-project dialog from the + next to PROJECTS; no inline form remains', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
+    expect(within(nav).getByRole('row', { name: /This host/ })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Clone URL' })).not.toBeInTheDocument();
+    await userEvent.click(within(nav).getByRole('button', { name: 'Add project' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add project' });
+    expect(within(dialog).getByRole('radio', { name: 'Clone URL' })).toBeInTheDocument();
+  });
+
+  it('lays a project page out in sections', async () => {
+    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
+    await userEvent.click(await within(nav).findByRole('row', { name: /Alpha/ }));
+    const main = screen.getByRole('main');
+    await within(main).findByRole('region', { name: 'Project' });
+    expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Danger zone']);
+    expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
+  });
+});
+
+describe('phone', () => {
+  it('puts the list column in a sheet opened by the workspace name, closed by choosing a workspace', async () => {
+    stubPhone();
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    expect(screen.queryByRole('region', { name: 'Workspaces' })).not.toBeInTheDocument();
+    const opener = screen.getByRole('button', { name: 'Workspaces and agents' });
+    expect(opener).toHaveTextContent('Alpha');
+    await userEvent.click(opener);
+    const sheet = await screen.findByRole('dialog', { name: 'Workspaces and agents' });
+    await userEvent.click(await within(sheet).findByRole('row', { name: /Release/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Workspaces and agents' })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Workspaces and agents' })).toHaveTextContent('Release');
+  });
+
+  it('closes the sheet on choosing an agent and on Escape', async () => {
+    stubPhone();
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Workspaces and agents' }));
+    let sheet = await screen.findByRole('dialog', { name: 'Workspaces and agents' });
+    await userEvent.click(within(within(sheet).getByRole('region', { name: 'Agents' })).getByRole('row', { name: /Codex B/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Workspaces and agents' })).not.toBeInTheDocument());
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('button', { name: 'Workspaces and agents' }));
+    sheet = await screen.findByRole('dialog', { name: 'Workspaces and agents' });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Workspaces and agents' })).not.toBeInTheDocument());
+  });
+
+  it('has Search in the rail, which opens the palette, and the DEV badge in the header', async () => {
+    stubPhone();
+    stubWorkspaces({ 'GET /api/health': health(true, 8512) });
+    renderWithQuery(<AppShell />);
+    const rail = screen.getByRole('navigation', { name: 'Views' });
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Files', 'Search', 'Settings']);
+    const bar = (await screen.findByRole('button', { name: 'Workspaces and agents' })).parentElement!;
+    expect(await within(bar).findByText('DEV · 8512')).toBeInTheDocument();
+    expect(within(rail).queryByTitle('Development instance')).not.toBeInTheDocument();
+    await userEvent.click(within(rail).getByRole('button', { name: 'Search' }));
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+  });
+
+  it('opens the settings sections from the header in the Settings view', async () => {
+    stubPhone();
+    stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Settings sections' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Settings sections' });
+    await userEvent.click(await within(sheet).findByRole('row', { name: /Alpha/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings sections' })).not.toBeInTheDocument());
+    expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
   });
 });

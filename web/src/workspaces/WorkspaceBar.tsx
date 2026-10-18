@@ -1,6 +1,6 @@
-import { useRef, type DragEvent, type ReactNode } from 'react';
+import { useRef, type DragEvent, type ReactNode, type Ref } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { ContextMenu, IconButton, Kbd } from '@ui';
 import { api } from '../api/client';
@@ -89,13 +89,20 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
   );
 }
 
-/** The current workspace's name and tab strip. */
-export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, trailing }: {
+/**
+ * The current workspace's name and tab strip. With `onOpenList` (phones) the name is a button that opens the
+ * workspaces-and-agents sheet; `leading` follows it (the DEV badge on phones); `plusRef` is the "+" button, which the
+ * new-tab chooser anchors to.
+ */
+export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, trailing, onOpenList, leading, plusRef }: {
   ws: WorkspacesApi;
   renamingTabId: string | null;
   setRenamingTabId: (id: string | null) => void;
   onNewTab: () => void;
   trailing?: ReactNode;
+  onOpenList?: () => void;
+  leading?: ReactNode;
+  plusRef?: Ref<HTMLButtonElement>;
 }) {
   const w = ws.workspace;
   const touch = useRef<{ x: number; y: number } | null>(null);
@@ -124,7 +131,21 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
         if (Math.abs(dx) > 60 && Math.abs(t.clientY - start.y) < 40) step(dx < 0 ? 1 : -1);
       }}
     >
-      <span className="max-w-32 shrink-0 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? 'No workspace'}</span>
+      {onOpenList ? (
+        <button
+          type="button"
+          aria-label="Workspaces and agents"
+          aria-haspopup="dialog"
+          onClick={onOpenList}
+          className="flex max-w-40 shrink-0 items-center gap-0.5 rounded-md px-1 text-sm font-medium outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch"
+        >
+          <span className="truncate">{w?.name ?? 'No workspace'}</span>
+          <ChevronDown aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        </button>
+      ) : (
+        <span className="max-w-32 shrink-0 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? 'No workspace'}</span>
+      )}
+      {leading}
       <IconButton label="Previous tab" size="sm" className="md:hidden" onClick={() => step(-1)}><ChevronLeft aria-hidden /></IconButton>
       <div
         role="tablist"
@@ -145,7 +166,7 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
             onDrop={drop}
           />
         ))}
-        <IconButton label="New tab" size="sm" shortcut={<Kbd keys={['Ctrl', ']', 'c']} />} disabled={!w} onClick={onNewTab}>
+        <IconButton ref={plusRef} label="New tab" size="sm" shortcut={<Kbd keys={['Ctrl', ']', 'c']} />} disabled={!w} onClick={onNewTab}>
           <Plus aria-hidden />
         </IconButton>
       </div>

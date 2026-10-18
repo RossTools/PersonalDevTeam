@@ -311,6 +311,7 @@ export function ListRow({
           {trailing != null && <span className="flex items-center gap-1.5">{trailing}</span>}
           {secondary != null && (
             <span
+              data-slot="list-secondary"
               className="truncate text-meta text-muted-foreground"
               style={{ gridColumn: `${(allowsDragging ? 1 : 0) + (leading != null ? 1 : 0) + 1} / -1` }}
             >

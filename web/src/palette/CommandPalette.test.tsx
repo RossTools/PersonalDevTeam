@@ -57,10 +57,10 @@ describe('CommandPalette', () => {
     expect(within(dialog).getByText('Go to')).toBeInTheDocument();
     expect(within(dialog).getByText('Actions')).toBeInTheDocument();
     expect(within(dialog).getByText('Ctrl+] x').tagName).toBe('KBD');
-    expect(within(dialog).getByRole('menuitem', { name: /fix login — PersonalDevTeam/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole('menuitem', { name: /fix login PersonalDevTeam/ })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Needs you')).toBeInTheDocument();
     await u.keyboard('fix-login');
-    expect(within(dialog).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['fix login — PersonalDevTeam']);
+    expect(within(dialog).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['fix login PersonalDevTeam']);
   });
 
   it('filters; Enter runs the highlighted item, closes and returns focus', async () => {

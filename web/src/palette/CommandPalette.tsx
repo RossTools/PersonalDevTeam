@@ -27,11 +27,11 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   add: <Plus aria-hidden />,
 };
 
-/** CommandList has no secondary-text slot: the detail (a tab's workspace) follows the label and is filtered with it. */
 function toCommand(it: PaletteItem): CommandItem {
   return {
     id: it.id,
-    label: it.detail ? `${it.label} — ${it.detail}` : it.label,
+    label: it.label,
+    ...(it.detail ? { detail: it.detail } : {}),
     group: it.group,
     ...(it.shortcut ? { shortcut: it.shortcut } : {}),
     ...(it.keywords ? { keywords: it.keywords } : {}),

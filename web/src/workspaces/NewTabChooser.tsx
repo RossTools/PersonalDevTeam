@@ -7,6 +7,7 @@ import type { TabPlacement } from '../api/gen/TabPlacement';
 import { AgentDot, itemState } from '../common/AgentState';
 import { PlacePicker } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
+import { useMediaQuery } from '../common/useMediaQuery';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { choiceLabel, parseChoice, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
@@ -31,19 +32,7 @@ function usePlace(ws: WorkspacesApi) {
 }
 
 /** True below Tailwind's `sm` breakpoint (phones), where the chooser is a bottom sheet. */
-function useNarrow() {
-  const query = '(max-width: 639.98px)';
-  const get = () => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches;
-  const [narrow, setNarrow] = useState(get);
-  useEffect(() => {
-    const mq = window.matchMedia?.(query);
-    if (!mq) return;
-    const on = () => setNarrow(mq.matches);
-    mq.addEventListener?.('change', on);
-    return () => mq.removeEventListener?.('change', on);
-  }, []);
-  return narrow;
-}
+const useNarrow = () => useMediaQuery('(max-width: 639.98px)');
 
 /** The overlay the chooser lives in: a popover under `anchor` (a bottom sheet on phones), else a dialog. */
 function Frame({ anchor, onClose, children }: { anchor?: RefObject<Element | null>; onClose: () => void; children: ReactNode }) {
@@ -131,11 +120,11 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
       : []),
     ...others.map(({ info, workspaceName }) => ({
       id: `bring:${info.item.kind}:${info.item.id}`,
-      // CommandList has no detail slot: the workspace follows the title.
-      label: workspaceName ? `${info.title} · ${workspaceName}` : info.title,
+      label: info.title,
+      ...(workspaceName ? { detail: workspaceName } : {}),
       group: 'Bring here',
       icon: <AgentDot state={itemState(info)} />,
-      keywords: [info.session?.agent ?? info.item.kind, ...(workspaceName ? [workspaceName] : [])],
+      keywords: [info.session?.agent ?? info.item.kind],
     })),
   ];
 
