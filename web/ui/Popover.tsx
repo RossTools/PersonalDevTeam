@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import type { ReactElement, ReactNode, RefObject } from 'react';
 import { cn } from '@ui/lib/utils';
 import { Dialog as AriaDialog, Heading } from 'react-aria-components';
 import { Popover as PopoverPrimitive, PopoverTrigger } from './primitives/popover';
@@ -8,7 +8,10 @@ export type PopoverPlacement = 'bottom' | 'bottom start' | 'bottom end' | 'top' 
 
 export interface PopoverProps {
   /** The element that opens it: a Button (or a DOM button). Focus returns to it on close. */
-  trigger: ReactElement;
+  trigger?: ReactElement;
+  /** Instead of `trigger`: an element elsewhere to anchor to (control it with `open`/`onOpenChange`). Focus returns to
+   * whatever had it when the panel opened. */
+  anchor?: RefObject<Element | null>;
   /** Accessible name of the panel when there's no visible `title`. */
   label?: string;
   /** A visible heading at the top of the panel (also its accessible name). */
@@ -26,23 +29,39 @@ export interface PopoverProps {
  * An anchored panel (filters, pickers). Click outside or Escape closes it, focus returns to the trigger. Draws above
  * dialogs and sheets (z-(--pdt-z-menu)), so a picker inside a dialog works.
  */
-export function Popover({ trigger, label, title, children, placement = 'bottom start', open, onOpenChange, className }: PopoverProps) {
+export function Popover({ trigger, anchor, label, title, children, placement = 'bottom start', open, onOpenChange, className }: PopoverProps) {
+  const panel = (
+    <AriaDialog aria-label={title ? undefined : label} className="flex min-h-0 flex-col gap-2 outline-none">
+      {({ close }) => (
+        <>
+          {title && (
+            <Heading slot="title" className="text-xs font-semibold">
+              {title}
+            </Heading>
+          )}
+          {typeof children === 'function' ? children({ close }) : children}
+        </>
+      )}
+    </AriaDialog>
+  );
+  if (!trigger) {
+    return (
+      <PopoverPrimitive
+        triggerRef={anchor}
+        isOpen={open ?? false}
+        onOpenChange={onOpenChange}
+        placement={placement}
+        className={cn('max-w-[calc(100vw-2rem)]', className)}
+      >
+        {panel}
+      </PopoverPrimitive>
+    );
+  }
   return (
     <PopoverTrigger {...(open === undefined ? {} : { isOpen: open })} onOpenChange={onOpenChange}>
       {pressableChild(trigger)}
       <PopoverPrimitive placement={placement} className={cn('max-w-[calc(100vw-2rem)]', className)}>
-        <AriaDialog aria-label={title ? undefined : label} className="flex min-h-0 flex-col gap-2 outline-none">
-          {({ close }) => (
-            <>
-              {title && (
-                <Heading slot="title" className="text-xs font-semibold">
-                  {title}
-                </Heading>
-              )}
-              {typeof children === 'function' ? children({ close }) : children}
-            </>
-          )}
-        </AriaDialog>
+        {panel}
       </PopoverPrimitive>
     </PopoverTrigger>
   );

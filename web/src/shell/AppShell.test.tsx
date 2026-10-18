@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
@@ -223,8 +223,9 @@ describe('workspaces', () => {
     await userEvent.click(await within(list).findByRole('row', { name: /Release/ }));
     expect(within(list).getByRole('row', { name: /Release/ })).toHaveAttribute('data-current', 'true');
     await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
-    const others = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('grid', { name: 'Other sessions and runs' });
-    await userEvent.click(within(others).getByRole('row', { name: /Claude A/ }));
+    const choices = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('menu', { name: 'New tab choices' });
+    // Its workspace follows the title.
+    await userEvent.click(within(choices).getByRole('menuitem', { name: /Claude A · Alpha/ }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wr/tabs', body: { sessionId: 'a', position: 0 } }));
   });
   it('creates, renames and deletes workspaces from the sidebar', async () => {
@@ -332,7 +333,7 @@ describe('workspaces', () => {
     await userEvent.click(await within(screen.getByRole('menu', { name: 'Places' })).findByRole('menuitem', { name: 'feat' }));
     await within(chooser).findByRole('button', { name: 'Place: Alpha › feat' });
     await userEvent.click(within(chooser).getByRole('switch', { name: /Skip permission prompts/ }));
-    await userEvent.click(within(chooser).getByRole('button', { name: /^Codex/ }));
+    await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Codex/ }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body).toMatchObject({
       worktreeId: 'wt1', agent: 'codex', bypassPermissions: true,
     }));
@@ -370,20 +371,118 @@ describe('workspaces', () => {
     expect(await screen.findByText('Workspace is gone')).toBeInTheDocument();
   });
 
-  it('does not launch an agent on type-ahead in the chooser\'s run picker', async () => {
-    const config = {
-      filePath: '/r/.pdt/project.toml', file: '', overrides: null, error: null,
-      effective: { runs: [{ name: 'compile', setup: null, command: 'x', web: false, data: false, env: {} }], tests: [] },
-    };
-    const calls = stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: config });
+  it('does not launch an agent on type-ahead in the chooser\'s run-another-branch pickers', async () => {
+    const calls = stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: runConfig, [`GET /api/projects/${project.id}/branches`]: [] });
     renderWithQuery(<AppShell />);
     await userEvent.click(await screen.findByRole('button', { name: 'New tab' }));
     const chooser = screen.getByRole('dialog', { name: 'New tab' });
-    await userEvent.click(await within(chooser).findByRole('button', { name: /Start a run/ }));
+    await userEvent.click(await within(chooser).findByRole('menuitem', { name: 'Run another branch…' }));
+    await userEvent.click(await within(chooser).findByRole('button', { name: /What to run/ }));
     const listbox = await screen.findByRole('listbox');
     await waitFor(() => expect(listbox).toContainElement(document.activeElement as HTMLElement));
     await userEvent.keyboard('c');
     await userEvent.keyboard('{Escape}');
     expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions')).toBe(false);
+  });
+
+});
+
+const runConfig = {
+  filePath: '/r/.pdt/project.toml', file: '', overrides: null, error: null,
+  effective: {
+    runs: [{ name: 'web', setup: null, command: 'x', web: true, data: true, env: {} }],
+    tests: [{ name: 'check', setup: null, command: 'y', web: false, data: false, env: {} }],
+  },
+};
+const runOf = (id: string) => ({
+  id, projectId: project.id, worktreeId: null, branch: 'main', name: 'web', kind: 'run', state: 'starting',
+  port: 8401, url: null, dataDir: '/d', cwd: '/r', exitCode: null, error: null, createdAt: 1, updatedAt: 1,
+});
+
+describe('new-tab chooser', () => {
+  const sessionPost = (calls: Call[]) => calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body;
+  async function open() {
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    const chooser = screen.getByRole('dialog', { name: 'New tab' });
+    await waitFor(() => expect(chooser).toHaveFocus());
+    return chooser;
+  }
+
+  it('groups Start here, Run and Bring here, with the keys and the footer', async () => {
+    stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: runConfig });
+    const chooser = await open();
+    const list = within(chooser).getByRole('menu', { name: 'New tab choices' });
+    for (const g of ['Start here', 'Run', 'Bring here']) expect(within(list).getByText(g)).toBeInTheDocument();
+    expect(within(list).getByRole('menuitem', { name: /^Claude/ })).toHaveTextContent('c');
+    expect(await within(list).findByRole('menuitem', { name: 'Run web' })).toBeInTheDocument();
+    expect(within(list).getByRole('menuitem', { name: 'Test check' })).toBeInTheDocument();
+    expect(within(list).getByRole('menuitem', { name: 'Run another branch…' })).toBeInTheDocument();
+    // Sessions without a tab here: c and d (no workspace).
+    expect(within(list).getByRole('menuitem', { name: /Shell C/ })).toBeInTheDocument();
+    expect(within(list).queryByRole('menuitem', { name: /Codex B/ })).not.toBeInTheDocument();
+    expect(within(chooser).getByRole('switch', { name: /Skip permission prompts/ })).toBeInTheDocument();
+    expect(within(chooser).getByText('Esc to close')).toBeInTheDocument();
+  });
+
+  it.each([['Shell', 's', 'shell'], ['Codex', 'x', 'agent_tui']])('launches %s by click and by its key', async (label, key, kind) => {
+    const calls = stubWorkspaces({ 'POST /api/sessions': sess('e', 'New', { kind }) });
+    const chooser = await open();
+    await userEvent.click(within(chooser).getByRole('menuitem', { name: new RegExp(`^${label}`) }));
+    await waitFor(() => expect(sessionPost(calls)).toMatchObject({ kind, tab: { workspaceId: 'wa', position: 1 } }));
+    cleanup();
+    calls.length = 0;
+    await open();
+    await userEvent.keyboard(key);
+    await waitFor(() => expect(sessionPost(calls)).toMatchObject({ kind }));
+  });
+
+  it('types other keys into the filter, which filters every group and turns the shortcuts off', async () => {
+    const calls = stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: runConfig });
+    const chooser = await open();
+    const list = within(chooser).getByRole('menu', { name: 'New tab choices' });
+    await within(list).findByRole('menuitem', { name: 'Run web' });
+    await userEvent.keyboard('hell');
+    const filter = within(chooser).getByRole('searchbox');
+    expect(filter).toHaveFocus();
+    expect(filter).toHaveValue('hell');
+    expect(within(list).getByRole('menuitem', { name: /^Shell(?! C)/ })).toBeInTheDocument();
+    expect(within(list).getByRole('menuitem', { name: /Shell C/ })).toBeInTheDocument();
+    expect(within(list).queryByRole('menuitem', { name: /^Claude/ })).not.toBeInTheDocument();
+    expect(within(list).queryByRole('menuitem', { name: 'Run web' })).not.toBeInTheDocument();
+    expect(within(list).queryByText('Run')).not.toBeInTheDocument();
+    // With text in the filter, c / x / s are just letters.
+    await userEvent.keyboard('{Backspace}{Backspace}{Backspace}{Backspace}x');
+    expect(filter).toHaveValue('x');
+    expect(sessionPost(calls)).toBeUndefined();
+  });
+
+  it('starts a configured run after the current tab', async () => {
+    const calls = stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: runConfig, [`POST /api/projects/${project.id}/runs`]: runOf('r9'),
+      'POST /api/workspaces/wa/tabs': { id: 'tr', workspaceId: 'wa', sessionId: null, runId: 'r9', position: 1 },
+    });
+    const chooser = await open();
+    await userEvent.click(await within(chooser).findByRole('menuitem', { name: 'Test check' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === `/api/projects/${project.id}/runs`)?.body).toEqual({
+      name: 'check', kind: 'test', tab: { workspaceId: 'wa', position: 1 },
+    }));
+  });
+
+  it('swaps the list for the branch form and back', async () => {
+    stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: runConfig, [`GET /api/projects/${project.id}/branches`]: [] });
+    const chooser = await open();
+    await userEvent.click(await within(chooser).findByRole('menuitem', { name: 'Run another branch…' }));
+    expect(within(chooser).queryByRole('menu', { name: 'New tab choices' })).not.toBeInTheDocument();
+    expect(await within(chooser).findByRole('button', { name: /^Branch/ })).toBeInTheDocument();
+    await userEvent.click(within(chooser).getByRole('button', { name: 'Back' }));
+    expect(within(chooser).getByRole('menu', { name: 'New tab choices' })).toBeInTheDocument();
+  });
+
+  it('shows the error from a failed launch', async () => {
+    stubWorkspaces({ 'POST /api/sessions': new Reply(500, { code: 'spawn', message: 'claude not found' }) });
+    const chooser = await open();
+    await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Claude/ }));
+    expect(await within(chooser).findByText('claude not found')).toBeInTheDocument();
   });
 });

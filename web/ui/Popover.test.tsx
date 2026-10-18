@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { Popover } from './Popover';
 import { Button } from './primitives/button';
@@ -58,5 +59,27 @@ describe('Popover', () => {
       </Popover>,
     );
     expect(screen.getByRole('dialog', { name: 'Filters' })).toBeInTheDocument();
+  });
+
+  it('anchors to an element elsewhere and closes on Escape', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    function Anchored() {
+      const ref = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button ref={ref} type="button">Plus</button>
+          <Popover anchor={ref} label="Chooser" open onOpenChange={onOpenChange}>
+            <input aria-label="Filter" />
+          </Popover>
+        </>
+      );
+    }
+    render(<Anchored />);
+    const panel = screen.getByRole('dialog', { name: 'Chooser' });
+    expect(within(panel).getByRole('textbox', { name: 'Filter' })).toBeInTheDocument();
+    await user.click(within(panel).getByRole('textbox', { name: 'Filter' }));
+    await user.keyboard('{Escape}');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
