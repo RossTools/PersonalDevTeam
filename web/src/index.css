@@ -87,10 +87,6 @@
   --spacing-control-sm: var(--pdt-control-sm);
   --spacing-control-md: var(--pdt-control-md);
   --spacing-control-touch: var(--pdt-control-touch);
-  --z-popover: var(--pdt-z-popover);
-  --z-dialog: var(--pdt-z-dialog);
-  --z-menu: var(--pdt-z-menu);
-  --z-toast: var(--pdt-z-toast);
   --ease-pdt: var(--pdt-ease);
   --default-transition-duration: var(--pdt-duration);
 
