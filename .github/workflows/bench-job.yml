@@ -20,17 +20,18 @@ env:
 
 jobs:
   bench:
-    # Namespace keeps a cache volume per tag: a tag per bench run makes the cold job cold and the warm job reuse it.
-    runs-on: ${{ startsWith(inputs.runner, 'namespace-') && format('{0};overrides.cache-tag=bench-{1}', inputs.runner, github.run_id) || inputs.runner }}
+    # Namespace runners use their profile's cache volume, which keeps a job's writes only when it exits cleanly and
+    # reaches other machines in the background: run bench twice, a few minutes apart, for warm Namespace numbers.
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       # GitHub's images have rustup; other providers' may not.
-      - name: Ensure rustup
+      - name: Ensure rustup and zsh
         if: runner.os != 'Windows'
         run: |
-          # Terminal tests start $SHELL (else /bin/zsh); Namespace's Linux runners set no SHELL and have no zsh.
-          if [ -z "${SHELL:-}" ] || [ ! -x "$SHELL" ]; then echo "SHELL=/bin/bash" >> "$GITHUB_ENV"; fi
+          # Terminal tests start /bin/zsh when the platform names no shell; GitHub's Ubuntu image has it, Namespace's not.
+          if [ "$RUNNER_OS" = Linux ] && [ ! -x /bin/zsh ]; then sudo apt-get install -y -qq zsh >/dev/null; fi
           if ! command -v rustup >/dev/null; then
             curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
