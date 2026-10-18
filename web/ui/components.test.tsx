@@ -6,8 +6,8 @@ describe('Button', () => {
   it('primary uses accent tokens', () => {
     render(<Button variant="primary">Send feedback</Button>);
     const b = screen.getByRole('button', { name: 'Send feedback' });
-    expect(b.className).toContain('bg-accent');
-    expect(b.className).toContain('text-on-accent');
+    expect(b.className).toContain('bg-primary');
+    expect(b.className).toContain('text-primary-foreground');
   });
 
   it('defaults to secondary and forwards props', () => {

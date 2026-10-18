@@ -1,36 +1,12 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Session } from '../api/gen/Session';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { ActivityBadge } from './ActivityBadge';
 import { useViewTracking } from './useViewTracking';
 
 vi.mock('../terminal/TerminalView', () => ({ TerminalView: () => <div /> }));
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-});
-
-const base: Session = {
-  id: 's1', projectId: 'p', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'Claude · PDT', cwd: '/r',
-  status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
-  activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false,
-};
-
-describe('ActivityBadge', () => {
-  it('names every activity and marks unseen ones', () => {
-    const { rerender, container } = render(<ActivityBadge activity="working" unseen={false} />);
-    expect(screen.getByText('Working')).toBeInTheDocument();
-    rerender(<ActivityBadge activity="needs_you" unseen />);
-    expect(screen.getByText('Needs you')).toBeInTheDocument();
-    expect(screen.getByLabelText('unseen')).toBeInTheDocument();
-    rerender(<ActivityBadge activity="idle" unseen={false} />);
-    expect(screen.queryByLabelText('unseen')).not.toBeInTheDocument();
-    rerender(<ActivityBadge activity="unknown" unseen={false} />);
-    expect(screen.getByText('Unknown')).toBeInTheDocument();
-    rerender(<ActivityBadge activity={null} unseen={false} />);
-    expect(container).toBeEmptyDOMElement();
-  });
 });
 
 function Probe({ id, polledAt }: { id: string; polledAt: number }) {

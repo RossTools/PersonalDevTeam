@@ -137,12 +137,25 @@ pattern and stays, with a comment and a test that the two blocks match.
   virtual keyboard handling) and its toasts are Sonner (React Aria's Toast is still `UNSTABLE_`). React Aria's own
   swipeable `Sheet` arrived in v1.22 and may replace the Base UI drawer once it settles. Not covered: resizable
   panes (`react-resizable-panels`). App gestures (swipe between tabs, the terminal key bar) stay ours.
-- **Touch spike first.** The aria base is three months old and React Aria doesn't document how touch drag starts on
+- **Touch spike first** (done 2026-10-17, passed on Android; findings in docs/superpowers/notes/phase-3c-touch-spike.md: drag data is `text/plain`, draggable rows carry a drag handle, no edge-swipe sheets). The aria base is three months old and React Aria doesn't document how touch drag starts on
   iOS. 3c-1 opens with a short spike in Mobile Safari on the iOS Simulator (Xcode, on the Mac) and Chrome on any
   available Android device or emulator: long-press tab menu, sidebar sheet swipe, dragging a card between two
   lists, the palette with the on-screen keyboard. (No physical iPhone; the Simulator runs the real WebKit.) If the aria base falls short,
   fall back to shadcn's default Base UI base (same component model and styling, so most of the work carries over)
   plus dnd-kit for drag and drop.
+- **Decided while building 3c-1** (plan 2026-10-17-phase-3c-1-design-system.md):
+  - Tailwind colour names follow shadcn so generated components work unchanged: `bg-primary` is our accent blue,
+    `bg-accent` the soft selected/hover fill, `bg-muted` a quiet fill, `text-muted-foreground` secondary text,
+    `text-destructive` errors. All are aliases of `--pdt-*` in `src/index.css`; `bg`, `surface`, `surface-2`, `fg`
+    and the status colours keep our names.
+  - `dark:` follows our theme rule, not shadcn's `.dark` class.
+  - The `shadcn` package isn't a dependency: its `tailwind.css` is copied to `web/ui/shadcn.css`; components are added
+    with `pnpm dlx shadcn@latest add <name> -c web`. Style: Nova.
+  - Popovers and menus share the menu layer (`--pdt-z-menu`), above dialogs, so a picker inside a dialog works.
+  - React Aria collection rows can't be wrapped in a context-menu trigger: `ListRow` reports `onMenu(point)` (right
+    click, long press, Shift+F10) and `useMenuAt` opens the menu there.
+  - React Aria runs its own long-press timer only on iOS; on Android the browser's `contextmenu` event (from a long
+    press) opens the same menu.
 - **Gallery**: `web/gallery.html`, a second Vite entry served by `pnpm --dir web dev` and left out of the production
   build. One page, every component in every variant, a theme switch. It is the living spec and the screenshot
   target for reviews.
@@ -269,8 +282,9 @@ Escape closes, focus returns to the opener. Lists: Up/Down, Enter, Home/End.
 
 ### 6.7 Phone
 
-- The sidebar becomes a `Sheet` from the left, opened by the workspace name in the header or a swipe from the left
-  edge; the work area keeps the full height.
+- The sidebar becomes a `Sheet` from the left, opened by the workspace name in the header and closed by a swipe or
+  a tap outside; the work area keeps the full height. No edge swipe to open it: the left-edge swipe is the system or
+  browser Back gesture on Android and iOS (touch spike, docs/superpowers/notes/phase-3c-touch-spike.md).
 - The rail stays at the bottom (as today) with at most five items; Settings moves into the sheet's footer.
 - Inbox and approvals are the phone's main job from Phase 7 (§8.4): designed for one hand.
 

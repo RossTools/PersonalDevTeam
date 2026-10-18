@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Button } from '@ui';
+import { Alert, Button, Select } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { parseChoice, RunMenu, useRunChoices } from './RunMenu';
@@ -23,20 +23,20 @@ export function RunBranchForm({ project, onSelectRun }: { project: Project; onSe
         start.mutate({ branch, ...parseChoice(what) });
       }}
     >
-      <select
+      <Select
         aria-label="Branch"
+        size="sm"
+        placeholder="Branch…"
+        options={(branches.data ?? []).map((b) => ({ value: b.name, label: b.local ? b.name : `${b.name} (origin)` }))}
         value={branch}
-        onChange={(e) => setBranch(e.target.value)}
-        className="rounded-pdt bg-surface border border-border text-xs px-1 py-0.5"
-      >
-        <option value="">Branch…</option>
-        {(branches.data ?? []).map((b) => (
-          <option key={b.name} value={b.name}>{b.local ? b.name : `${b.name} (origin)`}</option>
-        ))}
-      </select>
+        onChange={setBranch}
+      />
       <RunMenu label="What to run" choices={choices} value={what} onChange={setWhat} />
-      <Button type="submit" variant="ghost" aria-label="Run branch" disabled={!branch || !what || start.isPending}>Run</Button>
-      {start.isError && <p role="alert" className="w-full text-xs text-failed">{start.error.message}</p>}
+      <Button type="submit" variant="ghost" size="sm" aria-label="Run branch" disabled={!branch || !what} pending={start.isPending}>
+        Run
+      </Button>
+      {branches.isError && <Alert tone="error" className="w-full">{branches.error.message}</Alert>}
+      {start.isError && <Alert tone="error" className="w-full">{start.error.message}</Alert>}
     </form>
   );
 }

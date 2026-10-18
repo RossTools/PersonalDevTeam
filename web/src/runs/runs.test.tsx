@@ -8,6 +8,7 @@ import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
 import { RunView } from './RunView';
 
+vi.mock('../files/CodeViewer', () => ({ CodeViewer: ({ text }: { text: string }) => <pre data-testid="code">{text}</pre> }));
 vi.mock('../terminal/TerminalView', () => ({
   TerminalView: ({ url, sessionStatus }: { url?: string; sessionStatus?: string }) => (
     <div data-testid="terminal-view" data-status={sessionStatus}>{url}</div>
@@ -33,6 +34,19 @@ const config = {
   },
 };
 
+/** Opens a Select and picks the option with this label. */
+async function choose(trigger: HTMLElement, option: string) {
+  await userEvent.click(trigger);
+  await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: option }));
+}
+
+/** Answers the confirm dialog that is open with its named action. */
+async function confirmWith(action: string) {
+  const dialog = await screen.findByRole('alertdialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: action }));
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+}
+
 describe('RunBranchForm', () => {
   it('runs a branch that has no worktree yet', async () => {
     const calls = stubApi({
@@ -42,8 +56,8 @@ describe('RunBranchForm', () => {
     });
     const onSelectRun = vi.fn();
     renderWithQuery(<RunBranchForm project={project} onSelectRun={onSelectRun} />);
-    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Branch' }), 'feature/y');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'What to run' }), 'run:web');
+    await choose(await screen.findByRole('button', { name: /^Branch/ }), 'feature/y (origin)');
+    await choose(screen.getByRole('button', { name: /What to run/ }), 'web');
     await userEvent.click(screen.getByRole('button', { name: 'Run branch' }));
     await waitFor(() => expect(onSelectRun).toHaveBeenCalledWith('n'));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ branch: 'feature/y', name: 'web', kind: 'run' });
@@ -56,7 +70,7 @@ describe('RunView', () => {
     renderWithQuery(<RunView run={run({})} onRemoved={() => {}} />);
     expect(screen.getByRole('link', { name: 'https://box.t.ts.net:8401/' })).toHaveAttribute('target', '_blank');
     expect(screen.getByTestId('terminal-view')).toHaveTextContent('/api/runs/r1/pty/command');
-    await userEvent.click(screen.getByRole('button', { name: 'Setup' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Setup' }));
     expect(screen.getByTestId('terminal-view')).toHaveTextContent('/api/runs/r1/pty/setup');
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await waitFor(() => expect(calls.some((c) => c.path === '/api/runs/r1/stop')).toBe(true));
@@ -70,13 +84,16 @@ describe('RunView', () => {
       'GET /api/projects/p/runs': [],
     });
     const onRemoved = vi.fn();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderWithQuery(<RunView run={run({ state: 'failed', error: 'setup exited with code 3', exitCode: 3 })} onRemoved={onRemoved} />);
     expect(screen.getByRole('alert')).toHaveTextContent('setup exited with code 3');
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Reset data' }));
+    await confirmWith('Reset data');
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/runs/r1/reset-data')).toBe(true));
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/runs/r1/restart')).toBe(true));
     await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await confirmWith('Remove run');
     await waitFor(() => expect(onRemoved).toHaveBeenCalled());
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(
       expect.arrayContaining(['POST /api/runs/r1/reset-data', 'POST /api/runs/r1/restart', 'DELETE /api/runs/r1']),
@@ -91,12 +108,35 @@ describe('RunView', () => {
       'POST /api/runs/r1/restart': () =>
         ++posts === 1 ? new Reply(409, { code: 'too_many_runs', message: 'Stop "api · b1" to start this one?' }) : run({}),
     });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Stop "api · b1" to start this one?' })).toBeInTheDocument();
+    await confirmWith('Stop it and start');
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/runs/r1/restart')).toHaveLength(2));
-    expect(confirm).toHaveBeenCalledWith('Stop "api · b1" to start this one?');
     expect(calls.filter((c) => c.path === '/api/runs/r1/restart').map((c) => c.body)).toEqual([{}, { stopRunId: 'oldest' }]);
+  });
+
+  it('asks before resetting data or removing, and does nothing when cancelled', async () => {
+    const calls = stubApi({ 'GET /api/projects/p/runs': [] });
+    const onRemoved = vi.fn();
+    renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={onRemoved} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Reset data' }));
+    const reset = await screen.findByRole('alertdialog', { name: 'Reset the data of web?' });
+    expect(reset).toHaveTextContent('(/d)');
+    await confirmWith('Cancel');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Remove web · main?' })).toHaveTextContent(/data folder and the checkout stay/);
+    await confirmWith('Cancel');
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+    expect(onRemoved).not.toHaveBeenCalled();
+  });
+
+  it('shows a failed reset', async () => {
+    stubApi({ 'GET /api/projects/p/runs': [], 'POST /api/runs/r1/reset-data': new Reply(500, { code: 'internal', message: 'permission denied' }) });
+    renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Reset data' }));
+    await confirmWith('Reset data');
+    expect(await screen.findByRole('alert')).toHaveTextContent('permission denied');
   });
 
   it('follows the run state with its tab, and marks a finished step finished', async () => {
@@ -106,7 +146,7 @@ describe('RunView', () => {
     rerender(<RunView run={run({ state: 'ready' })} onRemoved={() => {}} />);
     expect(screen.getByTestId('terminal-view')).toHaveTextContent('/pty/command');
     expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-status', 'running');
-    await userEvent.click(screen.getByRole('button', { name: 'Setup' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Setup' }));
     expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-status', 'finished');
     rerender(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
     expect(screen.getByTestId('terminal-view')).toHaveTextContent('/pty/command');
@@ -116,7 +156,7 @@ describe('RunView', () => {
   it('starts clean for another run when keyed by run id', async () => {
     stubApi({ 'GET /api/projects/p/runs': [], 'POST /api/runs/r1/stop': new Reply(409, { code: 'run_stopping', message: 'still stopping' }) });
     const { rerender } = renderWithQuery(<RunView key="r1" run={run({})} onRemoved={() => {}} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Setup' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Setup' }));
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('still stopping');
     rerender(<RunView key="r2" run={run({ id: 'r2' })} onRemoved={() => {}} />);
@@ -148,9 +188,9 @@ describe('ProjectSettingsPanel', () => {
           : { agentCredentials: 'pass_through', effectiveCredentials: 'pass_through', runOverrides: (c.body as { runOverrides: string }).runOverrides },
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);
-    expect(await screen.findByText(/name = "web"/)).toBeInTheDocument();
+    expect(await screen.findByTestId('code')).toHaveTextContent('name = "web"');
     await userEvent.type(screen.getByRole('textbox', { name: 'Host overrides (TOML)' }), 'bad');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Agent credentials' }), 'pass_through');
+    await choose(screen.getByRole('button', { name: /Agent credentials/ }), 'Pass through');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('not valid');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));

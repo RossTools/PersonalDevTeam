@@ -9,7 +9,7 @@ import { PtySocket, ptyUrl, type PtyStatus } from './ptySocket';
 import { cssVar, terminalTheme } from './theme';
 import { NEWLINE, isShiftEnter, promptSequence, shouldOpenLink } from './input';
 import { linkUnderliner } from './linkSpan';
-import { Button } from '@ui';
+import { Composer } from '../common/Composer';
 
 /** The least time between two automatic reattach attempts of one terminal. */
 const RETRY_EVERY_MS = 5000;
@@ -228,54 +228,20 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
           <div ref={host} data-testid="terminal" className="h-full w-full" />
         </div>
         {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
-        {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted">Session ended.</p>}
+        {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
       </div>
       {composing && (
         <Composer
+          submitOn="mod-enter"
+          mono
           onSend={sendPrompt}
-          onClose={() => {
+          onCancel={() => {
             onComposeClose?.();
             termRef.current?.focus();
           }}
         />
       )}
       <KeyBar onKey={sendKey} />
-    </div>
-  );
-}
-
-/** A multi-line prompt box: Enter adds a line, Cmd/Ctrl+Enter (or Send) sends, Escape closes. */
-function Composer({ onSend, onClose }: { onSend: (text: string) => void; onClose: () => void }) {
-  const [text, setText] = useState('');
-  const send = () => {
-    if (!text.trim()) return;
-    onSend(text);
-    setText('');
-  };
-  return (
-    <div className="flex shrink-0 items-end gap-2 border-t border-border bg-surface p-2">
-      <textarea
-        aria-label="Prompt"
-        autoFocus
-        rows={3}
-        value={text}
-        placeholder="Write a prompt. Enter adds a line; ⌘/Ctrl+Enter sends."
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            send();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            onClose();
-          }
-        }}
-        className="min-h-16 flex-1 resize-y rounded-pdt border border-border bg-bg px-2 py-1.5 font-mono text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
-      <div className="flex flex-col gap-1">
-        <Button variant="primary" disabled={!text.trim()} onClick={send}>Send</Button>
-        <Button variant="ghost" onClick={onClose}>Close</Button>
-      </div>
     </div>
   );
 }
@@ -306,7 +272,7 @@ function KeyBar({ onKey }: { onKey: (seq: string) => void }) {
           // Don't take focus from the terminal, or the soft keyboard would close on each tap.
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => onKey(k.seq)}
-          className="min-h-11 min-w-11 shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent-soft"
+          className="min-h-11 min-w-11 shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent"
         >
           {k.label}
         </button>

@@ -1,5 +1,3 @@
-import type { Status } from '@ui';
-import type { Activity } from '../api/gen/Activity';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
 
@@ -18,39 +16,6 @@ export function findTab(workspaces: Workspace[], item: Item): { workspace: Works
     if (tab) return { workspace, tab };
   }
   return null;
-}
-
-const RANK: Record<Activity, number> = { needs_you: 3, working: 2, idle: 1, unknown: 0 };
-
-/** The most urgent activity: needs you, then working, then idle. */
-export function worstActivity(list: (Activity | null | undefined)[]): Activity | null {
-  let worst: Activity | null = null;
-  for (const a of list) if (a && (worst === null || RANK[a] > RANK[worst])) worst = a;
-  return worst;
-}
-
-/** The status-dot colour for an activity (same colours as the activity badge). */
-export function activityStatus(a: Activity | null): Status | null {
-  switch (a) {
-    case 'needs_you': return 'waiting';
-    case 'working': return 'running';
-    case 'idle':
-    case 'unknown': return 'idle';
-    default: return null;
-  }
-}
-
-export type AgentState = 'Needs you' | 'Working' | 'Done' | 'Idle' | 'Unknown';
-
-/** herdr-style state words: an idle agent nobody has looked at since it finished is "Done". */
-export function agentState(activity: Activity | null, unseen: boolean): AgentState | null {
-  switch (activity) {
-    case 'needs_you': return 'Needs you';
-    case 'working': return 'Working';
-    case 'idle': return unseen ? 'Done' : 'Idle';
-    case 'unknown': return 'Unknown';
-    default: return null;
-  }
 }
 
 /** Per-device choice: the workspace on screen and the last tab looked at in each workspace. */

@@ -3,7 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { PanelBottom } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
-import { Button } from '@ui';
+import { Button, EmptyState, IconButton, List, ListRow } from '@ui';
+import { ProjectKey } from '../common/BranchChip';
+import { runAction } from '../common/useAction';
 import { AddProjectForm } from '../projects/AddProjectForm';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
 import { ProjectPage } from '../projects/ProjectPage';
@@ -70,7 +72,7 @@ export function AppShell() {
       case 'newTab': setChooserOpen(true); break;
       case 'switcher':
         // Focus the current workspace in the sidebar; Up/Down and Enter pick another.
-        requestAnimationFrame(() => document.querySelector<HTMLElement>('#workspace-list [aria-current=true], #workspace-list [data-row]')?.focus());
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('#workspace-list [data-current], #workspace-list [role=row]')?.focus());
         break;
       case 'help': setHelpOpen(true); break;
       case 'tab': if (w?.tabs[a.index]) ws.selectTab(w.tabs[a.index]); break;
@@ -81,7 +83,7 @@ export function AppShell() {
           ws.selectTab(w.tabs[(t.position + by + w.tabs.length) % w.tabs.length]);
         }
         break;
-      case 'close': if (t) void ws.closeTab(t); break;
+      case 'close': if (t) void runAction(() => ws.closeTab(t)); break;
       case 'rename': if (t?.sessionId) setRenamingTabId(t.id); break;
       case 'needsYou': {
         const next = nextNeedingYou(ws.workspaces, t?.id ?? null, (item) => ws.info(item)?.activity === 'needs_you');
@@ -108,17 +110,17 @@ export function AppShell() {
   const bottomProject = ws.projects.find((p) => p.id === (current?.projectId ?? ws.workspace?.projectId)) ?? ws.projects[0] ?? null;
 
   return (
-    <div className="h-full overflow-hidden flex flex-col-reverse md:flex-row bg-bg text-fg">
+    <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail active={view} onSelect={setView} />
       <aside aria-label={`${label} list`} className="md:w-72 max-h-[40vh] md:max-h-none border-border md:border-r flex flex-col min-h-0">
-        <h2 className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">{label}</h2>
+        <h2 className="px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground">{label}</h2>
         <div className="flex-1 overflow-auto px-1">
           {view === 'sessions' ? (
             <>
               {ws.projects.length === 0 && (
-                <p className="px-2 py-2 text-xs text-muted">
-                  No projects yet. <button type="button" className="underline" onClick={() => setView('settings')}>Add one in Settings</button>.
-                </p>
+                <EmptyState action={<Button size="sm" onClick={() => setView('settings')}>Add one in Settings</Button>}>
+                  No projects yet.
+                </EmptyState>
               )}
               <Sidebar
                 ws={ws}
@@ -132,20 +134,21 @@ export function AppShell() {
           ) : view === 'settings' ? (
             <>
               <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
-                <button type="button" aria-current={settingsProjectId === null ? 'true' : undefined} onClick={() => setSettingsProjectId(null)}
-                  className={`text-left px-2 py-1 rounded-pdt text-sm ${settingsProjectId === null ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>This host</button>
-                <h3 className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-muted">Projects</h3>
-                {ws.projects.map((p) => (
-                  <button key={p.id} type="button" title={p.repoPath} aria-current={settingsProjectId === p.id ? 'true' : undefined} onClick={() => setSettingsProjectId(p.id)}
-                    className={`text-left px-2 py-1 rounded-pdt text-sm truncate ${settingsProjectId === p.id ? 'bg-accent-soft' : 'hover:bg-surface-2'}`}>
-                    <span className="mr-2 font-mono text-[11px] text-muted">{p.key}</span>{p.name}
-                  </button>
-                ))}
+                <List aria-label="Host" onAction={() => setSettingsProjectId(null)}>
+                  <ListRow id="host" title="This host" current={settingsProjectId === null} />
+                </List>
+                <h3 className="px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">Projects</h3>
+                <List aria-label="Projects" onAction={setSettingsProjectId}>
+                  {ws.projects.map((p) => (
+                    <ListRow key={p.id} id={p.id} title={p.name} textValue={p.name} current={settingsProjectId === p.id}
+                      leading={<ProjectKey projectKey={p.key} />} />
+                  ))}
+                </List>
               </nav>
               <AddProjectForm onAdded={(p) => setSettingsProjectId(p.id)} />
             </>
           ) : (
-            <p className="px-2 text-xs text-muted">{PHASE_NOTE[view]}</p>
+            <EmptyState>{PHASE_NOTE[view]}</EmptyState>
           )}
         </div>
       </aside>
@@ -158,9 +161,9 @@ export function AppShell() {
             setRenamingTabId={setRenamingTabId}
             onNewTab={() => setChooserOpen(true)}
             trailing={
-              <Button variant="ghost" aria-label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
-                <PanelBottom size={16} aria-hidden />
-              </Button>
+              <IconButton label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
+                <PanelBottom aria-hidden />
+              </IconButton>
             }
           />
         )}
@@ -171,10 +174,11 @@ export function AppShell() {
             onClose={() => setAddingProject(false)}
             onAdded={(p) => {
               // Show the new project's workspace once the list includes it.
-              void api.listWorkspaces().then((list) => {
+              void runAction(async () => {
+                const list = await api.listWorkspaces();
                 const home = list.find((w) => w.projectId === p.id);
                 if (home) ws.selectWorkspace(home.id);
-                void ws.refresh();
+                await ws.refresh();
               });
             }}
           />
@@ -190,11 +194,9 @@ export function AppShell() {
             ) : current?.session ? (
               <SessionView key={current.session.id} session={current.session} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} branchLink={branchLink} />
             ) : ws.projects.length === 0 ? (
-              <p className="p-4 text-sm text-muted">Add a project to get started.</p>
+              <EmptyState>Add a project to get started.</EmptyState>
             ) : (
-              <p className="p-4 text-sm text-muted">
-                {ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}
-              </p>
+              <EmptyState>{ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}</EmptyState>
             )}
           </div>
         )}

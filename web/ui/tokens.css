@@ -13,6 +13,26 @@
   --pdt-waiting: #b45309;
   --pdt-failed: #dc2626;
   --pdt-idle: #6b7080;
+  --pdt-running-soft: rgba(21, 128, 61, 0.1);
+  --pdt-waiting-soft: rgba(180, 83, 9, 0.1);
+  --pdt-failed-soft: rgba(220, 38, 38, 0.08);
+  --pdt-diff-add: rgba(21, 128, 61, 0.09);
+  --pdt-diff-del: rgba(220, 38, 38, 0.08);
+  --pdt-diff-add-strong: rgba(21, 128, 61, 0.22);
+  --pdt-diff-del-strong: rgba(220, 38, 38, 0.2);
+  --pdt-backdrop: rgba(15, 16, 20, 0.25);
+  --pdt-shadow-popover: 0 4px 16px rgba(15, 16, 20, 0.1);
+  --pdt-shadow-dialog: 0 12px 40px rgba(15, 16, 20, 0.18);
+  /* Not per theme: layers, control heights, motion. */
+  --pdt-z-popover: 30;
+  --pdt-z-dialog: 40;
+  --pdt-z-menu: 50;
+  --pdt-z-toast: 60;
+  --pdt-control-sm: 24px;
+  --pdt-control-md: 28px;
+  --pdt-control-touch: 44px;
+  --pdt-duration: 120ms;
+  --pdt-ease: cubic-bezier(0.2, 0, 0, 1);
   --pdt-radius: 6px;
   --pdt-font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --pdt-font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -35,6 +55,8 @@
   color-scheme: light;
 }
 
+/* The dark palette is written twice (system dark unless the user picked light; and the user's pick). tokens.test.ts
+   checks the two copies match. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --pdt-bg: #0e0f12;
@@ -51,6 +73,16 @@
     --pdt-waiting: #f59e0b;
     --pdt-failed: #f87171;
     --pdt-idle: #8a8f9c;
+    --pdt-running-soft: rgba(52, 211, 153, 0.12);
+    --pdt-waiting-soft: rgba(245, 158, 11, 0.12);
+    --pdt-failed-soft: rgba(248, 113, 113, 0.12);
+    --pdt-diff-add: rgba(52, 211, 153, 0.1);
+    --pdt-diff-del: rgba(248, 113, 113, 0.1);
+    --pdt-diff-add-strong: rgba(52, 211, 153, 0.24);
+    --pdt-diff-del-strong: rgba(248, 113, 113, 0.24);
+    --pdt-backdrop: rgba(0, 0, 0, 0.5);
+    --pdt-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
+    --pdt-shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
     --pdt-term-black: #3a3d47;
     --pdt-term-red: #f87171;
     --pdt-term-green: #34d399;
@@ -86,6 +118,16 @@
   --pdt-waiting: #f59e0b;
   --pdt-failed: #f87171;
   --pdt-idle: #8a8f9c;
+  --pdt-running-soft: rgba(52, 211, 153, 0.12);
+  --pdt-waiting-soft: rgba(245, 158, 11, 0.12);
+  --pdt-failed-soft: rgba(248, 113, 113, 0.12);
+  --pdt-diff-add: rgba(52, 211, 153, 0.1);
+  --pdt-diff-del: rgba(248, 113, 113, 0.1);
+  --pdt-diff-add-strong: rgba(52, 211, 153, 0.24);
+  --pdt-diff-del-strong: rgba(248, 113, 113, 0.24);
+  --pdt-backdrop: rgba(0, 0, 0, 0.5);
+  --pdt-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --pdt-shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
   --pdt-term-black: #3a3d47;
   --pdt-term-red: #f87171;
   --pdt-term-green: #34d399;
