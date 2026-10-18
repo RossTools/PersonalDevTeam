@@ -23,7 +23,7 @@ const run: Run = {
 };
 
 const tab = (id: string, workspaceId: string, position: number, item: { sessionId?: string; runId?: string }): Tab => ({
-  id, workspaceId, position, sessionId: item.sessionId ?? null, runId: item.runId ?? null,
+  id, workspaceId, position, sessionId: item.sessionId ?? null, runId: item.runId ?? null, ticketId: null,
 });
 
 const workspaces: Workspace[] = [

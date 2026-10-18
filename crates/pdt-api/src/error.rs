@@ -5,10 +5,11 @@ use axum::response::{IntoResponse, Response};
 use pdt_agents::PtyError;
 use pdt_core::project::ValidationError;
 use pdt_core::session::SessionValidationError;
+use pdt_core::ticket::TicketValidationError;
 use pdt_core::workspace::WorkspaceValidationError;
 use pdt_core::worktree::WorktreeValidationError;
 use pdt_git::GitError;
-use pdt_store::StoreError;
+use pdt_store::{StoreError, TicketError};
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -72,6 +73,28 @@ impl From<WorkspaceValidationError> for ApiError {
 impl From<SessionValidationError> for ApiError {
     fn from(e: SessionValidationError) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<TicketValidationError> for ApiError {
+    fn from(e: TicketValidationError) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<TicketError> for ApiError {
+    fn from(e: TicketError) -> Self {
+        match e {
+            TicketError::NotFound(what) => Self::not_found(what),
+            TicketError::Invalid(_) => Self::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()),
+            TicketError::Cycle(_) => Self::new(StatusCode::CONFLICT, "link_cycle", e.to_string()),
+            TicketError::Active(ref key) => Self::new(
+                StatusCode::CONFLICT,
+                "ticket_active",
+                format!("{key} has an active attempt; abandon it or finish the work first"),
+            ),
+            TicketError::Store(s) => s.into(),
+        }
     }
 }
 

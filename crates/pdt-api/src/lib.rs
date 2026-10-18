@@ -15,6 +15,7 @@ mod runconfig;
 mod runs;
 pub mod secrets;
 mod sessions;
+mod tickets;
 pub mod update;
 mod workspaces;
 mod worktrees;

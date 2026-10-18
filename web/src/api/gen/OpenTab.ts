@@ -3,7 +3,7 @@
 /**
  * Opens a tab in a workspace, or moves the item's existing tab there.
  */
-export type OpenTab = { sessionId?: string, runId?: string, 
+export type OpenTab = { sessionId?: string, runId?: string, ticketId?: string, 
 /**
  * Index in the workspace's tabs (clamped); the end when absent.
  */
