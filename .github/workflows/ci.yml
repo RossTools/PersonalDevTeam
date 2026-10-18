@@ -12,8 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        # Set by update-prs.yml after it brings a PR's branch up to date: its push (made with GITHUB_TOKEN) starts no
-        # pull_request run, so it dispatches this workflow on the branch and `changes` picks jobs as for that PR.
+        # Set by update-prs.yml when its update of a PR's branch starts no runnable pull_request run (no PR updater
+        # App, so the push was made with GITHUB_TOKEN): it dispatches this workflow on the branch and `changes` picks
+        # jobs as for that PR.
         description: Pull request whose branch this run checks (picks the jobs as a pull_request run would)
         required: false
         default: ""

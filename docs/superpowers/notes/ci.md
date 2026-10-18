@@ -25,11 +25,24 @@ platform-specific code (`cfg(windows)`, process spawning, paths).
 
 The "Main" ruleset requires a PR to be up to date with main, so a merge leaves every other auto-merge PR "behind".
 `.github/workflows/update-prs.yml` runs on each push to main: for every open auto-merge PR from this repo that main
-has moved past, it calls GitHub's update-branch (merging main in, with `expected_head_sha` so it never races a push)
-and then dispatches `ci.yml` on the branch with `pr=<n>`. The dispatch is needed because a push made with
-`GITHUB_TOKEN` starts no `pull_request` run; with `pr` set, the `changes` job reads that PR's files and labels, so
-the dispatched run picks the same jobs a PR run would, and its checks land on the new head. A PR whose update
-conflicts is skipped with a warning in the run summary.
+has moved past, it calls GitHub's update-branch (merging main in, with `expected_head_sha` so it never races a push).
+A PR whose update conflicts is skipped with a warning in the run summary.
+
+The update is made as the **PR updater** GitHub App, so its push starts the PR's normal CI run, which shows on the
+PR. A push made with `GITHUB_TOKEN` instead starts a run GitHub holds for approval ("action required"), which never
+reports the required checks. So after each update the workflow looks for the PR's CI run on the new head; if there
+is none or it is held, it dispatches `ci.yml` on the branch with `pr=<n>` (the `changes` job then reads that PR's
+files and labels and picks the same jobs a PR run would; its checks land on the new head, but the PR page does not
+show them). That fallback is what runs while the App is not set up.
+
+The App (one-time setup, in the ross-game-tools org):
+- Settings → Developer settings → GitHub Apps → New GitHub App. Webhook off. Repository permissions: Contents
+  read & write, Pull requests read & write, Workflows read & write (merging main in can bring workflow changes).
+  Only on this account.
+- Install it on PersonalDevTeam only. Generate a private key.
+- Repo variable `PR_UPDATER_CLIENT_ID` (the App's Client ID) and secret `PR_UPDATER_PRIVATE_KEY` (the .pem):
+  `gh variable set PR_UPDATER_CLIENT_ID -b <id>`, `gh secret set PR_UPDATER_PRIVATE_KEY < key.pem` (the agents'
+  fine-grained token cannot set them). Unset the variable to go back to the fallback.
 
 ## The Mac mini runner
 - Lives in `~/actions-runner-pdt`, runs as the user (LaunchAgent `actions.runner.ross-game-tools-PersonalDevTeam.*`,
