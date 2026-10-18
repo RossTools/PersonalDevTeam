@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Maximize2, Minimize2, Plus } from 'lucide-react';
 import { useState } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { EmptyState, IconButton, SegmentedControl } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';

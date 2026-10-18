@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, FolderGit2, GitBranch } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { CommandList, type CommandItem } from '@ui/CommandList';
 import { Popover } from '@ui/Popover';
 import { api } from '../api/client';

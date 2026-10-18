@@ -1,5 +1,5 @@
 import type { AriaRole, ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 
 export type BannerTone = 'neutral' | 'accent' | 'running' | 'waiting' | 'failed';
 

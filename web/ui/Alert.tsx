@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { CircleAlertIcon, InfoIcon, TriangleAlertIcon } from 'lucide-react';
 import { Alert as AlertPrimitive, AlertAction, AlertDescription, AlertTitle } from './primitives/alert';
 

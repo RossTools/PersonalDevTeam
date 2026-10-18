@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { type VariantProps } from "class-variance-authority"
-import { cn } from "cn"
+import { cn } from '@ui/lib/utils'
 import {
   ToggleButtonGroup as ToggleGroupPrimitive,
   ToggleButton as TogglePrimitive,

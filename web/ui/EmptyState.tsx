@@ -1,5 +1,5 @@
 import type { AriaRole, ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Empty, EmptyContent, EmptyDescription, EmptyMedia } from './primitives/empty';
 
 /**

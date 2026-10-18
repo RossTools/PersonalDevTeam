@@ -111,6 +111,9 @@ export interface ListProps<T extends object> {
   'aria-label': string;
   /** Dynamic rows: `items` plus a render function as `children`. Each item needs an `id` (or `key`). */
   items?: Iterable<T>;
+  /** With `items`: values the row render function reads from outside the items (current tab, activity…); rows re-render
+   *  when they change. React Aria caches dynamic rows by item otherwise. */
+  dependencies?: readonly unknown[];
   children: ReactNode | ((item: T) => ReactNode);
   /** `none` (default): rows act (`onAction`), the current one is marked with `ListRow current`. `single`: click selects. */
   selectionMode?: 'none' | 'single';
@@ -209,6 +212,7 @@ export function List<T extends object>({
           {...rest}
           {...selection}
           items={items}
+          dependencies={rest.dependencies ? [...rest.dependencies] : undefined}
           onAction={onAction ? (key: Key) => onAction(String(key)) : undefined}
           renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
           dragAndDropHooks={dragKind || onDrop ? dragAndDropHooks : undefined}

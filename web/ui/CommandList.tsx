@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { useFilter, type AutocompleteProps } from 'react-aria-components';
 import {
   Command,

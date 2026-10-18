@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Dialog as AriaDialog, Heading } from 'react-aria-components';
 import { Popover as PopoverPrimitive, PopoverTrigger } from './primitives/popover';
 import { pressableChild } from './lib/pressableChild';

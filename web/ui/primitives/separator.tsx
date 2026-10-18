@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from '@ui/lib/utils'
 import { Separator as SeparatorPrimitive } from "react-aria-components"
 
 function Separator({

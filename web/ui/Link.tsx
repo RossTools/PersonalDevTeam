@@ -1,7 +1,7 @@
 import type { AriaAttributes, ReactNode } from 'react';
 import { Link as LinkPrimitive, type PressEvent } from 'react-aria-components';
 import { ExternalLinkIcon } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 
 export interface LinkProps extends AriaAttributes {
   children: ReactNode;

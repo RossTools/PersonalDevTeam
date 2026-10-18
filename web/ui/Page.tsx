@@ -91,7 +91,7 @@ export function SettingsRow({ label, description, htmlFor, children, className }
       aria-describedby={description != null ? descId : undefined}
       className={cn('flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6', className)}
     >
-      <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="flex shrink-0 flex-col gap-0.5">
         {htmlFor ? (
           <label id={labelId} htmlFor={htmlFor} className={labelClass}>{label}</label>
         ) : (
@@ -99,7 +99,7 @@ export function SettingsRow({ label, description, htmlFor, children, className }
         )}
         {description != null && <p id={descId} className="text-xs text-muted-foreground">{description}</p>}
       </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">{children}</div>
     </div>
   );
 }

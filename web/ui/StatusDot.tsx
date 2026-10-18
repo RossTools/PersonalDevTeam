@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 
 /** running = working (green), waiting = needs you (amber), failed (red), idle (grey), ended = hollow grey ring. */
 export type Status = 'running' | 'waiting' | 'failed' | 'idle' | 'ended';

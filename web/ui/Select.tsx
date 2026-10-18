@@ -1,5 +1,5 @@
 import type { Key } from 'react-aria-components';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Select as SelectRoot, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ui/primitives/select';
 import { useFieldControl } from './fieldContext';
 

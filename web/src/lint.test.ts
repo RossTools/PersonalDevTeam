@@ -45,6 +45,10 @@ describe('design system rules', () => {
     expect(offenders(/\bwindow\.confirm\(|\bconfirm\(\s*['"`]/)).toEqual([]);
   });
 
+  it("merges classes with web/ui/lib/utils' cn, which knows our theme names", () => {
+    expect(offenders(/from ['"]cn['"]/)).toEqual([]);
+  });
+
   it('keeps React Aria, Base UI and the primitives behind @ui', () => {
     expect(
       offenders(/from ['"](react-aria-components|react-aria|react-stately|@base-ui\/react[^'"]*|@ui\/primitives[^'"]*)['"]/, (p) => !p.startsWith('ui/')),

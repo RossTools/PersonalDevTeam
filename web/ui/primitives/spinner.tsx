@@ -1,4 +1,4 @@
-import { cn } from "cn"
+import { cn } from '@ui/lib/utils'
 import { Loader2Icon } from "lucide-react"
 
 /** A spinning icon. `role="status"` + label unless it's decorative (inside a pending Button, which announces itself). */

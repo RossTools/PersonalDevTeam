@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Alert } from '@ui/Alert';
 import { Button } from '@ui/Button';
 import { Textarea } from '@ui/Textarea';

@@ -1,7 +1,7 @@
 "use client"
 
 import { cva, type VariantProps } from "class-variance-authority"
-import { cn } from "cn"
+import { cn } from '@ui/lib/utils'
 import {
   ToggleButton as TogglePrimitive,
   type ToggleButtonProps,

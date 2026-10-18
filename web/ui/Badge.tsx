@@ -1,5 +1,5 @@
 import type { HTMLAttributes, ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Badge as BadgePrimitive } from './primitives/badge';
 
 export type BadgeTone = 'neutral' | 'running' | 'waiting' | 'failed' | 'accent';

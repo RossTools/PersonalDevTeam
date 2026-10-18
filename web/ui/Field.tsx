@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Label } from '@ui/primitives/label';
 import { FieldDescription, FieldError } from '@ui/primitives/field';
 import { FieldContext } from './fieldContext';

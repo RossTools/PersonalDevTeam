@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import {
   Dialog as DialogPrimitive,
   DialogDescription,

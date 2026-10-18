@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Field, Section, Select, Skeleton, Textarea } from '@ui';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { Project } from '../api/gen/Project';
-import { CodeViewer } from '../files/CodeViewer';
+import { CodeViewer } from '../files/LazyCodeViewer';
 
 /** The Select's value for "no override: use the host setting" (its empty value would show the placeholder). */
 const HOST = 'host';

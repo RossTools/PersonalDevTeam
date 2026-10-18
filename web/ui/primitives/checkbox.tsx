@@ -1,6 +1,6 @@
 "use client"
 
-import { cn } from "cn"
+import { cn } from '@ui/lib/utils'
 import {
   Checkbox as CheckboxPrimitive,
   composeRenderProps,

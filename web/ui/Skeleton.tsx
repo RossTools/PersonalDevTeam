@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Skeleton as SkeletonPrimitive } from '@ui/primitives/skeleton';
 
 export interface SkeletonProps {

@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { StatusDot } from '@ui/StatusDot';
 import type { Activity } from '../api/gen/Activity';
 import type { RunState } from '../api/gen/RunState';

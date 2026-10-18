@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { File, FileQuestion, Folder, FolderOpen } from 'lucide-react';
 import { Alert, Chip, EmptyState, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Project } from '../api/gen/Project';
 import { PlacePicker, type Place } from '../common/PlacePicker';
-import { CodeViewer } from './CodeViewer';
+import { CodeViewer } from './LazyCodeViewer';
 
 /** The folder view's state: which checkout, which folders are open, which file is shown. */
 export function useFolderView(projects: Project[], initial: Place | null) {

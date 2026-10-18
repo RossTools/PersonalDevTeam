@@ -1,5 +1,5 @@
 import { useState, type ReactElement, type ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { DialogTrigger } from 'react-aria-components';
 import { XIcon } from 'lucide-react';
 import {

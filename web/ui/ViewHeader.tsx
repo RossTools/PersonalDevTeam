@@ -32,9 +32,9 @@ export function ViewHeader({ title, titleTooltip, leading, meta, actions, classN
     >
       <div className="flex min-w-0 flex-[1_1_12rem] items-center gap-2">
         {leading != null && <span className="flex shrink-0 items-center">{leading}</span>}
-        <h2 className="min-w-0 shrink truncate font-medium" title={titleTooltip}>{title}</h2>
+        <h2 className="min-w-0 max-w-[60%] shrink-0 truncate font-medium" title={titleTooltip}>{title}</h2>
         {meta != null && (
-          <div className="flex min-w-0 shrink items-center gap-2 truncate text-xs text-muted-foreground">{meta}</div>
+          <div className="flex min-w-0 flex-1 items-center gap-2 truncate text-xs text-muted-foreground">{meta}</div>
         )}
       </div>
       {actions != null && <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>}

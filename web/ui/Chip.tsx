@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 
 const base =
   'inline-flex h-5 max-w-full min-w-0 shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 font-mono text-meta text-foreground [&>svg]:size-3 [&>svg]:shrink-0 [&>svg]:text-muted-foreground';

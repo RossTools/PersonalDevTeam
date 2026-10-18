@@ -1,7 +1,7 @@
 import { useRef, type DragEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { ContextMenu, IconButton, Kbd } from '@ui';
 import { api } from '../api/client';
 import type { Tab } from '../api/gen/Tab';

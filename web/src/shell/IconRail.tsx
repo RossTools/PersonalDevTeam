@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { IconButton } from '@ui';
 import { VIEWS, type ViewId } from './views';
 

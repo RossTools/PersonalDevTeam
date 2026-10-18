@@ -1,5 +1,5 @@
 import { GitBranch } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { Chip } from '@ui/Chip';
 import { MenuButton, type MenuEntry } from '@ui/Menu';
 import { branchUrl, compareUrl } from '../projects/github';

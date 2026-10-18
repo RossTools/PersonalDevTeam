@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Key } from 'react-aria-components';
-import { cn } from 'cn';
+import { cn } from '@ui/lib/utils';
 import { ToggleGroup, ToggleGroupItem } from '@ui/primitives/toggle-group';
 
 export interface SegmentedOption<V extends string = string> {
