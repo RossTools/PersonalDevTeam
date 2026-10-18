@@ -9,7 +9,7 @@ import { PtySocket, ptyUrl, type PtyStatus } from './ptySocket';
 import { cssVar, terminalTheme } from './theme';
 import { NEWLINE, isShiftEnter, promptSequence, shouldOpenLink } from './input';
 import { linkUnderliner } from './linkSpan';
-import { Button } from '@ui';
+import { Composer } from '../common/Composer';
 
 /** The least time between two automatic reattach attempts of one terminal. */
 const RETRY_EVERY_MS = 5000;
@@ -232,50 +232,16 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       </div>
       {composing && (
         <Composer
+          submitOn="mod-enter"
+          mono
           onSend={sendPrompt}
-          onClose={() => {
+          onCancel={() => {
             onComposeClose?.();
             termRef.current?.focus();
           }}
         />
       )}
       <KeyBar onKey={sendKey} />
-    </div>
-  );
-}
-
-/** A multi-line prompt box: Enter adds a line, Cmd/Ctrl+Enter (or Send) sends, Escape closes. */
-function Composer({ onSend, onClose }: { onSend: (text: string) => void; onClose: () => void }) {
-  const [text, setText] = useState('');
-  const send = () => {
-    if (!text.trim()) return;
-    onSend(text);
-    setText('');
-  };
-  return (
-    <div className="flex shrink-0 items-end gap-2 border-t border-border bg-surface p-2">
-      <textarea
-        aria-label="Prompt"
-        autoFocus
-        rows={3}
-        value={text}
-        placeholder="Write a prompt. Enter adds a line; ⌘/Ctrl+Enter sends."
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            send();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            onClose();
-          }
-        }}
-        className="min-h-16 flex-1 resize-y rounded-pdt border border-border bg-bg px-2 py-1.5 font-mono text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
-      <div className="flex flex-col gap-1">
-        <Button variant="primary" disabled={!text.trim()} onClick={send}>Send</Button>
-        <Button variant="ghost" onClick={onClose}>Close</Button>
-      </div>
     </div>
   );
 }

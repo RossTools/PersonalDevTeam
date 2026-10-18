@@ -143,6 +143,19 @@ pattern and stays, with a comment and a test that the two blocks match.
   lists, the palette with the on-screen keyboard. (No physical iPhone; the Simulator runs the real WebKit.) If the aria base falls short,
   fall back to shadcn's default Base UI base (same component model and styling, so most of the work carries over)
   plus dnd-kit for drag and drop.
+- **Decided while building 3c-1** (plan 2026-10-17-phase-3c-1-design-system.md):
+  - Tailwind colour names follow shadcn so generated components work unchanged: `bg-primary` is our accent blue,
+    `bg-accent` the soft selected/hover fill, `bg-muted` a quiet fill, `text-muted-foreground` secondary text,
+    `text-destructive` errors. All are aliases of `--pdt-*` in `src/index.css`; `bg`, `surface`, `surface-2`, `fg`
+    and the status colours keep our names.
+  - `dark:` follows our theme rule, not shadcn's `.dark` class.
+  - The `shadcn` package isn't a dependency: its `tailwind.css` is copied to `web/ui/shadcn.css`; components are added
+    with `pnpm dlx shadcn@latest add <name> -c web`. Style: Nova.
+  - Popovers and menus share the menu layer (`--pdt-z-menu`), above dialogs, so a picker inside a dialog works.
+  - React Aria collection rows can't be wrapped in a context-menu trigger: `ListRow` reports `onMenu(point)` (right
+    click, long press, Shift+F10) and `useMenuAt` opens the menu there.
+  - React Aria runs its own long-press timer only on iOS; on Android the browser's `contextmenu` event (from a long
+    press) opens the same menu.
 - **Gallery**: `web/gallery.html`, a second Vite entry served by `pnpm --dir web dev` and left out of the production
   build. One page, every component in every variant, a theme switch. It is the living spec and the screenshot
   target for reviews.
