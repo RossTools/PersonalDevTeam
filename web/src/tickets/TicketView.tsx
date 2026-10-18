@@ -15,7 +15,7 @@ import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { useCheckMerge, useTicket } from './queries';
 import {
-  LabelChips, TicketAreas, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
+  LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
 } from './TicketParts';
 
 type HubTab = 'overview' | 'conversation' | 'changes';
@@ -132,7 +132,6 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
             <AttemptSection ticket={t} />
             <TicketOverlaps ticket={t} />
             <TicketLinks ticket={t} />
-            <TicketAreas ticket={t} />
           </aside>
         </div>
       </div>

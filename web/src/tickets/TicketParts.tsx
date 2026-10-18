@@ -168,7 +168,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-/** Stage, priority and labels; each change saves at once. */
+/** Stage, priority, labels and areas; each change saves at once. Shown in the ticket tab and the peek. */
 export function TicketDetails({ ticket }: { ticket: Ticket }) {
   const qc = useQueryClient();
   const labels = useLabels(ticket.projectId);
@@ -186,17 +186,12 @@ export function TicketDetails({ ticket }: { ticket: Ticket }) {
       <DetailRow label="Labels">
         <LabelsEditor labels={ticket.labels} suggestions={labels.data ?? []} onChange={(l) => void save({ labels: l })} />
       </DetailRow>
-    </OverviewSection>
-  );
-}
-
-/** The parts of the project the ticket expects to touch: overlap is checked on the ones `.pdt/project.toml` declares. */
-export function TicketAreas({ ticket }: { ticket: Pick<Ticket, 'id' | 'projectId' | 'areas'> }) {
-  const qc = useQueryClient();
-  const [save] = useAction((areas: string[]) => patchTicket(qc, ticket.id, { areas }));
-  return (
-    <OverviewSection title="Areas">
-      <AreasEditor projectId={ticket.projectId} areas={ticket.areas} onChange={(a) => void save(a)} />
+      {/* The parts of the project the ticket expects to touch: overlap is checked on the ones .pdt/project.toml declares. */}
+      <DetailRow label="Areas">
+        <div role="group" aria-label="Areas">
+          <AreasEditor projectId={ticket.projectId} areas={ticket.areas} onChange={(areas) => void save({ areas })} />
+        </div>
+      </DetailRow>
     </OverviewSection>
   );
 }

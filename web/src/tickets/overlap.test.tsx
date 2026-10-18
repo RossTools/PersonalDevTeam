@@ -257,14 +257,14 @@ describe('ticket tab', () => {
   it('has no Overlaps section without overlaps', async () => {
     stubTicket(ticket(1));
     view();
-    await screen.findByRole('region', { name: 'Areas' });
+    await screen.findByRole('group', { name: 'Areas' });
     expect(screen.queryByRole('region', { name: 'Overlaps' })).not.toBeInTheDocument();
   });
 
   it('strikes through areas the config does not declare, marks exclusive ones and offers the configured ones', async () => {
     const calls = stubTicket();
     view();
-    const section = await screen.findByRole('region', { name: 'Areas' });
+    const section = await screen.findByRole('group', { name: 'Areas' });
     await waitFor(() => expect(within(section).getByText('old-area').closest('[title]')).toHaveAttribute('title', 'Not in .pdt/project.toml — ignored for overlap'));
     expect(within(section).getByText('old-area').closest('span[title]')!.className).toContain('line-through');
     expect(within(section).getByLabelText('Exclusive')).toBeInTheDocument();
@@ -276,7 +276,7 @@ describe('ticket tab', () => {
   it('shows a configuration error quietly', async () => {
     stubTicket(ticket(1, { areas: ['web/ui'] }), { areas: [], error: 'area "x": no paths' });
     view();
-    const section = await screen.findByRole('region', { name: 'Areas' });
+    const section = await screen.findByRole('group', { name: 'Areas' });
     expect(await within(section).findByText(/Areas config: area "x": no paths/)).toBeInTheDocument();
     // Without a valid config nothing is struck through.
     expect(within(section).getByText('web/ui').closest('span[title], span')!.className).not.toContain('line-through');
