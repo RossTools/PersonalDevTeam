@@ -360,7 +360,9 @@ async fn merges_are_detected_on_demand_and_by_the_loop() {
     assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "active");
     git(&env.repo, &["merge", "-q", "--squash", "pdt/PDT-2-squash-me"]);
     git(&env.repo, &["commit", "-q", "-m", "squashed"]);
-    git(&env.repo, &["worktree", "remove", "--force", ".worktrees/pdt-PDT-2-squash-me"]);
+    // Free the branch so it can be deleted. Detached rather than removed: on Windows the agent still running in the
+    // folder keeps it from being deleted.
+    git(&env.repo.join(".worktrees/pdt-PDT-2-squash-me"), &["checkout", "-q", "--detach"]);
     git(&env.repo, &["branch", "-q", "-D", "pdt/PDT-2-squash-me"]);
     pdt_api::check_merges(&env.state).await;
     assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "merged");
