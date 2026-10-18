@@ -4,6 +4,9 @@ The working list of what comes next, until PDT has its own tickets (Phase 4); th
 in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs/superpowers/notes/*-carryover.md.
 
 ## Done
+- Agent activity: Codex OSC 7501 status drives activity when available, including returning idle after
+  folder trust; Shift+Enter is excluded from the legacy Enter fallback. Acknowledged Claude interruptions
+  clear working activity without relying on a Stop hook.
 - Browser favicon: blue terminal prompt matching the UI accent.
 - Phase 0: foundation
 - Phase 1: terminals (#1)
@@ -30,7 +33,10 @@ in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs
 ## Next (build order)
 The design spec above also fixes the UX and component list of Phases 4–7 (§8); each phase's own spec covers the rest.
 1. **Phase 4c: areas and overlap** so agents don't make conflicting changes.
-2. **Phase 5: Structured agents.** Claude and Codex adapters, event log, conversation view, approvals, scratch chats.
+2. **Phase 5: Structured agents.** Conversations replace raw agent terminals as the default: Claude (`claude -p`
+   stream-json) and Codex (`codex app-server`) adapters, event log, conversation view, approvals/questions/plans,
+   switch to the real TUI, scratch chats. Spec: docs/superpowers/specs/2026-10-18-structured-agents-design.md;
+   protocol facts: docs/superpowers/notes/phase-5-agent-protocols.md. Devin (ACP adapter) researched, built later.
 3. **Phase 6: Review.** Diff view, line comments, feedback, merge; worktree removal after merge.
 4. **Phase 7: Pipeline.** Personas, workflow engine, pdt-mcp, Refine/Review/QA stages, inbox, loop limit.
 
