@@ -10,6 +10,7 @@ import { InlineRename } from '../common/InlineRename';
 import { runAction } from '../common/useAction';
 import { accepts, dragTab, dropped, type Dropped } from './dnd';
 import { tabMenu } from './menus';
+import { SessionTicketChip } from './SessionTicketChip';
 import { itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 
@@ -86,6 +87,7 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
           </button>
         </ContextMenu>
       )}
+      <SessionTicketChip session={info?.session} className="flex" />
       <IconButton label={`Close ${title}`} size="sm" noTooltip className="size-5" onClick={() => void runAction(() => ws.closeTab(tab))}>
         <X aria-hidden />
       </IconButton>

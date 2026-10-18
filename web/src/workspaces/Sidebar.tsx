@@ -12,6 +12,7 @@ import { DROP_KINDS, droppedOf } from './dnd';
 import { agentMenu, workspaceMenu } from './menus';
 import { findTab, itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
+import { SessionTicketChip } from './SessionTicketChip';
 import { applyDrop } from './WorkspaceBar';
 
 const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
@@ -188,9 +189,10 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                 current={!!ws.tab && where?.tab.id === ws.tab.id}
                 leading={<AgentDot state={state} unseenDot={false} />}
                 trailing={
-                  state.label || info.unseen ? (
+                  state.label || info.unseen || info.session?.ticket ? (
                     <>
-                      <AgentLabel state={state} />
+                      <SessionTicketChip session={info.session} className="flex" />
+                      {state.label && <AgentLabel state={state} />}
                       {info.unseen && <UnseenDot />}
                     </>
                   ) : undefined

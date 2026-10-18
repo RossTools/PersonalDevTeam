@@ -109,11 +109,12 @@ describe('backlog', () => {
     expect(await screen.findByText('No open tickets.')).toBeInTheDocument();
   });
 
-  it('shows the board placeholder on Board', async () => {
+  it('switches to the board', async () => {
     stub();
     renderWithQuery(<Harness />);
     await userEvent.click(screen.getByRole('radio', { name: 'Board' }));
-    expect(screen.getByText('The board arrives with Start (Phase 4b).')).toBeInTheDocument();
+    for (const name of ['Ready', 'In progress', 'Done']) expect(await screen.findByRole('region', { name })).toBeInTheDocument();
+    expect(screen.queryByRole('grid', { name: 'Tickets' })).not.toBeInTheDocument();
   });
 
   it('quick-adds a Draft above the first row with Enter; Shift+Enter opens the full form with the title', async () => {

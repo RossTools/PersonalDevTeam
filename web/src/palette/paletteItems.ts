@@ -70,6 +70,8 @@ export interface PaletteHandlers {
   newTicket: () => void;
   /** Opens (or focuses) a ticket's tab. */
   openTicket: (ticket: { id: string; projectId: string }) => void;
+  /** Opens the Start dialog; `here`: the ticket's tab is on screen, so its tabs open after it. */
+  startTicket: (ticket: { id: string; projectId: string }, here: boolean) => void;
 }
 
 export interface PaletteContext {
@@ -185,6 +187,19 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
         next: { kind: 'tickets', title: 'Open ticket', projectId: ctx.ticketProjectId ?? null, run: (t) => h.openTicket(t) },
       },
     );
+    const open = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
+    if (open && (open.stage === 'draft' || open.stage === 'ready') && open.attempt?.state !== 'active') {
+      const t = open;
+      actions.push({ id: 'tickets:start-open', label: `Start ${t.key}`, group: ACTIONS, icon: 'run', keywords: [t.title, 'agent'], run: () => h.startTicket(t, true) });
+    }
+    actions.push({
+      id: 'tickets:start',
+      label: 'Start ticket…',
+      group: ACTIONS,
+      icon: 'run',
+      keywords: ['agent', 'attempt', 'worktree'],
+      next: { kind: 'tickets', title: 'Start ticket', projectId: ctx.ticketProjectId ?? null, run: (t) => h.startTicket(t, false) },
+    });
   }
   actions.push({ id: 'run', label: 'Run…', group: ACTIONS, icon: 'run', shortcut: key('c'), keywords: ['new tab', 'test'], run: h.openChooser });
   if (tab) {

@@ -27,6 +27,11 @@ describe('prefix keys', () => {
     expect(KEY_HELP.find(([k]) => k === 'l')?.[1]).toMatch(/Tickets/);
   });
 
+  it('opens the board with b, and lists it in the help', () => {
+    expect(actionFor('b')).toEqual({ type: 'board' });
+    expect(KEY_HELP.find(([k]) => k === 'b')?.[1]).toMatch(/board/);
+  });
+
   it('runs the action for the key after the prefix and hides both from the page', () => {
     const onAction = vi.fn();
     const seen = vi.fn();
