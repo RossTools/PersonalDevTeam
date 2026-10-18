@@ -296,6 +296,7 @@ export function ListRow({
           {allowsDragging && (
             <AriaButton
               slot="drag"
+              data-drag-handle
               className={cn(
                 'flex size-4 items-center justify-center rounded-sm text-muted-foreground outline-none',
                 'opacity-0 group-data-hovered/row:opacity-100 group-data-focus-visible/row:opacity-100 data-focus-visible:opacity-100 data-focus-visible:ring-2 data-focus-visible:ring-ring',

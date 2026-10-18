@@ -150,6 +150,18 @@ describe('workspaces', () => {
     await userEvent.click(d);
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wa/tabs', body: { sessionId: 'd' } }));
   });
+  it('keeps the agents list a plain view: no drag handles, and a menu without tab movement', async () => {
+    stubWorkspaces({});
+    renderWithQuery(<AppShell />);
+    const agents = await screen.findByRole('region', { name: 'Agents' });
+    const b = await within(agents).findByRole('row', { name: /Codex B/ });
+    expect(agents.querySelector('[data-drag-handle]')).toBeNull();
+    // The workspaces list above still has them (workspaces reorder by dragging).
+    expect(screen.getByRole('region', { name: 'Workspaces' }).querySelector('[data-drag-handle]')).not.toBeNull();
+    fireEvent.contextMenu(b);
+    const menu = await screen.findByRole('menu', { name: 'Agent Codex B' });
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Open', 'Rename']);
+  });
   it('closes a tab without stopping its session', async () => {
     const calls = stubWorkspaces({ 'DELETE /api/tabs/tb': undefined });
     renderWithQuery(<AppShell />);

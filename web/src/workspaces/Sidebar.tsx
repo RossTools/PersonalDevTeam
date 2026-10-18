@@ -7,7 +7,7 @@ import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
 import { runAction } from '../common/useAction';
 import { DROP_KINDS, droppedOf } from './dnd';
-import { tabMenu, workspaceMenu } from './menus';
+import { agentMenu, workspaceMenu } from './menus';
 import { findTab, itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { applyDrop } from './WorkspaceBar';
@@ -155,7 +155,6 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
             const a = agents.find((x) => x.id === id);
             if (a) void runAction(() => ws.focusItem(a.info.item, a.info.projectId));
           }}
-          dragKind="session"
           renderEmpty={() => <EmptyState>No agents yet. Start one with + in the tab bar (Ctrl+] c).</EmptyState>}
         >
           {agents.map(({ id, info, where }) => {
@@ -178,9 +177,10 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
                   ) : undefined
                 }
                 secondary={`${where ? where.workspace.name : 'no tab'} · ${branchOf(info) ?? ''}`}
-                onMenu={(at) => openMenu(at, `Agent ${info.title}`, () => (where
-                  ? tabMenu(ws, where.tab, () => { ws.selectTab(where.tab); onRenameTab(where.tab.id); })
-                  : [{ label: 'Open', onSelect: () => void runAction(() => ws.focusItem(info.item, info.projectId)) }]))}
+                onMenu={(at) => openMenu(at, `Agent ${info.title}`, () => agentMenu(
+                  () => void runAction(() => ws.focusItem(info.item, info.projectId)),
+                  where ? () => { ws.selectTab(where.tab); onRenameTab(where.tab.id); } : undefined,
+                ))}
               />
             );
           })}

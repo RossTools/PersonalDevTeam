@@ -54,8 +54,8 @@ The phase ships as two PRs under this one spec:
   (sessions and runs started through the API without a placement go to the end of their project workspace).
 - **Clicking** an agent in the sidebar switches to the workspace and tab that hold it; if it has no tab, it
   opens one in its project workspace.
-- **Moving:** a tab's menu has "Move to workspace…" (pick or make a free-form workspace); a tab or a sidebar agent can
-  also be dragged onto a workspace's tab strip.
+- **Moving:** a tab's menu has "Move to workspace…" (pick or make a free-form workspace); a tab can also be dragged
+  onto a workspace's tab strip.
 - **Deleting a free-form workspace** moves its tabs back to the end of their project workspaces.
 - The migration opens a tab in each project workspace for every session and active run the project has, grouped by
   place (Repository first, then worktrees) so a branch's tabs sit together.
@@ -89,9 +89,11 @@ AGENTS
   "+" makes a new one.
 - **Agents:** every agent session (not shells or runs) in workspace and tab order, then agents without a tab. Each
   row shows its state, the unseen dot, its workspace and its place. Click to go to its tab (opening one in its
-  project workspace if it has none); drag onto a tab strip or workspace.
+  project workspace if it has none). The list is only a way to see and reach agents: no dragging, no tab movement
+  (changed 2026-10-17).
 - **Right-click menus** (long press on touch screens), drawn at the pointer above everything else:
-  - tab or agent: Rename, Move left / right, Move to workspace (or a new one), Close tab;
+  - tab: Rename, Move left / right, Move to workspace (or a new one), Close tab;
+  - agent: Open, Rename;
   - workspace: Rename and Delete (free-form only), Move up / down.
 - Shells, runs and new agents start from the tab bar's "+" (§4.3). Projects are added and configured in the Settings
   view (This host, then one entry per project, then Add project).
@@ -144,7 +146,6 @@ through to the terminal.
 
 - Drag tabs to reorder them, or onto a workspace in the sidebar to move them there.
 - Drag workspaces in the sidebar to reorder them.
-- Drag an agent from the sidebar onto a tab strip or workspace (§2.3).
 - Everything dragging does has a keyboard or menu equivalent ("Move to workspace…", "Move left/right").
 
 ### 4.6 Phone

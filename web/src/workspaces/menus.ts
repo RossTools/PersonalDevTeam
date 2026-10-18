@@ -28,6 +28,14 @@ export function tabMenu(ws: WorkspacesApi, tab: Tab, onRename: () => void): Menu
   ];
 }
 
+/**
+ * The right-click menu of an agent in the sidebar. The agents list is only a way to see and reach agents, so it has no
+ * tab movement (that lives on the tab itself).
+ */
+export function agentMenu(onOpen: () => void, onRename?: () => void): MenuEntry[] {
+  return [{ label: 'Open', onSelect: onOpen }, ...(onRename ? [{ label: 'Rename', onSelect: onRename }] : [])];
+}
+
 /** The right-click menu of a workspace in the sidebar. Failures toast. */
 export function workspaceMenu(ws: WorkspacesApi, w: Workspace, onRename: () => void, onProjectSettings?: (projectId: string) => void): MenuEntry[] {
   const i = ws.workspaces.findIndex((x) => x.id === w.id);
