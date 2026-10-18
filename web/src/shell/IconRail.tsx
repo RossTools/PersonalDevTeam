@@ -1,20 +1,20 @@
+import { cn } from 'cn';
+import { IconButton } from '@ui';
 import { VIEWS, type ViewId } from './views';
 
 export function IconRail({ active, onSelect }: { active: ViewId; onSelect: (v: ViewId) => void }) {
   return (
-    <nav aria-label="Views" className="flex md:flex-col gap-1 p-1.5 bg-surface border-border md:border-r border-t md:border-t-0 justify-around md:justify-start">
+    <nav aria-label="Views" className="flex justify-around gap-1 border-t border-border bg-card p-1.5 md:flex-col md:justify-start md:border-t-0 md:border-r">
       {VIEWS.map(({ id, label, icon: Icon }) => (
-        <button
+        <IconButton
           key={id}
-          type="button"
-          aria-label={label}
-          title={label}
+          label={label}
           aria-current={active === id ? 'page' : undefined}
           onClick={() => onSelect(id)}
-          className={`min-h-11 min-w-11 md:min-h-0 md:min-w-0 flex items-center justify-center p-2 rounded-pdt outline-none focus-visible:ring-2 focus-visible:ring-ring ${active === id ? 'bg-accent text-fg' : 'text-muted-foreground hover:text-fg hover:bg-surface-2'}`}
+          className={cn('size-9 pointer-coarse:size-11', active === id ? 'bg-accent text-foreground' : 'text-muted-foreground')}
         >
-          <Icon size={18} aria-hidden />
-        </button>
+          <Icon aria-hidden />
+        </IconButton>
       ))}
     </nav>
   );

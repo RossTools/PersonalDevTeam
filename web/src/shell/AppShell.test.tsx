@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, stubApi, type Call } from '../test-utils';
+import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { AppShell } from './AppShell';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -60,7 +60,7 @@ describe('AppShell', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(await screen.findByRole('heading', { name: 'This host' })).toBeInTheDocument();
-    expect(await screen.findByRole('checkbox', { name: 'Remote access' })).toBeChecked();
+    expect(await screen.findByRole('switch', { name: 'Remote access' })).toBeChecked();
   });
 
   it('toggles the bottom panel with Ctrl+` and with the on-screen button', async () => {
@@ -83,7 +83,7 @@ describe('AppShell', () => {
     stubAlpha();
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
-    expect(await within(list).findByRole('button', { name: /Alpha/ })).toHaveAttribute('aria-current', 'true');
+    expect(await within(list).findByRole('row', { name: /Alpha/ })).toHaveAttribute('data-current', 'true');
     expect(screen.getByRole('main')).toHaveTextContent('No tabs here.');
   });
 });
@@ -138,13 +138,13 @@ describe('workspaces', () => {
     const calls = stubWorkspaces({ 'POST /api/workspaces/wa/tabs': tabOf('td', 'wa', 'd', 2) });
     renderWithQuery(<AppShell />);
     const agents = await screen.findByRole('region', { name: 'Agents' });
-    const b = await within(agents).findByRole('button', { name: /Codex B/ });
+    const b = await within(agents).findByRole('row', { name: /Codex B/ });
     expect(b).toHaveTextContent('Needs you');
     expect(b).toHaveTextContent('Alpha');
-    expect(within(agents).queryByRole('button', { name: /Shell C/ })).not.toBeInTheDocument();
+    expect(within(agents).queryByRole('row', { name: /Shell C/ })).not.toBeInTheDocument();
     await userEvent.click(b);
     expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
-    const d = within(agents).getByRole('button', { name: /Claude D/ });
+    const d = within(agents).getByRole('row', { name: /Claude D/ });
     expect(d).toHaveTextContent('Done');
     expect(d).toHaveTextContent('no tab');
     await userEvent.click(d);
@@ -198,7 +198,7 @@ describe('workspaces', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New tab' }));
     const chooser = screen.getByRole('dialog', { name: 'New tab' });
     await waitFor(() => expect(chooser).toHaveFocus());
-    const place = within(chooser).getByRole('combobox', { name: 'Place' });
+    const place = within(chooser).getByRole('button', { name: /^Place:/ });
     place.focus();
     rerender(<AppShell />);
     expect(place).toHaveFocus();
@@ -208,11 +208,11 @@ describe('workspaces', () => {
     const calls = stubWorkspaces({ 'POST /api/workspaces/wr/tabs': tabOf('ta', 'wr', 'a', 0) });
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
-    await userEvent.click(await within(list).findByRole('button', { name: /Release/ }));
-    expect(within(list).getByRole('button', { name: /Release/ })).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(await within(list).findByRole('row', { name: /Release/ }));
+    expect(within(list).getByRole('row', { name: /Release/ })).toHaveAttribute('data-current', 'true');
     await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
-    const others = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('list', { name: 'Other sessions and runs' });
-    await userEvent.click(within(others).getByRole('button', { name: /Claude A/ }));
+    const others = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('grid', { name: 'Other sessions and runs' });
+    await userEvent.click(within(others).getByRole('row', { name: /Claude A/ }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wr/tabs', body: { sessionId: 'a', position: 0 } }));
   });
   it('creates, renames and deletes workspaces from the sidebar', async () => {
@@ -227,19 +227,19 @@ describe('workspaces', () => {
     await userEvent.type(within(list).getByRole('textbox', { name: 'New workspace name' }), 'Spike{Enter}');
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces', body: { name: 'Spike' } }));
 
-    fireEvent.contextMenu(within(list).getByRole('button', { name: /Release/ }));
+    fireEvent.contextMenu(within(list).getByRole('row', { name: /Release/ }));
     await userEvent.click(within(screen.getByRole('menu', { name: 'Workspace Release' })).getByRole('menuitem', { name: 'Rename' }));
     const name = within(list).getByRole('textbox', { name: 'Workspace name' });
     await userEvent.clear(name);
     await userEvent.type(name, 'Ship{Enter}');
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/workspaces/wr', body: { name: 'Ship' } }));
 
-    fireEvent.contextMenu(within(list).getByRole('button', { name: /Release/ }));
+    fireEvent.contextMenu(within(list).getByRole('row', { name: /Release/ }));
     await userEvent.click(within(screen.getByRole('menu', { name: 'Workspace Release' })).getByRole('menuitem', { name: /Delete/ }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/workspaces/wr')).toBe(true));
 
     // A project's own workspace can be neither renamed nor deleted.
-    fireEvent.contextMenu(within(list).getByRole('button', { name: /Alpha/ }));
+    fireEvent.contextMenu(within(list).getByRole('row', { name: /Alpha/ }));
     const menu = screen.getByRole('menu', { name: 'Workspace Alpha' });
     expect(within(menu).queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: /Delete/ })).not.toBeInTheDocument();
@@ -252,7 +252,7 @@ describe('workspaces', () => {
     for (const item of ['Rename', 'Move left', 'Move right', 'Release', 'Close tab']) {
       expect(within(menu).getByRole('menuitem', { name: item })).toBeInTheDocument();
     }
-    expect(within(menu).getByRole('textbox', { name: 'New workspace…' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'New workspace…' })).toBeInTheDocument();
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'Release' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tabs/ta', body: { workspaceId: 'wr' } }));
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
@@ -274,14 +274,15 @@ describe('workspaces', () => {
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
-    fireEvent.contextMenu(await within(list).findByRole('button', { name: /Alpha/ }));
+    fireEvent.contextMenu(await within(list).findByRole('row', { name: /Alpha/ }));
     await userEvent.click(within(screen.getByRole('menu', { name: 'Workspace Alpha' })).getByRole('menuitem', { name: 'Project settings…' }));
-    expect(await screen.findByRole('textbox', { name: 'Project key' })).toHaveValue('ALP');
+    expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
     await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Add project' }));
     const dialog = screen.getByRole('dialog', { name: 'Add project' });
-    expect(within(dialog).getByRole('tab', { name: 'Clone URL' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Workspaces' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: 'Clone URL' })).toBeInTheDocument();
+    // The modal hides the page behind it from assistive tech; the Sessions view is still underneath.
+    expect(screen.getByRole('region', { name: 'Workspaces', hidden: true })).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: 'Add project' })).not.toBeInTheDocument();
   });
@@ -290,21 +291,21 @@ describe('workspaces', () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
-    const alpha = await within(list).findByRole('button', { name: /Alpha/ });
+    const alpha = await within(list).findByRole('row', { name: /Alpha/ });
     await waitFor(() => expect(alpha).toHaveTextContent('Needs you'));
-    expect(within(alpha).getByRole('img', { name: 'waiting' })).toBeInTheDocument();
-    expect(within(list).getByRole('button', { name: /Release/ })).not.toHaveTextContent('Needs you');
+    expect(within(alpha).getByRole('img', { name: 'Needs you' })).toBeInTheDocument();
+    expect(within(list).getByRole('row', { name: /Release/ })).not.toHaveTextContent('Needs you');
   });
 
   it('focuses the workspace list with Ctrl+] w', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);
     const list = await screen.findByRole('region', { name: 'Workspaces' });
-    await within(list).findByRole('button', { name: /Alpha/ });
+    await within(list).findByRole('row', { name: /Alpha/ });
     await userEvent.keyboard('{Control>}]{/Control}w');
-    await waitFor(() => expect(within(list).getByRole('button', { name: /Alpha/ })).toHaveFocus());
+    await waitFor(() => expect(within(list).getByRole('row', { name: /Alpha/ })).toHaveFocus());
     await userEvent.keyboard('{ArrowDown}');
-    expect(within(list).getByRole('button', { name: /Release/ })).toHaveFocus();
+    expect(within(list).getByRole('row', { name: /Release/ })).toHaveFocus();
   });
 
   it('starts an agent with skip-permissions in another place from the chooser', async () => {
@@ -315,8 +316,9 @@ describe('workspaces', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(await screen.findByRole('button', { name: 'New tab' }));
     const chooser = screen.getByRole('dialog', { name: 'New tab' });
-    await within(chooser).findByRole('option', { name: 'feat' });
-    await userEvent.selectOptions(within(chooser).getByRole('combobox', { name: 'Place' }), 'wt1');
+    await userEvent.click(within(chooser).getByRole('button', { name: /^Place:/ }));
+    await userEvent.click(await within(screen.getByRole('menu', { name: 'Places' })).findByRole('menuitem', { name: 'feat' }));
+    await within(chooser).findByRole('button', { name: 'Place: Alpha › feat' });
     await userEvent.click(within(chooser).getByRole('switch', { name: /Skip permission prompts/ }));
     await userEvent.click(within(chooser).getByRole('button', { name: /^Codex/ }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body).toMatchObject({
@@ -329,10 +331,47 @@ describe('workspaces', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(await within(nav).findByRole('button', { name: /Alpha/ }));
-    expect(within(nav).getByRole('button', { name: /Alpha/ })).toHaveAttribute('aria-current', 'true');
-    expect(within(nav).getByRole('button', { name: /Alpha/ })).toHaveTextContent('ALP');
-    expect(await screen.findByRole('textbox', { name: 'Project key' })).toHaveValue('ALP');
+    await userEvent.click(await within(nav).findByRole('row', { name: /Alpha/ }));
+    expect(within(nav).getByRole('row', { name: /Alpha/ })).toHaveAttribute('data-current', 'true');
+    expect(within(nav).getByRole('row', { name: /Alpha/ })).toHaveTextContent('ALP');
+    expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
     expect(screen.getByRole('button', { name: 'Add project' })).toBeInTheDocument();
+  });
+
+  it('shows one state dot per tab, plus the unseen dot', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const a = await screen.findByRole('tab', { name: /Claude A/ });
+    expect(within(a).getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual(['Working']);
+    const b = screen.getByRole('tab', { name: /Codex B/ });
+    expect(within(b).getAllByRole('img').map((e) => e.getAttribute('aria-label'))).toEqual(['Needs you', 'unseen']);
+  });
+
+  it('toasts when a tab action fails', async () => {
+    stubWorkspaces({ 'DELETE /api/tabs/tb': new Reply(500, { code: 'internal', message: 'Tab store is locked' }) });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Close Codex B' }));
+    expect(await screen.findByText('Tab store is locked')).toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /Claude A/ }));
+    stubWorkspaces({ 'PATCH /api/tabs/ta': new Reply(409, { code: 'conflict', message: 'Workspace is gone' }) });
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Tab Claude A' })).getByRole('menuitem', { name: 'Release' }));
+    expect(await screen.findByText('Workspace is gone')).toBeInTheDocument();
+  });
+
+  it('does not launch an agent on type-ahead in the chooser\'s run picker', async () => {
+    const config = {
+      filePath: '/r/.pdt/project.toml', file: '', overrides: null, error: null,
+      effective: { runs: [{ name: 'compile', setup: null, command: 'x', web: false, data: false, env: {} }], tests: [] },
+    };
+    const calls = stubWorkspaces({ [`GET /api/projects/${project.id}/run-config`]: config });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'New tab' }));
+    const chooser = screen.getByRole('dialog', { name: 'New tab' });
+    await userEvent.click(await within(chooser).findByRole('button', { name: /Start a run/ }));
+    const listbox = await screen.findByRole('listbox');
+    await waitFor(() => expect(listbox).toContainElement(document.activeElement as HTMLElement));
+    await userEvent.keyboard('c');
+    await userEvent.keyboard('{Escape}');
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions')).toBe(false);
   });
 });

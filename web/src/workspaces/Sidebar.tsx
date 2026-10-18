@@ -1,89 +1,48 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useState, type MouseEvent, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
-import { StatusDot } from '@ui';
+import { Button, EmptyState, IconButton, List, ListRow, useMenuAt, type ListDropEvent } from '@ui';
 import type { Workspace } from '../api/gen/Workspace';
-import { useContextMenu } from './ContextMenu';
-import { accepts, dragItem, dropped } from './dnd';
+import { AgentDot, AgentLabel, itemState, rollup, UnseenDot } from '../common/AgentState';
+import { ProjectKey } from '../common/BranchChip';
+import { InlineRename } from '../common/InlineRename';
+import { runAction } from '../common/useAction';
+import { DROP_KINDS, droppedOf } from './dnd';
 import { tabMenu, workspaceMenu } from './menus';
-import { activityStatus, agentState, findTab, itemOf, worstActivity } from './model';
+import { findTab, itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { applyDrop } from './WorkspaceBar';
 
-const WORKSPACE_MIME = 'application/x-pdt-workspace';
-const heading = 'px-2 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground flex items-center';
-const row = 'w-full flex items-center gap-2 text-left px-2 py-1 rounded-pdt text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 
-/** Up/Down move focus between the rows of a list (Enter clicks the focused one). */
-function arrowKeys(e: KeyboardEvent<HTMLElement>) {
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-  e.preventDefault();
-  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-row]')];
-  const i = rows.indexOf(document.activeElement as HTMLElement);
-  rows[(i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus();
-}
-
-function StateDot({ activity, fallback }: { activity: ItemInfo['activity']; fallback: ItemInfo['status'] }) {
-  return <StatusDot status={activityStatus(activity) ?? fallback} />;
-}
-
-/** A workspace's rolled-up state: its most urgent agent, "Done" when an idle one is unseen. */
-function rollup(ws: WorkspacesApi, w: Workspace) {
-  const infos = w.tabs.map((t) => ws.info(itemOf(t))).filter((i): i is ItemInfo => i !== null && i.activity !== null);
-  const activity = worstActivity(infos.map((i) => i.activity));
-  return { activity, state: agentState(activity, infos.some((i) => i.unseen)) };
-}
-
-function WorkspaceRow({ ws, w, onMenu, onProjectSettings }: {
-  ws: WorkspacesApi;
-  w: Workspace;
-  onMenu: ReturnType<typeof useContextMenu>['bind'];
-  onProjectSettings: (projectId: string) => void;
-}) {
-  const [renaming, setRenaming] = useState(false);
-  const { activity, state } = rollup(ws, w);
-  const current = ws.workspace?.id === w.id;
-  const projectKey = w.projectId ? ws.projects.find((p) => p.id === w.projectId)?.key : undefined;
-  if (renaming) {
-    return (
-      <form className="px-1" onSubmit={(e) => {
-        e.preventDefault();
-        const name = new FormData(e.currentTarget).get('name')?.toString().trim();
-        setRenaming(false);
-        if (name && name !== w.name) void ws.renameWorkspace(w.id, name);
-      }}>
-        <input autoFocus name="name" aria-label="Workspace name" defaultValue={w.name} onBlur={(e) => e.currentTarget.form?.requestSubmit()}
-          onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(false); }}
-          className="w-full px-2 py-1 rounded-pdt text-sm bg-surface border border-border outline-none" />
-      </form>
-    );
-  }
+/** Keeps keys and clicks inside an in-row text field away from the row (typeahead, selection, drag). */
+function RowField({ children }: { children: ReactNode }) {
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   return (
-    <button
-      type="button"
-      data-row
-      aria-current={current ? 'true' : undefined}
-      draggable
-      onDragStart={(e) => e.dataTransfer.setData(WORKSPACE_MIME, w.id)}
-      onDragOver={(e) => { if (accepts(e) || e.dataTransfer.types.includes(WORKSPACE_MIME)) e.preventDefault(); }}
-      onDrop={(e) => {
-        e.preventDefault();
-        const moving = e.dataTransfer.getData(WORKSPACE_MIME);
-        if (moving) { if (moving !== w.id) void ws.moveWorkspace(moving, w.position); }
-        else void applyDrop(ws, dropped(e), w.id);
-      }}
-      onClick={() => ws.selectWorkspace(w.id)}
-      onDoubleClick={() => w.projectId === null && setRenaming(true)}
-      {...onMenu(`Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenaming(true), onProjectSettings))}
-      className={`${row} ${current ? 'bg-accent' : 'hover:bg-surface-2'}`}
-    >
-      {activity ? <StateDot activity={activity} fallback="idle" /> : <span className="inline-block size-2" />}
-      <span className="flex-1 truncate">{w.name}</span>
-      {projectKey && <span className="font-mono text-2xs text-muted-foreground">{projectKey}</span>}
-      {state && state !== 'Idle' && <span className={`text-meta ${state === 'Needs you' ? 'text-waiting font-semibold' : 'text-muted-foreground'}`}>{state}</span>}
-      <span className="text-meta text-muted-foreground tabular-nums">{w.tabs.length}</span>
-    </button>
+    <span className="block" onKeyDown={stop} onKeyUp={stop} onPointerDown={stop} onMouseDown={stop} onClick={stop} onDoubleClick={stop}>
+      {children}
+    </span>
   );
 }
+
+/** A workspace's rolled-up state: its most urgent item ("Done" when an idle agent is unseen). */
+function workspaceState(ws: WorkspacesApi, w: Workspace) {
+  return rollup(w.tabs.map((t) => ws.info(itemOf(t))).filter((i): i is ItemInfo => i !== null).map(itemState));
+}
+
+/** Where a workspace dropped at `target` goes: before/on a row takes its place, after goes behind it. */
+function reorderTo(list: Workspace[], movingId: string, target: ListDropEvent['target']): number | null {
+  const from = list.findIndex((w) => w.id === movingId);
+  if (from < 0) return null;
+  if (!target) return list.length - 1;
+  if (target.id === movingId) return null;
+  const to = list.findIndex((w) => w.id === target.id);
+  if (to < 0) return null;
+  const at = to + (target.position === 'after' ? 1 : 0);
+  return at > from ? at - 1 : at;
+}
+
+// Rows are static children, not `items` + a render function: GridList caches rendered items by object, and these rows
+// also depend on outside state (the current workspace or tab, renaming).
 
 /** herdr's left panel: workspaces on top, every agent below with its state and where it is. */
 export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
@@ -93,11 +52,12 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
   onProjectSettings: (projectId: string) => void;
   onAddProject: () => void;
 }) {
-  const { bind, menu } = useContextMenu();
+  const { openMenu, menu } = useMenuAt();
   const [adding, setAdding] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const agents = ws.allInfos
     .filter((i) => i.session?.kind === 'agent_tui')
-    .map((i) => ({ info: i, where: findTab(ws.workspaces, i.item) }))
+    .map((i) => ({ id: i.item.id, info: i, where: findTab(ws.workspaces, i.item) }))
     .sort((a, b) => {
       const wa = a.where ? a.where.workspace.position : Infinity;
       const wb = b.where ? b.where.workspace.position : Infinity;
@@ -108,77 +68,127 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onAddProject }: {
     return i.session?.cwd && i.worktreeId ? i.session.cwd.split(/[\\/]/).pop() : project?.name;
   };
 
+  const onWorkspaceDrop = (e: ListDropEvent) => {
+    if (e.kind === 'workspace') {
+      const to = reorderTo(ws.workspaces, e.id, e.target);
+      if (to !== null) void runAction(() => ws.moveWorkspace(e.id, to));
+      return;
+    }
+    // A tab or an agent dropped on (or next to) a workspace row goes to the end of that workspace.
+    if (e.target) void runAction(() => applyDrop(ws, droppedOf(e), e.target!.id));
+  };
+  // Double-clicking a free-form workspace renames it.
+  const onWorkspaceDoubleClick = (e: MouseEvent<HTMLElement>) => {
+    const id = (e.target as HTMLElement).closest<HTMLElement>('[data-key]')?.dataset.key;
+    const w = ws.workspaces.find((x) => x.id === id);
+    if (w && w.projectId === null) setRenamingId(w.id);
+  };
+
   return (
     <div className="flex flex-col">
       <section aria-label="Workspaces">
         <h2 className={heading}>
           <span className="flex-1">Workspaces</span>
-          <button type="button" aria-label="New workspace" onClick={() => setAdding(true)} className="rounded-pdt p-0.5 hover:bg-surface-2 hover:text-fg">
-            <Plus size={12} aria-hidden />
-          </button>
+          <IconButton label="New workspace" size="sm" noTooltip className="size-5" onClick={() => setAdding(true)}>
+            <Plus aria-hidden />
+          </IconButton>
         </h2>
-        <div id="workspace-list" className="flex flex-col gap-0.5" onKeyDown={arrowKeys}>
-          {ws.workspaces.map((w) => <WorkspaceRow key={w.id} ws={ws} w={w} onMenu={bind} onProjectSettings={onProjectSettings} />)}
+        <div onDoubleClick={onWorkspaceDoubleClick}>
+          <List
+            id="workspace-list"
+            aria-label="Workspaces"
+            onAction={(id) => ws.selectWorkspace(id)}
+            dragKind="workspace"
+            acceptKinds={['workspace', ...DROP_KINDS]}
+            onDrop={onWorkspaceDrop}
+          >
+            {ws.workspaces.map((w) => {
+              const state = workspaceState(ws, w);
+              const projectKey = w.projectId ? ws.projects.find((p) => p.id === w.projectId)?.key : undefined;
+              const renaming = renamingId === w.id;
+              return (
+                <ListRow
+                  key={w.id}
+                  id={w.id}
+                  textValue={w.name}
+                  current={ws.workspace?.id === w.id}
+                  title={renaming ? (
+                    <RowField>
+                      <InlineRename
+                        label="Workspace name"
+                        initial={w.name}
+                        onCommit={(name) => { setRenamingId(null); void runAction(() => ws.renameWorkspace(w.id, name)); }}
+                        onCancel={() => setRenamingId(null)}
+                      />
+                    </RowField>
+                  ) : w.name}
+                  leading={state ? <AgentDot state={state} unseenDot={false} /> : <span className="inline-block size-2" />}
+                  trailing={
+                    <>
+                      {projectKey && <ProjectKey projectKey={projectKey} />}
+                      {state && state.label !== 'Idle' && <AgentLabel state={state} />}
+                      <span className="text-meta text-muted-foreground tabular-nums">{w.tabs.length}</span>
+                    </>
+                  }
+                  onMenu={(at) => openMenu(at, `Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenamingId(w.id), onProjectSettings))}
+                />
+              );
+            })}
+          </List>
         </div>
         {adding && (
-          <form className="px-1 pt-0.5" onSubmit={(e) => {
-            e.preventDefault();
-            const name = new FormData(e.currentTarget).get('name')?.toString().trim();
-            setAdding(false);
-            if (name) void ws.createWorkspace(name);
-          }}>
-            <input autoFocus name="name" aria-label="New workspace name" placeholder="Workspace name"
-              onBlur={() => setAdding(false)} onKeyDown={(e) => { if (e.key === 'Escape') setAdding(false); }}
-              className="w-full px-2 py-1 rounded-pdt text-sm bg-surface border border-border outline-none" />
-          </form>
+          <div className="px-1 pt-0.5">
+            <InlineRename
+              label="New workspace name"
+              placeholder="Workspace name"
+              onCommit={(name) => { setAdding(false); void runAction(() => ws.createWorkspace(name)); }}
+              onCancel={() => setAdding(false)}
+            />
+          </div>
         )}
       </section>
       <section aria-label="Agents">
         <h2 className={heading}>Agents</h2>
-        {agents.length === 0 ? (
-          <p className="px-2 text-xs text-muted-foreground">No agents yet. Start one with + in the tab bar (Ctrl+] c).</p>
-        ) : (
-          <ul className="flex flex-col gap-0.5" onKeyDown={arrowKeys}>
-            {agents.map(({ info, where }) => {
-              const state = agentState(info.activity, info.unseen);
-              const current = ws.tab && where?.tab.id === ws.tab.id;
-              return (
-                <li key={info.item.id}>
-                  <button
-                    type="button"
-                    data-row
-                    aria-current={current ? 'true' : undefined}
-                    draggable
-                    onDragStart={(e) => dragItem(e, info.item, info.projectId)}
-                    onClick={() => void ws.focusItem(info.item, info.projectId)}
-                    {...bind(`Agent ${info.title}`, () => (where ? tabMenu(ws, where.tab, () => { ws.selectTab(where.tab); onRenameTab(where.tab.id); }) : [
-                      { label: 'Open', onSelect: () => void ws.focusItem(info.item, info.projectId) },
-                    ]))}
-                    className={`${row} flex-col items-stretch gap-0 ${current ? 'bg-accent' : 'hover:bg-surface-2'}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <StateDot activity={info.session?.status === 'running' ? info.activity : null} fallback={info.status} />
-                      <span className={`flex-1 truncate ${info.unseen ? 'font-semibold' : ''}`}>{info.title}</span>
-                      {state && (
-                        <span className={`text-meta ${state === 'Needs you' ? 'text-waiting font-semibold' : state === 'Working' ? 'text-running' : 'text-muted-foreground'}`}>
-                          {state}
-                        </span>
-                      )}
-                      {info.unseen && <span role="img" aria-label="unseen" className="inline-block size-1.5 rounded-full bg-primary" />}
-                    </span>
-                    <span className="pl-4 text-meta text-muted-foreground truncate">
-                      {where ? where.workspace.name : 'no tab'} · {branchOf(info)}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <List
+          aria-label="Agents"
+          onAction={(id) => {
+            const a = agents.find((x) => x.id === id);
+            if (a) void runAction(() => ws.focusItem(a.info.item, a.info.projectId));
+          }}
+          dragKind="session"
+          renderEmpty={() => <EmptyState>No agents yet. Start one with + in the tab bar (Ctrl+] c).</EmptyState>}
+        >
+          {agents.map(({ id, info, where }) => {
+            const state = itemState(info);
+            return (
+              <ListRow
+                key={id}
+                id={id}
+                textValue={info.title}
+                title={info.title}
+                bold={info.unseen}
+                current={!!ws.tab && where?.tab.id === ws.tab.id}
+                leading={<AgentDot state={state} unseenDot={false} />}
+                trailing={
+                  state.label || info.unseen ? (
+                    <>
+                      <AgentLabel state={state} />
+                      {info.unseen && <UnseenDot />}
+                    </>
+                  ) : undefined
+                }
+                secondary={`${where ? where.workspace.name : 'no tab'} · ${branchOf(info) ?? ''}`}
+                onMenu={(at) => openMenu(at, `Agent ${info.title}`, () => (where
+                  ? tabMenu(ws, where.tab, () => { ws.selectTab(where.tab); onRenameTab(where.tab.id); })
+                  : [{ label: 'Open', onSelect: () => void runAction(() => ws.focusItem(info.item, info.projectId)) }]))}
+              />
+            );
+          })}
+        </List>
       </section>
-      <button type="button" onClick={onAddProject} className="mt-3 mx-2 self-start inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-fg">
-        <Plus size={12} aria-hidden /> Add project
-      </button>
+      <Button variant="ghost" size="sm" onClick={onAddProject} className="mx-2 mt-3 self-start text-muted-foreground">
+        <Plus aria-hidden /> Add project
+      </Button>
       {menu}
     </div>
   );

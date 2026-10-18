@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
-import { activityStatus, agentState, findTab, itemOf, nextNeedingYou, resolveCurrent, sameItem, worstActivity, type Item } from './model';
+import { findTab, itemOf, nextNeedingYou, resolveCurrent, sameItem, type Item } from './model';
 
 const tab = (id: string, workspaceId: string, item: Item, position = 0): Tab => ({
   id,
@@ -29,24 +29,6 @@ describe('workspace model', () => {
     expect(findTab(list, r('b'))?.tab.id).toBe('t2');
     expect(findTab(list, r('b'))?.workspace.id).toBe('w2');
     expect(findTab(list, s('zz'))).toBeNull();
-  });
-
-  it('ranks activity: needs you, then working, then idle', () => {
-    expect(worstActivity([])).toBeNull();
-    expect(worstActivity([null, 'idle'])).toBe('idle');
-    expect(worstActivity(['idle', 'working', 'unknown'])).toBe('working');
-    expect(worstActivity(['working', 'needs_you', 'idle'])).toBe('needs_you');
-    expect(activityStatus('needs_you')).toBe('waiting');
-    expect(activityStatus('working')).toBe('running');
-    expect(activityStatus('idle')).toBe('idle');
-    expect(activityStatus(null)).toBeNull();
-  });
-
-  it('names agent states like herdr', () => {
-    expect(agentState('idle', true)).toBe('Done');
-    expect(agentState('idle', false)).toBe('Idle');
-    expect(agentState('needs_you', false)).toBe('Needs you');
-    expect(agentState(null, false)).toBeNull();
   });
 
   it('resolves the current workspace and tab, falling back when they are gone', () => {
