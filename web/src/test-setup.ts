@@ -4,3 +4,17 @@ import { afterEach } from 'vitest';
 
 // Vitest globals are off, so RTL's automatic cleanup does not register itself.
 afterEach(() => cleanup());
+
+// jsdom gaps that React Aria and Sonner touch.
+Element.prototype.setPointerCapture ??= () => {};
+Element.prototype.releasePointerCapture ??= () => {};
+window.matchMedia ??= ((query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  addListener: () => {},
+  removeListener: () => {},
+  dispatchEvent: () => false,
+})) as unknown as typeof window.matchMedia;
