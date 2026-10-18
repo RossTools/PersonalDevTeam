@@ -29,22 +29,14 @@ jobs:
       - name: Ensure rustup
         if: runner.os != 'Windows'
         run: |
-          # Terminal tests start $SHELL; Namespace's Linux image names /bin/zsh without installing it.
-          if [ -n "${SHELL:-}" ] && [ ! -x "$SHELL" ]; then echo "SHELL=/bin/bash" >> "$GITHUB_ENV"; fi
+          # Terminal tests start $SHELL (else /bin/zsh); Namespace's Linux runners set no SHELL and have no zsh.
+          if [ -z "${SHELL:-}" ] || [ ! -x "$SHELL" ]; then echo "SHELL=/bin/bash" >> "$GITHUB_ENV"; fi
           if ! command -v rustup >/dev/null; then
             curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
       - name: Show Rust toolchain
         run: rustup show
-      - name: Cache (Namespace volume)
-        if: startsWith(inputs.runner, 'namespace-')
-        continue-on-error: true
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: |
-            rust
-            pnpm
       - name: Cache (rust-cache)
         if: ${{ !startsWith(inputs.runner, 'namespace-') }}
         uses: Swatinem/rust-cache@v2
@@ -61,6 +53,13 @@ jobs:
         with:
           node-version: 24
           cache: ${{ !startsWith(inputs.runner, 'namespace-') && 'pnpm' || '' }}
+      - name: Cache (Namespace volume)
+        if: startsWith(inputs.runner, 'namespace-')
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            ${{ inputs.os != 'windows' && 'pnpm' || '' }}
       - name: pnpm install
         if: inputs.os != 'windows'
         run: pnpm install --frozen-lockfile
