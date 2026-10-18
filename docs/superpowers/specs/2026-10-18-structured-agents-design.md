@@ -341,19 +341,38 @@ Hands-on checks before building it are listed in the notes file (org policy for 
   and rate limits, Claude's terminal handoff (§8.2) and history import, Continue after restart.
 - **5d — tickets**: Start in conversation mode, ticket Conversation tab, scratch chats → Make ticket.
 
-## 14. Open questions
+## 14. Terms and billing
 
-- **Terms.** Both tools bill the user's own subscription in these modes. Anthropic's Agent SDK docs say third-party
-  developers may not offer claude.ai login or rate limits in their products without approval; OpenAI's docs say hosted
-  or commercial use of app-server auth isn't permitted. PDT as a personal tool driving the user's own installed CLIs is
-  the case the main spec (§5.5) already assumes is fine; a product version needs this checked (or API keys).
+Checked 2026-10-18 (docs/superpowers/notes/agent-terms-2026-10.md, with quotes and links). **Personal use is allowed**
+by all three vendors: Anthropic explicitly lets `claude -p` draw from a Claude plan ("ordinary, individual usage"),
+OpenAI lets local and open-source apps use app-server's ChatGPT login (never commercial or hosted), and Devin's ACP
+mode is meant for third-party clients (the employer's policy decides the work laptop). **Releasing PDT to others** on
+subscription logins is plausible as free, open-source, bring-your-own-CLI, but not settled for Anthropic; a release
+needs a re-check and probably an API-key path. Guardrails (amending main spec §5.5):
+
+- Launch only the user's installed, unmodified `claude` / `codex` / `devin`; never spoof a client, never disable their
+  login methods. Login happens in the CLI's own flow (a terminal tab), never in PDT.
+- Never read, copy, store or refresh agent credentials (`~/.claude`, the keychain entries, `~/.codex/auth.json`,
+  Devin's `credentials.toml`). Sign in with ChatGPT would break this rule, so it's out unless chosen deliberately.
+- Strip `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `WINDSURF_API_KEY` by default; a per-project
+  **"Use API key"** setting passes one through (e.g. a Max plan's included API credits). Never pass `--bare`, and the
+  Claude adapter fails loudly (a host check) if `-p` stops using the plan login: Anthropic says `--bare` will become
+  the default for `-p`.
+- Each session shows its billing source in the composer footer ("Claude plan", "API key", "ChatGPT plan",
+  "Devin Enterprise"), with the vendors' own rate-limit events.
+- Stay "ordinary": a host setting caps live conversation processes (default 6; more queue with "Waiting for a slot"),
+  nothing runs unattended in a loop by default, and rate-limit errors back off instead of retrying.
+- One owner per host: the owner-only Tailscale identity check stays; no sharing sessions with anyone else.
+
+## 15. Open questions
+
 - Windows: Codex `--listen unix://` support; `claude -p` stdio behaviour under Windows process handling.
 - Claude TUI resume of a `-p` session (§8.2).
 - Whether to use Codex's experimental API (plan mode, queue) from day one or only behind a capability check — proposed:
   capability check, fall back to PDT's own queue and no plan mode.
 - Edit-before-approve (5c or later).
 
-## 15. Deferred
+## 16. Deferred
 
 - Personas, pdt-mcp, the pipeline (Phase 7) — `OpenSpec` already carries their fields.
 - Forking/rewinding conversations (Claude `rewind_files`, Codex `thread/fork`/`revert`).
