@@ -144,7 +144,7 @@ const isCode = (e: unknown, code: string) => e instanceof ApiError && e.code ===
 /**
  * The merged banner's action: moves the ticket to Done, then removes the attempt's worktree and the workspace Start made
  * for it (its remaining tabs go back to their project's workspace). A busy worktree asks to stop the attempt's running
- * sessions first; a dirty one asks to discard its changes. Results toast.
+ * sessions and the branch's active runs first; a dirty one asks to discard its changes. Results toast.
  */
 const BUSY_RETRIES = 10;
 const BUSY_RETRY_MS = 300;
@@ -183,7 +183,7 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
       if (isCode(e, 'worktree_busy') && !stopped) {
         const { ok } = await confirm({
           title: 'The worktree is in use',
-          body: `Sessions are still running in ${attempt.branch}. Stop its sessions and remove the worktree?`,
+          body: `Sessions or runs are still going in ${attempt.branch}. Stop them and remove the worktree?`,
           action: 'Stop and remove',
           danger: true,
         });
@@ -191,6 +191,8 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
         stopped = true;
         const running = t.sessions.filter((s) => s.attemptId === attempt.id && s.status === 'running');
         for (const s of running) await api.killSession(s.id);
+        const runs = (await api.listActiveRuns()).filter((r) => r.worktreeId === worktreeId);
+        for (const r of runs) await api.stopRun(r.id);
         continue;
       }
       if (isCode(e, 'worktree_busy') && stopped && busyRetries < BUSY_RETRIES) {

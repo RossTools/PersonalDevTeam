@@ -111,7 +111,7 @@ describe('ticket attempt', () => {
 describe('merged banner', () => {
   const merged = { ...active, attempt: attempt({ state: 'merged' }), attempts: [attempt({ state: 'merged' })] };
 
-  it('moves to Done, then stops the busy sessions and discards changes before removing the worktree', async () => {
+  it('moves to Done, then stops the busy sessions and runs and discards changes before removing the worktree', async () => {
     let removals = 0;
     const calls = stub(merged, {
       'DELETE /api/worktrees/w1': () => {
@@ -122,6 +122,8 @@ describe('merged banner', () => {
         return undefined;
       },
       'POST /api/sessions/s1/kill': undefined,
+      'GET /api/runs': [{ id: 'r1', worktreeId: 'w1' }, { id: 'r2', worktreeId: 'other' }],
+      'POST /api/runs/r1/stop': undefined,
     });
     view();
     const banner = (await screen.findByText('Merged into main.')).closest<HTMLElement>('[role=status]')!;
@@ -134,6 +136,9 @@ describe('merged banner', () => {
     // Only the attempt's running session is stopped (s0 belongs to an older attempt and has ended).
     await waitFor(() => expect(count(calls, 'POST', '/api/sessions/s1/kill')).toBe(1));
     expect(count(calls, 'POST', '/api/sessions/s0/kill')).toBe(0);
+    // The branch's active runs are stopped too; other branches' runs are left alone.
+    await waitFor(() => expect(count(calls, 'POST', '/api/runs/r1/stop')).toBe(1));
+    expect(count(calls, 'POST', '/api/runs/r2/stop')).toBe(0);
 
     const dirty = await screen.findByRole('alertdialog', { name: 'The worktree has uncommitted changes' });
     await userEvent.click(within(dirty).getByRole('button', { name: 'Discard and remove' }));
