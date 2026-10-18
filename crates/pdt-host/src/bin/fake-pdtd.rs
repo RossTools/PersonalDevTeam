@@ -7,7 +7,8 @@
 //! With "migrate" it stands in for a version with a new migration: at startup it rewrites `<PDT_DATA_DIR>/pdt.db`
 //! (to `migrated by <version>`) and its `-wal` and `-shm` files.
 //! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "hang_tree" also starts a child that never
-//! finishes (its pid in `grandchild.pid` beside the installer); "fail_partial" breaks `<dir>/fake.json` and fails.
+//! finishes (its pid in `grandchild.pid` beside the installer, written before the installer hangs); "fail_partial"
+//! breaks `<dir>/fake.json` and fails.
 use std::io::{Read, Write};
 
 fn installer(cfg: &serde_json::Value, args: &[String]) -> ! {
@@ -21,7 +22,12 @@ fn installer(cfg: &serde_json::Value, args: &[String]) -> ! {
     match cfg["installer"].as_str().unwrap_or("") {
         "hang_tree" => {
             let exe = std::env::current_exe().expect("exe");
-            let _ = std::process::Command::new(exe).args(args).env("FAKE_GRANDCHILD", "1").spawn();
+            let pid_file = exe.with_file_name("grandchild.pid");
+            let _ = std::process::Command::new(&exe).args(args).env("FAKE_GRANDCHILD", "1").spawn();
+            // Hang only once the child has recorded its pid, so a timeout always finds the whole tree.
+            while std::fs::read_to_string(&pid_file).map(|p| p.trim().is_empty()).unwrap_or(true) {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             std::thread::sleep(std::time::Duration::from_secs(3600));
             std::process::exit(0)
         }
