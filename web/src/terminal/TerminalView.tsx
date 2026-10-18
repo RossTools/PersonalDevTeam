@@ -41,7 +41,7 @@ const clipboard: IClipboardProvider = {
  * `sessionStatus` is the daemon's view of the session (from the polled list). When it turns `running` while this
  * view is detached from a finished process, the view reattaches by itself (e.g. after Restart or an auto-resume).
  */
-export function TerminalView({ sessionId, url, sessionStatus, polledAt, composing = false, onComposeClose }: {
+export function TerminalView({ sessionId, url, sessionStatus, polledAt, composing = false, onComposeClose, dimmed = false }: {
   sessionId: string;
   /** WebSocket URL; defaults to the session's PTY URL. */
   url?: string;
@@ -51,6 +51,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   /** Shows a multi-line text box whose text is sent to the program as one prompt. */
   composing?: boolean;
   onComposeClose?: () => void;
+  /** The session has ended: the last screen stays, dimmed, and the parent shows what happened (no "Session ended."). */
+  dimmed?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const sockRef = useRef<PtySocket | null>(null);
@@ -224,11 +226,11 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       <div className="relative min-h-0 flex-1">
         {/* The padding lives on this wrapper: xterm fits itself to the full height of the element it is opened in,
             padding included, so a padded host makes it stick out and the page scroll (a resize loop on phones). */}
-        <div className="absolute inset-0 overflow-hidden p-1">
+        <div className={`absolute inset-0 overflow-hidden p-1${dimmed ? ' opacity-60' : ''}`} data-dimmed={dimmed || undefined}>
           <div ref={host} data-testid="terminal" className="h-full w-full" />
         </div>
         {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
-        {status === 'ended' && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
+        {status === 'ended' && !dimmed && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
       </div>
       {composing && (
         <Composer

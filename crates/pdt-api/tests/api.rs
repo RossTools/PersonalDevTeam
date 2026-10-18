@@ -40,6 +40,36 @@ async fn health_reports_product() {
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["status"], "ok");
     assert_eq!(v["name"], "Personal Dev Team");
+    // `AppState::new` is a dev instance on port 0.
+    assert_eq!((v["profile"].as_str(), v["port"].as_u64(), v["dev"].as_bool()), (Some("dev"), Some(0), Some(true)));
+}
+
+async fn health_of(tmp: &Path, instance: pdt_core::instance::InstanceInfo) -> Value {
+    let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
+    let mut state = AppState::new(store, tmp.join("data"));
+    state.instance = instance;
+    let (status, body) = call(&router(state, None), "GET", "/api/health", None).await;
+    assert_eq!(status, StatusCode::OK);
+    serde_json::from_str(&body).unwrap()
+}
+
+#[tokio::test]
+async fn health_reports_the_instance() {
+    use pdt_core::brand::{Profile, STABLE_PORT};
+    use pdt_core::instance::InstanceInfo;
+    // The ports are only reported; nothing is bound.
+    let tmp = tempfile::tempdir().unwrap();
+    let v = health_of(tmp.path(), InstanceInfo::new(Profile::Stable, STABLE_PORT)).await;
+    assert_eq!(
+        (v["profile"].as_str(), v["port"].as_u64(), v["dev"].as_bool()),
+        (Some("stable"), Some(7420), Some(false))
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let v = health_of(tmp.path(), InstanceInfo::new(Profile::Dev, 8512)).await;
+    assert_eq!((v["profile"].as_str(), v["port"].as_u64(), v["dev"].as_bool()), (Some("dev"), Some(8512), Some(true)));
+    let tmp = tempfile::tempdir().unwrap();
+    let v = health_of(tmp.path(), InstanceInfo::new(Profile::Stable, 8512)).await;
+    assert_eq!(v["dev"], true);
 }
 
 #[tokio::test]

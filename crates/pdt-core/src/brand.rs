@@ -21,7 +21,9 @@ pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
 /// The optional run configuration file inside a project's repository (remote-host spec §4.1).
 pub const PROJECT_CONFIG_FILE: &str = ".pdt/project.toml";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum Profile {
     Stable,
     Dev,

@@ -15,6 +15,8 @@ import { Kbd } from './Kbd';
 export interface CommandItem {
   id: string;
   label: string;
+  /** Secondary text after the label, muted (a tab's workspace). Also matched by the filter. */
+  detail?: string;
   /** Items with the same group are listed together under it, groups in order of first appearance. */
   group?: string;
   /** Shown as a key hint ("⌘K", "Ctrl+] k"). */
@@ -53,7 +55,7 @@ function groupItems(items: CommandItem[]) {
 }
 
 /**
- * A filterable, keyboard-driven list: type to filter (label and keywords), Up/Down to move, Enter to choose. Usable
+ * A filterable, keyboard-driven list: type to filter (label, detail and keywords), Up/Down to move, Enter to choose. Usable
  * inline, in a Popover or a Dialog; the command palette and PlacePicker are built on it.
  */
 export function CommandList({
@@ -70,13 +72,21 @@ export function CommandList({
   const { contains } = useFilter({ sensitivity: 'base' });
   const filter: AutocompleteProps<object>['filter'] = (text, input, node) => {
     const item = node.value as CommandItem | null;
-    return contains(text, input) || !!item?.keywords?.some((k) => contains(k, input));
+    return contains(text, input) || (!!item?.detail && contains(item.detail, input)) || !!item?.keywords?.some((k) => contains(k, input));
   };
   const { loose, groups } = groupItems(items);
   const renderItem = (it: CommandItem) => (
     <CommandItemPrimitive key={it.id} id={it.id} value={it} textValue={it.label} isDisabled={it.disabled}>
       {it.icon}
-      <span className="min-w-0 flex-1 truncate">{it.label}</span>
+      <span className="min-w-0 flex-1 truncate">
+        {it.label}
+        {it.detail && (
+          <>
+            {' '}
+            <span className="ml-1 text-meta text-muted-foreground">{it.detail}</span>
+          </>
+        )}
+      </span>
       {it.shortcut && (
         <CommandShortcut className="tracking-normal">
           <Kbd>{it.shortcut}</Kbd>

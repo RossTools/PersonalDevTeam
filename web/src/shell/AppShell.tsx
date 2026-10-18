@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { PanelBottom } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
-import { Button, EmptyState, IconButton, List, ListRow } from '@ui';
+import { Button, EmptyState, IconButton, List, ListRow, Sheet, useThemePref } from '@ui';
 import { ProjectKey } from '../common/BranchChip';
+import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
-import { AddProjectForm } from '../projects/AddProjectForm';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
+import { CommandPalette } from '../palette/CommandPalette';
+import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
+import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
+import { newSession, type Choice } from '../sessions/newSession';
 import { ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
@@ -23,21 +28,20 @@ import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
+import { InstanceBadge } from './InstanceBadge';
+import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
-const PHASE_NOTE: Record<Exclude<ViewId, 'sessions' | 'settings' | 'files'>, string> = {
-  inbox: 'The inbox arrives with the pipeline (Phase 7).',
-  board: 'The board arrives with tickets (Phase 4).',
-  personas: 'Personas arrive with the pipeline (Phase 7).',
-};
+const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', codex: 'Codex', shell: 'Shell' };
 
-/** Keeps the browser tab's title as `(<n>) <page title>` while n sessions need the user. */
+/** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
+const LIST_NAME: Record<ViewId, string> = { sessions: 'Workspaces and agents', files: 'Files and folders', settings: 'Settings sections' };
+
+const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
+
+/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n sessions need the user; [dev] on a dev instance. */
 function useAttentionTitle(count: number) {
-  const base = useRef(document.title);
-  useEffect(() => {
-    document.title = count > 0 ? `(${count}) ${base.current}` : base.current;
-  }, [count]);
-  useEffect(() => () => { document.title = base.current; }, []);
+  useDevTitle(count);
 }
 
 export function AppShell() {
@@ -49,9 +53,14 @@ export function AppShell() {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Phones: the list column is a sheet from the left, opened from the header.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const phone = useMediaQuery(PHONE_QUERY);
+  const plusRef = useRef<HTMLButtonElement>(null);
+  const [theme, setTheme] = useThemePref();
+  const qc = useQueryClient();
   const ws = useWorkspaces();
-  const tabId = ws.tab?.id ?? null;
-
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -64,14 +73,21 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  useMetaK(() => setPaletteOpen(true));
+
   usePrefixKeys((a: KeyAction) => {
     const w = ws.workspace;
     const t = ws.tab;
+    if (a.type === 'palette') {
+      setPaletteOpen(true);
+      return;
+    }
     setView('sessions');
     switch (a.type) {
       case 'newTab': setChooserOpen(true); break;
       case 'switcher':
-        // Focus the current workspace in the sidebar; Up/Down and Enter pick another.
+        // Focus the current workspace in the sidebar; Up/Down and Enter pick another. On a phone, open the sheet first.
+        if (phone) setSheetOpen(true);
         requestAnimationFrame(() => document.querySelector<HTMLElement>('#workspace-list [data-current], #workspace-list [role=row]')?.focus());
         break;
       case 'help': setHelpOpen(true); break;
@@ -102,81 +118,161 @@ export function AppShell() {
   const worktrees = useQuery({
     queryKey: ['worktrees', currentProject?.id ?? ''],
     queryFn: () => api.listWorktrees(currentProject!.id),
-    enabled: !!currentProject?.githubRepo && !!current?.worktreeId,
+    enabled: !!currentProject && !!current?.worktreeId,
   });
-  const branch = current?.run?.branch ?? worktrees.data?.find((w) => w.id === current?.worktreeId)?.branch ?? null;
+  const worktreeBranch = current?.worktreeId ? worktrees.data?.find((w) => w.id === current.worktreeId)?.branch : undefined;
+  const branch = current?.run?.branch ?? worktreeBranch ?? null;
   const branchLink = currentProject?.githubRepo && branch ? branchUrl(currentProject.githubRepo, branch) : null;
   const folder = useFolderView(ws.projects, current ? { projectId: current.projectId, worktreeId: current.worktreeId } : null);
   const bottomProject = ws.projects.find((p) => p.id === (current?.projectId ?? ws.workspace?.projectId)) ?? ws.projects[0] ?? null;
 
+  // Choosing a file closes the phone sheet.
+  useEffect(() => {
+    if (folder.file) setSheetOpen(false);
+  }, [folder.file]);
+
+  const showProjectSettings = (id: string | null) => {
+    setSettingsProjectId(id);
+    setView('settings');
+    setSheetOpen(false);
+  };
+
+  // The palette's items, built only while it is open (the screen re-renders every 2 s).
+  const place: Place | null = current
+    ? { projectId: current.projectId, worktreeId: current.worktreeId }
+    : ws.workspace?.projectId ? { projectId: ws.workspace.projectId, worktreeId: null } : null;
+  const handlers: PaletteHandlers = {
+    selectWorkspace: (id) => { setView('sessions'); ws.selectWorkspace(id); },
+    selectTab: (t) => { setView('sessions'); ws.selectTab(t); },
+    focusItem: (item, projectId) => { setView('sessions'); void runAction(() => ws.focusItem(item, projectId)); },
+    projectSettings: (id) => showProjectSettings(id),
+    hostSettings: () => showProjectSettings(null),
+    newSession: (kind, at) => {
+      setView('sessions');
+      const w = ws.workspace;
+      // Like the new-tab chooser: right after the current tab.
+      const tab = w ? { workspaceId: w.id, position: ws.tab ? ws.tab.position + 1 : w.tabs.length } : undefined;
+      void runAction(async () => {
+        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, CHOICE[kind], false), ...(tab ? { tab } : {}) });
+        void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
+        await ws.refresh();
+        await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);
+      });
+    },
+    openChooser: () => { setView('sessions'); setChooserOpen(true); },
+    renameTab: (t) => { setView('sessions'); ws.selectTab(t); setRenamingTabId(t.id); },
+    closeTab: (t) => void runAction(() => ws.closeTab(t)),
+    moveTab: (t, workspaceId) => void runAction(() => ws.moveTab(t, workspaceId)),
+    moveTabToNewWorkspace: (t, name) => void runAction(async () => {
+      const created = await api.createWorkspace({ name });
+      await ws.moveTab(t, created.id);
+      ws.selectWorkspace(created.id);
+    }),
+    setTheme,
+    showKeys: () => setHelpOpen(true),
+  };
+  const items = paletteOpen
+    ? paletteItems({ workspaces: ws.workspaces, infos: ws.allInfos, projects: ws.projects, tab: ws.tab, place, theme, handlers })
+    : [];
+
+  const list: ReactNode = view === 'sessions' ? (
+    // The Sidebar has its own section headings (Workspaces, Agents).
+    <>
+      {ws.projects.length === 0 && (
+        <EmptyState action={<Button size="sm" onClick={() => { setView('settings'); setSheetOpen(false); }}>Add one in Settings</Button>}>
+          No projects yet.
+        </EmptyState>
+      )}
+      <Sidebar
+        ws={ws}
+        onRenameTab={setRenamingTabId}
+        onProjectSettings={showProjectSettings}
+        onChoose={() => setSheetOpen(false)}
+      />
+    </>
+  ) : view === 'files' ? (
+    <>
+      <h2 className={listHeading}>{label}</h2>
+      <FolderTree state={folder} />
+    </>
+  ) : (
+    <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
+      <h2 className={listHeading}>{label}</h2>
+      <List aria-label="Host" onAction={() => showProjectSettings(null)}>
+        <ListRow id="host" title="This host" current={settingsProjectId === null} />
+      </List>
+      <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
+        <span className="flex-1">Projects</span>
+        <IconButton label="Add project" size="sm" noTooltip className="size-5" onClick={() => { setSheetOpen(false); setAddingProject(true); }}>
+          <Plus aria-hidden />
+        </IconButton>
+      </h3>
+      <List aria-label="Projects" onAction={(id) => showProjectSettings(id)}>
+        {ws.projects.map((p) => (
+          <ListRow key={p.id} id={p.id} title={p.name} textValue={p.name} current={settingsProjectId === p.id}
+            leading={<ProjectKey projectKey={p.key} />} />
+        ))}
+      </List>
+    </nav>
+  );
+  const openList = () => setSheetOpen(true);
+
   return (
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
-      <IconRail active={view} onSelect={setView} />
-      <aside aria-label={`${label} list`} className="md:w-72 max-h-[40vh] md:max-h-none border-border md:border-r flex flex-col min-h-0">
-        <h2 className="px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground">{label}</h2>
-        <div className="flex-1 overflow-auto px-1">
-          {view === 'sessions' ? (
-            <>
-              {ws.projects.length === 0 && (
-                <EmptyState action={<Button size="sm" onClick={() => setView('settings')}>Add one in Settings</Button>}>
-                  No projects yet.
-                </EmptyState>
-              )}
-              <Sidebar
-                ws={ws}
-                onRenameTab={setRenamingTabId}
-                onProjectSettings={(id) => { setSettingsProjectId(id); setView('settings'); }}
-                onAddProject={() => setAddingProject(true)}
-              />
-            </>
-          ) : view === 'files' ? (
-            <FolderTree state={folder} />
-          ) : view === 'settings' ? (
-            <>
-              <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
-                <List aria-label="Host" onAction={() => setSettingsProjectId(null)}>
-                  <ListRow id="host" title="This host" current={settingsProjectId === null} />
-                </List>
-                <h3 className="px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">Projects</h3>
-                <List aria-label="Projects" onAction={setSettingsProjectId}>
-                  {ws.projects.map((p) => (
-                    <ListRow key={p.id} id={p.id} title={p.name} textValue={p.name} current={settingsProjectId === p.id}
-                      leading={<ProjectKey projectKey={p.key} />} />
-                  ))}
-                </List>
-              </nav>
-              <AddProjectForm onAdded={(p) => setSettingsProjectId(p.id)} />
-            </>
-          ) : (
-            <EmptyState>{PHASE_NOTE[view]}</EmptyState>
-          )}
-        </div>
-      </aside>
+      <IconRail
+        active={view}
+        onSelect={(v) => { setView(v); setSheetOpen(false); }}
+        onSearch={phone ? () => setPaletteOpen(true) : undefined}
+        top={phone ? undefined : <InstanceBadge stacked />}
+      />
+      {phone ? (
+        <Sheet side="left" title={LIST_NAME[view]} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
+          <div className="-mx-2">{list}</div>
+        </Sheet>
+      ) : (
+        <aside aria-label={`${label} list`} className="flex min-h-0 w-72 flex-col border-r border-border">
+          <div className="flex-1 overflow-auto px-1">{list}</div>
+        </aside>
+      )}
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
         <UpdateBanner />
-        {view !== 'settings' && view !== 'files' && (
+        {view === 'sessions' ? (
           <WorkspaceBar
             ws={ws}
             renamingTabId={renamingTabId}
             setRenamingTabId={setRenamingTabId}
             onNewTab={() => setChooserOpen(true)}
+            plusRef={plusRef}
+            {...(phone ? { onOpenList: openList, leading: <InstanceBadge compact /> } : {})}
             trailing={
               <IconButton label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
                 <PanelBottom aria-hidden />
               </IconButton>
             }
           />
-        )}
-        {chooserOpen && view !== 'settings' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} />}
+        ) : phone ? (
+          <div className="flex min-w-0 items-center gap-1 border-b border-border px-2 py-1">
+            <Button variant="ghost" size="sm" aria-label={LIST_NAME[view]} aria-haspopup="dialog" onClick={openList} className="font-medium">
+              {label} <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
+            </Button>
+            <InstanceBadge compact />
+          </div>
+        ) : null}
+        {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
+        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} />
         {addingProject && (
           <AddProjectDialog
             onClose={() => setAddingProject(false)}
             onAdded={(p) => {
+              if (view === 'settings') {
+                setSettingsProjectId(p.id);
+                return;
+              }
               // Show the new project's workspace once the list includes it.
               void runAction(async () => {
-                const list = await api.listWorkspaces();
-                const home = list.find((w) => w.projectId === p.id);
+                const all = await api.listWorkspaces();
+                const home = all.find((w) => w.projectId === p.id);
                 if (home) ws.selectWorkspace(home.id);
                 await ws.refresh();
               });
@@ -190,9 +286,24 @@ export function AppShell() {
             ) : view === 'settings' ? (
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
             ) : current?.run ? (
-              <RunView key={current.run.id} run={current.run} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} branchLink={branchLink} />
+              <RunView
+                key={current.run.id}
+                run={current.run}
+                polledAt={current.polledAt}
+                onRemoved={() => void ws.refresh()}
+                branchLink={branchLink}
+                {...(currentProject ? { repo: currentProject.githubRepo, baseBranch: currentProject.baseBranch } : {})}
+              />
             ) : current?.session ? (
-              <SessionView key={current.session.id} session={current.session} polledAt={current.polledAt} onRemoved={() => void ws.refresh()} branchLink={branchLink} />
+              <SessionView
+                key={current.session.id}
+                session={current.session}
+                polledAt={current.polledAt}
+                onRemoved={() => void ws.refresh()}
+                branchLink={branchLink}
+                {...(currentProject ? { repo: currentProject.githubRepo, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}
+                {...(!current.worktreeId ? { branch: null } : worktreeBranch !== undefined ? { branch: worktreeBranch } : {})}
+              />
             ) : ws.projects.length === 0 ? (
               <EmptyState>Add a project to get started.</EmptyState>
             ) : (

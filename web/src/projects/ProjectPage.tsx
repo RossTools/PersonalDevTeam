@@ -173,7 +173,7 @@ export function ProjectPage({ project, onRemoved }: { project: Project; onRemove
     <Page title={project.name} actions={<ProjectKey projectKey={project.key} />}>
       <Identity key={`${project.name}:${project.key}`} project={project} />
       <Worktrees project={project} />
-      <div className="-mx-4 border-t border-border sm:-mx-6"><ProjectSettingsPanel project={project} /></div>
+      <ProjectSettingsPanel project={project} />
       <RemoveProject project={project} onRemoved={onRemoved} />
     </Page>
   );

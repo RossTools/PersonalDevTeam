@@ -90,6 +90,9 @@ pub struct AppState {
     pub update_token_account: String,
     /// The last host checks (tool and login checks); the first `GET /host/checks` runs them.
     pub(crate) checks: std::sync::Arc<std::sync::Mutex<Option<crate::checks::HostChecks>>>,
+    /// Which instance this is (profile, port, dev), reported by `/api/health`. `new` makes it a dev instance on port
+    /// 0; pdtd sets the real one.
+    pub instance: pdt_core::instance::InstanceInfo,
 }
 
 impl AppState {
@@ -135,6 +138,7 @@ impl AppState {
             )),
             update_token_account,
             checks: Default::default(),
+            instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
         }
     }
 }
@@ -201,6 +205,9 @@ pub struct Health {
     pub status: String,
     pub name: String,
     pub version: String,
+    pub profile: pdt_core::brand::Profile,
+    pub port: u16,
+    pub dev: bool,
 }
 
 /// Asks pdtd to stop gracefully (running sessions become `interrupted`). Guarded by the Host/Origin checks.
@@ -295,6 +302,14 @@ async fn web_cache_headers(req: axum::extract::Request, next: axum::middleware::
     res
 }
 
-async fn health() -> Json<Health> {
-    Json(Health { status: "ok".into(), name: PRODUCT_NAME.into(), version: pdt_core::BUILD_VERSION.into() })
+async fn health(State(st): State<AppState>) -> Json<Health> {
+    let i = st.instance;
+    Json(Health {
+        status: "ok".into(),
+        name: PRODUCT_NAME.into(),
+        version: pdt_core::BUILD_VERSION.into(),
+        profile: i.profile,
+        port: i.port,
+        dev: i.dev,
+    })
 }

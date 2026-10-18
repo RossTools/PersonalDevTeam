@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { File, FileQuestion, Folder, FolderOpen } from 'lucide-react';
-import { Alert, Chip, EmptyState, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
+import { Alert, Chip, EmptyState, MenuButton, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Project } from '../api/gen/Project';
+import { copyToClipboard } from '../common/clipboard';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { CodeViewer } from './LazyCodeViewer';
 
@@ -111,13 +112,24 @@ export function FileViewer({ state }: { state: FolderViewState }) {
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <ViewHeader
-        title={<span className="font-mono">{f.path}</span>}
+        title={
+          // Truncates from the left so the file name stays visible (the bidi isolate keeps the path in order).
+          <span className="block truncate font-mono [direction:rtl]"><bdi>{f.path}</bdi></span>
+        }
         titleTooltip={f.path}
         meta={
           <>
             {f.status && <Chip title={`git: ${f.status}`} className={statusTone(f.status)}>{statusLetter(f.status)}</Chip>}
-            <span>{f.size.toLocaleString()} bytes</span>
+            <span className="shrink-0">{f.size.toLocaleString()} bytes</span>
           </>
+        }
+        actions={
+          <MenuButton
+            label="File actions"
+            size="sm"
+            placement="bottom end"
+            entries={() => [{ label: 'Copy path', onSelect: () => void copyToClipboard(f.path, 'Path copied') }]}
+          />
         }
       />
       {f.tooLarge ? (

@@ -34,6 +34,16 @@ describe('folder view', () => {
     await waitFor(() => expect(screen.getByTestId('code')).toHaveTextContent('fn main() {}'));
     expect(screen.getByTestId('code')).toHaveAttribute('data-name', 'src/main.rs');
     expect(screen.getByRole('row', { name: /main\.rs/ })).toHaveAttribute('aria-selected', 'true');
+    const header = screen.getByRole('banner');
+    expect(within(header).getByRole('heading', { name: 'src/main.rs' })).toHaveAttribute('title', 'src/main.rs');
+    expect(within(header).getByTitle('git: ??')).toHaveTextContent('U');
+    expect(within(header).getByText('13 bytes')).toBeInTheDocument();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    await userEvent.click(within(header).getByRole('button', { name: 'File actions' }));
+    await userEvent.click(within(await screen.findByRole('menu', { name: 'File actions' })).getByRole('menuitem', { name: 'Copy path' }));
+    expect(writeText).toHaveBeenCalledWith('src/main.rs');
+    expect(await screen.findByText('Path copied')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('row', { name: /README/ }));
     expect(await screen.findByText('This is a binary file.')).toBeInTheDocument();
   });
