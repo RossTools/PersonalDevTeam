@@ -53,9 +53,25 @@ which active tickets would change the same code, so two agents don't make confli
   interpret `&`, `|`, `%` and newlines).
 - **The first prompt is not stored**; restarts resume the conversation. Started sessions are titled
   `<Agent> · <ticket title>`; the ticket key shows as a chip beside them.
-- **Start checks in 4b** are blockers only (`check | force`); `wait` and the area checks arrive with 4c.
+- **Start checks in 4b** are blockers only (`check | force`); the area checks arrived with 4c (and Wait as a PATCH).
 - Abandon is idempotent; bulk moves to Done/Won't do also end attempts; an existing branch without a worktree is
   checked out rather than refused.
+
+### Decided while planning and building 4c
+- **Whose overlap:** always against the project's tickets with an *active attempt*. Two active tickets overlap by
+  shared areas or shared changed files; an open ticket without an attempt (including a waiting one) overlaps an active
+  one by shared areas, which is what Start warns about. Waiting tickets never hold areas against each other (they
+  would wait for each other forever).
+- **Wait** is `PATCH /api/tickets/{id} {waiting}` rather than a Start mode, so Start's result always has a session.
+  A waiting ticket goes to the top of its stage; Start and closing clear it; `waiting` events record changes.
+  `clearToStart` = waiting, no open blockers, no overlap.
+- **Areas** come from the main checkout's `.pdt/project.toml` plus host overrides (merged by name); `paths` are globs
+  (`*` stays in a folder); an invalid area invalidates the configuration like a bad run.
+- **Changed files** are recomputed every 30 s without a HEAD/index cache (that would miss unstaged edits): `git diff
+  --name-only --no-renames <merge-base>` against the working tree plus untracked files.
+- **Overlap events** are deduplicated against the ticket's latest `overlap` event for the same other ticket, so a
+  restart doesn't repeat them. `conflicts=true|false` filters on any overlap; the built-in saved filter "Ready to
+  start" is Ready, unblocked, no overlap.
 
 ## 3. Model
 

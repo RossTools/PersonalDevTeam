@@ -73,6 +73,8 @@ pub struct AppState {
     /// Serializes ticket Starts up to the attempt row (checks, worktree, attempt), so two Starts of one ticket can't
     /// both make a worktree.
     pub(crate) ticket_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap, tickets spec §7).
+    pub(crate) changed_files: crate::overlap::ChangedFiles,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
     pub run_stop_wait: std::time::Duration,
     /// The program agent hooks run (`<this pdtd> hook …`).
@@ -128,6 +130,7 @@ impl AppState {
             run_controls: Default::default(),
             run_start_lock: Default::default(),
             ticket_start_lock: Default::default(),
+            changed_files: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),
             hook_program: std::env::current_exe().unwrap_or_default(),
             activity: Default::default(),
@@ -263,6 +266,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
         .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
         .route("/projects/{id}/labels", get(crate::tickets::labels))
+        .route("/projects/{id}/areas", get(crate::overlap::areas))
         .route("/tickets", get(crate::tickets::list))
         .route("/tickets/bulk", axum::routing::post(crate::tickets::bulk))
         .route(

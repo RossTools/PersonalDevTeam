@@ -7,8 +7,8 @@ mod shutdown;
 
 use anyhow::Context;
 use pdt_api::{
-    AppState, apply_remote_access, check_merges, plan_resume_interrupted, resume_runs, router, run_activity_ticker,
-    sweep_gone_runs, with_host_guard,
+    AppState, apply_remote_access, check_merges, plan_resume_interrupted, refresh_overlaps, resume_runs, router,
+    run_activity_ticker, sweep_gone_runs, with_host_guard,
 };
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
@@ -145,6 +145,20 @@ async fn run() -> anyhow::Result<()> {
                 sweep_gone_runs(&st).await;
                 // Ticket attempts whose branch was merged (tickets spec §6).
                 check_merges(&st).await;
+            }
+        });
+    }
+    // Each active attempt's changed files and the overlaps they make, every 30 s (tickets spec §7).
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                refresh_overlaps(&st).await;
             }
         });
     }
