@@ -10,9 +10,13 @@ import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { AttemptSection, MergedBanner } from './Attempt';
-import { abandonAttempt, canStart, deleteTicket, moveToEntries, useStartTicket } from './actions';
+import { abandonAttempt, canStart, deleteTicket, moveToEntries, stopWaitingEntry, useStartTicket } from './actions';
+import { useClearToStartToasts } from './clearToStart';
+import { TicketBadges } from './TicketBadges';
 import { useCheckMerge, useTicket } from './queries';
-import { LabelChips, TicketAreas, TicketDescription, TicketDetails, TicketLinks, TicketTimeline, TicketTitle } from './TicketParts';
+import {
+  LabelChips, TicketAreas, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
+} from './TicketParts';
 
 type HubTab = 'overview' | 'conversation' | 'changes';
 
@@ -63,6 +67,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
         <>
           <StageStepper stage={ticket.stage} compact />
           <PriorityIcon priority={ticket.priority} />
+          <TicketBadges ticket={ticket} />
           <LabelChips labels={ticket.labels} className="hidden sm:flex" />
           {attempt && <BranchChip branch={attempt.branch} base={attempt.baseBranch} className="hidden max-w-60 md:inline-flex" />}
         </>
@@ -77,6 +82,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           <MenuButton
             label="Ticket actions"
             entries={() => [
+              ...(ticket.waiting ? [stopWaitingEntry(qc, ticket)] : []),
               { submenu: 'Move to', entries: moveToEntries(qc, ticket) },
               ...(attempt?.state === 'active'
                 ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
@@ -100,6 +106,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
   const q = useTicket(ticketId);
   const [tab] = useState<HubTab>('overview');
   useCheckMerge(q.data);
+  useClearToStartToasts(q.data ? [q.data] : []);
   if (q.isPending) return <div className="p-4"><Skeleton lines={3} label="Loading ticket" /></div>;
   if (!q.data) {
     return (
@@ -123,6 +130,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
           <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
             <TicketDetails ticket={t} />
             <AttemptSection ticket={t} />
+            <TicketOverlaps ticket={t} />
             <TicketLinks ticket={t} />
             <TicketAreas ticket={t} />
           </aside>

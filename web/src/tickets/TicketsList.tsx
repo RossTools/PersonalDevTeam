@@ -79,32 +79,31 @@ export function TicketsList({ backlog, projects, onChoose }: { backlog: BacklogS
           <Plus aria-hidden />
         </IconButton>
       </h3>
-      {backlog.saved.length === 0 ? (
-        <Button variant="ghost" size="sm" className="mx-1 justify-start text-muted-foreground" onClick={() => setSaving(true)}>
-          Save filter…
-        </Button>
-      ) : (
-        <List
-          aria-label="Saved filters"
-          items={backlog.saved}
-          onAction={(id) => {
-            const f = backlog.saved.find((x) => x.id === id);
-            if (f) { backlog.applyFilter(f); onChoose?.(); }
-          }}
-        >
-          {(f) => (
-            <ListRow
-              id={f.id}
-              title={f.name}
-              secondary={f.projectId ? projects.find((p) => p.id === f.projectId)?.name ?? 'Removed project' : 'All projects'}
-              onMenu={(at) => openMenu(at, `Saved filter ${f.name}`, [
-                { label: 'Apply', onSelect: () => backlog.applyFilter(f) },
-                { label: 'Delete', danger: true, onSelect: () => backlog.deleteFilter(f.id) },
-              ])}
-            />
-          )}
-        </List>
-      )}
+      {/* Never empty: the built-in "Ready to start" is always first. */}
+      <List
+        aria-label="Saved filters"
+        items={backlog.saved}
+        onAction={(id) => {
+          const f = backlog.saved.find((x) => x.id === id);
+          if (f) { backlog.applyFilter(f); onChoose?.(); }
+        }}
+      >
+        {(f) => (
+          <ListRow
+            id={f.id}
+            title={f.name}
+            secondary={
+              f.builtin
+                ? 'Ready, unblocked, no overlap'
+                : f.projectId ? projects.find((p) => p.id === f.projectId)?.name ?? 'Removed project' : 'All projects'
+            }
+            onMenu={(at) => openMenu(at, `Saved filter ${f.name}`, [
+              { label: 'Apply', onSelect: () => backlog.applyFilter(f) },
+              ...(f.builtin ? [] : [{ label: 'Delete', danger: true, onSelect: () => backlog.deleteFilter(f.id) }]),
+            ])}
+          />
+        )}
+      </List>
       {menu}
       {saving && <SaveFilterDialog onSave={backlog.saveFilter} onClose={() => setSaving(false)} />}
     </nav>

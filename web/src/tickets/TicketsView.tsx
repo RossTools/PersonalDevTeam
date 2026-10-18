@@ -1,6 +1,6 @@
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryClient, type InfiniteData, type QueryClient, type QueryKey } from '@tanstack/react-query';
-import { ChevronDown, Plus } from 'lucide-react';
+import { Check, ChevronDown, Plus } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
   Badge, BulkActionBar, Button, Checkbox, DataList, DataListRow, EmptyState, FilterBar, Input, MenuButton, Popover,
@@ -18,14 +18,16 @@ import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { canStart, deleteTicket, moveToEntries, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { canStart, deleteTicket, moveToEntries, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { AttemptSection, MergedBanner } from './Attempt';
 import { Board } from './Board';
+import { useClearToStartToasts } from './clearToStart';
+import { TicketBadges } from './TicketBadges';
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
 import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketPages } from './queries';
-import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketTimeline, TicketTitle } from './TicketParts';
+import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -71,6 +73,30 @@ function MultiChip<V extends string>({ label, options, selected, onChange, none 
         )}
       </div>
     </Popover>
+  );
+}
+
+/** A filter chip with one choice of three: either (null), yes (true) or no (false). */
+function ChoiceChip({ label, value, onChange, yes, no }: {
+  label: string;
+  value: boolean | null;
+  onChange: (v: boolean | null) => void;
+  /** What true and false are called ("With overlap", "No overlap"). */
+  yes: string;
+  no: string;
+}) {
+  const text = value === null ? label : `${label}: ${value ? yes : no}`;
+  const entry = (v: boolean | null, name: string): MenuEntry => ({
+    label: name,
+    icon: value === v ? <Check aria-hidden /> : <span aria-hidden className="size-4" />,
+    onSelect: () => onChange(v),
+  });
+  return (
+    <MenuButton label={`${label} filter`} placement="bottom start" entries={() => [entry(null, 'Any'), entry(true, yes), entry(false, no)]}>
+      <Button variant={value !== null ? 'secondary' : 'ghost'} size="sm" compact aria-label={`${label} filter`}>
+        {text} <ChevronDown aria-hidden />
+      </Button>
+    </MenuButton>
   );
 }
 
@@ -121,7 +147,7 @@ async function rankMove(qc: QueryClient, key: QueryKey, ids: string[], target: s
 // Rows
 
 function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
-  const blocked = t.blockedBy > 0 && <Badge tone="waiting" title={`${t.blockedBy} open blocker${t.blockedBy === 1 ? '' : 's'}`}>Blocked</Badge>;
+  const badges = <TicketBadges ticket={t} />;
   if (phone) {
     return (
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
@@ -133,7 +159,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
           <span>{STAGE_LABEL[t.stage]}</span>
           <span aria-hidden>·</span>
           <PriorityIcon priority={t.priority} />
-          {blocked}
+          {badges}
           <LabelChips labels={t.labels} className="overflow-hidden" />
         </div>
       </div>
@@ -143,7 +169,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
     <>
       <TicketKey ticketKey={t.key} className="w-20 justify-start" />
       <span className={cn('min-w-0 flex-1 truncate', isClosed(t.stage) && 'text-muted-foreground line-through')}>{t.title}</span>
-      {blocked}
+      {badges}
       <LabelChips labels={t.labels} className="hidden max-w-60 overflow-hidden lg:flex" />
       <Badge className="w-20 justify-center">{STAGE_LABEL[t.stage]}</Badge>
       <PriorityIcon priority={t.priority} className="w-4" />
@@ -223,6 +249,7 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
             label="Ticket actions"
             placement="top end"
             entries={() => [
+              ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
               { submenu: 'Move to', entries: moveToEntries(qc, t) },
               { separator: true },
               { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
@@ -242,10 +269,12 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
             <TicketKey ticketKey={t.key} className="self-start" />
             <TicketTitle ticket={t} className="text-base font-semibold" />
             <StageStepper stage={t.stage} compact />
+            <TicketBadges ticket={t} className="flex-wrap" />
             <MergedBanner ticket={t} className="rounded-md border" />
           </div>
           <TicketDetails ticket={t} />
           {t.attempt && <AttemptSection ticket={t} compact />}
+          {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
           <TicketDescription key={t.id} ticket={t} />
           <TicketLinks ticket={t} />
           <TicketTimeline ticketId={t.id} recent={5} />
@@ -278,6 +307,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   const pages = useTicketPages(query, mode === 'backlog');
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const total = pages.data?.pages[0]?.total;
+  useClearToStartToasts(mode === 'backlog' ? items : []);
   const labels = useLabels(project?.id ?? null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -483,6 +513,8 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
                   selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
                 <MultiChip<Priority> label="Priority" options={priorityOptions} selected={filters.priorities} onChange={(priorities) => backlog.setFilters({ priorities })} />
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
+                <ChoiceChip label="Blocked" yes="Blocked" no="Unblocked" value={filters.blocked} onChange={(blocked) => backlog.setFilters({ blocked })} />
+                <ChoiceChip label="Overlap" yes="With overlap" no="No overlap" value={filters.conflicts} onChange={(conflicts) => backlog.setFilters({ conflicts })} />
                 {phone && viewOptions}
               </FilterBar>
             )}

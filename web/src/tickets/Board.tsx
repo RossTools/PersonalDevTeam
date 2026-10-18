@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Badge, Button, ContextMenu, dragData, MenuButton, parseDragData, SegmentedControl, Skeleton, useConfirm, type MenuEntry,
+  Button, ContextMenu, dragData, MenuButton, parseDragData, SegmentedControl, Skeleton, useConfirm, type MenuEntry,
 } from '@ui';
 import type { Session } from '../api/gen/Session';
 import type { TicketQuery } from '../api/gen/TicketQuery';
@@ -17,6 +17,8 @@ import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { canStart, patchTicket, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { useAllSessions, useTicketPages } from './queries';
+import { useClearToStartToasts } from './clearToStart';
+import { TicketBadges } from './TicketBadges';
 import { LabelChips } from './TicketParts';
 
 export type BoardStage = Extract<TicketStage, 'todo' | 'in_progress' | 'done'>;
@@ -65,7 +67,7 @@ export interface BoardCardProps {
   draggable?: boolean;
 }
 
-/** A board card: key, title (two lines), priority, labels, blocked, and the attempt's branch with its activity dot. */
+/** A board card: key, title (two lines), priority, labels, blocked/overlap/waiting, and the attempt's branch with its activity dot. */
 export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = false }: BoardCardProps) {
   const [dragging, setDragging] = useState(false);
   const onDragStart = (e: DragEvent) => {
@@ -92,10 +94,10 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
           onClick={onOpen}
           className="flex min-w-0 flex-col gap-1.5 rounded-md p-2 pr-8 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span className="flex items-center gap-1.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <TicketKey ticketKey={t.key} />
             <PriorityIcon priority={t.priority} />
-            {t.blockedBy > 0 && <Badge tone="waiting">Blocked</Badge>}
+            <TicketBadges ticket={t} className="flex-wrap" />
           </span>
           <span className={cn('line-clamp-2 text-sm', activity?.unseen && 'font-semibold')}>{t.title}</span>
           {t.labels.length > 0 && <LabelChips labels={t.labels} className="flex-wrap" />}
@@ -135,6 +137,7 @@ function Column({ projectId, stage, title, closedAfter, sessions, onPeek, dropTa
   const pages = useTicketPages(query);
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const total = pages.data?.pages[0]?.total;
+  useClearToStartToasts(items);
   const [over, setOver] = useState(false);
 
   const onDragOver = (e: DragEvent) => {
