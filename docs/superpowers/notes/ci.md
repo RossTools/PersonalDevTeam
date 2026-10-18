@@ -1,24 +1,38 @@
 # CI layout
 
-Workflow: `.github/workflows/ci.yml`; bundle steps in `.github/actions/bundle`.
+Workflow: `.github/workflows/ci.yml`; shared setup (toolchain, cache, nextest, pnpm) in `.github/actions/setup`, bundle
+steps in `.github/actions/bundle`.
 
 Linux does every check that doesn't depend on the OS, split into parallel jobs. macOS and Windows run only what they
 can break on their own: clippy (for `cfg` code) and the Rust tests (paths, processes, PTYs).
 
 | Check | Runs on | Does | Pull requests | main / nightly |
 |---|---|---|---|---|
-| lint (linux) | GitHub Linux | fmt, clippy | unless docs only | always / nightly |
-| test (linux) | GitHub Linux | nextest, generated TS types are committed | unless docs only | always / nightly |
-| web (linux) | GitHub Linux | web typecheck, vitest, build | unless docs only | always / nightly |
-| build (macos-latest) ✱ | GitHub macOS (M1, 3 vCPU) | clippy, nextest, desktop crate clippy + test | unless docs only | always / nightly |
+| lint (linux) | Namespace `linux-8` | fmt, clippy | unless docs only | always / nightly |
+| test (linux) | Namespace `linux-8` | nextest, generated TS types are committed | unless docs only | always / nightly |
+| web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | always / nightly |
+| build (macos-latest) ✱ | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | unless docs only | always / nightly |
 | build (windows-latest) ✱ | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | always / nightly |
 | bundle (macos-latest, app) ✱ | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | always (release) |
 | bundle (windows-latest, nsis) ✱ | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | always (release) |
 
-The Linux jobs run on `${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}`. `ubuntu-latest` is 2 vCPU for this
-internal repo (vitest takes ~4 min there); a larger runner (org Settings → Actions → Runners → New GitHub-hosted
-runner; 8-core arm64 is $0.014/min, never covered by the included minutes) is used by setting the repo variable
-`PDT_LINUX_RUNNER` to its name. Unset the variable to go back.
+### Runners
+
+- **Namespace** (namespace.so; its GitHub App is installed on this repo) runs the Linux and macOS checks: runner
+  profiles `namespace-profile-linux-8` (8 vCPU x64, Ubuntu) and `namespace-profile-macos-6` (M4 Pro), each with a
+  cache volume. A cache volume keeps `target/`, the cargo registry and the pnpm store between runs, like the Mac mini's
+  warm build dir did, so most runs rebuild only what changed. A job saves its changes only when it exits cleanly, and
+  the saved copy reaches other machines in the background. Paid per minute (~$50/month at ~400 runs,
+  docs/superpowers/notes/runners.md).
+- Namespace's Linux image is not GitHub's: no `SHELL` and no zsh. pdtd's terminal tests start `/bin/zsh` when no
+  shell is given, so `setup` with `zsh: true` installs it (with an empty `~/.zshrc` and `skip_global_compinit=1`).
+- **GitHub** runs Windows (checks and installer), the macOS release bundle (signing) and the small `changes` and
+  `release` jobs; the standard runners are covered by the plan's included minutes.
+- Repo variables `PDT_LINUX_RUNNER` / `PDT_MACOS_RUNNER` override the Namespace runners, e.g. `ubuntu-latest` /
+  `macos-latest` if Namespace is down or out of credit (`gh variable set PDT_LINUX_RUNNER --body ubuntu-latest`, and
+  `gh variable delete` to go back). `setup` notices the runner (`nsc-runner-*` names) and uses rust-cache and
+  setup-node's pnpm cache on GitHub's runners instead.
+- Comparing hosts: `.github/workflows/bench.yml` times the same work on any list of runners.
 
 ✱ required by the "Main" ruleset. The Linux checks must be added to it too (Settings → Rules → Main → required
 status checks), or a PR can merge with them failing.
@@ -30,11 +44,10 @@ status checks), or a PR can merge with them failing.
 A job skipped by its `if` still reports its check, and a skipped check counts as passing, so the job names must stay
 the ruleset's required check names. Renaming a job means editing the "Main" ruleset first.
 
-Why: on `windows-latest` (2 vCPU for this internal repo) vitest alone took 6m37s, and the web code is the same on every
-OS; Linux minutes are the cheapest. CI no longer runs on the Mac mini, which also runs the agents and the stable PDT
-(docs/superpowers/notes/runners.md). The standard macOS and Windows runners are covered by the plan's included
-minutes. `PDT_MACOS_RUNNER` (repo variable) moves the macOS checks to another runner, such as `macos-latest-xlarge`
-(paid per minute). A Windows-only break is caught on
+Why: on GitHub's 2-vCPU runners (this internal repo's size) vitest alone took ~3 min on Linux and 6m37s on Windows,
+and the web code is the same on every OS. Namespace ran the Linux checks in 1.8 min (vs 6.4) and macOS in 1.4 (vs
+2.7–3.9). CI no longer runs on the Mac mini, which also runs the agents and the stable PDT
+(docs/superpowers/notes/runners.md). A Windows-only break is caught on
 the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
 platform-specific code (`cfg(windows)`, process spawning, paths).
 

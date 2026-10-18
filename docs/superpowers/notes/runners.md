@@ -201,6 +201,10 @@ secrets as env vars and runs that command:
 
 ## Recommendation
 
+**Chosen (2026-10-18):** Namespace for the Linux and macOS checks; Windows and the release bundles stay on GitHub's
+standard runners. The list below is the original recommendation.
+
+
 1. **Now, free:** take vitest (and the other OS-independent web checks) off the Windows job.
 2. **PDT-24:** switch "Main" to merge queue instead of "require up to date"; add `merge_group` to ci.yml; remove
    `update-prs.yml`; close PR #35. Portable to Buildkite.
