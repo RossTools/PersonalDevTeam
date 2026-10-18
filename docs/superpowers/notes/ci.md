@@ -1,13 +1,22 @@
 # CI layout
 
-Workflow: `.github/workflows/ci.yml`; shared steps in `.github/actions/checks` and `.github/actions/bundle`.
+Workflow: `.github/workflows/ci.yml`; bundle steps in `.github/actions/bundle`.
 
-| Check (required on main) | Runs on | Pull requests | main / nightly |
-|---|---|---|---|
-| build (macos-latest) | Mac mini, self-hosted (`pdt-mini`) | unless docs only | always / nightly |
-| build (windows-latest) | GitHub Windows | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | always / nightly |
-| bundle (macos-latest, app) | GitHub macOS | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | always (release) |
-| bundle (windows-latest, nsis) | GitHub Windows | same | always (release) |
+Linux does every check that doesn't depend on the OS, split into parallel jobs. macOS and Windows run only what they
+can break on their own: clippy (for `cfg` code) and the Rust tests (paths, processes, PTYs).
+
+| Check | Runs on | Does | Pull requests | main / nightly |
+|---|---|---|---|---|
+| lint (linux) | GitHub Linux | fmt, clippy | unless docs only | always / nightly |
+| test (linux) | GitHub Linux | nextest, generated TS types are committed | unless docs only | always / nightly |
+| web (linux) | GitHub Linux | web typecheck, vitest, build | unless docs only | always / nightly |
+| build (macos-latest) ✱ | Mac mini, self-hosted (`pdt-mini`) | clippy, nextest, desktop crate clippy + test | unless docs only | always / nightly |
+| build (windows-latest) ✱ | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | always / nightly |
+| bundle (macos-latest, app) ✱ | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | always (release) |
+| bundle (windows-latest, nsis) ✱ | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | always (release) |
+
+✱ required by the "Main" ruleset. The Linux checks must be added to it too (Settings → Rules → Main → required
+status checks), or a PR can merge with them failing.
 
 **Docs-only PRs** (every changed file under `docs/` or ending in `.md`) skip every job but `changes`; a `windows` or
 `bundle` label still runs those jobs. No code reads a Markdown file today; if one ever does (an `include_str!` of a
@@ -16,8 +25,10 @@ Workflow: `.github/workflows/ci.yml`; shared steps in `.github/actions/checks` a
 A job skipped by its `if` still reports its check, and a skipped check counts as passing, so the job names must stay
 the ruleset's required check names. Renaming a job means editing the "Main" ruleset first.
 
-Why: hosted runners start cold (1.2 GB cache restore, full workspace rebuild) and Windows is twice as slow as macOS. On
-the Mac mini the build output stays warm; a small change re-checks in about a minute. A Windows-only break is caught on
+Why: on `windows-latest` (2 vCPU for this internal repo) vitest alone took 6m37s against 33 s on the Mac mini, and the
+web code is the same on every OS; Linux minutes are the cheapest, and the Mac mini also runs the agents
+(docs/superpowers/notes/runners.md). On the Mac mini the build output stays warm; a small change re-checks in about a
+minute. A Windows-only break is caught on
 the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
 platform-specific code (`cfg(windows)`, process spawning, paths).
 

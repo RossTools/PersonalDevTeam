@@ -119,7 +119,7 @@ Put each check behind one command that any CI calls, so a CI file only picks the
 secrets as env vars and runs that command:
 
 - `cargo xtask ci <check|test|web|bundle-macos|bundle-windows>` (Rust is on every agent, and no bash/PowerShell
-  split on Windows), or `just`/`mise` tasks. The checks now live in `.github/actions/checks`.
+  split on Windows), or `just`/`mise` tasks.
 - `scripts/sign-macos.sh` / `notarize-macos.sh` already read env vars; keep it that way.
 - The `changes` job's docs-only and label logic becomes a script both systems use. Buildkite has `if_changed` and
   dynamic pipelines (`buildkite-agent pipeline upload`).
