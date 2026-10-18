@@ -34,7 +34,8 @@ env:
 # What a pull request waits for (docs/superpowers/notes/ci.md):
 # - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`): every other job is skipped.
 # - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types)
-#   and web (typecheck, vitest, build). None of it depends on the OS.
+#   and web (typecheck, vitest, build). None of it depends on the OS. They run on the larger runner named by the
+#   repo variable PDT_LINUX_RUNNER when it is set, else on ubuntu-latest (2 vCPU for this internal repo).
 # - build (macos-latest): every other PR, on the Mac mini's self-hosted runner, only what macOS can break: clippy,
 #   nextest and the desktop crate.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
@@ -83,7 +84,7 @@ jobs:
     name: lint (linux)
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -99,7 +100,7 @@ jobs:
     name: test (linux)
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -121,7 +122,7 @@ jobs:
     name: web (linux)
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

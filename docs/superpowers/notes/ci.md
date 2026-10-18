@@ -15,6 +15,11 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | bundle (macos-latest, app) ✱ | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | always (release) |
 | bundle (windows-latest, nsis) ✱ | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | always (release) |
 
+The Linux jobs run on `${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}`. `ubuntu-latest` is 2 vCPU for this
+internal repo (vitest takes ~4 min there); a larger runner (org Settings → Actions → Runners → New GitHub-hosted
+runner; 8-core arm64 is $0.014/min, never covered by the included minutes) is used by setting the repo variable
+`PDT_LINUX_RUNNER` to its name. Unset the variable to go back.
+
 ✱ required by the "Main" ruleset. The Linux checks must be added to it too (Settings → Rules → Main → required
 status checks), or a PR can merge with them failing.
 
