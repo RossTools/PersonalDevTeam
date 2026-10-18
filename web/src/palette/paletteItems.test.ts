@@ -77,15 +77,15 @@ describe('paletteItems', () => {
     expect(groups.lastIndexOf(GO_TO)).toBeLessThan(groups.indexOf(ACTIONS));
   });
 
-  it('goes to every workspace and every tab, tabs with their workspace, state, project key and branch', () => {
+  it('goes to every workspace and every tab, tabs with their agent, workspace, state, project key and branch', () => {
     const c = ctx();
     const items = paletteItems(c);
     expect(byId(items, 'workspace:w2').label).toBe('Workspace · Scratch');
     const t1 = byId(items, 'tab:t1');
-    expect(t1).toMatchObject({ label: 'fix login', detail: 'PersonalDevTeam', group: GO_TO });
-    expect(t1.keywords).toEqual(expect.arrayContaining(['PDT', 'fix-login']));
+    expect(t1).toMatchObject({ label: 'fix login', detail: 'Claude · PersonalDevTeam', group: GO_TO });
+    expect(t1.keywords).toEqual(expect.arrayContaining(['PDT', 'fix-login', 'Claude']));
     expect(t1.state?.label).toBe('Idle');
-    expect(byId(items, 'tab:t2')).toMatchObject({ label: 'pdt · feature-x', keywords: expect.arrayContaining(['feature-x']) });
+    expect(byId(items, 'tab:t2')).toMatchObject({ label: 'pdt · feature-x', detail: 'PersonalDevTeam', keywords: expect.arrayContaining(['feature-x']) });
     expect(byId(items, 'tab:t3').state?.label).toBe('Needs you');
     byId(items, 'tab:t3').run!();
     expect(c.handlers.selectTab).toHaveBeenCalledWith(workspaces[1].tabs[0]);

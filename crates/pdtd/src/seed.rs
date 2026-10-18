@@ -117,16 +117,13 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         ticket: None,
     };
     let sessions = [
-        session(&app, None, None, "Shell · main", 3 * DAY - HOUR),
-        Session {
-            exit_code: Some(1),
-            ..session(&app, None, Some(AgentKind::Codex), "Codex · Fix the README typo", DAY)
-        },
-        session(&app, Some(&wt), Some(AgentKind::Claude), "Claude · Build the login form", 4 * HOUR),
-        session(&app, Some(&wt), None, "Shell · feature/login-form", 3 * HOUR),
+        session(&app, None, None, "main", 3 * DAY - HOUR),
+        Session { exit_code: Some(1), ..session(&app, None, Some(AgentKind::Codex), "Fix the README typo", DAY) },
+        session(&app, Some(&wt), Some(AgentKind::Claude), "Build the login form", 4 * HOUR),
+        session(&app, Some(&wt), None, "feature/login-form", 3 * HOUR),
         Session {
             bypass_permissions: true,
-            ..session(&lib, None, Some(AgentKind::Claude), "Claude · Write the docs (no prompts)", 2 * HOUR)
+            ..session(&lib, None, Some(AgentKind::Claude), "Write the docs (no prompts)", 2 * HOUR)
         },
     ];
     for s in &sessions {

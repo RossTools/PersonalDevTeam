@@ -115,7 +115,7 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
     assert_eq!((s(&attempt["branch"]), s(&attempt["state"])), ("pdt/PDT-1-fix-the-login", "active"));
     assert_eq!(attempt["baseBranch"], "main");
     assert_eq!(attempt["lastHead"], Value::Null);
-    assert_eq!(s(&session["title"]), "Claude · Fix the login");
+    assert_eq!(s(&session["title"]), "Fix the login");
     assert_eq!(session["attemptId"], attempt["id"]);
     assert_eq!(session["ticket"], json!({"id": id, "key": "PDT-1"}));
     assert_eq!(session["status"], "running");
@@ -166,7 +166,7 @@ async fn codex_gets_the_prompt_after_its_flags() {
     let id = ticket(&env, json!({"title": "Add -v flag"})).await;
     let r = started(&env, &id, json!({"agent": "codex", "bypassPermissions": true, "branch": "feature/v"})).await;
     assert_eq!(r["attempt"]["branch"], "feature/v");
-    assert_eq!(r["session"]["title"], "Codex · Add -v flag");
+    assert_eq!(r["session"]["title"], "Add -v flag");
     assert_eq!(r["session"]["bypassPermissions"], true);
     let launch = recorded_launches(&env.bin, "fakecodex", 1).await.remove(0);
     if !cfg!(windows) {

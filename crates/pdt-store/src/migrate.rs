@@ -98,3 +98,56 @@ mod tests {
         assert_eq!(second, tmp.path().join("pdt-42-1.db"));
     }
 }
+
+#[cfg(test)]
+mod session_title_tests {
+    use crate::Store;
+    use sqlx::migrate::Migrator;
+
+    /// 0012 strips the agent prefix PDT used to put on session titles, and nothing else.
+    #[tokio::test]
+    async fn migration_strips_agent_prefixes_from_titles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let before = tmp.path().join("before");
+        std::fs::create_dir_all(&before).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            if name.as_str() < "0012" {
+                std::fs::copy(src.join(&name), before.join(&name)).unwrap();
+            }
+        }
+        let db = tmp.path().join("t.db");
+        let backups = tmp.path().join("backups");
+        let s = Store::open_with(&db, &Migrator::new(before.as_path()).await.unwrap(), &backups).await.unwrap();
+        sqlx::query("INSERT INTO projects (id, name, repo_path, base_branch, created_at, key) VALUES ('p', 'P', '/r', 'main', 0, 'P')")
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        let rows = [
+            ("a", "agent_tui", Some("claude"), "Claude · feature-x"),
+            ("b", "agent_tui", Some("codex"), "Codex · Fix login"),
+            ("c", "shell", None, "Shell · main"),
+            ("d", "agent_tui", Some("codex"), "Claude · named by hand"),
+            ("e", "agent_tui", Some("claude"), "My own title"),
+            ("f", "agent_tui", Some("claude"), "Claude · "),
+        ];
+        for (id, kind, agent, title) in rows {
+            sqlx::query("INSERT INTO sessions (id, project_id, kind, agent, title, cwd, status, created_at) VALUES (?, 'p', ?, ?, ?, '/r', 'finished', 0)")
+                .bind(id)
+                .bind(kind)
+                .bind(agent)
+                .bind(title)
+                .execute(&s.pool)
+                .await
+                .unwrap();
+        }
+        s.close().await;
+
+        let s = Store::open_with(&db, &super::MIGRATOR, &backups).await.unwrap();
+        let titles: Vec<(String,)> =
+            sqlx::query_as("SELECT title FROM sessions ORDER BY id").fetch_all(&s.pool).await.unwrap();
+        let titles: Vec<&str> = titles.iter().map(|(t,)| t.as_str()).collect();
+        assert_eq!(titles, ["feature-x", "Fix login", "main", "Claude · named by hand", "My own title", "Claude · "]);
+    }
+}

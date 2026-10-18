@@ -1884,7 +1884,7 @@ mod tests {
             kind: SessionKind::AgentTui,
             agent: Some(AgentKind::Claude),
             bypass_permissions: false,
-            title: format!("Claude · {id}"),
+            title: format!("session {id}"),
             cwd: "/r".into(),
             status: SessionStatus::Running,
             exit_code: None,

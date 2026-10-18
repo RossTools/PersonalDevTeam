@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
-  ArrowRightLeft, BellRing, Bot, Check, Code, Keyboard, Layers, PanelTop, Pencil, Play, Plus, Server, Settings, Sparkles,
-  SquareTerminal, SunMoon, Ticket, Files, X,
+  ArrowRightLeft, BellRing, Bot, Check, Keyboard, Layers, PanelTop, Pencil, Play, Plus, Server, Settings, SunMoon, Ticket,
+  Files, X,
 } from 'lucide-react';
 import { Button, CommandList, Dialog, Field, Input, type CommandItem } from '@ui';
 import { AgentDot } from '../common/AgentState';
+import { KIND_ICON } from '../common/SessionKindIcon';
 import { TicketPicker } from '../tickets/TicketPicker';
 import type { PaletteIcon, PaletteItem, PaletteStep } from './paletteItems';
 
@@ -14,9 +15,9 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   agent: <Bot aria-hidden />,
   settings: <Settings aria-hidden />,
   host: <Server aria-hidden />,
-  claude: <Sparkles aria-hidden />,
-  codex: <Code aria-hidden />,
-  shell: <SquareTerminal aria-hidden />,
+  claude: <KIND_ICON.claude aria-hidden />,
+  codex: <KIND_ICON.codex aria-hidden />,
+  shell: <KIND_ICON.shell aria-hidden />,
   run: <Play aria-hidden />,
   rename: <Pencil aria-hidden />,
   close: <X aria-hidden />,

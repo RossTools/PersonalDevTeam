@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bot, GitBranch, Play, SquareTerminal, TestTube, Ticket } from 'lucide-react';
+import { ArrowLeft, GitBranch, Play, TestTube, Ticket } from 'lucide-react';
 import { Alert, Button, CommandList, Dialog, Popover, Sheet, Switch, type CommandItem } from '@ui';
 import { api } from '../api/client';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import { AgentDot, itemState } from '../common/AgentState';
 import { PlacePicker } from '../common/PlacePicker';
+import { KIND_ICON } from '../common/SessionKindIcon';
 import { runAction } from '../common/useAction';
 import { useMediaQuery } from '../common/useMediaQuery';
 import { RunBranchForm } from '../runs/RunBranchForm';
@@ -98,14 +99,10 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
 
   const items: CommandItem[] = [
     ...(place
-      ? AGENTS.map((c) => ({
-          id: `new:${c}`,
-          label: c,
-          group: 'Start here',
-          shortcut: keyOf(c),
-          icon: c === 'Shell' ? <SquareTerminal aria-hidden /> : <Bot aria-hidden />,
-          disabled: create.isPending,
-        }))
+      ? AGENTS.map((c) => {
+          const Icon = KIND_ICON[c === 'Shell' ? 'shell' : c === 'Codex' ? 'codex' : 'claude'];
+          return { id: `new:${c}`, label: c, group: 'Start here', shortcut: keyOf(c), icon: <Icon aria-hidden />, disabled: create.isPending };
+        })
       : []),
     ...(place && workspace ? [{ id: 'ticket', label: 'Ticket…', group: 'Start here', icon: <Ticket aria-hidden /> }] : []),
     ...(place

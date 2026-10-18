@@ -6,6 +6,7 @@ import { ContextMenu, IconButton, Kbd } from '@ui';
 import { api } from '../api/client';
 import type { Tab } from '../api/gen/Tab';
 import { AgentDot, itemState } from '../common/AgentState';
+import { SessionKindIcon } from '../common/SessionKindIcon';
 import { InlineRename } from '../common/InlineRename';
 import { runAction } from '../common/useAction';
 import { accepts, dragTab, dropped, type Dropped } from './dnd';
@@ -83,6 +84,7 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
             ) : (
               info && <AgentDot state={itemState(info)} />
             )}
+            <SessionKindIcon session={info?.session} />
             <span className={cn('max-w-48 truncate', info?.unseen && 'font-semibold')}>{title}</span>
           </button>
         </ContextMenu>
