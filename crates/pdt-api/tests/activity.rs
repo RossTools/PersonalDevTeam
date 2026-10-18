@@ -298,6 +298,48 @@ async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn claude_interrupt_returns_to_idle_without_a_stop_hook() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, port, pid) = serve_claude(tmp.path(), 60_000).await;
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
+    // The fake echoes each line as output. Quoting the interruption message during ordinary work is not a stop.
+    type_in(&mut ws, "Interrupted · What should Claude do instead?\r").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "working");
+    // Use a separate terminal for cancellation so a delayed echo of the quoted example cannot serve as its ack.
+    call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
+    // Esc requests cancellation; a dialog can consume it, so wait for Claude's interruption acknowledgement.
+    type_in(&mut ws, "\x1b").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "working");
+    type_in(&mut ws, "Interrupted · What should Claude do instead?\r").await;
+    wait_for_activity(&app, &id, json!("idle")).await;
+    // A tool finishing while cancellation settles must not leave the session stuck working again.
+    report(&app, &id, json!({"source": "claude", "event": "PostToolUse"})).await;
+    report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "idle");
+    report(&app, &id, json!({"source": "claude", "event": "PreToolUse"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "new tool use proves work resumed");
+    report(&app, &id, json!({"source": "claude", "event": "Stop"})).await;
+    report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "a new prompt starts normally");
+    let id = create_claude(&app, &pid).await;
+    let mut ws = terminal(port, &id).await;
+    report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
+    type_in(&mut ws, "\x1b").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(session(&app, &id).await["activity"], "needs_you", "Esc alone can decline a permission");
+    report(&app, &id, json!({"source": "claude", "event": "PostToolUse"})).await;
+    assert_eq!(session(&app, &id).await["activity"], "working", "a declined permission can continue the turn");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn removing_a_session_deletes_its_hook_settings() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _, pid) = serve_claude(tmp.path(), 2_000).await;

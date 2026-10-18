@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast::error::RecvError;
 
-/// How much squashed Codex output is kept to look for the approval prompt (it arrives in pieces).
+/// How much squashed output is kept to look for agent screen markers (they arrive in pieces).
 const SCREEN_TAIL: usize = 16 * 1024;
 /// The longest unfinished window-title sequence carried from one output chunk to the next.
 const TITLE_CARRY: usize = 1024;
@@ -27,16 +27,20 @@ pub(crate) struct Tracker {
     agent: AgentKind,
     activity: Activity,
     watch: Watch,
-    /// Set by input that resumed Codex: the output task forgets the screen it has scanned so far.
+    /// An interrupt key was sent; wait for the TUI acknowledgement before declaring the turn idle.
+    interrupt_pending: bool,
+    /// Ignore late tool hooks after an acknowledged interrupt until new work starts.
+    interrupted: bool,
+    /// Set when input resumes Codex, requests interruption, or starts a Claude turn: forget the scanned screen.
     clear_screen: bool,
     /// Tells this terminal run's tracker from a later one for the same session (restart).
     generation: u64,
 }
 
-/// Recent Codex output, owned by the session's output task (scanned outside any shared lock).
+/// Recent agent output, owned by the session's output task (scanned outside any shared lock).
 #[derive(Default)]
 struct Screen {
-    /// Squashed text, searched for the approval prompt.
+    /// Squashed text, searched for approval and interruption messages.
     text: String,
     /// An unfinished window-title sequence from the previous chunk.
     title_carry: Vec<u8>,
@@ -57,6 +61,16 @@ impl Screen {
         if rest.len() <= TITLE_CARRY {
             self.title_carry = rest.to_vec();
         }
+        self.push_text(bytes);
+        codex_approval_shown(title, &self.text)
+    }
+
+    fn shows_interruption(&mut self, bytes: &[u8]) -> bool {
+        self.push_text(bytes);
+        self.text.contains("interrupted") && self.text.contains("whatshouldclaudedoinstead?")
+    }
+
+    fn push_text(&mut self, bytes: &[u8]) {
         self.text.push_str(&squash(&strip_ansi(bytes)));
         if self.text.len() > SCREEN_TAIL {
             let mut cut = self.text.len() - SCREEN_TAIL;
@@ -65,7 +79,6 @@ impl Screen {
             }
             self.text.drain(..cut);
         }
-        codex_approval_shown(title, &self.text)
     }
 }
 
@@ -85,9 +98,25 @@ pub(crate) fn forget(st: &AppState, id: &str) {
 pub(crate) async fn apply(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiError> {
     let order = order_lock(st, id);
     let _in_order = order.lock().await;
+    apply_ordered(st, id, sig).await
+}
+
+async fn apply_ordered(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiError> {
     let tracked = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         map.get_mut(id).map(|t| {
+            if sig == Signal::Interrupted {
+                if !t.interrupt_pending {
+                    return (t.activity, t.activity);
+                }
+                t.interrupt_pending = false;
+                t.interrupted = true;
+                t.watch.enter_at_ms = None;
+            } else if matches!(sig, Signal::Busy | Signal::NeedsYou) && t.interrupted {
+                return (t.activity, t.activity);
+            } else if sig == Signal::TurnEnded {
+                t.interrupt_pending = false;
+            }
             let prev = t.activity;
             t.activity = next(prev, sig);
             (prev, t.activity)
@@ -129,6 +158,8 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
                 activity: Activity::Idle,
                 watch: Watch { last_output_ms: now_ms(), ..Default::default() },
                 clear_screen: false,
+                interrupt_pending: false,
+                interrupted: false,
                 generation,
             },
         );
@@ -166,23 +197,25 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
 }
 
 async fn on_output(st: &AppState, id: &str, bytes: &[u8], screen: &mut Screen) {
-    let (agent, activity, clear) = {
+    let (agent, activity, clear, interrupt_pending) = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
         t.watch.last_output_ms = now_ms();
         if t.watch.enter_at_ms.is_some() {
             t.watch.output_since_enter = true;
         }
-        (t.agent, t.activity, std::mem::take(&mut t.clear_screen))
+        (t.agent, t.activity, std::mem::take(&mut t.clear_screen), t.interrupt_pending)
     };
     if clear {
         screen.clear();
     }
-    if agent != AgentKind::Codex || activity == Activity::NeedsYou || !screen.shows_approval(bytes) {
-        return;
-    }
+    let signal = match agent {
+        AgentKind::Claude if interrupt_pending && screen.shows_interruption(bytes) => Signal::Interrupted,
+        AgentKind::Codex if activity != Activity::NeedsYou && screen.shows_approval(bytes) => Signal::NeedsYou,
+        _ => return,
+    };
     screen.clear();
-    let _ = apply(st, id, Signal::NeedsYou).await;
+    let _ = apply(st, id, signal).await;
 }
 
 /// Whether terminal input is the user pressing a key, rather than something the terminal sent by itself (focus
@@ -202,6 +235,12 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
     let sig = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
+        if t.agent == AgentKind::Claude && matches!(bytes, b"\x1b" | b"\x03") {
+            // Esc can also close a dialog. Only the subsequent acknowledgement proves the turn stopped.
+            t.interrupt_pending = true;
+            t.clear_screen = true;
+            return;
+        }
         let answered = t.activity == Activity::NeedsYou && is_answer(bytes);
         if t.agent == AgentKind::Claude && enter && !t.watch.hook_seen {
             // Until a hook has arrived, an Enter that prints but brings no hook within the grace period means the
@@ -265,12 +304,21 @@ pub(crate) async fn post_report(
     if s.kind != SessionKind::AgentTui {
         return Err(ApiError::new(StatusCode::CONFLICT, "not_an_agent", "only agent sessions report activity"));
     }
+    let order = order_lock(&st, &id);
+    let _in_order = order.lock().await;
     if let Some(t) = st.activity.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id) {
+        if matches!(&report, HookReport::Claude { event, .. }
+            if event == "UserPromptSubmit" || (event == "PreToolUse" && t.interrupted))
+        {
+            t.interrupted = false;
+            t.interrupt_pending = false;
+            t.clear_screen = true;
+        }
         t.watch.hook_seen = true;
         t.watch.enter_at_ms = None;
     }
     if let Some(sig) = report.signal() {
-        apply(&st, &id, sig).await?;
+        apply_ordered(&st, &id, sig).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -285,6 +333,16 @@ pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>
 #[cfg(test)]
 mod tests {
     use super::{Screen, is_answer, is_enter};
+
+    #[test]
+    fn claude_interruption_acknowledgement_is_found_across_chunks() {
+        let mut s = Screen::default();
+        assert!(!s.shows_interruption(b"\x1b[31mInterrupted\x1b[0m"));
+        assert!(!s.shows_interruption(b" \xc2\xb7 What should Claude do "));
+        assert!(s.shows_interruption(b"instead?"));
+        s.clear();
+        assert!(!s.shows_interruption(b"What should Claude do instead?"), "also needs Interrupted");
+    }
 
     #[test]
     fn composing_a_newline_does_not_start_a_codex_turn() {

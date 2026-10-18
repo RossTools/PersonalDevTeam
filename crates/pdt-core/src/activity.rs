@@ -49,6 +49,8 @@ pub enum Signal {
     Busy,
     NeedsYou,
     TurnEnded,
+    /// The TUI acknowledged a requested interruption (no Stop hook is sent).
+    Interrupted,
     /// No output for `QUIET_AFTER_MS` while working.
     Quiet,
     /// Claude took input and printed, but no hook arrived within `HOOK_GRACE_MS`: detection is broken.
@@ -81,7 +83,7 @@ pub fn next(current: Activity, s: Signal) -> Activity {
     match s {
         Signal::Busy => Activity::Working,
         Signal::NeedsYou => Activity::NeedsYou,
-        Signal::TurnEnded => Activity::Idle,
+        Signal::TurnEnded | Signal::Interrupted => Activity::Idle,
         Signal::Quiet if current == Activity::Working => Activity::Unknown,
         Signal::Quiet => current,
         Signal::HookMissing => Activity::Unknown,
@@ -313,6 +315,9 @@ mod tests {
         assert_eq!(next(Working, Signal::NeedsYou), NeedsYou);
         assert_eq!(next(NeedsYou, Signal::Busy), Working);
         assert_eq!(next(Working, Signal::TurnEnded), Idle);
+        for state in [Working, NeedsYou, Unknown] {
+            assert_eq!(next(state, Signal::Interrupted), Idle);
+        }
         assert_eq!(next(Working, Signal::Quiet), Unknown);
         assert_eq!(next(Idle, Signal::Quiet), Idle, "quiet only matters while working");
         assert_eq!(next(Idle, Signal::HookMissing), Unknown, "hooks broke: say so");
