@@ -4,8 +4,58 @@
 @import '@fontsource/inter/600.css';
 @import '@fontsource/jetbrains-mono/400.css';
 @import '../ui/tokens.css';
+@import 'tw-animate-css';
+@import '../ui/shadcn.css';
+
+/* `dark:` follows our theme rule (tokens.css), not shadcn's `.dark` class: dark when the system is dark and the user
+   hasn't picked light, or when the user picked dark. */
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
+}
+
+/* shadcn's variables are aliases of our tokens (tokens.css stays the only place colours are defined). They switch with
+   light/dark because the --pdt-* values do, so there is no `.dark` block. Mapping: spec 2026-10-17-design-system-ux
+   and plan phase-3c-1, Task 3. */
+:root {
+  --background: var(--pdt-bg);
+  --foreground: var(--pdt-fg);
+  --card: var(--pdt-surface);
+  --card-foreground: var(--pdt-fg);
+  --popover: var(--pdt-surface);
+  --popover-foreground: var(--pdt-fg);
+  --primary: var(--pdt-accent);
+  --primary-foreground: var(--pdt-on-accent);
+  --secondary: var(--pdt-surface-2);
+  --secondary-foreground: var(--pdt-fg);
+  --muted: var(--pdt-surface-2);
+  --muted-foreground: var(--pdt-muted);
+  --accent: var(--pdt-accent-soft);
+  --accent-foreground: var(--pdt-fg);
+  --destructive: var(--pdt-failed);
+  --border: var(--pdt-border);
+  --input: var(--pdt-border);
+  --ring: var(--pdt-ring);
+  --radius: var(--pdt-radius);
+  --sidebar: var(--pdt-surface);
+  --sidebar-foreground: var(--pdt-fg);
+  --sidebar-primary: var(--pdt-accent);
+  --sidebar-primary-foreground: var(--pdt-on-accent);
+  --sidebar-accent: var(--pdt-accent-soft);
+  --sidebar-accent-foreground: var(--pdt-fg);
+  --sidebar-border: var(--pdt-border);
+  --sidebar-ring: var(--pdt-ring);
+}
 
 @theme inline {
+  /* Our names, used by today's screens. `accent` and `muted` mean something else in shadcn (a hover fill and a muted
+     fill); Task 4 renames our uses, then the shadcn meanings below take these two names over. */
   --color-bg: var(--pdt-bg);
   --color-surface: var(--pdt-surface);
   --color-surface-2: var(--pdt-surface-2);
@@ -23,6 +73,38 @@
   --radius-pdt: var(--pdt-radius);
   --font-sans: var(--pdt-font-sans);
   --font-mono: var(--pdt-font-mono);
+  --font-heading: var(--pdt-font-sans);
+
+  /* shadcn's names that don't clash with ours. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 html, body, #root { height: 100%; margin: 0; }
@@ -45,5 +127,11 @@ html, body, #root { height: 100%; margin: 0; }
   :disabled,
   [aria-disabled='true'] {
     cursor: not-allowed;
+  }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
   }
 }

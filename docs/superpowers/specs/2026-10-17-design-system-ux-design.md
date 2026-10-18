@@ -137,7 +137,7 @@ pattern and stays, with a comment and a test that the two blocks match.
   virtual keyboard handling) and its toasts are Sonner (React Aria's Toast is still `UNSTABLE_`). React Aria's own
   swipeable `Sheet` arrived in v1.22 and may replace the Base UI drawer once it settles. Not covered: resizable
   panes (`react-resizable-panels`). App gestures (swipe between tabs, the terminal key bar) stay ours.
-- **Touch spike first.** The aria base is three months old and React Aria doesn't document how touch drag starts on
+- **Touch spike first** (done 2026-10-17, passed on Android; findings in docs/superpowers/notes/phase-3c-touch-spike.md: drag data is `text/plain`, draggable rows carry a drag handle, no edge-swipe sheets). The aria base is three months old and React Aria doesn't document how touch drag starts on
   iOS. 3c-1 opens with a short spike in Mobile Safari on the iOS Simulator (Xcode, on the Mac) and Chrome on any
   available Android device or emulator: long-press tab menu, sidebar sheet swipe, dragging a card between two
   lists, the palette with the on-screen keyboard. (No physical iPhone; the Simulator runs the real WebKit.) If the aria base falls short,
@@ -269,8 +269,9 @@ Escape closes, focus returns to the opener. Lists: Up/Down, Enter, Home/End.
 
 ### 6.7 Phone
 
-- The sidebar becomes a `Sheet` from the left, opened by the workspace name in the header or a swipe from the left
-  edge; the work area keeps the full height.
+- The sidebar becomes a `Sheet` from the left, opened by the workspace name in the header and closed by a swipe or
+  a tap outside; the work area keeps the full height. No edge swipe to open it: the left-edge swipe is the system or
+  browser Back gesture on Android and iOS (touch spike, docs/superpowers/notes/phase-3c-touch-spike.md).
 - The rail stays at the bottom (as today) with at most five items; Settings moves into the sheet's footer.
 - Inbox and approvals are the phone's main job from Phase 7 (§8.4): designed for one hand.
 
