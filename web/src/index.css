@@ -70,6 +70,8 @@
   --color-waiting: var(--pdt-waiting);
   --color-failed: var(--pdt-failed);
   --color-idle: var(--pdt-idle);
+  /* The Claude mark's colour (SessionKindIcon); for that logo only. */
+  --color-claude: var(--pdt-brand-claude);
   --radius-pdt: var(--pdt-radius);
   --font-sans: var(--pdt-font-sans);
   --font-mono: var(--pdt-font-mono);

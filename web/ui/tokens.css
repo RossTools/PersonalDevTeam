@@ -17,6 +17,7 @@
   --pdt-running-soft: rgba(21, 128, 61, 0.1);
   --pdt-waiting-soft: rgba(180, 83, 9, 0.1);
   --pdt-failed-soft: rgba(220, 38, 38, 0.08);
+  --pdt-brand-claude: #c15f3c;
   --pdt-diff-add: rgba(21, 128, 61, 0.09);
   --pdt-diff-del: rgba(220, 38, 38, 0.08);
   --pdt-diff-add-strong: rgba(21, 128, 61, 0.22);
@@ -78,6 +79,7 @@
     --pdt-running-soft: rgba(52, 211, 153, 0.12);
     --pdt-waiting-soft: rgba(245, 158, 11, 0.12);
     --pdt-failed-soft: rgba(248, 113, 113, 0.12);
+    --pdt-brand-claude: #d97757;
     --pdt-diff-add: rgba(52, 211, 153, 0.1);
     --pdt-diff-del: rgba(248, 113, 113, 0.1);
     --pdt-diff-add-strong: rgba(52, 211, 153, 0.24);
@@ -124,6 +126,7 @@
   --pdt-running-soft: rgba(52, 211, 153, 0.12);
   --pdt-waiting-soft: rgba(245, 158, 11, 0.12);
   --pdt-failed-soft: rgba(248, 113, 113, 0.12);
+  --pdt-brand-claude: #d97757;
   --pdt-diff-add: rgba(52, 211, 153, 0.1);
   --pdt-diff-del: rgba(248, 113, 113, 0.1);
   --pdt-diff-add-strong: rgba(52, 211, 153, 0.24);
