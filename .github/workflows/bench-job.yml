@@ -31,7 +31,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           # Terminal tests start /bin/zsh when the platform names no shell; GitHub's Ubuntu image has it, Namespace's not.
-          if [ "$RUNNER_OS" = Linux ] && [ ! -x /bin/zsh ]; then sudo apt-get install -y -qq zsh >/dev/null; fi
+          if [ "$RUNNER_OS" = Linux ] && [ ! -x /bin/zsh ]; then sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null; fi
           if ! command -v rustup >/dev/null; then
             curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
