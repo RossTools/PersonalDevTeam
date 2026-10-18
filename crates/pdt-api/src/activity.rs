@@ -191,9 +191,14 @@ fn is_answer(bytes: &[u8]) -> bool {
     bytes.contains(&b'\r') || bytes == b"\x1b" || !strip_ansi(bytes).trim().is_empty()
 }
 
+/// A plain Enter submits input; Alt/Shift+Enter (`ESC CR`) inserts a composer newline.
+fn is_enter(bytes: &[u8]) -> bool {
+    bytes.iter().enumerate().any(|(i, b)| *b == b'\r' && (i == 0 || bytes[i - 1] != 0x1b))
+}
+
 /// Called with every chunk the user types into a terminal (no-op for terminals without a tracker).
 pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
-    let enter = bytes.contains(&b'\r');
+    let enter = is_enter(bytes);
     let sig = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
@@ -279,7 +284,15 @@ pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{Screen, is_answer};
+    use super::{Screen, is_answer, is_enter};
+
+    #[test]
+    fn composing_a_newline_does_not_start_a_codex_turn() {
+        assert!(is_enter(b"\r"));
+        assert!(is_enter(b"prompt\r"));
+        assert!(!is_enter(b"\x1b\r"), "Shift+Enter inserts a newline in the composer");
+        assert!(!is_enter(b"\x1b[I"), "focus reports do not submit input");
+    }
 
     #[test]
     fn answers_are_keys_the_user_pressed() {

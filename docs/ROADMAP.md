@@ -4,6 +4,7 @@ The working list of what comes next, until PDT has its own tickets (Phase 4); th
 in docs/superpowers/specs, plans in docs/superpowers/plans, known limits in docs/superpowers/notes/*-carryover.md.
 
 ## Done
+- Codex activity: composing a newline with Shift+Enter no longer marks an idle session as working.
 - Browser favicon: blue terminal prompt matching the UI accent.
 - Phase 0: foundation
 - Phase 1: terminals (#1)
