@@ -7,12 +7,13 @@ export type { TicketStage };
 export const STAGE_LABEL: Record<TicketStage, string> = {
   draft: 'Draft',
   ready: 'Ready',
+  todo: 'To do',
   in_progress: 'In progress',
   done: 'Done',
   wont_do: "Won't do",
 };
 
-const FLOW: TicketStage[] = ['draft', 'ready', 'in_progress', 'done'];
+const FLOW: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done'];
 
 export interface StageStepperProps {
   stage: TicketStage;
@@ -22,12 +23,12 @@ export interface StageStepperProps {
 }
 
 /**
- * Draft → Ready → In progress → Done, the current stage marked (`aria-current="step"`), earlier ones checked. A
+ * Draft → Ready → To do → In progress → Done, the current stage marked (`aria-current="step"`), earlier ones checked. A
  * ticket closed as Won't do shows that as a crossed-out final step in place of Done.
  */
 export function StageStepper({ stage, compact = false, className }: StageStepperProps) {
   const closedUndone = stage === 'wont_do';
-  const steps: TicketStage[] = closedUndone ? ['draft', 'ready', 'in_progress', 'wont_do'] : FLOW;
+  const steps: TicketStage[] = closedUndone ? ['draft', 'ready', 'todo', 'in_progress', 'wont_do'] : FLOW;
   const at = closedUndone ? steps.length - 1 : FLOW.indexOf(stage);
   return (
     <ol aria-label="Stage" className={cn('flex min-w-0 items-center', compact ? 'gap-1' : 'gap-1.5', className)}>

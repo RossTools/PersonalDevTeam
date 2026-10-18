@@ -124,7 +124,7 @@ interface Ticket {
 }
 
 const WORDS = ['fix', 'login', 'redirect', 'tickets', 'schema', 'board', 'drag', 'rank', 'palette', 'terminal', 'resize', 'update', 'remote', 'tailscale', 'search', 'filter', 'sheet', 'peek'];
-const STAGES: TicketStage[] = ['draft', 'ready', 'in_progress', 'done'];
+const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done'];
 const LABELS = ['ui', 'api', 'bug', 'perf', 'docs'];
 
 function makeTickets(n: number, from = 0): Ticket[] {
@@ -134,7 +134,7 @@ function makeTickets(n: number, from = 0): Ticket[] {
       id: `t${i}`,
       key: `PDT-${i + 1}`,
       title: `${WORDS[i % WORDS.length]} ${WORDS[(i * 7) % WORDS.length]} ${WORDS[(i * 13) % WORDS.length]}`,
-      stage: STAGES[(i * 3) % 4],
+      stage: STAGES[(i * 3) % STAGES.length],
       priority: PRIORITIES[(i * 2 + Math.floor(i / 5)) % 5],
       labels: i % 3 ? [LABELS[i % 5]] : [],
       updated: NOW - i * 17 * MIN,

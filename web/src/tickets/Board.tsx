@@ -1,4 +1,5 @@
-// The Tickets view's Board: committed work in three columns (Ready, In progress, Done in the last two weeks).
+// The Tickets view's Board: committed work in three columns (To do, In progress, Done in the last two weeks). Ready
+// tickets wait in the backlog until they are moved to To do.
 import { useMemo, useState, type DragEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GitBranch } from 'lucide-react';
@@ -18,10 +19,10 @@ import { canStart, patchTicket, ticketMenu, useOpenTicket, useStartTicket } from
 import { useAllSessions, useTicketPages } from './queries';
 import { LabelChips } from './TicketParts';
 
-export type BoardStage = Extract<TicketStage, 'ready' | 'in_progress' | 'done'>;
+export type BoardStage = Extract<TicketStage, 'todo' | 'in_progress' | 'done'>;
 
 export const BOARD_COLUMNS: { stage: BoardStage; title: string }[] = [
-  { stage: 'ready', title: 'Ready' },
+  { stage: 'todo', title: 'To do' },
   { stage: 'in_progress', title: 'In progress' },
   { stage: 'done', title: 'Done' },
 ];
@@ -207,13 +208,13 @@ function Column({ projectId, stage, title, closedAfter, sessions, onPeek, dropTa
 }
 
 /**
- * Ready / In progress / Done side by side, each its own paged, polled query; drag a card to another column to move
+ * To do / In progress / Done side by side, each its own paged, polled query; drag a card to another column to move
  * it (desktop). Phones show one column at a time with a picker.
  */
 export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
   // Fixed while the board is on screen: a new value every render would be a new query every render.
   const [closedAfter] = useState(() => Date.now() - DONE_WINDOW_MS);
-  const [stage, setStage] = useState<BoardStage>('ready');
+  const [stage, setStage] = useState<BoardStage>('todo');
   const sessions = useAllSessions();
   const columns = phone ? BOARD_COLUMNS.filter((c) => c.stage === stage) : BOARD_COLUMNS;
   return (

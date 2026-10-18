@@ -5,7 +5,7 @@ sidebar keys), §9, §10 (4b). Branch `phase-4b-start-board`.
 
 **Goal:** a ticket can be started: PDT makes the branch and worktree, an attempt, and an agent session whose first
 prompt is the ticket, and opens the ticket and the session as tabs. PDT notices when the branch is merged and offers
-"Move to Done and remove the worktree". The Board shows Ready / In progress / Done. Sessions that belong to an attempt
+"Move to Done and remove the worktree". The Board shows To do / In progress / Done. Sessions that belong to an attempt
 show the ticket key. A script imports docs/ROADMAP.md as tickets (run against the stable instance only with the user's
 go-ahead).
 
@@ -27,7 +27,9 @@ go-ahead).
 - **The first prompt is not stored:** it is given on the session's creation only; restarts resume the conversation.
 - **Merge check on demand** is `POST /api/tickets/{id}/check-merge` (the ticket tab and peek call it when they open),
   not a side effect of GET.
-- **Session titles** for started sessions: `<Agent> · <KEY>-<n>`; sessions carry `ticket {id, key}` for the sidebar.
+- **To do stage** (`todo`, between Ready and In progress, added after review): the board shows To do, not Ready, so a
+  backlog of Ready tickets does not crowd it. No migration (stage is free text).
+- **Session titles** for started sessions: `<Agent> · <ticket title>` (the key shows as a chip beside it); sessions carry `ticket {id, key}` for the sidebar.
 
 ## API contract (both helpers code against this)
 
@@ -106,7 +108,7 @@ web/src/api/gen; commit it.
   `defaultBranch`), base (placeholder the project's base), bypass permissions (same wording as the new-session dialog),
   "Open in a new workspace"; open blockers listed with a warning and the primary becomes "Start anyway" (`mode:
   force`); errors in the dialog. On success the session's tab becomes current.
-- Entry points: the ticket header's primary action **Start** (Draft/Ready with no active attempt), the peek footer, the
+- Entry points: the ticket header's primary action **Start** (Draft/Ready/To do with no active attempt), the peek footer, the
   row and card menus ("Start…"), the palette ("Start <KEY>-<n>" for the open ticket tab; "Start ticket…" picks one).
 - Ticket side column **Attempt** section: branch, state badge, its sessions (open; status dot), Abandon (confirm).
 - **Merged banner** (ticket tab and peek, when the latest attempt is merged and the ticket is open): "Merged into
@@ -115,7 +117,7 @@ web/src/api/gen; commit it.
   `checkMerge` once when they open on a ticket with an active attempt.
 
 ### Task 6 — Board and keys
-- Board segment: three columns Ready / In progress / Done (Done: `closedAfter` = 14 days ago, newest first), each its
+- Board segment: three columns To do / In progress / Done (Done: `closedAfter` = 14 days ago, newest first), each its
   own paged query (polling like the backlog), cards with key, title, priority, labels, the attempt branch and its
   sessions' activity dot; click opens the peek; drag a card to another column (desktop, a handle; `text/plain
   pdt:ticket:<id>`) moves its stage; "Move to ›" in the card menu (right-click / long press). Phones: one column at a

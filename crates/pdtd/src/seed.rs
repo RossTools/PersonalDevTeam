@@ -172,7 +172,7 @@ async fn seed_tickets(store: &Store, project_id: &str, now: i64) -> anyhow::Resu
             High,
             &["ui"],
         ),
-        ("Remember the signed-in user", "Keep the session across reloads.", Ready, Medium, &["auth"]),
+        ("Remember the signed-in user", "Keep the session across reloads.", Todo, Medium, &["auth"]),
         ("Password reset by email", "Send a one-time link; expire it after an hour.", Ready, Medium, &["auth"]),
         ("Fix the README typo", "\"recieve\" in the install section.", Ready, Low, &["docs"]),
         ("Dark mode for the settings page", "", Draft, None, &["ui"]),

@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { StageStepper } from './StageStepper';
 
 describe('StageStepper', () => {
-  it('lists the four stages and marks the current one', () => {
+  it('lists the stages and marks the current one', () => {
     render(<StageStepper stage="ready" />);
     const steps = within(screen.getByRole('list', { name: 'Stage' })).getAllByRole('listitem');
-    expect(steps.map((s) => s.textContent)).toEqual(['Draft', 'Ready', 'In progress', 'Done']);
+    expect(steps.map((s) => s.textContent)).toEqual(['Draft', 'Ready', 'To do', 'In progress', 'Done']);
     expect(steps[1]).toHaveAttribute('aria-current', 'step');
     expect(steps[0]).toHaveAttribute('data-state', 'complete');
     expect(steps[2]).toHaveAttribute('data-state', 'upcoming');
@@ -16,10 +16,10 @@ describe('StageStepper', () => {
   it("shows Won't do as a crossed final step", () => {
     render(<StageStepper stage="wont_do" />);
     const steps = screen.getAllByRole('listitem');
-    expect(steps).toHaveLength(4);
-    expect(steps[3]).toHaveTextContent("Won't do");
-    expect(steps[3]).toHaveAttribute('aria-current', 'step');
-    expect(within(steps[3]).getByText("Won't do").className).toContain('line-through');
+    expect(steps).toHaveLength(5);
+    expect(steps[4]).toHaveTextContent("Won't do");
+    expect(steps[4]).toHaveAttribute('aria-current', 'step');
+    expect(within(steps[4]).getByText("Won't do").className).toContain('line-through');
     expect(screen.queryByText('Done')).toBeNull();
   });
 

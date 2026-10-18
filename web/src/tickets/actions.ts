@@ -38,9 +38,9 @@ export const useStartTicket = () => useContext(StartTicketContext);
 export const OpenSessionContext = createContext<(s: { id: string; projectId: string }) => void>(() => {});
 export const useOpenSession = () => useContext(OpenSessionContext);
 
-/** Start is offered for Draft and Ready tickets with no active attempt. */
+/** Start is offered for Draft, Ready and To do tickets with no active attempt. */
 export const canStart = (t: { stage: TicketStage; attempt: Pick<AttemptSummary, 'state'> | null }) =>
-  (t.stage === 'draft' || t.stage === 'ready') && t.attempt?.state !== 'active';
+  (t.stage === 'draft' || t.stage === 'ready' || t.stage === 'todo') && t.attempt?.state !== 'active';
 
 export async function patchTicket(qc: QueryClient, id: string, patch: TicketPatch) {
   const t = await api.updateTicket(id, patch);

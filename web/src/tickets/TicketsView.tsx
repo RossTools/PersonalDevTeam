@@ -452,6 +452,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
             {selected.length > 0 ? (
               <BulkActionBar count={selected.length} noun={selected.length === 1 ? 'ticket' : 'tickets'} onClear={() => setSelection(new Set())}>
                 <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'ready')}>Move to Ready</Button>
+                <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'todo')}>Move to To do</Button>
                 <MenuButton
                   label="Set priority"
                   placement="bottom start"

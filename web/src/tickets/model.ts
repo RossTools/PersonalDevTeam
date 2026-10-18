@@ -10,8 +10,8 @@ import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 
-export const STAGES: TicketStage[] = ['draft', 'ready', 'in_progress', 'done', 'wont_do'];
-export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'in_progress'];
+export const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done', 'wont_do'];
+export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress'];
 export const isClosed = (s: TicketStage) => s === 'done' || s === 'wont_do';
 
 export type GroupBy = 'none' | 'stage' | 'priority' | 'label';

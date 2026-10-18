@@ -18,7 +18,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const attempt = { id: 'a1', branch: 'pdt/ALP-2-cache', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null };
 const columns = {
-  ready: [summary(1, { stage: 'ready', priority: 'high', labels: ['ui'] }), summary(4, { stage: 'ready', blockedBy: 1 })],
+  todo: [summary(1, { stage: 'todo', priority: 'high', labels: ['ui'] }), summary(4, { stage: 'todo', blockedBy: 1 })],
   in_progress: [summary(2, { stage: 'in_progress', title: 'Cache', attempt })],
   done: [summary(3, { stage: 'done', closedAt: Date.now() })],
 } as Record<string, ReturnType<typeof summary>[]>;
@@ -35,7 +35,7 @@ function stub(extra: Parameters<typeof stubApi>[0] = {}): Call[] {
     'GET /api/projects': [project],
     [`GET /api/projects/${project.id}/sessions`]: [agent],
     [`GET /api/projects/${project.id}/labels`]: [],
-    'GET /api/tickets/t1': ticket(1, { stage: 'ready' }),
+    'GET /api/tickets/t1': ticket(1, { stage: 'todo' }),
     'GET /api/tickets/t1/events': { items: [event('e1')], nextCursor: null },
     'PATCH /api/tickets/t1': (c: Call) => ticket(1, c.body as object),
     ...extra,
@@ -70,16 +70,16 @@ function transfer() {
 }
 
 describe('board', () => {
-  it('shows Ready, In progress and Done with their own queries; Done is the last two weeks, newest first', async () => {
+  it('shows To do, In progress and Done with their own queries; Done is the last two weeks, newest first', async () => {
     const calls = stub();
     const before = Date.now();
     renderWithQuery(<Harness />);
-    expect(await within(column('Ready')).findByText('Ticket 1')).toBeInTheDocument();
+    expect(await within(column('To do')).findByText('Ticket 1')).toBeInTheDocument();
     expect(await within(column('In progress')).findByText('Cache')).toBeInTheDocument();
     expect(await within(column('Done')).findByText('Ticket 3')).toBeInTheDocument();
-    expect(within(column('Ready')).getByText('Blocked')).toBeInTheDocument();
+    expect(within(column('To do')).getByText('Blocked')).toBeInTheDocument();
     const lists = calls.filter((c) => c.path.startsWith('/api/tickets?')).map((c) => params(c.path));
-    expect(lists).toContainEqual({ stage: 'ready', limit: '50' });
+    expect(lists).toContainEqual({ stage: 'todo', limit: '50' });
     expect(lists).toContainEqual({ stage: 'in_progress', limit: '50' });
     const done = lists.find((q) => q.stage === 'done')!;
     expect(done.sort).toBe('updated');
@@ -95,7 +95,7 @@ describe('board', () => {
     localStorage.setItem('pdt.tickets.view', JSON.stringify({ projectId: project.id, mode: 'board', filters: {} }));
     const calls = stub();
     renderWithQuery(<Harness />);
-    await within(column('Ready')).findByText('Ticket 1');
+    await within(column('To do')).findByText('Ticket 1');
     const lists = calls.filter((c) => c.path.startsWith('/api/tickets?')).map((c) => params(c.path));
     expect(lists.every((q) => q.project === project.id)).toBe(true);
   });
@@ -119,12 +119,12 @@ describe('board', () => {
     const c = await card(/ALP-1 Ticket 1/);
     const dt = transfer();
     fireEvent.dragStart(c, { dataTransfer: dt });
-    fireEvent.drop(column('Ready'), { dataTransfer: dt });
+    fireEvent.drop(column('To do'), { dataTransfer: dt });
     await new Promise((r) => setTimeout(r, 20));
     expect(calls.some((x) => x.method === 'PATCH')).toBe(false);
   });
 
-  it('moves a card from its menu, and offers Start… for a Ready ticket', async () => {
+  it('moves a card from its menu, and offers Start… for a To do ticket', async () => {
     const onStart = vi.fn();
     const calls = stub();
     renderWithQuery(<Harness onStart={onStart} />);

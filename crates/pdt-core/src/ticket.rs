@@ -35,11 +35,13 @@ macro_rules! str_enum {
 pub enum TicketStage {
     Draft,
     Ready,
+    /// Picked to be worked on next: on the board. Ready tickets wait in the backlog.
+    Todo,
     InProgress,
     Done,
     WontDo,
 }
-str_enum!(TicketStage { Draft => "draft", Ready => "ready", InProgress => "in_progress", Done => "done", WontDo => "wont_do" });
+str_enum!(TicketStage { Draft => "draft", Ready => "ready", Todo => "todo", InProgress => "in_progress", Done => "done", WontDo => "wont_do" });
 
 impl TicketStage {
     /// Done and Won't do are closed: hidden like done, and they no longer block anything.
@@ -839,7 +841,8 @@ mod tests {
         }
         assert!(TicketStage::Done.is_closed() && TicketStage::WontDo.is_closed());
         assert!(!TicketStage::Draft.is_closed() && !TicketStage::Ready.is_closed());
-        assert!(!TicketStage::InProgress.is_closed());
+        assert!(!TicketStage::Todo.is_closed() && !TicketStage::InProgress.is_closed());
+        assert_eq!(TicketStage::parse("todo"), Some(TicketStage::Todo));
         assert_eq!(TicketStage::parse("wont_do"), Some(TicketStage::WontDo));
         assert_eq!(TicketStage::parse("Done"), None);
         for e in EventKind::ALL {

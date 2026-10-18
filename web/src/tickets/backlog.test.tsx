@@ -69,7 +69,7 @@ describe('backlog', () => {
     expect(first).toHaveTextContent('High');
     expect(first).toHaveTextContent('ui');
     expect(within(grid).getByRole('row', { name: /ALP-3/ })).toHaveTextContent('Blocked');
-    expect(lastList(calls)).toEqual({ limit: '100', stage: 'draft,ready,in_progress' });
+    expect(lastList(calls)).toEqual({ limit: '100', stage: 'draft,ready,todo,in_progress' });
     expect(screen.getByText(/All projects · 3 tickets/)).toBeInTheDocument();
     // The list column: projects with their open-ticket count.
     expect(await screen.findByLabelText('7 open')).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe('backlog', () => {
     stub();
     renderWithQuery(<Harness />);
     await userEvent.click(screen.getByRole('radio', { name: 'Board' }));
-    for (const name of ['Ready', 'In progress', 'Done']) expect(await screen.findByRole('region', { name })).toBeInTheDocument();
+    for (const name of ['To do', 'In progress', 'Done']) expect(await screen.findByRole('region', { name })).toBeInTheDocument();
     expect(screen.queryByRole('grid', { name: 'Tickets' })).not.toBeInTheDocument();
   });
 

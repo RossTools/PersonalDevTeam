@@ -188,7 +188,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       },
     );
     const open = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
-    if (open && (open.stage === 'draft' || open.stage === 'ready') && open.attempt?.state !== 'active') {
+    if (open && ['draft', 'ready', 'todo'].includes(open.stage) && open.attempt?.state !== 'active') {
       const t = open;
       actions.push({ id: 'tickets:start-open', label: `Start ${t.key}`, group: ACTIONS, icon: 'run', keywords: [t.title, 'agent'], run: () => h.startTicket(t, true) });
     }
