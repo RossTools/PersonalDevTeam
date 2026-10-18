@@ -17,6 +17,7 @@ export const ticketKeys = {
   one: (id: string) => ['ticket', id] as const,
   events: (id: string) => ['ticketEvents', id] as const,
   labels: (projectId: string) => ['labels', projectId] as const,
+  areas: (projectId: string) => ['areas', projectId] as const,
 };
 
 /** After a write: every list, and the tickets it touched (their view, timeline). Labels may have changed too. */
@@ -61,6 +62,17 @@ export function useLabels(projectId: string | null) {
     queryFn: () => api.projectLabels(projectId!),
     enabled: !!projectId,
     staleTime: 10_000,
+  });
+}
+
+/** The project's configured areas (they change rarely: refetched on focus and once a minute). */
+export function useProjectAreas(projectId: string | null) {
+  return useQuery({
+    queryKey: ticketKeys.areas(projectId ?? ''),
+    queryFn: () => api.getProjectAreas(projectId!),
+    enabled: !!projectId,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 }
 

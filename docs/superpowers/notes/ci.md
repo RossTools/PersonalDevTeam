@@ -38,15 +38,18 @@ minutes. `PDT_MACOS_RUNNER` (repo variable) moves the macOS checks to another ru
 the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
 platform-specific code (`cfg(windows)`, process spawning, paths).
 
-## Keeping auto-merge PRs up to date
+## Merge queue
 
-The "Main" ruleset requires a PR to be up to date with main, so a merge leaves every other auto-merge PR "behind".
-`.github/workflows/update-prs.yml` runs on each push to main: for every open auto-merge PR from this repo that main
-has moved past, it calls GitHub's update-branch (merging main in, with `expected_head_sha` so it never races a push)
-and then dispatches `ci.yml` on the branch with `pr=<n>`. The dispatch is needed because a push made with
-`GITHUB_TOKEN` starts no `pull_request` run; with `pr` set, the `changes` job reads that PR's files and labels, so
-the dispatched run picks the same jobs a PR run would, and its checks land on the new head. A PR whose update
-conflicts is skipped with a warning in the run summary.
+The "Main" ruleset merges through a merge queue (squash, one PR per group) instead of requiring branches to be up
+to date with main. A PR joins the queue when its checks pass and auto-merge is on; GitHub then makes
+`gh-readonly-queue/main/pr-<n>-<sha>` (main plus the PR) and runs `ci.yml` on it with the `merge_group` event. The
+`changes` job picks jobs for it as for a PR: the files come from comparing the group's base and head (more than 300
+files runs everything), the labels from PR `<n>` in the queue branch's name, which is why the group size stays 1.
+The required checks report on the queue run the same way they do on a PR (skipped counts as passing), and the PR
+merges when they pass. A PR that conflicts with main or fails there leaves the queue.
+
+So each merge runs CI on the PR, in the queue, and on main (the release). The queue runs only once a PR is ready;
+all of it runs on GitHub's runners.
 
 ## The old Mac mini runner (unused)
 CI ran `build (macos-latest)` on a self-hosted runner on the Mac mini until PDT-27; no job targets it now.

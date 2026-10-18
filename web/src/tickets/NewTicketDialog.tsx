@@ -10,6 +10,7 @@ import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { actionError } from '../common/useAction';
+import { AreasEditor } from './Areas';
 import { LabelsEditor } from './LabelsEditor';
 import { OPEN_STAGES } from './model';
 import { invalidateTickets, useLabels } from './queries';
@@ -24,7 +25,7 @@ export interface NewTicketDialogProps {
   onCreated?: (t: Ticket) => void;
 }
 
-/** The full new-ticket form: title, description (with preview), stage, priority, labels. It lands at the top of its stage. */
+/** The full new-ticket form: title, description (with preview), stage, priority, labels, areas. It lands at the top of its stage. */
 export function NewTicketDialog({ projects, projectId: initialProject, title: initialTitle = '', onClose, onCreated }: NewTicketDialogProps) {
   const qc = useQueryClient();
   const [projectId, setProjectId] = useState<string | null>(initialProject ?? projects[0]?.id ?? null);
@@ -34,6 +35,7 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
   const [stage, setStage] = useState<TicketStage>('draft');
   const [priority, setPriority] = useState<Priority>('none');
   const [labels, setLabels] = useState<string[]>([]);
+  const [areas, setAreas] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
@@ -51,6 +53,7 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
         stage,
         priority,
         ...(labels.length > 0 ? { labels } : {}),
+        ...(areas.length > 0 ? { areas } : {}),
       });
       invalidateTickets(qc);
       onCreated?.(t);
@@ -84,7 +87,7 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
               <Select
                 options={projects.map((p) => ({ value: p.id, label: `${p.key} · ${p.name}` }))}
                 value={projectId}
-                onChange={(v) => { setProjectId(v); setLabels([]); }}
+                onChange={(v) => { setProjectId(v); setLabels([]); setAreas([]); }}
               />
             </Field>
           )}
@@ -130,6 +133,10 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-medium">Labels</span>
             <LabelsEditor labels={labels} suggestions={known.data ?? []} onChange={setLabels} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium">Areas</span>
+            <AreasEditor projectId={projectId} areas={areas} onChange={setAreas} />
           </div>
         </div>
         {error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{error}</Alert></div>}

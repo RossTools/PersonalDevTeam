@@ -30,6 +30,10 @@ pub fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
         if e.file_type()?.is_dir() {
             copy_dir(&e.path(), &to)?;
         } else {
+            // A new file, never an overwrite: macOS can kill a program whose executable was rewritten in place.
+            if to.is_file() {
+                std::fs::remove_file(&to)?;
+            }
             std::fs::copy(e.path(), &to)?;
         }
     }

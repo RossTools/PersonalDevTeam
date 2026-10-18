@@ -4,6 +4,7 @@ import { Button } from '@ui/Button';
 import { StatusDot, type Status } from '@ui/StatusDot';
 import { Badge } from '@ui/Badge';
 import { Chip } from '@ui/Chip';
+import { OverlapBadge } from '@ui/OverlapBadge';
 import { Alert } from '@ui/Alert';
 import { Banner } from '@ui/Banner';
 import { EmptyState } from '@ui/EmptyState';
@@ -103,6 +104,14 @@ function render() {
           <Badge count={3} aria-label="3 unread" />
           <Badge tone="waiting" count={12} aria-label="12 waiting" />
           <Badge tone="accent" count={250} aria-label="250 new" />
+        </Row>
+
+        <Row label="OverlapBadge">
+          <OverlapBadge level="overlap" keys={['PDT-51']} />
+          <OverlapBadge level="overlap" keys={['PDT-51', 'PDT-52']} />
+          <OverlapBadge level="conflict" keys={['PDT-51']} />
+          <OverlapBadge level="conflict" keys={['PDT-51', 'PDT-52', 'PDT-60']} />
+          <span className="text-meta text-muted-foreground">(none renders nothing)</span>
         </Row>
 
         <Row label="Chip">
