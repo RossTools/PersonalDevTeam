@@ -343,9 +343,10 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
 pub(crate) async fn pty(
     State(st): State<AppState>,
     Path((id, step)): Path<(String, String)>,
+    axum::extract::Query(params): axum::extract::Query<crate::pty_ws::PtyParams>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     load(&st, &id).await?;
     let step = RunStep::parse(&step).ok_or_else(|| ApiError::not_found("run step"))?;
-    crate::pty_ws::upgrade(st, pty_id(&id, step), ws)
+    crate::pty_ws::upgrade(st, pty_id(&id, step), params.gzip_replay(), ws)
 }

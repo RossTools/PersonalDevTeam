@@ -54,6 +54,13 @@ pub async fn serve(listener: TcpListener, app: axum::Router, state: AppState) ->
         st.ptys.shutdown().await;
         let _ = cleaned_tx.send(());
     };
+    // TCP_NODELAY: terminal echoes are tiny WebSocket frames; with Nagle's algorithm one can wait for the ACK of the
+    // previous one, which over a remote link (Tailscale) makes typing lag.
+    let listener = axum::serve::ListenerExt::tap_io(listener, |tcp| {
+        if let Err(e) = tcp.set_nodelay(true) {
+            tracing::debug!(error = %e, "could not set TCP_NODELAY");
+        }
+    });
     let server = axum::serve(listener, app).with_graceful_shutdown(graceful).into_future();
     tokio::select! {
         r = server => r?,

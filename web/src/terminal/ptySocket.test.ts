@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PtySocket, ptyUrl, runPtyUrl, type SocketLike } from './ptySocket';
+import { PtySocket, ptyUrl, runPtyUrl, withGzipReplay, type SocketLike } from './ptySocket';
 
 class FakeSocket implements SocketLike {
   binaryType: BinaryType = 'blob';
@@ -17,8 +17,9 @@ class FakeSocket implements SocketLike {
   drop() { this.readyState = 3; this.onclose?.({ code: 1006 } as CloseEvent); }
 }
 
-function setup() {
+function setup(gunzip: ((b: Uint8Array) => Promise<Uint8Array>) | null = null) {
   const sockets: FakeSocket[] = [];
+  const urls: string[] = [];
   const events: string[] = [];
   const h = {
     onData: (b: Uint8Array, replay: boolean) => events.push(`${replay ? 'replay' : 'data'}:${new TextDecoder().decode(b)}`),
@@ -28,13 +29,53 @@ function setup() {
     onEnded: () => events.push('ended'),
     onStatus: (s: string) => events.push(`status:${s}`),
   };
-  const sock = new PtySocket('ws://x/api/sessions/s/pty', h, () => {
+  const sock = new PtySocket('ws://x/api/sessions/s/pty', h, (url) => {
     const s = new FakeSocket();
     sockets.push(s);
+    urls.push(url);
     return s;
-  }, { baseDelayMs: 100, maxDelayMs: 400, stableMs: 5000 });
-  return { sock, sockets, events };
+  }, { gunzip, baseDelayMs: 100, maxDelayMs: 400, stableMs: 5000 });
+  return { sock, sockets, events, urls };
 }
+
+describe('gzipped replay', () => {
+  it('asks for it and decodes the replay before anything that came after it', async () => {
+    let finish: () => void = () => {};
+    const gunzip = (b: Uint8Array) => new Promise<Uint8Array>((res) => {
+      finish = () => res(new TextEncoder().encode(new TextDecoder().decode(b).toUpperCase()));
+    });
+    const { sock, sockets, events, urls } = setup(gunzip);
+    sock.connect();
+    expect(urls).toEqual(['ws://x/api/sessions/s/pty?replay=gzip']);
+    const s = sockets[0];
+    s.open();
+    s.data('old output');
+    s.text('{"type":"ready"}');
+    s.data('live');
+    expect(events.filter((e) => !e.startsWith('status'))).toEqual(['reset']);
+    finish();
+    await vi.waitFor(() => expect(events).toContain('data:live'));
+    expect(events.filter((e) => !e.startsWith('status'))).toEqual(['reset', 'replay:OLD OUTPUT', 'ready', 'data:live']);
+    s.data('more');
+    expect(events.at(-1)).toBe('data:more');
+  });
+
+  it('drops a replay that does not decode and carries on', async () => {
+    const { sock, sockets, events } = setup(() => Promise.reject(new Error('bad')));
+    sock.connect();
+    sockets[0].open();
+    sockets[0].data('garbage');
+    sockets[0].text('{"type":"ready"}');
+    sockets[0].data('live');
+    await vi.waitFor(() => expect(events).toContain('data:live'));
+    expect(events.filter((e) => !e.startsWith('status'))).toEqual(['reset', 'ready', 'data:live']);
+  });
+
+  it('adds the parameter to URLs with or without a query', () => {
+    expect(withGzipReplay('ws://h/api/runs/r/pty/setup')).toBe('ws://h/api/runs/r/pty/setup?replay=gzip');
+    expect(withGzipReplay('ws://h/x?a=1')).toBe('ws://h/x?a=1&replay=gzip');
+  });
+});
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());

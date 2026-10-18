@@ -4,7 +4,7 @@
 use crate::error::ApiError;
 use crate::routes::AppState;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
@@ -12,22 +12,37 @@ use pdt_agents::{Attachment, PtyEvent};
 use pdt_core::session::{PtyClientMessage, PtyServerMessage};
 use tokio::sync::broadcast::error::RecvError;
 
+/// `?replay=gzip`: the client can decompress (DecompressionStream), so the scrollback replay is sent gzipped. Over a
+/// remote link the replay (up to `SCROLLBACK_BYTES`) dominates opening a terminal; terminal output compresses ~10-30×.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct PtyParams {
+    replay: Option<String>,
+}
+
+impl PtyParams {
+    pub(crate) fn gzip_replay(&self) -> bool {
+        self.replay.as_deref() == Some("gzip")
+    }
+}
+
 /// Close code telling the client it fell behind and should reconnect (it will get the scrollback again).
 const CLOSE_LAGGED: u16 = 4000;
 
 pub(crate) async fn connect(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    Query(params): Query<PtyParams>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
-    upgrade(st, id, ws)
+    upgrade(st, id, params.gzip_replay(), ws)
 }
 
 /// Upgrades to the PTY protocol for terminal `pty_id` (a session id, or a run step's id).
 pub(crate) fn upgrade(
     st: AppState,
     pty_id: String,
+    gzip: bool,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     let ws = ws.map_err(|_| {
@@ -37,9 +52,9 @@ pub(crate) fn upgrade(
     // A session with no terminal (stopped, or interrupted by a daemon restart) still gets the upgrade, so the
     // browser can tell "not running" from "daemon unreachable" and stop retrying.
     Ok(match classify(&st, &id) {
-        Outcome::Attach(attachment) => ws.on_upgrade(move |socket| pump(socket, st, id, attachment)),
+        Outcome::Attach(attachment) => ws.on_upgrade(move |socket| pump(socket, st, id, attachment, gzip)),
         // The startup auto-resume has not got to this session yet: wait for it rather than report "not running".
-        Outcome::Wait => ws.on_upgrade(move |socket| wait_for_resume(socket, st, id)),
+        Outcome::Wait => ws.on_upgrade(move |socket| wait_for_resume(socket, st, id, gzip)),
         Outcome::NotRunning => ws.on_upgrade(not_running),
     })
 }
@@ -68,7 +83,7 @@ const RESUME_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Holds the connection while the session is pending auto-resume (no session lock is taken), then attaches as
 /// usual, or reports `not_running` if the resume skipped or failed it, shutdown began, or the wait ran out.
-async fn wait_for_resume(mut socket: WebSocket, st: AppState, id: String) {
+async fn wait_for_resume(mut socket: WebSocket, st: AppState, id: String, gzip: bool) {
     // Subscribed before the first check, so a change in between is not missed.
     let mut changed = st.resume_changed.subscribe();
     let deadline = tokio::time::Instant::now() + RESUME_WAIT;
@@ -80,7 +95,7 @@ async fn wait_for_resume(mut socket: WebSocket, st: AppState, id: String) {
                 if let Some((cols, rows)) = size {
                     let _ = st.ptys.resize(&id, cols, rows);
                 }
-                return pump(socket, st, id, att).await;
+                return pump(socket, st, id, att, gzip).await;
             }
             Outcome::NotRunning => return not_running(socket).await,
             Outcome::Wait if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) => {
@@ -105,6 +120,18 @@ async fn wait_for_resume(mut socket: WebSocket, st: AppState, id: String) {
     }
 }
 
+/// The scrollback as one gzip stream (falls back to the raw bytes only if compressing fails, which it cannot for an
+/// in-memory buffer; the client would then fail to decode and show an empty screen until new output).
+async fn gzipped(bytes: Vec<u8>) -> Vec<u8> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::with_capacity(bytes.len() / 8), flate2::Compression::fast());
+        enc.write_all(&bytes).and_then(|()| enc.finish()).unwrap_or(bytes)
+    })
+    .await
+    .unwrap_or_default()
+}
+
 fn control(msg: &PtyServerMessage) -> Message {
     Message::Text(serde_json::to_string(msg).expect("serializable").into())
 }
@@ -118,10 +145,11 @@ async fn not_running(mut socket: WebSocket) {
     let _ = socket.close().await;
 }
 
-async fn pump(socket: WebSocket, st: AppState, id: String, att: Attachment) {
+async fn pump(socket: WebSocket, st: AppState, id: String, att: Attachment, gzip: bool) {
     let (mut tx, mut rx) = socket.split();
     let Attachment { scrollback, exited, mut events } = att;
-    if !scrollback.is_empty() && tx.send(Message::Binary(scrollback.into())).await.is_err() {
+    let replay = if gzip && !scrollback.is_empty() { gzipped(scrollback).await } else { scrollback };
+    if !replay.is_empty() && tx.send(Message::Binary(replay.into())).await.is_err() {
         return;
     }
     if tx.send(control(&PtyServerMessage::Ready)).await.is_err() {
