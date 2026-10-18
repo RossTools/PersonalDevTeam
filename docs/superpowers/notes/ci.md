@@ -4,10 +4,14 @@ Workflow: `.github/workflows/ci.yml`; shared steps in `.github/actions/checks` a
 
 | Check (required on main) | Runs on | Pull requests | main / nightly |
 |---|---|---|---|
-| build (macos-latest) | Mac mini, self-hosted (`pdt-mini`) | always | always / nightly |
+| build (macos-latest) | Mac mini, self-hosted (`pdt-mini`) | unless docs only | always / nightly |
 | build (windows-latest) | GitHub Windows | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | always / nightly |
 | bundle (macos-latest, app) | GitHub macOS | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | always (release) |
 | bundle (windows-latest, nsis) | GitHub Windows | same | always (release) |
+
+**Docs-only PRs** (every changed file under `docs/` or ending in `.md`) skip every job but `changes`; a `windows` or
+`bundle` label still runs those jobs. No code reads a Markdown file today; if one ever does (an `include_str!` of a
+`.md`, release notes from a file), narrow the rule in the `changes` job. Pushes to main always run everything.
 
 A job skipped by its `if` still reports its check, and a skipped check counts as passing, so the job names must stay
 the ruleset's required check names. Renaming a job means editing the "Main" ruleset first.
