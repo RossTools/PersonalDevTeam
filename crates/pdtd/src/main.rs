@@ -17,7 +17,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     // `pdtd hook …` runs inside agent sessions: no runtime, no logging, never stdout, always exit 0.
     if args.get(1).map(String::as_str) == Some("hook") {
-        std::process::exit(hook::run(&args[2..], &mut std::io::stdin(), &|k| std::env::var(k).ok()));
+        std::process::exit(hook::run(&args[2..], &mut std::io::stdin(), &mut std::io::stdout(), &|k| {
+            std::env::var(k).ok()
+        }));
     }
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     if let Err(e) = rt.block_on(run()) {
@@ -67,6 +69,9 @@ async fn run() -> anyhow::Result<()> {
     }
     if let Some(p) = &cfg.codex_program {
         state.platform.codex_program = p.clone();
+    }
+    if let Some(p) = &cfg.devin_program {
+        state.platform.devin_program = p.clone();
     }
     state.owner_from_env = cfg.owner_login.clone();
     state.refresh_owner().await;
@@ -193,8 +198,9 @@ async fn run() -> anyhow::Result<()> {
         let st = state.clone();
         tokio::spawn(async move {
             let c = pdt_api::run_host_checks(&st).await;
-            for (name, check) in [("claude", &c.claude), ("codex", &c.codex)] {
-                if !check.ok {
+            for (name, check) in [("claude", &c.claude), ("codex", &c.codex), ("devin", &c.devin)] {
+                // Devin is optional: only an installed one that is not logged in is worth a warning.
+                if !check.ok && (check.found || name != "devin") {
                     tracing::warn!(tool = name, detail = %check.detail, "agent CLI is missing or not logged in for this user");
                 }
             }

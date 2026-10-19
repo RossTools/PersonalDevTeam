@@ -1,6 +1,6 @@
 # Personal Dev Team (PDT)
 
-A personal command center for building software with AI coding agents. PDT runs Claude Code and Codex sessions in
+A personal command center for building software with AI coding agents. PDT runs Claude Code, Codex and Devin sessions in
 terminals that outlive the browser window, keeps each change in its own git worktree, and starts a dev build of any
 branch with one click so you can try it. It runs as a daemon on your machine, and the same web UI works from a phone
 or another computer over Tailscale.
@@ -12,7 +12,7 @@ instances of it.
 
 ## What it does today
 
-- **Agent sessions and terminals.** Claude Code, Codex and shell sessions run in PTYs owned by the daemon. They survive
+- **Agent sessions and terminals.** Claude Code, Codex, Devin and shell sessions run in PTYs owned by the daemon. They survive
   closed windows and daemon restarts (agents resume their conversation), and show their activity in the sidebar.
 - **Workspaces and tabs.** Each project has a workspace, a strip of tabs showing sessions and runs; you can add your
   own. Keyboard shortcuts start with `Ctrl+]`.

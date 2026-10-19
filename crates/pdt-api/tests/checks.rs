@@ -27,16 +27,20 @@ async fn reports_logins_and_missing_tools() {
     let mut st = AppState::new(store, tmp.path().join("data"));
     st.platform.claude_program = fake(tmp.path(), "claude", r#"{"loggedIn": false, "authMethod": "none"}"#, 0);
     st.platform.codex_program = fake(tmp.path(), "codex", "Logged in using ChatGPT", 0);
+    st.platform.devin_program = fake(tmp.path(), "devin", "Not logged in.", 0);
     st.tailscale = Arc::new(RecordingTailscale::new(Err(pdt_tailscale::TsError::NotInstalled)));
     let c = run_host_checks(&st).await;
     assert!(c.claude.found && !c.claude.ok, "{:?}", c.claude);
     assert!(c.codex.found && c.codex.ok, "{:?}", c.codex);
+    assert!(c.devin.found && !c.devin.ok, "{:?}", c.devin);
     assert!(c.git.found && c.git.ok, "{:?}", c.git);
     assert!(!c.tailscale.ok && c.tailscale.detail.contains("not found"));
 
     st.platform.claude_program = tmp.path().join("no-such-claude").to_string_lossy().into();
     st.platform.codex_program = fake(tmp.path(), "codex2", "Not logged in", 1);
+    st.platform.devin_program = tmp.path().join("no-such-devin").to_string_lossy().into();
     let c = run_host_checks(&st).await;
     assert!(!c.claude.found && !c.claude.ok);
+    assert!(!c.devin.found && !c.devin.ok);
     assert!(c.codex.found && !c.codex.ok);
 }

@@ -23,7 +23,8 @@ const MODE_KEY = 'pdt.tickets.startMode';
 
 function loadAgent(): AgentKind {
   try {
-    return localStorage.getItem(AGENT_KEY) === 'codex' ? 'codex' : 'claude';
+    const saved = localStorage.getItem(AGENT_KEY);
+    return saved === 'codex' || saved === 'devin' ? saved : 'claude';
   } catch {
     return 'claude';
   }
@@ -99,6 +100,9 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     setModeState(m);
     saveMode(m);
   };
+  // Devin runs only as a terminal; the remembered choice stays for the other agents.
+  const terminalOnly = agent === 'devin';
+  const effectiveMode: SessionMode = terminalOnly ? 'terminal' : sessionMode;
   const blockers = t ? openBlockers(t) : [];
   const overlaps = t?.overlaps ?? [];
   const conflict = overlaps.some((o) => o.level === 'conflict');
@@ -148,7 +152,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     const mode: StartMode = force ? 'force' : 'check';
     const body: StartTicket = {
       agent,
-      sessionMode,
+      sessionMode: effectiveMode,
       ...(branch.trim() ? { branch: branch.trim() } : {}),
       ...(base.trim() ? { base: base.trim() } : {}),
       ...(bypass ? { bypassPermissions: true } : {}),
@@ -247,19 +251,19 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           )}
           <Field
             label="Agent"
-            hint={sessionMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."}
+            hint={effectiveMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."}
           >
             <div className="flex flex-wrap items-center gap-2">
               <SegmentedControl
                 aria-label="Agent"
-                options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }]}
+                options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'devin', label: 'Devin' }]}
                 value={agent}
                 onChange={setAgent}
               />
               <SegmentedControl<SessionMode>
                 aria-label="Show as"
-                options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }]}
-                value={sessionMode}
+                options={[{ value: 'conversation', label: 'Conversation', disabled: terminalOnly }, { value: 'terminal', label: 'Terminal' }]}
+                value={effectiveMode}
                 onChange={setMode}
               />
             </div>

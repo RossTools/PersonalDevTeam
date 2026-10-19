@@ -158,6 +158,18 @@ impl StartTicket {
                 START_ROWS.end()
             )));
         }
+        // Devin runs only as a terminal (PDT-54): it defaults to one and refuses a conversation.
+        let session_mode = match self.session_mode {
+            Some(SessionMode::Conversation) if !self.agent.has_conversations() => {
+                return Err(TicketValidationError::Invalid(format!(
+                    "{} runs only as a terminal, not a conversation",
+                    self.agent.label()
+                )));
+            }
+            Some(m) => m,
+            None if self.agent.has_conversations() => SessionMode::Conversation,
+            None => SessionMode::Terminal,
+        };
         Ok(ValidStart {
             agent: self.agent,
             branch,
@@ -166,7 +178,7 @@ impl StartTicket {
             tab: self.tab.clone(),
             new_workspace: self.new_workspace.unwrap_or(false),
             mode: self.mode.unwrap_or_default(),
-            session_mode: self.session_mode.unwrap_or(SessionMode::Conversation),
+            session_mode,
             from_session,
             size: TerminalSize { cols, rows },
         })
@@ -271,6 +283,9 @@ mod tests {
         );
         let t = start(serde_json::json!({"agent": "claude", "sessionMode": "terminal"})).unwrap();
         assert_eq!(t.session_mode, SessionMode::Terminal);
+        let devin = start(serde_json::json!({"agent": "devin"})).unwrap();
+        assert_eq!(devin.session_mode, SessionMode::Terminal, "Devin is terminal only");
+        assert!(start(serde_json::json!({"agent": "devin", "sessionMode": "conversation"})).is_err());
         let chat = start(serde_json::json!({"agent": "claude", "fromSession": " s1 "})).unwrap();
         assert_eq!(chat.from_session.as_deref(), Some("s1"));
         let v = start(serde_json::json!({

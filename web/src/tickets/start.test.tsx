@@ -61,6 +61,19 @@ describe('Start dialog', () => {
     expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked();
   });
 
+  it('can start Devin, only as a terminal, and remembers it without changing the mode for the others', async () => {
+    localStorage.setItem('pdt.tickets.startAgent', 'devin');
+    const calls = stub(ready);
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    expect(within(dialog).getByRole('radio', { name: 'Devin' })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Terminal' })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Conversation' })).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'devin', sessionMode: 'terminal' }));
+    expect(localStorage.getItem('pdt.tickets.startMode')).toBeNull();
+  });
+
   it('starts a conversation by default, or the terminal when chosen (remembered)', async () => {
     const calls = stub(ready);
     const { onStarted } = open();

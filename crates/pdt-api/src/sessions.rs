@@ -207,6 +207,11 @@ async fn plan_resume(st: &AppState, s: &Session) -> Resume {
     if s.kind != SessionKind::AgentTui {
         return Resume::Fresh;
     }
+    if s.agent == Some(AgentKind::Devin) {
+        // The conversation its SessionStart hook last named. Devin saves one only at its first prompt, but resuming
+        // one it never saved just starts a new one (whose id the hook then reports), so there is nothing to check.
+        return s.external_session_id.clone().map(Resume::Devin).unwrap_or(Resume::Fresh);
+    }
     // Claude: resuming a conversation that was never saved fails, so start a fresh one under the same id (a new
     // conversation's own after `/clear`: the session id's transcript is taken). Only a few
     // directory entries are read, so this stays on the async thread. Unknown config dir: assume it was saved.
@@ -319,7 +324,7 @@ fn start_pty(
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
     let l = launch(s.kind, s.agent, &st.platform, resume, s.claude_conversation_id(), s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
-    let launch_args = with_hook_args(st, s, l.args)?;
+    let launch_args = with_hook_args(st, s, l.args, instructions.map(|i| i.file.as_path()))?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;
     let (program, mut args) = (resolved.program, resolved.args);
     if let Some(i) = instructions.filter(|_| s.kind == SessionKind::AgentTui) {
@@ -330,10 +335,16 @@ fn start_pty(
                 let extra = pdt_agents::instructions::codex_tui_args(&i.text, resolved.via_cmd, &i.file);
                 args.splice(at..at, extra);
             }
-            _ => args.extend(pdt_agents::instructions::claude_args(&i.file)),
+            Some(AgentKind::Claude) => args.extend(pdt_agents::instructions::claude_args(&i.file)),
+            // Devin has no instructions flag: its SessionStart hook hands them over (see `with_hook_args`).
+            Some(AgentKind::Devin) | None => {}
         }
     }
     if let Some(p) = prompt.filter(|_| s.kind == SessionKind::AgentTui) {
+        if s.agent == Some(AgentKind::Devin) {
+            // Devin reads a bare argument as a folder to work in; the prompt goes after `--`.
+            args.push("--".into());
+        }
         if resolved.via_cmd {
             let dir = session_data_dir(st, &s.id);
             let file = dir.join("prompt.md");
@@ -392,10 +403,16 @@ fn start_pty(
 }
 
 /// The agent's launch arguments plus its activity hooks (remote-host spec §5.1): Claude gets a per-session
-/// `--settings` file in PDT's data folder, Codex a `-c notify=[…]` that chains to the user's own notify. The user's
-/// own agent settings are never written. Limit: with a Windows `.cmd` shim (npm installs) the arguments pass through
+/// `--settings` file in PDT's data folder, Codex a `-c notify=[…]` that chains to the user's own notify, Devin a
+/// `--config` file copied from the user's own config with a `SessionStart` hook added (it names the conversation and
+/// prints `instructions` back as context). The user's own agent settings are never written. Limit: with a Windows `.cmd` shim (npm installs) the arguments pass through
 /// `cmd.exe`, so a hook program path containing `&`, `|`, `^` or `%` would be mangled.
-fn with_hook_args(st: &AppState, s: &Session, args: Vec<String>) -> Result<Vec<String>, PtyError> {
+fn with_hook_args(
+    st: &AppState,
+    s: &Session,
+    args: Vec<String>,
+    instructions: Option<&FsPath>,
+) -> Result<Vec<String>, PtyError> {
     if s.kind != SessionKind::AgentTui {
         return Ok(args);
     }
@@ -415,6 +432,20 @@ fn with_hook_args(st: &AppState, s: &Session, args: Vec<String>) -> Result<Vec<S
                 .and_then(|h| pdt_agents::hooks::user_codex_notify(h, &st.hook_program))
                 .unwrap_or_default();
             let mut all = pdt_agents::hooks::codex_notify_args(&st.hook_program, &chain);
+            all.extend(args);
+            Ok(all)
+        }
+        Some(AgentKind::Devin) => {
+            let command = pdt_agents::hooks::devin_hook_command(&st.hook_program, instructions, st.platform.windows);
+            let user = st.platform.devin_config_file.as_deref();
+            let written = pdt_agents::hooks::write_devin_config(&session_data_dir(st, &s.id), user, &command)
+                .map_err(|e| PtyError::Spawn(format!("writing the session's Devin config: {e}")))?;
+            let Some(file) = written else {
+                tracing::warn!(session = %s.id, config = ?user,
+                    "could not read the user's Devin config; starting Devin without PDT's hook (no resume id, no instructions)");
+                return Ok(args);
+            };
+            let mut all = vec!["--config".to_string(), file.to_string_lossy().into_owned()];
             all.extend(args);
             Ok(all)
         }

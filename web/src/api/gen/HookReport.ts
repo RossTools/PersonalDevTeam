@@ -11,4 +11,4 @@ sessionId?: string,
 /**
  * SessionStart's `source`: `startup`, `resume`, `clear` or `compact`.
  */
-startSource?: string, } | { "source": "codex", event: string, };
+startSource?: string, } | { "source": "codex", event: string, } | { "source": "devin", event: string, sessionId?: string, };

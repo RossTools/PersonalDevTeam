@@ -24,6 +24,8 @@ pub struct ToolCheck {
 pub struct HostChecks {
     pub claude: ToolCheck,
     pub codex: ToolCheck,
+    /// Optional: most hosts never install Devin, so a missing one is no problem.
+    pub devin: ToolCheck,
     pub git: ToolCheck,
     pub tailscale: ToolCheck,
     #[ts(type = "number")]
@@ -69,6 +71,11 @@ pub(crate) fn claude_logged_in(stdout: &str) -> Option<bool> {
     serde_json::from_str::<serde_json::Value>(&stdout[start..]).ok()?.get("loggedIn")?.as_bool()
 }
 
+/// `devin auth status` exits 0 either way; logged out, it says "Not logged in.".
+pub(crate) fn devin_logged_in(exit_ok: bool, out: &str) -> bool {
+    exit_ok && !out.to_ascii_lowercase().contains("not logged in")
+}
+
 pub async fn run_host_checks(st: &AppState) -> HostChecks {
     // The host's policy: the one agent sessions get unless their project overrides it.
     let creds = match st.store.get_host_settings().await {
@@ -99,6 +106,16 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             ToolCheck { found: true, ok: false, detail: format!("not logged in: run `codex login` ({out})") }
         }
     };
+    let devin = match agent(&st.platform.devin_program, &["auth", "status"]).await {
+        Err(e) => ToolCheck { found: false, ok: false, detail: e },
+        // Its status goes on to list the account and team settings; the first line says it all.
+        Ok((ok, out)) if devin_logged_in(ok, &out) => {
+            ToolCheck { found: true, ok: true, detail: out.lines().next().unwrap_or_default().trim().to_string() }
+        }
+        Ok((_, out)) => {
+            ToolCheck { found: true, ok: false, detail: format!("not logged in: run `devin auth login` ({out})") }
+        }
+    };
     let git = match run(st, "git", &["--version"], SessionKind::Shell, creds).await {
         Err(e) => ToolCheck { found: false, ok: false, detail: e },
         Ok((ok, out)) => ToolCheck { found: true, ok, detail: out },
@@ -111,7 +128,7 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
         }
         Err(e) => ToolCheck { found: false, ok: false, detail: e.to_string() },
     };
-    let c = HostChecks { claude, codex, git, tailscale, checked_at: now_ms() };
+    let c = HostChecks { claude, codex, devin, git, tailscale, checked_at: now_ms() };
     *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = Some(c.clone());
     c
 }
@@ -135,5 +152,13 @@ mod tests {
         assert_eq!(super::claude_logged_in("{\n \"loggedIn\": true, \"authMethod\": \"claude.ai\"\n}"), Some(true));
         assert_eq!(super::claude_logged_in("warning\n{\"loggedIn\": false}"), Some(false));
         assert_eq!(super::claude_logged_in("Logged in"), None);
+    }
+
+    #[test]
+    fn reads_devin_auth_status() {
+        let out = "Not logged in.\n  Credentials path: /u/.local/share/devin/credentials.toml\nRun `devin auth login`";
+        assert!(!super::devin_logged_in(true, out));
+        assert!(super::devin_logged_in(true, "Logged in as someone"));
+        assert!(!super::devin_logged_in(false, "Logged in as someone"));
     }
 }

@@ -9,8 +9,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::PtyEvent;
 use pdt_core::activity::{
-    Activity, HookReport, Signal, Watch, codex_approval_shown, codex_program_status, needs_attention, next, osc_titles,
-    squash, strip_ansi, tick_with, titles_say_action_required,
+    Activity, HookReport, Signal, Watch, codex_approval_shown, needs_attention, next, osc_titles, program_status,
+    program_status_app, squash, strip_ansi, tick_with, titles_say_action_required,
 };
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub(crate) struct Tracker {
     agent: AgentKind,
     activity: Activity,
     watch: Watch,
-    /// Once Codex emits OSC 7501, only its explicit statuses drive activity for this terminal run.
+    /// Once Codex or Devin emits OSC 7501, only its explicit statuses drive activity for this terminal run.
     program_status_seen: bool,
     /// An interrupt key was sent; wait for the TUI acknowledgement before declaring the turn idle.
     interrupt_pending: bool,
@@ -71,10 +71,10 @@ impl Screen {
         codex_approval_shown(title, &self.text)
     }
 
-    fn program_status(&mut self, bytes: &[u8]) -> Option<Activity> {
+    fn program_status(&mut self, bytes: &[u8], app: &str) -> Option<Activity> {
         let mut raw = std::mem::take(&mut self.program_carry);
         raw.extend_from_slice(bytes);
-        let (activity, rest) = codex_program_status(&raw);
+        let (activity, rest) = program_status(&raw, app);
         if rest.len() <= TITLE_CARRY {
             self.program_carry = rest.to_vec();
         }
@@ -233,8 +233,8 @@ async fn on_output(st: &AppState, id: &str, bytes: &[u8], screen: &mut Screen) {
     if clear {
         screen.clear();
     }
-    if agent == AgentKind::Codex {
-        if let Some(activity) = screen.program_status(bytes) {
+    if let Some(app) = program_status_app(agent) {
+        if let Some(activity) = screen.program_status(bytes, app) {
             let _ = apply(st, id, Signal::ProgramStatus(activity)).await;
             return;
         }
@@ -360,6 +360,9 @@ pub(crate) async fn post_report(
     if s.kind != SessionKind::AgentTui {
         return Err(ApiError::new(StatusCode::CONFLICT, "not_an_agent", "only agent sessions report activity"));
     }
+    if let HookReport::Devin { session_id: Some(conversation), .. } = &report {
+        remember_devin_conversation(&st, &s, conversation).await;
+    }
     let order = order_lock(&st, &id);
     let _in_order = order.lock().await;
     if let Some(t) = st.activity.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id) {
@@ -388,6 +391,23 @@ pub(crate) async fn post_report(
         crate::conversations::terminal_conversation_moved(&st, &s, new_id, trigger).await?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Records the Devin conversation a session's terminal runs, as its `SessionStart` hook names it: a fresh launch
+/// gets a new one, and resuming one Devin never saved (no prompt yet) quietly starts a new one too, so the latest
+/// report always wins.
+async fn remember_devin_conversation(st: &AppState, s: &Session, conversation: &str) {
+    let valid = !conversation.is_empty()
+        && conversation.len() <= 200
+        && conversation.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if s.agent != Some(AgentKind::Devin) || !valid || s.external_session_id.as_deref() == Some(conversation) {
+        return;
+    }
+    match st.store.set_external_session_id(&s.id, conversation).await {
+        Ok(_) => tracing::info!(session = %s.id, conversation, "the session runs this Devin conversation"),
+        // Another session already runs it (the user resumed it in both): this one keeps its own.
+        Err(e) => tracing::warn!(session = %s.id, conversation, error = %e, "could not record the Devin conversation"),
+    }
 }
 
 pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

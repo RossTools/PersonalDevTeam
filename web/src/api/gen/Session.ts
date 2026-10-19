@@ -14,7 +14,7 @@ export type Session = { id: string, projectId: string,
 worktreeId: string | null, kind: SessionKind, agent: AgentKind | null, 
 /**
  * Agents only: launched with permission prompts bypassed (`--dangerously-skip-permissions` for Claude,
- * `--dangerously-bypass-approvals-and-sandbox` for Codex). Persisted so restart/auto-resume keep it.
+ * `--dangerously-bypass-approvals-and-sandbox` for Codex, `--permission-mode dangerous` for Devin). Persisted so restart/auto-resume keep it.
  */
 bypassPermissions: boolean, title: string, 
 /**
@@ -24,11 +24,11 @@ cwd: string, status: SessionStatus, exitCode: number | null, createdAt: number, 
 /**
  * The agent's own conversation id. Codex: found in its rollout files once a turn has been taken, None until
  * then. Claude: the conversation `/clear` (or the TUI's `/resume`) moved to; None while it is still `id`
- * (see `claude_conversation_id`).
+ * (see `claude_conversation_id`). Devin: the conversation its `SessionStart` hook last named.
  */
 externalSessionId: string | null, 
 /**
- * Codex only: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
+ * Codex and Devin: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
  * resume), in ms. Matches the session to its conversation's start time. Resuming a bound conversation leaves it
  * alone. None for rows from before it was recorded.
  */

@@ -2,8 +2,8 @@ import type { NewSession } from '../api/gen/NewSession';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import { INITIAL_SIZE } from './status';
 
-/** `Claude` and `Codex` are conversations; the `(terminal)` choices are the agents' own TUIs. */
-export type Choice = 'Shell' | 'Claude' | 'Claude (terminal)' | 'Codex' | 'Codex (terminal)';
+/** `Claude` and `Codex` are conversations; the `(terminal)` choices are the agents' own TUIs (Devin has only that). */
+export type Choice = 'Shell' | 'Claude' | 'Claude (terminal)' | 'Codex' | 'Codex (terminal)' | 'Devin (terminal)';
 
 export interface NewSessionOptions {
   /** Terminal agents: skip the agent's permission prompts. */
@@ -16,7 +16,7 @@ export interface NewSessionOptions {
 export function newSession(projectId: string, worktreeId: string | null, choice: Choice, opts: NewSessionOptions = {}): NewSession {
   const base = { projectId, ...(worktreeId ? { worktreeId } : {}) };
   if (choice === 'Shell') return { ...base, kind: 'shell', ...INITIAL_SIZE };
-  const agent = choice === 'Codex' || choice === 'Codex (terminal)' ? 'codex' : 'claude';
+  const agent = choice === 'Codex' || choice === 'Codex (terminal)' ? 'codex' : choice === 'Devin (terminal)' ? 'devin' : 'claude';
   if (choice === 'Claude' || choice === 'Codex') {
     return {
       ...base,

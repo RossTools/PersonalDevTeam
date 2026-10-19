@@ -114,7 +114,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
       </Field>
       <Field
         label="Agent instructions"
-        hint="Given to every Claude and Codex session in this project, with PDT's own context, on top of the repository's CLAUDE.md or AGENTS.md. Kept on this host, never written to the repository. New sessions get changes."
+        hint="Given to every Claude, Codex and Devin session in this project, with PDT's own context, on top of the repository's CLAUDE.md or AGENTS.md. Kept on this host, never written to the repository. New sessions get changes."
       >
         <Textarea
           rows={6}
