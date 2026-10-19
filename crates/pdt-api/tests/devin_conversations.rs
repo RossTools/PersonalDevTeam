@@ -105,6 +105,17 @@ async fn session(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1
 }
 
+/// Activity is recorded just after the event that changes it, so it is waited for (20 s: a loaded Windows runner).
+async fn wait_activity(env: &Env, id: &str, want: &str) {
+    for _ in 0..800 {
+        if session(env, id).await["activity"] == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("activity never became {want}: {}", session(env, id).await);
+}
+
 async fn stop(env: &Env, id: &str) {
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
@@ -160,7 +171,7 @@ async fn approvals_questions_and_edits_round_trip_in_devins_terms() {
     let req = open_request(&all).unwrap();
     assert_eq!((req["requestKind"].as_str(), req["title"].as_str()), (Some("approval"), Some("touch x")));
     assert_eq!(req["canAlways"], true, "Devin's session-only option");
-    assert_eq!(session(&env, &id).await["activity"], "needs_you");
+    wait_activity(&env, &id, "needs_you").await;
     answer(&env, &id, req["id"].as_str().unwrap(), json!({"type": "approve", "always": true})).await;
     let all = wait_turns(&env, &id, 1).await;
     assert_eq!(said(&all).last().unwrap(), "ran it (allow_session)", "never a rule saved to Devin's settings");
