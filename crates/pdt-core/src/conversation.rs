@@ -81,6 +81,15 @@ impl PermissionMode {
             PermissionMode::Bypass => "bypassPermissions",
         }
     }
+    /// How the UI and notices name it.
+    pub fn label(self) -> &'static str {
+        match self {
+            PermissionMode::Ask => "Ask",
+            PermissionMode::AcceptEdits => "Accept edits",
+            PermissionMode::Plan => "Plan",
+            PermissionMode::Bypass => "Bypass",
+        }
+    }
     /// The PDT mode for Claude's value; None for modes PDT does not offer (e.g. `auto`, `dontAsk`).
     pub fn from_claude(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|m| m.claude() == s)
@@ -197,13 +206,17 @@ pub enum Answer {
     },
     /// Answers to a question request: question text → chosen labels (or the user's own text).
     Question { answers: BTreeMap<String, Vec<String>> },
-    /// A plan request: approve it, or keep planning with feedback.
+    /// A plan request: approve it (optionally going on in `mode`, e.g. Accept edits), or keep planning with feedback.
     Plan {
         approve: bool,
         #[serde(default)]
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         feedback: Option<String>,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        mode: Option<PermissionMode>,
     },
 }
 
@@ -264,6 +277,10 @@ pub enum AgentEvent {
         tool_call_id: Option<String>,
         /// Whether "Always allow in this session" is offered.
         can_always: bool,
+        /// The change a file-edit request would make (unified diff).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        diff: Option<String>,
         state: RequestState,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -607,7 +624,7 @@ mod tests {
         let a: Answer = serde_json::from_str(r#"{"type":"approve"}"#).unwrap();
         assert_eq!(a, Answer::Approve { always: false });
         let a: Answer = serde_json::from_str(r#"{"type":"plan","approve":false,"feedback":"more"}"#).unwrap();
-        assert_eq!(a, Answer::Plan { approve: false, feedback: Some("more".into()) });
+        assert_eq!(a, Answer::Plan { approve: false, feedback: Some("more".into()), mode: None });
     }
 
     #[test]

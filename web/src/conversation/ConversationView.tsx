@@ -13,6 +13,9 @@ import type { EventsSocketLike } from './eventsSocket';
 import { MessageList } from './MessageList';
 import { useConversation, type ConversationData } from './useConversation';
 
+/** What Continue sends after an interrupted turn. */
+export const CONTINUE_PROMPT = 'Continue where you left off.';
+
 const thousands = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 /** "Context 45% · 90k / 200k" from the latest usage report. */
@@ -77,6 +80,8 @@ export function ConversationPane({ session, conv, banner, className }: {
     }
   };
   const interrupt = () => void runAction(() => api.interruptSession(session.id));
+  // Never automatic: a turn cut off by a restart or a crash waits for this click (spec §9, §14).
+  const continueTurn = () => runAction(() => send(CONTINUE_PROMPT));
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -87,6 +92,8 @@ export function ConversationPane({ session, conv, banner, className }: {
         turnRunning={turnRunning}
         pending={state?.pending ?? []}
         onAnswer={answer}
+        agent={agent}
+        onContinue={continueTurn}
         empty={
           conv.ready ? (
             <EmptyState icon={<MessagesSquare />} className="mt-16 border-0">

@@ -53,6 +53,21 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   `entrypoint:"cli"`; a later `-p --resume <id>` sees the TUI's turns too. The TUI shows its folder-trust prompt in a
   folder never trusted before (`-p` skips it), so the handoff (5c) must expect that prompt in a fresh folder. [V]
 - The `control_response` PDT sends for `can_use_tool` is echoed back on stdout (same `request_id`); ignore it. [V]
+- **Edits and plans (checked 2026-10-19, 5c, a Haiku `-p` run in plan mode; fixture `plan.jsonl`)**: Edit's
+  `tool_use_result` has `structuredPatch: [{oldStart, oldLines, newStart, newLines, lines}]` (lines prefixed ` `/`+`/
+  `-`); Write gives `{type: "create", content, structuredPatch: []}` for a new file. Approving ExitPlanMode with
+  `updatedPermissions: [{type: "setMode", mode: "acceptEdits", destination: "session"}]` goes straight to Accept edits
+  (the following Edit/Write ran without a prompt); `system/status` carries the new `permissionMode` at once. Plan mode
+  writes its plan with Write to `~/.claude/plans/<slug>.md` (outside the project). [V]
+- **Transcript (`<config dir>/projects/<key>/<id>.jsonl`, fixture `transcript.jsonl`)**: `user` / `assistant` /
+  `system` entries mirror the stream frames (`toolUseResult` instead of `tool_use_result`, one `assistant` entry per
+  content block), plus bookkeeping types to skip (`attachment`, `queue-operation`, `last-prompt`, `api-request*`,
+  `atis-latch`, …); `isMeta` entries (command caveats) and `isSidechain` entries are not the conversation. There is no
+  `result`: a turn ends at the next real prompt, at `[Request interrupted by user]`, or (TUI turns) at
+  `system/turn_duration {durationMs}`. Local commands appear as `<command-name>/x</command-name>…<command-args>` and
+  `<local-command-stdout>…`. [V]
+- **The TUI leaves on a typed `/exit`** (written, then Enter 150 ms later so it isn't read as a paste): a fresh TUI in
+  a trusted folder exited 0 about 1 s after Enter. [V]
 - Windows `claude -p`: not checked by hand (no Windows machine here). The adapter pipes stdio with no PTY, through
   `cmd.exe /d /c` for a `.cmd` shim (flags only, no free text on the command line); the fake-agent tests cover that
   path on the Windows CI.

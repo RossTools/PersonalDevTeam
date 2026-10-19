@@ -745,6 +745,158 @@ pub(crate) async fn close_terminal(State(st): State<AppState>, Path(id): Path<St
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ---- Claude: one at a time, conversation or terminal (spec §8.2) ----
+
+/// How long the TUI gets to leave after `/exit` before it is killed.
+const TUI_EXIT_GRACE: Duration = Duration::from_secs(5);
+
+/// `POST /api/sessions/{id}/mode`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SwitchMode {
+    mode: SessionMode,
+    #[serde(default)]
+    cols: Option<u16>,
+    #[serde(default)]
+    rows: Option<u16>,
+    /// Interrupt a running turn instead of refusing (`turn_running`).
+    #[serde(default)]
+    interrupt: bool,
+}
+
+/// `POST /api/sessions/{id}/mode`: hands a Claude session between the conversation and Claude's own TUI. Codex
+/// conversations keep their live shared terminal (`…/terminal`) instead.
+pub(crate) async fn switch_mode(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<SwitchMode>, JsonRejection>,
+) -> Result<Json<Session>, ApiError> {
+    let Json(body) = payload?;
+    let _guard = st.lock_session(&id).await;
+    let session = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    if session.kind != SessionKind::AgentTui || session.agent != Some(AgentKind::Claude) {
+        return Err(conflict(
+            "switch_unsupported",
+            "only Claude sessions switch between conversation and terminal (Codex conversations open a live terminal)",
+        ));
+    }
+    if session.mode != body.mode {
+        match body.mode {
+            SessionMode::Terminal => {
+                let size =
+                    pdt_core::session::TerminalSize { cols: body.cols.unwrap_or(120), rows: body.rows.unwrap_or(30) }
+                        .validate()?;
+                to_terminal(&st, &session, size, body.interrupt).await?;
+            }
+            SessionMode::Conversation => to_conversation(&st, &session).await?,
+        }
+    }
+    let session = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    Ok(Json(session))
+}
+
+/// The session's transcript, read off the async runtime (None: Claude has not saved one, or no config dir known).
+async fn read_transcript(st: &AppState, id: &str) -> Option<String> {
+    let dir = st.platform.claude_config_dir.clone()?;
+    let id = id.to_string();
+    tokio::task::spawn_blocking(move || {
+        pdt_agents::launch::claude_transcript(&dir, &id).and_then(|p| std::fs::read_to_string(p).ok())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Conversation → terminal: closes the `-p` process (interrupting a turn only when asked), remembers where PDT's log
+/// ends in Claude's transcript, and starts the TUI on the same conversation as a restart would (hooks, `--resume`).
+async fn to_terminal(
+    st: &AppState,
+    session: &Session,
+    size: pdt_core::session::TerminalSize,
+    interrupt: bool,
+) -> Result<(), ApiError> {
+    let c = conv(st, session).await?;
+    let busy = {
+        let s = c.state();
+        s.turn_running || !s.pending.is_empty() || !s.open_requests.is_empty()
+    };
+    if busy && !interrupt {
+        return Err(conflict("turn_running", "Claude is working; interrupt it to open the terminal"));
+    }
+    park(st, &c).await;
+    let notice =
+        AgentEvent::Notice { level: NoticeLevel::Info, text: "Continued in the terminal.".into(), until: None };
+    append(st, &c, None, None, notice, None).await;
+    // "" means "from the start": Claude had not saved this conversation yet.
+    let anchor = read_transcript(st, &session.id)
+        .await
+        .and_then(|t| pdt_core::conversation::claude::last_uuid(&t))
+        .unwrap_or_default();
+    st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).remove(&session.id);
+    st.store.switch_session_mode(&session.id, SessionMode::Terminal, Some(&anchor)).await?;
+    if let Err(e) = crate::sessions::restart_locked(st, &session.id, size, None).await {
+        st.store.switch_session_mode(&session.id, SessionMode::Conversation, None).await?;
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Terminal → conversation: asks the TUI to `/exit` (killing it after a grace period), imports the turns it took
+/// (spec §8.3; all of them for a session that was always a terminal) and makes the session a conversation again. The
+/// next message resumes it headless.
+async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiError> {
+    let id = session.id.as_str();
+    if st.ptys.is_running(id) {
+        // Typed, then Enter on its own: a single write would look like a paste to the TUI.
+        let _ = st.ptys.write(id, b"/exit");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let _ = st.ptys.write(id, b"\r");
+        let deadline = Instant::now() + TUI_EXIT_GRACE;
+        while st.ptys.is_running(id) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if st.ptys.is_running(id) {
+            st.kill_pty(id).await?;
+        }
+    }
+    crate::sessions::settle_exit(st, id).await;
+    st.remove_pty(id).await;
+    let anchor = st.store.history_from(id).await?;
+    let logged = st.store.last_session_event_seq(id).await? > 0;
+    let after = match anchor.as_deref() {
+        Some("") => Some(None),
+        Some(uuid) => Some(Some(uuid.to_string())),
+        // Never handed over by PDT: import everything, unless PDT already has a log it cannot line up.
+        None if logged => None,
+        None => Some(None),
+    };
+    st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
+    st.store.set_session_running(id).await?;
+    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let c = conv(st, &session).await?;
+    if let Some(after) = after
+        && let Some(transcript) = read_transcript(st, id).await
+    {
+        match pdt_core::conversation::claude::history_events(&transcript, after.as_deref(), Some(&session.cwd)) {
+            Ok(events) => {
+                for out in events {
+                    if let pdt_core::conversation::claude::MapOut::Event { item_id, turn_id, event } = out {
+                        append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
+                    }
+                }
+            }
+            Err(e) => {
+                let text = format!("{e}: turns taken in the terminal are not shown here.");
+                let notice = AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None };
+                append(st, &c, None, None, notice, None).await;
+            }
+        }
+    }
+    refresh_activity(st, &c).await;
+    c.push_state();
+    Ok(())
+}
+
 /// After a pdtd restart: a turn that was running ends as interrupted and open requests expire (spec §9). Run before
 /// serving.
 pub async fn recover_conversations(st: &AppState) {
@@ -792,18 +944,8 @@ async fn recover_one(st: &AppState, id: &str) -> Result<(), pdt_store::StoreErro
         };
         let item = format!("turn-end:{turn}");
         let ne = NewEvent { ts: now_ms(), item_id: Some(&item), turn_id: Some(&turn), event: &e, raw: None };
+        // The web offers Continue on an interrupted last turn; nothing is sent without the user (spec §14).
         st.store.upsert_session_event(id, ne).await?;
-        let notice = AgentEvent::Notice {
-            level: NoticeLevel::Info,
-            text: "PDT restarted while Claude was working. Send a message to continue.".into(),
-            until: None,
-        };
-        st.store
-            .upsert_session_event(
-                id,
-                NewEvent { ts: now_ms(), item_id: None, turn_id: None, event: &notice, raw: None },
-            )
-            .await?;
     }
     Ok(())
 }

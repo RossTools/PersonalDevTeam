@@ -8,6 +8,8 @@
 //! - `who` — says the session id and whether it was resumed.
 //! - anything else — streams `echo: <text>` back.
 //!
+//! Started without `-p` (Claude's TUI, in a terminal) it reads lines and leaves on `/exit`.
+//!
 //! `FAKE_AGENT_LOG` (a file path), when set, gets every stdin line and the argv.
 //!
 //! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), and `fake-agent resume …` the Codex
@@ -274,6 +276,10 @@ fn main() {
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
             let Ok(line) = line else { break };
+            // Typed into the TUI stand-in (no `-p`): leave like Claude's TUI does.
+            if line.trim() == "/exit" {
+                break;
+            }
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
                 let _ = tx.send(Some(v));
             }
