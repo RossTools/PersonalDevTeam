@@ -92,6 +92,11 @@ with the prompt on stdin answers one `result` object whose `structured_output` h
 holds it as text; `num_turns` is 2: the schema is a tool). Nothing is saved: the project folder keeps only the original
 `<id>.jsonl`. Works while the conversation's own `-p` process is live. Make ticket uses it (5d).
 
+### `/clear` (checked 2026-10-19, 2.1.302)
+- Sent as a user message, `/clear` is not replayed. Claude prints `{"type":"conversation_reset","trigger":"clear","new_conversation_id":A,"uuid":A,"user_message_uuid":…,"session_id":<old>}`, then a `system/init` and a `result` (`local_command: "clear"`, `num_turns: 0`) whose `session_id` is a third id B.
+- Every later frame carries B, and the transcript is `projects/*/B.jsonl` (it starts with the `/clear` command entries); no file is named after A. `--resume B` continues the cleared conversation and keeps B.
+- So PDT follows the `session_id` of each `init`, never `new_conversation_id` (fixture: crates/pdt-core/tests/fixtures/claude/clear.jsonl). In the TUI, the SessionStart hook (`source: "clear"`) reports B as its `session_id`.
+
 ## Codex: `codex app-server`
 
 - Handshake: `initialize {clientInfo:{name,version}, capabilities:{experimentalApi?}}` then the `initialized`

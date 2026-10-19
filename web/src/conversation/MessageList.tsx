@@ -313,13 +313,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'error':
       return <Alert tone="error">{ev.text}</Alert>;
     case 'compaction':
-      return (
-        <div className="flex items-center gap-2 text-meta text-muted-foreground">
-          <span className="h-px flex-1 bg-border" aria-hidden />
-          Context compacted
-          <span className="h-px flex-1 bg-border" aria-hidden />
-        </div>
-      );
+      return <Divider>Context compacted</Divider>;
+    case 'conversation_reset':
+      return <Divider>{resetLabel(ev.trigger)}</Divider>;
     case 'plan':
       return (
         <section aria-label="Plan" className="rounded-lg border border-border bg-card p-3">
@@ -337,6 +333,28 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'usage':
     case 'turn_diff':
       return null;
+  }
+}
+
+function Divider({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-meta text-muted-foreground">
+      <span className="h-px flex-1 bg-border" aria-hidden />
+      {children}
+      <span className="h-px flex-1 bg-border" aria-hidden />
+    </div>
+  );
+}
+
+/** What a `conversation_reset` divider says: Claude's `/clear`, the TUI's `/resume`, or whatever else started over. */
+function resetLabel(trigger: string): string {
+  switch (trigger) {
+    case 'clear':
+      return 'Conversation cleared';
+    case 'resume':
+      return 'Switched to another conversation';
+    default:
+      return `New conversation (${trigger})`;
   }
 }
 

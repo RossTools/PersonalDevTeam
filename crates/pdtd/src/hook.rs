@@ -23,6 +23,8 @@ pub fn run(args: &[String], stdin: &mut dyn Read, env: &dyn Fn(&str) -> Option<S
                 "source": "claude",
                 "event": event,
                 "notificationType": input.get("notification_type").and_then(|v| v.as_str()),
+                "sessionId": input.get("session_id").and_then(|v| v.as_str()),
+                "startSource": (event == "SessionStart").then(|| input.get("source").and_then(|v| v.as_str())).flatten(),
             })
         }
         Some("codex-notify") => {
@@ -125,6 +127,11 @@ mod tests {
 
     /// Runs `pdtd hook codex-notify <payload>` against a listener standing in for pdtd; returns the request it got.
     fn notify(payload: &str) -> Option<String> {
+        report(&s(&["codex-notify", payload]), "")
+    }
+
+    /// Runs `pdtd hook <args>` with `stdin` against a listener standing in for pdtd; returns the request it got.
+    fn report(args: &[String], stdin: &str) -> Option<String> {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port().to_string();
         let env = move |k: &str| match k {
@@ -148,8 +155,21 @@ mod tests {
             }
             None
         });
-        assert_eq!(run(&s(&["codex-notify", payload]), &mut std::io::empty(), &env), 0);
+        assert_eq!(run(args, &mut stdin.as_bytes(), &env), 0);
         server.join().unwrap()
+    }
+
+    #[test]
+    fn claude_reports_its_conversation_id_and_why_a_session_started() {
+        let input = r#"{"session_id":"new-conv","source":"clear","hook_event_name":"SessionStart"}"#;
+        let req = report(&s(&["claude", "SessionStart"]), input).expect("reported");
+        let body: serde_json::Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body["sessionId"], "new-conv");
+        assert_eq!(body["startSource"], "clear");
+        let input = r#"{"session_id":"c","source":"elsewhere"}"#;
+        let req = report(&s(&["claude", "Stop"]), input).expect("reported");
+        let body: serde_json::Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(body["startSource"].is_null(), "only SessionStart has a start source");
     }
 
     #[test]
