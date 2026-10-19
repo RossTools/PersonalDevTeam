@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
 import { runAction } from '../common/useAction';
+import { positionInAll, sameGroup } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
 /** The right-click menu of a tab (also used for an agent row that has a tab). Failures toast. */
@@ -38,13 +39,16 @@ export function agentMenu(onOpen: () => void, onRename?: () => void): MenuEntry[
 
 /** The right-click menu of a workspace in the sidebar. Failures toast. */
 export function workspaceMenu(ws: WorkspacesApi, w: Workspace, onRename: () => void, onProjectSettings?: (projectId: string) => void): MenuEntry[] {
-  const i = ws.workspaces.findIndex((x) => x.id === w.id);
+  // Up and down within its sidebar section (ticket workspaces or the others).
+  const group = sameGroup(ws.workspaces, w);
+  const i = group.findIndex((x) => x.id === w.id);
+  const move = (to: number) => () => void runAction(() => ws.moveWorkspace(w.id, positionInAll(ws.workspaces, group, w.id, to)));
   const free = w.projectId === null;
   return [
     ...(w.projectId && onProjectSettings ? [{ label: 'Project settings…', onSelect: () => onProjectSettings(w.projectId!) }] : []),
     ...(free ? [{ label: 'Rename', onSelect: onRename }] : []),
-    { label: 'Move up', disabled: i <= 0, onSelect: () => void runAction(() => ws.moveWorkspace(w.id, i - 1)) },
-    { label: 'Move down', disabled: i >= ws.workspaces.length - 1, onSelect: () => void runAction(() => ws.moveWorkspace(w.id, i + 1)) },
+    { label: 'Move up', disabled: i <= 0, onSelect: move(i - 1) },
+    { label: 'Move down', disabled: i >= group.length - 1, onSelect: move(i + 1) },
     ...(free ? [{ label: 'Delete (tabs go back to their projects)', danger: true, onSelect: () => void runAction(() => ws.deleteWorkspace(w.id)) }] : []),
   ];
 }

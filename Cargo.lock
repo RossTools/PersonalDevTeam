@@ -3181,6 +3181,7 @@ dependencies = [
  "pdt-agents",
  "pdt-core",
  "pdt-git",
+ "pdt-github",
  "pdt-store",
  "pdt-tailscale",
  "pdt-update",
@@ -3232,6 +3233,16 @@ version = "0.1.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pdt-github"
+version = "0.1.0"
+dependencies = [
+ "pdt-core",
+ "serde_json",
+ "thiserror 2.0.21",
+ "which",
 ]
 
 [[package]]
@@ -3301,6 +3312,7 @@ dependencies = [
  "pdt-api",
  "pdt-core",
  "pdt-git",
+ "pdt-github",
  "pdt-store",
  "pdt-tailscale",
  "pdt-update",

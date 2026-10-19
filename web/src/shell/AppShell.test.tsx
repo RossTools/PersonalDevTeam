@@ -152,6 +152,36 @@ describe('workspaces', () => {
   beforeEach(() => { document.title = 'PDT'; });
   afterEach(() => { document.title = ''; });
 
+  it('lists ticket workspaces apart, with the ticket, its PR and its agent state', async () => {
+    const ticketWs = {
+      id: 'wt', name: 'ALP-7', projectId: null, position: 1, createdAt: 3, tabs: [tabOf('td', 'wt', 'd', 0)],
+      ticket: {
+        id: 't7', projectId: project.id, key: 'ALP-7', title: 'Fix login', stage: 'in_progress', attemptId: 'a7', attemptState: 'active',
+        pr: {
+          number: 48, url: 'https://gh/pull/48', title: 'Fix login', state: 'open', draft: false, baseBranch: 'main', headSha: 'h',
+          mergeable: 'mergeable', behind: false, autoMerge: true, inMergeQueue: false, queuePosition: null, queueCi: null, checkedAt: 1,
+          ci: { state: 'failed', url: 'https://gh/runs/1', runs: [] },
+        },
+      },
+    };
+    stubWorkspaces({
+      'GET /api/workspaces': [
+        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0)] },
+        ticketWs,
+        { id: 'wr', name: 'Release', projectId: null, position: 2, createdAt: 2, tabs: [] },
+      ],
+    });
+    renderWithQuery(<AppShell />);
+    const tickets = await screen.findByRole('region', { name: 'Ticket workspaces' });
+    const row = await within(tickets).findByRole('row', { name: /Fix login/ });
+    expect(within(row).getByRole('button', { name: 'ALP-7' })).toBeInTheDocument();
+    expect(within(row).getByText(/#48 · CI failed/)).toBeInTheDocument();
+    expect(within(row).getByText('Done')).toBeInTheDocument();
+    const general = screen.getByRole('region', { name: 'Workspaces' });
+    expect(within(general).queryByRole('row', { name: /Fix login|ALP-7/ })).toBeNull();
+    expect(within(general).getByRole('row', { name: /Release/ })).toBeInTheDocument();
+  });
+
   it('shows the workspace tabs with their status and the current tab', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);

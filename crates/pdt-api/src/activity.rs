@@ -37,6 +37,8 @@ pub(crate) struct Tracker {
     clear_screen: bool,
     /// Tells this terminal run's tracker from a later one for the same session (restart).
     generation: u64,
+    /// When someone last typed into the terminal (ms), so pdtd never types over a half-written prompt.
+    last_input_ms: i64,
 }
 
 /// Recent agent output, owned by the session's output task (scanned outside any shared lock).
@@ -182,6 +184,7 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
                 interrupt_pending: false,
                 interrupted: false,
                 generation,
+                last_input_ms: 0,
             },
         );
         let _ = st.store.update_activity(&s.id, Some(Activity::Idle), None).await;
@@ -259,12 +262,32 @@ fn is_enter(bytes: &[u8]) -> bool {
     bytes.iter().enumerate().any(|(i, b)| *b == b'\r' && (i == 0 || bytes[i - 1] != 0x1b))
 }
 
+/// Whether pdtd may type a message into the agent session now: it runs in this daemon, is idle (not working, not
+/// asking the user anything) and nobody has typed into it for `quiet_ms`.
+pub(crate) fn ready_for_message(st: &AppState, id: &str, quiet_ms: i64) -> bool {
+    let map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
+    map.get(id).is_some_and(|t| t.activity == Activity::Idle && now_ms() - t.last_input_ms >= quiet_ms)
+}
+
+/// Types `text` into an agent session as one bracketed paste, then presses Enter (as the browser's Compose does), so
+/// the agent takes it as a prompt. Activity sees it as input.
+pub(crate) async fn type_message(st: &AppState, id: &str, text: &str) -> Result<(), pdt_agents::PtyError> {
+    let body = text.replace('\x1b', "").replace("\r\n", "\r").replace('\n', "\r");
+    let paste = format!("\x1b[200~{body}\x1b[201~");
+    st.ptys.write(id, paste.as_bytes())?;
+    // Some TUIs treat an Enter in the same chunk as part of the paste.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    on_input(st, id, b"\r");
+    st.ptys.write(id, b"\r")
+}
+
 /// Called with every chunk the user types into a terminal (no-op for terminals without a tracker).
 pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
     let enter = is_enter(bytes);
     let sig = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
+        t.last_input_ms = now_ms();
         if t.agent == AgentKind::Claude && matches!(bytes, b"\x1b" | b"\x03") {
             // Esc can also close a dialog. Only the subsequent acknowledgement proves the turn stopped.
             t.interrupt_pending = true;
