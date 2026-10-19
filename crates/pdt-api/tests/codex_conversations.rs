@@ -114,6 +114,17 @@ async fn session(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1
 }
 
+/// Activity is recorded just after the event that changes it, so it is waited for.
+async fn wait_activity(env: &Env, id: &str, want: &str) {
+    for _ in 0..200 {
+        if session(env, id).await["activity"] == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("activity never became {want}: {}", session(env, id).await);
+}
+
 async fn stop(env: &Env, id: &str) {
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
@@ -130,7 +141,7 @@ async fn a_codex_conversation_streams_and_keeps_its_thread() {
     assert_eq!(said(&all), ["echo: hello"]);
     let s = session(&env, &id).await;
     assert!(s["externalSessionId"].as_str().unwrap().starts_with("thr-"), "{s}");
-    assert_eq!(s["activity"], "idle");
+    wait_activity(&env, &id, "idle").await;
     let (_, caps) = call(&env.app, "GET", "/api/agents/codex/capabilities", None).await;
     assert_eq!(caps["models"].as_array().unwrap().len(), 1, "hidden models are left out: {caps}");
     assert_eq!(caps["models"][0]["value"], "gpt-fake");
@@ -163,7 +174,7 @@ async fn approvals_always_allow_for_the_session_and_deny_notes_follow() {
     let req = open_request(&all).unwrap();
     let r = all.iter().find(|e| e["event"]["kind"] == "request").unwrap();
     assert_eq!((r["event"]["title"].as_str(), r["event"]["canAlways"].as_bool()), (Some("touch a"), Some(true)));
-    assert_eq!(session(&env, &id).await["activity"], "needs_you");
+    wait_activity(&env, &id, "needs_you").await;
     assert_eq!(answer(&env, &id, &req, json!({"type": "approve", "always": true})).await.0, 204);
     let (s, v) = answer(&env, &id, &req, json!({"type": "deny"})).await;
     assert_eq!((s, v["code"].as_str()), (409, Some("request_closed")));
