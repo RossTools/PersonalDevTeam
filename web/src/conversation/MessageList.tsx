@@ -152,7 +152,7 @@ function TurnFooter({ ev }: { ev: Ev<'turn'> }) {
       <span className="h-px flex-1 bg-border" aria-hidden />
       <span className={cn('min-w-0 text-center', ev.status === 'failed' && 'text-failed')}>
         {text}
-        {ev.reason ? ` · ${ev.reason}` : ''}
+        {ev.reason && ev.reason.toLowerCase() !== ev.status ? ` · ${ev.reason}` : ''}
       </span>
       <span className="h-px flex-1 bg-border" aria-hidden />
     </div>

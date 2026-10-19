@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ApprovalCard, type ApprovalAnswer } from '@ui/ApprovalCard';
 import { MessageBubble } from '@ui/MessageBubble';
+import { PromptBox } from '@ui/PromptBox';
+import { Select } from '@ui/Select';
 import { ToolCallRow, ToolOutput } from '@ui/ToolCallRow';
 import { toast } from '@ui/Toaster';
 import { Markdown } from '../../common/Markdown';
@@ -13,6 +15,30 @@ function Demo({ label, children }: { label: string; children: ReactNode }) {
       <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
       {children}
     </div>
+  );
+}
+
+function PromptBoxDemo({ working }: { working?: boolean }) {
+  const [text, setText] = useState(working ? 'Also update the changelog.' : '');
+  const [model, setModel] = useState('default');
+  return (
+    <PromptBox
+      label="Message"
+      value={text}
+      onChange={setText}
+      onSend={() => setText('')}
+      onStop={working ? () => toast.info('Stop') : undefined}
+      sendLabel={working ? 'Queue' : 'Send'}
+      placeholder="Message Claude…"
+      toolbar={
+        <>
+          <Select aria-label="Model" size="sm" quiet value={model} onChange={setModel}
+            options={[{ value: 'default', label: 'Default model' }, { value: 'opus', label: 'Opus' }]} />
+          <Select aria-label="Permission mode" size="sm" quiet value="ask" onChange={() => {}} options={[{ value: 'ask', label: 'Ask' }]} />
+        </>
+      }
+      meta={working ? 'Esc stops' : 'Context 16% · 31k / 200k'}
+    />
   );
 }
 
@@ -38,6 +64,12 @@ export const section = {
   order: 75,
   render: () => (
     <div className="flex max-w-3xl flex-col gap-6">
+      <Demo label="PromptBox · idle, working (Stop + Queue)">
+        <div className="flex flex-col gap-3">
+          <PromptBoxDemo />
+          <PromptBoxDemo working />
+        </div>
+      </Demo>
       <Demo label="MessageBubble · sent, queued, from the terminal">
         <div className="flex flex-col gap-2">
           <MessageBubble>Fix the flaky login test, then open a PR.</MessageBubble>

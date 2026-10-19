@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { cn } from '@ui/lib/utils';
 import { Alert } from '@ui/Alert';
 import { Button } from '@ui/Button';
@@ -10,16 +10,6 @@ export interface ComposerProps {
   onSend: (text: string) => Promise<unknown> | void;
   /** Escape, and the Close button (shown only when this is given). */
   onCancel?: () => void;
-  /** Cmd/Ctrl+Enter sends through this instead of `onSend` (a conversation's "Send now"). Same success/error rules. */
-  onSendNow?: (text: string) => Promise<unknown> | void;
-  /** Escape without a Close button (e.g. interrupt the agent); ignored when `onCancel` is given. */
-  onEscape?: () => void;
-  /** More buttons under Send (e.g. Stop). */
-  actions?: ReactNode;
-  /** A row under the text box (pickers, readouts). */
-  footer?: ReactNode;
-  /** Above the text box (a warning about the agent). */
-  above?: ReactNode;
   /**
    * `enter` (default): Enter sends, Shift+Enter adds a line. `mod-enter`: Enter adds a line, Cmd/Ctrl+Enter sends.
    * Cmd/Ctrl+Enter sends in both.
@@ -41,11 +31,6 @@ export interface ComposerProps {
 export function Composer({
   onSend,
   onCancel,
-  onSendNow,
-  onEscape,
-  actions,
-  footer,
-  above,
   submitOn = 'enter',
   label = 'Prompt',
   placeholder,
@@ -63,13 +48,13 @@ export function Composer({
   const sending = useRef(false);
   const empty = !text.trim();
 
-  const send = async (now = false) => {
+  const send = async () => {
     if (empty || disabled || sending.current) return;
     sending.current = true;
     setPending(true);
     setError(null);
     try {
-      await (now && onSendNow ? onSendNow(text) : onSend(text));
+      await onSend(text);
       setText('');
     } catch (err) {
       setError(actionError(err));
@@ -80,23 +65,22 @@ export function Composer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Escape' && (onCancel || onEscape)) {
+    if (e.key === 'Escape' && onCancel) {
       e.preventDefault();
-      (onCancel ?? onEscape)!();
+      onCancel();
       return;
     }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     const mod = e.metaKey || e.ctrlKey;
     if (mod || (submitOn === 'enter' && !e.shiftKey && !e.altKey)) {
       e.preventDefault();
-      void send(mod);
+      void send();
     }
   };
 
   const hint = submitOn === 'enter' ? 'Enter sends; Shift+Enter adds a line.' : 'Enter adds a line; ⌘/Ctrl+Enter sends.';
   return (
     <div className={cn('flex shrink-0 flex-col gap-2 border-t border-border bg-card p-2', className)}>
-      {above}
       {error && <Alert tone="error">{error}</Alert>}
       <div className="flex items-end gap-2">
         <Textarea
@@ -120,10 +104,8 @@ export function Composer({
               {cancelLabel}
             </Button>
           )}
-          {actions}
         </div>
       </div>
-      {footer}
     </div>
   );
 }
