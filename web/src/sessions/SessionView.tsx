@@ -14,6 +14,7 @@ import type { EventsSocketLike } from '../conversation/eventsSocket';
 import { useConversation, type ConversationData } from '../conversation/useConversation';
 import { branchUrl, repoUrl } from '../projects/github';
 import { TerminalView } from '../terminal/TerminalView';
+import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
@@ -116,6 +117,9 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
   // Conversations have no terminal: sending a message reopens them, so no Compose, Restart or ended bar.
   const conversation = session.mode === 'conversation';
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
+  // A scratch chat (a conversation with no ticket) can become a ticket (spec §10).
+  const [makingTicket, setMakingTicket] = useState(false);
+  const scratch = conversation && isAgent && !session.attemptId;
 
   // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread (spec §8.1).
   const switchable = conversation && session.agent === 'codex' && conv !== null;
@@ -223,6 +227,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
   };
 
   const entries = (): MenuEntry[] => [
+    ...(scratch ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
     ...(conversation
       ? [
           ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),
@@ -247,6 +252,14 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
+      {makingTicket && (
+        <MakeTicketDialog
+          session={session}
+          canStartHere={!!theBranch && !!theBase && theBranch !== theBase}
+          onClose={() => setMakingTicket(false)}
+          onCreated={(t) => toast.success(`Created ${t.key}`)}
+        />
+      )}
       <ViewHeader
         leading={
           <span className="flex items-center gap-1.5">

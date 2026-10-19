@@ -20,6 +20,7 @@ import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
+import type { MessageSource } from '../api/gen/MessageSource';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
 import { buildBlocks, currentTool, turnStartedAt, type Block, type RowNode } from './blocks';
@@ -27,6 +28,12 @@ import type { Streams } from './model';
 import { approvalTitle, clock, duration, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
+
+/** Said under a user message that the user didn't send from the composer. */
+const SOURCE_META: Partial<Record<MessageSource, string>> = {
+  terminal: 'From the terminal',
+  notice: 'Sent automatically: news about the pull request',
+};
 
 export interface MessageListProps {
   rows: ConversationEvent[];
@@ -271,7 +278,7 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
   switch (ev.kind) {
     case 'user_message':
       return (
-        <MessageBubble meta={ev.source === 'terminal' ? 'From the terminal' : undefined} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
+        <MessageBubble meta={SOURCE_META[ev.source]} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
           {ev.text || undefined}
         </MessageBubble>
       );

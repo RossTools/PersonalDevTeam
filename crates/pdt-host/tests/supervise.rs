@@ -86,6 +86,7 @@ fn config(install: &Path, data: &Path, port: u16) -> HostConfig {
         poll: Duration::from_millis(200),
         stop_timeout: Duration::from_secs(10),
         forward_env: Vec::new(),
+        updates_unsupported: None,
     }
 }
 
@@ -477,9 +478,10 @@ fn a_dev_host_never_runs_an_installer() {
     let setup = fake_installer(&tmp.path().join("release"), "fail_partial");
     let data = tmp.path().join("data");
     let port = free_port();
-    let cfg = config(&install, &data, port);
+    let mut cfg = config(&install, &data, port);
     assert!(cfg.dev);
-    let installer = host_installer(&cfg);
+    let installer = host_installer(&mut cfg);
+    assert_eq!(cfg.updates_unsupported, None, "a dev pdtd already knows it never updates");
     assert_eq!(installer.backup_path(), None, "a dev host keeps no backup: it never installs");
     let _h = supervise_with(cfg, installer);
     wait_version(port, "0.1.5", Duration::from_secs(20));

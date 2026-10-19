@@ -101,7 +101,7 @@ describe('MessageList', () => {
     const { unmount } = list([cut(1), ev(2, { kind: 'user_message', text: 'next', images: [], source: 'pdt' })], { onContinue: vi.fn(async () => {}) });
     expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
     unmount();
-    list([cut(1)], { onContinue: vi.fn(async () => {}), pending: [{ id: 'q', text: 'x', delivery: 'next', images: [] }] });
+    list([cut(1)], { onContinue: vi.fn(async () => {}), pending: [{ id: 'q', text: 'x', delivery: 'next', images: [], notice: false }] });
     expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
   });
 
@@ -155,7 +155,7 @@ describe('MessageList', () => {
       {
         turnRunning: true,
         provisional: [{ itemId: 'm:1', markdown: 'Streaming…' }],
-        pending: [{ id: 'q', text: 'also do X', delivery: 'next', images: [] }],
+        pending: [{ id: 'q', text: 'also do X', delivery: 'next', images: [], notice: false }],
       },
     );
     expect(screen.getByTestId('working')).toHaveTextContent(/Running\s*cargo build/);
@@ -314,7 +314,7 @@ describe('ConversationView', () => {
   it('replays, then follows live events and sends messages', async () => {
     const calls = stubApi({
       'GET /api/agents/claude/capabilities': caps,
-      'POST /api/sessions/s1/messages': { id: 'q', text: 'hello', delivery: 'next', images: [] },
+      'POST /api/sessions/s1/messages': { id: 'q', text: 'hello', delivery: 'next', images: [], notice: false },
     });
     renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
     expect(server().url).toMatch(/\/api\/sessions\/s1\/events\?after=0$/);
@@ -328,7 +328,7 @@ describe('ConversationView', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hello{Enter}');
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/messages')?.body).toEqual({ text: 'hello' }));
     act(() => {
-      server().send({ type: 'state', state: { ...idle, turnRunning: true, pending: [{ id: 'q', text: 'hello', delivery: 'next', images: [] }] } });
+      server().send({ type: 'state', state: { ...idle, turnRunning: true, pending: [{ id: 'q', text: 'hello', delivery: 'next', images: [], notice: false }] } });
     });
     expect(screen.getByText('Queued')).toBeInTheDocument();
     act(() => {
@@ -396,6 +396,24 @@ describe('SessionView for a conversation', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Compose' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Restart' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
+  });
+
+  it('offers Make ticket… for a chat with no ticket only', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    stubApi({
+      'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+      'GET /api/projects': [],
+      'POST /api/sessions/s1/view': undefined,
+      'POST /api/sessions/s1/ticket-draft': new Promise(() => {}),
+    });
+    const { unmount } = renderWithQuery(<SessionView session={session} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    await userEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Make ticket…' }));
+    expect(await screen.findByRole('dialog', { name: 'Make ticket' })).toBeInTheDocument();
+    unmount();
+    renderWithQuery(<SessionView session={{ ...session, attemptId: 'a1', ticket: { id: 't1', key: 'ALP-1' } }} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    expect(within(await screen.findByRole('menu')).queryByRole('menuitem', { name: 'Make ticket…' })).toBeNull();
   });
 });
 

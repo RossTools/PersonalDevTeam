@@ -10,6 +10,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{SessionKind, ValidSession};
 use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, started_session_title, ticket_prompt};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
@@ -75,14 +76,25 @@ pub(crate) async fn start(
     }
     let project =
         st.store.get_project(&ticket.summary.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let branch = v.branch.clone().unwrap_or_else(|| ticket.default_branch.clone());
     let base = v.base.clone().unwrap_or_else(|| project.base_branch.clone());
-    let existing = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch);
-    let wt = match existing {
-        Some(w) => w,
+    // Start from a chat: its worktree and branch, and the chat itself instead of a new session.
+    let chat = match &v.from_session {
+        Some(sid) => Some(startable_chat(&st, sid, &project).await?),
+        None => None,
+    };
+    let (wt, branch) = match &chat {
+        Some((_, wt)) => (wt.clone(), wt.branch.clone()),
         None => {
-            let from = newest_base(&project.repo_path, &base).await;
-            crate::worktrees::make_worktree(&st, &project, &branch, &from, true).await?
+            let branch = v.branch.clone().unwrap_or_else(|| ticket.default_branch.clone());
+            let existing = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch);
+            let wt = match existing {
+                Some(w) => w,
+                None => {
+                    let from = newest_base(&project.repo_path, &base).await;
+                    crate::worktrees::make_worktree(&st, &project, &branch, &from, true).await?
+                }
+            };
+            (wt, branch)
         }
     };
     let extra = if blockers.is_empty() && overlaps.is_empty() {
@@ -100,6 +112,34 @@ pub(crate) async fn start(
         .await?;
     drop(guard);
 
+    if let Some((chat, _)) = chat {
+        let linked = st.store.set_session_attempt(&chat.id, &attempt_id).await;
+        if !matches!(linked, Ok(true)) {
+            if let Err(u) = st.store.undo_start(&started).await {
+                tracing::error!(ticket = %id, error = %u, "could not undo a failed start");
+            }
+            return Err(match linked {
+                Err(e) => e.into(),
+                _ => conflict("chat_not_startable", "that chat already works on a ticket".into()),
+            });
+        }
+        let data = json!({"sessionId": chat.id, "agent": chat.agent, "attemptId": attempt_id, "fromChat": true});
+        if let Err(e) =
+            st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await
+        {
+            tracing::warn!(ticket = %id, error = %e, "could not record the chat on the timeline");
+        }
+        open_tab_before_chat(&st, &project.id, &key, &id, &attempt_id, &chat.id, &v).await;
+        let session = st.store.get_session(&chat.id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+        let ticket = load_ticket(&st, &id).await?;
+        let attempt =
+            ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
+        return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session })));
+    }
+
+    let conversation = v.session_mode == SessionMode::Conversation;
+    let permission_mode =
+        conversation.then_some(if v.bypass_permissions { PermissionMode::Bypass } else { PermissionMode::Ask });
     let req = CreateSession {
         valid: ValidSession {
             project_id: project.id.clone(),
@@ -108,11 +148,11 @@ pub(crate) async fn start(
             agent: Some(v.agent),
             bypass_permissions: v.bypass_permissions,
             size: v.size,
+            // A conversation gets it as its first message, a terminal as the agent's last argument.
             initial_prompt: Some(ticket_prompt(&key, &ticket.summary.title, &ticket.description, &branch)),
-            // Start opens a terminal until conversation mode reaches it (5d).
-            mode: pdt_core::conversation::SessionMode::Terminal,
+            mode: v.session_mode,
             model: None,
-            permission_mode: None,
+            permission_mode,
         },
         title: Some(started_session_title(&ticket.summary.title)),
         attempt_id: Some(attempt_id.clone()),
@@ -138,6 +178,61 @@ pub(crate) async fn start(
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
     Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session })))
+}
+
+/// The chat a Start from a chat adopts, with its worktree: a conversation session of this project with no ticket,
+/// in a worktree off the base branch that no active attempt uses.
+async fn startable_chat(
+    st: &AppState,
+    session_id: &str,
+    project: &pdt_core::project::Project,
+) -> Result<(pdt_core::session::Session, pdt_core::worktree::Worktree), ApiError> {
+    let no = |m: &str| conflict("chat_not_startable", m.to_string());
+    let s = st.store.get_session(session_id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    if s.project_id != project.id {
+        return Err(no("that chat belongs to another project"));
+    }
+    if s.mode != SessionMode::Conversation || s.agent.is_none() {
+        return Err(no("only a conversation can be started from"));
+    }
+    if let Some(t) = &s.ticket {
+        return Err(no(&format!("that chat already works on {}", t.key)));
+    }
+    let wid = s
+        .worktree_id
+        .clone()
+        .ok_or_else(|| no("that chat runs in the main checkout; start the ticket in its own worktree instead"))?;
+    let wt = st.store.get_worktree(&wid).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    if wt.branch == project.base_branch {
+        return Err(no("that chat's worktree is on the base branch"));
+    }
+    if st.store.list_active_attempts().await?.iter().any(|a| a.attempt.worktree_id.as_deref() == Some(wid.as_str())) {
+        return Err(no("another ticket's attempt already uses that chat's worktree"));
+    }
+    Ok((s, wt))
+}
+
+/// Start from a chat: the ticket's tab goes just before the chat's (which stays where it is); a chat with no tab gets
+/// both, as a new start would.
+async fn open_tab_before_chat(
+    st: &AppState,
+    project_id: &str,
+    key: &str,
+    ticket_id: &str,
+    attempt_id: &str,
+    session_id: &str,
+    v: &ValidStart,
+) {
+    match st.store.tab_for(&TabItem::Session(session_id.to_string())).await {
+        Ok(Some(tab)) => {
+            let item = TabItem::Ticket(ticket_id.to_string());
+            let new_id = uuid::Uuid::now_v7().to_string();
+            if let Err(e) = st.store.open_tab(&new_id, &tab.workspace_id, &item, Some(tab.position), now_ms()).await {
+                tracing::warn!(error = %e, "could not open the ticket's tab");
+            }
+        }
+        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, session_id, v).await,
+    }
 }
 
 /// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so

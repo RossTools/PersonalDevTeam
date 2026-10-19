@@ -127,6 +127,10 @@ pub struct Target<'a> {
     pub os: Os,
     pub exe: &'a Path,
     pub home: Option<&'a Path>,
+    /// macOS: take over from a pdt-host that is already running (another copy of the app, PDT-51): its launchd job is
+    /// booted out, and it is stopped if it still runs, before this one is bootstrapped. pdtd keeps running (its own
+    /// process group); the new pdt-host adopts it.
+    pub replace: bool,
 }
 
 /// Whether another process holds the lock file at `path`.
@@ -136,7 +140,7 @@ fn locked(path: &Path) -> bool {
 }
 
 /// Whether another pdt-host holds the data folder's lock.
-fn host_running(data_dir: &Path) -> bool {
+pub fn host_running(data_dir: &Path) -> bool {
     locked(&data_dir.join(format!("{HOST_BIN}.lock")))
 }
 
@@ -148,6 +152,26 @@ pub fn pid_path(data_dir: &Path) -> PathBuf {
 
 pub fn write_pid(data_dir: &Path) -> std::io::Result<()> {
     std::fs::write(pid_path(data_dir), std::process::id().to_string())
+}
+
+/// The program the running pdt-host was started from (written with the pid), so the tray can tell which copy of the
+/// app runs (PDT-51). A separate file: older versions parse the pid file as a bare number.
+pub fn program_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(format!("{HOST_BIN}.program"))
+}
+
+pub fn write_program(data_dir: &Path, exe: &Path) -> std::io::Result<()> {
+    std::fs::write(program_path(data_dir), exe.to_string_lossy().as_bytes())
+}
+
+/// The program of the pdt-host running for `data_dir`, when one runs and has said (older versions do not).
+pub fn running_program(data_dir: &Path) -> Option<PathBuf> {
+    if !host_running(data_dir) {
+        return None;
+    }
+    let text = std::fs::read_to_string(program_path(data_dir)).ok()?;
+    let text = text.trim();
+    (!text.is_empty()).then(|| PathBuf::from(text))
 }
 
 fn launchd_domain(runner: &mut dyn Runner) -> Result<String, String> {
@@ -173,10 +197,10 @@ where
 /// Registers pdt-host to start at login and starts it if no pdt-host is running. Windows registers a copy in the data
 /// folder (made unless a running pdt-host owns it; that one replaces itself after updates); macOS registers the bundle's
 /// own pdt-host and removes the copy older versions made.
-pub fn install(cfg: &HostConfig) -> Result<(), String> {
+pub fn install(cfg: &HostConfig, replace: bool) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let home = std::env::home_dir();
-    install_with(cfg, &Target { os: Os::current(), exe: &exe, home: home.as_deref() }, &mut System)
+    install_with(cfg, &Target { os: Os::current(), exe: &exe, home: home.as_deref(), replace }, &mut System)
 }
 
 pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) -> Result<(), String> {
@@ -193,13 +217,22 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
             if !program.is_file() {
                 return Err(format!("{} does not exist", program.display()));
             }
+            // A login item naming a translocated or read-only bundle breaks once that folder goes away, and that
+            // pdt-host could never install an update (PDT-51).
+            if let Some(reason) = crate::placement::bundle_problem(&cfg.install_dir) {
+                return Err(format!("not starting this copy at login: {reason}"));
+            }
             let home = target.home.ok_or("no home folder")?;
             let plist = launch_agent_path(home);
             write_launch_agent(cfg, &plist)?;
-            if !running {
+            if !running || target.replace {
                 let domain = launchd_domain(runner)?;
-                // A stale registration (e.g. from an older install) fails bootstrap; it may not exist.
+                // A stale registration (e.g. from an older install) fails bootstrap; it may not exist. Booting it out
+                // also stops the pdt-host launchd runs for it.
                 let _ = runner.status(launchctl(["bootout".to_string(), format!("{domain}/{HOST_LABEL}")]));
+                if running && !stop_running_host(cfg, target.os, runner) {
+                    return Err("the running pdt-host did not stop".into());
+                }
                 let bootstrap = launchctl([OsString::from("bootstrap"), domain.into(), plist.into_os_string()]);
                 if !runner.status(bootstrap)? {
                     return Err("launchctl bootstrap failed".into());
@@ -247,6 +280,28 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
     Ok(())
 }
 
+/// Stops the pdt-host holding the data folder's lock (one launchd did not run, e.g. started by the tray) and waits up
+/// to `stop_timeout` for the lock to be free: whether it is.
+fn stop_running_host(cfg: &HostConfig, os: Os, runner: &mut dyn Runner) -> bool {
+    let free = |within: Duration| {
+        let deadline = Instant::now() + within;
+        loop {
+            if !host_running(&cfg.data_dir) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    if free(Duration::from_secs(2).min(cfg.stop_timeout)) {
+        return true;
+    }
+    stop_host(cfg, os, runner);
+    free(cfg.stop_timeout)
+}
+
 fn write_launch_agent(cfg: &HostConfig, plist: &Path) -> Result<(), String> {
     let log = cfg.data_dir.join("logs").join(format!("{HOST_BIN}.launchd.log"));
     let _ = std::fs::create_dir_all(log.parent().expect("logs"));
@@ -268,7 +323,10 @@ pub fn migrate_launch_agent(cfg: &HostConfig, home: &Path) -> Result<bool, Strin
     let plist = launch_agent_path(home);
     let Ok(text) = std::fs::read_to_string(&plist) else { return Ok(false) };
     let program = bundled_host_path(&cfg.install_dir);
-    if cfg.dev || !program.is_file() || text.contains(&format!("<string>{}</string>", xml(&program.to_string_lossy())))
+    if cfg.dev
+        || !program.is_file()
+        || crate::placement::bundle_problem(&cfg.install_dir).is_some()
+        || text.contains(&format!("<string>{}</string>", xml(&program.to_string_lossy())))
     {
         return Ok(false);
     }
@@ -451,7 +509,7 @@ mod tests {
     }
 
     fn target(s: &Setup, os: Os) -> Target<'_> {
-        Target { os, exe: &s.exe, home: Some(&s.home) }
+        Target { os, exe: &s.exe, home: Some(&s.home), replace: false }
     }
 
     /// Holds the data folder's pdt-host lock, as a running pdt-host does.
@@ -619,6 +677,89 @@ mod tests {
         s.cfg.dev = true;
         assert!(!migrate_launch_agent(&s.cfg, &s.home).unwrap(), "a dev host never touches it");
         assert_eq!(std::fs::read_to_string(&plist).unwrap(), "old");
+    }
+
+    /// Moves `s`'s install folder into an App Translocation folder, as macOS runs an app opened from Downloads.
+    fn translocate(s: &mut Setup) {
+        let dir = s._tmp.path().join("AppTranslocation").join("0F1E").join("d").join("P 2.app").join("Contents");
+        s.cfg.install_dir = dir.join("MacOS");
+        std::fs::create_dir_all(&s.cfg.install_dir).unwrap();
+    }
+
+    #[test]
+    fn a_translocated_bundle_is_never_registered() {
+        let mut s = setup();
+        translocate(&mut s);
+        bundle_host(&s);
+        let mut r = Recorder::default();
+        let err = install_with(&s.cfg, &target(&s, Os::Mac), &mut r).unwrap_err();
+        assert!(err.contains("not starting this copy at login") && err.contains("Applications folder"), "{err}");
+        assert!(r.ran.is_empty(), "{:?}", r.ran);
+        assert!(!launch_agent_path(&s.home).exists());
+    }
+
+    #[test]
+    fn an_agent_is_never_rewritten_to_name_a_translocated_bundle() {
+        let mut s = setup();
+        let copy = old_copy(&s);
+        translocate(&mut s);
+        bundle_host(&s);
+        let plist = launch_agent_path(&s.home);
+        std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
+        let text = launchd_plist(&copy, Path::new("/Applications/P.app/Contents/MacOS"), Path::new("l.log"));
+        std::fs::write(&plist, &text).unwrap();
+        assert!(!migrate_launch_agent(&s.cfg, &s.home).unwrap());
+        assert_eq!(std::fs::read_to_string(&plist).unwrap(), text);
+    }
+
+    #[test]
+    fn mac_install_replace_takes_over_from_a_running_host() {
+        let s = setup();
+        bundle_host(&s);
+        let lock = hold_lock(&s.cfg);
+        // The other copy's pdt-host lets go once launchd has booted it out.
+        let let_go = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(lock);
+        });
+        let mut r = Recorder::default();
+        install_with(&s.cfg, &Target { replace: true, ..target(&s, Os::Mac) }, &mut r).unwrap();
+        let_go.join().unwrap();
+        let plist = launch_agent_path(&s.home);
+        assert_eq!(
+            r.ran,
+            [
+                "id | -u".to_string(),
+                "launchctl | bootout | gui/501/dev.personaldevteam.host".to_string(),
+                format!("launchctl | bootstrap | gui/501 | {}", plist.display()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mac_install_replace_kills_a_host_launchd_does_not_run_and_fails_if_it_stays() {
+        let s = setup();
+        bundle_host(&s);
+        let _lock = hold_lock(&s.cfg);
+        std::fs::write(pid_path(&s.cfg.data_dir), "4242\n").unwrap();
+        let mut r = Recorder::default();
+        let err = install_with(&s.cfg, &Target { replace: true, ..target(&s, Os::Mac) }, &mut r).unwrap_err();
+        assert!(err.contains("did not stop"), "{err}");
+        assert_eq!(r.ran.last().map(String::as_str), Some("kill | 4242"), "{:?}", r.ran);
+        assert!(!r.ran.iter().any(|l| l.contains("bootstrap")), "{:?}", r.ran);
+    }
+
+    #[test]
+    fn the_running_hosts_program_is_known_only_while_it_runs() {
+        let s = setup();
+        std::fs::create_dir_all(&s.cfg.data_dir).unwrap();
+        let program = Path::new("/Applications/P.app/Contents/MacOS/pdt-host");
+        write_program(&s.cfg.data_dir, program).unwrap();
+        assert_eq!(running_program(&s.cfg.data_dir), None, "no pdt-host holds the lock");
+        let _lock = hold_lock(&s.cfg);
+        assert_eq!(running_program(&s.cfg.data_dir).as_deref(), Some(program));
+        std::fs::remove_file(program_path(&s.cfg.data_dir)).unwrap();
+        assert_eq!(running_program(&s.cfg.data_dir), None, "an older pdt-host does not say");
     }
 
     #[test]

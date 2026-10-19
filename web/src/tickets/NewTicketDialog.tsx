@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, SegmentedControl, Select, Textarea, useConfirm } from '@ui';
+import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Select, Textarea, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { Project } from '../api/gen/Project';
@@ -19,18 +19,27 @@ export interface NewTicketDialogProps {
   projects: Project[];
   /** The project it goes in (a picker shows when there's more than one project). */
   projectId: string | null;
-  /** Typed in the quick-add row before Shift+Enter. */
+  /** Typed in the quick-add row before Shift+Enter, or drafted by an agent (Make ticket). */
   title?: string;
+  /** Drafted by an agent (Make ticket). */
+  description?: string;
+  /** A follow-up offered as a checkbox (off by default), run once the ticket exists: Make ticket's "Start from this chat". */
+  then?: { label: string; hint?: string; run: (t: Ticket) => Promise<void> };
+  /** The form's heading ("New ticket"). */
+  heading?: string;
   onClose: () => void;
   onCreated?: (t: Ticket) => void;
 }
 
 /** The full new-ticket form: title, description (with preview), stage, priority, labels, areas. It lands at the top of its stage. */
-export function NewTicketDialog({ projects, projectId: initialProject, title: initialTitle = '', onClose, onCreated }: NewTicketDialogProps) {
+export function NewTicketDialog({
+  projects, projectId: initialProject, title: initialTitle = '', description: initialDescription = '', then, heading = 'New ticket', onClose, onCreated,
+}: NewTicketDialogProps) {
   const qc = useQueryClient();
   const [projectId, setProjectId] = useState<string | null>(initialProject ?? projects[0]?.id ?? null);
   const [title, setTitle] = useState(initialTitle);
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(initialDescription);
+  const [follow, setFollow] = useState(false);
   const [mode, setMode] = useState<'write' | 'preview'>('write');
   const [stage, setStage] = useState<TicketStage>('draft');
   const [priority, setPriority] = useState<Priority>('none');
@@ -80,6 +89,14 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
         ...(areas.length > 0 ? { areas } : {}),
       });
       invalidateTickets(qc);
+      if (then && follow) {
+        try {
+          await then.run(t);
+        } catch (e) {
+          // The ticket exists; only the follow-up failed.
+          toast.error(`${t.key} was created, but: ${actionError(e)}`);
+        }
+      }
       onCreated?.(t);
       onClose();
     } catch (e) {
@@ -94,7 +111,7 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
     <Dialog
       open
       onOpenChange={(o) => { if (!o) void requestClose(); }}
-      title="New ticket"
+      title={heading}
       size="lg"
       footer={
         <>
@@ -163,6 +180,12 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
             <AreasEditor projectId={projectId} areas={areas} onChange={setAreas} />
           </div>
         </div>
+        {then && (
+          <div className="flex flex-col gap-1">
+            <Checkbox checked={follow} onChange={setFollow}>{then.label}</Checkbox>
+            {then.hint && <p className="pl-6 text-meta text-muted-foreground">{then.hint}</p>}
+          </div>
+        )}
         {error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{error}</Alert></div>}
       </form>
     </Dialog>

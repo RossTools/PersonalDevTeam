@@ -2,6 +2,7 @@
 //! edits with their timeline events, bulk actions, links and comments.
 
 use crate::{Store, StoreError};
+use pdt_core::conversation::SessionMode;
 use pdt_core::links::would_cycle;
 use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
@@ -697,7 +698,7 @@ impl Store {
         .map(to_attempt)
         .collect::<Result<Vec<_>, _>>()?;
         let sessions = sqlx::query(
-            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id FROM sessions s \
+            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id, s.mode FROM sessions s \
              JOIN attempts a ON a.id = s.attempt_id WHERE a.ticket_id = ? ORDER BY s.created_at DESC, s.id DESC",
         )
         .bind(id)
@@ -707,12 +708,14 @@ impl Store {
         .map(|r| {
             let status: String = r.try_get("status")?;
             let agent: Option<String> = r.try_get("agent")?;
+            let mode: String = r.try_get("mode")?;
             Ok(AttemptSession {
                 id: r.try_get("id")?,
                 title: r.try_get("title")?,
                 status: SessionStatus::parse(&status).ok_or_else(|| corrupt("session status", &status))?,
                 agent: agent.map(|a| AgentKind::parse(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
                 attempt_id: r.try_get("attempt_id")?,
+                mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("session mode", &mode))?,
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
@@ -2069,6 +2072,15 @@ mod tests {
         let ids: Vec<&str> = ticket.sessions.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["s2", "s1"], "newest first");
         assert_eq!(ticket.sessions[0].attempt_id, "at1");
+
+        // A chat joins an attempt once; a session with one keeps it.
+        assert!(store.set_session_attempt("plain", "at1").await.unwrap());
+        assert!(!store.set_session_attempt("plain", "at1").await.unwrap());
+        assert!(!store.set_session_attempt("s1", "at1").await.unwrap());
+        assert!(!store.set_session_attempt("gone", "at1").await.unwrap());
+        let ticket = store.get_ticket("a").await.unwrap().unwrap();
+        assert_eq!(ticket.sessions.len(), 3);
+        store.delete_session("plain").await.unwrap();
 
         // Deleting the ticket (here directly: the API refuses while the attempt is active) drops the attempt; its
         // sessions lose the link.

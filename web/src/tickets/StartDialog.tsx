@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Skeleton, Switch } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
+import type { SessionMode } from '../api/gen/SessionMode';
 import type { StartMode } from '../api/gen/StartMode';
 import type { StartResult } from '../api/gen/StartResult';
 import type { StartTicket } from '../api/gen/StartTicket';
@@ -18,6 +19,7 @@ import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
 
 const AGENT_KEY = 'pdt.tickets.startAgent';
+const MODE_KEY = 'pdt.tickets.startMode';
 
 function loadAgent(): AgentKind {
   try {
@@ -31,6 +33,23 @@ function loadAgent(): AgentKind {
 function saveAgent(a: AgentKind) {
   try {
     localStorage.setItem(AGENT_KEY, a);
+  } catch {
+    // Storage blocked: remembered for this page only.
+  }
+}
+
+/** Conversation unless this browser last chose Terminal. */
+function loadMode(): SessionMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'terminal' ? 'terminal' : 'conversation';
+  } catch {
+    return 'conversation';
+  }
+}
+
+function saveMode(m: SessionMode) {
+  try {
+    localStorage.setItem(MODE_KEY, m);
   } catch {
     // Storage blocked: remembered for this page only.
   }
@@ -62,6 +81,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;
   const project = projects.data?.find((p) => p.id === t?.projectId) ?? null;
   const [agent, setAgentState] = useState<AgentKind>(loadAgent);
+  const [sessionMode, setModeState] = useState<SessionMode>(loadMode);
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [bypass, setBypass] = useState(true);
@@ -76,6 +96,13 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     setAgentState(a);
     saveAgent(a);
   };
+  const setMode = (m: SessionMode) => {
+    setModeState(m);
+    saveMode(m);
+  };
+  // Devin runs only as a terminal; the remembered choice stays for the other agents.
+  const terminalOnly = agent === 'devin';
+  const effectiveMode: SessionMode = terminalOnly ? 'terminal' : sessionMode;
   const blockers = t ? openBlockers(t) : [];
   const overlaps = t?.overlaps ?? [];
   const conflict = overlaps.some((o) => o.level === 'conflict');
@@ -125,6 +152,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     const mode: StartMode = force ? 'force' : 'check';
     const body: StartTicket = {
       agent,
+      sessionMode: effectiveMode,
       ...(branch.trim() ? { branch: branch.trim() } : {}),
       ...(base.trim() ? { base: base.trim() } : {}),
       ...(bypass ? { bypassPermissions: true } : {}),
@@ -221,12 +249,24 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               {t.clearToStart ? 'Nothing is in the way any more.' : `${t.key} waits for its blockers and overlaps to clear.`}
             </Alert>
           )}
-          <Field label="Agent">
-            <SegmentedControl
-              options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'devin', label: 'Devin' }]}
-              value={agent}
-              onChange={setAgent}
-            />
+          <Field
+            label="Agent"
+            hint={effectiveMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <SegmentedControl
+                aria-label="Agent"
+                options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'devin', label: 'Devin' }]}
+                value={agent}
+                onChange={setAgent}
+              />
+              <SegmentedControl<SessionMode>
+                aria-label="Show as"
+                options={[{ value: 'conversation', label: 'Conversation', disabled: terminalOnly }, { value: 'terminal', label: 'Terminal' }]}
+                value={effectiveMode}
+                onChange={setMode}
+              />
+            </div>
           </Field>
           <Field label="Branch" hint="Made from the base with a worktree; an existing .worktrees folder for it is reused.">
             <Input mono value={branch} placeholder={t.defaultBranch} maxLength={200} onChange={(e) => setBranch(e.target.value)} />
