@@ -185,14 +185,21 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                 key={id}
                 id={id}
                 textValue={info.title}
-                title={info.title}
+                title={
+                  info.session?.ticket ? (
+                    // The key leads the title row only, so the second line still runs under it.
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <SessionTicketChip session={info.session} className="flex shrink-0" />
+                      <span className="truncate">{info.title}</span>
+                    </span>
+                  ) : info.title
+                }
                 bold={info.unseen}
                 current={!!ws.tab && where?.tab.id === ws.tab.id}
                 leading={
                   <span className="flex items-center gap-1.5">
                     <AgentDot state={state} unseenDot={false} />
                     <SessionKindIcon session={info.session} />
-                    <SessionTicketChip session={info.session} className="flex" />
                   </span>
                 }
                 trailing={
