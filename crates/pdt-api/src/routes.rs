@@ -220,6 +220,7 @@ pub(crate) fn now_ms() -> i64 {
 }
 
 #[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Health {
     pub status: String,
@@ -228,6 +229,9 @@ pub struct Health {
     pub profile: pdt_core::brand::Profile,
     pub port: u16,
     pub dev: bool,
+    /// A short hash of the index.html pdtd serves now, or null without a web dir. Every dev build reports the same
+    /// `version`, so the UI reloads itself when this changes (a dev instance restarted with a rebuilt web/dist).
+    pub web_build: Option<String>,
 }
 
 /// Asks pdtd to stop gracefully (running sessions become `interrupted`). Guarded by the Host/Origin checks.
@@ -239,8 +243,9 @@ async fn request_shutdown(State(st): State<AppState>) -> StatusCode {
 
 pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let guard_state = state.clone();
+    let index = web_dir.as_ref().map(|d| d.join("index.html"));
     let api = Router::new()
-        .route("/health", get(health))
+        .route("/health", get(move |st: State<AppState>| health(st, index.clone())))
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/host/whoami", get(crate::identity_guard::whoami))
@@ -348,8 +353,13 @@ async fn web_cache_headers(req: axum::extract::Request, next: axum::middleware::
     res
 }
 
-async fn health(State(st): State<AppState>) -> Json<Health> {
+async fn health(State(st): State<AppState>, index: Option<PathBuf>) -> Json<Health> {
     let i = st.instance;
+    // Read on every call: the web dir can be rebuilt while pdtd runs, and ServeDir serves the new files at once.
+    let web_build = match index {
+        Some(path) => tokio::fs::read(path).await.ok().map(|bytes| web_build_id(&bytes)),
+        None => None,
+    };
     Json(Health {
         status: "ok".into(),
         name: PRODUCT_NAME.into(),
@@ -357,5 +367,13 @@ async fn health(State(st): State<AppState>) -> Json<Health> {
         profile: i.profile,
         port: i.port,
         dev: i.dev,
+        web_build,
     })
+}
+
+/// The first 12 hex digits of index.html's SHA-256. Vite names every asset by its content hash and index.html links
+/// them, so any change to the bundle changes it.
+fn web_build_id(index_html: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(index_html).iter().take(6).map(|b| format!("{b:02x}")).collect()
 }
