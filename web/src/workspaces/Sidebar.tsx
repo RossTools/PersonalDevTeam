@@ -192,12 +192,12 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                   <span className="flex items-center gap-1.5">
                     <AgentDot state={state} unseenDot={false} />
                     <SessionKindIcon session={info.session} />
+                    <SessionTicketChip session={info.session} className="flex" />
                   </span>
                 }
                 trailing={
-                  state.label || info.unseen || info.session?.ticket ? (
+                  state.label || info.unseen ? (
                     <>
-                      <SessionTicketChip session={info.session} className="flex" />
                       {state.label && <AgentLabel state={state} />}
                       {info.unseen && <UnseenDot />}
                     </>
