@@ -429,8 +429,11 @@ mod tests {
     #[test]
     fn a_conversation_belongs_to_the_latest_launch_before_it() {
         let dir = tempfile::tempdir().unwrap();
-        let (a, b) = (t0(), t0() + 60_000);
-        // A never took a turn; B (a minute later) did.
+        // B launches less than ROLLOUT_MTIME_SLACK_MS after A: at exactly the slack, the file
+        // written now would pass B's mtime filter only if the file system clock never lags now().
+        let a = t0();
+        let b = a + 50_000;
+        // A never took a turn; B (50 s later) did.
         rollout(dir.path(), "conv-b", cwd(), at(b, 1.0));
         assert_eq!(find(dir.path(), a, &[b], cwd(), &[]), None, "A cannot claim B's conversation");
         assert_eq!(find(dir.path(), b, &[a], cwd(), &[]).as_deref(), Some("conv-b"));
