@@ -395,14 +395,15 @@ async fn closing_a_ticket_ends_its_attempt() {
     let (_, t) = call(&env.app, "PATCH", &format!("/api/tickets/{b}"), Some(json!({"stage": "done"}))).await;
     assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("done", "merged"));
 
-    // Bulk close too.
+    // Done says the work landed, even when git cannot see it: never abandoned. Bulk close too.
     let c = ticket(&env, json!({"title": "Bulk"})).await;
     started(&env, &c, json!({"agent": "claude"})).await;
+    work_in(&env, "pdt-PDT-3-bulk", "bulk.txt");
     let (st, v) =
         call(&env.app, "POST", "/api/tickets/bulk", Some(json!({"ids": [c], "action": "stage", "value": "done"})))
             .await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    assert_eq!(get_ticket(&env, &c).await["attempts"][0]["state"], "abandoned");
+    assert_eq!(get_ticket(&env, &c).await["attempts"][0]["state"], "merged");
 
     // The board's Done column: recently closed tickets.
     let (_, page) =

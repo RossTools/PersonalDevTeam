@@ -65,9 +65,9 @@ pub(crate) async fn update(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(patch) = payload?;
     let patch = patch.validate()?;
-    if patch.stage.is_some_and(|s| s.is_closed()) {
+    if let Some(stage) = patch.stage.filter(|s| s.is_closed()) {
         // Closing a ticket ends its attempt (tickets spec §6).
-        crate::start::end_for_close(&st, &id).await?;
+        crate::start::end_for_close(&st, &id, stage).await?;
     }
     reply(&st, st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?).await
 }
@@ -106,7 +106,7 @@ pub(crate) async fn bulk(
         && stage.is_closed()
     {
         for id in &req.ids {
-            crate::start::end_for_close(&st, id).await?;
+            crate::start::end_for_close(&st, id, stage).await?;
         }
     }
     Ok(Json(BulkResult { count }))

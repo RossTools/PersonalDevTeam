@@ -267,6 +267,11 @@ async fn queue_news(st: &AppState, attempt_id: &str, ticket_id: &str, news: Vec<
     }
 }
 
+/// The attempt's PR as last seen (None when it has none, or the project is not on GitHub).
+pub(crate) fn watched_pr(st: &AppState, attempt_id: &str) -> Option<PullRequestStatus> {
+    watch(st).by_attempt.get(attempt_id).cloned()
+}
+
 /// The attempt's branch was found merged (git or GitHub) and the attempt ended: tell its agent.
 pub(crate) async fn notify_merged(st: &AppState, info: &AttemptInfo) {
     let pr = watch(st).by_attempt.get(&info.attempt.id).map(|p| p.number);

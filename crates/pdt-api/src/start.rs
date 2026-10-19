@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::session::{SessionKind, ValidSession};
 use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, started_session_title, ticket_prompt};
-use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket};
+use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
 use pdt_core::workspace::{TabItem, Workspace, valid_workspace_name};
 use pdt_store::{AttemptInfo, TicketError};
 use serde_json::json;
@@ -220,23 +220,28 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
     Ok(Json(load_ticket(&st, &id).await?))
 }
 
-/// Ends the ticket's active attempt because the ticket is being closed: `merged` if its branch is, else `abandoned`.
-pub(crate) async fn end_for_close(st: &AppState, ticket_id: &str) -> Result<(), ApiError> {
+/// Ends the ticket's active attempt because the ticket is being closed. Done says the work landed, so the attempt
+/// is `merged`; Won't do ends it `merged` if its branch is (git or GitHub), else `abandoned`.
+pub(crate) async fn end_for_close(st: &AppState, ticket_id: &str, stage: TicketStage) -> Result<(), ApiError> {
     if let Some(info) = st.store.active_attempt(ticket_id).await? {
-        let state = if is_merged(st, &info, false).await { AttemptState::Merged } else { AttemptState::Abandoned };
+        let merged = stage == TicketStage::Done || is_merged(st, &info, false).await;
+        let state = if merged { AttemptState::Merged } else { AttemptState::Abandoned };
         st.store.end_attempt(&info.attempt.id, state, Actor::User, now_ms()).await?;
     }
     Ok(())
 }
 
-/// Whether the attempt's branch is merged into its base (locally or on `origin`, fetched first with `fetch`), and
-/// remembers the branch head it saw. A deleted branch is judged by its last known head. Git runs on a blocking
-/// thread; any failure counts as not merged.
+/// Whether the attempt's branch is merged into its base, and remembers the branch head it saw. A deleted branch is
+/// judged by its last known head. Merged means GitHub merged the attempt's PR at that head (the merge queue squashes
+/// onto a newer base, which git's patch check can miss), or git finds the head or its whole patch in the base (locally
+/// or on `origin`, fetched first with `fetch`; for projects not on GitHub). Git runs on a blocking thread; any
+/// failure counts as not merged.
 async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool) -> bool {
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
     let (base_commit, last_head) = (info.base_commit.clone(), info.attempt.last_head.clone());
     let attempt = info.attempt.id.clone();
+    let pr = crate::github::watched_pr(st, &info.attempt.id);
     let found = tokio::task::spawn_blocking(move || {
         if fetch
             && pdt_git::remote_url(&repo, "origin").is_some()
@@ -245,6 +250,9 @@ async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool) -> bool {
             tracing::info!(attempt = %attempt, error = %e, "could not fetch the base branch; checking the local refs");
         }
         let head = pdt_git::rev_parse(&repo, &format!("refs/heads/{branch}")).or(last_head)?;
+        if pr.is_some_and(|p| p.merged_at(&head)) {
+            return Some((head, true));
+        }
         let origin = format!("origin/{base}");
         let merged = pdt_git::is_merged(&repo, &head, &base_commit, &[&base, &origin]);
         Some((head, merged))
