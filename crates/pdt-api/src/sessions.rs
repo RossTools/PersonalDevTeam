@@ -531,13 +531,10 @@ pub(crate) async fn discard(st: &AppState, id: &str) {
     st.forget_session_lock(id);
 }
 
+/// Removes a session, stopping it first if it runs.
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    let _guard = st.lock_session(&id).await;
     load(&st, &id).await?;
-    if st.ptys.is_running(&id) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "stop the session before removing it"));
-    }
-    remove_locked(&st, &id).await?;
+    stop_and_remove(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
