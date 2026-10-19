@@ -14,7 +14,7 @@ const LOCK_WAIT: Duration = Duration::from_secs(10);
 fn usage() -> ! {
     let bin = pdt_core::brand::HOST_BIN;
     eprintln!("usage: {bin} run [--install-dir <dir>]");
-    eprintln!("       {bin} install [--install-dir <dir>]");
+    eprintln!("       {bin} install [--install-dir <dir>] [--replace]");
     eprintln!("       {bin} uninstall [--install-dir <dir>]");
     std::process::exit(2);
 }
@@ -31,7 +31,7 @@ fn install_dir(args: &[String]) -> anyhow::Result<PathBuf> {
 const FROM_COPY: &str = "--from-copy";
 
 fn run(args: &[String]) -> anyhow::Result<()> {
-    let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
+    let mut cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
     std::fs::create_dir_all(&cfg.data_dir)?;
     let exe = std::env::current_exe()?;
     let bundled = pdt_host::register::bundled_host_path(&cfg.install_dir);
@@ -47,10 +47,13 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     if let Err(e) = pdt_host::register::write_pid(&cfg.data_dir) {
         log(&cfg, &format!("could not record this process id: {e}"));
     }
+    if let Err(e) = pdt_host::register::write_program(&cfg.data_dir, &exe) {
+        log(&cfg, &format!("could not record this program's path: {e}"));
+    }
     pdt_host::selfupdate::clean_old(&exe);
     log(&cfg, &format!("supervising {} on port {}", cfg.pdtd_path().display(), cfg.port));
     // Ruling F9 / final review #1: without an installer, or on the dev profile, keep supervising and refuse updates.
-    let installer = host_installer(&cfg);
+    let installer = host_installer(&mut cfg);
     let stop = AtomicBool::new(false);
     // What this process runs, read before an update can swap the bundle it came from (macOS).
     let own_digest = pdt_host::selfupdate::digest(&exe);
@@ -106,10 +109,14 @@ fn under_launchd() -> bool {
     std::env::var("XPC_SERVICE_NAME").is_ok_and(|v| v == pdt_core::brand::HOST_LABEL)
 }
 
+/// `install --replace` (macOS): take over from a pdt-host another copy of the app runs (the tray's "Switch to this
+/// copy", PDT-51).
+const REPLACE: &str = "--replace";
+
 /// Registers pdt-host to start at login (Windows: a copy in the data folder; macOS: the bundle's).
 fn install(args: &[String]) -> anyhow::Result<()> {
     let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
-    pdt_host::register::install(&cfg).map_err(|e| {
+    pdt_host::register::install(&cfg, args.iter().any(|a| a == REPLACE)).map_err(|e| {
         // Also logged: the installer's hook runs this without a console.
         log(&cfg, &format!("registering pdt-host failed: {e}"));
         anyhow::Error::msg(e)

@@ -160,7 +160,7 @@ function Updates({ v }: { v: HostSettingsView }) {
       description={
         <>
           Version {u?.current ?? '…'}
-          {updatesApply && ' · Updates apply to the installed app, not this development daemon.'}
+          {updatesApply && ` · Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`}
           {u?.error && <span className="text-destructive"> · {u.error}</span>}
         </>
       }
