@@ -139,20 +139,10 @@ async fn a_new_claude_tab_is_a_conversation_that_streams_replies() {
     assert!(agent_text(&all)[1].contains("resumed=false"), "the process stays up between turns");
     let (_, caps) = call(&env.app, "GET", "/api/agents/claude/capabilities", None).await;
     assert_eq!(caps["models"][1]["value"], "opus", "{caps}");
-    let (_, caps) = call(&env.app, "GET", "/api/agents/codex/capabilities", None).await;
-    assert_eq!(caps["conversation"], false);
 
     // Bad input.
     let (st, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/messages"), Some(json!({"text": "  "}))).await;
     assert_eq!((st.as_u16(), v["code"].as_str()), (400, Some("invalid_message")));
-    let (st, _) = call(
-        &env.app,
-        "POST",
-        "/api/sessions",
-        Some(json!({"projectId": env.pid, "kind": "agent_tui", "agent": "codex", "mode": "conversation", "cols": 80, "rows": 24})),
-    )
-    .await;
-    assert_eq!(st.as_u16(), 400, "Codex conversations come in 5b");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 

@@ -11,6 +11,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::claude::ClaudeAdapter;
+use pdt_agents::adapter::codex::{CodexAdapter, CodexServer, CodexServerConfig, TOKEN_ENV};
 use pdt_agents::adapter::{AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, SessionChange};
 use pdt_core::activity::{Activity, needs_attention};
 use pdt_core::conversation::{
@@ -41,6 +42,8 @@ pub struct Conversations {
     generation: Arc<AtomicU64>,
     /// Parks a live process idle this long (tests shorten it).
     pub idle_park: Duration,
+    /// PDT's `codex app-server`, made on first use.
+    codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
 }
 
 impl Default for Conversations {
@@ -50,8 +53,38 @@ impl Default for Conversations {
             caps: Default::default(),
             generation: Arc::new(AtomicU64::new(1)),
             idle_park: IDLE_PARK,
+            codex: Default::default(),
         }
     }
+}
+
+/// The environment variables removed from agents under a credential policy.
+fn scrubbed(creds: CredentialPolicy) -> Vec<String> {
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| is_scrubbed(SessionKind::AgentTui, k, creds))
+        .collect()
+}
+
+fn login_path_env(st: &AppState) -> Vec<(String, String)> {
+    st.platform.login_path.iter().map(|p| ("PATH".to_string(), p.clone())).collect()
+}
+
+/// PDT's Codex app-server, shared by every Codex conversation. One server serves every project, so it follows the
+/// host's credential setting (a project override applies to Claude and to Codex terminals only).
+async fn codex_server(st: &AppState) -> Result<Arc<CodexServer>, ApiError> {
+    if let Some(s) = st.conversations.codex.get() {
+        return Ok(s.clone());
+    }
+    let creds = st.store.get_host_settings().await?.agent_credentials;
+    let config = CodexServerConfig {
+        program: st.platform.codex_program.clone(),
+        search_path: st.platform.login_path.clone(),
+        dir: st.data_dir.join("codex"),
+        env: login_path_env(st),
+        env_remove: scrubbed(creds),
+    };
+    Ok(st.conversations.codex.get_or_init(|| CodexServer::new(config)).clone())
 }
 
 type LiveSlot = Option<(Arc<dyn LiveConversation>, u64)>;
@@ -84,6 +117,7 @@ struct ConvState {
     last_active: Instant,
     activity: Option<Activity>,
     generation: u64,
+    terminal_open: bool,
 }
 
 impl ConvState {
@@ -97,6 +131,7 @@ impl ConvState {
             pending: self.pending.clone(),
             stopped: self.stopped.clone(),
             agent_version: self.agent_version.clone(),
+            terminal_open: self.terminal_open,
         }
     }
 
@@ -126,10 +161,11 @@ impl Conv {
     }
 }
 
-fn adapter_for(agent: Option<AgentKind>) -> Option<Box<dyn AgentAdapter>> {
+async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn AgentAdapter>, ApiError> {
     match agent {
-        Some(AgentKind::Claude) => Some(Box::new(ClaudeAdapter)),
-        _ => None,
+        Some(AgentKind::Claude) => Ok(Box::new(ClaudeAdapter)),
+        Some(AgentKind::Codex) => Ok(Box::new(CodexAdapter { server: codex_server(st).await? })),
+        None => Err(conflict("not_conversation", "only agent sessions are conversations")),
     }
 }
 
@@ -187,6 +223,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             last_active: Instant::now(),
             activity: session.activity,
             generation: 0,
+            terminal_open: false,
         }),
         activity_write: tokio::sync::Mutex::new(()),
         exits: tokio::sync::watch::channel(0).0,
@@ -202,34 +239,34 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
     if let Some((l, _)) = slot.as_ref().filter(|(l, _)| l.is_alive()) {
         return Ok(l.clone());
     }
-    let adapter = adapter_for(session.agent)
-        .ok_or_else(|| conflict("not_conversation", "this agent has no conversation mode yet"))?;
+    let adapter = adapter_for(st, session.agent).await?;
     let creds = crate::sessions::credentials_for(st, &session.project_id).await?;
     let has_history = c.state().has_history;
-    // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
-    let saved = st
-        .platform
-        .claude_config_dir
-        .as_deref()
-        .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &session.id));
-    let mut env = Vec::new();
-    if let Some(path) = &st.platform.login_path {
-        env.push(("PATH".to_string(), path.clone()));
-    }
     let row = st.store.get_session(&session.id).await?.unwrap_or_else(|| session.clone());
+    let (program, resume) = match session.agent {
+        // Codex resumes its thread whenever it has one.
+        Some(AgentKind::Codex) => (st.platform.codex_program.clone(), row.external_session_id.is_some()),
+        // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
+        _ => {
+            let saved = st
+                .platform
+                .claude_config_dir
+                .as_deref()
+                .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &session.id));
+            (st.platform.claude_program.clone(), has_history && saved)
+        }
+    };
     let spec = OpenSpec {
         session_id: session.id.clone(),
-        resume: has_history && saved,
+        external_id: row.external_session_id.clone(),
+        resume,
         cwd: PathBuf::from(&session.cwd),
-        program: st.platform.claude_program.clone(),
+        program,
         search_path: st.platform.login_path.clone(),
         model: row.model.clone(),
         permission_mode: row.permission_mode.unwrap_or_default(),
-        env,
-        env_remove: std::env::vars_os()
-            .filter_map(|(k, _)| k.into_string().ok())
-            .filter(|k| is_scrubbed(SessionKind::AgentTui, k, creds))
-            .collect(),
+        env: login_path_env(st),
+        env_remove: scrubbed(creds),
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
@@ -245,7 +282,8 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
     if session.status != SessionStatus::Running || row.status != SessionStatus::Running {
         st.store.set_session_running(&session.id).await?;
     }
-    tokio::spawn(pump(st.clone(), c.clone(), rx, generation, creds));
+    let agent = session.agent.unwrap_or(AgentKind::Claude);
+    tokio::spawn(pump(st.clone(), c.clone(), rx, generation, creds, agent));
     drop(slot);
     c.push_state();
     Ok(live)
@@ -258,6 +296,7 @@ async fn pump(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<AdapterOutput>,
     generation: u64,
     creds: CredentialPolicy,
+    agent: AgentKind,
 ) {
     while let Some(out) = rx.recv().await {
         match out {
@@ -305,8 +344,14 @@ async fn pump(
                 c.push_state();
             }
             AdapterOutput::Capabilities(caps) => {
-                st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).insert(AgentKind::Claude, caps);
+                st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).insert(agent, caps);
             }
+            AdapterOutput::ExternalId(id) => {
+                if let Err(e) = st.store.set_external_session_id(&c.id, &id).await {
+                    tracing::warn!(session = %c.id, error = %e, "could not record the agent's conversation id");
+                }
+            }
+            AdapterOutput::History(turns) => import_history(&st, &c, &turns).await,
             AdapterOutput::Exited { code, stderr_tail, expected } => {
                 let current = c.state().generation == generation;
                 if !current {
@@ -498,6 +543,9 @@ async fn send_message(
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
 pub(crate) async fn stop(st: &AppState, session: &Session) -> Result<(), ApiError> {
     let c = conv(st, session).await?;
+    if st.ptys.is_running(&session.id) {
+        let _ = st.kill_pty(&session.id).await;
+    }
     park(st, &c).await;
     st.store.end_session(&session.id, SessionStatus::Finished, None, now_ms()).await?;
     {
@@ -582,6 +630,119 @@ pub async fn shutdown_conversations(st: &AppState) {
     let convs: Vec<Arc<Conv>> =
         st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
     futures_util::future::join_all(convs.iter().map(|c| park(st, c))).await;
+    if let Some(server) = st.conversations.codex.get() {
+        server.shutdown().await;
+    }
+}
+
+/// Appends the agent's turns that PDT has not logged (taken in the TUI while PDT was not listening).
+async fn import_history(st: &AppState, c: &Arc<Conv>, turns: &[serde_json::Value]) {
+    let known = match st.store.session_turn_ids(&c.id).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(session = %c.id, error = %e, "could not read the logged turns");
+            return;
+        }
+    };
+    for out in pdt_core::conversation::codex::history_events(turns, &known) {
+        if let pdt_core::conversation::codex::CodexOut::Event { item_id, turn_id, event } = out {
+            append(st, c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
+        }
+    }
+}
+
+// ---- the live shared terminal (Codex, spec §8.1) ----
+
+#[derive(serde::Deserialize)]
+pub(crate) struct TerminalSizeBody {
+    cols: u16,
+    rows: u16,
+}
+
+/// `POST /api/sessions/{id}/terminal`: opens the real Codex TUI on this conversation's thread, attached live to PDT's
+/// app-server, in a terminal keyed by the session id (`/api/sessions/{id}/pty`). Nothing happens when it is open.
+pub(crate) async fn open_terminal(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<TerminalSizeBody>, JsonRejection>,
+) -> Result<StatusCode, ApiError> {
+    let Json(size) = payload?;
+    let size = pdt_core::session::TerminalSize { cols: size.cols, rows: size.rows }.validate()?;
+    let session = conversation_session(&st, &id).await?;
+    if session.agent != Some(AgentKind::Codex) {
+        return Err(conflict("terminal_unsupported", "only Codex conversations open in a live terminal so far"));
+    }
+    let _guard = st.lock_session(&id).await;
+    if st.ptys.is_running(&id) {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    // Codex saves a thread only once it has taken a turn; the TUI cannot resume one before that.
+    if st.store.session_turn_ids(&id).await?.is_empty() {
+        return Err(conflict("no_turn_yet", "send a first message, then open the terminal"));
+    }
+    let c = conv(&st, &session).await?;
+    ensure_live(&st, &c, &session).await?;
+    // The pump records a new thread's id just after it opens.
+    let mut thread = None;
+    for _ in 0..100 {
+        thread = st.store.get_session(&id).await?.and_then(|s| s.external_session_id);
+        if thread.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let thread =
+        thread.ok_or_else(|| conflict("agent_not_running", "Codex has not started this conversation's thread"))?;
+    let server = codex_server(&st).await?;
+    let endpoint = server.endpoint().await.ok_or_else(|| conflict("agent_not_running", "Codex is not running"))?;
+    let args = vec![
+        "resume".to_string(),
+        thread,
+        "--remote".into(),
+        endpoint.url,
+        "--remote-auth-token-env".into(),
+        TOKEN_ENV.into(),
+    ];
+    let resolved =
+        pdt_agents::launch::resolve_launch(&st.platform.codex_program, &args, st.platform.login_path.as_deref())?;
+    let mut env = pdt_core::session::terminal_env();
+    env.extend(login_path_env(&st));
+    env.push((TOKEN_ENV.to_string(), endpoint.token));
+    let creds = st.store.get_host_settings().await?.agent_credentials;
+    st.remove_pty(&id).await;
+    let exit = st.ptys.spawn(pdt_agents::SpawnSpec {
+        id: id.clone(),
+        program: resolved.program,
+        args: resolved.args,
+        cwd: PathBuf::from(&session.cwd),
+        env_remove: scrubbed(creds),
+        env,
+        cols: size.cols,
+        rows: size.rows,
+    })?;
+    c.state().terminal_open = true;
+    c.push_state();
+    let c2 = c.clone();
+    tokio::spawn(async move {
+        let _ = exit.await;
+        // Closing the TUI leaves the conversation as it was.
+        c2.state().terminal_open = false;
+        c2.push_state();
+    });
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/sessions/{id}/terminal`: closes the live TUI (the conversation goes on).
+pub(crate) async fn close_terminal(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let session = conversation_session(&st, &id).await?;
+    let _guard = st.lock_session(&id).await;
+    if st.ptys.is_running(&id) {
+        st.kill_pty(&id).await?;
+    }
+    let c = conv(&st, &session).await?;
+    c.state().terminal_open = false;
+    c.push_state();
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// After a pdtd restart: a turn that was running ends as interrupted and open requests expire (spec §9). Run before
@@ -816,9 +977,13 @@ pub(crate) async fn capabilities(
 ) -> Result<Json<AgentCapabilities>, ApiError> {
     let agent = AgentKind::parse(&agent).ok_or_else(|| ApiError::not_found("agent"))?;
     let known = st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).get(&agent).cloned();
+    let known = known.or_else(|| match agent {
+        AgentKind::Codex => st.conversations.codex.get().and_then(|s| s.capabilities()),
+        AgentKind::Claude => None,
+    });
     Ok(Json(known.unwrap_or_else(|| AgentCapabilities {
-        conversation: agent == AgentKind::Claude,
-        permission_modes: if agent == AgentKind::Claude { PermissionMode::ALL.to_vec() } else { vec![] },
+        conversation: true,
+        permission_modes: PermissionMode::ALL.to_vec(),
         ..Default::default()
     })))
 }

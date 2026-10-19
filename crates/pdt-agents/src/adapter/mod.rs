@@ -2,6 +2,7 @@
 //! it into normalized events. They know nothing about HTTP or the store.
 
 pub mod claude;
+pub mod codex;
 
 use pdt_core::conversation::{AgentCapabilities, AgentEvent, Answer, Delivery, DeltaField, PermissionMode};
 use pdt_core::session::AgentKind;
@@ -20,6 +21,10 @@ pub enum AdapterOutput {
     Capabilities(AgentCapabilities),
     /// The process ended. `expected`: PDT closed it.
     Exited { code: Option<i32>, stderr_tail: String, expected: bool },
+    /// The agent's own id for this conversation (Codex: the thread id), to keep as `external_session_id`.
+    ExternalId(String),
+    /// The agent's history (Codex: `thread/turns/list`, oldest first), for importing turns PDT did not see.
+    History(Vec<serde_json::Value>),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -37,6 +42,8 @@ pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenSpec {
     pub session_id: String,
+    /// The agent's own conversation id (Codex: the thread id), when it has one.
+    pub external_id: Option<String>,
     /// Continue the saved conversation (Claude: `--resume <session id>`), else start it (`--session-id`).
     pub resume: bool,
     pub cwd: PathBuf,

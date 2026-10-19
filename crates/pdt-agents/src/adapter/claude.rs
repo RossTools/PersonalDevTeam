@@ -372,6 +372,7 @@ mod tests {
     fn spec(resume: bool, model: Option<&str>) -> OpenSpec {
         OpenSpec {
             session_id: "sid".into(),
+            external_id: None,
             resume,
             cwd: std::env::temp_dir(),
             program: "claude".into(),

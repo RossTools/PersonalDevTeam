@@ -14,4 +14,8 @@ live: boolean, turnRunning: boolean, model?: string, permissionMode: PermissionM
 /**
  * The agent stopped unexpectedly: why, with the end of its error output.
  */
-stopped?: string, agentVersion?: string, };
+stopped?: string, agentVersion?: string, 
+/**
+ * Codex: the agent's own TUI is open on this conversation (live, beside it).
+ */
+terminalOpen: boolean, };
