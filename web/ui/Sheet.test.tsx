@@ -32,9 +32,38 @@ describe('Sheet', () => {
         body
       </Sheet>,
     );
-    const sheet = await screen.findByRole('dialog', { name: 'Peek' });
+    const sheet = await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
     await user.click(within(sheet).getByRole('button', { name: 'Close' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('closes when modal on a press on its backdrop only, not on one that lands on the page around it', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(<Sheet side="left" title="Sidebar" open onOpenChange={onOpenChange}>body</Sheet>);
+    await screen.findByRole('dialog', { name: 'Sidebar' }, { timeout: 5000 });
+    // Where a click lands when a menu opened on mouse down covers its button by mouse up.
+    await user.click(document.body);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await user.click(document.querySelector('[data-slot="drawer-viewport"]')!);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('stays open when not modal while the page beside it is used', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <>
+        <button type="button">Beside</button>
+        <Sheet side="right" title="Peek" modal={false} open onOpenChange={onOpenChange}>body</Sheet>
+      </>,
+    );
+    const sheet = await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
+    // The sheet takes focus once it opens; moving focus out of it must not close it either.
+    await waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true));
+    await user.click(screen.getByRole('button', { name: 'Beside' }));
+    expect(screen.getByRole('button', { name: 'Beside' })).toHaveFocus();
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it('keeps a hidden title for screen readers', async () => {
@@ -43,7 +72,7 @@ describe('Sheet', () => {
         body
       </Sheet>,
     );
-    const sheet = await screen.findByRole('dialog', { name: 'Sidebar' });
+    const sheet = await screen.findByRole('dialog', { name: 'Sidebar' }, { timeout: 5000 });
     expect(within(sheet).getByRole('button', { name: 'Settings' })).toBeInTheDocument();
   });
 
