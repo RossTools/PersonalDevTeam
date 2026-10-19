@@ -109,11 +109,7 @@ pub fn spawn_pdtd(cfg: &HostConfig) -> std::io::Result<Child> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(out.try_clone()?))
         .stderr(Stdio::from(out));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000 | 0x0000_0200); // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    }
+    crate::process::detached_no_window(&mut cmd);
     #[cfg(unix)]
     {
         // Own process group: pdtd survives pdt-host restarting itself (launchd kills the job's process group).
