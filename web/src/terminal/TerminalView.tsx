@@ -41,7 +41,7 @@ const clipboard: IClipboardProvider = {
  * `sessionStatus` is the daemon's view of the session (from the polled list). When it turns `running` while this
  * view is detached from a finished process, the view reattaches by itself (e.g. after Restart or an auto-resume).
  */
-export function TerminalView({ sessionId, url, sessionStatus, polledAt, composing = false, onComposeClose, dimmed = false }: {
+export function TerminalView({ sessionId, url, sessionStatus, polledAt, composing = false, onComposeClose, dimmed = false, readOnly = false }: {
   sessionId: string;
   /** WebSocket URL; defaults to the session's PTY URL. */
   url?: string;
@@ -53,6 +53,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   onComposeClose?: () => void;
   /** The session has ended: the last screen stays, dimmed, and the parent shows what happened (no "Session ended."). */
   dimmed?: boolean;
+  /** Output only (a detached run's log): no typing, no cursor, no key bar. */
+  readOnly?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const sockRef = useRef<PtySocket | null>(null);
@@ -124,7 +126,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       onReady: () => {
         replay.ready = true;
       },
-      onExit: (code) => term.write(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m\r\n`),
+      // A negative code is unknown (a detached run's processes outlived the one PDT started).
+      onExit: (code) => term.write(`\r\n\x1b[2m[process exited${code >= 0 ? ` with code ${code}` : ''}]\x1b[0m\r\n`),
       onStatus: setStatus,
     });
     sockRef.current = sock;
@@ -194,6 +197,14 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     };
   }, [sessionId, url]);
 
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.disableStdin = readOnly;
+    term.options.cursorInactiveStyle = readOnly ? 'none' : 'outline';
+    term.options.cursorBlink = !readOnly;
+  }, [readOnly]);
+
   // Send a raw byte sequence to the PTY (from the on-screen key bar), keeping the terminal focused so the phone's
   // soft keyboard stays up.
   const sendKey = (seq: string) => {
@@ -243,7 +254,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
           }}
         />
       )}
-      <KeyBar onKey={sendKey} />
+      {!readOnly && <KeyBar onKey={sendKey} />}
     </div>
   );
 }

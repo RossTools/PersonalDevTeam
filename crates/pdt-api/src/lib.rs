@@ -30,7 +30,7 @@ pub use host_guard::{AllowedHosts, with_host_guard};
 pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, apply_remote_access};
 pub use routes::{AppState, Health, router};
-pub use run_manager::{resume_runs, sweep_gone_runs};
+pub use run_manager::{log_path as run_log_path, resume_runs, sweep_gone_runs};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};
 pub use start::check_merges;
 pub use update::{UpdateService, run_update_loop};
