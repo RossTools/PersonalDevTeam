@@ -594,8 +594,10 @@ pub(crate) async fn forget(st: &AppState, id: &str) {
     }
 }
 
-/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`.
-pub async fn park_idle_conversations(st: &AppState) {
+/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`. Returns how
+/// many it parked.
+pub async fn park_idle_conversations(st: &AppState) -> usize {
+    let mut parked = 0;
     let convs: Vec<Arc<Conv>> =
         st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
     for c in convs {
@@ -610,8 +612,10 @@ pub async fn park_idle_conversations(st: &AppState) {
         if idle {
             tracing::info!(session = %c.id, "parking an idle conversation");
             park(st, &c).await;
+            parked += 1;
         }
     }
+    parked
 }
 
 /// Parks idle conversations every 30 s, until shutdown.

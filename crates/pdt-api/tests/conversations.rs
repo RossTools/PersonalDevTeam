@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{call, git};
+use common::{call, git, park_once_idle};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
 use pdt_store::Store;
@@ -316,7 +316,7 @@ async fn idle_conversations_park_and_settings_apply_on_resume() {
     .await;
     assert_eq!(st.as_u16(), 200, "{v}");
     assert_eq!((v["permissionMode"].as_str(), &v["model"]), (Some("accept_edits"), &Value::Null));
-    pdt_api::park_idle_conversations(&env.state).await;
+    park_once_idle(&env.state).await;
     let s = session(&env, &id).await;
     assert_eq!(s["status"], "running", "a parked conversation is still open");
     let proj = env.claude_dir.join("projects").join("x");

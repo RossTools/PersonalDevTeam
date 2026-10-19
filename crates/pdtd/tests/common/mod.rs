@@ -8,17 +8,35 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub struct Daemon(pub Child);
+#[path = "../../../../test-support/port_blocks.rs"]
+pub mod port_blocks;
+
+/// A running pdtd and, once it answered, the port it serves.
+pub struct Daemon(pub Child, Option<u16>);
 
 impl Drop for Daemon {
+    /// Asks pdtd to shut down first, so it stops its sessions' process trees: killing pdtd alone leaves them running
+    /// on Windows, holding the test's output pipes (a nextest LEAK). Kills it if it does not exit in time.
     fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait()
+            && let Some(port) = self.1
+        {
+            let _ = http(port, "POST", "/api/shutdown", None);
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline && matches!(self.0.try_wait(), Ok(None)) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
+/// A port for a test's pdtd that no other test holds, below every OS's ephemeral range (Linux hands out 32768 and up
+/// for outgoing connections, Windows and macOS 49152 and up). A port from `bind(0)` was free only at that moment: under
+/// nextest another test's connection could take it before pdtd bound it (or between a shutdown and a restart).
 pub fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    port_blocks::claim(30500, 500, 1)
 }
 
 pub fn start(port: u16, data: &Path) -> Daemon {
@@ -47,15 +65,19 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         .stderr(log_file(data))
         .spawn()
         .unwrap();
-    let d = Daemon(child);
+    let mut d = Daemon(child, None);
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         if http(port, "GET", "/api/health", None).0 == 200 {
+            d.1 = Some(port);
             return d;
+        }
+        if let Ok(Some(status)) = d.0.try_wait() {
+            panic!("pdtd exited while starting ({status})\n{}", diagnose(&mut d, port, data));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    panic!("pdtd did not become healthy");
+    panic!("pdtd did not become healthy\n{}", diagnose(&mut d, port, data));
 }
 
 /// pdtd's stderr, kept in the data dir's parent so `diagnose` can show it.

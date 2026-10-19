@@ -146,8 +146,10 @@ async fn restart_right_after_kill_is_not_overwritten_by_old_exit() {
     let id = sess["id"].as_str().unwrap().to_string();
     call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     let uri = format!("/api/sessions/{id}/restart");
+    // Kill only signals; the process exits a moment later (seconds for a ConPTY shell on a loaded Windows runner).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     let mut restarted = false;
-    for _ in 0..100 {
+    while std::time::Instant::now() < deadline {
         let (s, v) = call(&app, "POST", &uri, Some(json!({"cols": 80, "rows": 24}))).await;
         if s == StatusCode::OK {
             restarted = true;
@@ -156,7 +158,7 @@ async fn restart_right_after_kill_is_not_overwritten_by_old_exit() {
         assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "already_running"));
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    assert!(restarted);
+    assert!(restarted, "the killed process never exited");
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let (_, now) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
     assert_eq!(now["status"], "running");
@@ -588,9 +590,10 @@ async fn stop(app: &axum::Router, id: &str) {
     wait_status(app, id, "finished").await;
 }
 
-/// Waits for the exit recorder to finish its binding attempt (it runs just after the status write).
+/// Waits for the exit recorder to finish its binding attempt (it runs just after the status write; up to 10 s for a
+/// loaded Windows runner).
 async fn settle_binding(state: &AppState, id: &str, expect_bound: bool) {
-    for _ in 0..30 {
+    for _ in 0..100 {
         if external_id(state, id).await.is_some() == expect_bound {
             break;
         }
