@@ -1892,6 +1892,7 @@ mod tests {
             position: 0,
             created_at: 1,
             tabs: vec![],
+            ticket: None,
         };
         store.insert_workspace(&free).await.unwrap();
         store.move_tab("ta", Some("f"), None).await.unwrap().unwrap();
@@ -1999,6 +2000,7 @@ mod tests {
             position: 0,
             created_at: 5,
             tabs: vec![],
+            ticket: None,
         };
         store.insert_workspace(&w).await.unwrap();
         assert!(store.set_attempt_workspace("at1", "ws").await.unwrap());

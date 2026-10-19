@@ -53,3 +53,21 @@ export function nextNeedingYou(workspaces: Workspace[], currentTabId: string | n
   }
   return null;
 }
+
+/** True for a workspace a ticket's Start made: the sidebar lists these under Tickets, apart from the others. */
+export const isTicketWorkspace = (w: Workspace) => !!w.ticket;
+
+/** The workspaces listed together with `w` in the sidebar (ticket workspaces, or all the others), in order. */
+export const sameGroup = (all: Workspace[], w: Workspace) => all.filter((x) => isTicketWorkspace(x) === isTicketWorkspace(w));
+
+/**
+ * The position in the full list (as `PATCH /api/workspaces` takes it) that puts `movingId` at index `to` of its group
+ * (`to` counted without it). Workspaces of the other group keep their places.
+ */
+export function positionInAll(all: Workspace[], group: Workspace[], movingId: string, to: number): number {
+  const rest = group.filter((w) => w.id !== movingId);
+  const allRest = all.filter((w) => w.id !== movingId);
+  if (to < rest.length) return allRest.findIndex((w) => w.id === rest[to]!.id);
+  const last = rest[rest.length - 1];
+  return last ? allRest.findIndex((w) => w.id === last.id) + 1 : allRest.length;
+}

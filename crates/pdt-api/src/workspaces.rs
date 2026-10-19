@@ -16,7 +16,9 @@ fn unknown_workspace() -> ApiError {
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Workspace>>, ApiError> {
-    Ok(Json(st.store.list_workspaces().await?))
+    let mut list = st.store.list_workspaces().await?;
+    crate::github::apply_workspaces(&st, &mut list);
+    Ok(Json(list))
 }
 
 pub(crate) async fn create(
@@ -31,6 +33,7 @@ pub(crate) async fn create(
         position: 0,
         created_at: now_ms(),
         tabs: vec![],
+        ticket: None,
     };
     st.store.insert_workspace(&w).await?;
     let w = st.store.get_workspace(&w.id).await?.ok_or_else(unknown_workspace)?;
@@ -51,7 +54,9 @@ pub(crate) async fn update(
     if let Some(pos) = patch.position {
         st.store.move_workspace(&id, pos).await?;
     }
-    Ok(Json(st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?))
+    let mut w = st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?;
+    crate::github::apply_workspaces(&st, std::slice::from_mut(&mut w));
+    Ok(Json(w))
 }
 
 #[derive(Debug, Default, serde::Deserialize)]

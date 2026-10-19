@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
-import { findTab, itemOf, nextNeedingYou, openTabBody, resolveCurrent, sameItem, type Item } from './model';
+import { findTab, itemOf, nextNeedingYou, openTabBody, positionInAll, resolveCurrent, sameGroup, sameItem, type Item } from './model';
 
 const tab = (id: string, workspaceId: string, item: Item, position = 0): Tab => ({
   id,
@@ -62,5 +62,28 @@ describe('workspace model', () => {
     expect(nextNeedingYou(list, 't3', needs)?.id).toBe('t1');
     expect(nextNeedingYou(list, null, needs)?.id).toBe('t1');
     expect(nextNeedingYou(list, 't1', () => false)).toBeNull();
+  });
+});
+
+describe('ticket workspace groups', () => {
+  const w = (id: string, ticket = false) => ({ id, name: id, projectId: null, position: 0, createdAt: 0, tabs: [],
+    ...(ticket ? { ticket: { id: `t${id}`, projectId: 'p', key: `K-${id}`, title: id, stage: 'in_progress' as const, attemptId: 'a', attemptState: 'active' as const, pr: null } } : {}) });
+  const all = [w('p1'), w('t1', true), w('f1'), w('t2', true), w('t3', true)];
+
+  it('splits ticket workspaces from the others', () => {
+    expect(sameGroup(all, all[1]!).map((x) => x.id)).toEqual(['t1', 't2', 't3']);
+    expect(sameGroup(all, all[0]!).map((x) => x.id)).toEqual(['p1', 'f1']);
+  });
+
+  it('maps a place in a group to a place in the full list', () => {
+    const tickets = sameGroup(all, all[1]!);
+    // t3 to the top of the tickets: just before t1.
+    expect(positionInAll(all, tickets, 't3', 0)).toBe(1);
+    // t1 to the end of the tickets: after t3.
+    expect(positionInAll(all, tickets, 't1', 2)).toBe(4);
+    // t1 one down: just before t3, which is at 3 once t1 is out.
+    expect(positionInAll(all, tickets, 't1', 1)).toBe(3);
+    const others = sameGroup(all, all[0]!);
+    expect(positionInAll(all, others, 'f1', 0)).toBe(0);
   });
 });

@@ -154,6 +154,7 @@ async fn open_tabs(
             position: 0,
             created_at: now_ms(),
             tabs: vec![],
+            ticket: None,
         };
         match st.store.insert_workspace(&w).await {
             Ok(()) => {

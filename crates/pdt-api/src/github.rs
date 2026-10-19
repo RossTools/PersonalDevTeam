@@ -68,6 +68,14 @@ pub(crate) fn apply(st: &AppState, t: &mut Ticket) {
     }
 }
 
+/// Fills in the PR of ticket workspaces' tickets.
+pub(crate) fn apply_workspaces(st: &AppState, list: &mut [pdt_core::workspace::Workspace]) {
+    let w = watch(st);
+    for t in list.iter_mut().filter_map(|x| x.ticket.as_mut()) {
+        t.pr = w.by_attempt.get(&t.attempt_id).cloned();
+    }
+}
+
 /// Reads every active attempt's PR (projects on GitHub only) and queues the news. pdtd runs it every 60 s. Never
 /// fails; problems are logged.
 pub async fn refresh_prs(st: &AppState) {

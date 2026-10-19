@@ -203,3 +203,44 @@ async fn a_busy_agent_is_told_later_and_a_merge_is_news() {
     assert_eq!(events[0]["data"]["told"], true);
     env.state.ptys.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_ticket_workspace_carries_its_ticket_and_pr() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await;
+    let pid = t["projectId"].as_str().unwrap();
+    let (_, t2) =
+        call(&env.app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Own space"}))).await;
+    let id2 = t2["id"].as_str().unwrap();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{id2}/start"),
+        Some(json!({"agent": "claude", "newWorkspace": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let mut p = pr();
+    p.number = 13;
+    p.mergeable = Mergeable::Conflicting;
+    env.gh.set_pr("pdt/PDT-2-own-space", Some(p));
+    pdt_api::refresh_prs(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let list = list.as_array().unwrap();
+    let mine: Vec<&Value> = list.iter().filter(|w| !w["ticket"].is_null()).collect();
+    assert_eq!(mine.len(), 1, "only the workspace Start made: {list:?}");
+    let ticket = &mine[0]["ticket"];
+    assert_eq!(mine[0]["name"], "PDT-2");
+    assert_eq!(ticket["key"], "PDT-2");
+    assert_eq!(ticket["title"], "Own space");
+    assert_eq!(ticket["stage"], "in_progress");
+    assert_eq!(ticket["attemptState"], "active");
+    assert_eq!(ticket["pr"]["number"], 13);
+    assert_eq!(ticket["pr"]["mergeable"], "conflicting");
+    assert!(
+        list.iter().any(|w| w["projectId"].is_string() && w.get("ticket").is_none()),
+        "project workspaces have none"
+    );
+    env.state.ptys.shutdown().await;
+}
