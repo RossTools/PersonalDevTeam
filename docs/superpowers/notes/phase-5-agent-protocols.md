@@ -166,6 +166,9 @@ object; its notifications name the fork's thread id, so they never reach the con
 
 ## Devin CLI: `devin acp` (docs only)
 
+Checked hands-on since (PDT-55): docs/superpowers/notes/devin-cli.md, "Conversations: `devin acp`".
+
+
 - Local agent working in its cwd; macOS/Linux/Windows; `~/.local/bin/devin`. [D] https://docs.devin.ai/cli/index
 - `devin acp`: an Agent Client Protocol server (JSON-RPC 2.0, stdio), the route Zed/JetBrains use. Flow: `initialize`
   → `authenticate` (if asked) → `session/new {cwd, mcpServers}` or `session/load` → `session/prompt` (its response ends

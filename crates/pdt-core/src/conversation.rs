@@ -4,6 +4,7 @@
 pub mod claude;
 pub mod codex;
 pub mod composer;
+pub mod devin;
 pub mod draft;
 
 use crate::activity::Activity;

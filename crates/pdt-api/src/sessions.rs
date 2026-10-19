@@ -436,21 +436,29 @@ fn with_hook_args(
             Ok(all)
         }
         Some(AgentKind::Devin) => {
-            let command = pdt_agents::hooks::devin_hook_command(&st.hook_program, instructions, st.platform.windows);
-            let user = st.platform.devin_config_file.as_deref();
-            let written = pdt_agents::hooks::write_devin_config(&session_data_dir(st, &s.id), user, &command)
+            let written = devin_config(st, &s.id, instructions)
                 .map_err(|e| PtyError::Spawn(format!("writing the session's Devin config: {e}")))?;
-            let Some(file) = written else {
-                tracing::warn!(session = %s.id, config = ?user,
-                    "could not read the user's Devin config; starting Devin without PDT's hook (no resume id, no instructions)");
-                return Ok(args);
-            };
+            let Some(file) = written else { return Ok(args) };
             let mut all = vec!["--config".to_string(), file.to_string_lossy().into_owned()];
             all.extend(args);
             Ok(all)
         }
         None => Ok(args),
     }
+}
+
+/// Writes a Devin session's `--config` file: the user's own config plus PDT's `SessionStart` hook (it names the
+/// conversation, and prints `instructions` back to Devin as context). Ok(None) when the user's config cannot be read:
+/// Devin then runs on it without PDT's hook (no resume id, no instructions).
+pub(crate) fn devin_config(st: &AppState, id: &str, instructions: Option<&FsPath>) -> std::io::Result<Option<PathBuf>> {
+    let command = pdt_agents::hooks::devin_hook_command(&st.hook_program, instructions, st.platform.windows);
+    let user = st.platform.devin_config_file.as_deref();
+    let written = pdt_agents::hooks::write_devin_config(&session_data_dir(st, id), user, &command)?;
+    if written.is_none() {
+        tracing::warn!(session = %id, config = ?user,
+            "could not read the user's Devin config; starting Devin without PDT's hook (no resume id, no instructions)");
+    }
+    Ok(written)
 }
 
 /// PDT's own files for one session (the Claude hook settings).

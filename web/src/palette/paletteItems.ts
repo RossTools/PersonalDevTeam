@@ -3,7 +3,9 @@ import type { Project } from '../api/gen/Project';
 import type { Tab } from '../api/gen/Tab';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
+import type { AgentKind } from '../api/gen/AgentKind';
 import { itemState, type AgentStateValue } from '../common/AgentState';
+import { NOT_LOGGED_IN, type AgentAvailability } from '../common/useAgentAvailability';
 import type { Place } from '../common/PlacePicker';
 import { sessionKindLabel } from '../common/SessionKindIcon';
 import { findTab, itemOf, nextNeedingYou, type Item } from '../workspaces/model';
@@ -45,8 +47,8 @@ export interface PaletteItem {
   next?: PaletteStep;
 }
 
-/** `claude` and `codex` are conversations, the `_terminal` kinds the agents' own TUIs (Devin has only that). */
-export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'devin_terminal' | 'shell';
+/** `claude`, `codex` and `devin` are conversations, the `_terminal` kinds the agents' own TUIs. */
+export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'devin' | 'devin_terminal' | 'shell';
 
 /** What the items do. AppShell implements them with the workspaces API (through runAction). */
 export interface PaletteHandlers {
@@ -91,6 +93,8 @@ export interface PaletteContext {
   tickets?: TicketSummary[];
   /** Where "Open ticket…" searches: the backlog's project, or every project (null). */
   ticketProjectId?: string | null;
+  /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing one. */
+  agents?: (agent: AgentKind) => AgentAvailability;
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;
@@ -175,12 +179,28 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
   const actions: PaletteItem[] = [];
   if (place) {
     const words = [projectOf(place.projectId)?.key].filter((w): w is string => !!w);
+    const agentItems: [AgentKind, NewKind, string, string][] = [
+      ['claude', 'claude', 'new:claude', 'New Claude here'],
+      ['claude', 'claude_terminal', 'new:claude-terminal', 'New Claude (terminal) here'],
+      ['codex', 'codex', 'new:codex', 'New Codex here'],
+      ['codex', 'codex_terminal', 'new:codex-terminal', 'New Codex (terminal) here'],
+      ['devin', 'devin', 'new:devin', 'New Devin here'],
+      ['devin', 'devin_terminal', 'new:devin-terminal', 'New Devin (terminal) here'],
+    ];
+    for (const [agent, kind, id, label] of agentItems) {
+      const availability = ctx.agents?.(agent) ?? 'ready';
+      if (availability === 'missing') continue;
+      actions.push({
+        id,
+        label,
+        group: ACTIONS,
+        icon: agent,
+        ...(availability === 'logged_out' ? { detail: NOT_LOGGED_IN } : {}),
+        keywords: kind.endsWith('_terminal') ? [...words, 'tui'] : words,
+        run: () => h.newSession(kind, place),
+      });
+    }
     actions.push(
-      { id: 'new:claude', label: 'New Claude here', group: ACTIONS, icon: 'claude', keywords: words, run: () => h.newSession('claude', place) },
-      { id: 'new:claude-terminal', label: 'New Claude (terminal) here', group: ACTIONS, icon: 'claude', keywords: [...words, 'tui'], run: () => h.newSession('claude_terminal', place) },
-      { id: 'new:codex', label: 'New Codex here', group: ACTIONS, icon: 'codex', keywords: words, run: () => h.newSession('codex', place) },
-      { id: 'new:codex-terminal', label: 'New Codex (terminal) here', group: ACTIONS, icon: 'codex', keywords: [...words, 'tui'], run: () => h.newSession('codex_terminal', place) },
-      { id: 'new:devin-terminal', label: 'New Devin (terminal) here', group: ACTIONS, icon: 'devin', keywords: [...words, 'tui'], run: () => h.newSession('devin_terminal', place) },
       { id: 'new:shell', label: 'New shell here', group: ACTIONS, icon: 'shell', keywords: words, run: () => h.newSession('shell', place) },
     );
   }

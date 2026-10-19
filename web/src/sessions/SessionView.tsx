@@ -227,7 +227,8 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
   };
 
   const entries = (): MenuEntry[] => [
-    ...(scratch ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
+    // Devin cannot draft on the side without touching the conversation (the server says draft_unsupported).
+    ...(scratch && session.agent !== 'devin' ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
     ...(conversation
       ? [
           ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),
