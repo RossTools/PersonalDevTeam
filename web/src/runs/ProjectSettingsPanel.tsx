@@ -18,6 +18,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ['project-settings', project.id], queryFn: () => api.projectSettings(project.id) });
   const config = useQuery({ queryKey: ['run-config', project.id, null], queryFn: () => api.runConfig(project.id, null) });
+  const ignored = ignoredNote(config.data?.effective?.ignored);
   const [overrides, setOverrides] = useState('');
   const [creds, setCreds] = useState<CredsChoice>(HOST);
   const save = useMutation({
@@ -71,6 +72,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
           <p className="text-xs text-muted-foreground">This repository has no run configuration file.</p>
         )}
         {config.data?.error && <Alert tone="error">{config.data.error}</Alert>}
+        {ignored && <Alert>{ignored}</Alert>}
       </div>
       {settings.isError && <Alert tone="error">{settings.error.message}</Alert>}
       <Field label="Host overrides (TOML)" hint="Merged over the repository's file, on this host only.">
@@ -97,4 +99,13 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
       {save.isError && <Alert tone="error">{save.error.message}</Alert>}
     </Section>
   );
+}
+
+/** Sections written for a newer version are skipped, not refused; name them so a missing feature is not a mystery. */
+function ignoredNote(ignored: string[] | undefined): string | null {
+  if (!ignored?.length) return null;
+  const names = ignored.map((s) => `[${s}]`).join(', ');
+  return ignored.length === 1
+    ? `Skipped ${names}: this version does not know that section.`
+    : `Skipped ${names}: this version does not know those sections.`;
 }

@@ -2,4 +2,8 @@
 import type { AreaDef } from "./AreaDef";
 import type { RunDef } from "./RunDef";
 
-export type RunConfig = { runs: Array<RunDef>, tests: Array<RunDef>, areas: Array<AreaDef>, };
+export type RunConfig = { runs: Array<RunDef>, tests: Array<RunDef>, areas: Array<AreaDef>, 
+/**
+ * Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
+ */
+ignored: Array<string>, };

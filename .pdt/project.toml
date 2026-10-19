@@ -25,3 +25,45 @@ command = "cargo test"
 name    = "web"
 command = "pnpm --dir web test"
 
+
+# Areas (docs/run-config.md "Areas"): parts of PDT that two tickets in flight at once would both touch. Starting a
+# ticket warns when its areas or changed files overlap another active ticket's; only `migrations` is exclusive (two
+# branches adding migrations collide on their numbers).
+[[area]]
+name      = "migrations"
+paths     = ["crates/pdt-store/migrations/**"]
+exclusive = true
+
+[[area]]
+name  = "design system"
+paths = ["web/ui/**"]
+
+[[area]]
+name  = "tickets"
+paths = ["crates/pdt-core/src/ticket.rs", "crates/pdt-core/src/start.rs", "crates/pdt-core/src/overlap.rs",
+         "crates/pdt-core/src/links.rs", "crates/pdt-core/src/rank.rs", "crates/pdt-store/src/tickets.rs",
+         "crates/pdt-api/src/tickets.rs", "crates/pdt-api/src/start.rs", "crates/pdt-api/src/overlap.rs",
+         "web/src/tickets/**"]
+
+[[area]]
+name  = "terminals"
+paths = ["crates/pdt-agents/**", "crates/pdt-api/src/pty_ws.rs", "crates/pdt-api/src/sessions.rs",
+         "crates/pdt-api/src/activity.rs", "web/src/terminal/**", "web/src/sessions/**"]
+
+[[area]]
+name  = "runs"
+paths = ["crates/pdt-core/src/run.rs", "crates/pdt-core/src/runconfig.rs", "crates/pdt-store/src/runs.rs",
+         "crates/pdt-api/src/run*.rs", "web/src/runs/**", "docs/run-config.md"]
+
+[[area]]
+name  = "workspaces"
+paths = ["crates/pdt-core/src/workspace.rs", "crates/pdt-store/src/workspaces.rs", "crates/pdt-api/src/workspaces.rs",
+         "web/src/workspaces/**"]
+
+[[area]]
+name  = "host and updates"
+paths = ["crates/pdt-host/**", "crates/pdt-update/**", "crates/pdt-api/src/update.rs", "desktop/**", "scripts/**"]
+
+[[area]]
+name  = "ci"
+paths = [".github/**"]
