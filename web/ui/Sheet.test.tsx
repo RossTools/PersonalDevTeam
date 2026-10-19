@@ -58,7 +58,9 @@ describe('Sheet', () => {
         <Sheet side="right" title="Peek" modal={false} open onOpenChange={onOpenChange}>body</Sheet>
       </>,
     );
-    await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
+    const sheet = await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
+    // The sheet takes focus once it opens; moving focus out of it must not close it either.
+    await waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true));
     await user.click(screen.getByRole('button', { name: 'Beside' }));
     expect(screen.getByRole('button', { name: 'Beside' })).toHaveFocus();
     expect(onOpenChange).not.toHaveBeenCalled();
