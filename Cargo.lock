@@ -3153,6 +3153,7 @@ dependencies = [
 name = "pdt-agents"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "jiff",
  "libc",
  "pdt-core",

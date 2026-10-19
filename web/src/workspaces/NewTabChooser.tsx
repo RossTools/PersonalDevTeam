@@ -3,12 +3,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, GitBranch, Play, TestTube, Ticket } from 'lucide-react';
 import { Alert, Button, CommandList, Dialog, Popover, Sheet, Switch, type CommandItem } from '@ui';
 import { api } from '../api/client';
+import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import { AgentDot, itemState } from '../common/AgentState';
 import { PlacePicker } from '../common/PlacePicker';
 import { KIND_ICON } from '../common/SessionKindIcon';
 import { runAction } from '../common/useAction';
 import { useMediaQuery } from '../common/useMediaQuery';
+import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { choiceLabel, parseChoice, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
@@ -17,8 +19,8 @@ import { TicketPicker } from '../tickets/TicketPicker';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
-const KEYS: Record<string, Choice> = { c: 'Claude', x: 'Codex', s: 'Shell' };
-const AGENTS: Choice[] = ['Claude', 'Codex', 'Shell'];
+const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', s: 'Shell' };
+const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Shell'];
 const keyOf = (c: Choice) => Object.keys(KEYS).find((k) => KEYS[k] === c)!;
 
 /** Where a new session starts: the user's pick, else the current tab's place, else the project workspace's project. */
@@ -62,7 +64,8 @@ function Frame({ anchor, onClose, children }: { anchor?: RefObject<Element | nul
 }
 
 /**
- * The new-tab chooser: one filterable list to launch Claude, Codex or a shell (c / x / s while the filter is empty),
+ * The new-tab chooser: one filterable list to launch a Claude conversation, Claude's terminal, Codex or a shell
+ * (c / t / x / s while the filter is empty),
  * start a configured run or test, run another branch, or bring an existing session or run here. With `anchor` (the
  * tab strip's "+") it is a popover there, a bottom sheet on phones; without one, a dialog.
  */
@@ -70,6 +73,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   const qc = useQueryClient();
   const { place, setPicked } = usePlace(ws);
   const [bypass, setBypass] = useState(false);
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'list' | 'branch' | 'ticket'>('list');
   const workspace = ws.workspace;
@@ -82,7 +86,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     onClose();
   };
   const create = useMutation({
-    mutationFn: (choice: Choice) => api.createSession({ ...newSession(place!.projectId, place!.worktreeId, choice, bypass), ...(placement ? { tab: placement } : {}) }),
+    mutationFn: (choice: Choice) => api.createSession({ ...newSession(place!.projectId, place!.worktreeId, choice, { bypass, permissionMode }), ...(placement ? { tab: placement } : {}) }),
     onSuccess: async (s) => {
       void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
       await done({ kind: 'session', id: s.id }, s.projectId);
@@ -141,7 +145,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     }
   };
 
-  // c / x / s launch Claude, Codex or a shell while focus is in the chooser, outside any text field, and the filter is
+  // c / t / x / s launch Claude, Claude (terminal), Codex or a shell while focus is in the chooser, outside any text field, and the filter is
   // empty; any other printable key moves to the filter and types there. Overlays own their element, so listen on
   // window and check where the key came from.
   const marker = useRef<HTMLDivElement>(null);
@@ -200,7 +204,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
         ) : (
           <CommandList
             label="New tab choices"
-            placeholder="Filter, or press c, x or s…"
+            placeholder="Filter, or press c, t, x or s…"
             items={items}
             onAction={onAction}
             query={query}
@@ -210,11 +214,17 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
         )}
         {configError && <p className="text-meta text-failed">{configError}</p>}
         {error && <Alert tone="error">{error.message}</Alert>}
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-2">
-          <Switch size="sm" checked={bypass} onChange={setBypass} aria-label="Skip permission prompts for the new agent" className="text-xs">
-            Skip permission prompts (dangerous)
+        <div className="flex flex-col gap-1.5 border-t border-border pt-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-xs">
+              <span aria-hidden className="text-muted-foreground">Claude permissions</span>
+              <PermissionModeSelect value={permissionMode} onChange={setPermissionMode} label="Permission mode for a new Claude conversation" />
+            </span>
+            <span className="shrink-0 text-meta text-muted-foreground pointer-coarse:hidden">Esc to close</span>
+          </div>
+          <Switch size="sm" checked={bypass} onChange={setBypass} aria-label="Skip permission prompts for a new terminal agent" className="text-xs">
+            Terminal agents: skip permission prompts (dangerous)
           </Switch>
-          <span className="shrink-0 text-meta text-muted-foreground pointer-coarse:hidden">Esc to close</span>
         </div>
       </div>
     </Frame>

@@ -1,0 +1,124 @@
+import { useState, type ReactNode } from 'react';
+import { ApprovalCard, type ApprovalAnswer } from '@ui/ApprovalCard';
+import { MessageBubble } from '@ui/MessageBubble';
+import { PromptBox } from '@ui/PromptBox';
+import { Select } from '@ui/Select';
+import { ToolCallRow, ToolOutput } from '@ui/ToolCallRow';
+import { toast } from '@ui/Toaster';
+import { Markdown } from '../../common/Markdown';
+import type { ConversationEvent } from '../../api/gen/ConversationEvent';
+import { MessageList } from '../../conversation/MessageList';
+
+function Demo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+function PromptBoxDemo({ working }: { working?: boolean }) {
+  const [text, setText] = useState(working ? 'Also update the changelog.' : '');
+  const [model, setModel] = useState('default');
+  return (
+    <PromptBox
+      label="Message"
+      value={text}
+      onChange={setText}
+      onSend={() => setText('')}
+      onStop={working ? () => toast.info('Stop') : undefined}
+      sendLabel={working ? 'Queue' : 'Send'}
+      placeholder="Message Claude…"
+      toolbar={
+        <>
+          <Select aria-label="Model" size="sm" quiet value={model} onChange={setModel}
+            options={[{ value: 'default', label: 'Default model' }, { value: 'opus', label: 'Opus' }]} />
+          <Select aria-label="Permission mode" size="sm" quiet value="ask" onChange={() => {}} options={[{ value: 'ask', label: 'Ask' }]} />
+        </>
+      }
+      meta={working ? 'Esc stops' : 'Context 16% · 31k / 200k'}
+    />
+  );
+}
+
+const answered = (a: ApprovalAnswer) => void toast.info(`Answer: ${JSON.stringify(a)}`);
+const T0 = Date.now() - 60_000;
+const e = (seq: number, event: ConversationEvent['event'], turnId = 'u1'): ConversationEvent => ({ seq, pos: seq, ts: T0 + seq * 1000, itemId: `i${seq}`, turnId, event });
+
+const sample: ConversationEvent[] = [
+  e(1, { kind: 'user_message', text: 'The login test is flaky on CI. Can you look?', images: [], source: 'pdt' }),
+  e(2, { kind: 'turn', phase: 'started' }),
+  e(3, { kind: 'tool_call', id: 'a', tool: 'Grep', title: 'login_flow', input: { pattern: 'login_flow' }, status: 'done' }),
+  e(4, { kind: 'tool_call', id: 'b', tool: 'Read', title: 'tests/login.rs', input: { file_path: 'tests/login.rs' }, status: 'done' }),
+  e(5, { kind: 'tool_call', id: 'c', tool: 'Bash', title: 'cargo test login', input: { command: 'cargo test login' }, status: 'done', output: 'running 3 tests\ntest login_ok ... ok\ntest login_flow ... ok\n\ntest result: ok. 3 passed' }),
+  e(6, { kind: 'agent_message', id: 'm1', phase: 'final', markdown: 'The test waits on a **fixed 100 ms sleep**. I replaced it with a poll on the session cookie.' }),
+  e(7, { kind: 'turn', phase: 'ended', status: 'completed', durationMs: 42_000 }),
+  e(8, { kind: 'user_message', text: 'Great, run the whole suite.', images: [], source: 'pdt' }, 'u2'),
+  e(9, { kind: 'turn', phase: 'started' }, 'u2'),
+  e(10, { kind: 'tool_call', id: 'd', tool: 'Bash', title: 'cargo test', input: { command: 'cargo test' }, status: 'running' }, 'u2'),
+];
+
+export const section = {
+  title: 'Conversation',
+  order: 75,
+  render: () => (
+    <div className="flex max-w-3xl flex-col gap-6">
+      <Demo label="PromptBox · idle, working (Stop + Queue)">
+        <div className="flex flex-col gap-3">
+          <PromptBoxDemo />
+          <PromptBoxDemo working />
+        </div>
+      </Demo>
+      <Demo label="MessageBubble · sent, queued, from the terminal">
+        <div className="flex flex-col gap-2">
+          <MessageBubble>Fix the flaky login test, then open a PR.</MessageBubble>
+          <MessageBubble tone="pending" label="Queued">Also update the changelog.</MessageBubble>
+          <MessageBubble meta="From the terminal">/compact</MessageBubble>
+        </div>
+      </Demo>
+      <Demo label="ToolCallRow · running, done, failed, declined, nested, summary">
+        <div className="flex flex-col">
+          <ToolCallRow verb="Run" subject="cargo test --workspace" status="running" meta="0:42" />
+          <ToolCallRow verb="Edit" subject="crates/pdt-api/src/start.rs" status="done" meta="+12 −3"
+            details={<ToolOutput label="Diff">{'-    sleep(100);\n+    wait_for_cookie().await?;'}</ToolOutput>} />
+          <ToolCallRow verb="Run" subject="pnpm test" status="failed" meta="exit 1"
+            details={<ToolOutput label="Output" tone="error">{'\u001b[31mFAIL\u001b[0m src/login.test.ts\n  expected 200, got 401'}</ToolOutput>} />
+          <ToolCallRow verb="Write" subject="/etc/hosts" status="declined" />
+          <ToolCallRow verb="Agent:" subject="Explore the auth module" status="done" defaultOpen>
+            <ToolCallRow verb="Search" subject="fn login" status="done" />
+            <ToolCallRow verb="Read" subject="src/auth.rs" status="done" />
+          </ToolCallRow>
+          <ToolCallRow verb="Ran 3 commands, edited 2 files">
+            <ToolCallRow verb="Run" subject="ls" status="done" />
+          </ToolCallRow>
+        </div>
+      </Demo>
+      <Demo label="ApprovalCard · command (with Always), file, keyboard y / n">
+        <div className="flex flex-col gap-3">
+          <ApprovalCard title="Run this command?" subject="cargo test -p pdt-api" description="Run the API crate's tests" canAlways keyboard onAnswer={answered} />
+          <ApprovalCard title="Edit this file?" subject="web/src/conversation/MessageList.tsx" onAnswer={answered} />
+        </div>
+      </Demo>
+      <Demo label="ApprovalCard · question, plan">
+        <div className="flex flex-col gap-3">
+          <ApprovalCard
+            kind="question"
+            title="Claude asks"
+            questions={[
+              { question: 'Which database should the cache use?', header: 'Storage', options: [{ label: 'SQLite' }, { label: 'In memory' }] },
+              { question: 'What should it cache?', options: [{ label: 'Tickets' }, { label: 'Sessions' }, { label: 'Runs' }], multiSelect: true },
+            ]}
+            onAnswer={answered}
+          />
+          <ApprovalCard kind="plan" title="Approve this plan?" plan={<Markdown>{'1. Add `session_events`\n2. Stream deltas over the socket\n3. Render the conversation'}</Markdown>} onAnswer={answered} />
+        </div>
+      </Demo>
+      <Demo label="MessageList · a finished turn (collapsed) and a running one">
+        <div className="flex h-96 flex-col rounded-lg border border-border">
+          <MessageList rows={sample} provisional={[]} streams={{}} turnRunning pending={[{ id: 'p', text: 'Then push it.', delivery: 'next' }]} onAnswer={async () => {}} />
+        </div>
+      </Demo>
+    </div>
+  ),
+};

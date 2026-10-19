@@ -45,7 +45,8 @@ export interface PaletteItem {
   next?: PaletteStep;
 }
 
-export type NewKind = 'claude' | 'codex' | 'shell';
+/** `claude` is a conversation, `claude_terminal` Claude's own TUI. */
+export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'shell';
 
 /** What the items do. AppShell implements them with the workspaces API (through runAction). */
 export interface PaletteHandlers {
@@ -176,6 +177,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
     const words = [projectOf(place.projectId)?.key].filter((w): w is string => !!w);
     actions.push(
       { id: 'new:claude', label: 'New Claude here', group: ACTIONS, icon: 'claude', keywords: words, run: () => h.newSession('claude', place) },
+      { id: 'new:claude-terminal', label: 'New Claude (terminal) here', group: ACTIONS, icon: 'claude', keywords: [...words, 'tui'], run: () => h.newSession('claude_terminal', place) },
       { id: 'new:codex', label: 'New Codex here', group: ACTIONS, icon: 'codex', keywords: words, run: () => h.newSession('codex', place) },
       { id: 'new:shell', label: 'New shell here', group: ACTIONS, icon: 'shell', keywords: words, run: () => h.newSession('shell', place) },
     );

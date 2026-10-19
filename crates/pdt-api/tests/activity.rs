@@ -44,6 +44,9 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
                 unseen: false,
                 attempt_id: None,
                 ticket: None,
+                mode: pdt_core::conversation::SessionMode::Terminal,
+                model: None,
+                permission_mode: None,
             })
             .await
             .unwrap();
@@ -325,7 +328,8 @@ async fn serve_claude(tmp: &Path, quiet_after_ms: i64) -> (axum::Router, pdt_api
 }
 
 async fn create_claude(app: &axum::Router, pid: &str) -> String {
-    let body = json!({"projectId": pid, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24});
+    let body =
+        json!({"projectId": pid, "kind": "agent_tui", "agent": "claude", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, created) = call(app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{created}");
     created["id"].as_str().unwrap().to_string()

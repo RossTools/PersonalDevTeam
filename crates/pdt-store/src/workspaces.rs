@@ -393,6 +393,9 @@ mod tests {
             unseen: false,
             attempt_id: None,
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         }
     }
 

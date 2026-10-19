@@ -8,6 +8,7 @@ import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { SessionKindIcon } from '../common/SessionKindIcon';
 import { useAction } from '../common/useAction';
+import { ConversationView } from '../conversation/ConversationView';
 import { branchUrl, repoUrl } from '../projects/github';
 import { TerminalView } from '../terminal/TerminalView';
 import { EndedBar } from './EndedBar';
@@ -67,6 +68,8 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   const busy = killing || restarting || removing;
   const state = agentState({ kind: session.kind, status: session.status, activity: session.activity, unseen: session.unseen });
   const isAgent = session.kind === 'agent_tui';
+  // Conversations have no terminal: sending a message reopens them, so no Compose, Restart or ended bar.
+  const conversation = session.mode === 'conversation';
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
 
   // Stopping is reversible (Restart resumes), so it asks only when it would cut off an agent mid-turn (spec §6.2).
@@ -74,7 +77,9 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
     if (session.activity === 'working') {
       const { ok } = await confirm({
         title: `Stop ${session.title}?`,
-        body: 'The agent is working; stopping it interrupts the current turn. Restart resumes its conversation.',
+        body: conversation
+          ? 'The agent is working; stopping it interrupts the current turn. Send a message to start it again.'
+          : 'The agent is working; stopping it interrupts the current turn. Restart resumes its conversation.',
         action: 'Stop agent',
         danger: true,
       });
@@ -84,7 +89,9 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   };
   // A modal every time: removing cannot be undone, and a running session is stopped first.
   const askRemove = async () => {
-    const lost = isAgent
+    const lost = conversation
+      ? 'Its conversation history is deleted. Files in its folder stay.'
+      : isAgent
       ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
       : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.';
     const { ok } = await confirm({
@@ -101,14 +108,18 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   };
 
   const entries = (): MenuEntry[] => [
-    ...(running
-      ? [
-          { label: 'Compose', onSelect: () => setComposing((c) => !c) },
-          { label: 'Stop', onSelect: () => void askStop(), disabled: busy },
-        ]
-      : []),
-    { label: restartLabel, onSelect: () => void restart(), disabled: busy },
-    { separator: true },
+    ...(conversation
+      ? running ? [{ label: 'Stop', onSelect: () => void askStop(), disabled: busy }, { separator: true } as const] : []
+      : [
+          ...(running
+            ? [
+                { label: 'Compose', onSelect: () => setComposing((c) => !c) },
+                { label: 'Stop', onSelect: () => void askStop(), disabled: busy },
+              ]
+            : []),
+          { label: restartLabel, onSelect: () => void restart(), disabled: busy },
+          { separator: true } as const,
+        ]),
     { label: 'Copy path', onSelect: () => void copyToClipboard(session.cwd, 'Path copied') },
     ...(githubLink ? [{ label: 'Open on GitHub', onSelect: () => void window.open(githubLink, '_blank', 'noopener,noreferrer') }] : []),
     { separator: true },
@@ -138,35 +149,39 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
         }
         actions={
           <>
-            {ended && (
+            {ended && !conversation && (
               <Button variant="primary" size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>{restartLabel}</Button>
             )}
             <MenuButton label="Session actions" size="sm" placement="bottom end" entries={entries} />
           </>
         }
       />
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <TerminalView
-          key={session.id}
-          sessionId={session.id}
-          sessionStatus={session.status}
-          polledAt={polledAt}
-          composing={composing && running}
-          onComposeClose={() => setComposing(false)}
-          dimmed={ended}
-        />
-        {ended && (
-          <EndedBar
-            status={session.status === 'interrupted' ? 'interrupted' : 'finished'}
-            agent={isAgent}
-            onRestart={() => void restart()}
-            onRemove={() => void askRemove()}
-            restarting={restarting}
-            removing={removing}
-            disabled={busy}
+      {conversation ? (
+        <ConversationView key={session.id} session={session} />
+      ) : (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <TerminalView
+            key={session.id}
+            sessionId={session.id}
+            sessionStatus={session.status}
+            polledAt={polledAt}
+            composing={composing && running}
+            onComposeClose={() => setComposing(false)}
+            dimmed={ended}
           />
-        )}
-      </div>
+          {ended && (
+            <EndedBar
+              status={session.status === 'interrupted' ? 'interrupted' : 'finished'}
+              agent={isAgent}
+              onRestart={() => void restart()}
+              onRemove={() => void askRemove()}
+              restarting={restarting}
+              removing={removing}
+              disabled={busy}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

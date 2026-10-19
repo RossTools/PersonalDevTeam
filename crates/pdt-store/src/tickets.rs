@@ -1927,6 +1927,9 @@ mod tests {
             unseen: false,
             attempt_id: attempt.map(Into::into),
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         }
     }
 

@@ -429,7 +429,9 @@ mod tests {
     #[test]
     fn a_conversation_belongs_to_the_latest_launch_before_it() {
         let dir = tempfile::tempdir().unwrap();
-        let (a, b) = (t0(), t0() + 60_000);
+        // B launched just now, A a minute earlier (both before the rollout files are written, as in real use).
+        let b = t0();
+        let a = b - 60_000;
         // A never took a turn; B (a minute later) did.
         rollout(dir.path(), "conv-b", cwd(), at(b, 1.0));
         assert_eq!(find(dir.path(), a, &[b], cwd(), &[]), None, "A cannot claim B's conversation");

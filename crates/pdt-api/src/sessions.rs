@@ -5,6 +5,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::{PtyError, SpawnSpec};
+use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{
     AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
     default_title, is_scrubbed, launch, prompt_arg, shim_prompt,
@@ -88,10 +89,27 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         unseen: false,
         attempt_id: req.attempt_id,
         ticket: None,
+        mode: valid.mode,
+        model: valid.model.clone(),
+        permission_mode: valid.permission_mode,
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(st, &session.project_id).await?;
     st.store.insert_session(&session).await?;
+    if session.mode == SessionMode::Conversation {
+        // The first prompt is the first message; the agent starts now so a missing program fails here.
+        if let Err(e) = crate::conversations::start(st, &session, valid.initial_prompt).await {
+            crate::conversations::forget(st, &session.id).await;
+            st.store.delete_session(&session.id).await?;
+            let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
+            return Err(e);
+        }
+        if let Some(tab) = req.tab {
+            let item = pdt_core::workspace::TabItem::Session(session.id.clone());
+            crate::workspaces::open_for_new(st, &session.project_id, item, tab.as_ref()).await;
+        }
+        return load(st, &session.id).await;
+    }
     let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket_key });
     if let Err(e) = start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref()) {
         st.store.delete_session(&session.id).await?;
@@ -353,28 +371,68 @@ async fn settle_exit(st: &AppState, id: &str) {
     }
 }
 
+/// `PATCH /api/sessions/{id}`: any of a new title, and for conversations the model (null or "" for the agent's
+/// default) and permission mode.
 #[derive(serde::Deserialize)]
-pub(crate) struct Rename {
-    title: String,
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateSession {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    model: Option<Option<String>>,
+    #[serde(default)]
+    permission_mode: Option<PermissionMode>,
 }
 
-pub(crate) async fn rename(
+/// Tells an absent field (None) from an explicit null (Some(None)).
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    use serde::Deserialize;
+    Ok(Some(Option::<String>::deserialize(d)?))
+}
+
+pub(crate) async fn update(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    payload: Result<Json<Rename>, JsonRejection>,
+    payload: Result<Json<UpdateSession>, JsonRejection>,
 ) -> Result<Json<Session>, ApiError> {
     let Json(body) = payload?;
-    let title = clean_title(&body.title)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_title", "title must be 1 to 100 characters"))?;
-    if !st.store.rename_session(&id, &title).await? {
-        return Err(ApiError::not_found("session"));
+    let session = load(&st, &id).await?;
+    if let Some(title) = &body.title {
+        let title = clean_title(title).ok_or_else(|| {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_title", "title must be 1 to 100 characters")
+        })?;
+        st.store.rename_session(&id, &title).await?;
+    }
+    if body.model.is_some() || body.permission_mode.is_some() {
+        if session.mode != SessionMode::Conversation {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "not_conversation",
+                "the model and permission mode are set on conversations",
+            ));
+        }
+        let model = match body.model {
+            Some(m) => match m.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+                Some(m) if !pdt_core::conversation::valid_model(m) => {
+                    return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "invalid model name"));
+                }
+                m => Some(m.map(String::from)),
+            },
+            None => None,
+        };
+        let change = pdt_agents::adapter::SessionChange { model, permission_mode: body.permission_mode };
+        crate::conversations::apply_settings(&st, &session, change).await?;
     }
     Ok(Json(load(&st, &id).await?))
 }
 
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let _guard = st.lock_session(&id).await;
-    load(&st, &id).await?;
+    let session = load(&st, &id).await?;
+    if session.mode == SessionMode::Conversation {
+        crate::conversations::stop(&st, &session).await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     st.kill_pty(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -387,7 +445,11 @@ pub(crate) async fn restart(
     let Json(size) = payload?;
     let size = size.validate()?;
     let _guard = st.lock_session(&id).await;
-    load(&st, &id).await?;
+    let session = load(&st, &id).await?;
+    if session.mode == SessionMode::Conversation {
+        crate::conversations::reopen(&st, &session).await?;
+        return Ok(Json(load(&st, &id).await?));
+    }
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
     }
@@ -492,7 +554,8 @@ impl ResumePlan {
 /// (see `plan_resume`), so sessions sharing a folder do not interfere.
 pub async fn plan_resume_interrupted(st: &AppState) -> ResumePlan {
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
-        Ok(v) => v,
+        // Conversations reopen on the next message instead (spec §9).
+        Ok(v) => v.into_iter().filter(|s| s.mode != SessionMode::Conversation).collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!(error = %e, "could not list interrupted sessions to resume");
             return ResumePlan(Vec::new());
@@ -517,6 +580,7 @@ pub async fn resume_interrupted(st: &AppState) -> usize {
 /// worktree goes away.
 pub(crate) async fn discard(st: &AppState, id: &str) {
     let _guard = st.lock_session(id).await;
+    crate::conversations::forget(st, id).await;
     if st.ptys.is_running(id) {
         let _ = st.kill_pty(id).await;
     }
@@ -540,6 +604,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
 
 /// Deletes a session that has no running process. The caller holds the session lock.
 async fn remove_locked(st: &AppState, id: &str) -> Result<(), ApiError> {
+    crate::conversations::forget(st, id).await;
     settle_exit(st, id).await;
     st.remove_pty(id).await;
     st.store.delete_session(id).await?;
