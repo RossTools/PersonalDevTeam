@@ -5,6 +5,7 @@ import { api, ApiError } from '../api/client';
 import type { AttemptSummary } from '../api/gen/AttemptSummary';
 import type { Ticket } from '../api/gen/Ticket';
 import type { Priority } from '../api/gen/Priority';
+import type { PullResult } from '../api/gen/PullResult';
 import type { TicketPatch } from '../api/gen/TicketPatch';
 import type { TicketStage } from '../api/gen/TicketStage';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
@@ -179,16 +180,45 @@ const ignoreMissing = (e: unknown) => {
   if (!(e instanceof ApiError && e.status === 404)) throw e;
 };
 
+/** The base branch's pull, for the toast: a sentence to add to the success, or a problem to show on its own. */
+function pullNote(r: PullResult | null): { done?: string; problem?: string } {
+  if (!r) return { problem: 'The base branch could not be pulled.' };
+  const b = r.branch;
+  const why = r.message?.split('\n')[0]?.trim();
+  switch (r.outcome) {
+    case 'updated':
+      return { done: `${b} is pulled.` };
+    case 'up_to_date':
+      return { done: `${b} is up to date.` };
+    case 'diverged':
+      return { problem: `${b} was not pulled: it has commits origin doesn't, and origin has commits it doesn't.` };
+    case 'blocked':
+      return { problem: `${b} was not pulled${why ? `: ${why}` : '; its checkout has changes in the way.'}` };
+    case 'fetch_failed':
+      return { problem: `${b} was not pulled: fetching it from origin failed${why ? ` (${why})` : ''}.` };
+    default:
+      return {};
+  }
+}
+
 /**
  * The merged banner's action: moves the ticket to Done, stops what is still going (the sessions in the ticket's
  * workspace, the attempt's sessions, every session and run in its worktree, the workspace's runs) after asking once,
  * removes the worktree (asking to discard uncommitted changes), then deletes the workspace's sessions, closes the
- * ticket's tab and deletes the workspace Start made for it. Results toast.
+ * ticket's tab and deletes the workspace Start made for it. Meanwhile the base branch is pulled (fast-forward only,
+ * PDT-56) so the main checkout has the merged work. Results toast.
  */
 export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket) {
   const attempt = t.attempt;
   await patchTicket(qc, t.id, { stage: 'done' });
-  if (!attempt) return void toast.success(`${t.key} moved to Done.`);
+  const pulling = api.pullBranch(t.projectId, attempt ? { branch: attempt.baseBranch } : {}).catch(() => null);
+  const report = async (show: (m: string) => void, message: string) => {
+    const note = pullNote(await pulling);
+    void qc.invalidateQueries({ queryKey: ['branches', t.projectId] });
+    show(note.done ? `${message} ${note.done}` : message);
+    if (note.problem) toast.info(note.problem);
+  };
+  if (!attempt) return report(toast.success, `${t.key} moved to Done.`);
   const worktreeId = attempt.worktreeId;
   const workspaces = await api.listWorkspaces();
   const workspace = attempt.workspaceId ? workspaces.find((w) => w.id === attempt.workspaceId) : undefined;
@@ -213,7 +243,7 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
       action: 'Stop and remove',
       danger: true,
     });
-    if (!ok) return void toast.info(`${t.key} moved to Done; the worktree was kept.`);
+    if (!ok) return report(toast.info, `${t.key} moved to Done; the worktree was kept.`);
     for (const id of running) await api.killSession(id).catch(ignoreMissing);
     for (const r of runs) await api.stopRun(r.id).catch(ignoreMissing);
   }
@@ -233,7 +263,7 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
             action: 'Discard and remove',
             danger: true,
           });
-          if (!ok) return void toast.info(`${t.key} moved to Done; the worktree was kept.`);
+          if (!ok) return report(toast.info, `${t.key} moved to Done; the worktree was kept.`);
           force = true;
           continue;
         }
@@ -256,7 +286,8 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
   void qc.invalidateQueries({ queryKey: ['sessions'] });
   void qc.invalidateQueries({ queryKey: ['workspaces'] });
   const removed = [worktreeId && 'worktree', workspaceRemoved && 'workspace'].filter(Boolean);
-  toast.success(
+  await report(
+    toast.success,
     removed.length
       ? `${t.key} is done and its ${removed.join(' and ')} ${removed.length === 1 ? 'is' : 'are'} removed.`
       : `${t.key} moved to Done.`,

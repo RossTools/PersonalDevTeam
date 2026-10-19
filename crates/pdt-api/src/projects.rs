@@ -6,7 +6,10 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::project::{CloneProject, NewProject, Project, ProjectPatch, valid_key};
+use pdt_core::project::{
+    CloneProject, NewProject, Project, ProjectPatch, PullBranch, PullOutcome, PullResult, valid_key,
+};
+use pdt_git::FastForward;
 use std::path::PathBuf;
 
 /// Fills in `github_repo` from each project's `origin` (git runs off the async runtime).
@@ -207,4 +210,48 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     }
     st.store.delete_project(&id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// How long a pull's fetch may take.
+const PULL_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fast-forwards a branch (the base by default) to `origin`'s, in whichever checkout has it (PDT-56; "Move to Done
+/// and remove the worktree" calls it so the main checkout has the merged work). Never merges and never touches
+/// uncommitted work: anything else is reported in the outcome, not as an error.
+pub(crate) async fn pull(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<PullBranch>, JsonRejection>,
+) -> Result<Json<PullResult>, ApiError> {
+    let input = match payload {
+        Ok(Json(p)) => p,
+        Err(JsonRejection::MissingJsonContentType(_)) => PullBranch::default(),
+        Err(e) => return Err(e.into()),
+    };
+    let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let branch = input.branch.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| project.base_branch.clone());
+    let repo = PathBuf::from(&project.repo_path);
+    let b = branch.clone();
+    let ff = tokio::task::spawn_blocking(move || {
+        if b.starts_with('-') {
+            return Err(pdt_git::GitError::InvalidBranch(b));
+        }
+        pdt_git::check_branch_name(&repo, &b)?;
+        pdt_git::fast_forward(&repo, &b, PULL_FETCH_TIMEOUT)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    let (outcome, message) = match ff {
+        FastForward::Updated { .. } => (PullOutcome::Updated, None),
+        FastForward::UpToDate => (PullOutcome::UpToDate, None),
+        FastForward::NoRemote => (PullOutcome::NoRemote, None),
+        FastForward::NoLocalBranch => (PullOutcome::NoBranch, None),
+        FastForward::FetchFailed { message } => (PullOutcome::FetchFailed, Some(message)),
+        FastForward::Diverged => (PullOutcome::Diverged, None),
+        FastForward::Blocked { message, .. } => (PullOutcome::Blocked, Some(message)),
+    };
+    if let Some(m) = &message {
+        tracing::info!(project = %id, branch = %branch, ?outcome, message = %m, "pull left the branch as it was");
+    }
+    Ok(Json(PullResult { branch, outcome, message }))
 }
