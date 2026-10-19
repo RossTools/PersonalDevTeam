@@ -92,6 +92,8 @@ mod tests {
         commit(&upstream, "a.txt", "a\n");
         let clone = tmp.join("clone");
         git(tmp, &["clone", "-q", &upstream.to_string_lossy(), &clone.to_string_lossy()]);
+        // The checkouts PDT updates run with the host's own config; keep files byte-exact on Windows runners.
+        git(&clone, &["config", "core.autocrlf", "false"]);
         (upstream, clone)
     }
 
