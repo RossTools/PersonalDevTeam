@@ -139,6 +139,14 @@ pub struct PullRequestStatus {
     pub checked_at: i64,
 }
 
+impl PullRequestStatus {
+    /// Whether GitHub merged this PR with `head` as its head: the attempt whose branch head (or last known head) is
+    /// `head` is merged, even when git cannot see it (the merge queue squashed it onto a newer base).
+    pub fn merged_at(&self, head: &str) -> bool {
+        self.state == PrState::Merged && !head.is_empty() && self.head_sha == head
+    }
+}
+
 /// The merge-queue branch prefix of PR `number` into `base`.
 pub fn queue_branch_prefix(base: &str, number: u32) -> String {
     format!("gh-readonly-queue/{base}/pr-{number}-")
@@ -289,6 +297,19 @@ mod tests {
             created_at: at.into(),
             failed_jobs: vec![],
         }
+    }
+
+    #[test]
+    fn merged_at_needs_a_merged_pr_on_that_head() {
+        let mut p = pr();
+        p.head_sha = "abc".into();
+        assert!(!p.merged_at("abc"), "open");
+        p.state = PrState::Merged;
+        assert!(p.merged_at("abc"));
+        assert!(!p.merged_at("def"), "the branch moved on after the merge");
+        assert!(!p.merged_at(""));
+        p.state = PrState::Closed;
+        assert!(!p.merged_at("abc"), "closed without merging");
     }
 
     fn pr() -> PullRequestStatus {

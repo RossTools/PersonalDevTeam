@@ -19,6 +19,7 @@ struct Env {
     app: axum::Router,
     state: AppState,
     gh: Arc<FakeGithub>,
+    repo: std::path::PathBuf,
     ticket: String,
     session: String,
 }
@@ -32,6 +33,8 @@ async fn setup(tmp: &std::path::Path) -> Env {
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     git(&repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    // A merge check's fetch of origin fails at once rather than going to the network.
+    git(&repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
@@ -56,7 +59,7 @@ async fn setup(tmp: &std::path::Path) -> Env {
         call(&app, "POST", &format!("/api/tickets/{ticket}/start"), Some(json!({"agent": "claude"}))).await;
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let session = started["session"]["id"].as_str().unwrap().to_string();
-    Env { app, state, gh, ticket, session }
+    Env { app, state, gh, repo, ticket, session }
 }
 
 fn pr() -> PullRequest {
@@ -242,5 +245,65 @@ async fn a_ticket_workspace_carries_its_ticket_and_pr() {
         list.iter().any(|w| w["projectId"].is_string() && w.get("ticket").is_none()),
         "project workspaces have none"
     );
+    env.state.ptys.shutdown().await;
+}
+
+fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
+    let out = std::process::Command::new("git").arg("-C").arg(dir).args(["rev-parse", rev]).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+async fn attempt_state(env: &Env) -> String {
+    ticket(env).await["attempts"][0]["state"].as_str().unwrap().to_string()
+}
+
+/// The merge queue squashes a PR onto a newer base: when the base moved near the PR's edits, git's patch check finds
+/// nothing, but GitHub's word that the PR merged at the attempt's head is enough (PDT-37).
+#[tokio::test]
+async fn a_pr_merged_on_github_ends_the_attempt_when_git_cannot_tell() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-ship-it");
+    std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "ship"]);
+    let head = rev_parse(&wt, "HEAD");
+    // Main changed the same line, as the queue's squash would sit on: the branch's patch is not in main.
+    std::fs::write(env.repo.join("a.txt"), "uno\n").unwrap();
+    git(&env.repo, &["commit", "-q", "-am", "other work"]);
+
+    // Merged at another head (the branch moved on since): still active.
+    let mut merged = pr();
+    merged.state = PrState::Merged;
+    env.gh.set_pr(BRANCH, Some(merged.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(attempt_state(&env).await, "active");
+
+    // Merged at the branch head: merged, by the loop.
+    merged.head_sha = head.clone();
+    env.gh.set_pr(BRANCH, Some(merged));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(attempt_state(&env).await, "merged");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn opening_a_ticket_finds_its_pr_merged_on_github() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-ship-it");
+    std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "ship"]);
+    std::fs::write(env.repo.join("a.txt"), "uno\n").unwrap();
+    git(&env.repo, &["commit", "-q", "-am", "other work"]);
+    let mut merged = pr();
+    merged.state = PrState::Merged;
+    merged.head_sha = rev_parse(&wt, "HEAD");
+    env.gh.set_pr(BRANCH, Some(merged));
+    // check-merge reads the PR first, then judges.
+    let (s, t) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    assert_eq!(t["attempts"][0]["state"], "merged");
     env.state.ptys.shutdown().await;
 }
