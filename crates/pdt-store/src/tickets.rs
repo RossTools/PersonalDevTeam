@@ -74,9 +74,9 @@ pub struct AttemptInfo {
 }
 
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
-                              a.ended_at, a.last_head FROM attempts a";
+                              a.ended_at, a.last_head, a.workspace_id FROM attempts a";
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
-                                   a.created_at, a.ended_at, a.last_head, a.base_commit, t.project_id, \
+                                   a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, t.project_id, \
                                    COALESCE(p.key, '') AS pkey, t.number, p.repo_path, w.path AS worktree_path \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
@@ -172,6 +172,7 @@ fn to_attempt(r: &SqliteRow) -> Result<AttemptSummary, StoreError> {
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
         last_head: r.try_get("last_head")?,
+        workspace_id: r.try_get("workspace_id")?,
     })
 }
 
@@ -208,7 +209,7 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
     let mut attempts: HashMap<String, AttemptSummary> = HashMap::new();
     for chunk in ids.chunks(500) {
         let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head FROM attempts \
+            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head, workspace_id FROM attempts \
              WHERE ticket_id IN ",
         );
         push_in(&mut qb, chunk);
@@ -681,7 +682,7 @@ impl Store {
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         let attempts = sqlx::query(
-            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head FROM attempts \
+            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head, workspace_id FROM attempts \
              WHERE ticket_id = ? ORDER BY created_at DESC, id DESC",
         )
         .bind(id)
@@ -1118,6 +1119,16 @@ impl Store {
     pub async fn set_attempt_head(&self, id: &str, head: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE attempts SET last_head = ? WHERE id = ?")
             .bind(head)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Remembers the workspace Start made for the attempt.
+    pub async fn set_attempt_workspace(&self, id: &str, workspace_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET workspace_id = ? WHERE id = ?")
+            .bind(workspace_id)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1867,7 +1878,7 @@ mod tests {
         };
         store.insert_workspace(&free).await.unwrap();
         store.move_tab("ta", Some("f"), None).await.unwrap().unwrap();
-        store.delete_workspace("f").await.unwrap();
+        store.delete_workspace("f", false).await.unwrap();
         assert_eq!(store.get_workspace(&home).await.unwrap().unwrap().tabs.len(), 2);
 
         assert_eq!(store.delete_ticket("b").await.unwrap(), DeleteTicket::Deleted);
@@ -1961,6 +1972,23 @@ mod tests {
 
         assert!(store.set_attempt_head("at1", "def").await.unwrap());
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.last_head.as_deref(), Some("def"));
+
+        // The workspace Start made is remembered, and forgotten when the workspace is deleted.
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
+        let w = pdt_core::workspace::Workspace {
+            id: "ws".into(),
+            name: "PX-1".into(),
+            project_id: None,
+            position: 0,
+            created_at: 5,
+            tabs: vec![],
+        };
+        store.insert_workspace(&w).await.unwrap();
+        assert!(store.set_attempt_workspace("at1", "ws").await.unwrap());
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id.as_deref(), Some("ws"));
+        assert_eq!(store.get_ticket("a").await.unwrap().unwrap().attempts[0].workspace_id.as_deref(), Some("ws"));
+        store.delete_workspace("ws", false).await.unwrap();
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
 
         assert_eq!(
             store.end_attempt("at1", AttemptState::Merged, Actor::System, 9).await.unwrap().as_deref(),

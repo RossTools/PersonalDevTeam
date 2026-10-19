@@ -183,6 +183,9 @@ pub struct AttemptSummary {
     pub ended_at: Option<i64>,
     /// The branch head when merge detection last looked (so a merged branch deleted afterwards is still recognised).
     pub last_head: Option<String>,
+    /// The workspace Start made for this attempt (gone with it when the ticket is finished); None when its tabs went
+    /// into an existing workspace or the workspace was deleted.
+    pub workspace_id: Option<String>,
 }
 
 /// The ticket a session works on (through its attempt), for the sidebar and tab titles.

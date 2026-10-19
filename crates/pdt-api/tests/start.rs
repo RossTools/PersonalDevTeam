@@ -257,6 +257,8 @@ async fn tabs_open_in_a_new_workspace_or_where_asked() {
     assert_eq!(mine["projectId"], Value::Null);
     assert_eq!(tabs(mine), [("ticket", a.clone()), ("session", sid)]);
     assert!(tabs(&ws[0]).is_empty(), "nothing in the project's workspace");
+    assert_eq!(r["attempt"]["workspaceId"], mine["id"], "the attempt remembers its workspace");
+    assert_eq!(r["ticket"]["attempt"]["workspaceId"], mine["id"]);
 
     // At a placement: the ticket's tab there, the session's right after it.
     let (_, free) = call(&env.app, "POST", "/api/workspaces", Some(json!({"name": "Free"}))).await;
@@ -269,6 +271,7 @@ async fn tabs_open_in_a_new_workspace_or_where_asked() {
     let ws = workspaces(&env).await;
     let free = ws.iter().find(|w| w["id"] == free_id.as_str()).unwrap();
     assert_eq!(tabs(free), [("ticket", b.clone()), ("session", sid), ("ticket", other)]);
+    assert_eq!(r["attempt"]["workspaceId"], Value::Null, "an existing workspace is not the attempt's");
     env.state.ptys.shutdown().await;
 }
 

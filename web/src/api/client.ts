@@ -106,6 +106,7 @@ export const api = {
   listWorktrees: (projectId: string) => request<Worktree[]>(`/api/projects/${enc(projectId)}/worktrees`),
   createWorktree: (projectId: string, w: NewWorktree) =>
     request<Worktree>(`/api/projects/${enc(projectId)}/worktrees`, { method: 'POST', body: JSON.stringify(w) }),
+  getSession: (id: string) => request<Session>(`/api/sessions/${enc(id)}`),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${enc(projectId)}/sessions`),
   createSession: (s: NewSession) => request<Session>('/api/sessions', { method: 'POST', body: JSON.stringify(s) }),
   viewSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/view`, { method: 'POST' }),
@@ -119,7 +120,8 @@ export const api = {
   createWorkspace: (w: NewWorkspace) => request<Workspace>('/api/workspaces', { method: 'POST', body: JSON.stringify(w) }),
   updateWorkspace: (id: string, p: WorkspacePatch) =>
     request<Workspace>(`/api/workspaces/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
-  deleteWorkspace: (id: string) => request<void>(`/api/workspaces/${enc(id)}`, { method: 'DELETE' }),
+  deleteWorkspace: (id: string, opts: { closeTabs?: boolean } = {}) =>
+    request<void>(`/api/workspaces/${enc(id)}${opts.closeTabs ? '?closeTabs=true' : ''}`, { method: 'DELETE' }),
   openTab: (workspaceId: string, t: OpenTab) =>
     request<Tab>(`/api/workspaces/${enc(workspaceId)}/tabs`, { method: 'POST', body: JSON.stringify(t) }),
   updateTab: (id: string, p: TabPatch) => request<Tab>(`/api/tabs/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
