@@ -29,9 +29,14 @@ env:
 
 # What a pull request, and its run in the merge queue, waits for (docs/superpowers/notes/ci.md):
 # - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`): every other job is skipped.
-# - build (macos-latest): every other PR, on the Mac mini's self-hosted runner (warm build, about a minute).
-# - build (windows-latest): only with the `windows` label or a change to Windows-specific files; always on main
-#   and nightly.
+# - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types)
+#   and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
+# - build (macos-latest): every other PR, on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break:
+#   clippy, nextest and the desktop crate.
+# - Repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER override those runners (e.g. ubuntu-latest / macos-latest if
+#   Namespace is down); .github/actions/setup picks the cache to match.
+# - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
+#   always on main and nightly.
 # - bundles: only with the `bundle` label or a change to what they pack; always on main (releases).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
 # those required checks, so they must not change without changing the ruleset.
@@ -84,35 +89,80 @@ jobs:
           echo "code=$code windows=$windows bundle=$bundle"
           { echo "code=$code"; echo "windows=$windows"; echo "bundle=$bundle"; } >> "$GITHUB_OUTPUT"
 
+  lint-linux:
+    name: lint (linux)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test-linux:
+    name: test (linux)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          nextest: "true"
+          zsh: "true"
+      # nextest runs all test binaries at once (cargo test runs them one after another); it also writes the TS types.
+      - run: cargo nextest run --profile ci
+      - name: Generated TS types are committed
+        run: |
+          out="$(git status --porcelain -- web/src/api/gen)"; if [ -n "$out" ]; then echo "Generated TS types are out of date:"; echo "$out"; exit 1; fi
+
+  web-linux:
+    name: web (linux)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: ${{ !startsWith(runner.name, 'nsc-runner') && 'pnpm' || '' }}
+      - name: Cache volume (Namespace)
+        if: startsWith(runner.name, 'nsc-runner')
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web test
+      - run: pnpm --dir web build
+
   build-macos:
     name: build (macos-latest)
     needs: changes
     # Skipped for docs-only PRs (the skipped check counts as passing).
     if: needs.changes.outputs.code == 'true'
-    # The Mac mini (docs/superpowers/notes/ci.md): its build output stays warm between runs, so a PR rebuilds only what changed.
-    runs-on: [self-hosted, macOS, ARM64, pdt-mini]
+    # The job name is a required check, so it keeps "macos-latest" whichever Mac runs it.
+    runs-on: ${{ vars.PDT_MACOS_RUNNER || 'namespace-profile-macos-6' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # Its own cargo home and target dir, apart from the user's; a cap so the target dir cannot grow forever.
-      - name: Runner build dirs
-        run: |
-          root="$HOME/.cache/pdt-ci"
-          mkdir -p "$root"
-          size_kb="$(du -sk "$root/target" 2>/dev/null | cut -f1)"
-          if [ "${size_kb:-0}" -gt 31457280 ]; then echo "target dir over 30 GB; starting fresh"; rm -rf "$root/target"; fi
-          {
-            echo "CARGO_HOME=$root/cargo-home"
-            echo "CARGO_TARGET_DIR=$root/target"
-            # Leaves cores for the agents working on this machine.
-            echo "CARGO_BUILD_JOBS=6"
-            echo "NEXTEST_TEST_THREADS=6"
-          } >> "$GITHUB_ENV"
-          echo "$root/cargo-home/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Show Rust toolchain
-        run: rustup show
-      - uses: ./.github/actions/checks
+      - uses: ./.github/actions/setup
+        with:
+          nextest: "true"
+          pnpm: "true"
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo nextest run --profile ci
+      # The desktop crate embeds web/dist, so it needs the web build first.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir web build
+      - run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
+      - run: cargo test -p pdt-desktop
 
   build-windows:
     name: build (windows-latest)
@@ -121,15 +171,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Show Rust toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup
         with:
-          # Only main saves the cache (PRs restore it): PR runs skip uploading ~1 GB, and every PR starts warm.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: ./.github/actions/checks
+          nextest: "true"
+      # Only what Windows can break: the web checks, fmt and the generated types run on Linux, and the Windows
+      # bundle compiles the desktop crate.
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo nextest run --profile ci
 
-  # Releases are built on GitHub's runners, never the Mac mini: a clean machine, and signing never touches its keychain.
   bundle-macos:
     name: bundle (macos-latest, app)
     needs: changes
@@ -166,7 +215,7 @@ jobs:
   release:
     # Every push to main becomes a GitHub release v0.1.<run number>, with SHA256SUMS; hosts' pdtd checks for it
     # through the GitHub REST API and pdt-host installs it.
-    needs: [build-macos, build-windows, bundle-macos, bundle-windows]
+    needs: [lint-linux, test-linux, web-linux, build-macos, build-windows, bundle-macos, bundle-windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
