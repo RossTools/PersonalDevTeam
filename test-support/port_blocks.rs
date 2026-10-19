@@ -11,6 +11,7 @@
 //! - 20000–29999: pdtd lifecycle runs (`tests/lifecycle.rs`, blocks of 40)
 //! - 30000–30249: pdt-host's fake pdtd (`tests/supervise.rs`)
 //! - 30500–30999: pdtd's own test daemons (`tests/common`)
+//! - 31000–31499: pdt-agents' PTY tests (`tests/pty.rs`)
 
 use std::sync::Mutex;
 
