@@ -111,6 +111,12 @@ pub struct Run {
     pub cwd: String,
     pub exit_code: Option<i32>,
     pub error: Option<String>,
+    /// The command runs outside PDT's terminals (`detach = true`) and outlives pdtd restarts; its Output tab shows
+    /// its log, read-only.
+    pub detached: bool,
+    /// How to find a detached command's processes again (`pdt_agents::detached`): set while they may be alive.
+    #[serde(skip)]
+    pub process: Option<String>,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]

@@ -6,7 +6,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 const COLUMNS: &str = "id, project_id, worktree_id, branch, name, kind, state, port, url, data_dir, cwd, exit_code, \
-                       error, created_at, updated_at";
+                       error, detached, process, created_at, updated_at";
 const ACTIVE: &str = "('setting_up', 'starting', 'ready', 'running')";
 
 fn to_run(r: &SqliteRow) -> Result<Run, StoreError> {
@@ -27,6 +27,8 @@ fn to_run(r: &SqliteRow) -> Result<Run, StoreError> {
         cwd: r.try_get("cwd")?,
         exit_code: r.try_get("exit_code")?,
         error: r.try_get("error")?,
+        detached: r.try_get("detached")?,
+        process: r.try_get("process")?,
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
     })
@@ -36,7 +38,8 @@ impl Store {
     pub async fn insert_run(&self, r: &Run) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO runs (id, project_id, worktree_id, branch, name, kind, state, port, url, data_dir, cwd, \
-             exit_code, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             exit_code, error, detached, process, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&r.id)
         .bind(&r.project_id)
@@ -51,6 +54,8 @@ impl Store {
         .bind(&r.cwd)
         .bind(r.exit_code)
         .bind(&r.error)
+        .bind(r.detached)
+        .bind(&r.process)
         .bind(r.created_at)
         .bind(r.updated_at)
         .execute(&self.pool)
@@ -88,6 +93,7 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Ends the run in `state` and forgets its detached processes (they have exited or been ended).
     pub async fn finish_run(
         &self,
         id: &str,
@@ -96,14 +102,16 @@ impl Store {
         error: Option<&str>,
         at: i64,
     ) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE runs SET state = ?, exit_code = ?, error = ?, updated_at = ? WHERE id = ?")
-            .bind(state.as_str())
-            .bind(exit_code)
-            .bind(error)
-            .bind(at)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE runs SET state = ?, exit_code = ?, error = ?, process = NULL, updated_at = ? WHERE id = ?",
+        )
+        .bind(state.as_str())
+        .bind(exit_code)
+        .bind(error)
+        .bind(at)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -111,6 +119,17 @@ impl Store {
         let r = sqlx::query("UPDATE runs SET port = ?, url = ? WHERE id = ?")
             .bind(port.map(i64::from))
             .bind(url)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Whether the run's command is detached, and how to find its processes (`None` once they are gone).
+    pub async fn set_run_process(&self, id: &str, detached: bool, process: Option<&str>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE runs SET detached = ?, process = ? WHERE id = ?")
+            .bind(detached)
+            .bind(process)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -143,6 +162,8 @@ mod tests {
             cwd: "/r".into(),
             exit_code: None,
             error: None,
+            detached: false,
+            process: None,
             created_at: at,
             updated_at: at,
         }
@@ -169,6 +190,20 @@ mod tests {
         assert_eq!(store.get_run("a").await.unwrap().unwrap().port, Some(8402));
         assert!(store.delete_run("a").await.unwrap());
         assert!(!store.delete_run("a").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn detached_process_is_kept_until_the_run_finishes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_run(&run("a", None, 1)).await.unwrap();
+        assert!(store.set_run_process("a", true, Some("pgid:42")).await.unwrap());
+        let a = store.get_run("a").await.unwrap().unwrap();
+        assert_eq!((a.detached, a.process.as_deref()), (true, Some("pgid:42")));
+        assert_eq!(store.list_active_runs().await.unwrap()[0].process.as_deref(), Some("pgid:42"));
+        store.finish_run("a", RunState::Stopped, None, None, 2).await.unwrap();
+        let a = store.get_run("a").await.unwrap().unwrap();
+        assert_eq!((a.detached, a.process), (true, None), "finishing forgets the processes, not the mode");
     }
 
     #[tokio::test]

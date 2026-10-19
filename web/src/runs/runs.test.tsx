@@ -32,7 +32,7 @@ async function runMenu(item: string) {
 const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null };
 const run = (over: Partial<Run>): Run => ({
   id: 'r1', projectId: 'p', worktreeId: null, branch: 'main', name: 'web', kind: 'run', state: 'ready',
-  port: 8401, url: 'https://box.t.ts.net:8401/', dataDir: '/d', cwd: '/r', exitCode: null, error: null,
+  port: 8401, url: 'https://box.t.ts.net:8401/', dataDir: '/d', cwd: '/r', exitCode: null, error: null, detached: false,
   createdAt: 1, updatedAt: 1, ...over,
 });
 const config = {
@@ -85,6 +85,14 @@ describe('RunView', () => {
     expect(within(h).queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
     rerender(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
     expect(within(screen.getByRole('banner')).getByRole('button', { name: 'Restart' })).toBeInTheDocument();
+  });
+
+  it('says a detached run keeps running when PDT restarts, on its Output only', async () => {
+    stubApi({});
+    renderWithQuery(<RunView run={run({ detached: true })} onRemoved={() => {}} />);
+    expect(screen.getByText(/Detached: keeps running when PDT restarts/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Setup' }));
+    expect(screen.queryByText(/Detached: keeps running/)).not.toBeInTheDocument();
   });
 
   it('copies the URL from its menu', async () => {

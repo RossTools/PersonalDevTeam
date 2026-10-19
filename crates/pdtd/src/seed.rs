@@ -162,6 +162,8 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         cwd: wt.map_or_else(|| project.repo_path.clone(), |w| w.path.clone()),
         exit_code: Some(0),
         error: None,
+        detached: false,
+        process: None,
         created_at: now - ago,
         updated_at: now - ago + 2 * MINUTE,
     };

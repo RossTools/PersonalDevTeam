@@ -248,6 +248,8 @@ pub(crate) async fn create(
         cwd: cwd.to_string_lossy().into_owned(),
         exit_code: None,
         error: None,
+        detached: def.detach,
+        process: None,
         created_at: now,
         updated_at: now,
     };
@@ -327,6 +329,7 @@ pub(crate) async fn discard(st: &AppState, run: &Run) -> bool {
         st.remove_pty(&pty_id(&run.id, step)).await;
     }
     let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, &run.id));
+    let _ = std::fs::remove_file(run_manager::log_path(st, &run.id));
     true
 }
 
@@ -344,6 +347,7 @@ async fn delete(st: &AppState, id: &str) -> Result<(), ApiError> {
         st.remove_pty(&pty_id(id, step)).await;
     }
     let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, id));
+    let _ = std::fs::remove_file(run_manager::log_path(st, id));
     st.store.delete_run(id).await?;
     Ok(())
 }
