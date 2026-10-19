@@ -190,7 +190,7 @@ export function ApprovalCard({
               {q.header && <span className="mr-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">{q.header}</span>}
               {q.question}
             </legend>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-col gap-1">
               {q.options.map((o) => {
                 const on = (picked[q.question] ?? []).includes(o.label);
                 return (
@@ -203,12 +203,12 @@ export function ApprovalCard({
                     disabled={busy}
                     onClick={() => toggle(q, o.label)}
                     className={cn(
-                      'inline-flex min-h-control-md max-w-full flex-col items-start justify-center rounded-md border px-2 py-1 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 pointer-coarse:min-h-control-touch',
+                      'flex min-h-control-md w-full flex-wrap items-baseline gap-x-2 rounded-md border px-2 py-1.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 pointer-coarse:min-h-control-touch',
                       on ? 'border-primary bg-accent text-foreground' : 'border-border hover:bg-accent',
                     )}
                   >
-                    <span>{o.label}</span>
-                    {o.description && <span aria-hidden className="text-2xs text-muted-foreground">{o.description}</span>}
+                    <span className="font-medium">{o.label}</span>
+                    {o.description && <span aria-hidden className="text-muted-foreground">{o.description}</span>}
                   </button>
                 );
               })}
@@ -218,7 +218,7 @@ export function ApprovalCard({
                 disabled={busy}
                 onClick={() => toggleOther(q)}
                 className={cn(
-                  'inline-flex min-h-control-md items-center rounded-md border border-dashed px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 pointer-coarse:min-h-control-touch',
+                  'flex min-h-control-md w-full items-center rounded-md border border-dashed px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 pointer-coarse:min-h-control-touch',
                   q.question in other ? 'border-primary bg-accent text-foreground' : 'border-border text-muted-foreground hover:bg-accent',
                 )}
               >
