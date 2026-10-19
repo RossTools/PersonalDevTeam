@@ -35,7 +35,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)?;
     let exe = std::env::current_exe()?;
     let bundled = pdt_host::register::bundled_host_path(&cfg.install_dir);
-    if cfg!(target_os = "macos") && !cfg.dev {
+    #[cfg(target_os = "macos")]
+    if !cfg.dev {
         use_the_bundle(&cfg, &exe, &bundled, args);
     }
     let lock_path = cfg.data_dir.join(format!("{}.lock", pdt_core::brand::HOST_BIN));
@@ -76,6 +77,7 @@ fn run(args: &[String]) -> anyhow::Result<()> {
 /// macOS runs the bundle's pdt-host, never a copy (PDT-40). An agent written by an older version still names its data
 /// folder copy: the agent is rewritten (launchd reads it at the next login) and this process becomes the bundle's
 /// pdt-host. Once launchd starts the bundle's pdt-host itself, the old copy is removed.
+#[cfg(target_os = "macos")]
 fn use_the_bundle(cfg: &HostConfig, exe: &std::path::Path, bundled: &std::path::Path, args: &[String]) {
     if let Some(home) = std::env::home_dir() {
         match pdt_host::register::migrate_launch_agent(cfg, &home) {
@@ -90,11 +92,7 @@ fn use_the_bundle(cfg: &HostConfig, exe: &std::path::Path, bundled: &std::path::
         }
         return;
     }
-    if !bundled.is_file() {
-        return;
-    }
-    #[cfg(unix)]
-    {
+    if bundled.is_file() {
         use std::os::unix::process::CommandExt;
         log(cfg, &format!("switching to {}", bundled.display()));
         let mut cmd = std::process::Command::new(bundled);
