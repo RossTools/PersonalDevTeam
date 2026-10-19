@@ -41,7 +41,7 @@ reason?: string, } | { "kind": "usage", contextUsed?: number, contextWindow?: nu
 /**
  * The agent's running list-price cost estimate, in USD.
  */
-costUsd?: number, } | { "kind": "turn_diff", diff: string, } | { "kind": "compaction", before?: number, after?: number, } | { "kind": "notice", level: NoticeLevel, text: string, 
+costUsd?: number, } | { "kind": "turn_diff", diff: string, } | { "kind": "compaction", before?: number, after?: number, } | { "kind": "conversation_reset", trigger: string, } | { "kind": "notice", level: NoticeLevel, text: string, 
 /**
  * When the condition ends (ms), e.g. a rate limit's reset.
  */

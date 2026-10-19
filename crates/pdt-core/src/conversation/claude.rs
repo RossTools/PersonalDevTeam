@@ -34,6 +34,9 @@ pub struct ClaudeInit {
     pub slash_commands: Vec<String>,
     /// Commands that work only in the TUI.
     pub terminal_commands: Vec<String>,
+    /// Claude's id for the conversation this turn belongs to. It changes after `/clear` (the new id is this one,
+    /// not `conversation_reset`'s `new_conversation_id`, which names no transcript).
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -531,6 +534,11 @@ impl ClaudeMapper {
             }
             "rate_limit_event" => self.on_rate_limit(v, &mut out),
             "result" => self.on_result(v, &mut out),
+            // `/clear` (or another trigger): what follows is a new conversation; the next init names its id.
+            "conversation_reset" => {
+                let trigger = str_field(v, "trigger").unwrap_or_else(|| "clear".into());
+                out.push(self.event(None, AgentEvent::ConversationReset { trigger }));
+            }
             "keep_alive" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
@@ -555,6 +563,7 @@ impl ClaudeMapper {
                         .and_then(Value::as_array)
                         .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
                         .unwrap_or_default(),
+                    session_id: str_field(v, "session_id"),
                 };
                 if let (Some(old), Some(new)) = (&self.model, &init.model)
                     && old != new
@@ -1083,6 +1092,50 @@ mod tests {
 
     fn run(m: &mut ClaudeMapper, frames: &str) -> Vec<MapOut> {
         frames.lines().flat_map(|l| m.on_line(l)).collect()
+    }
+
+    #[test]
+    fn clear_shows_a_divider_and_the_next_init_names_the_new_conversation() {
+        let mut m = ClaudeMapper::new();
+        let out = run(&mut m, include_str!("../../tests/fixtures/claude/clear.jsonl"));
+        let ev = events(&out);
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "unknown"), "{ev:?}");
+        assert_eq!(
+            ev.iter().filter(|(_, e)| *e == AgentEvent::ConversationReset { trigger: "clear".into() }).count(),
+            1
+        );
+        let ids: Vec<String> = out
+            .iter()
+            .filter_map(|o| match o {
+                MapOut::Init(i) => i.session_id.clone(),
+                _ => None,
+            })
+            .collect();
+        // Not `new_conversation_id` (170715ef…): the transcript and later frames use the init's id.
+        assert_eq!(
+            ids,
+            [
+                "144cb04b-8d3f-491e-8ea9-cf6ed4f159bf",
+                "90c29dfc-42bf-4be0-816c-6b0ceddf0d62",
+                "90c29dfc-42bf-4be0-816c-6b0ceddf0d62"
+            ]
+        );
+        let mut texts: Vec<&str> = ev
+            .iter()
+            .filter_map(|(_, e)| match e {
+                AgentEvent::AgentMessage { markdown, .. } => Some(markdown.as_str()),
+                _ => None,
+            })
+            .collect();
+        texts.dedup(); // a message row is written again when it is final
+        assert_eq!(texts, ["one", "two"]);
+    }
+
+    #[test]
+    fn a_reset_keeps_its_trigger() {
+        let mut m = ClaudeMapper::new();
+        let ev = events(&m.on_line(r#"{"type":"conversation_reset","trigger":"resume","new_conversation_id":"n"}"#));
+        assert_eq!(ev[0].1, AgentEvent::ConversationReset { trigger: "resume".into() });
     }
 
     #[test]

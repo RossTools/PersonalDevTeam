@@ -260,11 +260,10 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         Some(AgentKind::Codex) => (st.platform.codex_program.clone(), row.external_session_id.is_some()),
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {
-            let saved = st
-                .platform
-                .claude_config_dir
-                .as_deref()
-                .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &session.id));
+            let saved =
+                st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
+                    pdt_agents::launch::claude_conversation_exists(dir, row.claude_conversation_id())
+                });
             (st.platform.claude_program.clone(), has_history && saved)
         }
     };
@@ -874,8 +873,10 @@ pub(crate) async fn switch_mode(
     Ok(Json(session))
 }
 
-/// The session's transcript, read off the async runtime (None: Claude has not saved one, or no config dir known).
-async fn read_transcript(st: &AppState, id: &str) -> Option<String> {
+/// A Claude conversation's transcript, read off the async runtime (None: Claude has not saved one, or no config dir
+/// known).
+async fn read_transcript(st: &AppState, conversation_id: &str) -> Option<String> {
+    let id = conversation_id;
     let dir = st.platform.claude_config_dir.clone()?;
     let id = id.to_string();
     tokio::task::spawn_blocking(move || {
@@ -906,8 +907,10 @@ async fn to_terminal(
     let notice =
         AgentEvent::Notice { level: NoticeLevel::Info, text: "Continued in the terminal.".into(), until: None };
     append(st, &c, None, None, notice, None).await;
-    // "" means "from the start": Claude had not saved this conversation yet.
-    let anchor = read_transcript(st, &session.id)
+    // "" means "from the start": Claude had not saved this conversation yet. The row is read again: the process
+    // may have moved to a new conversation (`/clear`) since `session` was read.
+    let row = st.store.get_session(&session.id).await?.unwrap_or_else(|| session.clone());
+    let anchor = read_transcript(st, row.claude_conversation_id())
         .await
         .and_then(|t| pdt_core::conversation::claude::last_uuid(&t))
         .unwrap_or_default();
@@ -940,39 +943,79 @@ async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiErro
     }
     crate::sessions::settle_exit(st, id).await;
     st.remove_pty(id).await;
+    let after = import_anchor(st, id).await?;
+    st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
+    st.store.set_session_running(id).await?;
+    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let c = conv(st, &session).await?;
+    for (item_id, turn_id, event) in terminal_turns(st, &session, after).await {
+        append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
+    }
+    refresh_activity(st, &c).await;
+    c.push_state();
+    Ok(())
+}
+
+/// Where to import a terminal session's transcript from: `Some(None)` from its start, `Some(Some(uuid))` after
+/// the entry PDT's log ends at, None not at all.
+async fn import_anchor(st: &AppState, id: &str) -> Result<Option<Option<String>>, ApiError> {
     let anchor = st.store.history_from(id).await?;
     let logged = st.store.last_session_event_seq(id).await? > 0;
-    let after = match anchor.as_deref() {
+    Ok(match anchor.as_deref() {
         Some("") => Some(None),
         Some(uuid) => Some(Some(uuid.to_string())),
         // Never handed over by PDT: import everything, unless PDT already has a log it cannot line up.
         None if logged => None,
         None => Some(None),
-    };
-    st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
-    st.store.set_session_running(id).await?;
-    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
-    let c = conv(st, &session).await?;
-    if let Some(after) = after
-        && let Some(transcript) = read_transcript(st, id).await
-    {
-        match pdt_core::conversation::claude::history_events(&transcript, after.as_deref(), Some(&session.cwd)) {
-            Ok(events) => {
-                for out in events {
-                    if let pdt_core::conversation::claude::MapOut::Event { item_id, turn_id, event } = out {
-                        append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
-                    }
+    })
+}
+
+type Imported = (Option<String>, Option<String>, AgentEvent);
+
+/// The turns the TUI took in the session's current Claude conversation (spec §8.3), after `after` (see
+/// `import_anchor`); a warning instead when the transcript no longer has that entry.
+async fn terminal_turns(st: &AppState, session: &Session, after: Option<Option<String>>) -> Vec<Imported> {
+    let Some(after) = after else { return Vec::new() };
+    let Some(transcript) = read_transcript(st, session.claude_conversation_id()).await else { return Vec::new() };
+    match pdt_core::conversation::claude::history_events(&transcript, after.as_deref(), Some(&session.cwd)) {
+        Ok(events) => events
+            .into_iter()
+            .filter_map(|out| match out {
+                pdt_core::conversation::claude::MapOut::Event { item_id, turn_id, event } => {
+                    Some((item_id, turn_id, event))
                 }
-            }
-            Err(e) => {
-                let text = format!("{e}: turns taken in the terminal are not shown here.");
-                let notice = AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None };
-                append(st, &c, None, None, notice, None).await;
-            }
+                _ => None,
+            })
+            .collect(),
+        Err(e) => {
+            let text = format!("{e}: turns taken in the terminal are not shown here.");
+            vec![(None, None, AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None })]
         }
     }
-    refresh_activity(st, &c).await;
-    c.push_state();
+}
+
+/// A terminal Claude session moved to another conversation (`/clear`, or `/resume` in the TUI), as its SessionStart
+/// hook reported. The turns it took in the old one are logged now, while that transcript is still the one PDT's log
+/// lines up with, then the divider; from here on the session resumes `new_id`, and switching to a conversation
+/// imports the new transcript from its start. Written straight to the store: the session's activity is the
+/// terminal's, not derived from these events.
+pub(crate) async fn terminal_conversation_moved(
+    st: &AppState,
+    session: &Session,
+    new_id: &str,
+    trigger: &str,
+) -> Result<(), ApiError> {
+    let id = session.id.as_str();
+    let after = import_anchor(st, id).await?;
+    let mut events = terminal_turns(st, session, after).await;
+    events.push((None, None, AgentEvent::ConversationReset { trigger: trigger.to_string() }));
+    for (item_id, turn_id, event) in &events {
+        let ne = NewEvent { ts: now_ms(), item_id: item_id.as_deref(), turn_id: turn_id.as_deref(), event, raw: None };
+        st.store.upsert_session_event(id, ne).await?;
+    }
+    st.store.set_external_session_id(id, new_id).await?;
+    st.store.switch_session_mode(id, session.mode, Some("")).await?;
+    tracing::info!(session = %id, conversation = %new_id, trigger, "the terminal moved to another Claude conversation");
     Ok(())
 }
 
@@ -1189,11 +1232,9 @@ pub(crate) async fn ticket_draft(
     let (program, saved) = match session.agent {
         Some(AgentKind::Codex) => (st.platform.codex_program.clone(), session.external_session_id.is_some()),
         _ => {
-            let on_disk = st
-                .platform
-                .claude_config_dir
-                .as_deref()
-                .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &session.id));
+            let on_disk = st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
+                pdt_agents::launch::claude_conversation_exists(dir, session.claude_conversation_id())
+            });
             (st.platform.claude_program.clone(), on_disk && st.store.last_session_event_seq(&session.id).await? > 0)
         }
     };
