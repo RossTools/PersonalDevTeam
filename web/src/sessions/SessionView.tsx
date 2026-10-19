@@ -1,21 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, MenuButton, useConfirm, ViewHeader, type MenuEntry } from '@ui';
-import { api } from '../api/client';
+import { Button, MenuButton, SegmentedControl, useConfirm, ViewHeader, type MenuEntry } from '@ui';
+import { api, ApiError } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { SessionKindIcon } from '../common/SessionKindIcon';
 import { useAction } from '../common/useAction';
-import { ConversationView } from '../conversation/ConversationView';
+import { ConversationPane } from '../conversation/ConversationView';
+import type { EventsSocketLike } from '../conversation/eventsSocket';
+import { useConversation, type ConversationData } from '../conversation/useConversation';
 import { branchUrl, repoUrl } from '../projects/github';
 import { TerminalView } from '../terminal/TerminalView';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
 
-export function SessionView({ session, polledAt, onRemoved, branchLink, branch, repo, baseBranch, projectKey }: {
+export interface SessionViewProps {
   session: Session;
   polledAt?: number;
   onRemoved: () => void;
@@ -29,6 +31,48 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   baseBranch?: string;
   /** The project's key, shown for the main checkout; read from the projects list when left out. */
   projectKey?: string;
+  /** Tests: a fake events WebSocket for a conversation. */
+  socketFactory?: (url: string) => EventsSocketLike;
+}
+
+/** A session: its header over its terminal, or over its conversation (one events socket shared by both). */
+export function SessionView(props: SessionViewProps) {
+  return props.session.mode === 'conversation'
+    ? <ConversationSession key={props.session.id} {...props} />
+    : <SessionBody {...props} conv={null} />;
+}
+
+function ConversationSession(props: SessionViewProps) {
+  const conv = useConversation(props.session.id, props.socketFactory);
+  return <SessionBody {...props} conv={conv} />;
+}
+
+type ConvView = 'conversation' | 'terminal';
+const viewKey = (id: string) => `pdt.sessionView.${id}`;
+
+/** The Conversation | Terminal choice for one session, per browser (it outlives tab switches and polls). */
+function useStoredView(sessionId: string): [ConvView, (v: ConvView) => void] {
+  const [view, setView] = useState<ConvView>(() => {
+    try {
+      return localStorage.getItem(viewKey(sessionId)) === 'terminal' ? 'terminal' : 'conversation';
+    } catch {
+      return 'conversation';
+    }
+  });
+  const set = (v: ConvView) => {
+    setView(v);
+    try {
+      if (v === 'terminal') localStorage.setItem(viewKey(sessionId), v);
+      else localStorage.removeItem(viewKey(sessionId));
+    } catch {
+      // Storage blocked: the choice lasts while the view is open.
+    }
+  };
+  return [view, set];
+}
+
+function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, baseBranch, projectKey, conv }: SessionViewProps & {
+  conv: ConversationData | null;
 }) {
   useViewTracking(session.id, polledAt);
   const qc = useQueryClient();
@@ -72,6 +116,40 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   const conversation = session.mode === 'conversation';
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
 
+  // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread (spec §8.1).
+  const switchable = conversation && session.agent === 'codex' && conv !== null;
+  const terminalOpen = conv?.state?.terminalOpen ?? false;
+  // Codex can only resume a thread after its first turn.
+  const hasTurn = useMemo(() => conv?.rows.some((r) => r.event.kind === 'turn') ?? false, [conv?.rows]);
+  const [view, setView] = useStoredView(session.id);
+  // Between the open request succeeding and the state saying so: show the terminal already.
+  const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    if (terminalOpen) setOpening(false);
+  }, [terminalOpen]);
+  const showTerminal = switchable && view === 'terminal' && (terminalOpen || opening);
+  const [openTerminal, openingTerminal] = useAction(async () => {
+    if (!terminalOpen) {
+      try {
+        await api.openSessionTerminal(session.id, INITIAL_SIZE);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'no_turn_yet') throw new Error('Send a first message, then open the terminal.');
+        throw err;
+      }
+      setOpening(true);
+    }
+    setView('terminal');
+  });
+  const [closeTerminal, closingTerminal] = useAction(async () => {
+    await api.closeSessionTerminal(session.id);
+    setOpening(false);
+    setView('conversation');
+  });
+  const pickView = (v: ConvView) => {
+    if (v === 'terminal') void openTerminal();
+    else setView('conversation');
+  };
+
   // Stopping is reversible (Restart resumes), so it asks only when it would cut off an agent mid-turn (spec §6.2).
   const askStop = async () => {
     if (session.activity === 'working') {
@@ -109,7 +187,11 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
 
   const entries = (): MenuEntry[] => [
     ...(conversation
-      ? running ? [{ label: 'Stop', onSelect: () => void askStop(), disabled: busy }, { separator: true } as const] : []
+      ? [
+          ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),
+          ...(running ? [{ label: 'Stop', onSelect: () => void askStop(), disabled: busy }] : []),
+          ...(terminalOpen || running ? [{ separator: true } as const] : []),
+        ]
       : [
           ...(running
             ? [
@@ -149,6 +231,22 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
         }
         actions={
           <>
+            {switchable && (
+              // A disabled segment gets no hover of its own, so the wrapper carries the explanation.
+              <span className="flex" title={hasTurn || terminalOpen ? undefined : 'Send a first message, then open the terminal'}>
+                  <SegmentedControl<ConvView>
+                    aria-label="Show as"
+                    size="sm"
+                    value={showTerminal ? 'terminal' : 'conversation'}
+                    onChange={pickView}
+                    disabled={openingTerminal}
+                    options={[
+                      { value: 'conversation', label: 'Conversation' },
+                      { value: 'terminal', label: 'Terminal', disabled: !hasTurn && !terminalOpen },
+                    ]}
+                  />
+              </span>
+            )}
             {ended && !conversation && (
               <Button variant="primary" size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>{restartLabel}</Button>
             )}
@@ -156,8 +254,21 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
           </>
         }
       />
-      {conversation ? (
-        <ConversationView key={session.id} session={session} />
+      {showTerminal ? (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <TerminalView key={`${session.id}:tui`} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
+        </div>
+      ) : conv ? (
+        <ConversationPane
+          session={session}
+          conv={conv}
+          banner={switchable && terminalOpen ? (
+            <p className="flex items-center justify-center gap-2 px-4 pb-1 text-meta text-muted-foreground" role="status">
+              Also open in the terminal
+              <Button variant="ghost" size="sm" onClick={() => pickView('terminal')}>Show</Button>
+            </p>
+          ) : undefined}
+        />
       ) : (
         <div className="relative flex min-h-0 flex-1 flex-col">
           <TerminalView

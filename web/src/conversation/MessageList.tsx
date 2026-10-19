@@ -95,7 +95,8 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
 function resolvedText(ev: Ev<'request'>): string {
   if (ev.state === 'expired') return 'Expired';
   const a = ev.answer;
-  if (!a) return 'Answered';
+  // Codex: answered in its TUI, which PDT only hears about as resolved.
+  if (!a) return 'Answered in the terminal';
   switch (a.type) {
     case 'approve':
       return a.always ? 'Always allowed in this session' : 'Approved';
@@ -114,7 +115,7 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
     return (
       <ApprovalCard
         kind={ev.requestKind}
-        title={ev.requestKind === 'question' ? 'Claude asks' : ev.requestKind === 'plan' ? 'Approve this plan?' : approvalTitle(ev.tool)}
+        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : approvalTitle(ev.tool)}
         subject={ev.requestKind === 'approval' ? ev.title || undefined : undefined}
         description={ev.description}
         canAlways={ev.canAlways}

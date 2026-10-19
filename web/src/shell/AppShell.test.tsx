@@ -420,9 +420,9 @@ describe('workspaces', () => {
     await userEvent.click(await within(screen.getByRole('menu', { name: 'Places' })).findByRole('menuitem', { name: 'feat' }));
     await within(chooser).findByRole('button', { name: 'Place: Alpha › feat' });
     await userEvent.click(within(chooser).getByRole('switch', { name: /Skip permission prompts/ }));
-    await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Codex/ }));
+    await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Codex \(terminal\)/ }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body).toMatchObject({
-      worktreeId: 'wt1', agent: 'codex', bypassPermissions: true,
+      worktreeId: 'wt1', agent: 'codex', mode: 'terminal', bypassPermissions: true,
     }));
   });
 
@@ -505,6 +505,8 @@ describe('new-tab chooser', () => {
     for (const g of ['Start here', 'Run', 'Bring here']) expect(within(list).getByText(g)).toBeInTheDocument();
     expect(within(list).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ })).toHaveTextContent('c');
     expect(within(list).getByRole('menuitem', { name: /^Claude \(terminal\)/ })).toHaveTextContent('t');
+    expect(within(list).getByRole('menuitem', { name: /^Codex(?! \(terminal\))/ })).toHaveTextContent('x');
+    expect(within(list).getByRole('menuitem', { name: /^Codex \(terminal\)/ })).toHaveTextContent('o');
     expect(await within(list).findByRole('menuitem', { name: 'Run web' })).toBeInTheDocument();
     expect(within(list).getByRole('menuitem', { name: 'Test check' })).toBeInTheDocument();
     expect(within(list).getByRole('menuitem', { name: 'Run another branch…' })).toBeInTheDocument();
@@ -512,14 +514,18 @@ describe('new-tab chooser', () => {
     expect(within(list).getByRole('menuitem', { name: /Shell C/ })).toBeInTheDocument();
     expect(within(list).queryByRole('menuitem', { name: /Codex B/ })).not.toBeInTheDocument();
     expect(within(chooser).getByRole('switch', { name: /Skip permission prompts/ })).toBeInTheDocument();
-    expect(within(chooser).getByRole('button', { name: /Permission mode for a new Claude conversation/ })).toBeInTheDocument();
+    expect(within(chooser).getByRole('button', { name: /Permission mode for a new conversation/ })).toBeInTheDocument();
     expect(within(chooser).getByText('Esc to close')).toBeInTheDocument();
   });
 
-  it.each([['Shell', 's', 'shell'], ['Codex', 'x', 'agent_tui']])('launches %s by click and by its key', async (label, key, kind) => {
+  it.each([
+    ['Shell', /^Shell/, 's', 'shell'],
+    ['Codex', /^Codex(?! \(terminal\))/, 'x', 'agent_tui'],
+    ['Codex (terminal)', /^Codex \(terminal\)/, 'o', 'agent_tui'],
+  ] as const)('launches %s by click and by its key', async (_label, name, key, kind) => {
     const calls = stubWorkspaces({ 'POST /api/sessions': sess('e', 'New', { kind }) });
     const chooser = await open();
-    await userEvent.click(within(chooser).getByRole('menuitem', { name: new RegExp(`^${label}`) }));
+    await userEvent.click(within(chooser).getByRole('menuitem', { name }));
     await waitFor(() => expect(sessionPost(calls)).toMatchObject({ kind, tab: { workspaceId: 'wa', position: 1 } }));
     cleanup();
     calls.length = 0;

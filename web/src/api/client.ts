@@ -146,6 +146,10 @@ export const api = {
       body: JSON.stringify({ answer } satisfies AnswerRequest),
     }),
   interruptSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/interrupt`, { method: 'POST' }),
+  /** Codex conversations: opens the agent's own TUI on the same thread, live (PTY at the session's pty socket). */
+  openSessionTerminal: (id: string, size: TerminalSize) =>
+    request<void>(`/api/sessions/${enc(id)}/terminal`, { method: 'POST', body: JSON.stringify(size) }),
+  closeSessionTerminal: (id: string) => request<void>(`/api/sessions/${enc(id)}/terminal`, { method: 'DELETE' }),
   agentCapabilities: (agent: AgentKind) => request<AgentCapabilities>(`/api/agents/${enc(agent)}/capabilities`),
   listWorkspaces: () => request<Workspace[]>('/api/workspaces'),
   createWorkspace: (w: NewWorkspace) => request<Workspace>('/api/workspaces', { method: 'POST', body: JSON.stringify(w) }),
