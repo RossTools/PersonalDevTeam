@@ -36,6 +36,7 @@ setup   = "..."                     # optional
 command = "..."                     # must listen on $PORT
 web     = true                      # PDT assigns $PORT and shows the link when the port answers
 data    = true                      # PDT provides $PDT_RUN_DATA, a folder kept per branch
+detach  = true                      # optional: keeps running when PDT restarts or updates (no input)
 env     = { NAME = "value" }        # optional
 
 [[test]]
@@ -51,6 +52,8 @@ with the host's normal environment. Rules:
 - If the server checks the Host header, allow `$PDT_RUN_HOST` (through a flag or env var; don't edit the project's
   own config files for this unless I agree).
 - Point app state at `$PDT_RUN_DATA` when the app supports it, and set `data = true`.
+- Set `detach = true` only for a long-lived app I use day to day (a desktop app on the main checkout) that must
+  not be killed when PDT updates. Its output goes to a log, and it takes no typed input.
 - Never put secrets in it, and never forward a variable PDT doesn't set (`X = "$SOMETHING"` passes the literal text).
 - Prefer plain commands on PATH, joined with `&&`; no `||`, `;` or pipes (Windows doesn't split them).
 

@@ -51,6 +51,7 @@ pub struct EntryFile {
     pub command: Option<String>,
     pub web: Option<bool>,
     pub data: Option<bool>,
+    pub detach: Option<bool>,
     pub env: Option<BTreeMap<String, String>>,
 }
 
@@ -63,6 +64,9 @@ pub struct RunDef {
     pub command: String,
     pub web: bool,
     pub data: bool,
+    /// The command runs outside PDT's terminals and keeps running when pdtd restarts or updates (PDT-32). Its
+    /// output goes to a log file the run's tab follows; it takes no input.
+    pub detach: bool,
     pub env: BTreeMap<String, String>,
 }
 
@@ -121,6 +125,8 @@ pub enum RunConfigError {
     BadEnvName(String),
     #[error("test \"{0}\" cannot be a web run")]
     WebTest(String),
+    #[error("test \"{0}\" cannot be detached")]
+    DetachedTest(String),
     #[error("\"{0}\" cannot be an area name: it must be 1–{max} characters with no commas", max = crate::ticket::MAX_AREA)]
     BadAreaName(String),
     #[error("the area name \"{0}\" is used twice")]
@@ -162,6 +168,7 @@ fn merge_list(base: Vec<EntryFile>, over: Vec<EntryFile>) -> Result<Vec<EntryFil
                 b.command = o.command.or(b.command.take());
                 b.web = o.web.or(b.web);
                 b.data = o.data.or(b.data);
+                b.detach = o.detach.or(b.detach);
                 if let Some(env) = o.env {
                     b.env.get_or_insert_with(BTreeMap::new).extend(env);
                 }
@@ -201,8 +208,12 @@ fn finish(e: EntryFile, test: bool) -> Result<RunDef, RunConfigError> {
     if test && web {
         return Err(RunConfigError::WebTest(name));
     }
+    let detach = e.detach.unwrap_or(false);
+    if test && detach {
+        return Err(RunConfigError::DetachedTest(name));
+    }
     let setup = e.setup.filter(|s| !s.trim().is_empty());
-    Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), env })
+    Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), detach, env })
 }
 
 /// Areas merge by name like runs: an override's fields replace the file's.
@@ -363,6 +374,7 @@ mod tests {
             command: command.into(),
             web: true,
             data: false,
+            detach: false,
             env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         };
         assert!(uses_run_host(&def(None, "x", &[("PDT_ALLOWED_HOSTS", "$PDT_RUN_HOST:$PORT")])));
@@ -389,6 +401,18 @@ command = "pnpm test"
 
     fn file() -> ConfigFile {
         parse(FILE, Source::File).unwrap()
+    }
+
+    #[test]
+    fn detach_is_parsed_merged_and_refused_on_tests() {
+        let f = parse("[[run]]\nname = \"app\"\ncommand = \"python -m app\"\ndetach = true\n", Source::File).unwrap();
+        let c = merge(Some(f.clone()), None).unwrap();
+        assert!(c.runs[0].detach);
+        let off = parse("[[run]]\nname = \"app\"\ndetach = false\n", Source::Overrides).unwrap();
+        assert!(!merge(Some(f), Some(off)).unwrap().runs[0].detach, "an override turns it off");
+        assert!(!merge(Some(file()), None).unwrap().runs[0].detach, "off unless asked for");
+        let t = parse("[[test]]\nname = \"unit\"\ncommand = \"x\"\ndetach = true\n", Source::File).unwrap();
+        assert_eq!(merge(Some(t), None), Err(RunConfigError::DetachedTest("unit".into())));
     }
 
     #[test]
