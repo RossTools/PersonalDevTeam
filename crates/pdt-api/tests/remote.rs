@@ -220,19 +220,20 @@ async fn the_stable_instance_claims_443_and_others_their_own_port() {
 async fn a_hung_tailscale_times_out_and_releases_the_settings() {
     let tmp = tempfile::tempdir().unwrap();
     let fake = Arc::new(RecordingTailscale::new(Ok(ts(true))));
-    fake.set_delay(Duration::from_secs(2));
+    // Hangs well past the 100 ms limit, so "returned in time" can allow for a loaded CI runner (3 s).
+    fake.set_delay(Duration::from_secs(5));
     let (app, _) = setup_with(tmp.path(), fake.clone(), |s| s.tailscale_timeout = Duration::from_millis(100)).await;
     let started = Instant::now();
     let (s, v) = call(&app, "PUT", "/api/host/settings", Some(on())).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
     assert_eq!(v["remote"]["active"], false);
     assert!(v["remote"]["error"].as_str().unwrap().contains("in time"), "{v}");
     // The settings lock was released: another change goes through at once.
     let started = Instant::now();
     let (s, _) = call(&app, "PUT", "/api/host/settings", Some(json!({"updatePolicy": "manual"}))).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
 }
 
 #[tokio::test]

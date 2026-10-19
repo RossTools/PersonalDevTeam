@@ -18,10 +18,11 @@ use std::time::{Duration, Instant};
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 
-/// A port no other test holds, below the OS's ephemeral range: a port from `bind(0)` can be handed to another
-/// test's outgoing connection while pdtd restarts, and the new pdtd then cannot bind it.
+/// A port no other test holds, below every OS's ephemeral range (Linux hands out 32768 and up, Windows and macOS
+/// 49152 and up): a port from `bind(0)` can be handed to another test's outgoing connection while pdtd restarts, and
+/// the new pdtd then cannot bind it.
 fn free_port() -> u16 {
-    port_blocks::claim(40000, 250, 1)
+    port_blocks::claim(30000, 250, 1)
 }
 
 /// A folder holding the fake pdtd (as `pdtd[.exe]`) and its `fake.json`.
@@ -718,7 +719,8 @@ fn recovery_waits_for_a_pdtd_that_will_not_stop() {
     assert!(marker_path(&data).exists(), "the marker is kept");
     assert!(!result_path(&data).exists(), "nothing was rolled back yet");
     assert!(read(&install.join("fake.json")).contains("0.1.6"), "the running version's files are untouched");
-    wait_version(port, "0.1.6", Duration::from_secs(1));
+    // Still serving (one probe can take seconds on a loaded runner, so this is not a 1 s check).
+    wait_version(port, "0.1.6", Duration::from_secs(10));
     drop(outside);
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);

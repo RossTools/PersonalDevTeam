@@ -46,7 +46,8 @@ fn hook_is_silent_and_exits_0_when_pdtd_is_down() {
         let (out, took) = hook(&args, &env, r#"{"prompt":"hello"}"#);
         assert!(out.status.success(), "{args:?}: {out:?}");
         assert!(out.stdout.is_empty(), "{args:?} printed {:?}", String::from_utf8_lossy(&out.stdout));
-        assert!(took < Duration::from_secs(5), "{args:?} took {took:?}");
+        // Generous: what matters is that the hook never hangs. A cold start under a loaded CI runner took 9.5 s.
+        assert!(took < Duration::from_secs(15), "{args:?} took {took:?}");
     }
 }
 
@@ -68,15 +69,15 @@ fn codex_notify_runs_the_users_chained_notifier() {
     assert_eq!(std::fs::read_to_string(&out_file).unwrap(), payload);
 }
 
-/// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits. It records only when spawned
-/// as a session (PDT_SESSION_ID set): the health check also runs `claude auth status` in the background, and without
-/// this guard that invocation would race the session launch and clobber the shared files.
+/// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits. Only a session (PDT_SESSION_ID
+/// set) records and waits: pdtd's startup check also runs `claude auth status`, which must neither clobber the shared
+/// files nor hang (a check left waiting until its timeout leaves an orphaned `ping` on Windows, a nextest LEAK).
 fn fake_claude(dir: &Path) -> PathBuf {
     if cfg!(windows) {
         let p = dir.join("claude.cmd");
         std::fs::write(
             &p,
-            "@echo off\r\nif defined PDT_SESSION_ID (\r\n  echo %*> \"%~dp0args.txt\"\r\n  echo %PDT_SESSION_ID%> \"%~dp0session.txt\"\r\n)\r\nping -n 120 127.0.0.1 >nul\r\n",
+            "@echo off\r\nif not defined PDT_SESSION_ID (\r\n  echo {\"loggedIn\": true}\r\n  exit /b 0\r\n)\r\necho %*> \"%~dp0args.txt\"\r\necho %PDT_SESSION_ID%> \"%~dp0session.txt\"\r\nping -n 120 127.0.0.1 >nul\r\n",
         )
         .unwrap();
         p
@@ -84,7 +85,7 @@ fn fake_claude(dir: &Path) -> PathBuf {
         let p = dir.join("claude");
         std::fs::write(
             &p,
-            "#!/bin/sh\nif [ -n \"$PDT_SESSION_ID\" ]; then\n  echo \"$@\" > \"$(dirname \"$0\")/args.txt\"\n  echo \"$PDT_SESSION_ID\" > \"$(dirname \"$0\")/session.txt\"\nfi\nexec sleep 120\n",
+            "#!/bin/sh\nif [ -z \"$PDT_SESSION_ID\" ]; then\n  echo '{\"loggedIn\": true}'\n  exit 0\nfi\necho \"$@\" > \"$(dirname \"$0\")/args.txt\"\necho \"$PDT_SESSION_ID\" > \"$(dirname \"$0\")/session.txt\"\nexec sleep 120\n",
         )
         .unwrap();
         #[cfg(unix)]
@@ -155,10 +156,11 @@ fn hook_events_change_a_sessions_activity() {
     wait(serde_json::json!({"activity": "idle"}));
     assert!(hook(&["claude", "UserPromptSubmit"], &env, r#"{"prompt":"x"}"#).0.status.success());
     wait(serde_json::json!({"activity": "working"}));
-    hook(&["claude", "Stop"], &env, "{}");
+    assert!(hook(&["claude", "Stop"], &env, "{}").0.status.success());
     wait(serde_json::json!({"activity": "idle", "unseen": true}));
     assert_eq!(http(port, "POST", &format!("/api/sessions/{id}/view"), None).0, 204);
     wait(serde_json::json!({"unseen": false}));
-    hook(&["claude", "Notification"], &env, r#"{"notification_type":"permission_prompt","message":"m"}"#);
+    let notification = r#"{"notification_type":"permission_prompt","message":"m"}"#;
+    assert!(hook(&["claude", "Notification"], &env, notification).0.status.success());
     wait(serde_json::json!({"activity": "needs_you"}));
 }

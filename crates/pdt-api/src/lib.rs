@@ -21,6 +21,7 @@ mod runconfig;
 mod runs;
 pub mod secrets;
 mod sessions;
+mod slow;
 mod start;
 mod tickets;
 pub mod update;
