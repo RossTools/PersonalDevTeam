@@ -51,7 +51,7 @@ export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket;
         <span className="min-w-0 flex-1 truncate font-mono" title={a.branch}>{a.branch}</span>
         <AttemptBadge state={a.state} />
       </div>
-      {a.pr && <PrDetails pr={a.pr} />}
+      {a.pr && <PrDetails pr={a.pr} attemptMerged={a.state === 'merged'} />}
       {!compact && <p className="text-meta text-muted-foreground">Base {a.baseBranch}{t.attempts.length > 1 && ` · attempt ${t.attempts.length}`}</p>}
       {sessions.length > 0 ? (
         <ul aria-label="Sessions" className="flex flex-col gap-0.5">

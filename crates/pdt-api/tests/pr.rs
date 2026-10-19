@@ -397,3 +397,43 @@ async fn a_conversation_is_told_as_pdt_once_it_is_idle() {
     pdt_api::deliver_notices(&env.state).await;
     assert_eq!(pr_events(&env).await.len(), 1);
 }
+
+/// Git's merge check can end the attempt in the tick GitHub still reports the PR queued: the next look reads the
+/// ended attempt's PR again, so the badge says merged rather than "In queue" (PDT-59).
+#[tokio::test]
+async fn an_ended_attempts_pr_is_read_again_until_it_is_not_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-ship-it");
+    std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "ship"]);
+    let mut queued = pr();
+    queued.in_merge_queue = true;
+    env.gh.set_pr(BRANCH, Some(queued));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(attempt_state(&env).await, "active");
+
+    // Main gets the branch while GitHub still says queued: git ends the attempt, the stale look stays.
+    git(&env.repo, &["merge", "-q", "--ff-only", BRANCH]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    let t = ticket(&env).await;
+    assert_eq!(t["attempts"][0]["state"], "merged");
+    assert_eq!(t["attempts"][0]["pr"]["inMergeQueue"], true);
+
+    // GitHub catches up: the next look reads it, and tells nothing new.
+    pdt_api::deliver_notices(&env.state).await;
+    let told = pr_events(&env).await.len();
+    assert_eq!(told, 1);
+    let mut merged = pr();
+    merged.state = PrState::Merged;
+    env.gh.set_pr(BRANCH, Some(merged));
+    pdt_api::refresh_prs(&env.state).await;
+    let t = ticket(&env).await;
+    assert_eq!(t["attempts"][0]["pr"]["state"], "merged");
+    assert_eq!(t["attempts"][0]["pr"]["inMergeQueue"], false);
+    pdt_api::deliver_notices(&env.state).await;
+    assert_eq!(pr_events(&env).await.len(), told);
+    env.state.ptys.shutdown().await;
+}

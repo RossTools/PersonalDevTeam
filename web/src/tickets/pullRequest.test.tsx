@@ -44,6 +44,14 @@ describe('pull request status', () => {
     expect(prSummary(pr({ autoMerge: false, ci: null })).label).toBe('Open');
   });
 
+  it('shows a merged attempt\'s PR as merged while the last look still saw it queued (PDT-59)', () => {
+    expect(prSummary(pr({ inMergeQueue: true }), true)).toEqual({ label: 'Merged', tone: 'accent' });
+    expect(prSummary(pr({ state: 'closed' }), true).label).toBe('Closed');
+    render(<PrDetails pr={pr({ inMergeQueue: true, queuePosition: 1 })} attemptMerged />);
+    expect(screen.getByText('Merged')).toBeInTheDocument();
+    expect(screen.queryByText(/In merge queue/)).not.toBeInTheDocument();
+  });
+
   it('shows the details: link, CI, conflict, queue, and what failed', () => {
     const { rerender } = render(<PrDetails pr={pr({ ci: failed, mergeable: 'conflicting' })} />);
     const box = screen.getByLabelText('Pull request');

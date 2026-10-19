@@ -106,7 +106,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
             <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
               {activity ? <AgentDot state={activity} /> : <GitBranch aria-hidden className="size-3 shrink-0" />}
               <span className="min-w-0 truncate font-mono" title={t.attempt.branch}>{t.attempt.branch}</span>
-              {t.attempt.pr && <PrBadge pr={t.attempt.pr} />}
+              {t.attempt.pr && <PrBadge pr={t.attempt.pr} attemptMerged={t.attempt.state === 'merged'} />}
             </span>
           )}
         </button>
