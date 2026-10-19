@@ -44,6 +44,25 @@ async fn health_reports_product() {
     assert_eq!((v["profile"].as_str(), v["port"].as_u64(), v["dev"].as_bool()), (Some("dev"), Some(0), Some(true)));
 }
 
+#[tokio::test]
+async fn health_reports_a_web_build_that_follows_index_html() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, body) = call(&app(tmp.path(), None).await, "GET", "/api/health", None).await;
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["webBuild"], Value::Null);
+
+    let web = tmp.path().join("web");
+    std::fs::create_dir_all(&web).unwrap();
+    std::fs::write(web.join("index.html"), "<script src=\"/assets/index-aaa.js\"></script>").unwrap();
+    let app = app(tmp.path(), Some(web.clone())).await;
+    let build = |body: String| serde_json::from_str::<Value>(&body).unwrap()["webBuild"].as_str().unwrap().to_owned();
+    let first = build(call(&app, "GET", "/api/health", None).await.1);
+    assert_eq!(first.len(), 12);
+    assert_eq!(build(call(&app, "GET", "/api/health", None).await.1), first);
+    // A rebuild while pdtd runs is reported at once (ServeDir already serves it).
+    std::fs::write(web.join("index.html"), "<script src=\"/assets/index-bbb.js\"></script>").unwrap();
+    assert_ne!(build(call(&app, "GET", "/api/health", None).await.1), first);
+}
+
 async fn health_of(tmp: &Path, instance: pdt_core::instance::InstanceInfo) -> Value {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.join("data"));
