@@ -138,11 +138,7 @@ fn relaunch(cfg: &HostConfig, exe: &std::path::Path, args: &[String]) {
     }
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("run").args(args.iter().filter(|a| *a != FROM_COPY));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000 | 0x0000_0200);
-    }
+    pdt_host::process::detached_no_window(&mut cmd);
     match cmd.spawn() {
         Ok(_) => std::process::exit(0),
         Err(e) => log(cfg, &format!("could not start the replaced pdt-host ({e}); this copy keeps supervising")),
