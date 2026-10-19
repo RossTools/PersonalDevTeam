@@ -70,7 +70,7 @@ export function FilterBar({
     <div
       role="search"
       data-slot="filter-bar"
-      className={cn('flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-1.5 md:h-10 md:flex-nowrap md:py-0', className)}
+      className={cn('flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-1.5', className)}
     >
       <InputGroup className="w-full shrink-0 md:w-56">
         <InputGroupAddon>
@@ -104,7 +104,7 @@ export function FilterBar({
           )}
         </InputGroupAddon>
       </InputGroup>
-      {children != null && <div className="flex min-w-0 flex-wrap items-center gap-1.5 md:flex-nowrap">{children}</div>}
+      {children != null && <div className="flex min-w-0 flex-wrap items-center gap-1.5">{children}</div>}
       {trailing != null && <div className="ml-auto flex shrink-0 items-center gap-1.5">{trailing}</div>}
     </div>
   );

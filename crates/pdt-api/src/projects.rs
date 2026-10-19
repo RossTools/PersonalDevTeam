@@ -83,7 +83,13 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Project>), ApiError> {
     let Json(input) = payload?;
     let v = input.validate()?;
-    let p = add(&st, PathBuf::from(&v.repo_path), v.name, v.base_branch, v.key).await?;
+    // `~/…` (what the folder picker writes) is the home folder; anything else goes to git as typed.
+    let path = match v.repo_path.starts_with('~') {
+        true => pdt_core::project::resolve_folder(&v.repo_path, st.home_dir.as_deref())
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_folder", e.to_string()))?,
+        false => PathBuf::from(&v.repo_path),
+    };
+    let p = add(&st, path, v.name, v.base_branch, v.key).await?;
     Ok((StatusCode::CREATED, Json(p)))
 }
 

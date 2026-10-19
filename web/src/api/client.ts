@@ -8,6 +8,9 @@ import type { NewProject } from './gen/NewProject';
 import type { CloneProject } from './gen/CloneProject';
 import type { FileContent } from './gen/FileContent';
 import type { FileEntry } from './gen/FileEntry';
+import type { FolderEntry } from './gen/FolderEntry';
+import type { FolderListing } from './gen/FolderListing';
+import type { NewFolder } from './gen/NewFolder';
 import type { ProjectPatch } from './gen/ProjectPatch';
 import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
@@ -36,6 +39,7 @@ import type { EventQuery } from './gen/EventQuery';
 import type { NewComment } from './gen/NewComment';
 import type { NewTicket } from './gen/NewTicket';
 import type { RankMove } from './gen/RankMove';
+import type { ProjectAreas } from './gen/ProjectAreas';
 import type { Ticket } from './gen/Ticket';
 import type { TicketEvent } from './gen/TicketEvent';
 import type { TicketLink } from './gen/TicketLink';
@@ -85,6 +89,9 @@ function filesQuery(worktreeId: string | null, path: string): string {
 
 export const api = {
   health: () => request<Health>('/api/health'),
+  listFolders: (q: { path?: string; hidden?: boolean; nearest?: boolean }) =>
+    request<FolderListing>(`/api/host/folders${queryString({ ...q, hidden: q.hidden || undefined, nearest: q.nearest || undefined })}`),
+  createFolder: (f: NewFolder) => request<FolderEntry>('/api/host/folders', { method: 'POST', body: JSON.stringify(f) }),
   listProjects: () => request<Project[]>('/api/projects'),
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
@@ -142,6 +149,8 @@ export const api = {
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
   projectLabels: (projectId: string) => request<string[]>(`/api/projects/${enc(projectId)}/labels`),
+  /** The areas `.pdt/project.toml` (and the host overrides) declare, or why there are none. */
+  getProjectAreas: (projectId: string) => request<ProjectAreas>(`/api/projects/${enc(projectId)}/areas`),
   listRuns: (projectId: string) => request<Run[]>(`/api/projects/${enc(projectId)}/runs`),
   listActiveRuns: () => request<Run[]>('/api/runs'),
   startRun: (projectId: string, r: NewRun) =>

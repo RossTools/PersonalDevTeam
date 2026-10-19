@@ -73,6 +73,8 @@ pub struct AppState {
     /// Serializes ticket Starts up to the attempt row (checks, worktree, attempt), so two Starts of one ticket can't
     /// both make a worktree.
     pub(crate) ticket_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap, tickets spec §7).
+    pub(crate) changed_files: crate::overlap::ChangedFiles,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
     pub run_stop_wait: std::time::Duration,
     /// The program agent hooks run (`<this pdtd> hook …`).
@@ -96,6 +98,8 @@ pub struct AppState {
     /// Which instance this is (profile, port, dev), reported by `/api/health`. `new` makes it a dev instance on port
     /// 0; pdtd sets the real one.
     pub instance: pdt_core::instance::InstanceInfo,
+    /// The home folder the folder picker starts in and writes as `~`. `new` reads it from the OS; tests set it.
+    pub home_dir: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -128,6 +132,7 @@ impl AppState {
             run_controls: Default::default(),
             run_start_lock: Default::default(),
             ticket_start_lock: Default::default(),
+            changed_files: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),
             hook_program: std::env::current_exe().unwrap_or_default(),
             activity: Default::default(),
@@ -143,6 +148,7 @@ impl AppState {
             update_token_account,
             checks: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
+            home_dir: std::env::home_dir(),
         }
     }
 }
@@ -237,6 +243,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/install", axum::routing::post(crate::update::post_install))
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
+        .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
         .route("/projects", get(crate::projects::list).post(crate::projects::create))
         .route("/projects/clone", axum::routing::post(crate::projects::clone))
         .route(
@@ -263,6 +270,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
         .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
         .route("/projects/{id}/labels", get(crate::tickets::labels))
+        .route("/projects/{id}/areas", get(crate::overlap::areas))
         .route("/tickets", get(crate::tickets::list))
         .route("/tickets/bulk", axum::routing::post(crate::tickets::bulk))
         .route(

@@ -4,8 +4,10 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod changes;
 mod manage;
 mod merge;
+pub use changes::*;
 pub use manage::*;
 pub use merge::*;
 

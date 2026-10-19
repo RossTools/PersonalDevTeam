@@ -106,7 +106,8 @@ pub enum AttemptState {
 }
 str_enum!(AttemptState { Active => "active", Merged => "merged", Abandoned => "abandoned" });
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+/// Ordered: `none < overlap < conflict`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum OverlapLevel {
@@ -132,11 +133,13 @@ pub enum EventKind {
     Unblocked,
     Overlap,
     Comment,
+    /// "Wait until clear" was set or cleared: `{waiting}`.
+    Waiting,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
-    Unblocked => "unblocked", Overlap => "overlap", Comment => "comment",
+    Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -226,14 +229,18 @@ pub struct TicketSummary {
     pub areas: Vec<String>,
     /// Fractional index: lexicographic order is backlog order within the project.
     pub rank: String,
-    /// Start chose "Wait until clear" (Phase 4c).
+    /// Start chose "Wait until clear".
     pub waiting: bool,
+    /// Waiting, and nothing is in the way any more: no open blockers and no overlap.
+    pub clear_to_start: bool,
     /// How many open tickets block this one.
     pub blocked_by: u32,
     /// The active attempt, else the latest one.
     pub attempt: Option<AttemptSummary>,
-    /// Planned/actual overlap with other active tickets (Phase 4c; always `none` before).
+    /// The worst planned/actual overlap with the project's tickets that have an active attempt (tickets spec §7).
     pub overlap: OverlapLevel,
+    /// The keys of the tickets it overlaps, conflicts first.
+    pub overlap_with: Vec<String>,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]
@@ -241,6 +248,28 @@ pub struct TicketSummary {
     #[ts(type = "number | null")]
     pub closed_at: Option<i64>,
 }
+
+/// How a ticket overlaps another one that has an active attempt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketOverlap {
+    /// The other ticket.
+    pub ticket_id: String,
+    pub key: String,
+    pub title: String,
+    pub stage: TicketStage,
+    pub level: OverlapLevel,
+    /// Configured areas both tickets list (planned overlap).
+    pub areas: Vec<String>,
+    /// Files both active attempts changed (actual overlap), sorted; at most [`MAX_OVERLAP_FILES`].
+    pub files: Vec<String>,
+    /// How many files they share in all.
+    pub files_total: u32,
+}
+
+/// The most shared files a [`TicketOverlap`] lists.
+pub const MAX_OVERLAP_FILES: usize = 50;
 
 /// The other end of a link, as seen from one ticket.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -273,6 +302,8 @@ pub struct Ticket {
     pub default_branch: String,
     /// The sessions of all its attempts, newest first.
     pub sessions: Vec<AttemptSession>,
+    /// Its overlaps with the project's tickets that have an active attempt, conflicts first.
+    pub overlaps: Vec<TicketOverlap>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, TS)]
@@ -330,6 +361,10 @@ pub struct TicketPatch {
     #[serde(default)]
     #[ts(optional)]
     pub areas: Option<Vec<String>>,
+    /// Wait until clear (true; it also goes to the top of its stage) or stop waiting.
+    #[serde(default)]
+    #[ts(optional)]
+    pub waiting: Option<bool>,
 }
 
 /// A patch with its text checked and normalised.
@@ -341,6 +376,7 @@ pub struct ValidPatch {
     pub priority: Option<Priority>,
     pub labels: Option<Vec<String>>,
     pub areas: Option<Vec<String>>,
+    pub waiting: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -452,6 +488,10 @@ pub struct TicketQuery {
     #[serde(default)]
     #[ts(optional)]
     pub blocked: Option<bool>,
+    /// true: only tickets with an overlap or conflict; false: only those with none.
+    #[serde(default)]
+    #[ts(optional)]
+    pub conflicts: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub sort: Option<TicketSort>,
@@ -477,6 +517,11 @@ pub struct TicketFilter {
     pub priorities: Vec<Priority>,
     pub labels: Vec<String>,
     pub blocked: Option<bool>,
+    pub conflicts: Option<bool>,
+    /// Only these tickets (the API turns `conflicts` into this, since overlap is computed outside the store).
+    pub only_ids: Option<Vec<String>>,
+    /// Never these tickets.
+    pub except_ids: Vec<String>,
     pub sort: TicketSort,
     pub closed_after: Option<i64>,
     pub cursor: Option<String>,
@@ -746,6 +791,9 @@ impl TicketQuery {
             priorities,
             labels,
             blocked: self.blocked,
+            conflicts: self.conflicts,
+            only_ids: None,
+            except_ids: vec![],
             sort: self.sort.unwrap_or_default(),
             closed_after: self.closed_after,
             cursor: nonblank(&self.cursor),
@@ -792,6 +840,7 @@ impl TicketPatch {
             priority: self.priority,
             labels: self.labels.as_deref().map(normalize_labels).transpose()?,
             areas: self.areas.as_deref().map(normalize_areas).transpose()?,
+            waiting: self.waiting,
         })
     }
 }
@@ -957,9 +1006,11 @@ mod tests {
             areas: vec![],
             rank: "V".into(),
             waiting: false,
+            clear_to_start: false,
             blocked_by: 0,
             attempt: None,
             overlap: OverlapLevel::None,
+            overlap_with: vec![],
             created_at: 1,
             updated_at: 2,
             closed_at: None,
@@ -971,6 +1022,7 @@ mod tests {
             attempts: vec![],
             default_branch: "pdt/PDT-1-t".into(),
             sessions: vec![],
+            overlaps: vec![],
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["key"], "PDT-1");

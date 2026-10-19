@@ -22,8 +22,23 @@ pub(crate) async fn list(
     query: Result<Query<TicketQuery>, QueryRejection>,
 ) -> Result<Json<TicketPage>, ApiError> {
     let Query(q) = query.map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.body_text()))?;
-    let filter = q.validate()?;
-    Ok(Json(st.store.query_tickets(&filter).await?))
+    let mut filter = q.validate()?;
+    let idx = crate::overlap::index(&st, filter.project.as_deref()).await?;
+    match filter.conflicts {
+        Some(true) => filter.only_ids = Some(idx.ids()),
+        Some(false) => filter.except_ids = idx.ids(),
+        None => {}
+    }
+    let mut page = st.store.query_tickets(&filter).await?;
+    for t in page.items.iter_mut() {
+        idx.apply_summary(t);
+    }
+    Ok(Json(page))
+}
+
+/// The ticket as the API returns it: with its overlaps.
+async fn reply(st: &AppState, t: Ticket) -> Result<Json<Ticket>, ApiError> {
+    Ok(Json(crate::overlap::decorate(st, t).await?))
 }
 
 pub(crate) async fn create(
@@ -35,11 +50,11 @@ pub(crate) async fn create(
     let t = input.validate()?;
     let id = uuid::Uuid::now_v7().to_string();
     let ticket = st.store.create_ticket(&id, &project_id, &t, now_ms()).await?;
-    Ok((StatusCode::CREATED, Json(ticket)))
+    Ok((StatusCode::CREATED, reply(&st, ticket).await?))
 }
 
 pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
-    Ok(Json(st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?))
+    reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn update(
@@ -53,7 +68,7 @@ pub(crate) async fn update(
         // Closing a ticket ends its attempt (tickets spec §6).
         crate::start::end_for_close(&st, &id).await?;
     }
-    Ok(Json(st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?))
+    reply(&st, st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -76,7 +91,7 @@ pub(crate) async fn rank(
     let nonblank = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     let (before, after) = (nonblank(&m.before), nonblank(&m.after));
     let t = st.store.move_ticket(&id, before.as_deref(), after.as_deref(), m.to).await?;
-    Ok(Json(t.ok_or_else(unknown_ticket)?))
+    reply(&st, t.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn bulk(
@@ -103,7 +118,7 @@ pub(crate) async fn add_link(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(link) = payload?;
     let t = st.store.add_link(&id, link.to.trim(), link.kind, now_ms()).await?;
-    Ok(Json(t.ok_or_else(unknown_ticket)?))
+    reply(&st, t.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn remove_link(
@@ -113,7 +128,7 @@ pub(crate) async fn remove_link(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(link) = payload?;
     let t = st.store.remove_link(&id, link.to.trim(), link.kind, now_ms()).await?;
-    Ok(Json(t.ok_or_else(unknown_ticket)?))
+    reply(&st, t.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn events(

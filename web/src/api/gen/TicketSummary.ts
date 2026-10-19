@@ -25,9 +25,13 @@ areas: Array<string>,
  */
 rank: string, 
 /**
- * Start chose "Wait until clear" (Phase 4c).
+ * Start chose "Wait until clear".
  */
 waiting: boolean, 
+/**
+ * Waiting, and nothing is in the way any more: no open blockers and no overlap.
+ */
+clearToStart: boolean, 
 /**
  * How many open tickets block this one.
  */
@@ -37,6 +41,10 @@ blockedBy: number,
  */
 attempt: AttemptSummary | null, 
 /**
- * Planned/actual overlap with other active tickets (Phase 4c; always `none` before).
+ * The worst planned/actual overlap with the project's tickets that have an active attempt (tickets spec §7).
  */
-overlap: OverlapLevel, createdAt: number, updatedAt: number, closedAt: number | null, };
+overlap: OverlapLevel, 
+/**
+ * The keys of the tickets it overlaps, conflicts first.
+ */
+overlapWith: Array<string>, createdAt: number, updatedAt: number, closedAt: number | null, };
