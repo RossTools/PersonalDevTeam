@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, MenuButton, SegmentedControl, useConfirm, ViewHeader, type MenuEntry } from '@ui';
+import { Button, MenuButton, SegmentedControl, toast, useConfirm, ViewHeader, type MenuEntry } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { Session } from '../api/gen/Session';
+import type { SessionMode } from '../api/gen/SessionMode';
 import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { SessionKindIcon } from '../common/SessionKindIcon';
-import { useAction } from '../common/useAction';
+import { actionError, useAction } from '../common/useAction';
 import { ConversationPane } from '../conversation/ConversationView';
 import type { EventsSocketLike } from '../conversation/eventsSocket';
 import { useConversation, type ConversationData } from '../conversation/useConversation';
@@ -150,6 +151,42 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
     else setView('conversation');
   };
 
+  // Claude: the session is either the conversation or Claude's own TUI, one at a time (spec §8.2).
+  const claudeSwitch = isAgent && session.agent === 'claude';
+  const [switching, setSwitching] = useState<SessionMode | null>(null);
+  const switchMode = async (mode: SessionMode) => {
+    if (mode === session.mode || switching) return;
+    if (mode === 'conversation' && running && session.activity === 'working') {
+      const { ok } = await confirm({
+        title: 'Back to the conversation?',
+        body: 'Claude is working in the terminal. Switching closes the terminal, which stops this turn.',
+        action: 'Close terminal and switch',
+      });
+      if (!ok) return;
+    }
+    setSwitching(mode);
+    try {
+      const body = { mode, ...INITIAL_SIZE };
+      try {
+        await api.switchSessionMode(session.id, body);
+      } catch (err) {
+        if (!(err instanceof ApiError && err.code === 'turn_running')) throw err;
+        const { ok } = await confirm({
+          title: 'Interrupt and open the terminal?',
+          body: 'Claude is working on a turn. Opening the terminal stops it; you can carry on from there.',
+          action: 'Interrupt and open',
+        });
+        if (!ok) return;
+        await api.switchSessionMode(session.id, { ...body, interrupt: true });
+      }
+      await refresh();
+    } catch (err) {
+      toast.error(actionError(err));
+    } finally {
+      setSwitching(null);
+    }
+  };
+
   // Stopping is reversible (Restart resumes), so it asks only when it would cut off an agent mid-turn (spec §6.2).
   const askStop = async () => {
     if (session.activity === 'working') {
@@ -231,6 +268,19 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         }
         actions={
           <>
+            {claudeSwitch && (
+              <SegmentedControl<SessionMode>
+                aria-label="Show as"
+                size="sm"
+                value={switching ?? session.mode}
+                onChange={(v) => void switchMode(v)}
+                disabled={switching !== null || busy}
+                options={[
+                  { value: 'conversation', label: 'Conversation' },
+                  { value: 'terminal', label: 'Terminal' },
+                ]}
+              />
+            )}
             {switchable && (
               // A disabled segment gets no hover of its own, so the wrapper carries the explanation.
               <span className="flex" title={hasTurn || terminalOpen ? undefined : 'Send a first message, then open the terminal'}>

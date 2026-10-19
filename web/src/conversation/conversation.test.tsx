@@ -73,6 +73,56 @@ describe('MessageList', () => {
     expect(screen.getByText('boom')).toBeInTheDocument();
   });
 
+  it('shows an edit’s diff, the turn’s changes and Continue after a cut-off turn', async () => {
+    const diff = '--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,3 @@\n keep\n-old\n+new\n+more\n';
+    const onContinue = vi.fn(async () => {});
+    list([
+      ev(1, { kind: 'tool_call', id: 'e', tool: 'Edit', title: 'a.ts', input: { file_path: '/r/a.ts' }, status: 'done', output: 'updated', diff }),
+      ev(2, { kind: 'turn_diff', diff }),
+      ev(3, { kind: 'turn', phase: 'ended', status: 'interrupted', reason: 'PDT restarted' }),
+    ], { onContinue });
+    const row = screen.getByRole('button', { name: /Edit a\.ts \+2.?−1/ });
+    await userEvent.click(row);
+    expect(screen.getByText('more').closest('tr')).toHaveAttribute('data-kind', 'add');
+    expect(screen.queryByText('updated')).not.toBeInTheDocument();
+    expect(screen.queryByText('Input')).not.toBeInTheDocument();
+
+    const footer = screen.getByTestId('turn-footer');
+    await userEvent.click(within(footer).getByRole('button', { name: /Changes/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Changes in this turn' });
+    expect(within(dialog).getByRole('region', { name: 'a.ts' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(within(footer).getByRole('button', { name: 'Continue' }));
+    expect(onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers Continue only on the last turn, and not once something follows it', () => {
+    const cut = (seq: number) => ev(seq, { kind: 'turn', phase: 'ended', status: 'interrupted' }, { itemId: `end${seq}` });
+    const { unmount } = list([cut(1), ev(2, { kind: 'user_message', text: 'next', images: [], source: 'pdt' })], { onContinue: vi.fn(async () => {}) });
+    expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
+    unmount();
+    list([cut(1)], { onContinue: vi.fn(async () => {}), pending: [{ id: 'q', text: 'x', delivery: 'next' }] });
+    expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
+  });
+
+  it('edit approvals show their diff; Claude plans can go straight to Accept edits', async () => {
+    const onAnswer = vi.fn(async () => {});
+    list([
+      ev(1, { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Edit', title: 'a.ts', input: {}, canAlways: false, state: 'open', diff: '--- a/a.ts\n+++ b/a.ts\n@@ @@\n-x\n+y\n' }),
+      ev(2, { kind: 'request', id: 'p1', requestKind: 'plan', tool: 'ExitPlanMode', title: '', input: { plan: '1. Do it' }, canAlways: false, state: 'open' }),
+    ], { onAnswer });
+    const card = screen.getByRole('region', { name: 'Edit this file?' });
+    expect(within(card).getByText('y').closest('tr')).toHaveAttribute('data-kind', 'add');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve, accept edits' }));
+    expect(onAnswer).toHaveBeenCalledWith('p1', { type: 'plan', approve: true, mode: 'accept_edits' });
+  });
+
+  it('Codex plans have no Accept edits choice', () => {
+    list([ev(1, { kind: 'request', id: 'p1', requestKind: 'plan', tool: 'plan', title: '', input: { plan: 'x' }, canAlways: false, state: 'open' })], { agent: 'codex' });
+    expect(screen.queryByRole('button', { name: 'Approve, accept edits' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Approve plan/ })).toBeInTheDocument();
+  });
+
   it('collapses a finished turn’s tool calls into a summary', async () => {
     list([
       ev(1, { kind: 'tool_call', id: 'a', tool: 'Bash', title: 'ls', input: {}, status: 'done' }),
@@ -346,9 +396,36 @@ describe('SessionView for a Codex conversation', () => {
     expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
   });
 
-  it('Claude conversations have no switch yet', () => {
-    stubApi({ ...routes, 'GET /api/agents/claude/capabilities': caps });
+});
+
+describe('SessionView for Claude', () => {
+  const caps = { conversation: true, permissionModes: [], models: [], commands: [] };
+  const base = { 'GET /api/agents/claude/capabilities': caps, 'GET /api/projects': [], 'POST /api/sessions/s1/view': undefined };
+
+  it('hands a conversation to the terminal, asking before it interrupts a turn', async () => {
+    let tries = 0;
+    const calls = stubApi({
+      ...base,
+      'POST /api/sessions/s1/mode': () => (tries++ === 0 ? new Reply(409, { code: 'turn_running', message: 'working' }) : { ...session, mode: 'terminal' }),
+    });
     renderWithQuery(<SessionView session={session} onRemoved={() => {}} socketFactory={(u) => new FakeSocket(u)} />);
-    expect(screen.queryByRole('radiogroup', { name: 'Show as' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Conversation' })).toBeChecked();
+    await userEvent.click(screen.getByRole('radio', { name: 'Terminal' }));
+    const ask = await screen.findByRole('alertdialog', { name: 'Interrupt and open the terminal?' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Interrupt and open' }));
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/sessions/s1/mode').map((c) => c.body)).toEqual([
+      { mode: 'terminal', cols: 120, rows: 32 },
+      { mode: 'terminal', cols: 120, rows: 32, interrupt: true },
+    ]));
+  });
+
+  it('a Claude terminal goes back to being a conversation', async () => {
+    const calls = stubApi({ ...base, 'POST /api/sessions/s1/mode': { ...session } });
+    renderWithQuery(<SessionView session={{ ...session, mode: 'terminal' }} onRemoved={() => {}} />);
+    expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Terminal' })).toBeChecked();
+    await userEvent.click(screen.getByRole('radio', { name: 'Conversation' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/mode')?.body).toEqual({ mode: 'conversation', cols: 120, rows: 32 }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 });

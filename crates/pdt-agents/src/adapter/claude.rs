@@ -197,7 +197,7 @@ impl ClaudeLive {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let shared = Arc::new(Shared {
             session_id: spec.session_id.clone(),
-            mapper: Mutex::new(ClaudeMapper::new()),
+            mapper: Mutex::new(ClaudeMapper::with_cwd(spec.cwd.to_string_lossy())),
             replies: Mutex::new(HashMap::new()),
             stdin: Mutex::new(Some(tx)),
             alive: AtomicBool::new(true),

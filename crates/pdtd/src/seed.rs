@@ -195,6 +195,7 @@ async fn seed_conversation(store: &Store, session_id: &str, at: i64) -> anyhow::
     use pdt_core::conversation::*;
     use serde_json::json;
     let turn = "seed-turn-1";
+    let diff = "--- a/login.html\n+++ b/login.html\n@@ -2,4 +2,6 @@\n <form id=\"login\">\n-  <input name=\"email\">\n-  <input name=\"password\" type=\"password\">\n+  <input name=\"email\" type=\"email\" required>\n+  <span class=\"error\" data-for=\"email\"></span>\n+  <input name=\"password\" type=\"password\" required minlength=\"8\">\n+  <span class=\"error\" data-for=\"password\"></span>\n   <button>Sign in</button>\n </form>";
     let tool = |id: &str, tool: &str, title: &str, input: serde_json::Value, output: &str| AgentEvent::ToolCall {
         id: id.into(),
         tool: tool.into(),
@@ -240,13 +241,21 @@ async fn seed_conversation(store: &Store, session_id: &str, at: i64) -> anyhow::
                 input: json!({"file_path": "login.html"}),
                 tool_call_id: Some("seed-edit".into()),
                 can_always: true,
+                diff: Some(diff.into()),
                 state: RequestState::Answered,
                 answer: Some(Answer::Approve { always: false }),
             },
         ),
         (
             Some("t:seed-edit"),
-            tool("seed-edit", "Edit", "login.html", json!({"file_path": "login.html"}), "The file was updated."),
+            {
+                let mut edit =
+                    tool("seed-edit", "Edit", "login.html", json!({"file_path": "login.html"}), "The file was updated.");
+                if let AgentEvent::ToolCall { diff: d, .. } = &mut edit {
+                    *d = Some(diff.into());
+                }
+                edit
+            },
         ),
         (
             Some("t:seed-test"),
@@ -266,6 +275,7 @@ async fn seed_conversation(store: &Store, session_id: &str, at: i64) -> anyhow::
             Some("usage"),
             AgentEvent::Usage { context_used: Some(31_200), context_window: Some(200_000), rate_limits: vec![], cost_usd: Some(0.12) },
         ),
+        (Some("diff:seed-turn-1"), AgentEvent::TurnDiff { diff: diff.into() }),
         (
             Some("turn-end:seed-turn-1"),
             AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), duration_ms: Some(48_000), reason: None },
@@ -430,7 +440,7 @@ mod tests {
         assert_eq!(sessions.len(), 5);
         let conv = sessions.iter().find(|s| s.mode == pdt_core::conversation::SessionMode::Conversation).unwrap();
         let events = store.list_session_events(&conv.id, 0, 100).await.unwrap();
-        assert_eq!(events.len(), 10, "a demo conversation with one finished turn");
+        assert_eq!(events.len(), 11, "a demo conversation with one finished turn and its diff");
         assert!(sessions.iter().all(|s| s.status == SessionStatus::Finished && s.ended_at.is_some()));
         assert!(sessions.iter().any(|s| s.worktree_id.as_deref() == Some(wts[0].id.as_str())));
         assert!(store.list_sessions_by_status(SessionStatus::Interrupted).await.unwrap().is_empty());

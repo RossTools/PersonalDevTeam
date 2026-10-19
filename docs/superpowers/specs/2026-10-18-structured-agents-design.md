@@ -267,8 +267,9 @@ fails (Windows transport, version), fall back to §8.2's handoff.
 - **To conversation**: stop the TUI (send `/exit`, then kill after 5 s), import the turns it took (§8.3), and mark the
   session `conversation`; the next send resumes headless.
 - Today's terminal sessions get the same switch, so old sessions can become conversations.
-- Unverified: that an interactive `claude --resume` opens a session made by `-p` cleanly (same transcript file; the
-  plan's first task checks it).
+- Verified in 5a: an interactive `claude --resume` opens a session made by `-p` cleanly (same transcript file). As
+  built (5c), the switch changes the session's `mode`: the session view shows whichever side has it, with the
+  Conversation | Terminal control in the header, rather than a banner over a read-only conversation.
 
 ### 8.3 Importing history
 
@@ -370,10 +371,10 @@ needs a re-check and probably an API-key path. Guardrails (amending main spec §
 ## 15. Open questions
 
 - Windows: Codex `--listen unix://` support; `claude -p` stdio behaviour under Windows process handling.
-- Claude TUI resume of a `-p` session (§8.2).
+- ~~Claude TUI resume of a `-p` session (§8.2).~~ Works both ways (checked in 5a); the switch shipped in 5c.
 - Whether to use Codex's experimental API (plan mode, queue) from day one or only behind a capability check — proposed:
   capability check, fall back to PDT's own queue and no plan mode.
-- Edit-before-approve (5c or later).
+- Edit-before-approve (later; not in 5c).
 
 ## 16. Deferred
 

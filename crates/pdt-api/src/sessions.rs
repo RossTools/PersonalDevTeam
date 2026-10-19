@@ -367,7 +367,7 @@ fn session_data_dir(st: &AppState, id: &str) -> PathBuf {
 }
 
 /// Waits for the previous run's exit write (the process has already exited, so this is prompt).
-async fn settle_exit(st: &AppState, id: &str) {
+pub(crate) async fn settle_exit(st: &AppState, id: &str) {
     let handle = st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     if let Some(h) = handle {
         let _ = h.await;
@@ -461,7 +461,12 @@ pub(crate) async fn restart(
 }
 
 /// Starts a session that has no running process, resuming its agent conversation. The caller holds the session lock.
-async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Option<Resume>) -> Result<(), ApiError> {
+pub(crate) async fn restart_locked(
+    st: &AppState,
+    id: &str,
+    size: TerminalSize,
+    planned: Option<Resume>,
+) -> Result<(), ApiError> {
     settle_exit(st, id).await;
     st.remove_pty(id).await;
     // After the previous run's exit task, which may have just bound its Codex conversation.

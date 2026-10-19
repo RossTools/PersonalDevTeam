@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { ApprovalCard, type ApprovalAnswer } from '@ui/ApprovalCard';
+import { DiffViewer } from '@ui/DiffViewer';
 import { MessageBubble } from '@ui/MessageBubble';
 import { PromptBox } from '@ui/PromptBox';
 import { Select } from '@ui/Select';
@@ -42,6 +43,27 @@ function PromptBoxDemo({ working }: { working?: boolean }) {
   );
 }
 
+const DIFF = [
+  '--- a/tests/login.rs',
+  '+++ b/tests/login.rs',
+  '@@ -40,7 +40,9 @@ async fn login_flow() {',
+  '     let app = spawn_app().await;',
+  '     app.post_login("ross", "secret").await;',
+  '-    tokio::time::sleep(Duration::from_millis(100)).await;',
+  '-    assert!(app.has_session_cookie());',
+  '+    // Poll instead of a fixed sleep: CI machines are slower.',
+  '+    wait_until(|| app.has_session_cookie(), Duration::from_secs(5)).await;',
+  '+    assert!(app.has_session_cookie(), "no session cookie after login");',
+  '     app.get("/home").await.assert_ok();',
+  ' }',
+  '--- /dev/null',
+  '+++ b/tests/support/wait.rs',
+  '@@ -0,0 +1,3 @@',
+  '+pub async fn wait_until(f: impl Fn() -> bool, max: Duration) {',
+  '+    // …',
+  '+}',
+].join('\n');
+
 const answered = (a: ApprovalAnswer) => void toast.info(`Answer: ${JSON.stringify(a)}`);
 const T0 = Date.now() - 60_000;
 const e = (seq: number, event: ConversationEvent['event'], turnId = 'u1'): ConversationEvent => ({ seq, pos: seq, ts: T0 + seq * 1000, itemId: `i${seq}`, turnId, event });
@@ -52,11 +74,20 @@ const sample: ConversationEvent[] = [
   e(3, { kind: 'tool_call', id: 'a', tool: 'Grep', title: 'login_flow', input: { pattern: 'login_flow' }, status: 'done' }),
   e(4, { kind: 'tool_call', id: 'b', tool: 'Read', title: 'tests/login.rs', input: { file_path: 'tests/login.rs' }, status: 'done' }),
   e(5, { kind: 'tool_call', id: 'c', tool: 'Bash', title: 'cargo test login', input: { command: 'cargo test login' }, status: 'done', output: 'running 3 tests\ntest login_ok ... ok\ntest login_flow ... ok\n\ntest result: ok. 3 passed' }),
-  e(6, { kind: 'agent_message', id: 'm1', phase: 'final', markdown: 'The test waits on a **fixed 100 ms sleep**. I replaced it with a poll on the session cookie.' }),
-  e(7, { kind: 'turn', phase: 'ended', status: 'completed', durationMs: 42_000 }),
-  e(8, { kind: 'user_message', text: 'Great, run the whole suite.', images: [], source: 'pdt' }, 'u2'),
-  e(9, { kind: 'turn', phase: 'started' }, 'u2'),
-  e(10, { kind: 'tool_call', id: 'd', tool: 'Bash', title: 'cargo test', input: { command: 'cargo test' }, status: 'running' }, 'u2'),
+  e(6, { kind: 'tool_call', id: 'f', tool: 'Edit', title: 'tests/login.rs', input: { file_path: 'tests/login.rs' }, status: 'done', diff: DIFF.split('--- /dev/null')[0] }),
+  e(7, { kind: 'agent_message', id: 'm1', phase: 'final', markdown: 'The test waits on a **fixed 100 ms sleep**. I replaced it with a poll on the session cookie.' }),
+  e(8, { kind: 'turn_diff', diff: DIFF }),
+  e(9, { kind: 'turn', phase: 'ended', status: 'completed', durationMs: 42_000 }),
+  e(10, { kind: 'user_message', text: 'Great, run the whole suite.', images: [], source: 'pdt' }, 'u2'),
+  e(11, { kind: 'turn', phase: 'started' }, 'u2'),
+  e(12, { kind: 'tool_call', id: 'd', tool: 'Bash', title: 'cargo test', input: { command: 'cargo test' }, status: 'running' }, 'u2'),
+];
+
+const cutOff: ConversationEvent[] = [
+  e(1, { kind: 'user_message', text: 'Upgrade the dependencies.', images: [], source: 'pdt' }),
+  e(2, { kind: 'turn', phase: 'started' }),
+  e(3, { kind: 'tool_call', id: 'a', tool: 'Bash', title: 'cargo update', input: { command: 'cargo update' }, status: 'done' }),
+  e(4, { kind: 'turn', phase: 'ended', status: 'interrupted', reason: 'PDT restarted' }),
 ];
 
 export const section = {
@@ -97,26 +128,41 @@ export const section = {
       <Demo label="ApprovalCard · command (with Always), file, keyboard y / n">
         <div className="flex flex-col gap-3">
           <ApprovalCard title="Run this command?" subject="cargo test -p pdt-api" description="Run the API crate's tests" canAlways keyboard onAnswer={answered} />
-          <ApprovalCard title="Edit this file?" subject="web/src/conversation/MessageList.tsx" onAnswer={answered} />
+          <ApprovalCard title="Edit this file?" preview={<DiffViewer diff={DIFF.split('--- /dev/null')[0]} />} onAnswer={answered} />
         </div>
       </Demo>
-      <Demo label="ApprovalCard · question, plan">
+      <Demo label="DiffViewer · two files (one new); hunks without line numbers">
+        <div className="flex flex-col gap-3">
+          <DiffViewer diff={DIFF} />
+          <DiffViewer diff={'--- a/notes.md\n+++ b/notes.md\n@@ @@\n-line two\n+pear'} />
+        </div>
+      </Demo>
+      <Demo label="ApprovalCard · question (descriptions, Other…), plan (Claude: accept edits)">
         <div className="flex flex-col gap-3">
           <ApprovalCard
             kind="question"
             title="Claude asks"
             questions={[
-              { question: 'Which database should the cache use?', header: 'Storage', options: [{ label: 'SQLite' }, { label: 'In memory' }] },
+              {
+                question: 'Which database should the cache use?',
+                header: 'Storage',
+                options: [{ label: 'SQLite', description: 'Survives restarts' }, { label: 'In memory', description: 'Fastest; lost on restart' }],
+              },
               { question: 'What should it cache?', options: [{ label: 'Tickets' }, { label: 'Sessions' }, { label: 'Runs' }], multiSelect: true },
             ]}
             onAnswer={answered}
           />
-          <ApprovalCard kind="plan" title="Approve this plan?" plan={<Markdown>{'1. Add `session_events`\n2. Stream deltas over the socket\n3. Render the conversation'}</Markdown>} onAnswer={answered} />
+          <ApprovalCard kind="plan" title="Approve this plan?" planAcceptEdits plan={<Markdown>{'1. Add `session_events`\n2. Stream deltas over the socket\n3. Render the conversation'}</Markdown>} onAnswer={answered} />
         </div>
       </Demo>
       <Demo label="MessageList · a finished turn (collapsed) and a running one">
         <div className="flex h-96 flex-col rounded-lg border border-border">
           <MessageList rows={sample} provisional={[]} streams={{}} turnRunning pending={[{ id: 'p', text: 'Then push it.', delivery: 'next' }]} onAnswer={async () => {}} />
+        </div>
+      </Demo>
+      <Demo label="MessageList · a turn cut off by a restart (Continue)">
+        <div className="flex h-48 flex-col rounded-lg border border-border">
+          <MessageList rows={cutOff} provisional={[]} streams={{}} turnRunning={false} pending={[]} onAnswer={async () => {}} onContinue={async () => void toast.info('Continue')} />
         </div>
       </Demo>
     </div>

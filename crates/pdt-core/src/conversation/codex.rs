@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, HashMap};
 
 /// What one message from the server turns into.
 #[derive(Debug, Clone, PartialEq)]
+// Short-lived (mapped, then stored or sent at once): boxing the event would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum CodexOut {
     Event {
         item_id: Option<String>,
@@ -280,6 +282,11 @@ impl CodexMapper {
                 input: r.input.clone(),
                 tool_call_id: (r.kind == RequestKind::Approval).then(|| id.to_string()),
                 can_always: r.can_always,
+                diff: (r.tool == "Edit")
+                    .then(|| {
+                        file_diff(r.input.get("changes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]))
+                    })
+                    .flatten(),
                 state,
                 answer,
             },
@@ -952,7 +959,13 @@ mod tests {
         let AgentEvent::ToolCall { title, diff, .. } = &ev[0].1 else { panic!() };
         assert_eq!(title, "a.rs +1 more");
         assert!(diff.as_deref().unwrap().contains("+++ b/a.rs"));
-        m.on_server_request(json!(4), "item/fileChange/requestApproval", &json!({"itemId": "f", "turnId": "t1"}));
+        let ev = events(&m.on_server_request(
+            json!(4),
+            "item/fileChange/requestApproval",
+            &json!({"itemId": "f", "turnId": "t1"}),
+        ));
+        let AgentEvent::Request { diff, .. } = &ev[0].1 else { panic!() };
+        assert!(diff.as_deref().is_some_and(|d| d.contains("+++ b/b.rs")), "the card shows the change: {diff:?}");
         m.note_interrupt();
         let ev = events(&m.on_notification("turn/completed", &json!({"turn": {"id": "t1", "status": "interrupted"}})));
         assert!(

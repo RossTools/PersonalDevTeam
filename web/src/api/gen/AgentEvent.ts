@@ -29,7 +29,11 @@ toolCallId?: string,
 /**
  * Whether "Always allow in this session" is offered.
  */
-canAlways: boolean, state: RequestState, answer?: Answer, } | { "kind": "plan", markdown: string, } | { "kind": "turn", phase: TurnPhase, status?: TurnStatus, durationMs?: number, 
+canAlways: boolean, 
+/**
+ * The change a file-edit request would make (unified diff).
+ */
+diff?: string, state: RequestState, answer?: Answer, } | { "kind": "plan", markdown: string, } | { "kind": "turn", phase: TurnPhase, status?: TurnStatus, durationMs?: number, 
 /**
  * Why an interrupted or failed turn ended.
  */

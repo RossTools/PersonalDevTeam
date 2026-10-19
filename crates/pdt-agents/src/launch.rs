@@ -174,11 +174,14 @@ fn read_rollout_meta(path: &Path) -> Option<(String, String, i64)> {
 /// Whether Claude has saved a conversation for `session_id`. It writes `projects/<encoded cwd>/<id>.jsonl` only
 /// after the first turn; the folder name is Claude's own encoding, so every project folder is checked.
 pub fn claude_conversation_exists(config_dir: &Path, session_id: &str) -> bool {
-    let Ok(projects) = std::fs::read_dir(config_dir.join("projects")) else {
-        return false;
-    };
+    claude_transcript(config_dir, session_id).is_some()
+}
+
+/// Claude's transcript of a session: `<config dir>/projects/<folder key>/<session id>.jsonl`, once it has one.
+pub fn claude_transcript(config_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let projects = std::fs::read_dir(config_dir.join("projects")).ok()?;
     let file = format!("{session_id}.jsonl");
-    projects.flatten().any(|d| d.path().join(&file).is_file())
+    projects.flatten().map(|d| d.path().join(&file)).find(|p| p.is_file())
 }
 
 /// Runs `shell args` and returns the last line of its stdout, or None if it fails, prints nothing or outlives `timeout`.
