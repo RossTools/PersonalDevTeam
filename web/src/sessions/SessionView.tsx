@@ -82,13 +82,19 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
     }
     await kill();
   };
+  // A modal every time: removing cannot be undone, and a running session is stopped first.
   const askRemove = async () => {
+    const lost = isAgent
+      ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
+      : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.';
     const { ok } = await confirm({
       title: `Remove ${session.title}?`,
-      body: isAgent
-        ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
-        : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.',
-      action: 'Remove session',
+      body: !running
+        ? lost
+        : session.activity === 'working'
+          ? `The agent is working; removing it stops it mid-turn. ${lost}`
+          : `It is still running and will be stopped. ${lost}`,
+      action: running ? 'Stop and remove' : 'Remove session',
       danger: true,
     });
     if (ok) await remove();
@@ -105,7 +111,8 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
     { separator: true },
     { label: 'Copy path', onSelect: () => void copyToClipboard(session.cwd, 'Path copied') },
     ...(githubLink ? [{ label: 'Open on GitHub', onSelect: () => void window.open(githubLink, '_blank', 'noopener,noreferrer') }] : []),
-    ...(ended ? [{ separator: true } as const, { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true }] : []),
+    { separator: true },
+    { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true },
   ];
 
   return (

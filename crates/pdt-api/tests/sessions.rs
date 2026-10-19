@@ -78,9 +78,6 @@ async fn shell_session_lifecycle() {
     let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/sessions"), None).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
 
-    let (s, v) = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await;
-    assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "session_running"));
-
     let (s, _) = call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     let ended = wait_status(&app, &id, "finished").await;
@@ -91,6 +88,29 @@ async fn shell_session_lifecycle() {
     let (s, _) = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (s, _) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn removing_a_running_session_stops_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid, _) = setup(tmp.path()).await;
+    let (_, sess) =
+        call(&app, "POST", "/api/sessions", Some(json!({"projectId": pid, "kind": "shell", "cols": 80, "rows": 24})))
+            .await;
+    let id = sess["id"].as_str().unwrap().to_string();
+    assert!(state.ptys.is_running(&id));
+
+    let (s, _) = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(!state.ptys.is_running(&id));
+    let (s, _) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/sessions"), None).await;
+    assert_eq!(list.as_array().unwrap().len(), 0);
+
+    let (s, _) = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     state.ptys.shutdown().await;
 }
