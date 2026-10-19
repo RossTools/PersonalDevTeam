@@ -118,9 +118,18 @@ pub(crate) async fn update_tab(
     Ok(Json(tab.ok_or_else(unknown_workspace)?))
 }
 
+/// Closes a tab. A session or run tab also stops and removes what it shows, so nothing is left without a tab (PDT-28);
+/// a ticket tab only closes. If the item cannot be stopped the tab stays open.
 pub(crate) async fn close_tab(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let tab = st.store.get_tab(&id).await?.ok_or_else(|| ApiError::not_found("tab"))?;
+    if let Some(sid) = &tab.session_id {
+        crate::sessions::stop_and_remove(&st, sid).await?;
+    } else if let Some(rid) = &tab.run_id {
+        crate::runs::stop_and_remove(&st, rid).await?;
+    }
+    // Removing the item deleted its tab with it (cascade); a ticket tab is closed here.
     if !st.store.close_tab(&id).await? {
-        return Err(ApiError::not_found("tab"));
+        st.store.renumber_workspace_tabs(&tab.workspace_id).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
