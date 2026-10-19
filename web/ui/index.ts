@@ -48,3 +48,8 @@ export * from './ViewHeader';
 export * from './Page';
 
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';
+
+// Conversations
+export * from './MessageBubble';
+export * from './ToolCallRow';
+export * from './ApprovalCard';

@@ -64,6 +64,8 @@ pub(crate) struct Conv {
     state: Mutex<ConvState>,
     /// Orders activity writes so the row always ends with the latest state.
     activity_write: tokio::sync::Mutex<()>,
+    /// The newest process generation whose exit has been fully applied (its last events stored).
+    exits: tokio::sync::watch::Sender<u64>,
 }
 
 struct ConvState {
@@ -187,6 +189,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             generation: 0,
         }),
         activity_write: tokio::sync::Mutex::new(()),
+        exits: tokio::sync::watch::channel(0).0,
     });
     let mut map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
     Ok(map.entry(session.id.clone()).or_insert(c).clone())
@@ -307,6 +310,7 @@ async fn pump(
             AdapterOutput::Exited { code, stderr_tail, expected } => {
                 let current = c.state().generation == generation;
                 if !current {
+                    c.exits.send_modify(|g| *g = (*g).max(generation));
                     continue;
                 }
                 {
@@ -338,6 +342,7 @@ async fn pump(
                 }
                 c.push_state();
                 refresh_activity(&st, &c).await;
+                c.exits.send_modify(|g| *g = (*g).max(generation));
             }
         }
     }
@@ -433,11 +438,14 @@ async fn refresh_activity(st: &AppState, c: &Arc<Conv>) {
     c.push_state();
 }
 
-/// Closes a live process, keeping the conversation (the next message reopens it).
+/// Closes a live process, keeping the conversation (the next message reopens it). Returns once its last events (an
+/// interrupted turn, expired requests) are stored.
 async fn park(_st: &AppState, c: &Arc<Conv>) {
     let taken = c.live.lock().await.take();
-    if let Some((live, _)) = taken {
+    if let Some((live, generation)) = taken {
         live.close().await;
+        let mut exits = c.exits.subscribe();
+        let _ = tokio::time::timeout(Duration::from_secs(5), exits.wait_for(|g| *g >= generation)).await;
     }
 }
 

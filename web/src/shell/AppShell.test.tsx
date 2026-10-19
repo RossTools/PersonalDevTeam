@@ -14,7 +14,7 @@ vi.mock('../terminal/TerminalView', () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', githubRepo: 'o/alpha' };
-const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null };
+const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null };
 
 // The shell always renders the update banner; a fully set-up host shows none.
 const hostTool = { found: true, ok: true, detail: 'ok' };
@@ -478,7 +478,8 @@ describe('new-tab chooser', () => {
     const chooser = await open();
     const list = within(chooser).getByRole('menu', { name: 'New tab choices' });
     for (const g of ['Start here', 'Run', 'Bring here']) expect(within(list).getByText(g)).toBeInTheDocument();
-    expect(within(list).getByRole('menuitem', { name: /^Claude/ })).toHaveTextContent('c');
+    expect(within(list).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ })).toHaveTextContent('c');
+    expect(within(list).getByRole('menuitem', { name: /^Claude \(terminal\)/ })).toHaveTextContent('t');
     expect(await within(list).findByRole('menuitem', { name: 'Run web' })).toBeInTheDocument();
     expect(within(list).getByRole('menuitem', { name: 'Test check' })).toBeInTheDocument();
     expect(within(list).getByRole('menuitem', { name: 'Run another branch…' })).toBeInTheDocument();
@@ -486,6 +487,7 @@ describe('new-tab chooser', () => {
     expect(within(list).getByRole('menuitem', { name: /Shell C/ })).toBeInTheDocument();
     expect(within(list).queryByRole('menuitem', { name: /Codex B/ })).not.toBeInTheDocument();
     expect(within(chooser).getByRole('switch', { name: /Skip permission prompts/ })).toBeInTheDocument();
+    expect(within(chooser).getByRole('button', { name: /Permission mode for a new Claude conversation/ })).toBeInTheDocument();
     expect(within(chooser).getByText('Esc to close')).toBeInTheDocument();
   });
 
@@ -545,7 +547,7 @@ describe('new-tab chooser', () => {
   it('shows the error from a failed launch', async () => {
     stubWorkspaces({ 'POST /api/sessions': new Reply(500, { code: 'spawn', message: 'claude not found' }) });
     const chooser = await open();
-    await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Claude/ }));
+    await userEvent.click(within(chooser).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ }));
     expect(await within(chooser).findByText('claude not found')).toBeInTheDocument();
   });
 });

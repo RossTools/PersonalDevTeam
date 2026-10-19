@@ -41,7 +41,9 @@ impl Store {
     ) -> Result<ConversationEvent, StoreError> {
         let body = serde_json::to_string(e.event).map_err(|err| StoreError::Corrupt(err.to_string()))?;
         let raw = e.raw.map(|r| cap_text(r, MAX_RAW));
-        let mut tx = self.pool.begin().await?;
+        // IMMEDIATE: this reads then writes, and a deferred transaction that another writer gets ahead of cannot be
+        // upgraded (SQLITE_BUSY_SNAPSHOT, which the busy timeout does not retry).
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let (seq, pos_next): (i64, i64) = sqlx::query_as(
             "SELECT COALESCE(MAX(seq), 0) + 1, COALESCE(MAX(pos), 0) + 1 FROM session_events WHERE session_id = ?",
         )

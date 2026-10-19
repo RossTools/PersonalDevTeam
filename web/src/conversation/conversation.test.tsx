@@ -1,0 +1,253 @@
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentEvent } from '../api/gen/AgentEvent';
+import type { ConversationEvent } from '../api/gen/ConversationEvent';
+import type { ConversationState } from '../api/gen/ConversationState';
+import type { Session } from '../api/gen/Session';
+import { SessionView } from '../sessions/SessionView';
+import { Reply, renderWithQuery, stubApi } from '../test-utils';
+import { ConversationComposer, type ConversationComposerProps } from './ConversationComposer';
+import { ConversationView } from './ConversationView';
+import { FakeSocket } from './fakeSocket';
+import { MessageList } from './MessageList';
+
+const ev = (seq: number, event: AgentEvent, extra: Partial<ConversationEvent> = {}): ConversationEvent =>
+  ({ seq, pos: seq, ts: 1_000_000 + seq * 1000, event, itemId: `i${seq}`, turnId: 'u1', ...extra });
+
+const session: Session = {
+  id: 's1', projectId: 'p', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'PDT', cwd: '/r',
+  status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null, activity: 'idle',
+  attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation', model: null, permissionMode: 'ask',
+};
+const idle: ConversationState = { live: true, turnRunning: false, permissionMode: 'ask', pending: [] };
+
+afterEach(() => {
+  FakeSocket.all = [];
+  vi.unstubAllGlobals();
+});
+
+describe('MessageList', () => {
+  const list = (rows: ConversationEvent[], extra: Partial<Parameters<typeof MessageList>[0]> = {}) =>
+    render(<MessageList rows={rows} provisional={[]} streams={{}} turnRunning={false} pending={[]} onAnswer={vi.fn(async () => {})} {...extra} />);
+
+  it('renders every kind of event', async () => {
+    list([
+      ev(1, { kind: 'user_message', text: 'Fix the bug', images: [], source: 'pdt' }),
+      ev(2, { kind: 'turn', phase: 'started' }),
+      ev(3, { kind: 'reasoning', summary: 'Looking at it' }),
+      ev(4, { kind: 'agent_message', id: 'a', markdown: 'Let me check', phase: 'commentary' }),
+      ev(5, { kind: 'tool_call', id: 't', tool: 'Bash', title: 'cargo test', input: { command: 'cargo test' }, status: 'failed', exitCode: 101, output: 'boom' }),
+      ev(6, { kind: 'agent_message', id: 'b', markdown: 'It **works** now', phase: 'final' }),
+      ev(7, { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Edit', title: 'a.ts', input: {}, canAlways: false, state: 'answered', answer: { type: 'deny', message: 'no' } }),
+      ev(8, { kind: 'turn', phase: 'ended', status: 'interrupted', durationMs: 12_000, reason: 'Stopped by you' }),
+      ev(9, { kind: 'usage', contextUsed: 1, contextWindow: 2, rateLimits: [] }),
+      ev(10, { kind: 'notice', level: 'warning', text: 'Rate limited' }),
+      ev(11, { kind: 'error', text: 'Something broke', retryable: false }),
+      ev(12, { kind: 'compaction' }),
+      ev(13, { kind: 'plan', markdown: '1. First' }),
+      ev(14, { kind: 'turn_diff', diff: '+x' }),
+      ev(15, { kind: 'unknown', raw: { weird: true } }),
+    ], { empty: <p>Nothing yet</p> });
+    expect(screen.getByText('Fix the bug')).toBeInTheDocument();
+    expect(screen.getByText('Thinking')).toBeInTheDocument();
+    expect(screen.getByText('Let me check')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Run cargo test exit 101/ })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Failed' })).toBeInTheDocument();
+    expect(screen.getByText('works').tagName).toBe('STRONG');
+    expect(screen.getByText('Denied: no')).toBeInTheDocument();
+    expect(screen.getByTestId('turn-footer')).toHaveTextContent('Interrupted after 12 s · Stopped by you');
+    expect(screen.getByText('Rate limited')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Something broke');
+    expect(screen.getByText('Context compacted')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Plan' })).toHaveTextContent('First');
+    expect(screen.getByText('Unrecognised event')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('+x')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Run cargo test/ }));
+    expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+
+  it('collapses a finished turn’s tool calls into a summary', async () => {
+    list([
+      ev(1, { kind: 'tool_call', id: 'a', tool: 'Bash', title: 'ls', input: {}, status: 'done' }),
+      ev(2, { kind: 'tool_call', id: 'b', tool: 'Edit', title: 'a.ts', input: {}, status: 'done' }),
+      ev(3, { kind: 'turn', phase: 'ended', status: 'completed', durationMs: 500 }),
+    ]);
+    const summary = screen.getByRole('button', { name: /Ran 1 command, edited 1 file/ });
+    expect(screen.queryByText('ls')).not.toBeInTheDocument();
+    await userEvent.click(summary);
+    expect(screen.getByText('ls')).toBeInTheDocument();
+    expect(screen.getByTestId('turn-footer')).toHaveTextContent('Done in 500 ms');
+  });
+
+  it('shows the running tool while a turn works, streaming text and queued messages', () => {
+    list(
+      [
+        ev(1, { kind: 'turn', phase: 'started' }),
+        ev(2, { kind: 'tool_call', id: 'a', tool: 'Bash', title: 'cargo build', input: {}, status: 'running' }),
+      ],
+      {
+        turnRunning: true,
+        provisional: [{ itemId: 'm:1', markdown: 'Streaming…' }],
+        pending: [{ id: 'q', text: 'also do X', delivery: 'next' }],
+      },
+    );
+    expect(screen.getByTestId('working')).toHaveTextContent(/Running\s*cargo build/);
+    expect(screen.getByText('Streaming…')).toBeInTheDocument();
+    expect(screen.getByText('Queued')).toBeInTheDocument();
+    expect(screen.getByText('also do X')).toBeInTheDocument();
+  });
+
+  it('an open request is an approval card; y answers the newest one', async () => {
+    const onAnswer = vi.fn(async () => {});
+    list([
+      ev(1, { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Bash', title: 'rm a', input: {}, canAlways: true, state: 'open' }),
+      ev(2, { kind: 'request', id: 'r2', requestKind: 'approval', tool: 'Bash', title: 'rm b', input: {}, canAlways: true, state: 'open' }),
+    ], { onAnswer });
+    expect(screen.getAllByRole('region', { name: 'Run this command?' })).toHaveLength(2);
+    await userEvent.keyboard('y');
+    expect(onAnswer).toHaveBeenCalledTimes(1);
+    expect(onAnswer).toHaveBeenCalledWith('r2', { type: 'approve', always: false });
+  });
+});
+
+describe('ConversationComposer', () => {
+  const setup = (over: Partial<ConversationComposerProps> = {}) => {
+    const props: ConversationComposerProps = {
+      turnRunning: false, onSend: vi.fn(async () => {}), onInterrupt: vi.fn(), models: [{ value: 'opus', displayName: 'Opus' }],
+      model: null, onModel: vi.fn(), permissionModes: [], permissionMode: 'ask', onPermissionMode: vi.fn(), ...over,
+    };
+    render(<ConversationComposer {...props} />);
+    return props;
+  };
+
+  it('Enter sends; Shift+Enter adds a line', async () => {
+    const p = setup();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'one{Shift>}{Enter}{/Shift}two{Enter}');
+    expect(p.onSend).toHaveBeenCalledWith('one\ntwo', undefined);
+  });
+
+  it('while working: Enter queues, Cmd/Ctrl+Enter sends now, Escape and Stop interrupt', async () => {
+    const p = setup({ turnRunning: true });
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await userEvent.type(box, 'later{Enter}');
+    expect(p.onSend).toHaveBeenLastCalledWith('later', 'next');
+    await userEvent.type(box, 'now{Control>}{Enter}{/Control}');
+    expect(p.onSend).toHaveBeenLastCalledWith('now', 'now');
+    await userEvent.type(box, '{Escape}');
+    expect(p.onInterrupt).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: /Stop/ }));
+    expect(p.onInterrupt).toHaveBeenCalledTimes(2);
+  });
+
+  it('Escape does nothing when idle; shows why the agent stopped', async () => {
+    const p = setup({ stopped: 'exit 1: out of memory' });
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), '{Escape}');
+    expect(p.onInterrupt).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Claude stopped');
+    expect(screen.getByRole('alert')).toHaveTextContent('Send a message to start it again');
+  });
+
+  it('picks a model ("Default" is null) and a permission mode', async () => {
+    const p = setup();
+    await userEvent.click(screen.getByRole('button', { name: /Model/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Opus' }));
+    expect(p.onModel).toHaveBeenCalledWith('opus');
+    await userEvent.click(screen.getByRole('button', { name: /Permission mode/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Bypass (dangerous)' }));
+    expect(p.onPermissionMode).toHaveBeenCalledWith('bypass');
+  });
+});
+
+describe('ConversationView', () => {
+  const caps = { conversation: true, permissionModes: ['ask', 'accept_edits', 'plan', 'bypass'], models: [], commands: [] };
+  const server = () => FakeSocket.all[FakeSocket.all.length - 1];
+
+  it('replays, then follows live events and sends messages', async () => {
+    const calls = stubApi({
+      'GET /api/agents/claude/capabilities': caps,
+      'POST /api/sessions/s1/messages': { id: 'q', text: 'hello', delivery: 'next' },
+    });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    expect(server().url).toMatch(/\/api\/sessions\/s1\/events\?after=0$/);
+    act(() => {
+      server().open();
+      server().send({ type: 'event', event: ev(1, { kind: 'user_message', text: 'first', images: [], source: 'pdt' }) });
+      server().send({ type: 'state', state: idle });
+      server().send({ type: 'ready' });
+    });
+    expect(screen.getByText('first')).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hello{Enter}');
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/messages')?.body).toEqual({ text: 'hello' }));
+    act(() => {
+      server().send({ type: 'state', state: { ...idle, turnRunning: true, pending: [{ id: 'q', text: 'hello', delivery: 'next' }] } });
+    });
+    expect(screen.getByText('Queued')).toBeInTheDocument();
+    act(() => {
+      server().send({ type: 'delta', itemId: 'm:1', field: 'markdown', text: 'Hi the' });
+      server().send({ type: 'delta', itemId: 'm:1', field: 'markdown', text: 're' });
+    });
+    expect(screen.getByText('Hi there')).toBeInTheDocument();
+    // Reconnecting asks for what came after the last seq.
+    act(() => server().close());
+    await waitFor(() => expect(FakeSocket.all).toHaveLength(2), { timeout: 2000 });
+    expect(server().url).toMatch(/after=1$/);
+  });
+
+  it('answers requests, and says so when another device got there first', async () => {
+    const calls = stubApi({
+      'GET /api/agents/claude/capabilities': caps,
+      'POST /api/sessions/s1/requests/r1': new Reply(409, { code: 'request_closed', message: 'closed' }),
+    });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    act(() => {
+      server().open();
+      server().send({ type: 'event', event: ev(1, { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Bash', title: 'ls', input: {}, canAlways: false, state: 'open' }) });
+      server().send({ type: 'state', state: idle });
+      server().send({ type: 'ready' });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/requests/r1')?.body).toEqual({ answer: { type: 'approve', always: false } }));
+    expect(await screen.findByText('That request was already answered or has expired.')).toBeInTheDocument();
+  });
+
+  it('interrupts and changes the permission mode', async () => {
+    const calls = stubApi({
+      'GET /api/agents/claude/capabilities': caps,
+      'POST /api/sessions/s1/interrupt': undefined,
+      'PATCH /api/sessions/s1': { ...session, permissionMode: 'plan' },
+    });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    act(() => {
+      server().open();
+      server().send({ type: 'state', state: { ...idle, turnRunning: true } });
+      server().send({ type: 'ready' });
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Stop/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions/s1/interrupt')).toBe(true));
+    await userEvent.click(screen.getByRole('button', { name: /Permission mode/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Plan' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ permissionMode: 'plan' }));
+  });
+});
+
+describe('SessionView for a conversation', () => {
+  it('shows the conversation instead of a terminal, without Compose or Restart', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    stubApi({
+      'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+      'GET /api/projects': [],
+      'POST /api/sessions/s1/view': undefined,
+    });
+    renderWithQuery(<SessionView session={{ ...session, status: 'finished' }} onRemoved={() => {}} />);
+    expect(screen.getByRole('log', { name: 'Conversation' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Compose' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Restart' })).not.toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
+  });
+});

@@ -190,6 +190,7 @@ pub enum Answer {
     /// Refuse, optionally telling the agent why.
     Deny {
         #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         message: Option<String>,
     },
@@ -199,6 +200,7 @@ pub enum Answer {
     Plan {
         approve: bool,
         #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         feedback: Option<String>,
     },
@@ -231,13 +233,17 @@ pub enum AgentEvent {
         #[ts(type = "unknown")]
         input: Value,
         status: ToolStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         output: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         exit_code: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         diff: Option<String>,
         /// The sub-agent call this one ran under.
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         parent_id: Option<String>,
     },
@@ -246,16 +252,19 @@ pub enum AgentEvent {
         request_kind: RequestKind,
         tool: String,
         title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         description: Option<String>,
         #[ts(type = "unknown")]
         input: Value,
         /// The tool call this request is for.
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         tool_call_id: Option<String>,
         /// Whether "Always allow in this session" is offered.
         can_always: bool,
         state: RequestState,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         answer: Option<Answer>,
     },
@@ -264,22 +273,28 @@ pub enum AgentEvent {
     },
     Turn {
         phase: TurnPhase,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         status: Option<TurnStatus>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional, type = "number")]
         duration_ms: Option<i64>,
         /// Why an interrupted or failed turn ended.
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         reason: Option<String>,
     },
     Usage {
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional, type = "number")]
         context_used: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional, type = "number")]
         context_window: Option<i64>,
         #[serde(default)]
         rate_limits: Vec<RateLimitWindow>,
         /// The agent's running list-price cost estimate, in USD.
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         cost_usd: Option<f64>,
     },
@@ -287,8 +302,10 @@ pub enum AgentEvent {
         diff: String,
     },
     Compaction {
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional, type = "number")]
         before: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional, type = "number")]
         after: Option<i64>,
     },
@@ -296,6 +313,7 @@ pub enum AgentEvent {
         level: NoticeLevel,
         text: String,
         /// When the condition ends (ms), e.g. a rate limit's reset.
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional, type = "number")]
         until: Option<i64>,
     },
@@ -342,8 +360,10 @@ pub struct ConversationEvent {
     pub pos: i64,
     #[ts(type = "number")]
     pub ts: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub item_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub turn_id: Option<String>,
     pub event: AgentEvent,
@@ -386,18 +406,22 @@ pub struct PendingMessage {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ConversationState {
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub activity: Option<Activity>,
     /// The agent process is running (false: parked, it starts again on the next message).
     pub live: bool,
     pub turn_running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub model: Option<String>,
     pub permission_mode: PermissionMode,
     pub pending: Vec<PendingMessage>,
     /// The agent stopped unexpectedly: why, with the end of its error output.
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub stopped: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub agent_version: Option<String>,
 }
@@ -432,6 +456,7 @@ pub enum ConversationServerMessage {
 pub struct SendMessage {
     pub text: String,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery: Option<Delivery>,
 }
@@ -452,6 +477,7 @@ pub struct AgentModel {
     /// What to pass to the agent (`opus`, `default`).
     pub value: String,
     pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub description: Option<String>,
 }
@@ -464,6 +490,7 @@ pub struct AgentCommandInfo {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub argument_hint: Option<String>,
 }
@@ -478,6 +505,7 @@ pub struct AgentCapabilities {
     pub permission_modes: Vec<PermissionMode>,
     pub models: Vec<AgentModel>,
     pub commands: Vec<AgentCommandInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub version: Option<String>,
 }

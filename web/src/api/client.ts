@@ -48,6 +48,21 @@ import type { TicketPatch } from './gen/TicketPatch';
 import type { TicketQuery } from './gen/TicketQuery';
 import type { StartResult } from './gen/StartResult';
 import type { StartTicket } from './gen/StartTicket';
+import type { AgentCapabilities } from './gen/AgentCapabilities';
+import type { AgentKind } from './gen/AgentKind';
+import type { Answer } from './gen/Answer';
+import type { AnswerRequest } from './gen/AnswerRequest';
+import type { ConversationEvent } from './gen/ConversationEvent';
+import type { PendingMessage } from './gen/PendingMessage';
+import type { PermissionMode } from './gen/PermissionMode';
+import type { SendMessage } from './gen/SendMessage';
+
+/** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
+export interface SessionPatch {
+  title?: string;
+  model?: string | null;
+  permissionMode?: PermissionMode;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -116,6 +131,22 @@ export const api = {
   renameSession: (id: string, title: string) =>
     request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteSession: (id: string) => request<void>(`/api/sessions/${enc(id)}`, { method: 'DELETE' }),
+  updateSession: (id: string, p: SessionPatch) =>
+    request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  /** A conversation's stored events after `after`, oldest first. */
+  listSessionEvents: (id: string, q: { after?: number; limit?: number } = {}) =>
+    request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString(q)}`),
+  /** Sends a message to a conversation (reopening it when parked or ended); it is pending until the agent takes it. */
+  sendMessage: (id: string, m: SendMessage) =>
+    request<PendingMessage>(`/api/sessions/${enc(id)}/messages`, { method: 'POST', body: JSON.stringify(m) }),
+  /** Answers an open request; 409 `request_closed` when it was answered elsewhere or expired. */
+  answerRequest: (id: string, requestId: string, answer: Answer) =>
+    request<void>(`/api/sessions/${enc(id)}/requests/${enc(requestId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ answer } satisfies AnswerRequest),
+    }),
+  interruptSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/interrupt`, { method: 'POST' }),
+  agentCapabilities: (agent: AgentKind) => request<AgentCapabilities>(`/api/agents/${enc(agent)}/capabilities`),
   listWorkspaces: () => request<Workspace[]>('/api/workspaces'),
   createWorkspace: (w: NewWorkspace) => request<Workspace>('/api/workspaces', { method: 'POST', body: JSON.stringify(w) }),
   updateWorkspace: (id: string, p: WorkspacePatch) =>

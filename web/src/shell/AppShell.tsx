@@ -40,7 +40,7 @@ import { InstanceBadge } from './InstanceBadge';
 import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
-const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', codex: 'Codex', shell: 'Shell' };
+const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', shell: 'Shell' };
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
@@ -214,7 +214,7 @@ export function AppShell() {
       // Like the new-tab chooser: right after the current tab.
       const tab = w ? { workspaceId: w.id, position: ws.tab ? ws.tab.position + 1 : w.tabs.length } : undefined;
       void runAction(async () => {
-        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, CHOICE[kind], false), ...(tab ? { tab } : {}) });
+        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, CHOICE[kind]), ...(tab ? { tab } : {}) });
         void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
         await ws.refresh();
         await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);

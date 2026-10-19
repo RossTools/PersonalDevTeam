@@ -200,7 +200,7 @@ fn demo_seed_fills_an_empty_dev_database_once() {
     assert_eq!(names, ["Sample App", "Sample Library"], "{}", diagnose(&mut d, port, &data));
     let app = projects[0]["id"].as_str().unwrap().to_string();
     let (_, sessions) = http(port, "GET", &format!("/api/projects/{app}/sessions"), None);
-    assert_eq!(sessions.as_array().map(Vec::len), Some(4), "{sessions}");
+    assert_eq!(sessions.as_array().map(Vec::len), Some(5), "{sessions}");
     assert!(sessions.as_array().unwrap().iter().all(|s| s["status"] == "finished"), "{sessions}");
     let (_, runs) = http(port, "GET", &format!("/api/projects/{app}/runs"), None);
     assert_eq!(runs.as_array().map(Vec::len), Some(3), "{runs}");

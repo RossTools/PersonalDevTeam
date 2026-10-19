@@ -691,11 +691,12 @@ impl ClaudeMapper {
     }
 }
 
-/// Claude's permission suggestions turned into session-only rules: "Always allow" never writes settings files.
+/// Claude's permission suggestions turned into session-only rules: "Always allow" never writes settings files. For
+/// file edits Claude suggests `setMode acceptEdits`, which switches the session to Accept edits.
 fn session_rules(suggestions: &[Value]) -> Vec<Value> {
     suggestions
         .iter()
-        .filter(|s| matches!(s.get("type").and_then(Value::as_str), Some("addRules" | "addDirectories")))
+        .filter(|s| matches!(s.get("type").and_then(Value::as_str), Some("addRules" | "addDirectories" | "setMode")))
         .map(|s| {
             let mut s = s.clone();
             s["destination"] = json!("session");
