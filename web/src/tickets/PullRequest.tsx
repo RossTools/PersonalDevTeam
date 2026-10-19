@@ -21,9 +21,19 @@ export function failedJobs(ci: CiStatus | null): string[] {
 /** True when the PR left the merge queue because its queue run failed (and has not been re-queued). */
 const queueFailed = (pr: PullRequestStatus) => pr.state === 'open' && !pr.inMergeQueue && pr.queueCi?.state === 'failed';
 
-/** The one thing to know about a PR, most urgent first: merged, conflict, CI failed, left the queue, queued, CI. */
-export function prSummary(pr: PullRequestStatus): { label: string; tone: BadgeTone } {
-  if (pr.state === 'merged') return { label: 'Merged', tone: 'accent' };
+/**
+ * True when the PR counts as merged: GitHub says so, or the attempt ended merged while the last look still saw it open
+ * (git found the merge before GitHub reported it, PDT-59).
+ */
+const isMerged = (pr: PullRequestStatus, attemptMerged: boolean) =>
+  pr.state === 'merged' || (attemptMerged && pr.state === 'open');
+
+/**
+ * The one thing to know about a PR, most urgent first: merged, conflict, CI failed, left the queue, queued, CI.
+ * `attemptMerged` is the attempt's state being `merged`.
+ */
+export function prSummary(pr: PullRequestStatus, attemptMerged = false): { label: string; tone: BadgeTone } {
+  if (isMerged(pr, attemptMerged)) return { label: 'Merged', tone: 'accent' };
   if (pr.state === 'closed') return { label: 'Closed', tone: 'neutral' };
   if (pr.mergeable === 'conflicting') return { label: 'Conflict', tone: 'failed' };
   if (pr.ci?.state === 'failed') return { label: 'CI failed', tone: 'failed' };
@@ -36,8 +46,8 @@ export function prSummary(pr: PullRequestStatus): { label: string; tone: BadgeTo
 }
 
 /** `#12 · CI failed`, for a board card (inside its button, so not a link). */
-export function PrBadge({ pr }: { pr: PullRequestStatus }) {
-  const s = prSummary(pr);
+export function PrBadge({ pr, attemptMerged = false }: { pr: PullRequestStatus; attemptMerged?: boolean }) {
+  const s = prSummary(pr, attemptMerged);
   const jobs = failedJobs(pr.ci);
   const title = `PR #${pr.number}: ${pr.title}${jobs.length ? ` — failed: ${jobs.join(', ')}` : ''}`;
   return (
@@ -48,17 +58,20 @@ export function PrBadge({ pr }: { pr: PullRequestStatus }) {
 }
 
 /** The ticket's PR: a link to it, then its state (CI, conflict, auto-merge, merge queue) and what failed. */
-export function PrDetails({ pr, className }: { pr: PullRequestStatus; className?: string }) {
+export function PrDetails({ pr, attemptMerged = false, className }: {
+  pr: PullRequestStatus; attemptMerged?: boolean; className?: string;
+}) {
   const jobs = failedJobs(pr.ci);
   const queueJobs = failedJobs(pr.queueCi);
-  const open = pr.state === 'open';
+  const merged = isMerged(pr, attemptMerged);
+  const open = pr.state === 'open' && !merged;
   return (
     <div className={cn('flex min-w-0 flex-col gap-1 text-xs', className)} aria-label="Pull request">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <Link href={pr.url} external className="min-w-0 truncate" title={pr.title}>
           <GitPullRequest aria-hidden className="size-3.5 shrink-0" /> PR #{pr.number}
         </Link>
-        {pr.state === 'merged' && <Badge tone="accent">Merged</Badge>}
+        {merged && <Badge tone="accent">Merged</Badge>}
         {pr.state === 'closed' && <Badge>Closed</Badge>}
         {open && pr.draft && <Badge>Draft</Badge>}
         {open && pr.ci && <Badge tone={CI_TONE[pr.ci.state]}>{CI_LABEL[pr.ci.state]}</Badge>}
@@ -68,7 +81,7 @@ export function PrDetails({ pr, className }: { pr: PullRequestStatus; className?
           <Badge tone="waiting">In merge queue{pr.queuePosition ? ` · #${pr.queuePosition}` : ''}</Badge>
         )}
         {open && !pr.inMergeQueue && pr.autoMerge && <Badge>Auto-merge on</Badge>}
-        {queueFailed(pr) && <Badge tone="failed">Left the merge queue</Badge>}
+        {open && queueFailed(pr) && <Badge tone="failed">Left the merge queue</Badge>}
       </div>
       {open && pr.ci && pr.ci.state !== 'passed' && (
         <p className="text-meta text-muted-foreground">

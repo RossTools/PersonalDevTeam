@@ -207,7 +207,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                         <span className="flex" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop} onKeyDown={stop} onClick={stop} onDoubleClick={stop}>
                           <TicketKey ticketKey={t.key} title={`Open ${t.key}`} onClick={() => openTicket({ id: t.id, projectId: t.projectId })} />
                         </span>
-                        {t.pr ? <PrBadge pr={t.pr} /> : t.attemptState === 'merged' ? <Badge tone="accent" className="shrink-0">Merged</Badge> : null}
+                        {t.pr ? <PrBadge pr={t.pr} attemptMerged={t.attemptState === 'merged'} /> : t.attemptState === 'merged' ? <Badge tone="accent" className="shrink-0">Merged</Badge> : null}
                       </span>
                     }
                     onMenu={(at) => openMenu(at, `Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenamingId(w.id), onProjectSettings))}
