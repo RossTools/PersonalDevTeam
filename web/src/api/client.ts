@@ -18,6 +18,8 @@ import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
 import type { NewWorktree } from './gen/NewWorktree';
 import type { Project } from './gen/Project';
+import type { PullBranch } from './gen/PullBranch';
+import type { PullResult } from './gen/PullResult';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
@@ -125,6 +127,8 @@ export const api = {
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
   updateProject: (id: string, p: ProjectPatch) => request<Project>(`/api/projects/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  pullBranch: (id: string, p: PullBranch = {}) =>
+    request<PullResult>(`/api/projects/${enc(id)}/pull`, { method: 'POST', body: JSON.stringify(p) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: 'DELETE' }),
   removeWorktree: (id: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) =>
     request<void>(`/api/worktrees/${enc(id)}?force=${opts.force ? 'true' : 'false'}&deleteBranch=${opts.deleteBranch ? 'true' : 'false'}`, { method: 'DELETE' }),

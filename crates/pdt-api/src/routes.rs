@@ -267,6 +267,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             "/projects/{id}",
             get(crate::projects::get_one).patch(crate::projects::update).delete(crate::projects::remove),
         )
+        .route("/projects/{id}/pull", axum::routing::post(crate::projects::pull))
         .route("/projects/{id}/files", get(crate::files::list))
         .route("/projects/{id}/files/content", get(crate::files::content))
         .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))

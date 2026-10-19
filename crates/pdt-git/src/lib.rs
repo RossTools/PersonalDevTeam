@@ -7,9 +7,11 @@ use std::process::Command;
 mod changes;
 mod manage;
 mod merge;
+mod pull;
 pub use changes::*;
 pub use manage::*;
 pub use merge::*;
+pub use pull::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoInfo {
