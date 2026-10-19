@@ -119,6 +119,8 @@ describe('paletteItems', () => {
     expect(ids(items)).toEqual(expect.arrayContaining(['new:claude', 'new:codex', 'new:shell']));
     byId(items, 'new:codex').run!();
     expect(c.handlers.newSession).toHaveBeenCalledWith('codex', { projectId: 'p1', worktreeId: 'wt1' });
+    byId(items, 'new:devin-terminal').run!();
+    expect(c.handlers.newSession).toHaveBeenCalledWith('devin_terminal', { projectId: 'p1', worktreeId: 'wt1' });
     expect(ids(paletteItems(ctx({ place: null }))).some((i) => i.startsWith('new:'))).toBe(false);
   });
 

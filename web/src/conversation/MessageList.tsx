@@ -18,6 +18,7 @@ import {
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
+import type { AgentKind } from '../api/gen/AgentKind';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
@@ -38,7 +39,7 @@ export interface MessageListProps {
   /** Where a message's attached image is served (by attachment id). */
   imageUrl?: (attachmentId: string) => string;
   /** Which agent: Claude's plans can be approved straight into Accept edits. */
-  agent?: 'claude' | 'codex';
+  agent?: AgentKind;
   /** Offered under the last turn when it was interrupted (a restart, a crash, Stop): picks up where it left off. */
   onContinue?: () => Promise<unknown>;
   /** Shown when there is nothing yet. */
@@ -53,7 +54,7 @@ interface ListContext {
   /** The item id of the last ended turn, when it may be continued. */
   continueTurn: string | null;
   onContinue?: () => Promise<unknown>;
-  agent: 'claude' | 'codex';
+  agent: AgentKind;
   imageUrl?: (attachmentId: string) => string;
 }
 const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude' });

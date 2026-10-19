@@ -19,8 +19,9 @@ import { TicketPicker } from '../tickets/TicketPicker';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
-const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', o: 'Codex (terminal)', s: 'Shell' };
-const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Codex (terminal)', 'Shell'];
+const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', o: 'Codex (terminal)', d: 'Devin (terminal)', s: 'Shell' };
+const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Codex (terminal)', 'Devin (terminal)', 'Shell'];
+const iconOf = (c: Choice) => KIND_ICON[c === 'Shell' ? 'shell' : c.startsWith('Codex') ? 'codex' : c.startsWith('Devin') ? 'devin' : 'claude'];
 const keyOf = (c: Choice) => Object.keys(KEYS).find((k) => KEYS[k] === c)!;
 
 /** Where a new session starts: the user's pick, else the current tab's place, else the project workspace's project. */
@@ -64,8 +65,8 @@ function Frame({ anchor, onClose, children }: { anchor?: RefObject<Element | nul
 }
 
 /**
- * The new-tab chooser: one filterable list to launch a Claude or Codex conversation, either agent's terminal or a
- * shell (c / t / x / o / s while the filter is empty),
+ * The new-tab chooser: one filterable list to launch a Claude or Codex conversation, an agent's terminal (Claude,
+ * Codex or Devin) or a shell (c / t / x / o / d / s while the filter is empty),
  * start a configured run or test, run another branch, or bring an existing session or run here. With `anchor` (the
  * tab strip's "+") it is a popover there, a bottom sheet on phones; without one, a dialog.
  */
@@ -104,7 +105,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   const items: CommandItem[] = [
     ...(place
       ? AGENTS.map((c) => {
-          const Icon = KIND_ICON[c === 'Shell' ? 'shell' : c.startsWith('Codex') ? 'codex' : 'claude'];
+          const Icon = iconOf(c);
           return { id: `new:${c}`, label: c, group: 'Start here', shortcut: keyOf(c), icon: <Icon aria-hidden />, disabled: create.isPending };
         })
       : []),
@@ -145,7 +146,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     }
   };
 
-  // c / t / x / o / s launch Claude, Claude (terminal), Codex, Codex (terminal) or a shell while focus is in the chooser, outside any text field, and the filter is
+  // c / t / x / o / d / s launch Claude, Claude (terminal), Codex, Codex (terminal), Devin (terminal) or a shell while focus is in the chooser, outside any text field, and the filter is
   // empty; any other printable key moves to the filter and types there. Overlays own their element, so listen on
   // window and check where the key came from.
   const marker = useRef<HTMLDivElement>(null);
@@ -204,7 +205,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
         ) : (
           <CommandList
             label="New tab choices"
-            placeholder="Filter, or press c, t, x, o or s…"
+            placeholder="Filter, or press c, t, x, o, d or s…"
             items={items}
             onAction={onAction}
             query={query}

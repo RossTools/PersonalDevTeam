@@ -34,14 +34,21 @@ pub fn detect_platform() -> Platform {
         unix_shell,
         claude_program: "claude".into(),
         codex_program: "codex".into(),
+        devin_program: "devin".into(),
         login_path,
         codex_home: codex_home(),
         claude_config_dir: claude_config_dir(),
+        devin_config_file: crate::hooks::devin_user_config_file(
+            cfg!(windows),
+            std::env::var_os("APPDATA").filter(|v| !v.is_empty()).map(PathBuf::from),
+            std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from),
+            std::env::home_dir(),
+        ),
     }
 }
 
-/// Where Claude and Codex install on macOS: Claude's installer (~/.local/bin; ~/.claude/local before it), Homebrew
-/// and npm under Homebrew's Node.
+/// Where the agents install on macOS: Claude's and Devin's installers (~/.local/bin; ~/.claude/local for older
+/// Claude installs), Homebrew and npm under Homebrew's Node.
 fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = home.map(|h| vec![h.join(".local/bin"), h.join(".claude/local")]).unwrap_or_default();
     dirs.extend([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]);
@@ -503,6 +510,7 @@ mod tests {
     fn platform_defaults_to_plain_agent_names() {
         let p = detect_platform();
         assert_eq!((p.claude_program.as_str(), p.codex_program.as_str()), ("claude", "codex"));
+        assert_eq!(p.devin_program, "devin");
         assert_eq!(p.windows, cfg!(windows));
     }
 }

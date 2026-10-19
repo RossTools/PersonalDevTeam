@@ -21,7 +21,8 @@ const AGENT_KEY = 'pdt.tickets.startAgent';
 
 function loadAgent(): AgentKind {
   try {
-    return localStorage.getItem(AGENT_KEY) === 'codex' ? 'codex' : 'claude';
+    const saved = localStorage.getItem(AGENT_KEY);
+    return saved === 'codex' || saved === 'devin' ? saved : 'claude';
   } catch {
     return 'claude';
   }
@@ -222,7 +223,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           )}
           <Field label="Agent">
             <SegmentedControl
-              options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }]}
+              options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'devin', label: 'Devin' }]}
               value={agent}
               onChange={setAgent}
             />

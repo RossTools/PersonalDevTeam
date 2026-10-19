@@ -3,4 +3,4 @@
 /**
  * What `pdtd hook` posts to `/api/sessions/{id}/activity`.
  */
-export type HookReport = { "source": "claude", event: string, notificationType?: string, } | { "source": "codex", event: string, };
+export type HookReport = { "source": "claude", event: string, notificationType?: string, } | { "source": "codex", event: string, } | { "source": "devin", event: string, sessionId?: string, };

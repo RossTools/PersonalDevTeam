@@ -1,9 +1,9 @@
 import type { ComponentType, SVGProps } from 'react';
-import { SquareTerminal } from 'lucide-react';
+import { Bot, SquareTerminal } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import type { Session } from '../api/gen/Session';
 
-export type SessionKindName = 'claude' | 'codex' | 'shell';
+export type SessionKindName = 'claude' | 'codex' | 'devin' | 'shell';
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -31,16 +31,19 @@ export function CodexLogo(props: IconProps) {
   );
 }
 
-/** One icon per thing a session runs (tabs, agent rows, the palette, the new-tab chooser). */
-export const KIND_ICON: Record<SessionKindName, ComponentType<IconProps>> = { claude: ClaudeLogo, codex: CodexLogo, shell: SquareTerminal };
-export const KIND_LABEL: Record<SessionKindName, string> = { claude: 'Claude', codex: 'Codex', shell: 'Shell' };
+/**
+ * One icon per thing a session runs (tabs, agent rows, the palette, the new-tab chooser). Devin has no published
+ * icon set entry, so it gets a generic one.
+ */
+export const KIND_ICON: Record<SessionKindName, ComponentType<IconProps>> = { claude: ClaudeLogo, codex: CodexLogo, devin: Bot, shell: SquareTerminal };
+export const KIND_LABEL: Record<SessionKindName, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin', shell: 'Shell' };
 
 type KindOf = Pick<Session, 'kind' | 'agent'>;
 
 /** What a session runs. Session titles don't name it (PDT-20); this icon and label do. */
 export function sessionKindName(s: KindOf): SessionKindName {
   if (s.kind === 'shell') return 'shell';
-  return s.agent === 'codex' ? 'codex' : 'claude';
+  return s.agent === 'codex' || s.agent === 'devin' ? s.agent : 'claude';
 }
 
 export const sessionKindLabel = (s: KindOf) => KIND_LABEL[sessionKindName(s)];

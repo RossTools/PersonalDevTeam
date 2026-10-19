@@ -1,5 +1,6 @@
 //! Per-session agent hook configuration (remote-host spec §5.1, decisions 11–12). The user's own settings are never
-//! touched: Claude gets `--settings <file>`, Codex gets `-c notify=[…]`.
+//! touched: Claude gets `--settings <file>`, Codex gets `-c notify=[…]`, Devin gets `--config <file>` (a copy of the
+//! user's Devin config with PDT's hook added, since `--config` replaces the user's file).
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -74,6 +75,153 @@ pub fn user_codex_notify(codex_home: &Path, pdtd: &Path) -> Option<Vec<String>> 
     (!items.is_empty() && !ours).then_some(items)
 }
 
+pub const DEVIN_CONFIG_FILE: &str = "devin-config.json";
+
+/// The user's own Devin config file: `%APPDATA%\devin\config.json` on Windows, else
+/// `$XDG_CONFIG_HOME/devin/config.json` (default `~/.config`).
+pub fn devin_user_config_file(
+    windows: bool,
+    appdata: Option<PathBuf>,
+    xdg_config_home: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let base = if windows {
+        appdata?
+    } else {
+        xdg_config_home.filter(|p| p.is_absolute()).or_else(|| home.map(|h| h.join(".config")))?
+    };
+    Some(base.join("devin").join("config.json"))
+}
+
+/// One word of a hook command: Devin runs hook commands through a shell and ignores an `args` list (verified with
+/// Devin 3000.11), so PDT quotes the program itself. POSIX single quotes; on Windows double quotes.
+fn shell_word(s: &str, windows: bool) -> String {
+    if windows { format!("\"{s}\"") } else { format!("'{}'", s.replace('\'', r"'\''")) }
+}
+
+/// The hook command PDT gives a Devin session: `<pdtd> hook devin`, plus `--instructions <file>` (printed back to
+/// Devin as `SessionStart` context) when there are instructions.
+pub fn devin_hook_command(pdtd: &Path, instructions: Option<&Path>, windows: bool) -> String {
+    let mut cmd = format!("{} hook devin", shell_word(&pdtd.to_string_lossy(), windows));
+    if let Some(file) = instructions {
+        cmd.push_str(" --instructions ");
+        cmd.push_str(&shell_word(&file.to_string_lossy(), windows));
+    }
+    cmd
+}
+
+/// The config a Devin session gets: the user's own config, with PDT's `SessionStart` hook added after any of the
+/// user's own `SessionStart` hooks. Devin reports activity itself (OSC 7501), so that one hook is all PDT needs: it
+/// names the conversation (for resume) and hands Devin PDT's instructions.
+pub fn devin_config(user: Option<Value>, hook_command: &str) -> Value {
+    let mut config = match user {
+        Some(Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    let ours = json!({ "matcher": "", "hooks": [{ "type": "command", "command": hook_command, "timeout": 10 }] });
+    let hooks = config.entry("hooks").or_insert_with(|| json!({}));
+    if !hooks.is_object() {
+        *hooks = json!({});
+    }
+    let start = hooks.as_object_mut().expect("object").entry("SessionStart").or_insert_with(|| json!([]));
+    match start {
+        Value::Array(list) => list.push(ours),
+        other => *other = json!([ours]),
+    }
+    Value::Object(config)
+}
+
+/// Writes `<dir>/devin-config.json` from the user's config file (`user_file`; a missing file is an empty config) and
+/// returns its path. Ok(None) when the user's file cannot be read or parsed: the session then runs on the user's
+/// own config without PDT's hook, rather than on a copy that lost their settings.
+pub fn write_devin_config(
+    dir: &Path,
+    user_file: Option<&Path>,
+    hook_command: &str,
+) -> std::io::Result<Option<PathBuf>> {
+    let user = match user_file.map(std::fs::read_to_string) {
+        None => None,
+        Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Some(Err(_)) => return Ok(None),
+        Some(Ok(text)) => match parse_jsonc(&text) {
+            Some(v) if v.is_object() => Some(v),
+            _ => return Ok(None),
+        },
+    };
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(DEVIN_CONFIG_FILE);
+    std::fs::write(&path, serde_json::to_vec_pretty(&devin_config(user, hook_command)).expect("json"))?;
+    Ok(Some(path))
+}
+
+/// JSON with comments (`//`, `/* */`) and trailing commas, as Devin's config files allow.
+pub fn parse_jsonc(text: &str) -> Option<Value> {
+    serde_json::from_str(&strip_jsonc(text)).ok()
+}
+
+fn strip_jsonc(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '"' => {
+                out.push(c);
+                i += 1;
+                while i < chars.len() {
+                    out.push(chars[i]);
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        out.push(chars[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    if chars[i - 1] == '"' {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                    i += 1;
+                }
+                i += 2;
+            }
+            ',' => {
+                // A trailing comma: the next significant character closes the object or array.
+                let mut j = i + 1;
+                let next = loop {
+                    match chars.get(j) {
+                        Some(w) if w.is_whitespace() => j += 1,
+                        Some('/') if matches!(chars.get(j + 1), Some('/') | Some('*')) => {
+                            // Look past a comment by stripping the rest and checking it.
+                            let rest: String = chars[j..].iter().collect();
+                            break strip_jsonc(&rest).trim_start().chars().next();
+                        }
+                        other => break other.copied(),
+                    }
+                };
+                if !matches!(next, Some('}') | Some(']')) {
+                    out.push(c);
+                }
+                i += 1;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +287,82 @@ mod tests {
         assert_eq!(user_codex_notify(dir.path(), pdtd), None);
         std::fs::write(dir.path().join("config.toml"), "notify = []\n").unwrap();
         assert_eq!(user_codex_notify(dir.path(), pdtd), None);
+    }
+    #[test]
+    fn devin_config_keeps_the_users_settings_and_hooks() {
+        let user = parse_jsonc(
+            r#"{
+              // the user's own
+              "version": 1, "devin": { "org_id": "org-1" },
+              "theme_mode": "dark", /* block */ "url": "http://x//y",
+              "hooks": { "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "mine" }] }],
+                         "Stop": [], },
+            }"#,
+        )
+        .expect("JSONC parses");
+        let cmd = devin_hook_command(Path::new("/A p/pdtd"), Some(Path::new("/d/it's.md")), false);
+        assert_eq!(cmd, r#"'/A p/pdtd' hook devin --instructions '/d/it'\''s.md'"#);
+        let v = devin_config(Some(user), &cmd);
+        assert_eq!(v["devin"]["org_id"], "org-1");
+        assert_eq!(v["theme_mode"], "dark");
+        assert_eq!(v["url"], "http://x//y", "comment markers inside strings are kept");
+        assert_eq!(v["hooks"]["Stop"], json!([]));
+        let start = v["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(start.len(), 2, "the user's hook stays first");
+        assert_eq!(start[0]["hooks"][0]["command"], "mine");
+        assert_eq!(start[1]["hooks"][0]["command"], cmd);
+        assert_eq!(start[1]["hooks"][0]["type"], "command");
+        let fresh = devin_config(None, "x");
+        assert_eq!(fresh["hooks"]["SessionStart"][0]["hooks"][0]["command"], "x");
+        assert_eq!(
+            devin_hook_command(Path::new(r"C:\P D T\pdtd.exe"), None, true),
+            r#""C:\P D T\pdtd.exe" hook devin"#
+        );
+    }
+
+    #[test]
+    fn devin_config_file_is_written_only_from_a_readable_user_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("config.json");
+        let out = dir.path().join("s1");
+        // No user config yet: just PDT's hook.
+        let p = write_devin_config(&out, Some(&user), "h").unwrap().unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"], "h");
+        std::fs::write(&user, "{ \"theme_mode\": \"light\", }").unwrap();
+        let v: Value = serde_json::from_slice(
+            &std::fs::read(write_devin_config(&out, Some(&user), "h").unwrap().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["theme_mode"], "light");
+        // A config PDT cannot read is never replaced by a copy that lost it.
+        std::fs::write(&user, "{ not json").unwrap();
+        assert_eq!(write_devin_config(&out, Some(&user), "h").unwrap(), None);
+        std::fs::write(&user, "[1]").unwrap();
+        assert_eq!(write_devin_config(&out, Some(&user), "h").unwrap(), None);
+    }
+
+    #[test]
+    fn devin_user_config_location() {
+        let home = Some(PathBuf::from("/u"));
+        assert_eq!(
+            devin_user_config_file(false, None, None, home.clone()),
+            Some(PathBuf::from("/u/.config/devin/config.json"))
+        );
+        assert_eq!(
+            devin_user_config_file(false, None, Some(PathBuf::from("/x")), home.clone()),
+            Some(PathBuf::from("/x/devin/config.json"))
+        );
+        assert_eq!(
+            devin_user_config_file(false, None, Some(PathBuf::from("rel")), home.clone()),
+            Some(PathBuf::from("/u/.config/devin/config.json")),
+            "a relative XDG_CONFIG_HOME is ignored"
+        );
+        let appdata = PathBuf::from(r"C:\Users\me\AppData\Roaming");
+        assert_eq!(
+            devin_user_config_file(true, Some(appdata.clone()), None, home),
+            Some(appdata.join("devin").join("config.json"))
+        );
+        assert_eq!(devin_user_config_file(true, None, None, None), None);
     }
 }

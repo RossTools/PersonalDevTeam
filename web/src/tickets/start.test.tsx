@@ -60,6 +60,16 @@ describe('Start dialog', () => {
     expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked();
   });
 
+  it('can start Devin, and remembers it', async () => {
+    localStorage.setItem('pdt.tickets.startAgent', 'devin');
+    const calls = stub(ready);
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    expect(within(dialog).getByRole('radio', { name: 'Devin' })).toBeChecked();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'devin' }));
+  });
+
   it('lists open blockers and starts anyway with mode force', async () => {
     const blocked = {
       ...ready,

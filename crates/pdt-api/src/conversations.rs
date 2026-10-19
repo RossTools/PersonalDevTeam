@@ -169,6 +169,7 @@ async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn 
     match agent {
         Some(AgentKind::Claude) => Ok(Box::new(ClaudeAdapter)),
         Some(AgentKind::Codex) => Ok(Box::new(CodexAdapter { server: codex_server(st).await? })),
+        Some(AgentKind::Devin) => Err(conflict("conversation_unsupported", "Devin runs only as a terminal")),
         None => Err(conflict("not_conversation", "only agent sessions are conversations")),
     }
 }
@@ -1162,6 +1163,7 @@ pub(crate) async fn capabilities(
     let known = known.or_else(|| match agent {
         AgentKind::Codex => st.conversations.codex.get().and_then(|s| s.capabilities()),
         AgentKind::Claude => None,
+        AgentKind::Devin => Some(AgentCapabilities { conversation: false, ..Default::default() }),
     });
     Ok(Json(known.unwrap_or_else(|| AgentCapabilities {
         conversation: true,

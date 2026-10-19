@@ -41,6 +41,7 @@ async fn api_keys_in_pdtd_s_environment_count_only_where_sessions_get_them() {
     let mut st = AppState::new(store, tmp.path().join("data"));
     st.platform.claude_program = fake_needing(tmp.path(), "claude", "ANTHROPIC_API_KEY");
     st.platform.codex_program = fake_needing(tmp.path(), "codex", "OPENAI_API_KEY");
+    st.platform.devin_program = tmp.path().join("no-such-devin").to_string_lossy().into();
     st.tailscale = Arc::new(RecordingTailscale::new(Err(pdt_tailscale::TsError::NotInstalled)));
 
     let settings = st.store.get_host_settings().await.unwrap();

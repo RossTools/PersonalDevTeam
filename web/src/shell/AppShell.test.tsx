@@ -30,7 +30,7 @@ const hostRoutes = {
     current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null,
     error: null, token: { state: 'valid', expiresAt: null }, lastResult: null,
   },
-  'GET /api/host/checks': { claude: hostTool, codex: hostTool, git: hostTool, tailscale: hostTool, checkedAt: 1 },
+  'GET /api/host/checks': { claude: hostTool, codex: hostTool, devin: hostTool, git: hostTool, tailscale: hostTool, checkedAt: 1 },
   'GET /api/host/whoami': { caller: 'local', login: null },
 };
 
