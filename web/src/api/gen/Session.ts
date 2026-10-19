@@ -22,8 +22,9 @@ bypassPermissions: boolean, title: string,
  */
 cwd: string, status: SessionStatus, exitCode: number | null, createdAt: number, endedAt: number | null, 
 /**
- * The agent's own conversation id. Codex and Devin need it (Claude's conversation id is `id`): Codex's is found
- * in its rollout files once a turn has been taken, Devin's in its session list. None until then.
+ * The agent's own conversation id. Codex: found in its rollout files once a turn has been taken, None until
+ * then. Claude: the conversation `/clear` (or the TUI's `/resume`) moved to; None while it is still `id`
+ * (see `claude_conversation_id`). Devin: the conversation its `SessionStart` hook last named.
  */
 externalSessionId: string | null, 
 /**

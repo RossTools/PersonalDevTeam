@@ -299,6 +299,57 @@ async fn a_crash_is_reported_and_the_next_message_resumes() {
 }
 
 #[tokio::test]
+async fn after_clear_the_new_conversation_is_resumed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut env = setup(tmp.path()).await;
+    env.state.conversations.idle_park = Duration::ZERO;
+    env.app = router(env.state.clone(), None);
+    let id = new_conversation(&env, json!({"initialPrompt": "first"})).await["id"].as_str().unwrap().to_string();
+    wait_turns(&env, &id, 1).await;
+    send(&env, &id, "/clear").await;
+    let all = wait_for(&env, &id, "the divider", |e| e["kind"] == "conversation_reset").await;
+    assert!(!all.iter().any(|e| e["event"]["kind"] == "unknown"), "{all:#?}");
+    let reset = all.iter().find(|e| e["event"]["kind"] == "conversation_reset").unwrap();
+    assert_eq!(reset["event"]["trigger"], "clear");
+    let mut conversation = Value::Null;
+    for _ in 0..300 {
+        conversation = session(&env, &id).await["externalSessionId"].clone();
+        if conversation.is_string() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let conversation = conversation.as_str().expect("the new conversation id is stored").to_string();
+    assert_ne!(conversation, id);
+
+    // Messages in the same process carry the new id.
+    send(&env, &id, "who").await;
+    let all = wait_for(&env, &id, "who", |e| {
+        e["kind"] == "agent_message" && e["markdown"].as_str().is_some_and(|m| m.contains("msg_session="))
+    })
+    .await;
+    let who = agent_text(&all).into_iter().rfind(|t| t.contains("msg_session=")).unwrap();
+    assert!(who.contains(&format!("msg_session={conversation}")), "{who}");
+
+    // Parked, it reopens on the new conversation (Claude saved it under the new id).
+    park_once_idle(&env.state).await;
+    let proj = env.claude_dir.join("projects").join("x");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join(format!("{id}.jsonl")), "{}\n").unwrap();
+    std::fs::write(proj.join(format!("{conversation}.jsonl")), "{}\n").unwrap();
+    let before = agent_text(&events(&env, &id).await).len();
+    send(&env, &id, "who").await;
+    let all = wait_for(&env, &id, "who after reopening", |e| {
+        e["kind"] == "agent_message" && e["markdown"].as_str().is_some_and(|m| m.contains("resumed=true"))
+    })
+    .await;
+    let said = agent_text(&all)[before..].join(" ");
+    assert!(said.contains(&format!("session {conversation} resumed=true")), "{said}");
+    assert!(said.contains(&format!("msg_session={conversation}")), "{said}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
 async fn idle_conversations_park_and_settings_apply_on_resume() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = setup(tmp.path()).await;
@@ -516,6 +567,50 @@ async fn claude_hands_over_to_its_terminal_and_back_with_the_tui_turns() {
     })
     .await;
     assert!(agent_text(&all).last().unwrap().contains("resumed=true"), "{:?}", agent_text(&all));
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn clear_in_the_terminal_moves_the_session_to_the_new_conversation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let s = new_conversation(&env, json!({"mode": "terminal"})).await;
+    let id = s["id"].as_str().unwrap().to_string();
+    write_transcript(&env, &id, &[prompt("p-1", "before the clear"), said("a-1", "msg-1", "old answer")]);
+    let new_id = "6dc3d2d6-0b1e-4c1a-9f3e-2a7b8c9d0e1f";
+    let hook =
+        |sid: &str| json!({"source": "claude", "event": "SessionStart", "sessionId": sid, "startSource": "clear"});
+    for body in [hook(&id), hook("not-a-uuid")] {
+        let (st, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/activity"), Some(body)).await;
+        assert_eq!(st.as_u16(), 204, "{v}");
+    }
+    assert_eq!(session(&env, &id).await["externalSessionId"], Value::Null, "same or bad id: nothing moves");
+    // `/clear` typed in the TUI: its SessionStart hook names the new conversation (twice: only one divider).
+    for _ in 0..2 {
+        let (st, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/activity"), Some(hook(new_id))).await;
+        assert_eq!(st.as_u16(), 204, "{v}");
+    }
+    assert_eq!(session(&env, &id).await["externalSessionId"], new_id);
+    write_transcript(&env, new_id, &[prompt("n-1", "after the clear"), said("n-2", "msg-2", "new answer")]);
+
+    let (s, v) = switch(&env, &id, json!({"mode": "conversation"})).await;
+    assert_eq!(s, 200, "{v}");
+    let all = events(&env, &id).await;
+    let kinds: Vec<&str> = all
+        .iter()
+        .map(|e| e["event"]["kind"].as_str().unwrap())
+        .filter(|k| matches!(*k, "user_message" | "conversation_reset"))
+        .collect();
+    assert_eq!(kinds, ["user_message", "conversation_reset", "user_message"], "{all:#?}");
+    assert_eq!(agent_text(&all), ["old answer", "new answer"]);
+
+    send(&env, &id, "who").await;
+    let all = wait_for(&env, &id, "who's answer", |e| {
+        e["kind"] == "agent_message" && e["markdown"].as_str().is_some_and(|m| m.starts_with("session"))
+    })
+    .await;
+    let who = agent_text(&all).pop().unwrap();
+    assert!(who.contains(&format!("session {new_id} resumed=true")), "{who}");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 

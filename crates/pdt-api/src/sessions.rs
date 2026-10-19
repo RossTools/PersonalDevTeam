@@ -212,13 +212,14 @@ async fn plan_resume(st: &AppState, s: &Session) -> Resume {
         // one it never saved just starts a new one (whose id the hook then reports), so there is nothing to check.
         return s.external_session_id.clone().map(Resume::Devin).unwrap_or(Resume::Fresh);
     }
-    // Claude: resuming a conversation that was never saved fails, so start a fresh one under the same id. Only a few
+    // Claude: resuming a conversation that was never saved fails, so start a fresh one under the same id (a new
+    // conversation's own after `/clear`: the session id's transcript is taken). Only a few
     // directory entries are read, so this stays on the async thread. Unknown config dir: assume it was saved.
     let saved = st
         .platform
         .claude_config_dir
         .as_deref()
-        .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &s.id));
+        .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, s.claude_conversation_id()));
     if saved { Resume::Claude } else { Resume::Fresh }
 }
 
@@ -320,7 +321,8 @@ fn start_pty(
     prompt: Option<&InitialPrompt>,
     instructions: Option<&pdt_agents::adapter::SessionInstructions>,
 ) -> Result<(), PtyError> {
-    let l = launch(s.kind, s.agent, &st.platform, resume, &s.id, s.bypass_permissions);
+    // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
+    let l = launch(s.kind, s.agent, &st.platform, resume, s.claude_conversation_id(), s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args, instructions.map(|i| i.file.as_path()))?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;

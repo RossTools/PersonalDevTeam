@@ -58,9 +58,9 @@ pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenSpec {
     pub session_id: String,
-    /// The agent's own conversation id (Codex: the thread id), when it has one.
+    /// The agent's own conversation id (Codex: the thread id; Claude: the one `/clear` moved to), when it has one.
     pub external_id: Option<String>,
-    /// Continue the saved conversation (Claude: `--resume <session id>`), else start it (`--session-id`).
+    /// Continue the saved conversation (Claude: `--resume <conversation id>`), else start it (`--session-id`).
     pub resume: bool,
     pub cwd: PathBuf,
     /// The agent program (name or path), resolved on `search_path`.
@@ -72,6 +72,13 @@ pub struct OpenSpec {
     pub env_remove: Vec<String>,
     /// PDT's instructions for the session (`crate::instructions`), when it has any.
     pub instructions: Option<SessionInstructions>,
+}
+
+impl OpenSpec {
+    /// Claude's conversation id: the session id until `/clear` gives the conversation a new one.
+    pub fn claude_conversation_id(&self) -> &str {
+        self.external_id.as_deref().unwrap_or(&self.session_id)
+    }
 }
 
 /// The instructions text, and the file it was written to (Claude reads the file; Codex takes the text).

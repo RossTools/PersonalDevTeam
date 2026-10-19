@@ -48,7 +48,7 @@ pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     .map(String::from)
     .collect();
     a.push(if spec.resume { "--resume" } else { "--session-id" }.into());
-    a.push(spec.session_id.clone());
+    a.push(spec.claude_conversation_id().to_string());
     a.push("--permission-mode".into());
     a.push(spec.permission_mode.claude().into());
     if let Some(m) = &spec.model {
@@ -68,7 +68,7 @@ pub fn claude_draft_args(spec: &OpenSpec, schema: &Value) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "-p".into(),
         "--resume".into(),
-        spec.session_id.clone(),
+        spec.claude_conversation_id().to_string(),
         "--fork-session".into(),
         "--no-session-persistence".into(),
         "--tools".into(),
@@ -142,7 +142,8 @@ pub fn capabilities_from_initialize(v: &Value, version: Option<String>) -> Agent
 pub struct ClaudeAdapter;
 
 struct Shared {
-    session_id: String,
+    /// Claude's current conversation id: the one it was launched on until `/clear` moves it (reported by `init`).
+    conversation_id: Mutex<String>,
     mapper: Mutex<ClaudeMapper>,
     replies: Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>,
     stdin: Mutex<Option<mpsc::UnboundedSender<String>>>,
@@ -182,6 +183,17 @@ impl Shared {
                 }
                 MapOut::Delta { item_id, field, text } => AdapterOutput::Delta { item_id, field, text },
                 MapOut::Init(i) => {
+                    if let Some(id) = i.session_id.clone() {
+                        let moved = {
+                            let mut c = self.conversation_id.lock().unwrap_or_else(|e| e.into_inner());
+                            let moved = *c != id;
+                            *c = id.clone();
+                            moved
+                        };
+                        if moved {
+                            let _ = self.sink.send(AdapterOutput::ExternalId(id));
+                        }
+                    }
                     if !i.terminal_commands.is_empty() {
                         let changed = {
                             let mut t = self.terminal_commands.lock().unwrap_or_else(|e| e.into_inner());
@@ -325,7 +337,7 @@ impl ClaudeLive {
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let shared = Arc::new(Shared {
-            session_id: spec.session_id.clone(),
+            conversation_id: Mutex::new(spec.claude_conversation_id().to_string()),
             mapper: Mutex::new(ClaudeMapper::with_cwd(spec.cwd.to_string_lossy())),
             replies: Mutex::new(HashMap::new()),
             stdin: Mutex::new(Some(tx)),
@@ -453,7 +465,8 @@ impl LiveConversation for ClaudeLive {
                 m.note_sent_command(&msg.text);
             }
         }
-        self.shared.write(&user_line(&self.shared.session_id, &msg.text, &images, now))
+        let conversation = self.shared.conversation_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        self.shared.write(&user_line(&conversation, &msg.text, &images, now))
     }
 
     async fn answer(&self, request_id: &str, answer: &Answer) -> Result<(), AdapterError> {
@@ -542,6 +555,18 @@ mod tests {
         let mut s = spec(false, None);
         s.instructions = Some(SessionInstructions { text: "t".into(), file: "/d/instructions.md".into() });
         assert!(claude_args(&s).windows(2).any(|w| w == ["--append-system-prompt-file", "/d/instructions.md"]));
+    }
+
+    #[test]
+    fn after_a_clear_the_new_conversation_is_resumed_and_drafted_from() {
+        let mut s = spec(true, None);
+        s.external_id = Some("conv-2".into());
+        assert!(claude_args(&s).windows(2).any(|w| w == ["--resume", "conv-2"]));
+        let schema = pdt_core::conversation::draft::draft_schema();
+        assert!(claude_draft_args(&s, &schema).windows(2).any(|w| w == ["--resume", "conv-2"]));
+        // Not saved yet: a fresh conversation under the new id (the old id's transcript is taken).
+        s.resume = false;
+        assert!(claude_args(&s).windows(2).any(|w| w == ["--session-id", "conv-2"]));
     }
 
     #[test]

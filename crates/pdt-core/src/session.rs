@@ -109,8 +109,9 @@ pub struct Session {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub ended_at: Option<i64>,
-    /// The agent's own conversation id. Codex and Devin need it (Claude's conversation id is `id`): Codex's is found
-    /// in its rollout files once a turn has been taken, Devin's in its session list. None until then.
+    /// The agent's own conversation id. Codex: found in its rollout files once a turn has been taken, None until
+    /// then. Claude: the conversation `/clear` (or the TUI's `/resume`) moved to; None while it is still `id`
+    /// (see `claude_conversation_id`). Devin: the conversation its `SessionStart` hook last named.
     pub external_session_id: Option<String>,
     /// Codex and Devin: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
     /// resume), in ms. Matches the session to its conversation's start time. Resuming a bound conversation leaves it
@@ -137,6 +138,21 @@ pub struct Session {
     pub model: Option<String>,
     /// Conversations: PDT's permission setting.
     pub permission_mode: Option<crate::conversation::PermissionMode>,
+}
+
+impl Session {
+    /// Claude's id for this session's conversation: the session id it was first launched with (`--session-id`),
+    /// until `/clear` starts a new one. Resumes, transcript lookups and stdin messages use it.
+    pub fn claude_conversation_id(&self) -> &str {
+        self.external_session_id.as_deref().unwrap_or(&self.id)
+    }
+}
+
+/// Whether `id` looks like a Claude conversation id (a UUID): it becomes an argument and a transcript file name, so
+/// anything else a hook reports is ignored.
+pub fn is_claude_conversation_id(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -331,7 +347,7 @@ pub struct Launch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resume {
     Fresh,
-    /// Claude's conversation id is the session id, so each session resumes its own conversation.
+    /// Claude resumes the session's own conversation (`Session::claude_conversation_id`).
     Claude,
     /// Codex's own id for this session's conversation (found in its rollout files).
     Codex(String),
@@ -592,6 +608,14 @@ mod tests {
             )),
             ("/bin/bash".into(), vec!["-l".into()])
         );
+    }
+
+    #[test]
+    fn claude_conversation_ids() {
+        assert!(is_claude_conversation_id("6dc3d2d6-0b1e-4c1a-9f3e-2a7b8c9d0e1f"));
+        assert!(!is_claude_conversation_id("../../etc/passwd-0000000000000000000"));
+        assert!(!is_claude_conversation_id("6dc3d2d6-0b1e-4c1a-9f3e-2a7b8c9d0e1"));
+        assert!(!is_claude_conversation_id(""));
     }
 
     #[test]

@@ -379,6 +379,17 @@ pub(crate) async fn post_report(
     if let Some(sig) = report.signal() {
         apply_ordered(&st, &id, sig).await?;
     }
+    drop(_in_order);
+    // `/clear` (or `/resume`) in the TUI starts another conversation: restarts must resume that one.
+    if let HookReport::Claude { event, session_id: Some(new_id), start_source, .. } = &report
+        && event == "SessionStart"
+        && s.agent == Some(AgentKind::Claude)
+        && new_id.as_str() != s.claude_conversation_id()
+        && pdt_core::session::is_claude_conversation_id(new_id)
+    {
+        let trigger = start_source.as_deref().unwrap_or("clear");
+        crate::conversations::terminal_conversation_moved(&st, &s, new_id, trigger).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

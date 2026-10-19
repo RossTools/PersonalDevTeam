@@ -38,6 +38,14 @@ pub enum HookReport {
         #[serde(default)]
         #[ts(optional)]
         notification_type: Option<String>,
+        /// Claude's id for the conversation (it changes after `/clear` or the TUI's `/resume`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        session_id: Option<String>,
+        /// SessionStart's `source`: `startup`, `resume`, `clear` or `compact`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        start_source: Option<String>,
     },
     Codex {
         event: String,
@@ -73,7 +81,7 @@ const NEEDS_YOU_NOTIFICATIONS: [&str; 4] =
 impl HookReport {
     pub fn signal(&self) -> Option<Signal> {
         match self {
-            HookReport::Claude { event, notification_type } => match event.as_str() {
+            HookReport::Claude { event, notification_type, .. } => match event.as_str() {
                 "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => Some(Signal::Busy),
                 "PermissionRequest" => Some(Signal::NeedsYou),
                 "Stop" => Some(Signal::TurnEnded),
@@ -334,7 +342,12 @@ mod tests {
     use Activity::*;
 
     fn claude(event: &str, nt: Option<&str>) -> HookReport {
-        HookReport::Claude { event: event.into(), notification_type: nt.map(Into::into) }
+        HookReport::Claude {
+            event: event.into(),
+            notification_type: nt.map(Into::into),
+            session_id: None,
+            start_source: None,
+        }
     }
 
     #[test]

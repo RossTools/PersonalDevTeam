@@ -53,6 +53,8 @@ describe('MessageList', () => {
       ev(13, { kind: 'plan', markdown: '1. First' }),
       ev(14, { kind: 'turn_diff', diff: '+x' }),
       ev(15, { kind: 'unknown', raw: { weird: true } }),
+      ev(16, { kind: 'conversation_reset', trigger: 'clear' }),
+      ev(17, { kind: 'conversation_reset', trigger: 'something_new' }),
     ], { empty: <p>Nothing yet</p> });
     expect(screen.getByText('Fix the bug')).toBeInTheDocument();
     expect(screen.getByText('Thinking')).toBeInTheDocument();
@@ -65,6 +67,8 @@ describe('MessageList', () => {
     expect(screen.getByText('Rate limited')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Something broke');
     expect(screen.getByText('Context compacted')).toBeInTheDocument();
+    expect(screen.getByText('Conversation cleared')).toBeInTheDocument();
+    expect(screen.getByText('New conversation (something_new)')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Plan' })).toHaveTextContent('First');
     expect(screen.getByText('Unrecognised event')).toBeInTheDocument();
     expect(screen.queryByText('Nothing yet')).not.toBeInTheDocument();
