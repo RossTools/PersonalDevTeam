@@ -34,8 +34,11 @@ name    = "unit"
 command = "pnpm test"                             # passes when it exits 0; tests cannot be `web`
 ```
 
-Unknown keys are refused, and so are duplicate names, an entry without a command, and env names that are not
-`[A-Za-z_][A-Za-z0-9_]*`.
+Unknown keys inside an entry are refused, and so are duplicate names, an entry without a command, and env names that
+are not `[A-Za-z_][A-Za-z0-9_]*`. A top-level section PDT does not know (say, one added by a newer PDT) is skipped
+instead: it is logged when a run reads the file, listed in `effective.ignored`, and noted in the project's settings,
+so a file written for a newer PDT still runs on an older one. Host overrides are written for this PDT, so saving them
+with an unknown section is refused.
 
 ### Areas
 
@@ -101,10 +104,10 @@ The address of PDT is `127.0.0.1:7420` for the stable instance. Agent sessions s
 | Call | Does |
 |---|---|
 | `GET /api/projects` | projects (`id`, `repoPath`, …) |
-| `GET /api/projects/{id}/run-config[?worktreeId=…]` | `file`, `overrides`, the merged `effective` config, or `error` |
+| `GET /api/projects/{id}/run-config[?worktreeId=…]` | `file`, `overrides`, the merged `effective` config (`runs`, `tests`, `areas`, `ignored` sections), or `error` |
 | `GET /api/projects/{id}/areas` | `{ areas: [{ name, paths, exclusive }], error }` from the main checkout and the overrides |
 | `GET /api/projects/{id}/settings` | `{ agentCredentials, effectiveCredentials, runOverrides }` |
-| `PUT /api/projects/{id}/settings` | `{ agentCredentials, runOverrides }`; replaces **both**, so send back the `agentCredentials` you read. An empty `runOverrides` clears them. Text that isn't valid TOML is refused (`invalid_run_config`); check `run-config`'s `error` for the rest |
+| `PUT /api/projects/{id}/settings` | `{ agentCredentials, runOverrides }`; replaces **both**, so send back the `agentCredentials` you read. An empty `runOverrides` clears them. Text that isn't valid TOML, or has an unknown section, is refused (`invalid_run_config`); check `run-config`'s `error` for the rest |
 | `POST /api/projects/{id}/runs` | `{ name, kind: "run" \| "test", worktreeId? }`; without `worktreeId` (or `branch`) it uses the main checkout. Opens a tab in the project's workspace |
 | `GET /api/runs/{id}` | `state` (`setting_up`, `starting`, `ready`, `running`, `passed`, `failed`, `stopped`), `url`, `exitCode`, `error` |
 | `POST /api/runs/{id}/stop` · `/restart` · `/reset-data` | as named |

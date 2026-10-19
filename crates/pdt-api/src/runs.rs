@@ -40,6 +40,9 @@ pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, S
     let cfg = crate::runconfig::load_effective(st, &run.project_id, std::path::Path::new(&run.cwd))
         .await
         .map_err(|e| format!("the run configuration is invalid: {}", e.message()))?;
+    if !cfg.ignored.is_empty() {
+        tracing::info!(run = %run.name, cwd = %run.cwd, sections = ?cfg.ignored, "skipped run configuration sections this version does not know");
+    }
     let list = if run.kind == RunKind::Test { cfg.tests } else { cfg.runs };
     list.into_iter().find(|d| d.name == run.name).ok_or_else(|| format!("the configuration has no \"{}\"", run.name))
 }

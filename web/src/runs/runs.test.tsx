@@ -207,6 +207,15 @@ describe('RunView', () => {
 });
 
 describe('ProjectSettingsPanel', () => {
+  it('notes sections of the file that this version skipped', async () => {
+    stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null },
+      'GET /api/projects/p/run-config': { ...config, effective: { ...config.effective, areas: [], ignored: ['pipeline', 'gate'] } },
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    expect(await screen.findByText('Skipped [pipeline], [gate]: this version does not know those sections.')).toBeInTheDocument();
+  });
+
   it('saves run overrides and the credential policy, and shows validation errors', async () => {
     let attempt = 0;
     const calls = stubApi({
@@ -219,6 +228,7 @@ describe('ProjectSettingsPanel', () => {
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);
     expect(await screen.findByTestId('code')).toHaveTextContent('name = "web"');
+    expect(screen.queryByText(/Skipped/)).not.toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'Host overrides (TOML)' }), 'bad');
     await choose(screen.getByRole('button', { name: /Agent credentials/ }), 'Pass through');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
