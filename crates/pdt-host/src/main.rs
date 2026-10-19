@@ -14,7 +14,7 @@ const LOCK_WAIT: Duration = Duration::from_secs(10);
 fn usage() -> ! {
     let bin = pdt_core::brand::HOST_BIN;
     eprintln!("usage: {bin} run [--install-dir <dir>]");
-    eprintln!("       {bin} install [--install-dir <dir>]");
+    eprintln!("       {bin} install [--install-dir <dir>] [--replace]");
     eprintln!("       {bin} uninstall [--install-dir <dir>]");
     std::process::exit(2);
 }
@@ -27,9 +27,18 @@ fn install_dir(args: &[String]) -> anyhow::Result<PathBuf> {
     }
 }
 
+/// Passed when an older version's data folder copy hands over to the bundle's pdt-host (macOS).
+const FROM_COPY: &str = "--from-copy";
+
 fn run(args: &[String]) -> anyhow::Result<()> {
-    let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
+    let mut cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
     std::fs::create_dir_all(&cfg.data_dir)?;
+    let exe = std::env::current_exe()?;
+    let bundled = pdt_host::register::bundled_host_path(&cfg.install_dir);
+    #[cfg(target_os = "macos")]
+    if !cfg.dev {
+        use_the_bundle(&cfg, &exe, &bundled, args);
+    }
     let lock_path = cfg.data_dir.join(format!("{}.lock", pdt_core::brand::HOST_BIN));
     let Some(lock) = pdt_host::supervise::acquire_lock(&lock_path, LOCK_WAIT)? else {
         log(&cfg, "another pdt-host is already supervising this data folder; exiting");
@@ -38,15 +47,24 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     if let Err(e) = pdt_host::register::write_pid(&cfg.data_dir) {
         log(&cfg, &format!("could not record this process id: {e}"));
     }
-    let exe = std::env::current_exe()?;
+    if let Err(e) = pdt_host::register::write_program(&cfg.data_dir, &exe) {
+        log(&cfg, &format!("could not record this program's path: {e}"));
+    }
     pdt_host::selfupdate::clean_old(&exe);
     log(&cfg, &format!("supervising {} on port {}", cfg.pdtd_path().display(), cfg.port));
     // Ruling F9 / final review #1: without an installer, or on the dev profile, keep supervising and refuse updates.
-    let installer = host_installer(&cfg);
+    let installer = host_installer(&mut cfg);
     let stop = AtomicBool::new(false);
-    let bundled = cfg.install_dir.join(format!("{}{}", pdt_core::brand::HOST_BIN, std::env::consts::EXE_SUFFIX));
+    // What this process runs, read before an update can swap the bundle it came from (macOS).
+    let own_digest = pdt_host::selfupdate::digest(&exe);
     let after_install = || {
-        if exe != bundled && pdt_host::selfupdate::needs_replace(&exe, &bundled) {
+        if exe == bundled {
+            // macOS: the new bundle is in place; nothing is copied, the new pdt-host is just started.
+            if own_digest.is_some() && pdt_host::selfupdate::digest(&bundled).is_some_and(|d| Some(d) != own_digest) {
+                log(&cfg, "the release changes pdt-host itself; restarting");
+                relaunch(&cfg, &bundled, args);
+            }
+        } else if pdt_host::selfupdate::needs_replace(&exe, &bundled) {
             log(&cfg, "the release changes pdt-host itself; replacing and restarting");
             match pdt_host::selfupdate::replace(&exe, &bundled) {
                 Ok(()) => relaunch(&cfg, &exe, args),
@@ -59,10 +77,46 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Copies pdt-host into the data folder and registers it to start at login.
+/// macOS runs the bundle's pdt-host, never a copy (PDT-40). An agent written by an older version still names its data
+/// folder copy: the agent is rewritten (launchd reads it at the next login) and this process becomes the bundle's
+/// pdt-host. Once launchd starts the bundle's pdt-host itself, the old copy is removed.
+#[cfg(target_os = "macos")]
+fn use_the_bundle(cfg: &HostConfig, exe: &std::path::Path, bundled: &std::path::Path, args: &[String]) {
+    if let Some(home) = std::env::home_dir() {
+        match pdt_host::register::migrate_launch_agent(cfg, &home) {
+            Ok(true) => log(cfg, "the login item now starts the app bundle's pdt-host"),
+            Ok(false) => {}
+            Err(e) => log(cfg, &format!("could not update the login item: {e}")),
+        }
+    }
+    if exe == bundled {
+        if under_launchd() && !args.iter().any(|a| a == FROM_COPY) {
+            pdt_host::register::remove_old_copy(&cfg.data_dir);
+        }
+        return;
+    }
+    if bundled.is_file() {
+        use std::os::unix::process::CommandExt;
+        log(cfg, &format!("switching to {}", bundled.display()));
+        let mut cmd = std::process::Command::new(bundled);
+        cmd.arg("run").args(args.iter().filter(|a| *a != FROM_COPY)).arg(FROM_COPY);
+        let e = cmd.exec();
+        log(cfg, &format!("could not start {} ({e}); this copy keeps supervising", bundled.display()));
+    }
+}
+
+fn under_launchd() -> bool {
+    std::env::var("XPC_SERVICE_NAME").is_ok_and(|v| v == pdt_core::brand::HOST_LABEL)
+}
+
+/// `install --replace` (macOS): take over from a pdt-host another copy of the app runs (the tray's "Switch to this
+/// copy", PDT-51).
+const REPLACE: &str = "--replace";
+
+/// Registers pdt-host to start at login (Windows: a copy in the data folder; macOS: the bundle's).
 fn install(args: &[String]) -> anyhow::Result<()> {
     let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
-    pdt_host::register::install(&cfg).map_err(|e| {
+    pdt_host::register::install(&cfg, args.iter().any(|a| a == REPLACE)).map_err(|e| {
         // Also logged: the installer's hook runs this without a console.
         log(&cfg, &format!("registering pdt-host failed: {e}"));
         anyhow::Error::msg(e)
@@ -76,15 +130,14 @@ fn uninstall(args: &[String]) -> anyhow::Result<()> {
     pdt_host::register::uninstall(&cfg).map_err(anyhow::Error::msg)
 }
 
-/// Starts the replaced pdt-host and exits. Under launchd, exiting is enough: KeepAlive starts the new copy. pdtd keeps
-/// running; the new pdt-host adopts it. Returns (and this copy keeps supervising) only when the new copy cannot start.
+/// Starts the new pdt-host and exits. Under launchd, exiting is enough: KeepAlive starts the new one. pdtd keeps
+/// running; the new pdt-host adopts it. Returns (and this one keeps supervising) only when the new one cannot start.
 fn relaunch(cfg: &HostConfig, exe: &std::path::Path, args: &[String]) {
-    let under_launchd = std::env::var("XPC_SERVICE_NAME").is_ok_and(|v| v == pdt_core::brand::HOST_LABEL);
-    if under_launchd {
+    if under_launchd() {
         std::process::exit(0);
     }
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("run").args(args);
+    cmd.arg("run").args(args.iter().filter(|a| *a != FROM_COPY));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

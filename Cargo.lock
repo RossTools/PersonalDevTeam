@@ -3153,6 +3153,9 @@ dependencies = [
 name = "pdt-agents"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "futures-util",
  "jiff",
  "libc",
  "pdt-core",
@@ -3161,9 +3164,12 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "toml 1.1.8+spec-1.1.0",
  "tracing",
+ "uuid",
  "which",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3180,6 +3186,7 @@ dependencies = [
  "pdt-agents",
  "pdt-core",
  "pdt-git",
+ "pdt-github",
  "pdt-store",
  "pdt-tailscale",
  "pdt-update",
@@ -3231,6 +3238,16 @@ version = "0.1.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pdt-github"
+version = "0.1.0"
+dependencies = [
+ "pdt-core",
+ "serde_json",
+ "thiserror 2.0.21",
+ "which",
 ]
 
 [[package]]
@@ -3300,6 +3317,7 @@ dependencies = [
  "pdt-api",
  "pdt-core",
  "pdt-git",
+ "pdt-github",
  "pdt-store",
  "pdt-tailscale",
  "pdt-update",

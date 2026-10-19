@@ -122,10 +122,12 @@ fn bundled_host(exe_dir: Option<&Path>) -> PathBuf {
     exe_dir.map(|d| d.join(&file)).filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(file))
 }
 
-/// The pdt-host to run: the data folder's copy when there is one (installers must be able to replace the install
-/// folder, decision 14), else the one beside this exe (first run, development).
-fn host_to_run(data_dir: Option<&Path>, exe_dir: Option<&Path>) -> PathBuf {
+/// The pdt-host to run. Windows: the data folder's copy when there is one (the installer must be able to replace the
+/// install folder, decision 14), else the one beside this exe (first run, development). macOS: always the one beside
+/// this exe, in the bundle (PDT-40).
+fn host_to_run(os: pdt_host::register::Os, data_dir: Option<&Path>, exe_dir: Option<&Path>) -> PathBuf {
     data_dir
+        .filter(|_| os == pdt_host::register::Os::Windows)
         .map(pdt_host::register::installed_host_path)
         .filter(|p| p.is_file())
         .unwrap_or_else(|| bundled_host(exe_dir))
@@ -135,7 +137,10 @@ fn host_to_run(data_dir: Option<&Path>, exe_dir: Option<&Path>) -> PathBuf {
 /// already running (login item) makes this one exit at once.
 pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
     let exe_dir = exe_dir();
-    let mut cmd = host_command(&host_to_run(data_dir(profile).as_deref(), exe_dir.as_deref()), profile);
+    let mut cmd = host_command(
+        &host_to_run(pdt_host::register::Os::current(), data_dir(profile).as_deref(), exe_dir.as_deref()),
+        profile,
+    );
     cmd.arg("run");
     if let Some(dir) = exe_dir {
         cmd.arg("--install-dir").arg(dir);
@@ -185,12 +190,71 @@ fn ensure_registered_with(
         return false;
     }
     let (Some(home), Some(exe_dir)) = (home, exe_dir) else { return false };
-    if pdt_host::install::bundle_of(exe_dir).is_none() || pdt_host::register::launch_agent_path(home).exists() {
+    if pdt_host::install::bundle_of(exe_dir).is_none()
+        || pdt_host::placement::bundle_problem(exe_dir).is_some()
+        || pdt_host::register::launch_agent_path(home).exists()
+    {
         return false;
     }
     let mut cmd = host_command(&bundled_host(Some(exe_dir)), profile);
     cmd.arg("install").arg("--install-dir").arg(exe_dir);
     runner.status(cmd).unwrap_or(false)
+}
+
+/// macOS: why this app cannot stay where it runs from (translocated, read-only folder; PDT-51), so it is never
+/// registered at login and cannot update.
+pub fn own_problem() -> Option<String> {
+    if pdt_host::register::Os::current() != pdt_host::register::Os::Mac {
+        return None;
+    }
+    pdt_host::placement::bundle_problem(&exe_dir()?)
+}
+
+/// Another copy of the app whose pdt-host is the one running (PDT-51).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OtherCopy {
+    pub bundle: PathBuf,
+    /// Why that copy cannot stay where it is, if it cannot.
+    pub problem: Option<String>,
+}
+
+/// macOS: the other copy of the app the running pdt-host comes from, when it is not this one.
+pub fn other_copy(profile: Profile) -> Option<OtherCopy> {
+    if pdt_host::register::Os::current() != pdt_host::register::Os::Mac {
+        return None;
+    }
+    let running = pdt_host::register::running_program(&data_dir(profile)?)?;
+    other_copy_with(&exe_dir()?, &running)
+}
+
+fn other_copy_with(exe_dir: &Path, running: &Path) -> Option<OtherCopy> {
+    let own = pdt_host::install::bundle_of(exe_dir)?;
+    let running_dir = running.parent()?;
+    let bundle = pdt_host::install::bundle_of(running_dir)?;
+    (bundle != own).then(|| OtherCopy { problem: pdt_host::placement::bundle_problem(running_dir), bundle })
+}
+
+/// "Switch to this copy": this bundle's pdt-host registers itself at login and takes over from the running one
+/// (`pdt-host install --replace`). pdtd keeps running until the caller restarts it.
+pub fn switch_to_this_copy(profile: Profile) -> Result<(), String> {
+    let exe_dir = exe_dir().ok_or("cannot tell where this app is")?;
+    switch_with(profile, &exe_dir, &mut pdt_host::register::System)
+}
+
+fn switch_with(profile: Profile, exe_dir: &Path, runner: &mut dyn pdt_host::register::Runner) -> Result<(), String> {
+    let mut cmd = host_command(&bundled_host(Some(exe_dir)), profile);
+    cmd.arg("install").arg("--install-dir").arg(exe_dir).arg("--replace");
+    if runner.status(cmd)? {
+        Ok(())
+    } else {
+        Err(format!("{HOST_BIN} install failed; see {}", launch_log_hint(profile)))
+    }
+}
+
+fn launch_log_hint(profile: Profile) -> String {
+    data_dir(profile)
+        .map(|d| d.join("logs").join(format!("{HOST_BIN}.log")).display().to_string())
+        .unwrap_or_else(|| format!("{HOST_BIN}.log"))
 }
 
 #[cfg(test)]
@@ -369,6 +433,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let exe_dir = tmp.path().join("Personal Dev Team.app").join("Contents").join("MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
         let mut r = Recorder { ran: vec![], ok: true };
         assert!(ensure_registered_with(Os::Mac, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
         assert_eq!(r.ran, [format!("install --install-dir {}", exe_dir.display())]);
@@ -386,22 +451,58 @@ mod tests {
         std::fs::remove_file(&plist).unwrap();
         assert!(!ensure_registered_with(Os::Mac, Profile::Dev, Some(&exe_dir), Some(&home), &mut r));
         assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(tmp.path()), Some(&home), &mut r));
+        let moved =
+            tmp.path().join("AppTranslocation").join("u").join("d").join("P 2.app").join("Contents").join("MacOS");
+        std::fs::create_dir_all(&moved).unwrap();
+        assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(&moved), Some(&home), &mut r));
         assert!(!ensure_registered_with(Os::Windows, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
         assert!(r.ran.is_empty(), "{:?}", r.ran);
     }
 
     #[test]
-    fn the_data_folder_copy_of_pdt_host_wins_over_the_bundled_one() {
+    fn another_copys_host_is_noticed_with_what_is_wrong_with_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let macos = |root: &Path| root.join("Contents").join("MacOS");
+        let own = tmp.path().join("Applications").join("Personal Dev Team.app");
+        std::fs::create_dir_all(macos(&own)).unwrap();
+        let host = |b: &Path| macos(b).join("pdt-host");
+        assert_eq!(other_copy_with(&macos(&own), &host(&own)), None, "this copy's own pdt-host");
+
+        let moved = tmp.path().join("AppTranslocation").join("u").join("d").join("Personal Dev Team 2.app");
+        let other = other_copy_with(&macos(&own), &host(&moved)).unwrap();
+        assert_eq!(other.bundle, moved);
+        assert!(other.problem.unwrap().contains("temporary read-only folder"));
+
+        let fine = tmp.path().join("Elsewhere").join("Personal Dev Team.app");
+        std::fs::create_dir_all(macos(&fine)).unwrap();
+        assert_eq!(other_copy_with(&macos(&own), &host(&fine)), Some(OtherCopy { bundle: fine, problem: None }));
+        assert_eq!(other_copy_with(&macos(&own), Path::new("/data/host/pdt-host")), None, "not from a bundle");
+    }
+
+    #[test]
+    fn switching_runs_this_bundles_host_with_replace() {
+        let exe_dir = Path::new("/Applications/P.app/Contents/MacOS");
+        let mut r = Recorder { ran: vec![], ok: true };
+        switch_with(Profile::Stable, exe_dir, &mut r).unwrap();
+        assert_eq!(r.ran, ["install --install-dir /Applications/P.app/Contents/MacOS --replace"]);
+        let mut r = Recorder { ran: vec![], ok: false };
+        assert!(switch_with(Profile::Stable, exe_dir, &mut r).unwrap_err().contains("install failed"));
+    }
+
+    #[test]
+    fn on_windows_the_data_folder_copy_of_pdt_host_wins_over_the_bundled_one() {
+        use pdt_host::register::Os;
         let tmp = tempfile::tempdir().unwrap();
         let (data, app) = (tmp.path().join("data"), tmp.path().join("app"));
         let file = format!("pdt-host{}", std::env::consts::EXE_SUFFIX);
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(app.join(&file), "").unwrap();
-        assert_eq!(host_to_run(Some(&data), Some(&app)), app.join(&file), "no copy yet: the bundled one");
+        assert_eq!(host_to_run(Os::Windows, Some(&data), Some(&app)), app.join(&file), "no copy yet: the bundled one");
         let copy = pdt_host::register::installed_host_path(&data);
         std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
         std::fs::write(&copy, "").unwrap();
-        assert_eq!(host_to_run(Some(&data), Some(&app)), copy);
-        assert_eq!(host_to_run(None, None), PathBuf::from(&file), "else whatever is on PATH");
+        assert_eq!(host_to_run(Os::Windows, Some(&data), Some(&app)), copy);
+        assert_eq!(host_to_run(Os::Mac, Some(&data), Some(&app)), app.join(&file), "macOS runs the bundle's");
+        assert_eq!(host_to_run(Os::Windows, None, None), PathBuf::from(&file), "else whatever is on PATH");
     }
 }

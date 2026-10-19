@@ -115,6 +115,9 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         unseen: false,
         attempt_id: None,
         ticket: None,
+        mode: pdt_core::conversation::SessionMode::Terminal,
+        model: None,
+        permission_mode: None,
     };
     let sessions = [
         session(&app, None, None, "main", 3 * DAY - HOUR),
@@ -126,6 +129,15 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
             ..session(&lib, None, Some(AgentKind::Claude), "Write the docs (no prompts)", 2 * HOUR)
         },
     ];
+    // A Claude conversation with a finished turn (structured agents, Phase 5), so the conversation view has something
+    // to show without running an agent.
+    let conversation = Session {
+        mode: pdt_core::conversation::SessionMode::Conversation,
+        permission_mode: Some(pdt_core::conversation::PermissionMode::Ask),
+        exit_code: None,
+        ..session(&app, Some(&wt), Some(AgentKind::Claude), "Validate the login form", 90 * MINUTE)
+    };
+    let sessions: Vec<Session> = sessions.into_iter().chain([conversation.clone()]).collect();
     for s in &sessions {
         store.insert_session(s).await?;
         // Each session is a tab in its project's workspace, as sessions made through the API are.
@@ -150,6 +162,8 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         cwd: wt.map_or_else(|| project.repo_path.clone(), |w| w.path.clone()),
         exit_code: Some(0),
         error: None,
+        detached: false,
+        process: None,
         created_at: now - ago,
         updated_at: now - ago + 2 * MINUTE,
     };
@@ -171,8 +185,108 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
     for r in &runs {
         store.insert_run(r).await?;
     }
+    seed_conversation(store, &conversation.id, now - 90 * MINUTE).await?;
     seed_tickets(store, &app.id, &wt, now).await?;
     Ok(true)
+}
+
+/// One turn of a conversation: the user's request, commentary, three tool calls (one approved), the answer.
+async fn seed_conversation(store: &Store, session_id: &str, at: i64) -> anyhow::Result<()> {
+    use pdt_core::conversation::*;
+    use serde_json::json;
+    let turn = "seed-turn-1";
+    let diff = "--- a/login.html\n+++ b/login.html\n@@ -2,4 +2,6 @@\n <form id=\"login\">\n-  <input name=\"email\">\n-  <input name=\"password\" type=\"password\">\n+  <input name=\"email\" type=\"email\" required>\n+  <span class=\"error\" data-for=\"email\"></span>\n+  <input name=\"password\" type=\"password\" required minlength=\"8\">\n+  <span class=\"error\" data-for=\"password\"></span>\n   <button>Sign in</button>\n </form>";
+    let tool = |id: &str, tool: &str, title: &str, input: serde_json::Value, output: &str| AgentEvent::ToolCall {
+        id: id.into(),
+        tool: tool.into(),
+        title: title.into(),
+        input,
+        status: ToolStatus::Done,
+        output: Some(output.into()),
+        exit_code: None,
+        diff: None,
+        parent_id: None,
+    };
+    let events: Vec<(Option<&str>, AgentEvent)> = vec![
+        (Some("turn:seed-turn-1"), AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None }),
+        (
+            Some("u:seed-1"),
+            AgentEvent::UserMessage {
+                text: "Add inline validation to the login form: a required email and a password of at least 8 characters."
+                    .into(),
+                images: vec![],
+                source: MessageSource::Pdt,
+            },
+        ),
+        (
+            Some("m:seed-1"),
+            AgentEvent::AgentMessage {
+                id: "seed-1".into(),
+                markdown: "I'll look at the form first.".into(),
+                phase: MessagePhase::Commentary,
+            },
+        ),
+        (
+            Some("t:seed-read"),
+            tool("seed-read", "Read", "login.html", json!({"file_path": "login.html"}), "<form id=\"login\">…</form>"),
+        ),
+        (
+            Some("r:seed-req"),
+            AgentEvent::Request {
+                id: "seed-req".into(),
+                request_kind: RequestKind::Approval,
+                tool: "Edit".into(),
+                title: "login.html".into(),
+                description: Some("Add required and minlength attributes".into()),
+                input: json!({"file_path": "login.html"}),
+                tool_call_id: Some("seed-edit".into()),
+                can_always: true,
+                diff: Some(diff.into()),
+                state: RequestState::Answered,
+                answer: Some(Answer::Approve { always: false }),
+            },
+        ),
+        (
+            Some("t:seed-edit"),
+            {
+                let mut edit =
+                    tool("seed-edit", "Edit", "login.html", json!({"file_path": "login.html"}), "The file was updated.");
+                if let AgentEvent::ToolCall { diff: d, .. } = &mut edit {
+                    *d = Some(diff.into());
+                }
+                edit
+            },
+        ),
+        (
+            Some("t:seed-test"),
+            tool("seed-test", "Bash", "npm test", json!({"command": "npm test"}), "> sample-app@1.0.0 test\n\n2 passing (12ms)"),
+        ),
+        (
+            Some("m:seed-2"),
+            AgentEvent::AgentMessage {
+                id: "seed-2".into(),
+                markdown: "Done. The login form now checks:\n\n- **Email**: required, and must look like an address\n- \
+                           **Password**: at least 8 characters\n\nErrors show under each field as you type. The tests pass."
+                    .into(),
+                phase: MessagePhase::Final,
+            },
+        ),
+        (
+            Some("usage"),
+            AgentEvent::Usage { context_used: Some(31_200), context_window: Some(200_000), rate_limits: vec![], cost_usd: Some(0.12) },
+        ),
+        (Some("diff:seed-turn-1"), AgentEvent::TurnDiff { diff: diff.into() }),
+        (
+            Some("turn-end:seed-turn-1"),
+            AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), duration_ms: Some(48_000), reason: None },
+        ),
+    ];
+    for (i, (item, event)) in events.iter().enumerate() {
+        let ne =
+            pdt_store::NewEvent { ts: at + i as i64 * 4_000, item_id: *item, turn_id: Some(turn), event, raw: None };
+        store.upsert_session_event(session_id, ne).await?;
+    }
+    Ok(())
 }
 
 /// A small backlog for Sample App: every stage, a few priorities, labels and areas, one blocker, a comment, and an
@@ -323,13 +437,16 @@ mod tests {
         assert!(Path::new(&wts[0].path).join("login.html").is_file());
 
         let sessions = store.list_sessions(&app.id).await.unwrap();
-        assert_eq!(sessions.len(), 4);
+        assert_eq!(sessions.len(), 5);
+        let conv = sessions.iter().find(|s| s.mode == pdt_core::conversation::SessionMode::Conversation).unwrap();
+        let events = store.list_session_events(&conv.id, 0, 100).await.unwrap();
+        assert_eq!(events.len(), 11, "a demo conversation with one finished turn and its diff");
         assert!(sessions.iter().all(|s| s.status == SessionStatus::Finished && s.ended_at.is_some()));
         assert!(sessions.iter().any(|s| s.worktree_id.as_deref() == Some(wts[0].id.as_str())));
         assert!(store.list_sessions_by_status(SessionStatus::Interrupted).await.unwrap().is_empty());
         let workspaces = store.list_workspaces().await.unwrap();
         let tabs = |name: &str| workspaces.iter().find(|w| w.name == name).map(|w| w.tabs.len());
-        assert_eq!((tabs("Sample App"), tabs("Sample Library")), (Some(4), Some(1)), "every session has a tab");
+        assert_eq!((tabs("Sample App"), tabs("Sample Library")), (Some(5), Some(1)), "every session has a tab");
 
         let runs = store.list_runs(&app.id).await.unwrap();
         assert_eq!(runs.len(), 3);

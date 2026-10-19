@@ -6,6 +6,7 @@ export * from './Button';
 export * from './IconButton';
 export * from './Input';
 export * from './Textarea';
+export * from './PromptBox';
 export * from './Select';
 export * from './SuggestInput';
 export * from './Field';
@@ -43,7 +44,16 @@ export * from './FilterBar';
 export * from './BulkActionBar';
 export * from './Timeline';
 export * from './TreeView';
+export * from './FolderPicker';
 export * from './ViewHeader';
 export * from './Page';
 
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';
+
+// Conversations
+export * from './MessageBubble';
+export * from './ToolCallRow';
+export * from './ApprovalCard';
+export * from './DiffViewer';
+export * from './ImageThumb';
+export * from './SuggestionList';

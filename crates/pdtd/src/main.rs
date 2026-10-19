@@ -7,8 +7,8 @@ mod shutdown;
 
 use anyhow::Context;
 use pdt_api::{
-    AppState, apply_remote_access, check_merges, plan_resume_interrupted, refresh_overlaps, resume_runs, router,
-    run_activity_ticker, sweep_gone_runs, with_host_guard,
+    AppState, apply_remote_access, check_merges, deliver_notices, plan_resume_interrupted, refresh_overlaps,
+    refresh_prs, resume_runs, router, run_activity_ticker, sweep_gone_runs, with_host_guard,
 };
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
@@ -83,6 +83,11 @@ async fn run() -> anyhow::Result<()> {
     state.instance = pdt_core::instance::InstanceInfo::new(cfg.profile, cfg.port);
     state.remote_https_port = cfg.remote_https_port;
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
+    // Likewise the GitHub CLI (attempts' pull requests and CI).
+    state.github = match &cfg.gh_bin {
+        Some(bin) => std::sync::Arc::new(pdt_github::GhCli::new(bin.clone())),
+        None => std::sync::Arc::new(pdt_github::GhCli::detect(state.platform.login_path.as_deref())),
+    };
     // The real CLI is installed only here; `AppState::new` runs no tailscale command at all.
     state.tailscale = match &cfg.tailscale_bin {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
@@ -113,6 +118,8 @@ async fn run() -> anyhow::Result<()> {
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;
+    // Conversations need no restart: a turn the previous run left running ends as interrupted, open requests expire.
+    pdt_api::recover_conversations(&state).await;
     let app = with_host_guard(router(state.clone(), cfg.web_dir.clone()), state.allowed_hosts.clone());
     tracing::info!(
         profile = ?cfg.profile, port = cfg.port, data_dir = %cfg.data_dir.display(),
@@ -143,7 +150,9 @@ async fn run() -> anyhow::Result<()> {
                     break;
                 }
                 sweep_gone_runs(&st).await;
-                // Ticket attempts whose branch was merged (tickets spec §6).
+                // Ticket attempts' pull requests and CI (PDT-25), then attempts whose branch was merged (tickets
+                // spec §6).
+                refresh_prs(&st).await;
                 check_merges(&st).await;
             }
         });
@@ -162,8 +171,23 @@ async fn run() -> anyhow::Result<()> {
             }
         });
     }
+    // Pull-request notices waiting for their agent session to be idle (PDT-25).
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                tick.tick().await;
+                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                deliver_notices(&st).await;
+            }
+        });
+    }
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
+    tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
     {
         let st = state.clone();

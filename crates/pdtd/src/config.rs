@@ -21,6 +21,9 @@ pub struct Config {
     /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
     /// nothing, so they never reach the machine's Tailscale).
     pub tailscale_bin: Option<PathBuf>,
+    /// `PDT_GH_BIN`: the GitHub CLI to use instead of the detected one (tests point it at nothing, so they never
+    /// reach GitHub).
+    pub gh_bin: Option<PathBuf>,
     /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
     /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -31,6 +34,9 @@ pub struct Config {
     /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
     /// (`update_disabled_reason`).
     pub supervised: bool,
+    /// `PDT_UPDATES_UNSUPPORTED`: why the pdt-host that started this pdtd cannot install updates (e.g. the app runs
+    /// from a read-only folder, PDT-51); updates are then off with that reason.
+    pub updates_unsupported: Option<String>,
     /// `PDT_SEED=demo`: fill an empty database with demo data at startup (dev instances only; `seed.rs`).
     pub seed: Option<Seed>,
 }
@@ -79,10 +85,12 @@ impl Config {
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
         let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
+        let gh_bin = lookup("PDT_GH_BIN").map(PathBuf::from);
         let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
         let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
+        let updates_unsupported = lookup("PDT_UPDATES_UNSUPPORTED").map(|v| v.trim().to_string());
         let seed = match lookup("PDT_SEED").as_deref().map(str::trim) {
             None => None,
             Some("demo") => Some(Seed::Demo),
@@ -97,10 +105,12 @@ impl Config {
             owner_login,
             memory_secrets,
             tailscale_bin,
+            gh_bin,
             remote_https_port,
             claude_program,
             codex_program,
             supervised,
+            updates_unsupported,
             seed,
         })
     }
@@ -113,7 +123,7 @@ impl Config {
         } else if !self.supervised {
             Some(pdt_api::update::UNSUPERVISED_REASON.into())
         } else {
-            None
+            self.updates_unsupported.as_ref().map(|why| format!("pdt-host cannot install updates here: {why}"))
         }
     }
 
@@ -241,6 +251,12 @@ mod tests {
         let dev = Some(DEV_UPDATE_REASON);
         assert_eq!(reason(&[("PDT_PROFILE", "dev"), ("PDT_SUPERVISED", "1")]).as_deref(), dev);
         assert_eq!(reason(&[("PDT_PROFILE", "dev")]).as_deref(), dev);
+        assert_eq!(
+            reason(&[("PDT_SUPERVISED", "1"), ("PDT_UPDATES_UNSUPPORTED", "its folder cannot be written to")])
+                .as_deref(),
+            Some("pdt-host cannot install updates here: its folder cannot be written to")
+        );
+        assert_eq!(reason(&[("PDT_SUPERVISED", "1"), ("PDT_UPDATES_UNSUPPORTED", " ")]), None);
     }
 
     #[test]

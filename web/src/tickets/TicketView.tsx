@@ -13,6 +13,7 @@ import { AttemptSection, MergedBanner } from './Attempt';
 import { abandonAttempt, canStart, deleteTicket, moveToEntries, stopWaitingEntry, useStartTicket } from './actions';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
+import { TicketConversation } from './TicketConversation';
 import { useCheckMerge, useTicket } from './queries';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
@@ -22,12 +23,12 @@ type HubTab = 'overview' | 'conversation' | 'changes';
 
 const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'conversation', label: 'Conversation', arrives: 'Phase 5' },
+  { id: 'conversation', label: 'Conversation' },
   { id: 'changes', label: 'Changes', arrives: 'Phase 6' },
 ];
 
-/** Overview · Conversation · Changes; the last two arrive with structured agents (5) and review (6). */
-function HubTabs({ value }: { value: HubTab }) {
+/** Overview · Conversation · Changes; Changes arrives with review (6). */
+function HubTabs({ value, onChange }: { value: HubTab; onChange: (t: HubTab) => void }) {
   return (
     <div role="tablist" aria-label="Ticket sections" className="flex shrink-0 items-center gap-1 border-b border-border px-3">
       {HUB_TABS.map((t) => (
@@ -35,7 +36,9 @@ function HubTabs({ value }: { value: HubTab }) {
           key={t.id}
           type="button"
           role="tab"
+          id={`ticket-tab-${t.id}`}
           aria-selected={t.id === value}
+          onClick={() => !t.arrives && onChange(t.id)}
           aria-disabled={t.arrives ? true : undefined}
           disabled={!!t.arrives}
           title={t.arrives ? `Arrives in ${t.arrives}` : undefined}
@@ -101,10 +104,11 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   );
 }
 
-/** A ticket tab: header, the section tabs, then the Overview (description and activity; details and links aside). */
+/** A ticket tab: header, the section tabs, then the Overview (description and activity; details and links aside) or
+ * the Conversation (its agent sessions). */
 export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDeleted?: () => void }) {
   const q = useTicket(ticketId);
-  const [tab] = useState<HubTab>('overview');
+  const [tab, setTab] = useState<HubTab>('overview');
   useCheckMerge(q.data);
   useClearToStartToasts(q.data ? [q.data] : []);
   if (q.isPending) return <div className="p-4"><Skeleton lines={3} label="Loading ticket" /></div>;
@@ -120,21 +124,27 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       <MergedBanner ticket={t} />
-      <HubTabs value={tab} />
-      <div role="tabpanel" aria-label="Overview" className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
-          <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
-            <TicketDescription key={t.id} ticket={t} />
-            <TicketTimeline ticketId={t.id} composer />
-          </div>
-          <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
-            <TicketDetails ticket={t} />
-            <AttemptSection ticket={t} />
-            <TicketOverlaps ticket={t} />
-            <TicketLinks ticket={t} />
-          </aside>
+      <HubTabs value={tab} onChange={setTab} />
+      {tab === 'conversation' ? (
+        <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
+          <TicketConversation ticket={t} />
         </div>
-      </div>
+      ) : (
+        <div role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">
+          <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
+              <TicketDescription key={t.id} ticket={t} />
+              <TicketTimeline ticketId={t.id} composer />
+            </div>
+            <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
+              <TicketDetails ticket={t} />
+              <AttemptSection ticket={t} />
+              <TicketOverlaps ticket={t} />
+              <TicketLinks ticket={t} />
+            </aside>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

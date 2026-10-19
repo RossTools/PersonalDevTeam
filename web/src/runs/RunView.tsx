@@ -129,6 +129,11 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
           value={step}
           onChange={(s) => setPicked({ state: run.state, step: s })}
         />
+        {run.detached && step === 'command' && (
+          <span className="ml-2 self-center truncate text-xs text-muted-foreground" title="detach = true: the command runs outside PDT's terminals">
+            Detached: keeps running when PDT restarts or updates · output only
+          </span>
+        )}
       </div>
       <TerminalView
         key={`${run.id}:${step}`}
@@ -136,6 +141,7 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
         url={runPtyUrl(run.id, step)}
         sessionStatus={stepLive ? 'running' : 'finished'}
         polledAt={polledAt}
+        readOnly={run.detached && step === 'command'}
       />
     </div>
   );

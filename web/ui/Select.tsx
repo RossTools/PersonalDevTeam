@@ -21,6 +21,8 @@ export interface SelectProps<V extends string = string> {
   placeholder?: string;
   /** sm 24px, md 28px (default); 44px on touch screens. */
   size?: 'sm' | 'md';
+  /** A borderless chip in muted text that fills on hover (toolbars, e.g. a prompt box's pickers). */
+  quiet?: boolean;
   disabled?: boolean;
   id?: string;
   name?: string;
@@ -34,6 +36,7 @@ export function Select<V extends string = string>({
   onChange,
   placeholder = 'Select…',
   size = 'md',
+  quiet = false,
   disabled,
   id,
   name,
@@ -59,7 +62,10 @@ export function Select<V extends string = string>({
       disabledKeys={options.filter((o) => o.disabled).map((o) => o.value)}
       className={cn('min-w-0', className)}
     >
-      <SelectTrigger size={size === 'sm' ? 'sm' : 'default'}>
+      <SelectTrigger
+        size={size === 'sm' ? 'sm' : 'default'}
+        className={cn(quiet && 'w-auto border-transparent bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground')}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

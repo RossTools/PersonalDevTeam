@@ -1,6 +1,9 @@
-//! Process adapters. Phase 1: PTY terminals. Phase 3 adds the structured Claude and Codex adapters.
+//! Process adapters: PTY terminals and the structured agent adapters (conversations).
 
+pub mod adapter;
+pub mod detached;
 pub mod hooks;
+pub mod instructions;
 pub mod launch;
 pub mod pty;
 

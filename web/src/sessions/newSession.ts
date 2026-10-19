@@ -1,19 +1,39 @@
 import type { NewSession } from '../api/gen/NewSession';
+import type { PermissionMode } from '../api/gen/PermissionMode';
 import { INITIAL_SIZE } from './status';
 
-export type Choice = 'Shell' | 'Claude' | 'Codex';
+/** `Claude` and `Codex` are conversations; the `(terminal)` choices are the agents' own TUIs. */
+export type Choice = 'Shell' | 'Claude' | 'Claude (terminal)' | 'Codex' | 'Codex (terminal)';
 
-/** The create request for a shell or an agent in one place; `bypass` skips the agent's permission prompts. */
-export function newSession(projectId: string, worktreeId: string | null, choice: Choice, bypass: boolean): NewSession {
+export interface NewSessionOptions {
+  /** Terminal agents: skip the agent's permission prompts. */
+  bypass?: boolean;
+  /** Conversations: the permission mode (`ask` when absent). */
+  permissionMode?: PermissionMode;
+}
+
+/** The create request for a shell, a terminal agent or a conversation in one place. */
+export function newSession(projectId: string, worktreeId: string | null, choice: Choice, opts: NewSessionOptions = {}): NewSession {
   const base = { projectId, ...(worktreeId ? { worktreeId } : {}) };
-  return choice === 'Shell'
-    ? { ...base, kind: 'shell', ...INITIAL_SIZE }
-    : {
-        ...base,
-        kind: 'agent_tui',
-        agent: choice === 'Claude' ? 'claude' : 'codex',
-        // Only sent when armed, so a normal launch stays a plain payload.
-        ...(bypass ? { bypassPermissions: true } : {}),
-        ...INITIAL_SIZE,
-      };
+  if (choice === 'Shell') return { ...base, kind: 'shell', ...INITIAL_SIZE };
+  const agent = choice === 'Codex' || choice === 'Codex (terminal)' ? 'codex' : 'claude';
+  if (choice === 'Claude' || choice === 'Codex') {
+    return {
+      ...base,
+      kind: 'agent_tui',
+      agent,
+      mode: 'conversation',
+      // Only sent when it isn't the default, so a normal launch stays a plain payload.
+      ...(opts.permissionMode && opts.permissionMode !== 'ask' ? { permissionMode: opts.permissionMode } : {}),
+      ...INITIAL_SIZE,
+    };
+  }
+  return {
+    ...base,
+    kind: 'agent_tui',
+    agent,
+    mode: 'terminal',
+    ...(opts.bypass ? { bypassPermissions: true } : {}),
+    ...INITIAL_SIZE,
+  };
 }

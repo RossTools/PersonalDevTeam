@@ -5,6 +5,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::{PtyError, SpawnSpec};
+use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{
     AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
     default_title, is_scrubbed, launch, prompt_arg, shim_prompt,
@@ -64,8 +65,11 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         }
         None => (None, project.repo_path.clone(), project.name.clone()),
     };
-    // A fresh Codex launch is matched to its conversation by start time, so launches in a folder are spaced out.
-    let codex = valid.kind == SessionKind::AgentTui && valid.agent == Some(AgentKind::Codex);
+    // A fresh Codex terminal is matched to its conversation by start time, so launches in a folder are spaced out.
+    // (A Codex conversation knows its thread id from the start.)
+    let codex = valid.kind == SessionKind::AgentTui
+        && valid.agent == Some(AgentKind::Codex)
+        && valid.mode == SessionMode::Terminal;
     let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(st, &cwd).await) } else { None };
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),
@@ -88,15 +92,39 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         unseen: false,
         attempt_id: req.attempt_id,
         ticket: None,
+        mode: valid.mode,
+        model: valid.model.clone(),
+        permission_mode: valid.permission_mode,
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(st, &session.project_id).await?;
     st.store.insert_session(&session).await?;
+    if session.mode == SessionMode::Conversation {
+        // The first prompt is the first message; the agent starts now so a missing program fails here.
+        if let Err(e) = crate::conversations::start(st, &session, valid.initial_prompt).await {
+            crate::conversations::forget(st, &session.id).await;
+            st.store.delete_session(&session.id).await?;
+            let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
+            return Err(e);
+        }
+        if let Some(tab) = req.tab {
+            let item = pdt_core::workspace::TabItem::Session(session.id.clone());
+            crate::workspaces::open_for_new(st, &session.project_id, item, tab.as_ref()).await;
+        }
+        return load(st, &session.id).await;
+    }
     let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket_key });
-    if let Err(e) = start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref()) {
+    let started = match agent_instructions(st, &session).await {
+        Ok(instructions) => {
+            start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref(), instructions.as_ref())
+                .map_err(ApiError::from)
+        }
+        Err(e) => Err(e),
+    };
+    if let Err(e) = started {
         st.store.delete_session(&session.id).await?;
         let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
-        return Err(e.into());
+        return Err(e);
     }
     crate::activity::track(st, &session).await;
     if let Some(tab) = req.tab {
@@ -121,6 +149,46 @@ pub(crate) async fn credentials_for(
     let host = st.store.get_host_settings().await?.agent_credentials;
     let project = st.store.get_project_settings(project_id).await?.agent_credentials;
     Ok(pdt_core::host::effective_credentials(host, project))
+}
+
+/// PDT's instructions for an agent session (PDT-46): where PDT is, which session, project and checkout this is, and
+/// the project's own instructions from its settings. None for shells. Codex's text keeps the user's own
+/// `developer_instructions` first, since PDT's value replaces them. Written to `<session dir>/instructions.md`.
+pub(crate) async fn agent_instructions(
+    st: &AppState,
+    s: &Session,
+) -> Result<Option<pdt_agents::adapter::SessionInstructions>, ApiError> {
+    if s.kind != SessionKind::AgentTui {
+        return Ok(None);
+    }
+    let project = st.store.get_project(&s.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let branch = match &s.worktree_id {
+        Some(w) => st.store.get_worktree(w).await?.map(|w| w.branch),
+        None => None,
+    };
+    let settings = st.store.get_project_settings(&s.project_id).await?;
+    let ctx = pdt_core::agent_context::SessionContext {
+        port: st.listen_port,
+        session_id: &s.id,
+        project_id: &project.id,
+        project_name: &project.name,
+        project_key: &project.key,
+        checkout: &s.cwd,
+        branch: branch.as_deref(),
+        repo_path: &project.repo_path,
+        base_branch: &project.base_branch,
+    };
+    let ours = pdt_core::agent_context::session_instructions(&ctx, settings.agent_instructions.as_deref());
+    let text = match (s.agent, st.platform.codex_home.as_deref()) {
+        (Some(AgentKind::Codex), Some(home)) => {
+            let user = pdt_agents::instructions::user_codex_developer_instructions(home);
+            pdt_agents::instructions::combine(user.as_deref(), &ours)
+        }
+        _ => ours,
+    };
+    let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
+        .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
+    Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }))
 }
 
 fn is_codex(s: &Session) -> bool {
@@ -245,12 +313,24 @@ fn start_pty(
     resume: &Resume,
     creds: pdt_core::host::CredentialPolicy,
     prompt: Option<&InitialPrompt>,
+    instructions: Option<&pdt_agents::adapter::SessionInstructions>,
 ) -> Result<(), PtyError> {
     let l = launch(s.kind, s.agent, &st.platform, resume, &s.id, s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args)?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;
     let (program, mut args) = (resolved.program, resolved.args);
+    if let Some(i) = instructions.filter(|_| s.kind == SessionKind::AgentTui) {
+        match s.agent {
+            // Codex's flags go before its arguments (`resume <id>`), right after any cmd.exe prefix.
+            Some(AgentKind::Codex) => {
+                let at = args.len() - launch_args.len();
+                let extra = pdt_agents::instructions::codex_tui_args(&i.text, resolved.via_cmd, &i.file);
+                args.splice(at..at, extra);
+            }
+            _ => args.extend(pdt_agents::instructions::claude_args(&i.file)),
+        }
+    }
     if let Some(p) = prompt.filter(|_| s.kind == SessionKind::AgentTui) {
         if resolved.via_cmd {
             let dir = session_data_dir(st, &s.id);
@@ -346,35 +426,75 @@ fn session_data_dir(st: &AppState, id: &str) -> PathBuf {
 }
 
 /// Waits for the previous run's exit write (the process has already exited, so this is prompt).
-async fn settle_exit(st: &AppState, id: &str) {
+pub(crate) async fn settle_exit(st: &AppState, id: &str) {
     let handle = st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     if let Some(h) = handle {
         let _ = h.await;
     }
 }
 
+/// `PATCH /api/sessions/{id}`: any of a new title, and for conversations the model (null or "" for the agent's
+/// default) and permission mode.
 #[derive(serde::Deserialize)]
-pub(crate) struct Rename {
-    title: String,
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateSession {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    model: Option<Option<String>>,
+    #[serde(default)]
+    permission_mode: Option<PermissionMode>,
 }
 
-pub(crate) async fn rename(
+/// Tells an absent field (None) from an explicit null (Some(None)).
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    use serde::Deserialize;
+    Ok(Some(Option::<String>::deserialize(d)?))
+}
+
+pub(crate) async fn update(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    payload: Result<Json<Rename>, JsonRejection>,
+    payload: Result<Json<UpdateSession>, JsonRejection>,
 ) -> Result<Json<Session>, ApiError> {
     let Json(body) = payload?;
-    let title = clean_title(&body.title)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_title", "title must be 1 to 100 characters"))?;
-    if !st.store.rename_session(&id, &title).await? {
-        return Err(ApiError::not_found("session"));
+    let session = load(&st, &id).await?;
+    if let Some(title) = &body.title {
+        let title = clean_title(title).ok_or_else(|| {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_title", "title must be 1 to 100 characters")
+        })?;
+        st.store.rename_session(&id, &title).await?;
+    }
+    if body.model.is_some() || body.permission_mode.is_some() {
+        if session.mode != SessionMode::Conversation {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "not_conversation",
+                "the model and permission mode are set on conversations",
+            ));
+        }
+        let model = match body.model {
+            Some(m) => match m.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+                Some(m) if !pdt_core::conversation::valid_model(m) => {
+                    return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "invalid model name"));
+                }
+                m => Some(m.map(String::from)),
+            },
+            None => None,
+        };
+        let change = pdt_agents::adapter::SessionChange { model, permission_mode: body.permission_mode };
+        crate::conversations::apply_settings(&st, &session, change).await?;
     }
     Ok(Json(load(&st, &id).await?))
 }
 
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let _guard = st.lock_session(&id).await;
-    load(&st, &id).await?;
+    let session = load(&st, &id).await?;
+    if session.mode == SessionMode::Conversation {
+        crate::conversations::stop(&st, &session).await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     st.kill_pty(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -387,7 +507,11 @@ pub(crate) async fn restart(
     let Json(size) = payload?;
     let size = size.validate()?;
     let _guard = st.lock_session(&id).await;
-    load(&st, &id).await?;
+    let session = load(&st, &id).await?;
+    if session.mode == SessionMode::Conversation {
+        crate::conversations::reopen(&st, &session).await?;
+        return Ok(Json(load(&st, &id).await?));
+    }
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
     }
@@ -396,7 +520,12 @@ pub(crate) async fn restart(
 }
 
 /// Starts a session that has no running process, resuming its agent conversation. The caller holds the session lock.
-async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Option<Resume>) -> Result<(), ApiError> {
+pub(crate) async fn restart_locked(
+    st: &AppState,
+    id: &str,
+    size: TerminalSize,
+    planned: Option<Resume>,
+) -> Result<(), ApiError> {
     settle_exit(st, id).await;
     st.remove_pty(id).await;
     // After the previous run's exit task, which may have just bound its Codex conversation.
@@ -413,9 +542,10 @@ async fn restart_locked(st: &AppState, id: &str, size: TerminalSize, planned: Op
         st.store.set_fresh_started_at(id, at).await?;
         session.fresh_started_at = Some(at);
     }
+    let instructions = agent_instructions(st, &session).await?;
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
-    if let Err(e) = start_pty(st, &session, size, &resume, creds, None) {
+    if let Err(e) = start_pty(st, &session, size, &resume, creds, None, instructions.as_ref()) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
             st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;
@@ -492,7 +622,8 @@ impl ResumePlan {
 /// (see `plan_resume`), so sessions sharing a folder do not interfere.
 pub async fn plan_resume_interrupted(st: &AppState) -> ResumePlan {
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
-        Ok(v) => v,
+        // Conversations reopen on the next message instead (spec §9).
+        Ok(v) => v.into_iter().filter(|s| s.mode != SessionMode::Conversation).collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!(error = %e, "could not list interrupted sessions to resume");
             return ResumePlan(Vec::new());
@@ -517,6 +648,7 @@ pub async fn resume_interrupted(st: &AppState) -> usize {
 /// worktree goes away.
 pub(crate) async fn discard(st: &AppState, id: &str) {
     let _guard = st.lock_session(id).await;
+    crate::conversations::forget(st, id).await;
     if st.ptys.is_running(id) {
         let _ = st.kill_pty(id).await;
     }
@@ -531,18 +663,48 @@ pub(crate) async fn discard(st: &AppState, id: &str) {
     st.forget_session_lock(id);
 }
 
+/// Removes a session, stopping it first if it runs.
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    let _guard = st.lock_session(&id).await;
     load(&st, &id).await?;
-    if st.ptys.is_running(&id) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "stop the session before removing it"));
-    }
-    settle_exit(&st, &id).await;
-    st.remove_pty(&id).await;
-    st.store.delete_session(&id).await?;
-    // Best-effort: the session's hook settings.
-    let _ = std::fs::remove_dir_all(session_data_dir(&st, &id));
-    crate::activity::forget(&st, &id);
-    st.forget_session_lock(&id);
+    stop_and_remove(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a session that has no running process. The caller holds the session lock.
+async fn remove_locked(st: &AppState, id: &str) -> Result<(), ApiError> {
+    crate::conversations::forget(st, id).await;
+    settle_exit(st, id).await;
+    st.remove_pty(id).await;
+    st.store.delete_session(id).await?;
+    // Best-effort: the session's hook settings.
+    let _ = std::fs::remove_dir_all(session_data_dir(st, id));
+    crate::activity::forget(st, id);
+    st.forget_session_lock(id);
+    Ok(())
+}
+
+/// How long closing a tab waits for its session's process to exit after the kill.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Stops a session if it runs, waits for it to exit, then deletes it (closing its tab, PDT-28). A session that is
+/// already gone is fine. Fails with 409 `session_running` when the process outlives the kill.
+pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiError> {
+    let _guard = st.lock_session(id).await;
+    if st.store.get_session(id).await?.is_none() {
+        st.forget_session_lock(id);
+        return Ok(());
+    }
+    if st.ptys.is_running(id) {
+        let _ = st.kill_pty(id).await;
+        let exited = tokio::time::timeout(STOP_WAIT, async {
+            while st.ptys.is_running(id) {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        if exited.is_err() {
+            return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "the session did not stop in time"));
+        }
+    }
+    remove_locked(st, id).await
 }

@@ -1,18 +1,21 @@
 # Prompt: set up a project's runs in PDT
 
-Start a Claude Code or Codex session from PDT in the project (its main checkout or a worktree), and paste
-everything below the line. It finds the project through PDT itself, so nothing needs filling in. The reference it
-follows is [../run-config.md](../run-config.md).
+PDT has this prompt built in: **Set up with an agent** in a project's Settings (Runs on this host) starts a session
+with it, and `GET /api/guides/set-up-project` serves it. By hand: start a Claude Code or Codex session from PDT in the
+project (its main checkout or a worktree), and paste everything below the line. It finds the project through PDT
+itself, so nothing needs filling in. The reference it follows is [../run-config.md](../run-config.md)
+(`GET /api/guides/run-config`).
 
 ---
 
 Set up this project so PDT (Personal Dev Team, which started this session) can run and test it: a **Run** that
 starts the app for development, and a **Test** for each test suite.
 
-**1. Find PDT and this project.** PDT's API is `http://127.0.0.1:$PDT_HOOK_PORT/api`.
-`curl -s 127.0.0.1:$PDT_HOOK_PORT/api/sessions/$PDT_SESSION_ID` gives this session's `projectId` and `worktreeId`.
-(If those variables are unset, this session didn't come from PDT: use port 7420 and match `repoPath` in
-`GET /api/projects` to the repo root.) Read `GET /api/projects/<projectId>/run-config?worktreeId=<worktreeId>` (leave
+**1. Find PDT and this project.** PDT's instructions for this session name its API (`http://127.0.0.1:<port>/api`)
+and this session's id; terminal sessions also have `$PDT_HOOK_PORT` and `$PDT_SESSION_ID`.
+`GET /api/sessions/<session id>` gives this session's `projectId` and `worktreeId`. (If you have neither, this session
+didn't come from PDT: use port 7420 and match `repoPath` in `GET /api/projects` to the repo root.) The full reference
+for the configuration is `GET /api/guides/run-config`. Read `GET /api/projects/<projectId>/run-config?worktreeId=<worktreeId>` (leave
 out `worktreeId` when null): it shows any existing `.pdt/project.toml` (`file`), host overrides (`overrides`), and
 the merged result or an `error`. If a working configuration already exists, say so and ask what to change.
 
@@ -36,6 +39,7 @@ setup   = "..."                     # optional
 command = "..."                     # must listen on $PORT
 web     = true                      # PDT assigns $PORT and shows the link when the port answers
 data    = true                      # PDT provides $PDT_RUN_DATA, a folder kept per branch
+detach  = true                      # optional: keeps running when PDT restarts or updates (no input)
 env     = { NAME = "value" }        # optional
 
 [[test]]
@@ -51,6 +55,8 @@ with the host's normal environment. Rules:
 - If the server checks the Host header, allow `$PDT_RUN_HOST` (through a flag or env var; don't edit the project's
   own config files for this unless I agree).
 - Point app state at `$PDT_RUN_DATA` when the app supports it, and set `data = true`.
+- Set `detach = true` only for a long-lived app I use day to day (a desktop app on the main checkout) that must
+  not be killed when PDT updates. Its output goes to a log, and it takes no typed input.
 - Never put secrets in it, and never forward a variable PDT doesn't set (`X = "$SOMETHING"` passes the literal text).
 - Prefer plain commands on PATH, joined with `&&`; no `||`, `;` or pipes (Windows doesn't split them).
 

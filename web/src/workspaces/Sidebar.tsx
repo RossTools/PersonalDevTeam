@@ -1,7 +1,7 @@
 import { useState, type MouseEvent, type ReactNode } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Button, EmptyState, IconButton, List, ListRow, useMenuAt, type ListDropEvent } from '@ui';
+import { Badge, EmptyState, IconButton, List, ListRow, useMenuAt, type ListDropEvent } from '@ui';
 import { api } from '../api/client';
 import type { Workspace } from '../api/gen/Workspace';
 import { AgentDot, AgentLabel, itemState, rollup, UnseenDot } from '../common/AgentState';
@@ -11,10 +11,15 @@ import { InlineRename } from '../common/InlineRename';
 import { runAction } from '../common/useAction';
 import { DROP_KINDS, droppedOf } from './dnd';
 import { agentMenu, workspaceMenu } from './menus';
-import { findTab, itemOf } from './model';
+import { findTab, isTicketWorkspace, itemOf, positionInAll } from './model';
+import { TicketKey } from '../common/TicketKey';
+import { PrBadge } from '../tickets/PullRequest';
+import { useOpenTicket } from '../tickets/actions';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { SessionTicketChip } from './SessionTicketChip';
 import { applyDrop } from './WorkspaceBar';
+
+const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 
@@ -88,13 +93,17 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
     return branches.get(i.worktreeId) ?? i.session?.cwd.split(/[\\/]/).filter(Boolean).pop() ?? null;
   };
 
-  const onWorkspaceDrop = (e: ListDropEvent) => {
+  const openTicket = useOpenTicket();
+  const general = ws.workspaces.filter((w) => !isTicketWorkspace(w));
+  const tickets = ws.workspaces.filter(isTicketWorkspace);
+  /** Drops on one section's list: workspaces reorder within it; a tab or agent goes to the end of the row's workspace. */
+  const onDropIn = (group: Workspace[]) => (e: ListDropEvent) => {
     if (e.kind === 'workspace') {
-      const to = reorderTo(ws.workspaces, e.id, e.target);
-      if (to !== null) void runAction(() => ws.moveWorkspace(e.id, to));
+      if (!group.some((w) => w.id === e.id)) return;
+      const to = reorderTo(group, e.id, e.target);
+      if (to !== null) void runAction(() => ws.moveWorkspace(e.id, positionInAll(ws.workspaces, group, e.id, to)));
       return;
     }
-    // A tab or an agent dropped on (or next to) a workspace row goes to the end of that workspace.
     if (e.target) void runAction(() => applyDrop(ws, droppedOf(e), e.target!.id));
   };
   // Double-clicking a free-form workspace renames it.
@@ -103,6 +112,18 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
     const w = ws.workspaces.find((x) => x.id === id);
     if (w && w.projectId === null) setRenamingId(w.id);
   };
+
+  /** A row's name, or the rename field while it is being renamed. */
+  const nameOrRename = (w: Workspace): ReactNode => renamingId === w.id ? (
+    <RowField>
+      <InlineRename
+        label="Workspace name"
+        initial={w.name}
+        onCommit={(name) => { setRenamingId(null); void runAction(() => ws.renameWorkspace(w.id, name)); }}
+        onCancel={() => setRenamingId(null)}
+      />
+    </RowField>
+  ) : w.name;
 
   return (
     <div className="flex flex-col">
@@ -120,28 +141,18 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
             onAction={(id) => { ws.selectWorkspace(id); onChoose?.(); }}
             dragKind="workspace"
             acceptKinds={['workspace', ...DROP_KINDS]}
-            onDrop={onWorkspaceDrop}
+            onDrop={onDropIn(general)}
           >
-            {ws.workspaces.map((w) => {
+            {general.map((w) => {
               const state = workspaceState(ws, w);
               const projectKey = w.projectId ? ws.projects.find((p) => p.id === w.projectId)?.key : undefined;
-              const renaming = renamingId === w.id;
               return (
                 <ListRow
                   key={w.id}
                   id={w.id}
                   textValue={w.name}
                   current={ws.workspace?.id === w.id}
-                  title={renaming ? (
-                    <RowField>
-                      <InlineRename
-                        label="Workspace name"
-                        initial={w.name}
-                        onCommit={(name) => { setRenamingId(null); void runAction(() => ws.renameWorkspace(w.id, name)); }}
-                        onCancel={() => setRenamingId(null)}
-                      />
-                    </RowField>
-                  ) : w.name}
+                  title={nameOrRename(w)}
                   leading={state ? <AgentDot state={state} unseenDot={false} /> : <span className="inline-block size-2" />}
                   trailing={
                     <>
@@ -167,6 +178,46 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
           </div>
         )}
       </section>
+      {tickets.length > 0 && (
+        <section aria-label="Ticket workspaces">
+          <h2 className={heading}>Tickets</h2>
+          <div onDoubleClick={onWorkspaceDoubleClick}>
+            <List
+              id="ticket-workspace-list"
+              aria-label="Ticket workspaces"
+              onAction={(id) => { ws.selectWorkspace(id); onChoose?.(); }}
+              dragKind="workspace"
+              acceptKinds={['workspace', ...DROP_KINDS]}
+              onDrop={onDropIn(tickets)}
+            >
+              {tickets.map((w) => {
+                const t = w.ticket!;
+                const state = workspaceState(ws, w);
+                return (
+                  <ListRow
+                    key={w.id}
+                    id={w.id}
+                    textValue={`${t.key} ${t.title}`}
+                    current={ws.workspace?.id === w.id}
+                    title={renamingId === w.id ? nameOrRename(w) : t.title}
+                    leading={state ? <AgentDot state={state} unseenDot={false} /> : <span className="inline-block size-2" />}
+                    trailing={state && state.label !== 'Idle' ? <AgentLabel state={state} /> : undefined}
+                    secondary={
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="flex" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop} onKeyDown={stop} onClick={stop} onDoubleClick={stop}>
+                          <TicketKey ticketKey={t.key} title={`Open ${t.key}`} onClick={() => openTicket({ id: t.id, projectId: t.projectId })} />
+                        </span>
+                        {t.pr ? <PrBadge pr={t.pr} /> : t.attemptState === 'merged' ? <Badge tone="accent" className="shrink-0">Merged</Badge> : null}
+                      </span>
+                    }
+                    onMenu={(at) => openMenu(at, `Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenamingId(w.id), onProjectSettings))}
+                  />
+                );
+              })}
+            </List>
+          </div>
+        </section>
+      )}
       <section aria-label="Agents">
         <h2 className={heading}>Agents</h2>
         <List
@@ -185,7 +236,15 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                 key={id}
                 id={id}
                 textValue={info.title}
-                title={info.title}
+                title={
+                  info.session?.ticket ? (
+                    // The key leads the title row only, so the second line still runs under it.
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <SessionTicketChip session={info.session} className="flex shrink-0" />
+                      <span className="truncate">{info.title}</span>
+                    </span>
+                  ) : info.title
+                }
                 bold={info.unseen}
                 current={!!ws.tab && where?.tab.id === ws.tab.id}
                 leading={
@@ -195,9 +254,8 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                   </span>
                 }
                 trailing={
-                  state.label || info.unseen || info.session?.ticket ? (
+                  state.label || info.unseen ? (
                     <>
-                      <SessionTicketChip session={info.session} className="flex" />
                       {state.label && <AgentLabel state={state} />}
                       {info.unseen && <UnseenDot />}
                     </>

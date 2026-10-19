@@ -140,6 +140,9 @@ async fn add_busy_session(app: &axum::Router, state: &pdt_api::AppState, tmp: &s
             unseen: false,
             attempt_id: None,
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         })
         .await
         .unwrap();
@@ -184,6 +187,7 @@ async fn no_token_means_no_network_traffic() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn busy_hosts_ask_first_then_the_release_is_handed_off() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _) = setup(tmp.path(), true).await;
@@ -376,6 +380,7 @@ async fn an_unparseable_current_version_is_never_offered_an_update() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn a_dropped_install_request_still_finishes() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -385,9 +390,7 @@ async fn a_dropped_install_request_still_finishes() {
     // A failing download whose request was dropped: the state recovers and checks work again.
     *fake.sums.lock().unwrap() = format!("{}  {ASSET}\n", "0".repeat(64));
     fake.hold_assets.store(true, Ordering::SeqCst);
-    let install = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true})));
-    assert!(tokio::time::timeout(Duration::from_millis(200), install).await.is_err(), "the download is held");
-    assert_eq!(call(&app, "GET", "/api/host/update", None).await.1["state"], "downloading");
+    drop_install_once_downloading(&app).await;
     fake.hold_assets.store(false, Ordering::SeqCst);
     let v = wait_status(&app, state_is("available")).await;
     assert!(v["error"].as_str().unwrap().contains("checksum"), "{v}");
@@ -397,11 +400,22 @@ async fn a_dropped_install_request_still_finishes() {
     // A good download whose request was dropped is still handed off.
     *fake.sums.lock().unwrap() = good_sums();
     fake.hold_assets.store(true, Ordering::SeqCst);
-    let install = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true})));
-    assert!(tokio::time::timeout(Duration::from_millis(200), install).await.is_err());
+    drop_install_once_downloading(&app).await;
     fake.hold_assets.store(false, Ordering::SeqCst);
     wait_status(&app, state_is("installing")).await;
     assert!(request_path(&data(tmp.path())).exists());
+}
+
+/// Starts an install whose download the fake holds, then drops the request once the download is under way (not after
+/// a fixed delay: on a loaded runner the request may not have got that far yet).
+async fn drop_install_once_downloading(app: &axum::Router) {
+    let a = app.clone();
+    let install =
+        tokio::spawn(async move { call(&a, "POST", "/api/host/update/install", Some(json!({"force": true}))).await });
+    wait_status(app, state_is("downloading")).await;
+    assert!(!install.is_finished(), "the download is held");
+    install.abort();
+    let _ = install.await;
 }
 
 fn write_result(tmp: &std::path::Path, outcome: pdt_core::handoff::UpdateOutcome, at: i64) {
@@ -420,6 +434,7 @@ fn write_result(tmp: &std::path::Path, outcome: pdt_core::handoff::UpdateOutcome
 /// Final review #10: pdt-host took the request and recorded a failure while this pdtd kept running (it did not
 /// stop): the next status read leaves `installing` and shows the result.
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn a_failed_hand_off_while_pdtd_keeps_running_does_not_stay_installing() {
     use pdt_core::handoff::UpdateOutcome;
     let tmp = tempfile::tempdir().unwrap();
@@ -448,6 +463,7 @@ async fn a_failed_hand_off_while_pdtd_keeps_running_does_not_stay_installing() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn a_host_that_got_busy_during_the_download_is_asked_again() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -470,6 +486,7 @@ async fn a_host_that_got_busy_during_the_download_is_asked_again() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn checks_never_overwrite_an_install_and_never_stick() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -536,6 +553,7 @@ async fn the_loop_only_notifies_under_the_notify_policy() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn the_loop_installs_when_idle_under_auto_when_idle() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _) = setup(tmp.path(), true).await;
@@ -574,6 +592,7 @@ fn write_skip(tmp: &std::path::Path, version: &str) {
 /// Ruling B: a version that failed or was rolled back (pdt-host's skip.json) is never installed automatically again,
 /// even after the result is dismissed; a manual update retries it and clears the skip.
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn the_loop_never_auto_installs_a_version_that_failed_even_after_a_dismiss() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -597,6 +616,7 @@ async fn the_loop_never_auto_installs_a_version_that_failed_even_after_a_dismiss
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn the_loop_auto_installs_a_newer_version_than_the_one_that_failed() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _) = setup(tmp.path(), true).await;

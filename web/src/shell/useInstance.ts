@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Health } from '../api/gen/Health';
 
-/** This daemon's health: version, profile, port and whether it is a development instance. Fetched once, no polling. */
+/** This daemon's health: version, profile, port and whether it is a development instance. Fetched once here;
+ * `useReloadOnNewBuild` keeps the same query polled for `webBuild`. */
 export function useInstance() {
   return useQuery<Health>({ queryKey: ['health'], queryFn: api.health, staleTime: Infinity });
 }

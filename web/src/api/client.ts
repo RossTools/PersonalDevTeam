@@ -1,5 +1,7 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
+import type { GuideInfo } from './gen/GuideInfo';
 import type { Health } from './gen/Health';
+import type { TicketDraft } from './gen/TicketDraft';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { HostSettingsView } from './gen/HostSettingsView';
@@ -8,6 +10,9 @@ import type { NewProject } from './gen/NewProject';
 import type { CloneProject } from './gen/CloneProject';
 import type { FileContent } from './gen/FileContent';
 import type { FileEntry } from './gen/FileEntry';
+import type { FolderEntry } from './gen/FolderEntry';
+import type { FolderListing } from './gen/FolderListing';
+import type { NewFolder } from './gen/NewFolder';
 import type { ProjectPatch } from './gen/ProjectPatch';
 import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
@@ -18,7 +23,9 @@ import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
 import type { RunConfigView } from './gen/RunConfigView';
+import type { Attachment } from './gen/Attachment';
 import type { Session } from './gen/Session';
+import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
 import type { UpdateStatus } from './gen/UpdateStatus';
 import type { WhoAmI } from './gen/WhoAmI';
@@ -45,6 +52,21 @@ import type { TicketPatch } from './gen/TicketPatch';
 import type { TicketQuery } from './gen/TicketQuery';
 import type { StartResult } from './gen/StartResult';
 import type { StartTicket } from './gen/StartTicket';
+import type { AgentCapabilities } from './gen/AgentCapabilities';
+import type { AgentKind } from './gen/AgentKind';
+import type { Answer } from './gen/Answer';
+import type { AnswerRequest } from './gen/AnswerRequest';
+import type { ConversationEvent } from './gen/ConversationEvent';
+import type { PendingMessage } from './gen/PendingMessage';
+import type { PermissionMode } from './gen/PermissionMode';
+import type { SendMessage } from './gen/SendMessage';
+
+/** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
+export interface SessionPatch {
+  title?: string;
+  model?: string | null;
+  permissionMode?: PermissionMode;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -54,6 +76,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+/** A plain-text response (PDT's guides are Markdown). */
+async function requestText(path: string): Promise<string> {
+  return (await send(path)).text();
+}
+
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
   if (!res.ok) {
     let body: Partial<ApiErrorBody> = {};
@@ -64,8 +97,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  return res;
 }
 
 const enc = encodeURIComponent;
@@ -86,6 +118,9 @@ function filesQuery(worktreeId: string | null, path: string): string {
 
 export const api = {
   health: () => request<Health>('/api/health'),
+  listFolders: (q: { path?: string; hidden?: boolean; nearest?: boolean }) =>
+    request<FolderListing>(`/api/host/folders${queryString({ ...q, hidden: q.hidden || undefined, nearest: q.nearest || undefined })}`),
+  createFolder: (f: NewFolder) => request<FolderEntry>('/api/host/folders', { method: 'POST', body: JSON.stringify(f) }),
   listProjects: () => request<Project[]>('/api/projects'),
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
@@ -100,6 +135,7 @@ export const api = {
   listWorktrees: (projectId: string) => request<Worktree[]>(`/api/projects/${enc(projectId)}/worktrees`),
   createWorktree: (projectId: string, w: NewWorktree) =>
     request<Worktree>(`/api/projects/${enc(projectId)}/worktrees`, { method: 'POST', body: JSON.stringify(w) }),
+  getSession: (id: string) => request<Session>(`/api/sessions/${enc(id)}`),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${enc(projectId)}/sessions`),
   createSession: (s: NewSession) => request<Session>('/api/sessions', { method: 'POST', body: JSON.stringify(s) }),
   viewSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/view`, { method: 'POST' }),
@@ -109,11 +145,51 @@ export const api = {
   renameSession: (id: string, title: string) =>
     request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteSession: (id: string) => request<void>(`/api/sessions/${enc(id)}`, { method: 'DELETE' }),
+  updateSession: (id: string, p: SessionPatch) =>
+    request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  /** Make ticket: the agent drafts a title and description from the conversation (a hidden side request). */
+  draftTicket: (id: string, signal?: AbortSignal) =>
+    request<TicketDraft>(`/api/sessions/${enc(id)}/ticket-draft`, { method: 'POST', signal }),
+  /** A conversation's stored events after `after`, oldest first. */
+  listSessionEvents: (id: string, q: { after?: number; limit?: number } = {}) =>
+    request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString(q)}`),
+  /** Sends a message to a conversation (reopening it when parked or ended); it is pending until the agent takes it. */
+  sendMessage: (id: string, m: SendMessage) =>
+    request<PendingMessage>(`/api/sessions/${enc(id)}/messages`, { method: 'POST', body: JSON.stringify(m) }),
+  /** Answers an open request; 409 `request_closed` when it was answered elsewhere or expired. */
+  answerRequest: (id: string, requestId: string, answer: Answer) =>
+    request<void>(`/api/sessions/${enc(id)}/requests/${enc(requestId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ answer } satisfies AnswerRequest),
+    }),
+  interruptSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/interrupt`, { method: 'POST' }),
+  /** Codex conversations: opens the agent's own TUI on the same thread, live (PTY at the session's pty socket). */
+  openSessionTerminal: (id: string, size: TerminalSize) =>
+    request<void>(`/api/sessions/${enc(id)}/terminal`, { method: 'POST', body: JSON.stringify(size) }),
+  closeSessionTerminal: (id: string) => request<void>(`/api/sessions/${enc(id)}/terminal`, { method: 'DELETE' }),
+  /** Claude: hand the session between the conversation and its own TUI (`interrupt` stops a running turn). */
+  switchSessionMode: (id: string, body: { mode: SessionMode; cols?: number; rows?: number; interrupt?: boolean }) =>
+    request<Session>(`/api/sessions/${enc(id)}/mode`, { method: 'POST', body: JSON.stringify(body) }),
+  agentCapabilities: (agent: AgentKind) => request<AgentCapabilities>(`/api/agents/${enc(agent)}/capabilities`),
+  /** Stores an image for a message (PNG, JPEG, GIF or WebP, ≤ 10 MB); send its id in `images`. */
+  uploadAttachment: (sessionId: string, file: Blob) =>
+    request<Attachment>(`/api/sessions/${enc(sessionId)}/attachments`, {
+      method: 'POST',
+      body: file,
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+    }),
+  /** Where an attached image is served (thumbnails). */
+  attachmentUrl: (sessionId: string, attachmentId: string) =>
+    `/api/sessions/${enc(sessionId)}/attachments/${enc(attachmentId)}`,
+  /** The session folder's files best matching an `@` query. */
+  sessionFiles: (sessionId: string, q: string) =>
+    request<string[]>(`/api/sessions/${enc(sessionId)}/files${queryString({ q })}`),
   listWorkspaces: () => request<Workspace[]>('/api/workspaces'),
   createWorkspace: (w: NewWorkspace) => request<Workspace>('/api/workspaces', { method: 'POST', body: JSON.stringify(w) }),
   updateWorkspace: (id: string, p: WorkspacePatch) =>
     request<Workspace>(`/api/workspaces/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
-  deleteWorkspace: (id: string) => request<void>(`/api/workspaces/${enc(id)}`, { method: 'DELETE' }),
+  deleteWorkspace: (id: string, opts: { closeTabs?: boolean } = {}) =>
+    request<void>(`/api/workspaces/${enc(id)}${opts.closeTabs ? '?closeTabs=true' : ''}`, { method: 'DELETE' }),
   openTab: (workspaceId: string, t: OpenTab) =>
     request<Tab>(`/api/workspaces/${enc(workspaceId)}/tabs`, { method: 'POST', body: JSON.stringify(t) }),
   updateTab: (id: string, p: TabPatch) => request<Tab>(`/api/tabs/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
@@ -160,6 +236,9 @@ export const api = {
   projectSettings: (projectId: string) => request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`),
   saveProjectSettings: (projectId: string, s: ProjectSettingsInput) =>
     request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
+  listGuides: () => request<GuideInfo[]>('/api/guides'),
+  /** A built-in guide or prompt, as Markdown. */
+  guide: (name: string) => requestText(`/api/guides/${enc(name)}`),
   hostSettings: () => request<HostSettingsView>('/api/host/settings'),
   saveHostSettings: (p: HostSettingsPatch) =>
     request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),

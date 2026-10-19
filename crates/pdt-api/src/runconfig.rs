@@ -87,9 +87,17 @@ pub(crate) async fn effective_for_file(
     Ok(effective(file, overrides.as_deref())?)
 }
 
-/// Checks override text before it is stored.
+/// Checks override text before it is stored. Unlike the repository's file, which may be written for a newer PDT, the
+/// overrides are written for this one, so a section it does not know is a mistake.
 pub(crate) fn validate_overrides(text: &str) -> Result<(), ApiError> {
-    parse(text, Source::Overrides)?;
+    let o = parse(text, Source::Overrides)?;
+    if let Some(s) = o.ignored.first() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_run_config",
+            format!("{} is not valid: unknown section `{s}` (expected run, test or area)", Source::Overrides),
+        ));
+    }
     Ok(())
 }
 

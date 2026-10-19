@@ -1,5 +1,6 @@
 use crate::{Store, StoreError};
 use pdt_core::activity::Activity;
+use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{SessionTicket, format_key};
 use sqlx::Row;
@@ -8,7 +9,8 @@ use sqlx::sqlite::SqliteRow;
 /// Sessions with their attempt's ticket (id and key), for `WHERE s.…` clauses.
 const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent, s.bypass_permissions, s.title, s.cwd, \
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
-                      s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, t.id AS ticket_id, \
+                      s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
+                      t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
                       LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN projects p ON p.id = t.project_id";
@@ -21,6 +23,8 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let attention_at: Option<i64> = r.try_get("attention_at")?;
     let last_viewed_at: Option<i64> = r.try_get("last_viewed_at")?;
     let corrupt = |what: &str, v: &str| StoreError::Corrupt(format!("unknown session {what} {v:?}"));
+    let mode: String = r.try_get("mode")?;
+    let permission_mode: Option<String> = r.try_get("permission_mode")?;
     let ticket_id: Option<String> = r.try_get("ticket_id")?;
     let ticket = match ticket_id {
         Some(id) => {
@@ -57,6 +61,12 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         unseen: pdt_core::activity::is_unseen(attention_at, last_viewed_at),
         attempt_id: r.try_get("attempt_id")?,
         ticket,
+        mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("mode", &mode))?,
+        model: r.try_get("model")?,
+        permission_mode: match permission_mode {
+            Some(m) => Some(PermissionMode::parse(&m).ok_or_else(|| corrupt("permission mode", &m))?),
+            None => None,
+        },
     })
 }
 
@@ -64,8 +74,8 @@ impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
-             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id, mode, model, \
+             permission_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -85,6 +95,9 @@ impl Store {
         .bind(s.attention_at)
         .bind(s.last_viewed_at)
         .bind(&s.attempt_id)
+        .bind(s.mode.as_str())
+        .bind(&s.model)
+        .bind(s.permission_mode.map(PermissionMode::as_str))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -138,6 +151,17 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Makes a session with no ticket work on an attempt (Make ticket's "Start from this chat"). False if the session
+    /// is gone or already has an attempt.
+    pub async fn set_session_attempt(&self, id: &str, attempt_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET attempt_id = ? WHERE id = ? AND attempt_id IS NULL")
+            .bind(attempt_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Records that a Codex session was launched fresh at `at` (ms).
     pub async fn set_fresh_started_at(&self, id: &str, at: i64) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE sessions SET fresh_started_at = ? WHERE id = ?")
@@ -164,6 +188,16 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
+    /// Sets a conversation session's agent conversation id (Codex's thread), replacing one that could not be resumed.
+    pub async fn set_external_session_id(&self, id: &str, external_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET external_session_id = ? WHERE id = ?")
+            .bind(external_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
     }
 
     /// Binds an agent conversation id to a session that has none. Returns false when the session already has one,
@@ -210,6 +244,61 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// A conversation's model (None: the agent's default).
+    pub async fn set_session_model(&self, id: &str, model: Option<&str>) -> Result<bool, StoreError> {
+        let r =
+            sqlx::query("UPDATE sessions SET model = ? WHERE id = ?").bind(model).bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// A conversation's permission mode (bypass also sets `bypass_permissions`, which a terminal launch reads).
+    pub async fn set_session_permission_mode(&self, id: &str, mode: PermissionMode) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET permission_mode = ?, bypass_permissions = ? WHERE id = ?")
+            .bind(mode.as_str())
+            .bind(mode == PermissionMode::Bypass)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Switches how an agent session is driven, with the transcript entry PDT's log ends at (spec §8.3; None once
+    /// imported).
+    pub async fn switch_session_mode(
+        &self,
+        id: &str,
+        mode: SessionMode,
+        history_from: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET mode = ?, history_from = ? WHERE id = ?")
+            .bind(mode.as_str())
+            .bind(history_from)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// The transcript entry PDT's log ends at, while the agent's TUI has the session.
+    pub async fn history_from(&self, id: &str) -> Result<Option<String>, StoreError> {
+        let v: Option<Option<String>> = sqlx::query_scalar("SELECT history_from FROM sessions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(v.flatten())
+    }
+
+    /// Sessions made before permission modes existed get theirs from `bypass_permissions`.
+    pub(crate) async fn backfill_permission_modes(&self) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE sessions SET permission_mode = CASE WHEN bypass_permissions THEN 'bypass' ELSE 'ask' END \
+             WHERE permission_mode IS NULL AND kind = 'agent_tui'",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<bool, StoreError> {
@@ -263,6 +352,9 @@ mod tests {
             unseen: false,
             attempt_id: None,
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         }
     }
 
@@ -335,6 +427,21 @@ mod tests {
         assert!(store.rename_session("a", "New name").await.unwrap());
         assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "New name");
         assert!(!store.rename_session("zz", "x").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn mode_and_history_anchor_switch() {
+        use pdt_core::conversation::SessionMode;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        assert_eq!(store.history_from("a").await.unwrap(), None);
+        assert!(store.switch_session_mode("a", SessionMode::Conversation, Some("uuid-9")).await.unwrap());
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().mode, SessionMode::Conversation);
+        assert_eq!(store.history_from("a").await.unwrap().as_deref(), Some("uuid-9"));
+        assert!(store.switch_session_mode("a", SessionMode::Terminal, None).await.unwrap());
+        assert_eq!(store.history_from("a").await.unwrap(), None);
+        assert!(!store.switch_session_mode("zz", SessionMode::Terminal, None).await.unwrap());
     }
 
     #[tokio::test]

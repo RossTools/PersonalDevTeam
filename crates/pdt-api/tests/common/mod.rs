@@ -23,6 +23,24 @@ pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Valu
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
+/// Sends raw bytes (e.g. an image upload) and returns the status, the content type and the body bytes.
+pub async fn call_raw(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Vec<u8>,
+) -> (StatusCode, Option<String>, Vec<u8>) {
+    let req = Request::builder().method(method).uri(uri).body(Body::from(body)).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let ct = res.headers().get("content-type").and_then(|v| v.to_str().ok()).map(String::from);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, ct, bytes)
+}
+
+/// The smallest bytes PDT takes for a PNG (it reads the signature, not the pixels).
+pub const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRfake";
+
 /// Runs `git` in `dir` (with a throwaway identity, and no line-ending conversion so its warnings stay out of the
 /// test output) and asserts it succeeds.
 pub fn git(dir: &std::path::Path, args: &[&str]) {
@@ -69,17 +87,18 @@ pub fn argv_agent(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 }
 
 /// The launches [`argv_agent`] recorded, each as its arguments (on Windows: one string, the raw `%*` line). Waits up
-/// to 10 s for `want` of them.
+/// to 10 s for `want` of them. Only complete launches count: the fake writes one argument at a time, so a launch
+/// still being written (no end marker yet) is left out rather than returned with only its first arguments.
 pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -> Vec<Vec<String>> {
     let mut found = vec![];
     for _ in 0..100 {
         let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
         found = if cfg!(windows) {
-            text.lines().map(|l| vec![l.trim().to_string()]).collect()
+            text.split_inclusive('\n').filter(|l| l.ends_with('\n')).map(|l| vec![l.trim().to_string()]).collect()
         } else {
-            text.split_terminator("<<LAUNCH>>\n")
-                .map(|l| l.split_terminator("\n<<END>>\n").map(String::from).collect())
-                .collect()
+            let mut launches: Vec<&str> = text.split("<<LAUNCH>>\n").collect();
+            launches.pop(); // what follows the last end marker: nothing, or a launch still being written
+            launches.into_iter().map(|l| l.split_terminator("\n<<END>>\n").map(String::from).collect()).collect()
         };
         if found.len() >= want {
             break;
@@ -87,4 +106,14 @@ pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     found
+}
+
+/// Parks the test's idle conversation, retrying for up to 10 s: a turn's end is stored before the conversation's
+/// runtime state says the turn is over, so a test that saw the stored end can call park a moment too early.
+pub async fn park_once_idle(st: &pdt_api::AppState) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while pdt_api::park_idle_conversations(st).await == 0 {
+        assert!(std::time::Instant::now() < deadline, "the conversation never became idle enough to park");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }

@@ -4,7 +4,7 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::workspace::{
     NewWorkspace, OpenTab, Tab, TabItem, TabPatch, TabPlacement, Workspace, WorkspacePatch, valid_workspace_name,
@@ -16,7 +16,9 @@ fn unknown_workspace() -> ApiError {
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Workspace>>, ApiError> {
-    Ok(Json(st.store.list_workspaces().await?))
+    let mut list = st.store.list_workspaces().await?;
+    crate::github::apply_workspaces(&st, &mut list);
+    Ok(Json(list))
 }
 
 pub(crate) async fn create(
@@ -31,6 +33,7 @@ pub(crate) async fn create(
         position: 0,
         created_at: now_ms(),
         tabs: vec![],
+        ticket: None,
     };
     st.store.insert_workspace(&w).await?;
     let w = st.store.get_workspace(&w.id).await?.ok_or_else(unknown_workspace)?;
@@ -51,11 +54,24 @@ pub(crate) async fn update(
     if let Some(pos) = patch.position {
         st.store.move_workspace(&id, pos).await?;
     }
-    Ok(Json(st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?))
+    let mut w = st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?;
+    crate::github::apply_workspaces(&st, std::slice::from_mut(&mut w));
+    Ok(Json(w))
 }
 
-pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    match st.store.delete_workspace(&id).await? {
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct RemoveQuery {
+    /// Close the workspace's tabs instead of moving them to their projects' workspaces.
+    close_tabs: bool,
+}
+
+pub(crate) async fn remove(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<RemoveQuery>,
+) -> Result<StatusCode, ApiError> {
+    match st.store.delete_workspace(&id, q.close_tabs).await? {
         DeleteWorkspace::Deleted => Ok(StatusCode::NO_CONTENT),
         DeleteWorkspace::NotFound => Err(unknown_workspace()),
         DeleteWorkspace::ProjectWorkspace => Err(ApiError::new(
@@ -107,9 +123,18 @@ pub(crate) async fn update_tab(
     Ok(Json(tab.ok_or_else(unknown_workspace)?))
 }
 
+/// Closes a tab. A session or run tab also stops and removes what it shows, so nothing is left without a tab (PDT-28);
+/// a ticket tab only closes. If the item cannot be stopped the tab stays open.
 pub(crate) async fn close_tab(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let tab = st.store.get_tab(&id).await?.ok_or_else(|| ApiError::not_found("tab"))?;
+    if let Some(sid) = &tab.session_id {
+        crate::sessions::stop_and_remove(&st, sid).await?;
+    } else if let Some(rid) = &tab.run_id {
+        crate::runs::stop_and_remove(&st, rid).await?;
+    }
+    // Removing the item deleted its tab with it (cascade); a ticket tab is closed here.
     if !st.store.close_tab(&id).await? {
-        return Err(ApiError::not_found("tab"));
+        st.store.renumber_workspace_tabs(&tab.workspace_id).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }

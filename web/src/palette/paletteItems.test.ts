@@ -15,12 +15,12 @@ const project = (id: string, name: string, key: string): Project => ({
 const session = (over: Partial<Session> & { id: string }): Session => ({
   projectId: 'p1', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: over.id,
   cwd: '/r/p1', status: 'running', exitCode: null, createdAt: 0, endedAt: null, externalSessionId: null,
-  freshStartedAt: null, activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, ...over,
+  freshStartedAt: null, activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, ...over,
 });
 
 const run: Run = {
   id: 'r1', projectId: 'p1', worktreeId: 'wt1', branch: 'feature-x', name: 'pdt', kind: 'run', state: 'ready', port: 8500,
-  url: null, dataDir: null, cwd: '/r/p1/.worktrees/feature-x', exitCode: null, error: null, createdAt: 0, updatedAt: 0,
+  url: null, dataDir: null, cwd: '/r/p1/.worktrees/feature-x', exitCode: null, error: null, detached: false, createdAt: 0, updatedAt: 0,
 };
 
 const tab = (id: string, workspaceId: string, position: number, item: { sessionId?: string; runId?: string }): Tab => ({

@@ -53,6 +53,11 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
+    /// The GitHub CLI for attempts' pull requests. `new` installs [`pdt_github::Unavailable`], which runs nothing;
+    /// only pdtd's production wiring installs the real CLI, so tests never reach GitHub.
+    pub github: std::sync::Arc<dyn pdt_github::GithubApi>,
+    /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
+    pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
     /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -98,6 +103,10 @@ pub struct AppState {
     /// Which instance this is (profile, port, dev), reported by `/api/health`. `new` makes it a dev instance on port
     /// 0; pdtd sets the real one.
     pub instance: pdt_core::instance::InstanceInfo,
+    /// The home folder the folder picker starts in and writes as `~`. `new` reads it from the OS; tests set it.
+    pub home_dir: Option<std::path::PathBuf>,
+    /// Conversation sessions' runtimes (structured agents).
+    pub conversations: crate::conversations::Conversations,
 }
 
 impl AppState {
@@ -123,6 +132,8 @@ impl AppState {
             listen_port: 0,
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
+            github: std::sync::Arc::new(pdt_github::Unavailable),
+            pr_watch: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
@@ -146,6 +157,8 @@ impl AppState {
             update_token_account,
             checks: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
+            home_dir: std::env::home_dir(),
+            conversations: Default::default(),
         }
     }
 }
@@ -207,6 +220,7 @@ pub(crate) fn now_ms() -> i64 {
 }
 
 #[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Health {
     pub status: String,
@@ -215,6 +229,9 @@ pub struct Health {
     pub profile: pdt_core::brand::Profile,
     pub port: u16,
     pub dev: bool,
+    /// A short hash of the index.html pdtd serves now, or null without a web dir. Every dev build reports the same
+    /// `version`, so the UI reloads itself when this changes (a dev instance restarted with a rebuilt web/dist).
+    pub web_build: Option<String>,
 }
 
 /// Asks pdtd to stop gracefully (running sessions become `interrupted`). Guarded by the Host/Origin checks.
@@ -226,8 +243,9 @@ async fn request_shutdown(State(st): State<AppState>) -> StatusCode {
 
 pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let guard_state = state.clone();
+    let index = web_dir.as_ref().map(|d| d.join("index.html"));
     let api = Router::new()
-        .route("/health", get(health))
+        .route("/health", get(move |st: State<AppState>| health(st, index.clone())))
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/host/whoami", get(crate::identity_guard::whoami))
@@ -240,6 +258,9 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/install", axum::routing::post(crate::update::post_install))
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
+        .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
+        .route("/guides", get(crate::guides::list))
+        .route("/guides/{name}", get(crate::guides::get_one))
         .route("/projects", get(crate::projects::list).post(crate::projects::create))
         .route("/projects/clone", axum::routing::post(crate::projects::clone))
         .route(
@@ -285,7 +306,26 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))
         .route("/tabs/{id}", axum::routing::patch(crate::workspaces::update_tab).delete(crate::workspaces::close_tab))
         .route("/sessions", axum::routing::post(sessions::create))
-        .route("/sessions/{id}", get(sessions::get_one).patch(sessions::rename).delete(sessions::remove))
+        .route("/sessions/{id}", get(sessions::get_one).patch(sessions::update).delete(sessions::remove))
+        .route("/sessions/{id}/events", get(crate::conversations::events))
+        .route("/sessions/{id}/messages", axum::routing::post(crate::conversations::post_message))
+        .route("/sessions/{id}/requests/{request_id}", axum::routing::post(crate::conversations::post_answer))
+        .route("/sessions/{id}/interrupt", axum::routing::post(crate::conversations::post_interrupt))
+        .route("/sessions/{id}/ticket-draft", axum::routing::post(crate::conversations::ticket_draft))
+        .route("/sessions/{id}/mode", axum::routing::post(crate::conversations::switch_mode))
+        .route(
+            "/sessions/{id}/attachments",
+            axum::routing::post(crate::attachments::upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route("/sessions/{id}/attachments/{attachment_id}", get(crate::attachments::get))
+        .route("/sessions/{id}/files", get(crate::attachments::files))
+        .route(
+            "/sessions/{id}/terminal",
+            axum::routing::post(crate::conversations::open_terminal).delete(crate::conversations::close_terminal),
+        )
+        .route("/agents/{agent}/capabilities", get(crate::conversations::capabilities))
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
         .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
         .route("/sessions/{id}/pty", get(pty_ws::connect))
@@ -309,7 +349,9 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     // tiny bodies are left alone. Quality 4 keeps it fast on every response.
     let compression =
         tower_http::compression::CompressionLayer::new().quality(tower_http::compression::CompressionLevel::Precise(4));
-    app.layer(compression).layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+    app.layer(compression)
+        .layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+        .layer(axum::middleware::from_fn(crate::slow::log_slow))
 }
 
 /// Vite names every file in `/assets/` by its content hash, so browsers may keep them for good; everything else the
@@ -325,8 +367,13 @@ async fn web_cache_headers(req: axum::extract::Request, next: axum::middleware::
     res
 }
 
-async fn health(State(st): State<AppState>) -> Json<Health> {
+async fn health(State(st): State<AppState>, index: Option<PathBuf>) -> Json<Health> {
     let i = st.instance;
+    // Read on every call: the web dir can be rebuilt while pdtd runs, and ServeDir serves the new files at once.
+    let web_build = match index {
+        Some(path) => tokio::fs::read(path).await.ok().map(|bytes| web_build_id(&bytes)),
+        None => None,
+    };
     Json(Health {
         status: "ok".into(),
         name: PRODUCT_NAME.into(),
@@ -334,5 +381,13 @@ async fn health(State(st): State<AppState>) -> Json<Health> {
         profile: i.profile,
         port: i.port,
         dev: i.dev,
+        web_build,
     })
+}
+
+/// The first 12 hex digits of index.html's SHA-256. Vite names every asset by its content hash and index.html links
+/// them, so any change to the bundle changes it.
+fn web_build_id(index_html: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(index_html).iter().take(6).map(|b| format!("{b:02x}")).collect()
 }

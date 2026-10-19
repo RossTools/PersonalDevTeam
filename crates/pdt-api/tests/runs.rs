@@ -40,6 +40,16 @@ web = true
 name = "idle"
 command = "node -e \"setTimeout(() => {}, 120000)\""
 
+[[run]]
+name = "app"
+command = "node -e \"console.log('app up on ' + process.env.PDT_RUN_BRANCH); setTimeout(() => {}, 120000)\""
+detach = true
+
+[[run]]
+name = "app-exits"
+command = "node -e \"console.log('bye'); process.exit(3)\""
+detach = true
+
 [[test]]
 name = "ok"
 command = "node -e \"process.exit(0)\""
@@ -61,11 +71,11 @@ struct Env {
     _tmp: tempfile::TempDir,
 }
 
-/// A block of 40 run ports in 30000–39999, below the OS ephemeral ranges (Windows and macOS start at 49152) and apart
-/// from pdtd's lifecycle tests (20000–29999), so a port the OS hands to some connection never lands in it. Each call
-/// claims a block no other test holds (`port_blocks`).
+/// A block of 40 run ports in 10000–19999, below every OS's ephemeral range (Linux starts at 32768, Windows and macOS
+/// at 49152) and apart from pdtd's lifecycle tests (20000–29999), so a port the OS hands to some connection never lands
+/// in it. Each call claims a block no other test holds (`port_blocks`).
 fn free_range() -> (u16, u16) {
-    let start = port_blocks::claim(30000, 250, 40);
+    let start = port_blocks::claim(10000, 250, 40);
     (start, start + 39)
 }
 
@@ -325,6 +335,8 @@ async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
         cwd: env.repo.to_string_lossy().into_owned(),
         exit_code: None,
         error: None,
+        detached: false,
+        process: None,
         created_at: now,
         updated_at: now,
     };
@@ -596,6 +608,8 @@ async fn the_sweep_needs_no_worktree_record() {
         cwd: elsewhere.to_string_lossy().into_owned(),
         exit_code: None,
         error: None,
+        detached: false,
+        process: None,
         created_at: 1,
         updated_at: 1,
     };
@@ -667,4 +681,130 @@ async fn data_reset_and_removal_need_a_stopped_run() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (s, _) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn closing_a_run_tab_stops_and_removes_the_run() {
+    let env = setup().await;
+    let (s, r) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{r}");
+    let id = r["id"].as_str().unwrap();
+    wait_state(&env.app, id, &["running", "ready"]).await;
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let tab = list[0]["tabs"].as_array().unwrap().iter().find(|t| t["runId"] == id).unwrap()["id"].clone();
+    let (s, v) = call(&env.app, "DELETE", &format!("/api/tabs/{}", tab.as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let (s, _) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (_, active) = call(&env.app, "GET", "/api/runs", None).await;
+    assert_eq!(active, json!([]));
+    env.state.ptys.shutdown().await;
+}
+
+/// The Output terminal's replay so far (a followed log for a detached run).
+fn output(state: &AppState, id: &str) -> String {
+    let att = state.ptys.attach(&format!("run:{id}:command")).expect("the Output terminal exists");
+    String::from_utf8_lossy(&att.scrollback).into_owned()
+}
+
+async fn wait_output(state: &AppState, id: &str, want: &str) {
+    for _ in 0..300 {
+        if state.ptys.attach(&format!("run:{id}:command")).is_ok() && output(state, id).contains(want) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the output of {id} never showed {want:?}");
+}
+
+/// PDT-32: a detached run keeps running when pdtd exits, and the next pdtd reattaches to it (its log in the Output
+/// terminal, Stop ending every process) instead of starting it again.
+#[tokio::test]
+async fn a_detached_run_survives_pdtd_and_is_reattached() {
+    let env = setup().await;
+    let (s, r) = start(&env, json!({"name": "app", "kind": "run"})).await;
+    assert_eq!((s, &r["detached"]), (StatusCode::CREATED, &json!(true)), "{r}");
+    let id = r["id"].as_str().unwrap().to_string();
+    wait_state(&env.app, &id, &["ready"]).await;
+    wait_output(&env.state, &id, "app up on main\r\n").await;
+    let process = env.state.store.get_run(&id).await.unwrap().unwrap().process.expect("its processes are stored");
+    assert!(env.state.ptys.write(&format!("run:{id}:command"), b"x").is_err(), "no input");
+
+    // pdtd exits: its terminals are shut down, the run's row stays active.
+    env.state.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+    env.state.ptys.shutdown().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(pdt_agents::detached::alive(&process), "the command outlives pdtd");
+
+    // The next pdtd, on the same database and data folder.
+    let next = AppState::new(env.state.store.clone(), env._tmp.path().join("data"));
+    let app = router(next.clone(), None);
+    assert_eq!(pdt_api::resume_runs(&next).await, 1);
+    let r = wait_state(&app, &id, &["ready"]).await;
+    assert_eq!(r["detached"], true);
+    wait_output(&next, &id, "app up on main").await;
+    let after = env.state.store.get_run(&id).await.unwrap().unwrap().process;
+    assert_eq!(after.as_deref(), Some(process.as_str()), "reattached, not started again");
+
+    let (s, _) = call(&app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let r = wait_state(&app, &id, &["stopped"]).await;
+    assert!(!pdt_agents::detached::alive(&process), "Stop ends every process: {r}");
+    assert!(env.state.store.get_run(&id).await.unwrap().unwrap().process.is_none());
+    next.ptys.shutdown().await;
+}
+
+/// A detached run whose processes all exited while no pdtd was running is marked stopped, and its log stays
+/// readable.
+#[tokio::test]
+async fn a_detached_run_that_ended_while_pdtd_was_down_is_stopped() {
+    let env = setup().await;
+    let log = pdt_api::run_log_path(&env.state, "gone");
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, "last words\n").unwrap();
+    let gone = if cfg!(windows) { "job:Local\\pdt-run-no-such-job" } else { "pgid:99999999" };
+    let run = pdt_core::run::Run {
+        id: "gone".into(),
+        project_id: env.pid.clone(),
+        worktree_id: None,
+        branch: "main".into(),
+        name: "app".into(),
+        kind: pdt_core::run::RunKind::Run,
+        state: pdt_core::run::RunState::Ready,
+        port: None,
+        url: None,
+        data_dir: None,
+        cwd: env.repo.to_string_lossy().into_owned(),
+        exit_code: None,
+        error: None,
+        detached: true,
+        process: Some(gone.into()),
+        created_at: 1,
+        updated_at: 1,
+    };
+    env.state.store.insert_run(&run).await.unwrap();
+    assert_eq!(pdt_api::resume_runs(&env.state).await, 0, "nothing is started again");
+    let (_, r) = call(&env.app, "GET", "/api/runs/gone", None).await;
+    assert_eq!((r["state"].as_str(), r["exitCode"].as_i64()), (Some("stopped"), None), "{r}");
+    assert!(r["error"].as_str().unwrap().contains("while PDT was not running"), "{r}");
+    wait_output(&env.state, "gone", "last words\r\n").await;
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_detached_run_that_exits_reports_its_code() {
+    let env = setup().await;
+    let (_, r) = start(&env, json!({"name": "app-exits", "kind": "run"})).await;
+    let id = r["id"].as_str().unwrap().to_string();
+    let r = wait_state(&env.app, &id, &["failed"]).await;
+    assert_eq!(r["exitCode"], 3, "{r}");
+    wait_output(&env.state, &id, "bye\r\n").await;
+    for _ in 0..200 {
+        if env.state.ptys.attach(&format!("run:{id}:command")).unwrap().exited.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(env.state.ptys.attach(&format!("run:{id}:command")).unwrap().exited, Some(3));
+    env.state.ptys.shutdown().await;
 }

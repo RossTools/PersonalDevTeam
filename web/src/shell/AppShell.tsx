@@ -27,6 +27,7 @@ import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
+import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
 import { nextNeedingYou } from '../workspaces/model';
@@ -40,7 +41,7 @@ import { InstanceBadge } from './InstanceBadge';
 import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
-const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', codex: 'Codex', shell: 'Shell' };
+const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', shell: 'Shell' };
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
@@ -52,6 +53,7 @@ const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted
 /** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n sessions need the user; [dev] on a dev instance. */
 function useAttentionTitle(count: number) {
   useDevTitle(count);
+  useReloadOnNewBuild();
 }
 
 // The ticket screens (and the Markdown libraries they use) load the first time they're shown.
@@ -214,7 +216,7 @@ export function AppShell() {
       // Like the new-tab chooser: right after the current tab.
       const tab = w ? { workspaceId: w.id, position: ws.tab ? ws.tab.position + 1 : w.tabs.length } : undefined;
       void runAction(async () => {
-        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, CHOICE[kind], false), ...(tab ? { tab } : {}) });
+        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, CHOICE[kind]), ...(tab ? { tab } : {}) });
         void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
         await ws.refresh();
         await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);

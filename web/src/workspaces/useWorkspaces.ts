@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Status } from '@ui';
+import { useConfirm, type Status } from '@ui';
 import { api } from '../api/client';
 import type { Activity } from '../api/gen/Activity';
 import type { Project } from '../api/gen/Project';
@@ -10,7 +10,7 @@ import type { Tab } from '../api/gen/Tab';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
-import { runDot } from '../runs/runState';
+import { isActive, runDot } from '../runs/runState';
 import { toDot } from '../sessions/status';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
@@ -81,6 +81,7 @@ const TICKET_TAB_POLL = 5000;
  */
 export function useWorkspaces() {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
   const projectList: Project[] = useMemo(() => projects.data ?? [], [projects.data]);
   const workspacesQ = useQuery({ queryKey: ['workspaces'], queryFn: api.listWorkspaces, refetchInterval: 2000 });
@@ -170,8 +171,23 @@ export function useWorkspaces() {
     [workspace, tab],
   );
 
+  /** Closes a tab. A session or run goes with its tab (the daemon stops and removes it), so a running one asks first. */
   const closeTab = useCallback(
     async (t: Tab) => {
+      const i = info(itemOf(t));
+      const running = i?.session ? i.session.status === 'running' : i?.run ? isActive(i.run.state) : false;
+      if (running && i) {
+        const what = i.session ? (i.session.kind === 'agent_tui' ? 'agent' : 'session') : 'run';
+        const { ok } = await confirm({
+          title: `Close ${i.title}?`,
+          body: i.session
+            ? `Closing the tab stops the ${what} and removes it: its terminal history is deleted and it can no longer be resumed. Files in its folder stay.`
+            : 'Closing the tab stops the run and removes it. Its data folder stays.',
+          action: 'Stop and close',
+          danger: true,
+        });
+        if (!ok) return;
+      }
       const w = workspaces.find((x) => x.id === t.workspaceId);
       if (w && tab?.id === t.id) {
         const i = w.tabs.findIndex((x) => x.id === t.id);
@@ -180,8 +196,10 @@ export function useWorkspaces() {
       }
       await api.closeTab(t.id);
       await refresh();
+      if (t.sessionId) void qc.invalidateQueries({ queryKey: ['sessions'] });
+      if (t.runId) void qc.invalidateQueries({ queryKey: ['runs'] });
     },
-    [workspaces, tab, setChoice, refresh],
+    [info, confirm, workspaces, tab, setChoice, refresh, qc],
   );
 
   const moveTab = useCallback(

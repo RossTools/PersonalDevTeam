@@ -1,4 +1,5 @@
 mod error;
+mod events;
 mod host;
 mod migrate;
 mod runs;
@@ -8,6 +9,7 @@ mod workspaces;
 mod worktrees;
 
 pub use error::StoreError;
+pub use events::NewEvent;
 pub use host::ProjectSettings;
 pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, StartedAttempt, TicketError};
 pub use workspaces::DeleteWorkspace;
@@ -39,6 +41,7 @@ impl Store {
         let backup_dir = db_path.parent().unwrap_or(Path::new(".")).join("backups");
         let store = Self::open_with(db_path, &migrate::MIGRATOR, &backup_dir).await?;
         store.backfill_project_keys().await?;
+        store.backfill_permission_modes().await?;
         Ok(store)
     }
 

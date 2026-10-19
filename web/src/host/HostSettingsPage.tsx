@@ -7,6 +7,7 @@ import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
 import type { TokenState } from '../api/gen/TokenState';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
+import { FolderField } from '../common/FolderField';
 import { useAction } from '../common/useAction';
 
 /** Describes the stored token without ever showing it. */
@@ -159,7 +160,7 @@ function Updates({ v }: { v: HostSettingsView }) {
       description={
         <>
           Version {u?.current ?? '…'}
-          {updatesApply && ' · Updates apply to the installed app, not this development daemon.'}
+          {updatesApply && ` · Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`}
           {u?.error && <span className="text-destructive"> · {u.error}</span>}
         </>
       }
@@ -252,7 +253,14 @@ function ProjectsFolder({ v }: { v: HostSettingsView }) {
         description="Where “clone by URL” puts new repositories."
         actions={<Button type="submit" size="sm" variant="primary" aria-label="Save projects folder" disabled={!dirty} pending={save.isPending}>Save</Button>}
       >
-        <Input aria-label="Projects folder" mono placeholder={v.projectsDir ?? '~/work'} value={dir} onChange={(e) => setDir(e.target.value)} />
+        <FolderField
+          aria-label="Projects folder"
+          title="Projects folder"
+          placeholder={v.projectsDir ?? '~/work'}
+          start={v.projectsDir ?? ''}
+          value={dir}
+          onChange={setDir}
+        />
         {error}
       </Section>
     </form>

@@ -44,6 +44,9 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
                 unseen: false,
                 attempt_id: None,
                 ticket: None,
+                mode: pdt_core::conversation::SessionMode::Terminal,
+                model: None,
+                permission_mode: None,
             })
             .await
             .unwrap();
@@ -181,7 +184,7 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
         "POST",
         "/api/sessions",
         Some(json!({
-            "projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24
+            "projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "mode": "terminal", "cols": 80, "rows": 24
         })),
     )
     .await;
@@ -206,12 +209,11 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
     output_until(&mut ws, "Trust this folder?").await;
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "ready").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, id).await["activity"], "idle", "trust acceptance is not a turn");
+    // The terminal can show "ready" before the tracker has applied the program's idle status, so wait for it.
+    wait_for_activity(&app, id, json!("idle")).await; // trust acceptance is not a turn
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "empty").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, id).await["activity"], "idle", "empty Enter is not a turn");
+    wait_for_activity(&app, id, json!("idle")).await; // empty Enter is not a turn
     type_in(&mut ws, "a prompt\r").await;
     wait_for_activity(&app, id, json!("working")).await;
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -254,7 +256,7 @@ async fn codex_activity_follows_its_approval_screen_and_input() {
     tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
 
     let (_, projects) = call(&app, "GET", "/api/projects", None).await;
-    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24});
+    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, created) = call(&app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{created}");
     let id = created["id"].as_str().unwrap().to_string();
@@ -325,7 +327,8 @@ async fn serve_claude(tmp: &Path, quiet_after_ms: i64) -> (axum::Router, pdt_api
 }
 
 async fn create_claude(app: &axum::Router, pid: &str) -> String {
-    let body = json!({"projectId": pid, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24});
+    let body =
+        json!({"projectId": pid, "kind": "agent_tui", "agent": "claude", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, created) = call(app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{created}");
     created["id"].as_str().unwrap().to_string()

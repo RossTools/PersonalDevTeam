@@ -2,9 +2,11 @@
 //! one transaction whenever the order changes.
 
 use crate::{Store, StoreError};
-use pdt_core::workspace::{Tab, TabItem, Workspace, place_at};
+use pdt_core::ticket::{AttemptState, TicketStage};
+use pdt_core::workspace::{Tab, TabItem, Workspace, WorkspaceTicket, place_at};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, Sqlite, SqliteConnection, Transaction};
+use std::collections::HashMap;
 
 /// Why a workspace was not deleted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +121,7 @@ impl Store {
         let sql = format!("SELECT {TAB_COLUMNS} FROM workspace_tabs ORDER BY position, created_at, id");
         let tabs = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         let tabs: Vec<Tab> = tabs.iter().map(to_tab).collect::<Result<_, _>>()?;
+        let tickets = self.workspace_tickets().await?;
         rows.iter()
             .map(|r| {
                 let id: String = r.try_get("id")?;
@@ -128,10 +131,43 @@ impl Store {
                     project_id: r.try_get("project_id")?,
                     position: u32::try_from(r.try_get::<i64, _>("position")?).unwrap_or(u32::MAX),
                     created_at: r.try_get("created_at")?,
+                    ticket: tickets.get(&id).cloned(),
                     id,
                 })
             })
             .collect()
+    }
+
+    /// The ticket of each workspace a Start made (the newest attempt naming it), by workspace id.
+    async fn workspace_tickets(&self) -> Result<HashMap<String, WorkspaceTicket>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT a.workspace_id, a.id AS attempt_id, a.state, t.id, t.project_id, t.number, t.title, t.stage, \
+             COALESCE(p.key, '') AS pkey FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
+             JOIN projects p ON p.id = t.project_id WHERE a.workspace_id IS NOT NULL ORDER BY a.created_at, a.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = HashMap::new();
+        for r in &rows {
+            let state: String = r.try_get("state")?;
+            let stage: String = r.try_get("stage")?;
+            let number: i64 = r.try_get("number")?;
+            let pkey: String = r.try_get("pkey")?;
+            let t = WorkspaceTicket {
+                id: r.try_get("id")?,
+                project_id: r.try_get("project_id")?,
+                key: format!("{pkey}-{number}"),
+                title: r.try_get("title")?,
+                stage: TicketStage::parse(&stage)
+                    .ok_or_else(|| StoreError::Corrupt(format!("ticket stage {stage}")))?,
+                attempt_id: r.try_get("attempt_id")?,
+                attempt_state: AttemptState::parse(&state)
+                    .ok_or_else(|| StoreError::Corrupt(format!("attempt state {state}")))?,
+                pr: None,
+            };
+            out.insert(r.try_get::<String, _>("workspace_id")?, t);
+        }
+        Ok(out)
     }
 
     pub async fn get_workspace(&self, id: &str) -> Result<Option<Workspace>, StoreError> {
@@ -179,8 +215,9 @@ impl Store {
         Ok(true)
     }
 
-    /// Deletes a free-form workspace, moving its tabs to the end of their projects' workspaces.
-    pub async fn delete_workspace(&self, id: &str) -> Result<DeleteWorkspace, StoreError> {
+    /// Deletes a free-form workspace, moving its tabs to the end of their projects' workspaces, or closing them with
+    /// `close_tabs` (their sessions, runs and tickets stay).
+    pub async fn delete_workspace(&self, id: &str, close_tabs: bool) -> Result<DeleteWorkspace, StoreError> {
         let mut tx = self.pool.begin().await?;
         let row: Option<(Option<String>,)> =
             sqlx::query_as("SELECT project_id FROM workspaces WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
@@ -188,6 +225,9 @@ impl Store {
             None => return Ok(DeleteWorkspace::NotFound),
             Some((Some(_),)) => return Ok(DeleteWorkspace::ProjectWorkspace),
             Some((None,)) => {}
+        }
+        if close_tabs {
+            sqlx::query("DELETE FROM workspace_tabs WHERE workspace_id = ?").bind(id).execute(&mut *tx).await?;
         }
         let homes: Vec<(String, String)> = sqlx::query_as(
             "SELECT t.id, w.id FROM workspace_tabs t \
@@ -306,6 +346,14 @@ impl Store {
         self.get_tab(id).await
     }
 
+    /// Closes the gaps a deleted session or run leaves in a workspace's tab positions.
+    pub async fn renumber_workspace_tabs(&self, workspace_id: &str) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        renumber_tabs(&mut tx, workspace_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn close_tab(&self, id: &str) -> Result<bool, StoreError> {
         let Some(tab) = self.get_tab(id).await? else { return Ok(false) };
         let mut tx = self.pool.begin().await?;
@@ -345,11 +393,22 @@ mod tests {
             unseen: false,
             attempt_id: None,
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         }
     }
 
     fn free(id: &str, name: &str) -> Workspace {
-        Workspace { id: id.into(), name: name.into(), project_id: None, position: 0, created_at: 5, tabs: vec![] }
+        Workspace {
+            id: id.into(),
+            name: name.into(),
+            project_id: None,
+            position: 0,
+            created_at: 5,
+            tabs: vec![],
+            ticket: None,
+        }
     }
 
     fn s(id: &str) -> TabItem {
@@ -458,12 +517,19 @@ mod tests {
         }
         store.open_tab("ta", &home, &s("a"), None, 1).await.unwrap();
         store.open_tab("tb", "f", &s("b"), None, 1).await.unwrap();
-        assert_eq!(store.delete_workspace(&home).await.unwrap(), DeleteWorkspace::ProjectWorkspace);
-        assert_eq!(store.delete_workspace("nope").await.unwrap(), DeleteWorkspace::NotFound);
-        assert_eq!(store.delete_workspace("f").await.unwrap(), DeleteWorkspace::Deleted);
+        assert_eq!(store.delete_workspace(&home, false).await.unwrap(), DeleteWorkspace::ProjectWorkspace);
+        assert_eq!(store.delete_workspace("nope", false).await.unwrap(), DeleteWorkspace::NotFound);
+        assert_eq!(store.delete_workspace("f", false).await.unwrap(), DeleteWorkspace::Deleted);
         assert_eq!(tab_items(&ws(&store, &home).await), ["a", "b"]);
         let list = store.list_workspaces().await.unwrap();
         assert_eq!(list.iter().map(|w| (w.name.as_str(), w.position)).collect::<Vec<_>>(), [("G", 0), ("P", 1)]);
+
+        // Closing the tabs instead: they are gone, their sessions stay.
+        store.open_tab("tb2", "g", &s("b"), None, 2).await.unwrap();
+        assert_eq!(store.delete_workspace("g", true).await.unwrap(), DeleteWorkspace::Deleted);
+        assert_eq!(tab_items(&ws(&store, &home).await), ["a"]);
+        assert!(store.get_session("b").await.unwrap().is_some());
+        assert_eq!(store.list_workspaces().await.unwrap().len(), 1);
     }
 
     /// Applies migrations up to 0007, adds rows, then opens with 0008 and checks the seeded workspaces and tabs.

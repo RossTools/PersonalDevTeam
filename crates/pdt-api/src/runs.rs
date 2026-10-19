@@ -40,6 +40,9 @@ pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, S
     let cfg = crate::runconfig::load_effective(st, &run.project_id, std::path::Path::new(&run.cwd))
         .await
         .map_err(|e| format!("the run configuration is invalid: {}", e.message()))?;
+    if !cfg.ignored.is_empty() {
+        tracing::info!(run = %run.name, cwd = %run.cwd, sections = ?cfg.ignored, "skipped run configuration sections this version does not know");
+    }
     let list = if run.kind == RunKind::Test { cfg.tests } else { cfg.runs };
     list.into_iter().find(|d| d.name == run.name).ok_or_else(|| format!("the configuration has no \"{}\"", run.name))
 }
@@ -245,6 +248,8 @@ pub(crate) async fn create(
         cwd: cwd.to_string_lossy().into_owned(),
         exit_code: None,
         error: None,
+        detached: def.detach,
+        process: None,
         created_at: now,
         updated_at: now,
     };
@@ -324,6 +329,7 @@ pub(crate) async fn discard(st: &AppState, run: &Run) -> bool {
         st.remove_pty(&pty_id(&run.id, step)).await;
     }
     let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, &run.id));
+    let _ = std::fs::remove_file(run_manager::log_path(st, &run.id));
     true
 }
 
@@ -332,12 +338,27 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     if run.state.is_active() {
         return Err(conflict("run_active", "stop the run before removing it"));
     }
-    for step in [RunStep::Setup, RunStep::Command] {
-        st.remove_pty(&pty_id(&id, step)).await;
-    }
-    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(&st, &id));
-    st.store.delete_run(&id).await?;
+    delete(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete(st: &AppState, id: &str) -> Result<(), ApiError> {
+    for step in [RunStep::Setup, RunStep::Command] {
+        st.remove_pty(&pty_id(id, step)).await;
+    }
+    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, id));
+    let _ = std::fs::remove_file(run_manager::log_path(st, id));
+    st.store.delete_run(id).await?;
+    Ok(())
+}
+
+/// Stops a run if it is active, then deletes it (closing its tab, PDT-28). A run that is already gone is fine.
+pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiError> {
+    let Some(run) = st.store.get_run(id).await? else { return Ok(()) };
+    if run.state.is_active() && !run_manager::stop(st, id, None).await {
+        return Err(still_stopping());
+    }
+    delete(st, id).await
 }
 
 pub(crate) async fn pty(

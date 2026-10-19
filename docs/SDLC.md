@@ -10,12 +10,13 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    docs/superpowers/specs and a plan in docs/superpowers/plans first.
 2. **Make a worktree** for a new branch (below). Never commit on `main` in the main checkout.
 3. **Build it test-first** in the worktree (TDD for core logic). Run the checks before every push (below).
-4. **Push and open a PR** against `main`. CI runs the macOS checks on the Mac mini; Windows checks and the bundles
+4. **Push and open a PR** against `main`. CI runs the full checks on Linux and the macOS checks on macOS (both on Namespace); Windows checks and the bundles
    run on a PR only with the `windows` / `bundle` label or when it touches their files, and always on main
    (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
-6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --squash --auto`. Once the PR's required
+6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --auto`, with no merge-method flag (the queue
+   sets the method; `--squash` only prints "The merge strategy for main is set by the merge queue"). Once the PR's required
    checks pass it joins main's **merge queue**: GitHub builds main plus the PR on a temporary branch, runs CI on it
    and squash-merges the PR when that passes, so nobody sits in a shell watching CI and nobody updates the branch
    with main. PRs are squash-merged (the only merge mode on the repo); the PR title becomes the commit subject on

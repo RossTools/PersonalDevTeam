@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const attempt = { id: 'a1', branch: 'pdt/ALP-2-cache', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null };
+const attempt = { id: 'a1', branch: 'pdt/ALP-2-cache', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr: null };
 const columns = {
   todo: [summary(1, { stage: 'todo', priority: 'high', labels: ['ui'] }), summary(4, { stage: 'todo', blockedBy: 1 })],
   in_progress: [summary(2, { stage: 'in_progress', title: 'Cache', attempt })],
@@ -27,6 +27,7 @@ const agent: Session = {
   id: 's1', projectId: project.id, worktreeId: 'w1', kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'Claude · ALP-2',
   cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'needs_you', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: 'a1', ticket: { id: 't2', key: 'ALP-2' },
+  mode: 'terminal', model: null, permissionMode: null,
 };
 
 function stub(extra: Parameters<typeof stubApi>[0] = {}): Call[] {

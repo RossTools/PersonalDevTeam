@@ -101,10 +101,25 @@ struct State {
 struct Handle {
     state: Mutex<State>,
     events: broadcast::Sender<PtyEvent>,
+    /// A process in a PTY, or None for a followed log ([`PtyManager::follow_log`]).
+    proc: Option<Proc>,
+    follow: Follow,
+}
+
+struct Proc {
     input: std_mpsc::Sender<Vec<u8>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pid: Option<u32>,
+}
+
+/// A followed log's controls.
+#[derive(Default)]
+struct Follow {
+    /// Stop following (the entry is forgotten, or pdtd is shutting down).
+    stop: std::sync::atomic::AtomicBool,
+    /// The process behind the log ended: read what is left, then report this exit.
+    end: Mutex<Option<i32>>,
 }
 
 /// How long a process gets to act on SIGHUP before it is killed outright.
@@ -124,14 +139,17 @@ impl Handle {
     /// - unix: SIGHUP to the child's process group, which a shell can sit on (macOS's /bin/sh handles it only once
     ///   its read returns), so after `HANGUP_GRACE` the group (and the child) get SIGKILL. The group is killed even
     ///   when the shell has already exited, since its children may still be in it.
+    ///
+    /// A followed log has no process of its own: killing it does nothing.
     fn kill(self: &Arc<Self>) -> std::io::Result<()> {
+        let Some(p) = &self.proc else { return Ok(()) };
         #[cfg(windows)]
-        if let Some(pid) = self.pid {
+        if let Some(pid) = p.pid {
             kill_tree(pid);
         }
-        let result = self.killer.lock().unwrap().kill();
+        let result = p.killer.lock().unwrap().kill();
         #[cfg(unix)]
-        if let Some(pid) = self.pid.and_then(|p| i32::try_from(p).ok()) {
+        if let Some(pid) = p.pid.and_then(|p| i32::try_from(p).ok()) {
             // The child is a session leader, so its pid is also its process group id.
             unsafe {
                 libc::kill(-pid, libc::SIGHUP);
@@ -158,7 +176,7 @@ impl Handle {
 
 /// Ends `pid` and every process it started (`taskkill /T /F`), waiting for taskkill to finish.
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // The system copy, not whatever `taskkill` the PATH would find first.
@@ -232,10 +250,13 @@ impl PtyManager {
         let handle = Arc::new(Handle {
             state: Mutex::new(State { scrollback: Scrollback::new(SCROLLBACK_BYTES), exited: None }),
             events,
-            input: input_tx,
-            master: Mutex::new(Some(pair.master)),
-            killer: Mutex::new(killer),
-            pid,
+            proc: Some(Proc {
+                input: input_tx,
+                master: Mutex::new(Some(pair.master)),
+                killer: Mutex::new(killer),
+                pid,
+            }),
+            follow: Follow::default(),
         });
 
         let h = handle.clone();
@@ -250,7 +271,9 @@ impl PtyManager {
                         if std::mem::take(&mut first)
                             && let Some(rest) = strip_cursor_query(chunk)
                         {
-                            let _ = h.input.send(CURSOR_REPLY.to_vec());
+                            if let Some(p) = &h.proc {
+                                let _ = p.input.send(CURSOR_REPLY.to_vec());
+                            }
                             chunk = rest;
                         }
                         if chunk.is_empty() {
@@ -285,7 +308,9 @@ impl PtyManager {
                 let _ = h.events.send(PtyEvent::Exit(code));
             }
             // Closing the master ends the reader (on Windows, ConPTY keeps the pipe open until then).
-            h.master.lock().unwrap().take();
+            if let Some(p) = &h.proc {
+                p.master.lock().unwrap().take();
+            }
             tracing::debug!(session = %id, code, "terminal exited");
             let _ = exit_tx.send(code);
         });
@@ -306,15 +331,17 @@ impl PtyManager {
 
     pub fn write(&self, id: &str, bytes: &[u8]) -> Result<(), PtyError> {
         let h = self.get(id)?;
-        if h.exited() {
+        let Some(p) = h.proc.as_ref().filter(|_| !h.exited()) else {
             return Err(PtyError::NotRunning(id.to_string()));
-        }
-        h.input.send(bytes.to_vec()).map_err(|_| PtyError::NotRunning(id.to_string()))
+        };
+        p.input.send(bytes.to_vec()).map_err(|_| PtyError::NotRunning(id.to_string()))
     }
 
+    /// A followed log has no size: resizing it does nothing.
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), PtyError> {
         let h = self.get(id)?;
-        let master = h.master.lock().unwrap();
+        let Some(p) = &h.proc else { return Ok(()) };
+        let master = p.master.lock().unwrap();
         let master = master.as_ref().ok_or_else(|| PtyError::NotRunning(id.to_string()))?;
         master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| PtyError::Io(e.to_string()))
     }
@@ -331,23 +358,60 @@ impl PtyManager {
         self.get(id).is_ok_and(|h| !h.exited())
     }
 
-    /// Forgets a session, killing it first if it is still running.
+    /// Forgets a session, killing it first if it is still running (or stops following its log).
     pub fn remove(&self, id: &str) {
-        if let Some(h) = self.sessions.lock().unwrap().remove(id)
-            && !h.exited()
-        {
-            let _ = h.kill();
+        if let Some(h) = self.sessions.lock().unwrap().remove(id) {
+            h.follow.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            if !h.exited() {
+                let _ = h.kill();
+            }
+        }
+    }
+
+    /// Shows the file at `log` as terminal `id`, read-only: its last `SCROLLBACK_BYTES` (from a line start), then
+    /// whatever is appended, until [`PtyManager::end_log`]. The file may not exist yet. Bare line feeds become CR LF,
+    /// as a program writing to a file (not a terminal) leaves them bare.
+    pub fn follow_log(&self, id: &str, log: PathBuf) -> Result<(), PtyError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(PtyError::ShuttingDown);
+        }
+        if sessions.contains_key(id) {
+            return Err(PtyError::AlreadyExists(id.to_string()));
+        }
+        let (events, _) = broadcast::channel(1024);
+        let handle = Arc::new(Handle {
+            state: Mutex::new(State { scrollback: Scrollback::new(SCROLLBACK_BYTES), exited: None }),
+            events,
+            proc: None,
+            follow: Follow::default(),
+        });
+        let h = handle.clone();
+        std::thread::spawn(move || follow(&h, &log));
+        sessions.insert(id.to_string(), handle);
+        Ok(())
+    }
+
+    /// The process behind followed log `id` ended with `code` (-1 when unknown): the log's last output is shown,
+    /// then the exit.
+    pub fn end_log(&self, id: &str, code: Option<i32>) {
+        if let Ok(h) = self.get(id) {
+            *h.follow.end.lock().unwrap() = Some(code.unwrap_or(-1));
         }
     }
 
     /// Kills every running session and waits (up to 5 s) for them to report their exit. Afterwards `spawn` refuses
-    /// to start anything.
+    /// to start anything. Followed logs just stop: the processes behind them carry on.
     pub async fn shutdown(&self) {
         let handles: Vec<Arc<Handle>> = {
             let sessions = self.sessions.lock().unwrap();
             self.shut_down.store(true, std::sync::atomic::Ordering::SeqCst);
             sessions.values().cloned().collect()
         };
+        for h in &handles {
+            h.follow.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        let handles: Vec<Arc<Handle>> = handles.into_iter().filter(|h| h.proc.is_some()).collect();
         for h in &handles {
             if !h.exited() {
                 let _ = h.kill();
@@ -360,9 +424,149 @@ impl PtyManager {
     }
 }
 
+/// How often a followed log is checked for new output.
+const FOLLOW_EVERY: Duration = Duration::from_millis(200);
+
+/// `chunk` with every line feed not preceded by a carriage return made CR LF. `last_cr` carries the previous
+/// chunk's last byte across calls.
+fn crlf(chunk: &[u8], last_cr: &mut bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(chunk.len() + chunk.len() / 16);
+    for &b in chunk {
+        if b == b'\n' && !*last_cr {
+            out.push(b'\r');
+        }
+        out.push(b);
+        *last_cr = b == b'\r';
+    }
+    out
+}
+
+/// The follower thread of [`PtyManager::follow_log`].
+fn follow(h: &Handle, path: &std::path::Path) {
+    use std::io::{Seek, SeekFrom};
+    use std::sync::atomic::Ordering;
+    let mut file: Option<std::fs::File> = None;
+    let mut pos: u64 = 0;
+    let mut last_cr = false;
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        if h.follow.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        // Read before draining, so everything written before the end is shown.
+        let end = *h.follow.end.lock().unwrap();
+        if file.is_none()
+            && let Ok(mut f) = std::fs::File::open(path)
+        {
+            let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+            if len > SCROLLBACK_BYTES as u64 {
+                pos = len - SCROLLBACK_BYTES as u64;
+                let _ = f.seek(SeekFrom::Start(pos));
+                // Start at a line, not part way through one (or through a UTF-8 sequence).
+                let mut skip = [0u8; 1];
+                while let Ok(1) = f.read(&mut skip) {
+                    pos += 1;
+                    if skip[0] == b'\n' {
+                        break;
+                    }
+                }
+            }
+            file = Some(f);
+        }
+        if let Some(f) = file.as_mut() {
+            // A log truncated under us (the command started again) is read from its start.
+            if f.metadata().is_ok_and(|m| m.len() < pos) {
+                pos = 0;
+                let _ = f.seek(SeekFrom::Start(0));
+            }
+            loop {
+                match f.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        pos += n as u64;
+                        let bytes = crlf(&buf[..n], &mut last_cr);
+                        let mut st = h.state.lock().unwrap();
+                        st.scrollback.push(&bytes);
+                        let _ = h.events.send(PtyEvent::Output(Arc::from(bytes)));
+                    }
+                }
+            }
+        }
+        if let Some(code) = end {
+            let mut st = h.state.lock().unwrap();
+            st.exited = Some(code);
+            let _ = h.events.send(PtyEvent::Exit(code));
+            return;
+        }
+        std::thread::sleep(FOLLOW_EVERY);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Scrollback, strip_cursor_query};
+    use super::{PtyEvent, PtyManager, Scrollback, crlf, strip_cursor_query};
+    use std::time::Duration;
+
+    #[test]
+    fn bare_line_feeds_become_crlf() {
+        let mut cr = false;
+        assert_eq!(crlf(b"a\nb\r\nc", &mut cr), b"a\r\nb\r\nc");
+        assert_eq!(crlf(b"x\r", &mut cr), b"x\r");
+        assert_eq!(crlf(b"\ny\n", &mut cr), b"\ny\r\n", "a CR at the end of the last chunk counts");
+    }
+
+    #[tokio::test]
+    async fn a_followed_log_shows_its_tail_then_new_output_then_the_exit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("command.log");
+        let m = PtyManager::new();
+        m.follow_log("l", log.clone()).unwrap();
+        // The file appears after following began.
+        std::fs::write(&log, "one\n").unwrap();
+        let mut att = loop {
+            let att = m.attach("l").unwrap();
+            if !att.scrollback.is_empty() {
+                break att;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(att.scrollback, b"one\r\n");
+        assert!(m.write("l", b"x").is_err(), "no input");
+        assert!(m.resize("l", 80, 24).is_ok() && m.kill("l").is_ok(), "no size, nothing to kill");
+        assert!(m.attach("l").unwrap().exited.is_none(), "kill leaves it following");
+        use std::io::Write;
+        std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"two\n").unwrap();
+        m.end_log("l", Some(4));
+        let mut seen = Vec::new();
+        let code = loop {
+            match tokio::time::timeout(Duration::from_secs(5), att.events.recv()).await.unwrap().unwrap() {
+                PtyEvent::Output(b) => seen.extend_from_slice(&b),
+                PtyEvent::Exit(c) => break c,
+            }
+        };
+        assert_eq!((seen.as_slice(), code), (&b"two\r\n"[..], 4), "what was written before the end, then the exit");
+        m.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_long_log_starts_at_a_line_within_the_scrollback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("command.log");
+        let line = "x".repeat(99) + "\n";
+        std::fs::write(&log, format!("{}last\n", line.repeat(super::SCROLLBACK_BYTES / 100 + 50))).unwrap();
+        let m = PtyManager::new();
+        m.follow_log("l", log).unwrap();
+        let att = loop {
+            let att = m.attach("l").unwrap();
+            if att.scrollback.ends_with(b"last\r\n") {
+                break att;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert!(att.scrollback.starts_with(b"xxx"), "starts at a line");
+        assert!(att.scrollback.len() <= super::SCROLLBACK_BYTES);
+        m.shutdown().await;
+    }
 
     #[test]
     fn leading_cursor_query_is_stripped() {

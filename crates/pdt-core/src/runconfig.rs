@@ -6,8 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+/// The top-level sections this PDT understands. Any other is skipped (see [`parse`]).
+const SECTIONS: [&str; 3] = ["run", "test", "area"];
+
+/// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     #[serde(default, rename = "run")]
     pub runs: Vec<EntryFile>,
@@ -15,6 +18,9 @@ pub struct ConfigFile {
     pub tests: Vec<EntryFile>,
     #[serde(default, rename = "area")]
     pub areas: Vec<AreaFile>,
+    /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
+    #[serde(skip)]
+    pub ignored: Vec<String>,
 }
 
 /// An `[[area]]` as written (tickets spec §3): a named part of the project, for overlap detection.
@@ -45,6 +51,7 @@ pub struct EntryFile {
     pub command: Option<String>,
     pub web: Option<bool>,
     pub data: Option<bool>,
+    pub detach: Option<bool>,
     pub env: Option<BTreeMap<String, String>>,
 }
 
@@ -57,6 +64,9 @@ pub struct RunDef {
     pub command: String,
     pub web: bool,
     pub data: bool,
+    /// The command runs outside PDT's terminals and keeps running when pdtd restarts or updates (PDT-32). Its
+    /// output goes to a log file the run's tab follows; it takes no input.
+    pub detach: bool,
     pub env: BTreeMap<String, String>,
 }
 
@@ -77,6 +87,8 @@ pub struct RunConfig {
     pub runs: Vec<RunDef>,
     pub tests: Vec<RunDef>,
     pub areas: Vec<AreaDef>,
+    /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
+    pub ignored: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +125,8 @@ pub enum RunConfigError {
     BadEnvName(String),
     #[error("test \"{0}\" cannot be a web run")]
     WebTest(String),
+    #[error("test \"{0}\" cannot be detached")]
+    DetachedTest(String),
     #[error("\"{0}\" cannot be an area name: it must be 1–{max} characters with no commas", max = crate::ticket::MAX_AREA)]
     BadAreaName(String),
     #[error("the area name \"{0}\" is used twice")]
@@ -123,8 +137,14 @@ pub enum RunConfigError {
     BadGlob { area: String, path: String, message: String },
 }
 
+/// Parses a configuration. Unknown top-level sections are skipped and listed in `ignored`, so a file written for a
+/// newer PDT still works on an older one; unknown keys inside a `[[run]]`, `[[test]]` or `[[area]]` are refused.
 pub fn parse(text: &str, origin: Source) -> Result<ConfigFile, RunConfigError> {
-    toml::from_str(text).map_err(|e| RunConfigError::Parse { origin, message: e.to_string() })
+    let err = |e: toml::de::Error| RunConfigError::Parse { origin, message: e.to_string() };
+    let mut file: ConfigFile = toml::from_str(text).map_err(err)?;
+    let table: toml::Table = toml::from_str(text).map_err(err)?;
+    file.ignored = table.into_iter().map(|(k, _)| k).filter(|k| !SECTIONS.contains(&k.as_str())).collect();
+    Ok(file)
 }
 
 fn merge_list(base: Vec<EntryFile>, over: Vec<EntryFile>) -> Result<Vec<EntryFile>, RunConfigError> {
@@ -148,6 +168,7 @@ fn merge_list(base: Vec<EntryFile>, over: Vec<EntryFile>) -> Result<Vec<EntryFil
                 b.command = o.command.or(b.command.take());
                 b.web = o.web.or(b.web);
                 b.data = o.data.or(b.data);
+                b.detach = o.detach.or(b.detach);
                 if let Some(env) = o.env {
                     b.env.get_or_insert_with(BTreeMap::new).extend(env);
                 }
@@ -187,8 +208,12 @@ fn finish(e: EntryFile, test: bool) -> Result<RunDef, RunConfigError> {
     if test && web {
         return Err(RunConfigError::WebTest(name));
     }
+    let detach = e.detach.unwrap_or(false);
+    if test && detach {
+        return Err(RunConfigError::DetachedTest(name));
+    }
     let setup = e.setup.filter(|s| !s.trim().is_empty());
-    Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), env })
+    Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), detach, env })
 }
 
 /// Areas merge by name like runs: an override's fields replace the file's.
@@ -245,7 +270,9 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     let runs = merge_list(file.runs, over.runs)?.into_iter().map(|e| finish(e, false)).collect::<Result<_, _>>()?;
     let tests = merge_list(file.tests, over.tests)?.into_iter().map(|e| finish(e, true)).collect::<Result<_, _>>()?;
     let areas = merge_areas(file.areas, over.areas)?;
-    Ok(RunConfig { runs, tests, areas })
+    let mut ignored = file.ignored;
+    ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
+    Ok(RunConfig { runs, tests, areas, ignored })
 }
 
 /// The values PDT provides to a run (spec §4.2 "Variables PDT sets").
@@ -347,6 +374,7 @@ mod tests {
             command: command.into(),
             web: true,
             data: false,
+            detach: false,
             env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         };
         assert!(uses_run_host(&def(None, "x", &[("PDT_ALLOWED_HOSTS", "$PDT_RUN_HOST:$PORT")])));
@@ -373,6 +401,18 @@ command = "pnpm test"
 
     fn file() -> ConfigFile {
         parse(FILE, Source::File).unwrap()
+    }
+
+    #[test]
+    fn detach_is_parsed_merged_and_refused_on_tests() {
+        let f = parse("[[run]]\nname = \"app\"\ncommand = \"python -m app\"\ndetach = true\n", Source::File).unwrap();
+        let c = merge(Some(f.clone()), None).unwrap();
+        assert!(c.runs[0].detach);
+        let off = parse("[[run]]\nname = \"app\"\ndetach = false\n", Source::Overrides).unwrap();
+        assert!(!merge(Some(f), Some(off)).unwrap().runs[0].detach, "an override turns it off");
+        assert!(!merge(Some(file()), None).unwrap().runs[0].detach, "off unless asked for");
+        let t = parse("[[test]]\nname = \"unit\"\ncommand = \"x\"\ndetach = true\n", Source::File).unwrap();
+        assert_eq!(merge(Some(t), None), Err(RunConfigError::DetachedTest("unit".into())));
     }
 
     #[test]
@@ -441,6 +481,27 @@ command = "cargo run"
         assert_eq!(merge(Some(bad_env), None), Err(RunConfigError::BadEnvName("A=B".into())));
         let web_test = parse("[[test]]\nname = \"t\"\ncommand = \"x\"\nweb = true\n", Source::File).unwrap();
         assert_eq!(merge(Some(web_test), None), Err(RunConfigError::WebTest("t".into())));
+    }
+
+    #[test]
+    fn unknown_sections_are_skipped_but_unknown_entry_keys_are_refused() {
+        let text = "version = 2\n[[run]]\nname = \"a\"\ncommand = \"x\"\n[[pipeline]]\nname = \"p\"\n[later]\nx = 1\n";
+        let f = parse(text, Source::File).unwrap();
+        assert_eq!(f.ignored, ["later", "pipeline", "version"]);
+        let over = parse("[[pipeline]]\nname = \"q\"\n[[gate]]\nname = \"g\"\n", Source::Overrides).unwrap();
+        let c = merge(Some(f), Some(over)).unwrap();
+        assert_eq!(c.runs[0].name, "a");
+        assert_eq!(c.ignored, ["later", "pipeline", "version", "gate"]);
+        assert!(parse("[[run]]\nname = \"a\"\ncommand = \"x\"\n", Source::File).unwrap().ignored.is_empty());
+
+        // A typo inside an entry is still an error, and still says where it is.
+        for entry in ["[[run]]\nname = \"a\"\ncommand = \"x\"\n", "[[test]]\nname = \"a\"\ncommand = \"x\"\n"] {
+            let e = parse(&format!("{entry}comand = \"y\"\n[[pipeline]]\n"), Source::File).unwrap_err();
+            assert!(e.to_string().contains("comand") && e.to_string().contains("line 4"), "{e}");
+        }
+        assert!(parse("[[area]]\nname = \"a\"\npaths = [\"x\"]\nexclusiv = true\n[x]\n", Source::File).is_err());
+        // A known section of the wrong shape is still refused.
+        assert!(parse("run = 1\n", Source::File).is_err());
     }
 
     /// A name becomes a folder under the run data dir: it must not climb out of it or be unusable on any OS.
@@ -589,7 +650,12 @@ paths = ["web/ui/**", " "]
         assert_eq!(get("PDT_PORT"), "8401");
         assert_eq!(get("PDT_ALLOWED_HOSTS"), "box.t.ts.net:8401");
         assert_eq!(c.tests.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["rust", "web"]);
-        // No [[area]] yet: a stable PDT older than 4c refuses the section, and Run → pdt reads this file.
-        assert!(c.areas.is_empty());
+        assert!(c.ignored.is_empty());
+        let area = |n: &str| c.areas.iter().find(|a| a.name == n).unwrap_or_else(|| panic!("no area {n}"));
+        assert!(area("migrations").exclusive);
+        assert_eq!(area("migrations").paths, ["crates/pdt-store/migrations/**"]);
+        for n in ["design system", "tickets", "terminals", "runs", "workspaces", "host and updates", "ci"] {
+            assert!(!area(n).exclusive, "{n}");
+        }
     }
 }

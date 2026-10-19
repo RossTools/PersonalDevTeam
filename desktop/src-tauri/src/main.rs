@@ -5,6 +5,7 @@ mod api;
 mod daemon;
 
 use pdt_core::brand::{PRODUCT_NAME, Profile};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -17,9 +18,22 @@ use tauri_plugin_opener::OpenerExt;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(70);
 const REFRESH_EVERY: Duration = Duration::from_secs(60);
 
+/// Why the tray shows its placement item at the top of the menu (PDT-51).
+#[derive(Clone)]
+enum Placement {
+    /// This copy runs from a translocated or read-only folder.
+    Misplaced(String),
+    /// The running pdt-host is another copy's.
+    OtherCopy(daemon::OtherCopy),
+}
+
 struct Tray {
     profile: Profile,
     port: u16,
+    menu: Menu<Wry>,
+    /// In the menu only while `placement` is set.
+    placement_item: MenuItem<Wry>,
+    placement: Mutex<Option<Placement>>,
     restart_item: MenuItem<Wry>,
     update_item: MenuItem<Wry>,
     version_item: MenuItem<Wry>,
@@ -86,6 +100,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     let restart_item = MenuItem::with_id(app, "restart", "Restart daemon", false, None::<&str>)?;
     let version_item = MenuItem::with_id(app, "version", "Version …", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let placement_item = MenuItem::with_id(app, "placement", "", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -118,6 +133,9 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     app.manage(Tray {
         profile,
         port,
+        menu,
+        placement_item,
+        placement: Mutex::new(None),
         restart_item,
         update_item,
         version_item,
@@ -131,6 +149,13 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     let handle = app.handle().clone();
     std::thread::spawn(move || {
         let tray = handle.state::<Tray>();
+        // A copy macOS runs from a translocated or read-only folder is never registered at login (PDT-51); it still
+        // starts pdt-host, so the app works until it is moved.
+        let misplaced = daemon::own_problem();
+        if let Some(why) = &misplaced {
+            set_placement(&handle, Some(Placement::Misplaced(why.clone())));
+            explain_misplaced(&handle, why);
+        }
         // A first macOS launch starts pdt-host through launchd; the tray then only waits for pdtd.
         let registered = daemon::ensure_registered(profile);
         let spawn = || if registered { Ok(()) } else { daemon::spawn_host(profile) };
@@ -142,6 +167,16 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
                 tray.end();
                 if !tray.quiet_start {
                     open_ui(&handle);
+                }
+                if misplaced.is_none()
+                    && let Some(other) = daemon::other_copy(profile)
+                {
+                    // Only a copy that cannot stay where it is is worth interrupting for; any other shows in the menu.
+                    let ask_now = other.problem.is_some();
+                    set_placement(&handle, Some(Placement::OtherCopy(other)));
+                    if ask_now {
+                        placement_clicked(&handle);
+                    }
                 }
                 loop {
                     refresh(&handle);
@@ -188,6 +223,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "open" => open_ui(app),
         "update" => update_clicked(app),
         "restart" => restart_daemon(app),
+        "placement" => placement_clicked(app),
         // Only the tray exits (decision 16): pdt-host keeps pdtd running.
         "quit" => app.exit(0),
         _ => {}
@@ -217,6 +253,100 @@ fn open_ui(app: &AppHandle) {
     }
 }
 
+/// Shows (or, with `None`, removes) the placement item at the top of the menu.
+fn set_placement(app: &AppHandle, placement: Option<Placement>) {
+    let tray = app.state::<Tray>();
+    let mut current = tray.placement.lock().unwrap_or_else(|e| e.into_inner());
+    let label = match &placement {
+        Some(Placement::Misplaced(_)) => Some("Move the app to Applications to get updates…".to_string()),
+        Some(Placement::OtherCopy(other)) => {
+            Some(format!("Another copy runs ({}): switch to this one…", bundle_name(&other.bundle)))
+        }
+        None => None,
+    };
+    match (current.is_some(), label) {
+        (was, Some(label)) => {
+            let _ = tray.placement_item.set_text(label);
+            if !was {
+                let _ = tray.menu.prepend(&tray.placement_item);
+            }
+        }
+        (true, None) => {
+            let _ = tray.menu.remove(&tray.placement_item);
+        }
+        (false, None) => {}
+    }
+    *current = placement;
+}
+
+fn bundle_name(bundle: &std::path::Path) -> String {
+    bundle.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| bundle.display().to_string())
+}
+
+fn explain_misplaced(app: &AppHandle, why: &str) {
+    app.dialog()
+        .message(format!(
+            "{PRODUCT_NAME} can't start at login or install updates from where it is: {why}.\n\nIt keeps working until then."
+        ))
+        .kind(MessageDialogKind::Warning)
+        .title(PRODUCT_NAME)
+        .show(|_| {});
+}
+
+fn placement_clicked(app: &AppHandle) {
+    let placement = app.state::<Tray>().placement.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    match placement {
+        Some(Placement::Misplaced(why)) => explain_misplaced(app, &why),
+        Some(Placement::OtherCopy(other)) => {
+            let app = app.clone();
+            std::thread::spawn(move || switch_flow(&app, &other));
+        }
+        None => {}
+    }
+}
+
+/// "Switch to this copy": this copy's pdt-host takes over from the other's and registers at login, then pdtd restarts
+/// from this copy (PDT-51).
+fn switch_flow(app: &AppHandle, other: &daemon::OtherCopy) {
+    let here = std::env::current_exe()
+        .ok()
+        .and_then(|e| pdt_host::install::bundle_of(e.parent()?))
+        .map(|b| b.display().to_string())
+        .unwrap_or_else(|| "this copy".into());
+    let problem = other.problem.as_deref().map(|p| format!(" It can't stay there: {p}.")).unwrap_or_default();
+    let question = format!(
+        "{PRODUCT_NAME} is running from another copy: {}.{problem}\n\nSwitch to this copy ({here})? It will start at login and install updates. The daemon restarts; sessions resume afterwards.",
+        other.bundle.display()
+    );
+    if !ask(app, &question, "Switch") {
+        return;
+    }
+    let tray = app.state::<Tray>();
+    if !tray.begin() {
+        return;
+    }
+    let _ = tray.restart_item.set_enabled(false);
+    let profile = tray.profile;
+    let result = daemon::switch_to_this_copy(profile).and_then(|()| restart_and_wait(tray.port, profile));
+    match result {
+        Ok(()) => set_placement(app, None),
+        Err(e) => error_dialog(app, format!("Could not switch to this copy: {}", daemon::with_log_tail(e, profile)))
+            .show(|_| {}),
+    }
+    let _ = tray.restart_item.set_enabled(true);
+    tray.end();
+    refresh(app);
+}
+
+/// Asks pdtd to stop and waits until pdt-host has started it again (starting pdt-host if none runs).
+fn restart_and_wait(port: u16, profile: Profile) -> Result<(), String> {
+    pdt_host::health::request_shutdown(port).and_then(|()| {
+        std::thread::sleep(Duration::from_secs(2));
+        let problem = || daemon::host_problem(profile);
+        daemon::ensure_daemon(port, pdt_host::health::probe, || daemon::spawn_host(profile), problem, STARTUP_TIMEOUT)
+    })
+}
+
 /// Asks pdtd to stop; pdt-host starts it again (the tray starts pdt-host if none is running). Waits until it answers.
 fn restart_daemon(app: &AppHandle) {
     let tray = app.state::<Tray>();
@@ -228,18 +358,7 @@ fn restart_daemon(app: &AppHandle) {
     std::thread::spawn(move || {
         let tray = app.state::<Tray>();
         let profile = tray.profile;
-        let result = pdt_host::health::request_shutdown(tray.port).and_then(|()| {
-            std::thread::sleep(Duration::from_secs(2));
-            let problem = || daemon::host_problem(profile);
-            daemon::ensure_daemon(
-                tray.port,
-                pdt_host::health::probe,
-                || daemon::spawn_host(profile),
-                problem,
-                STARTUP_TIMEOUT,
-            )
-        });
-        if let Err(e) = result {
+        if let Err(e) = restart_and_wait(tray.port, profile) {
             error_dialog(&app, format!("The daemon did not come back: {}", daemon::with_log_tail(e, profile)))
                 .show(|_| {});
         }

@@ -2,6 +2,7 @@
 //! edits with their timeline events, bulk actions, links and comments.
 
 use crate::{Store, StoreError};
+use pdt_core::conversation::SessionMode;
 use pdt_core::links::would_cycle;
 use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
@@ -69,15 +70,18 @@ pub struct AttemptInfo {
     pub project_id: String,
     pub repo_path: String,
     pub base_commit: String,
+    /// Merge detection has seen the branch hold commits that are not in its base (sticky).
+    pub own_commits: bool,
     /// None when the worktree record is gone.
     pub worktree_path: Option<String>,
 }
 
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
-                              a.ended_at, a.last_head FROM attempts a";
+                              a.ended_at, a.last_head, a.workspace_id FROM attempts a";
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
-                                   a.created_at, a.ended_at, a.last_head, a.base_commit, t.project_id, \
-                                   COALESCE(p.key, '') AS pkey, t.number, p.repo_path, w.path AS worktree_path \
+                                   a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, a.own_commits, \
+                                   t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
+                                   w.path AS worktree_path \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
 
@@ -90,6 +94,7 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
         project_id: r.try_get("project_id")?,
         repo_path: r.try_get("repo_path")?,
         base_commit: r.try_get("base_commit")?,
+        own_commits: r.try_get::<i64, _>("own_commits")? != 0,
         worktree_path: r.try_get("worktree_path")?,
     })
 }
@@ -172,6 +177,8 @@ fn to_attempt(r: &SqliteRow) -> Result<AttemptSummary, StoreError> {
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
         last_head: r.try_get("last_head")?,
+        workspace_id: r.try_get("workspace_id")?,
+        pr: None,
     })
 }
 
@@ -208,7 +215,7 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
     let mut attempts: HashMap<String, AttemptSummary> = HashMap::new();
     for chunk in ids.chunks(500) {
         let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head FROM attempts \
+            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head, workspace_id FROM attempts \
              WHERE ticket_id IN ",
         );
         push_in(&mut qb, chunk);
@@ -681,7 +688,7 @@ impl Store {
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         let attempts = sqlx::query(
-            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head FROM attempts \
+            "SELECT id, ticket_id, branch, base_branch, worktree_id, state, created_at, ended_at, last_head, workspace_id FROM attempts \
              WHERE ticket_id = ? ORDER BY created_at DESC, id DESC",
         )
         .bind(id)
@@ -691,7 +698,7 @@ impl Store {
         .map(to_attempt)
         .collect::<Result<Vec<_>, _>>()?;
         let sessions = sqlx::query(
-            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id FROM sessions s \
+            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id, s.mode FROM sessions s \
              JOIN attempts a ON a.id = s.attempt_id WHERE a.ticket_id = ? ORDER BY s.created_at DESC, s.id DESC",
         )
         .bind(id)
@@ -701,12 +708,14 @@ impl Store {
         .map(|r| {
             let status: String = r.try_get("status")?;
             let agent: Option<String> = r.try_get("agent")?;
+            let mode: String = r.try_get("mode")?;
             Ok(AttemptSession {
                 id: r.try_get("id")?,
                 title: r.try_get("title")?,
                 status: SessionStatus::parse(&status).ok_or_else(|| corrupt("session status", &status))?,
                 agent: agent.map(|a| AgentKind::parse(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
                 attempt_id: r.try_get("attempt_id")?,
+                mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("session mode", &mode))?,
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
@@ -1114,10 +1123,22 @@ impl Store {
         Ok(Some(ticket_id))
     }
 
-    /// Remembers the attempt's branch head (merge detection).
-    pub async fn set_attempt_head(&self, id: &str, head: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE attempts SET last_head = ? WHERE id = ?")
+    /// Remembers the attempt's branch head (merge detection), and that the branch has commits of its own once
+    /// `own_commits` is true (never cleared).
+    pub async fn set_attempt_head(&self, id: &str, head: &str, own_commits: bool) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET last_head = ?, own_commits = MAX(own_commits, ?) WHERE id = ?")
             .bind(head)
+            .bind(own_commits)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Remembers the workspace Start made for the attempt.
+    pub async fn set_attempt_workspace(&self, id: &str, workspace_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET workspace_id = ? WHERE id = ?")
+            .bind(workspace_id)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1219,6 +1240,22 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    /// The keys of the pull-request notices already recorded for an attempt (`pr` events), so each is told once,
+    /// across pdtd restarts too.
+    pub async fn pr_notice_keys(&self, ticket_id: &str, attempt_id: &str) -> Result<HashSet<String>, StoreError> {
+        let rows: Vec<(Option<String>,)> =
+            sqlx::query_as("SELECT data FROM ticket_events WHERE ticket_id = ? AND kind = 'pr'")
+                .bind(ticket_id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(d,)| serde_json::from_str::<serde_json::Value>(&d?).ok())
+            .filter(|v| v.get("attemptId").and_then(|a| a.as_str()) == Some(attempt_id))
+            .filter_map(|v| v.get("key").and_then(|k| k.as_str()).map(String::from))
+            .collect())
     }
 
     /// Adds an event to a ticket's timeline (e.g. `session` when Start made one).
@@ -1864,10 +1901,11 @@ mod tests {
             position: 0,
             created_at: 1,
             tabs: vec![],
+            ticket: None,
         };
         store.insert_workspace(&free).await.unwrap();
         store.move_tab("ta", Some("f"), None).await.unwrap().unwrap();
-        store.delete_workspace("f").await.unwrap();
+        store.delete_workspace("f", false).await.unwrap();
         assert_eq!(store.get_workspace(&home).await.unwrap().unwrap().tabs.len(), 2);
 
         assert_eq!(store.delete_ticket("b").await.unwrap(), DeleteTicket::Deleted);
@@ -1898,6 +1936,9 @@ mod tests {
             unseen: false,
             attempt_id: attempt.map(Into::into),
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         }
     }
 
@@ -1959,8 +2000,32 @@ mod tests {
         assert_eq!(info.worktree_path, None);
         assert_eq!(store.active_attempt("a").await.unwrap().map(|a| a.attempt.id), Some("at1".into()));
 
-        assert!(store.set_attempt_head("at1", "def").await.unwrap());
-        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.last_head.as_deref(), Some("def"));
+        assert!(!info.own_commits);
+        assert!(store.set_attempt_head("at1", "def", false).await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert_eq!((info.attempt.last_head.as_deref(), info.own_commits), (Some("def"), false));
+        assert!(store.set_attempt_head("at1", "ghi", true).await.unwrap());
+        assert!(store.set_attempt_head("at1", "def", false).await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert_eq!((info.attempt.last_head.as_deref(), info.own_commits), (Some("def"), true), "own commits stick");
+
+        // The workspace Start made is remembered, and forgotten when the workspace is deleted.
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
+        let w = pdt_core::workspace::Workspace {
+            id: "ws".into(),
+            name: "PX-1".into(),
+            project_id: None,
+            position: 0,
+            created_at: 5,
+            tabs: vec![],
+            ticket: None,
+        };
+        store.insert_workspace(&w).await.unwrap();
+        assert!(store.set_attempt_workspace("at1", "ws").await.unwrap());
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id.as_deref(), Some("ws"));
+        assert_eq!(store.get_ticket("a").await.unwrap().unwrap().attempts[0].workspace_id.as_deref(), Some("ws"));
+        store.delete_workspace("ws", false).await.unwrap();
+        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
 
         assert_eq!(
             store.end_attempt("at1", AttemptState::Merged, Actor::System, 9).await.unwrap().as_deref(),
@@ -2007,6 +2072,15 @@ mod tests {
         let ids: Vec<&str> = ticket.sessions.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["s2", "s1"], "newest first");
         assert_eq!(ticket.sessions[0].attempt_id, "at1");
+
+        // A chat joins an attempt once; a session with one keeps it.
+        assert!(store.set_session_attempt("plain", "at1").await.unwrap());
+        assert!(!store.set_session_attempt("plain", "at1").await.unwrap());
+        assert!(!store.set_session_attempt("s1", "at1").await.unwrap());
+        assert!(!store.set_session_attempt("gone", "at1").await.unwrap());
+        let ticket = store.get_ticket("a").await.unwrap().unwrap();
+        assert_eq!(ticket.sessions.len(), 3);
+        store.delete_session("plain").await.unwrap();
 
         // Deleting the ticket (here directly: the API refuses while the attempt is active) drops the attempt; its
         // sessions lose the link.

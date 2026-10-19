@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -53,7 +53,7 @@ describe('NewTabChooser', () => {
     renderWithQuery(<Anchored onClose={onClose} />);
     const panel = screen.getByRole('dialog', { name: 'New tab' });
     expect(panel.closest('[data-slot=popover-content]')).not.toBeNull();
-    expect(within(panel).getByRole('menuitem', { name: /^Claude/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ })).toBeInTheDocument();
     await waitFor(() => expect(panel).toHaveFocus());
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalled();
@@ -65,6 +65,79 @@ describe('NewTabChooser', () => {
     renderWithQuery(<Anchored onClose={() => {}} />);
     const panel = await screen.findByRole('dialog', { name: 'New tab' });
     expect(panel.closest('[data-slot=popover-content]')).toBeNull();
-    expect(within(panel).getByRole('menuitem', { name: /^Codex/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('menuitem', { name: /^Codex(?! \(terminal\))/ })).toBeInTheDocument();
+  });
+
+  describe('modes', () => {
+    const created = { id: 'n', projectId: project.id };
+    const post = (calls: { method: string; path: string; body: unknown }[]) =>
+      calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body as Record<string, unknown> | undefined;
+    const open = async () => {
+      setNarrow(false);
+      const onClose = vi.fn();
+      renderWithQuery(<NewTabChooser ws={fakeWs()} onClose={onClose} />);
+      const panel = screen.getByRole('dialog', { name: 'New tab' });
+      await waitFor(() => expect(panel).toHaveFocus());
+      return panel;
+    };
+
+    it('c opens a Claude conversation', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      await open();
+      await userEvent.keyboard('c');
+      await waitFor(() => expect(post(calls)).toMatchObject({ kind: 'agent_tui', agent: 'claude', mode: 'conversation' }));
+      expect(post(calls)).not.toHaveProperty('permissionMode');
+      expect(post(calls)).not.toHaveProperty('bypassPermissions');
+    });
+
+    it('t opens Claude in its terminal, with the bypass switch', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      const panel = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /Skip permission prompts/ }));
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Claude \(terminal\)/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'claude', mode: 'terminal', bypassPermissions: true }));
+    });
+
+    it('sends the picked permission mode with a conversation, never the bypass switch', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      const panel = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /Skip permission prompts/ }));
+      await userEvent.click(within(panel).getByRole('button', { name: /Permission mode for a new conversation/ }));
+      await userEvent.click(await screen.findByRole('option', { name: 'Accept edits' }));
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ mode: 'conversation', permissionMode: 'accept_edits' }));
+      expect(post(calls)).not.toHaveProperty('bypassPermissions');
+    });
+
+    it('Codex opens a conversation with the picked permission mode', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      const panel = await open();
+      await userEvent.click(within(panel).getByRole('button', { name: /Permission mode for a new conversation/ }));
+      await userEvent.click(await screen.findByRole('option', { name: 'Plan' }));
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Codex(?! \(terminal\))/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'codex', mode: 'conversation', permissionMode: 'plan' }));
+      expect(post(calls)).not.toHaveProperty('bypassPermissions');
+    });
+
+    it('o opens Codex in its terminal, with the bypass switch', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      const panel = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /Skip permission prompts/ }));
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Codex \(terminal\)/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'codex', mode: 'terminal', bypassPermissions: true }));
+      expect(post(calls)).not.toHaveProperty('permissionMode');
+    });
+
+    it('x opens a Codex conversation, o its terminal', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      await open();
+      await userEvent.keyboard('x');
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'codex', mode: 'conversation' }));
+      cleanup();
+      calls.length = 0;
+      await open();
+      await userEvent.keyboard('o');
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'codex', mode: 'terminal' }));
+    });
   });
 });

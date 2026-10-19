@@ -10,6 +10,8 @@ pub struct ProjectSettings {
     pub run_overrides: Option<String>,
     /// None means "use the host's policy".
     pub agent_credentials: Option<CredentialPolicy>,
+    /// Instructions given to every agent session in the project (on top of the repo's CLAUDE.md / AGENTS.md).
+    pub agent_instructions: Option<String>,
 }
 
 impl Store {
@@ -37,30 +39,32 @@ impl Store {
     }
 
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
-        let row: Option<(Option<String>, Option<String>)> =
-            sqlx::query_as("SELECT run_overrides, agent_credentials FROM project_settings WHERE project_id = ?")
-                .bind(project_id)
-                .fetch_optional(&self.pool)
-                .await?;
-        let Some((run_overrides, creds)) = row else { return Ok(ProjectSettings::default()) };
+        let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT run_overrides, agent_credentials, agent_instructions FROM project_settings WHERE project_id = ?",
+        )
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((run_overrides, creds, agent_instructions)) = row else { return Ok(ProjectSettings::default()) };
         let agent_credentials = match creds {
             Some(c) => Some(
                 CredentialPolicy::parse(&c).ok_or_else(|| StoreError::Corrupt(format!("credential policy {c:?}")))?,
             ),
             None => None,
         };
-        Ok(ProjectSettings { run_overrides, agent_credentials })
+        Ok(ProjectSettings { run_overrides, agent_credentials, agent_instructions })
     }
 
     pub async fn put_project_settings(&self, project_id: &str, s: &ProjectSettings) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO project_settings (project_id, run_overrides, agent_credentials) VALUES (?, ?, ?) \
-             ON CONFLICT(project_id) DO UPDATE SET run_overrides = excluded.run_overrides, \
-             agent_credentials = excluded.agent_credentials",
+            "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions) \
+             VALUES (?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET run_overrides = excluded.run_overrides, \
+             agent_credentials = excluded.agent_credentials, agent_instructions = excluded.agent_instructions",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
         .bind(s.agent_credentials.map(CredentialPolicy::as_str))
+        .bind(&s.agent_instructions)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -115,6 +119,7 @@ mod tests {
         let s = ProjectSettings {
             run_overrides: Some("[[run]]\nname = \"web\"\n".into()),
             agent_credentials: Some(CredentialPolicy::PassThrough),
+            agent_instructions: Some("Run `make check` before pushing.".into()),
         };
         store.put_project_settings("p", &s).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), s);

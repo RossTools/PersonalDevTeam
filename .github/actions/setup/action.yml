@@ -1,0 +1,60 @@
+name: PDT setup
+description: Rust toolchain, build cache, and optionally nextest, pnpm and a shell for the terminal tests. Picks the cache by runner.
+inputs:
+  pnpm:
+    description: install pnpm and Node, and cache the pnpm store
+    default: "false"
+  nextest:
+    description: install cargo-nextest
+    default: "false"
+  zsh:
+    description: make sure /bin/zsh works (pdtd's terminal tests start it when no shell is given)
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # Namespace runners (runner names `nsc-runner-*`) keep a cache volume per profile: target/, the cargo registry and
+    # the pnpm store persist between runs, and a job that exits cleanly saves its changes. GitHub's runners restore
+    # rust-cache (saved by main only) and setup-node's pnpm cache instead.
+    - name: Rust toolchain
+      shell: bash
+      run: |
+        if ! command -v rustup >/dev/null; then
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        rustup show
+    # GitHub's Ubuntu image has zsh; Namespace's has none, and a fresh zsh stops at its first-run menu without
+    # ~/.zshrc and at compinit's prompt on Ubuntu.
+    - name: zsh
+      if: inputs.zsh == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        if [ ! -x /bin/zsh ]; then sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null; fi
+        [ -e ~/.zshrc ] || touch ~/.zshrc
+        [ -e ~/.zshenv ] || echo skip_global_compinit=1 > ~/.zshenv
+    - uses: pnpm/action-setup@v6
+      if: inputs.pnpm == 'true'
+    - uses: actions/setup-node@v7
+      if: inputs.pnpm == 'true'
+      with:
+        node-version: 24
+        cache: ${{ !startsWith(runner.name, 'nsc-runner') && 'pnpm' || '' }}
+    - name: Cache volume (Namespace)
+      if: startsWith(runner.name, 'nsc-runner')
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: |
+          rust
+          ${{ inputs.pnpm == 'true' && 'pnpm' || '' }}
+    - name: Rust cache (GitHub)
+      if: ${{ !startsWith(runner.name, 'nsc-runner') }}
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Only main saves the cache (PRs restore it): PR runs skip uploading ~1 GB, and every PR starts warm.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - uses: taiki-e/install-action@v2
+      if: inputs.nextest == 'true'
+      with:
+        tool: cargo-nextest

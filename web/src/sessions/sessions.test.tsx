@@ -24,7 +24,7 @@ const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,
   externalSessionId: null, freshStartedAt: 1,
-  activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, ...over,
+  activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, ...over,
 });
 const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1, missing: false };
 
@@ -104,6 +104,31 @@ describe('SessionView actions', () => {
     await choose('Copy path');
     expect(writeText).toHaveBeenCalledWith('/r/sub');
     expect(await screen.findByText('Path copied')).toBeInTheDocument();
+  });
+
+  it('removes a running session after a modal that says it is stopped first', async () => {
+    const calls = stubApi({ 'DELETE /api/sessions/s1': undefined, 'GET /api/projects/p/sessions': [] });
+    const onRemoved = vi.fn();
+    renderWithQuery(<SessionView session={session({})} onRemoved={onRemoved} />);
+    await choose('Remove…');
+    const dialog = await screen.findByRole('alertdialog', { name: 'Remove Shell?' });
+    expect(dialog).toHaveTextContent(/still running and will be stopped/);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    await choose('Remove…');
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop and remove' }));
+    await waitFor(() => expect(onRemoved).toHaveBeenCalled());
+    expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/sessions/s1')).toBe(true);
+    expect(calls.some((c) => c.path === '/api/sessions/s1/kill')).toBe(false);
+  });
+
+  it('warns that removing a working agent interrupts its turn', async () => {
+    stubApi({ 'GET /api/projects/p/sessions': [] });
+    renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', title: 'Claude', activity: 'working' })} onRemoved={() => {}} />);
+    await choose('Remove…');
+    const dialog = await screen.findByRole('alertdialog', { name: 'Remove Claude?' });
+    expect(dialog).toHaveTextContent(/stops it mid-turn/);
   });
 
   it('toasts a failed action', async () => {

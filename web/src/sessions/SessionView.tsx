@@ -1,20 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, MenuButton, useConfirm, ViewHeader, type MenuEntry } from '@ui';
-import { api } from '../api/client';
+import { Button, MenuButton, SegmentedControl, toast, useConfirm, ViewHeader, type MenuEntry } from '@ui';
+import { api, ApiError } from '../api/client';
 import type { Session } from '../api/gen/Session';
+import type { SessionMode } from '../api/gen/SessionMode';
 import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { SessionKindIcon } from '../common/SessionKindIcon';
-import { useAction } from '../common/useAction';
+import { actionError, useAction } from '../common/useAction';
+import { ConversationPane } from '../conversation/ConversationView';
+import type { EventsSocketLike } from '../conversation/eventsSocket';
+import { useConversation, type ConversationData } from '../conversation/useConversation';
 import { branchUrl, repoUrl } from '../projects/github';
 import { TerminalView } from '../terminal/TerminalView';
+import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
 
-export function SessionView({ session, polledAt, onRemoved, branchLink, branch, repo, baseBranch, projectKey }: {
+export interface SessionViewProps {
   session: Session;
   polledAt?: number;
   onRemoved: () => void;
@@ -28,6 +33,48 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   baseBranch?: string;
   /** The project's key, shown for the main checkout; read from the projects list when left out. */
   projectKey?: string;
+  /** Tests: a fake events WebSocket for a conversation. */
+  socketFactory?: (url: string) => EventsSocketLike;
+}
+
+/** A session: its header over its terminal, or over its conversation (one events socket shared by both). */
+export function SessionView(props: SessionViewProps) {
+  return props.session.mode === 'conversation'
+    ? <ConversationSession key={props.session.id} {...props} />
+    : <SessionBody {...props} conv={null} />;
+}
+
+function ConversationSession(props: SessionViewProps) {
+  const conv = useConversation(props.session.id, props.socketFactory);
+  return <SessionBody {...props} conv={conv} />;
+}
+
+type ConvView = 'conversation' | 'terminal';
+const viewKey = (id: string) => `pdt.sessionView.${id}`;
+
+/** The Conversation | Terminal choice for one session, per browser (it outlives tab switches and polls). */
+function useStoredView(sessionId: string): [ConvView, (v: ConvView) => void] {
+  const [view, setView] = useState<ConvView>(() => {
+    try {
+      return localStorage.getItem(viewKey(sessionId)) === 'terminal' ? 'terminal' : 'conversation';
+    } catch {
+      return 'conversation';
+    }
+  });
+  const set = (v: ConvView) => {
+    setView(v);
+    try {
+      if (v === 'terminal') localStorage.setItem(viewKey(sessionId), v);
+      else localStorage.removeItem(viewKey(sessionId));
+    } catch {
+      // Storage blocked: the choice lasts while the view is open.
+    }
+  };
+  return [view, set];
+}
+
+function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, baseBranch, projectKey, conv }: SessionViewProps & {
+  conv: ConversationData | null;
 }) {
   useViewTracking(session.id, polledAt);
   const qc = useQueryClient();
@@ -67,14 +114,91 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
   const busy = killing || restarting || removing;
   const state = agentState({ kind: session.kind, status: session.status, activity: session.activity, unseen: session.unseen });
   const isAgent = session.kind === 'agent_tui';
+  // Conversations have no terminal: sending a message reopens them, so no Compose, Restart or ended bar.
+  const conversation = session.mode === 'conversation';
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
+  // A scratch chat (a conversation with no ticket) can become a ticket (spec §10).
+  const [makingTicket, setMakingTicket] = useState(false);
+  const scratch = conversation && isAgent && !session.attemptId;
+
+  // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread (spec §8.1).
+  const switchable = conversation && session.agent === 'codex' && conv !== null;
+  const terminalOpen = conv?.state?.terminalOpen ?? false;
+  // Codex can only resume a thread after its first turn.
+  const hasTurn = useMemo(() => conv?.rows.some((r) => r.event.kind === 'turn') ?? false, [conv?.rows]);
+  const [view, setView] = useStoredView(session.id);
+  // Between the open request succeeding and the state saying so: show the terminal already.
+  const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    if (terminalOpen) setOpening(false);
+  }, [terminalOpen]);
+  const showTerminal = switchable && view === 'terminal' && (terminalOpen || opening);
+  const [openTerminal, openingTerminal] = useAction(async () => {
+    if (!terminalOpen) {
+      try {
+        await api.openSessionTerminal(session.id, INITIAL_SIZE);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'no_turn_yet') throw new Error('Send a first message, then open the terminal.');
+        throw err;
+      }
+      setOpening(true);
+    }
+    setView('terminal');
+  });
+  const [closeTerminal, closingTerminal] = useAction(async () => {
+    await api.closeSessionTerminal(session.id);
+    setOpening(false);
+    setView('conversation');
+  });
+  const pickView = (v: ConvView) => {
+    if (v === 'terminal') void openTerminal();
+    else setView('conversation');
+  };
+
+  // Claude: the session is either the conversation or Claude's own TUI, one at a time (spec §8.2).
+  const claudeSwitch = isAgent && session.agent === 'claude';
+  const [switching, setSwitching] = useState<SessionMode | null>(null);
+  const switchMode = async (mode: SessionMode) => {
+    if (mode === session.mode || switching) return;
+    if (mode === 'conversation' && running && session.activity === 'working') {
+      const { ok } = await confirm({
+        title: 'Back to the conversation?',
+        body: 'Claude is working in the terminal. Switching closes the terminal, which stops this turn.',
+        action: 'Close terminal and switch',
+      });
+      if (!ok) return;
+    }
+    setSwitching(mode);
+    try {
+      const body = { mode, ...INITIAL_SIZE };
+      try {
+        await api.switchSessionMode(session.id, body);
+      } catch (err) {
+        if (!(err instanceof ApiError && err.code === 'turn_running')) throw err;
+        const { ok } = await confirm({
+          title: 'Interrupt and open the terminal?',
+          body: 'Claude is working on a turn. Opening the terminal stops it; you can carry on from there.',
+          action: 'Interrupt and open',
+        });
+        if (!ok) return;
+        await api.switchSessionMode(session.id, { ...body, interrupt: true });
+      }
+      await refresh();
+    } catch (err) {
+      toast.error(actionError(err));
+    } finally {
+      setSwitching(null);
+    }
+  };
 
   // Stopping is reversible (Restart resumes), so it asks only when it would cut off an agent mid-turn (spec §6.2).
   const askStop = async () => {
     if (session.activity === 'working') {
       const { ok } = await confirm({
         title: `Stop ${session.title}?`,
-        body: 'The agent is working; stopping it interrupts the current turn. Restart resumes its conversation.',
+        body: conversation
+          ? 'The agent is working; stopping it interrupts the current turn. Send a message to start it again.'
+          : 'The agent is working; stopping it interrupts the current turn. Restart resumes its conversation.',
         action: 'Stop agent',
         danger: true,
       });
@@ -82,34 +206,60 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
     }
     await kill();
   };
+  // A modal every time: removing cannot be undone, and a running session is stopped first.
   const askRemove = async () => {
+    const lost = conversation
+      ? 'Its conversation history is deleted. Files in its folder stay.'
+      : isAgent
+      ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
+      : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.';
     const { ok } = await confirm({
       title: `Remove ${session.title}?`,
-      body: isAgent
-        ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
-        : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.',
-      action: 'Remove session',
+      body: !running
+        ? lost
+        : session.activity === 'working'
+          ? `The agent is working; removing it stops it mid-turn. ${lost}`
+          : `It is still running and will be stopped. ${lost}`,
+      action: running ? 'Stop and remove' : 'Remove session',
       danger: true,
     });
     if (ok) await remove();
   };
 
   const entries = (): MenuEntry[] => [
-    ...(running
+    ...(scratch ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
+    ...(conversation
       ? [
-          { label: 'Compose', onSelect: () => setComposing((c) => !c) },
-          { label: 'Stop', onSelect: () => void askStop(), disabled: busy },
+          ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),
+          ...(running ? [{ label: 'Stop', onSelect: () => void askStop(), disabled: busy }] : []),
+          ...(terminalOpen || running ? [{ separator: true } as const] : []),
         ]
-      : []),
-    { label: restartLabel, onSelect: () => void restart(), disabled: busy },
-    { separator: true },
+      : [
+          ...(running
+            ? [
+                { label: 'Compose', onSelect: () => setComposing((c) => !c) },
+                { label: 'Stop', onSelect: () => void askStop(), disabled: busy },
+              ]
+            : []),
+          { label: restartLabel, onSelect: () => void restart(), disabled: busy },
+          { separator: true } as const,
+        ]),
     { label: 'Copy path', onSelect: () => void copyToClipboard(session.cwd, 'Path copied') },
     ...(githubLink ? [{ label: 'Open on GitHub', onSelect: () => void window.open(githubLink, '_blank', 'noopener,noreferrer') }] : []),
-    ...(ended ? [{ separator: true } as const, { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true }] : []),
+    { separator: true },
+    { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true },
   ];
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
+      {makingTicket && (
+        <MakeTicketDialog
+          session={session}
+          canStartHere={!!theBranch && !!theBase && theBranch !== theBase}
+          onClose={() => setMakingTicket(false)}
+          onCreated={(t) => toast.success(`Created ${t.key}`)}
+        />
+      )}
       <ViewHeader
         leading={
           <span className="flex items-center gap-1.5">
@@ -131,35 +281,81 @@ export function SessionView({ session, polledAt, onRemoved, branchLink, branch, 
         }
         actions={
           <>
-            {ended && (
+            {claudeSwitch && (
+              <SegmentedControl<SessionMode>
+                aria-label="Show as"
+                size="sm"
+                value={switching ?? session.mode}
+                onChange={(v) => void switchMode(v)}
+                disabled={switching !== null || busy}
+                options={[
+                  { value: 'conversation', label: 'Conversation' },
+                  { value: 'terminal', label: 'Terminal' },
+                ]}
+              />
+            )}
+            {switchable && (
+              // A disabled segment gets no hover of its own, so the wrapper carries the explanation.
+              <span className="flex" title={hasTurn || terminalOpen ? undefined : 'Send a first message, then open the terminal'}>
+                  <SegmentedControl<ConvView>
+                    aria-label="Show as"
+                    size="sm"
+                    value={showTerminal ? 'terminal' : 'conversation'}
+                    onChange={pickView}
+                    disabled={openingTerminal}
+                    options={[
+                      { value: 'conversation', label: 'Conversation' },
+                      { value: 'terminal', label: 'Terminal', disabled: !hasTurn && !terminalOpen },
+                    ]}
+                  />
+              </span>
+            )}
+            {ended && !conversation && (
               <Button variant="primary" size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>{restartLabel}</Button>
             )}
             <MenuButton label="Session actions" size="sm" placement="bottom end" entries={entries} />
           </>
         }
       />
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <TerminalView
-          key={session.id}
-          sessionId={session.id}
-          sessionStatus={session.status}
-          polledAt={polledAt}
-          composing={composing && running}
-          onComposeClose={() => setComposing(false)}
-          dimmed={ended}
+      {showTerminal ? (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <TerminalView key={`${session.id}:tui`} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
+        </div>
+      ) : conv ? (
+        <ConversationPane
+          session={session}
+          conv={conv}
+          banner={switchable && terminalOpen ? (
+            <p className="flex items-center justify-center gap-2 px-4 pb-1 text-meta text-muted-foreground" role="status">
+              Also open in the terminal
+              <Button variant="ghost" size="sm" onClick={() => pickView('terminal')}>Show</Button>
+            </p>
+          ) : undefined}
         />
-        {ended && (
-          <EndedBar
-            status={session.status === 'interrupted' ? 'interrupted' : 'finished'}
-            agent={isAgent}
-            onRestart={() => void restart()}
-            onRemove={() => void askRemove()}
-            restarting={restarting}
-            removing={removing}
-            disabled={busy}
+      ) : (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <TerminalView
+            key={session.id}
+            sessionId={session.id}
+            sessionStatus={session.status}
+            polledAt={polledAt}
+            composing={composing && running}
+            onComposeClose={() => setComposing(false)}
+            dimmed={ended}
           />
-        )}
-      </div>
+          {ended && (
+            <EndedBar
+              status={session.status === 'interrupted' ? 'interrupted' : 'finished'}
+              agent={isAgent}
+              onRestart={() => void restart()}
+              onRemove={() => void askRemove()}
+              restarting={restarting}
+              removing={removing}
+              disabled={busy}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

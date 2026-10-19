@@ -2,6 +2,7 @@
 //! Start request.
 
 use crate::brand::{SHORT_NAME, SLUG};
+use crate::conversation::SessionMode;
 use crate::session::{AgentKind, Session, TerminalSize};
 use crate::ticket::{AttemptSummary, MAX_SLUG, Ticket, TicketValidationError, format_key, slug};
 use crate::workspace::TabPlacement;
@@ -96,6 +97,16 @@ pub struct StartTicket {
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<StartMode>,
+    /// How the agent runs: a conversation (the default; the ticket is its first message) or its terminal.
+    #[serde(default)]
+    #[ts(optional)]
+    pub session_mode: Option<SessionMode>,
+    /// Start from this chat (a conversation session with no ticket, in a worktree off the base branch) instead of a
+    /// new session: the attempt takes its worktree and branch, and nothing is sent to the agent. `agent`, `branch`,
+    /// `base` and `bypassPermissions` don't apply.
+    #[serde(default)]
+    #[ts(optional)]
+    pub from_session: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub cols: Option<u16>,
@@ -115,6 +126,8 @@ pub struct ValidStart {
     pub tab: Option<TabPlacement>,
     pub new_workspace: bool,
     pub mode: StartMode,
+    pub session_mode: SessionMode,
+    pub from_session: Option<String>,
     pub size: TerminalSize,
 }
 
@@ -130,6 +143,10 @@ impl StartTicket {
             ),
             None => None,
         };
+        let from_session = nonblank(&self.from_session);
+        if from_session.is_some() && (branch.is_some() || nonblank(&self.base).is_some()) {
+            return Err(TicketValidationError::Invalid("a start from a chat keeps the chat's branch".into()));
+        }
         let cols = self.cols.unwrap_or(DEFAULT_SIZE.cols);
         let rows = self.rows.unwrap_or(DEFAULT_SIZE.rows);
         if !START_COLS.contains(&cols) || !START_ROWS.contains(&rows) {
@@ -149,6 +166,8 @@ impl StartTicket {
             tab: self.tab.clone(),
             new_workspace: self.new_workspace.unwrap_or(false),
             mode: self.mode.unwrap_or_default(),
+            session_mode: self.session_mode.unwrap_or(SessionMode::Conversation),
+            from_session,
             size: TerminalSize { cols, rows },
         })
     }
@@ -245,9 +264,15 @@ mod tests {
                 tab: None,
                 new_workspace: false,
                 mode: StartMode::Check,
+                session_mode: SessionMode::Conversation,
+                from_session: None,
                 size: DEFAULT_SIZE,
             }
         );
+        let t = start(serde_json::json!({"agent": "claude", "sessionMode": "terminal"})).unwrap();
+        assert_eq!(t.session_mode, SessionMode::Terminal);
+        let chat = start(serde_json::json!({"agent": "claude", "fromSession": " s1 "})).unwrap();
+        assert_eq!(chat.from_session.as_deref(), Some("s1"));
         let v = start(serde_json::json!({
             "agent": "codex", "branch": " feature/x ", "base": " ", "bypassPermissions": true, "newWorkspace": true,
             "mode": "force", "cols": 20, "rows": 300, "tab": {"workspaceId": "w", "position": 2}
@@ -265,6 +290,8 @@ mod tests {
             serde_json::json!({"agent": "claude", "cols": 501}),
             serde_json::json!({"agent": "claude", "rows": 4}),
             serde_json::json!({"agent": "claude", "rows": 301}),
+            serde_json::json!({"agent": "claude", "fromSession": "s1", "branch": "x"}),
+            serde_json::json!({"agent": "claude", "fromSession": "s1", "base": "main"}),
         ] {
             assert!(matches!(start(bad.clone()), Err(TicketValidationError::Invalid(_))), "{bad}");
         }
