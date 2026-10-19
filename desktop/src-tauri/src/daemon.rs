@@ -1,14 +1,17 @@
 use pdt_core::brand::{DAEMON_BIN, HOST_BIN, PRODUCT_NAME, Profile};
+use pdt_core::handoff::{HostProblem, host_problem_path};
 use pdt_host::health::Probe;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Attaches to a running daemon, or starts pdt-host (which starts pdtd) and waits until pdtd answers its health check.
+/// Stops waiting when pdt-host reports a `problem` someone has to fix (say, pdtd's exe was quarantined).
 pub fn ensure_daemon(
     port: u16,
     probe: impl Fn(u16) -> Probe,
     spawn: impl FnOnce() -> std::io::Result<()>,
+    problem: impl Fn() -> Option<HostProblem>,
     timeout: Duration,
 ) -> Result<(), String> {
     let mut last = probe(port);
@@ -23,6 +26,9 @@ pub fn ensure_daemon(
         last = probe(port);
         if matches!(last, Probe::Ours { .. }) {
             return Ok(());
+        }
+        if let Some(p) = problem() {
+            return Err(p.message);
         }
     }
     Err(match last {
@@ -74,6 +80,15 @@ fn host_command(program: &Path, profile: Profile) -> Command {
 /// The data dir pdt-host and pdtd use for `profile` (the tray never passes `PDT_DATA_DIR` on).
 pub fn data_dir(profile: Profile) -> Option<PathBuf> {
     Some(dirs::data_local_dir()?.join(profile.data_dir_name()))
+}
+
+/// What pdt-host reports keeps pdtd from running, if anything (see `host_problem_path`).
+pub fn host_problem(profile: Profile) -> Option<HostProblem> {
+    read_problem(&data_dir(profile)?)
+}
+
+fn read_problem(data_dir: &Path) -> Option<HostProblem> {
+    serde_json::from_slice(&std::fs::read(host_problem_path(data_dir)).ok()?).ok()
 }
 
 /// Where the desktop app sends a spawned pdt-host's stdout/stderr (startup errors land here before the logs).
@@ -206,6 +221,7 @@ mod tests {
                 spawned.set(true);
                 Ok(())
             },
+            || None,
             Duration::from_millis(300),
         )
         .unwrap();
@@ -227,6 +243,7 @@ mod tests {
                 spawned.set(true);
                 Ok(())
             },
+            || None,
             Duration::from_secs(3),
         )
         .unwrap();
@@ -243,6 +260,7 @@ mod tests {
                 spawned.set(true);
                 Ok(())
             },
+            || None,
             Duration::from_millis(300),
         )
         .unwrap_err();
@@ -252,11 +270,30 @@ mod tests {
 
     #[test]
     fn timeout_and_spawn_failure_messages() {
-        let err = ensure_daemon(9, |_| Probe::Free, || Ok(()), Duration::from_millis(300)).unwrap_err();
+        let err = ensure_daemon(9, |_| Probe::Free, || Ok(()), || None, Duration::from_millis(300)).unwrap_err();
         assert!(err.contains("did not start"), "{err}");
-        let err = ensure_daemon(9, |_| Probe::Free, || Err(std::io::Error::other("nope")), Duration::from_millis(300))
-            .unwrap_err();
+        let nope = || Err(std::io::Error::other("nope"));
+        let err = ensure_daemon(9, |_| Probe::Free, nope, || None, Duration::from_millis(300)).unwrap_err();
         assert!(err.contains("failed to start pdt-host"), "{err}");
+    }
+
+    #[test]
+    fn a_reported_problem_ends_the_wait_with_its_message() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(read_problem(tmp.path()), None);
+        let p = HostProblem {
+            kind: pdt_core::handoff::HostProblemKind::PdtdMissing,
+            message: "pdtd.exe is missing; antivirus may have quarantined it.".into(),
+            path: tmp.path().join("pdtd.exe"),
+            since: 1,
+        };
+        std::fs::write(host_problem_path(tmp.path()), serde_json::to_vec(&p).unwrap()).unwrap();
+        assert_eq!(read_problem(tmp.path()), Some(p));
+        let t = Instant::now();
+        let err = ensure_daemon(9, |_| Probe::Free, || Ok(()), || read_problem(tmp.path()), Duration::from_secs(60))
+            .unwrap_err();
+        assert!(err.contains("antivirus may have quarantined it"), "{err}");
+        assert!(t.elapsed() < Duration::from_secs(5), "it did not wait out the timeout");
     }
 
     #[test]

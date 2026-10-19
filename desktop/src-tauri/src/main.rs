@@ -5,7 +5,7 @@ mod api;
 mod daemon;
 
 use pdt_core::brand::{PRODUCT_NAME, Profile};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -31,6 +31,8 @@ struct Tray {
     ready: AtomicBool,
     /// Started by pdt-host after an update: the browser already shows the UI, so startup opens no new window.
     quiet_start: bool,
+    /// The `since` of the pdt-host problem last shown in a dialog (0: none), so each is shown once.
+    shown_problem: AtomicI64,
 }
 
 impl Tray {
@@ -123,6 +125,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         updating: AtomicBool::new(false),
         ready: AtomicBool::new(false),
         quiet_start: daemon::quiet_start(std::env::args()),
+        shown_problem: AtomicI64::new(0),
     });
 
     let handle = app.handle().clone();
@@ -131,7 +134,8 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         // A first macOS launch starts pdt-host through launchd; the tray then only waits for pdtd.
         let registered = daemon::ensure_registered(profile);
         let spawn = || if registered { Ok(()) } else { daemon::spawn_host(profile) };
-        match daemon::ensure_daemon(port, pdt_host::health::probe, spawn, STARTUP_TIMEOUT) {
+        let problem = || daemon::host_problem(profile);
+        match daemon::ensure_daemon(port, pdt_host::health::probe, spawn, problem, STARTUP_TIMEOUT) {
             Ok(()) => {
                 let _ = tray.restart_item.set_enabled(true);
                 tray.ready.store(true, Ordering::SeqCst);
@@ -145,6 +149,11 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
                 }
             }
             Err(e) => {
+                if let Some(p) = daemon::host_problem(profile) {
+                    let h = handle.clone();
+                    error_dialog(&handle, p.message).show(move |_| h.exit(1));
+                    return;
+                }
                 let h = handle.clone();
                 error_dialog(&handle, daemon::with_log_tail(e, profile)).show(move |_| h.exit(1));
             }
@@ -153,9 +162,16 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// Updates the Update and Version items from pdtd.
+/// Updates the Update and Version items from pdtd, and shows a problem pdt-host reports (once each).
 fn refresh(app: &AppHandle) {
     let tray = app.state::<Tray>();
+    if let Some(p) = daemon::host_problem(tray.profile) {
+        let _ = tray.version_item.set_text("Not running — see the message");
+        if tray.shown_problem.swap(p.since, Ordering::SeqCst) != p.since {
+            error_dialog(app, p.message).show(|_| {});
+        }
+        return;
+    }
     let (text, enabled) = match api::call(tray.port, "GET", "/api/host/update", None) {
         Ok((200, s)) => api::update_label(&s),
         _ => ("Update check failed".into(), true),
@@ -214,7 +230,14 @@ fn restart_daemon(app: &AppHandle) {
         let profile = tray.profile;
         let result = pdt_host::health::request_shutdown(tray.port).and_then(|()| {
             std::thread::sleep(Duration::from_secs(2));
-            daemon::ensure_daemon(tray.port, pdt_host::health::probe, || daemon::spawn_host(profile), STARTUP_TIMEOUT)
+            let problem = || daemon::host_problem(profile);
+            daemon::ensure_daemon(
+                tray.port,
+                pdt_host::health::probe,
+                || daemon::spawn_host(profile),
+                problem,
+                STARTUP_TIMEOUT,
+            )
         });
         if let Err(e) = result {
             error_dialog(&app, format!("The daemon did not come back: {}", daemon::with_log_tail(e, profile)))

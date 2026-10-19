@@ -34,6 +34,33 @@ pub fn db_snapshot_dir(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("db-before-update")
 }
 
+/// Written by pdt-host while it cannot start pdtd for a reason someone has to fix (its exe is missing or blocked);
+/// removed once pdtd answers its health check. The tray reads it, since nothing serves the web UI meanwhile.
+pub fn host_problem_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("host-problem.json")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostProblemKind {
+    /// pdtd's exe is not there (antivirus quarantine, a half-removed install).
+    PdtdMissing,
+    /// The OS refused to run pdtd's exe as a virus.
+    PdtdBlocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostProblem {
+    pub kind: HostProblemKind,
+    /// A sentence for people: what is wrong and what to do.
+    pub message: String,
+    /// The pdtd exe pdt-host tries to start.
+    pub path: PathBuf,
+    /// When pdt-host first saw it (Unix ms).
+    pub since: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateRequest {
@@ -88,6 +115,7 @@ mod tests {
         assert_eq!(result_path(d), d.join("update").join("result.json"));
         assert_eq!(downloads_dir(d), d.join("update").join("downloads"));
         assert_eq!(skip_path(d), d.join("update").join("skip.json"));
+        assert_eq!(host_problem_path(d), d.join("host-problem.json"));
     }
 
     #[test]

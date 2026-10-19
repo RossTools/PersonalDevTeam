@@ -2,8 +2,8 @@
 mod port_blocks;
 
 use pdt_core::handoff::{
-    DB_FILE, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, db_snapshot_dir, request_path, result_path,
-    skip_path,
+    DB_FILE, HostProblem, HostProblemKind, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, db_snapshot_dir,
+    host_problem_path, request_path, result_path, skip_path,
 };
 use pdt_host::config::HostConfig;
 use pdt_host::health::{Probe, probe, request_shutdown};
@@ -578,18 +578,82 @@ fn a_missing_pdtd_is_restored_from_the_backup() {
     wait_version(port, "0.1.5", Duration::from_secs(20));
 }
 
-/// Review issue 6: with nothing runnable pdt-host keeps running and starts pdtd once it appears.
+fn problem(data: &Path) -> Option<HostProblem> {
+    serde_json::from_slice(&std::fs::read(host_problem_path(data)).ok()?).ok()
+}
+
+fn wait_problem(data: &Path) -> HostProblem {
+    let end = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(p) = problem(data) {
+            return p;
+        }
+        assert!(Instant::now() < end, "no problem was reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// PDT-30: with pdtd's exe missing and no backup, pdt-host says so once, reports it for the tray, and starts pdtd as
+/// soon as the file is back.
 #[test]
-fn with_nothing_to_run_it_keeps_trying() {
+fn a_missing_pdtd_is_reported_once_and_started_when_it_is_back() {
     let tmp = tempfile::tempdir().unwrap();
     let install = tmp.path().join("app");
+    let data = tmp.path().join("data");
     std::fs::create_dir_all(&install).unwrap();
     let port = free_port();
-    let h = supervise(config(&install, &tmp.path().join("data"), port), tmp.path().join("none"));
-    std::thread::sleep(Duration::from_secs(1));
+    let cfg = config(&install, &data, port);
+    let h = supervise(cfg.clone(), tmp.path().join("none"));
+    let p = wait_problem(&data);
+    assert_eq!(p.kind, HostProblemKind::PdtdMissing);
+    assert_eq!(p.path, cfg.pdtd_path());
+    assert!(p.message.contains("is missing; antivirus may have quarantined it"), "{}", p.message);
+    std::thread::sleep(Duration::from_secs(2)); // ten polls
     assert!(h.is_running(), "pdt-host did not give up");
+    let log = read(&log_path(&cfg));
+    assert_eq!(log.matches("is missing").count(), 1, "said once, not every retry:\n{log}");
+    assert!(!log.contains("could not start pdtd"), "{log}");
     fake_install(&install, "0.1.5", "healthy");
     wait_version(port, "0.1.5", Duration::from_secs(20));
+    wait_log(&cfg, "pdtd is running again");
+    assert!(problem(&data).is_none(), "the report is cleared once pdtd runs");
+}
+
+/// PDT-30: Defender kills the running pdtd and quarantines its exe (renamed here: Windows cannot delete a running
+/// exe, but can rename it).
+#[test]
+fn a_pdtd_quarantined_while_running_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let cfg = config(&install, &data, port);
+    let _h = supervise(cfg.clone(), tmp.path().join("none"));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    let exe = cfg.pdtd_path();
+    let quarantined = install.join(format!("quarantined{EXE}"));
+    std::fs::rename(&exe, &quarantined).unwrap();
+    request_shutdown(port).unwrap();
+    assert_eq!(wait_problem(&data).kind, HostProblemKind::PdtdMissing);
+    std::fs::rename(&quarantined, &exe).unwrap();
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    wait_log(&cfg, "is back; starting it");
+    wait_log(&cfg, "pdtd is running again");
+    assert!(problem(&data).is_none());
+}
+
+/// A report left by an earlier pdt-host is cleared once pdtd runs.
+#[test]
+fn a_stale_report_is_cleared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(host_problem_path(&data), "{}").unwrap();
+    let port = free_port();
+    let _h = supervise(config(&install, &data, port), tmp.path().join("none"));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    assert!(!host_problem_path(&data).exists());
 }
 
 #[test]

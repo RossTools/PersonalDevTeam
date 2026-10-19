@@ -21,6 +21,9 @@ the Mac mini the build output stays warm; a small change re-checks in about a mi
 the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
 platform-specific code (`cfg(windows)`, process spawning, paths).
 
+Windows bundles are Authenticode-signed when the Artifact Signing secrets and variables are set, and a main release
+fails without them (docs/superpowers/notes/windows-signing.md).
+
 ## Merge queue
 
 The "Main" ruleset merges through a merge queue (squash, one PR per group) instead of requiring branches to be up

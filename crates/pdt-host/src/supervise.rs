@@ -6,8 +6,10 @@ use crate::dbsnap;
 use crate::health::{Probe, probe, request_shutdown};
 use crate::install::Installer;
 use crate::log::{log, log_path};
+use pdt_core::brand::PRODUCT_NAME;
 use pdt_core::handoff::{
-    UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path, update_dir,
+    HostProblem, HostProblemKind, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, host_problem_path,
+    request_path, result_path, skip_path, update_dir,
 };
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -121,6 +123,75 @@ pub fn spawn_pdtd(cfg: &HostConfig) -> std::io::Result<Child> {
         cmd.process_group(0);
     }
     cmd.spawn()
+}
+
+/// Windows' ERROR_VIRUS_INFECTED and ERROR_VIRUS_DELETED: antivirus refused to run the file.
+const VIRUS_ERRORS: [i32; 2] = [225, 226];
+
+/// The problem a failed start of pdtd is, when someone has to fix it (rather than a retry).
+pub fn spawn_problem(e: &std::io::Error) -> Option<HostProblemKind> {
+    match e.raw_os_error() {
+        Some(code) if cfg!(windows) && VIRUS_ERRORS.contains(&code) => Some(HostProblemKind::PdtdBlocked),
+        _ => None,
+    }
+}
+
+/// What to tell people about `kind`: what is wrong and what to do.
+pub fn problem_message(cfg: &HostConfig, kind: HostProblemKind) -> String {
+    let path = cfg.pdtd_path();
+    match kind {
+        HostProblemKind::PdtdMissing => format!(
+            "{} is missing; antivirus may have quarantined it. Restore it from quarantine (Windows Security: \
+             Protection history) or reinstall {PRODUCT_NAME}; it starts again as soon as the file is back.",
+            path.display()
+        ),
+        HostProblemKind::PdtdBlocked => format!(
+            "Antivirus blocked {} from running. Allow or restore it (Windows Security: Protection history) or \
+             reinstall {PRODUCT_NAME}.",
+            path.display()
+        ),
+    }
+}
+
+/// Records the problem pdtd has (`None`: it is running), logging and writing `host-problem.json` only on a change.
+fn report(cfg: &HostConfig, current: &mut Option<HostProblem>, kind: Option<HostProblemKind>) {
+    if current.as_ref().map(|p| p.kind) == kind {
+        return;
+    }
+    let path = host_problem_path(&cfg.data_dir);
+    *current = kind.map(|kind| HostProblem {
+        kind,
+        message: problem_message(cfg, kind),
+        path: cfg.pdtd_path(),
+        since: jiff::Timestamp::now().as_millisecond(),
+    });
+    match current {
+        Some(p) => {
+            log(cfg, &p.message);
+            if let Err(e) = write_atomic(&path, &serde_json::to_vec_pretty(p).expect("json")) {
+                log(cfg, &format!("could not write {}: {e}", path.display()));
+            }
+        }
+        None => {
+            log(cfg, "pdtd is running again");
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+/// Waits while pdtd's exe is missing: until it is back, an update request arrives (installing one brings it back),
+/// a pdtd started elsewhere answers, or `stop`.
+fn wait_for_exe(cfg: &HostConfig, stop: &AtomicBool, notice_requests: bool) {
+    while !stopped(stop)
+        && !cfg.pdtd_path().is_file()
+        && !(notice_requests && request_path(&cfg.data_dir).exists())
+        && !matches!(probe(cfg.port), Probe::Ours { .. })
+    {
+        sleep_unless_stopped(cfg.poll, stop);
+    }
+    if cfg.pdtd_path().is_file() {
+        log(cfg, &format!("{} is back; starting it", cfg.pdtd_path().display()));
+    }
 }
 
 fn stopped(stop: &AtomicBool) -> bool {
@@ -415,18 +486,17 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bo
         write_result(cfg, &update_result(cfg, outcome, &from, &to, message));
         let _ = std::fs::remove_file(&marker);
     }
-    if !cfg.pdtd_path().is_file() {
-        match installer.backup_path() {
-            Some(b) if b.exists() => {
-                if !quiesce(cfg, stop) {
-                    return false;
-                }
-                log(cfg, &format!("{} is missing; restoring the previous version", cfg.pdtd_path().display()));
-                if let Err(e) = installer.rollback() {
-                    log(cfg, &format!("restoring the previous version failed: {e}"));
-                }
-            }
-            _ => log(cfg, &format!("{} is missing; retrying until it appears", cfg.pdtd_path().display())),
+    // Without a backup, the supervise loop reports the missing exe.
+    if !cfg.pdtd_path().is_file()
+        && let Some(b) = installer.backup_path()
+        && b.exists()
+    {
+        if !quiesce(cfg, stop) {
+            return false;
+        }
+        log(cfg, &format!("{} is missing; restoring the previous version", cfg.pdtd_path().display()));
+        if let Err(e) = installer.rollback() {
+            log(cfg, &format!("restoring the previous version failed: {e}"));
         }
     }
     true
@@ -440,6 +510,9 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
     // Set when a request file cannot be removed: it is then left alone until pdt-host restarts.
     let mut ignore_requests = false;
     let mut recovered = false;
+    // What keeps pdtd from running, if someone has to fix it. A file left by an earlier pdt-host is stale.
+    let mut problem: Option<HostProblem> = None;
+    let _ = std::fs::remove_file(host_problem_path(&cfg.data_dir));
     while !stopped(stop) {
         // Retried after each pdtd exit while a running pdtd blocks it.
         if !recovered {
@@ -476,9 +549,21 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
                     continue;
                 }
                 Probe::Free => {
+                    // Said once, and reported to the tray, instead of failing every minute (PDT-30).
+                    if !cfg.pdtd_path().is_file() {
+                        report(cfg, &mut problem, Some(HostProblemKind::PdtdMissing));
+                        wait_for_exe(cfg, stop, !ignore_requests);
+                        failures = 0;
+                        continue;
+                    }
                     child = match spawn_pdtd(cfg) {
                         Ok(c) => Some(c),
+                        // Gone since the check: the next pass reports it.
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !cfg.pdtd_path().is_file() => continue,
                         Err(e) => {
+                            if let Some(kind) = spawn_problem(&e) {
+                                report(cfg, &mut problem, Some(kind));
+                            }
                             failures += 1;
                             log(cfg, &format!("could not start pdtd: {e}"));
                             sleep_unless_stopped(cfg.backoff.delay(failures), stop);
@@ -495,6 +580,7 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
                 }
             },
         }
+        report(cfg, &mut problem, None);
         let started = Instant::now();
         watch(cfg, &mut child, stop, !ignore_requests);
         if stopped(stop) || (!ignore_requests && request_path(&cfg.data_dir).exists()) {
@@ -521,6 +607,15 @@ mod tests {
         let d: Vec<u64> = (0..9).map(|f| b.delay(f).as_secs()).collect();
         assert_eq!(d, [0, 1, 2, 4, 8, 16, 32, 60, 60]);
         assert_eq!(b.delay(1000), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn only_antivirus_refusals_need_someone_to_act() {
+        let virus = std::io::Error::from_raw_os_error(225);
+        let want = if cfg!(windows) { Some(HostProblemKind::PdtdBlocked) } else { None };
+        assert_eq!(spawn_problem(&virus), want);
+        assert_eq!(spawn_problem(&std::io::Error::from_raw_os_error(5)), None);
+        assert_eq!(spawn_problem(&std::io::Error::other("x")), None);
     }
 
     #[test]

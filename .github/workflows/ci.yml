@@ -162,6 +162,12 @@ jobs:
       - uses: ./.github/actions/bundle
         with:
           bundles: nsis
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          artifact-signing-endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          artifact-signing-account: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          artifact-signing-profile: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
 
   release:
     # Every push to main becomes a GitHub release v0.1.<run number>, with SHA256SUMS; hosts' pdtd checks for it

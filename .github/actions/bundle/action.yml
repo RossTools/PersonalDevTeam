@@ -19,6 +19,24 @@ inputs:
   notary-issuer:
     description: the API key's issuer id
     default: ''
+  azure-tenant-id:
+    description: Windows signing (scripts/sign-windows.ps1) - the app registration's tenant
+    default: ''
+  azure-client-id:
+    description: the app registration's client id
+    default: ''
+  azure-client-secret:
+    description: its client secret
+    default: ''
+  artifact-signing-endpoint:
+    description: the Artifact Signing account's regional endpoint
+    default: ''
+  artifact-signing-account:
+    description: the Artifact Signing account
+    default: ''
+  artifact-signing-profile:
+    description: its certificate profile
+    default: ''
 runs:
   using: composite
   steps:
@@ -38,18 +56,78 @@ runs:
         echo "PDT_BUILD_VERSION=$version" >> "$GITHUB_ENV"
         printf '{"version":"%s"}' "$version" > "$RUNNER_TEMP/release.conf.json"
         echo "Building release $version"
+    # Windows releases are Authenticode-signed (PDT-30: Defender quarantined an unsigned pdtd.exe). Releases must be
+    # signed; other builds are signed when the credentials are available to them.
+    - name: Windows signing
+      if: inputs.bundles == 'nsis'
+      shell: bash
+      env:
+        HAS_CREDENTIALS: ${{ inputs.azure-client-secret != '' && inputs.artifact-signing-account != '' }}
+      run: |
+        if [ "$HAS_CREDENTIALS" != true ]; then
+          if [ -n "${PDT_BUILD_VERSION:-}" ]; then
+            echo "::error::Windows releases must be signed: set the Artifact Signing secrets (docs/superpowers/notes/windows-signing.md)."
+            exit 1
+          fi
+          echo "::notice::No Windows signing credentials; this build is not a release, so it stays unsigned."
+          exit 0
+        fi
+        echo "PDT_SIGN_WINDOWS=1" >> "$GITHUB_ENV"
+        # Tauri signs the app exe, the installer and its uninstaller with this command, one file per call.
+        script="$(cygpath -w "$GITHUB_WORKSPACE/scripts/sign-windows.ps1")"
+        jq -n --arg s "$script" \
+          '{bundle: {windows: {signCommand: {cmd: "pwsh", args: ["-NoProfile", "-NonInteractive", "-File", $s, "%1"]}}}}' \
+          > "$RUNNER_TEMP/sign.conf.json"
+        cat "$RUNNER_TEMP/sign.conf.json"
     - run: pnpm --dir web build
       shell: bash
     - run: cargo build --release -p pdtd -p pdt-host
       shell: bash
+    # The sidecars are signed before they are staged, so the installer carries signed copies.
+    - name: Sign the sidecars
+      if: env.PDT_SIGN_WINDOWS == '1'
+      shell: pwsh
+      env:
+        AZURE_TENANT_ID: ${{ inputs.azure-tenant-id }}
+        AZURE_CLIENT_ID: ${{ inputs.azure-client-id }}
+        AZURE_CLIENT_SECRET: ${{ inputs.azure-client-secret }}
+        ARTIFACT_SIGNING_ENDPOINT: ${{ inputs.artifact-signing-endpoint }}
+        ARTIFACT_SIGNING_ACCOUNT: ${{ inputs.artifact-signing-account }}
+        ARTIFACT_SIGNING_PROFILE: ${{ inputs.artifact-signing-profile }}
+      run: scripts/sign-windows.ps1 target/release/pdtd.exe target/release/pdt-host.exe
     - run: node scripts/stage-sidecars.mjs
       shell: bash
     - name: Build the bundle
       shell: bash
+      env:
+        AZURE_TENANT_ID: ${{ inputs.azure-tenant-id }}
+        AZURE_CLIENT_ID: ${{ inputs.azure-client-id }}
+        AZURE_CLIENT_SECRET: ${{ inputs.azure-client-secret }}
+        ARTIFACT_SIGNING_ENDPOINT: ${{ inputs.artifact-signing-endpoint }}
+        ARTIFACT_SIGNING_ACCOUNT: ${{ inputs.artifact-signing-account }}
+        ARTIFACT_SIGNING_PROFILE: ${{ inputs.artifact-signing-profile }}
       run: |
         args=(--config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" --bundles "${{ inputs.bundles }}")
         if [ -n "${PDT_BUILD_VERSION:-}" ]; then args+=(--config "$RUNNER_TEMP/release.conf.json"); fi
+        if [ "${PDT_SIGN_WINDOWS:-}" = 1 ]; then args+=(--config "$RUNNER_TEMP/sign.conf.json"); fi
         pnpm --dir desktop exec tauri build "${args[@]}"
+    # Everything the installer puts on disk that Windows runs, and the installer itself. A release fails here rather
+    # than ship an unsigned file.
+    - name: Verify the Windows signatures
+      if: env.PDT_SIGN_WINDOWS == '1'
+      shell: pwsh
+      run: |
+        $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        # 7-Zip unpacks an NSIS installer: check the files it installs, not what the build left in target/.
+        $out = Join-Path $env:RUNNER_TEMP 'installer-contents'
+        Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+        7z x $setup.FullName "-o$out" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "could not unpack $($setup.Name)" }
+        $exes = @(Get-ChildItem $out -Recurse -Filter *.exe)
+        foreach ($want in 'pdtd.exe', 'pdt-host.exe') {
+          if (-not ($exes | Where-Object Name -eq $want)) { throw "$want is not in the installer" }
+        }
+        scripts/sign-windows.ps1 -Verify $setup.FullName @($exes.FullName)
     # One certificate signs every macOS release (scripts/sign-macos.sh). With a Developer ID certificate the keychain
     # trusts every release; a self-signed one still makes it ask after each update (docs/superpowers/notes/
     # developer-id.md). Releases must be signed; other builds are signed when the secret is available to them.
