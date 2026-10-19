@@ -1,0 +1,86 @@
+name: bench-job
+# One benchmark job for bench.yml: the CI work for one OS on one runner. Step times are read back from the API.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: linux, macos or windows (picks the work, as in ci.yml)
+        type: string
+        required: true
+      runner:
+        description: runs-on label
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  bench:
+    # Namespace runners use their profile's cache volume, which keeps a job's writes only when it exits cleanly and
+    # reaches other machines in the background: run bench twice, a few minutes apart, for warm Namespace numbers.
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # GitHub's images have rustup; other providers' may not.
+      - name: Ensure rustup and zsh
+        if: runner.os != 'Windows'
+        run: |
+          # Terminal tests start /bin/zsh when the platform names no shell; GitHub's Ubuntu image has it, Namespace's not
+          # (a fresh zsh stops at its first-run menu without ~/.zshrc, and at compinit's prompt on Ubuntu).
+          if [ "$RUNNER_OS" = Linux ] && [ ! -x /bin/zsh ]; then sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null; touch ~/.zshrc; echo skip_global_compinit=1 > ~/.zshenv; fi
+          if ! command -v rustup >/dev/null; then
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Show Rust toolchain
+        run: rustup show
+      - name: Cache (rust-cache)
+        if: ${{ !startsWith(inputs.runner, 'namespace-') }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Keyed to this bench run: the cold job starts empty and saves, the warm job restores it.
+          key: bench-${{ github.run_id }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: pnpm/action-setup@v6
+        if: inputs.os != 'windows'
+      - uses: actions/setup-node@v7
+        if: inputs.os != 'windows'
+        with:
+          node-version: 24
+          cache: ${{ !startsWith(inputs.runner, 'namespace-') && 'pnpm' || '' }}
+      - name: Cache (Namespace volume)
+        if: startsWith(inputs.runner, 'namespace-')
+        uses: namespacelabs/nscloud-cache-action@v1
+        with:
+          cache: |
+            rust
+            ${{ inputs.os != 'windows' && 'pnpm' || '' }}
+      - name: pnpm install
+        if: inputs.os != 'windows'
+        run: pnpm install --frozen-lockfile
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: nextest
+        run: cargo nextest run --profile ci
+      - name: web typecheck
+        if: inputs.os == 'linux'
+        run: pnpm --dir web typecheck
+      - name: web test
+        if: inputs.os == 'linux'
+        run: pnpm --dir web test
+      - name: web build
+        if: inputs.os != 'windows'
+        run: pnpm --dir web build
+      - name: desktop clippy
+        if: inputs.os == 'macos'
+        run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
+      - name: desktop test
+        if: inputs.os == 'macos'
+        run: cargo test -p pdt-desktop

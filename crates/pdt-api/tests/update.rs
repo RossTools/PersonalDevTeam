@@ -184,6 +184,7 @@ async fn no_token_means_no_network_traffic() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn busy_hosts_ask_first_then_the_release_is_handed_off() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _) = setup(tmp.path(), true).await;
@@ -376,6 +377,7 @@ async fn an_unparseable_current_version_is_never_offered_an_update() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn a_dropped_install_request_still_finishes() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -420,6 +422,7 @@ fn write_result(tmp: &std::path::Path, outcome: pdt_core::handoff::UpdateOutcome
 /// Final review #10: pdt-host took the request and recorded a failure while this pdtd kept running (it did not
 /// stop): the next status read leaves `installing` and shows the result.
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn a_failed_hand_off_while_pdtd_keeps_running_does_not_stay_installing() {
     use pdt_core::handoff::UpdateOutcome;
     let tmp = tempfile::tempdir().unwrap();
@@ -448,6 +451,7 @@ async fn a_failed_hand_off_while_pdtd_keeps_running_does_not_stay_installing() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn a_host_that_got_busy_during_the_download_is_asked_again() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -470,6 +474,7 @@ async fn a_host_that_got_busy_during_the_download_is_asked_again() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn checks_never_overwrite_an_install_and_never_stick() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -536,6 +541,7 @@ async fn the_loop_only_notifies_under_the_notify_policy() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn the_loop_installs_when_idle_under_auto_when_idle() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _) = setup(tmp.path(), true).await;
@@ -574,6 +580,7 @@ fn write_skip(tmp: &std::path::Path, version: &str) {
 /// Ruling B: a version that failed or was rolled back (pdt-host's skip.json) is never installed automatically again,
 /// even after the result is dismissed; a manual update retries it and clears the skip.
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn the_loop_never_auto_installs_a_version_that_failed_even_after_a_dismiss() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup(tmp.path(), true).await;
@@ -597,6 +604,7 @@ async fn the_loop_never_auto_installs_a_version_that_failed_even_after_a_dismiss
 }
 
 #[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
 async fn the_loop_auto_installs_a_newer_version_than_the_one_that_failed() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, _) = setup(tmp.path(), true).await;
