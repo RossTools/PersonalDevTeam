@@ -1,5 +1,6 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
 import type { Health } from './gen/Health';
+import type { TicketDraft } from './gen/TicketDraft';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { HostSettingsView } from './gen/HostSettingsView';
@@ -135,6 +136,9 @@ export const api = {
   deleteSession: (id: string) => request<void>(`/api/sessions/${enc(id)}`, { method: 'DELETE' }),
   updateSession: (id: string, p: SessionPatch) =>
     request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  /** Make ticket: the agent drafts a title and description from the conversation (a hidden side request). */
+  draftTicket: (id: string, signal?: AbortSignal) =>
+    request<TicketDraft>(`/api/sessions/${enc(id)}/ticket-draft`, { method: 'POST', signal }),
   /** A conversation's stored events after `after`, oldest first. */
   listSessionEvents: (id: string, q: { after?: number; limit?: number } = {}) =>
     request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString(q)}`),

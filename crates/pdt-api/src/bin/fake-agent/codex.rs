@@ -6,6 +6,9 @@
 //! - `exit` — the server exits 3.
 //! - anything else — `echo: <text>` (plus `saw N images` when the input has `localImage`s).
 //!
+//! `thread/fork` makes a fork that is never saved; a turn on it answers with a ticket draft naming the thread forked
+//! and what the fork and turn were given (`ephemeral`, sandbox, approval policy, an `outputSchema`).
+//!
 //! `thread/compact/start` and `review/start` run a short turn (a compaction item; a review answer), and
 //! `account/read` reports a ChatGPT account.
 //!
@@ -53,12 +56,14 @@ struct Store {
     saved: HashMap<String, Vec<Value>>,
     /// Threads started in this process (saved or not).
     loaded: HashMap<String, Vec<Value>>,
+    /// Forks (`thread/fork`): id → the thread forked and the fork's params. Never saved.
+    forks: HashMap<String, (String, Value)>,
 }
 
 impl Store {
     fn load(path: PathBuf) -> Self {
         let saved = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        Self { path, saved, loaded: HashMap::new() }
+        Self { path, saved, loaded: HashMap::new(), forks: HashMap::new() }
     }
     fn save(&self) {
         let _ = std::fs::write(&self.path, serde_json::to_string(&self.saved).unwrap_or_default());
@@ -209,6 +214,19 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
             let turns = st.loaded.get(&thread).or(st.saved.get(&thread)).cloned().unwrap_or_default();
             Ok(json!({"data": turns, "nextCursor": null, "backwardsCursor": null}))
         }
+        "thread/fork" => {
+            let mut st = server.store.lock().unwrap();
+            if !st.loaded.contains_key(&thread) && !st.saved.contains_key(&thread) {
+                return Err(format!("no rollout found for thread id {thread}"));
+            }
+            if p["ephemeral"] == true && p["excludeTurns"] != true {
+                return Err("ephemeral paginated thread/fork requires `excludeTurns: true`".into());
+            }
+            let n = server.next.fetch_add(1, Ordering::SeqCst);
+            let id = format!("fork-{}-{n}", std::process::id());
+            st.forks.insert(id.clone(), (thread.clone(), p.clone()));
+            Ok(json!({"thread": {"id": id}}))
+        }
         "thread/unsubscribe" => Ok(json!({})),
         "account/read" => {
             Ok(json!({"account": {"type": "chatgpt", "email": null, "planType": "pro"}, "requiresOpenaiAuth": true}))
@@ -237,6 +255,34 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
                 );
             });
             Ok(json!({}))
+        }
+        "turn/start" if server.store.lock().unwrap().forks.contains_key(&thread) => {
+            // A side turn on a fork: a draft that says what the fork and the turn were given.
+            let (parent, fork) = server.store.lock().unwrap().forks.get(&thread).cloned().unwrap();
+            let n = server.next.fetch_add(1, Ordering::SeqCst);
+            let turn = format!("turn-{n}");
+            let description = format!(
+                "ephemeral={} sandbox={} approval={} schema={}",
+                fork["ephemeral"],
+                fork["sandbox"].as_str().unwrap_or("?"),
+                p["approvalPolicy"].as_str().unwrap_or("?"),
+                p.get("outputSchema").is_some_and(|s| s.is_object())
+            );
+            let answer = json!({"title": format!("Draft of {parent}"), "description": description}).to_string();
+            let item =
+                json!({"type": "agentMessage", "id": format!("msg-{n}"), "text": answer, "phase": "final_answer"});
+            let conn = conn.clone();
+            let result = json!({"turn": {"id": turn, "items": [], "status": "inProgress"}});
+            tokio::spawn(async move {
+                let note = |m: &str, mut v: Value| {
+                    v["threadId"] = json!(thread);
+                    conn.notify(m, v);
+                };
+                note("turn/started", json!({"turn": {"id": turn, "items": [], "status": "inProgress"}}));
+                note("item/completed", json!({"turnId": turn, "item": item}));
+                note("turn/completed", json!({"turn": {"id": turn, "status": "completed", "items": []}}));
+            });
+            Ok(result)
         }
         "turn/start" => {
             if !server.store.lock().unwrap().loaded.contains_key(&thread) {

@@ -309,6 +309,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/messages", axum::routing::post(crate::conversations::post_message))
         .route("/sessions/{id}/requests/{request_id}", axum::routing::post(crate::conversations::post_answer))
         .route("/sessions/{id}/interrupt", axum::routing::post(crate::conversations::post_interrupt))
+        .route("/sessions/{id}/ticket-draft", axum::routing::post(crate::conversations::ticket_draft))
         .route("/sessions/{id}/mode", axum::routing::post(crate::conversations::switch_mode))
         .route(
             "/sessions/{id}/attachments",

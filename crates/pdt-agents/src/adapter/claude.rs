@@ -56,6 +56,53 @@ pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     a
 }
 
+/// The arguments of a side request (Make ticket): a fork of the saved conversation that is never saved, with no
+/// tools, answering in JSON shaped by `schema`. The prompt goes in on stdin (a Windows `.cmd` shim mangles free text
+/// in arguments; the schema is plain enough to pass). Never `--bare`.
+pub fn claude_draft_args(spec: &OpenSpec, schema: &Value) -> Vec<String> {
+    let mut a: Vec<String> = vec![
+        "-p".into(),
+        "--resume".into(),
+        spec.session_id.clone(),
+        "--fork-session".into(),
+        "--no-session-persistence".into(),
+        "--tools".into(),
+        String::new(),
+        "--output-format".into(),
+        "json".into(),
+        "--json-schema".into(),
+        schema.to_string(),
+    ];
+    if let Some(m) = &spec.model {
+        a.push("--model".into());
+        a.push(m.clone());
+    }
+    a
+}
+
+/// The answer in a side request's `--output-format json` result: its `structured_output`, else its text.
+pub fn draft_answer(stdout: &str) -> Result<Value, AdapterError> {
+    let result = stdout
+        .lines()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+        .find(|v| v.get("type").and_then(Value::as_str) == Some("result"))
+        .ok_or_else(|| AdapterError::Refused("Claude gave no answer".into()))?;
+    if result.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+        let why = result
+            .get("result")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .or(result.get("subtype").and_then(Value::as_str))
+            .unwrap_or("error");
+        return Err(AdapterError::Refused(why.to_string()));
+    }
+    match result.get("structured_output").filter(|v| !v.is_null()) {
+        Some(v) => Ok(v.clone()),
+        None => result.get("result").cloned().ok_or_else(|| AdapterError::Refused("Claude gave no answer".into())),
+    }
+}
+
 /// The capabilities in Claude's `initialize` reply.
 pub fn capabilities_from_initialize(v: &Value, version: Option<String>) -> AgentCapabilities {
     let models = v
@@ -201,6 +248,48 @@ impl AgentAdapter for ClaudeAdapter {
 
     async fn open(&self, spec: OpenSpec, sink: EventSink) -> Result<Box<dyn LiveConversation>, AdapterError> {
         Ok(Box::new(ClaudeLive::spawn(spec, sink).await?))
+    }
+
+    async fn draft(&self, spec: OpenSpec, prompt: &str, schema: &Value) -> Result<Value, AdapterError> {
+        let args = claude_draft_args(&spec, schema);
+        let resolved = crate::launch::resolve_launch(&spec.program, &args, spec.search_path.as_deref())
+            .map_err(|_| AdapterError::ProgramNotFound(spec.program.clone()))?;
+        let mut cmd = tokio::process::Command::new(&resolved.program);
+        cmd.args(&resolved.args)
+            .current_dir(&spec.cwd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        for k in &spec.env_remove {
+            cmd.env_remove(k);
+        }
+        cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let mut child = cmd.spawn().map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(prompt.as_bytes()).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
+            // Dropped here: stdin closes, so Claude reads the whole prompt.
+        }
+        // Dropping the future on a timeout kills the process (kill_on_drop).
+        let out = tokio::time::timeout(super::DRAFT_TIMEOUT, child.wait_with_output())
+            .await
+            .map_err(|_| AdapterError::Timeout)?
+            .map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        match draft_answer(&stdout) {
+            Err(AdapterError::Refused(why)) if why == "Claude gave no answer" && !out.status.success() => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let tail = err.trim().lines().last().unwrap_or("").to_string();
+                Err(AdapterError::Refused(if tail.is_empty() {
+                    format!("Claude exited ({})", out.status)
+                } else {
+                    tail
+                }))
+            }
+            r => r,
+        }
     }
 }
 
@@ -443,6 +532,33 @@ mod tests {
         let a = claude_args(&spec(true, Some("opus")));
         assert!(a.windows(2).any(|w| w == ["--resume", "sid"]));
         assert!(a.windows(2).any(|w| w == ["--model", "opus"]));
+    }
+
+    #[test]
+    fn side_requests_fork_without_saving_or_tools() {
+        let schema = pdt_core::conversation::draft::draft_schema();
+        let a = claude_draft_args(&spec(true, Some("opus")), &schema);
+        assert!(a.windows(2).any(|w| w == ["--resume", "sid"]));
+        assert!(a.iter().any(|x| x == "--fork-session") && a.iter().any(|x| x == "--no-session-persistence"));
+        assert!(a.windows(2).any(|w| w[0] == "--tools" && w[1].is_empty()));
+        assert!(a.windows(2).any(|w| w == ["--output-format", "json"]));
+        assert!(a.windows(2).any(|w| w == ["--model", "opus"]));
+        assert!(!a.iter().any(|x| x == "--bare" || x == "--settings" || x == "--dangerously-skip-permissions"));
+        // The schema passes through cmd.exe on Windows: nothing it would interpret.
+        let s = &a[a.iter().position(|x| x == "--json-schema").unwrap() + 1];
+        assert!(!s.chars().any(|c| "&|<>^%!\r\n".contains(c)), "{s}");
+    }
+
+    #[test]
+    fn side_answers_are_the_structured_output() {
+        let ok =
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"{}","structured_output":{"title":"t"}}"#;
+        assert_eq!(draft_answer(ok).unwrap(), json!({"title": "t"}));
+        let text = r#"{"type":"result","is_error":false,"result":"{\"title\":\"t\"}"}"#;
+        assert_eq!(draft_answer(text).unwrap(), json!("{\"title\":\"t\"}"));
+        let limited = r#"{"type":"result","is_error":true,"result":"You've hit your limit"}"#;
+        assert!(matches!(draft_answer(limited), Err(AdapterError::Refused(w)) if w.contains("limit")));
+        assert!(matches!(draft_answer("not json\n"), Err(AdapterError::Refused(_))));
     }
 
     #[test]

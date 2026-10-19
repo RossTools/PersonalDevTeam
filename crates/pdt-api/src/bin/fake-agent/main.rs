@@ -12,6 +12,9 @@
 //!
 //! Started without `-p` (Claude's TUI, in a terminal) it reads lines and leaves on `/exit`.
 //!
+//! With `--fork-session` (Make ticket's side request) it reads the prompt from stdin and prints one `json` result
+//! whose `structured_output` is a draft naming the session and what it was given.
+//!
 //! `FAKE_AGENT_LOG` (a file path), when set, gets every stdin line and the argv.
 //!
 //! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), and `fake-agent resume …` the Codex
@@ -273,6 +276,24 @@ impl Agent {
     }
 }
 
+/// A side request: one `--output-format json` result, nothing saved.
+fn draft(args: &[String], session: &str, resumed: bool) {
+    let mut prompt = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut prompt);
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let has = |name: &str| args.iter().any(|a| a == name);
+    let schema = flag("--json-schema").and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let description = format!(
+        "resumed={resumed} tools={:?} saved={} schema={} prompt={}",
+        flag("--tools").unwrap_or_default(),
+        !has("--no-session-persistence"),
+        schema.is_some(),
+        prompt.split_whitespace().take(3).collect::<Vec<_>>().join(" ")
+    );
+    out(json!({"type":"result","subtype":"success","is_error":false,"session_id":"fork","result":"",
+        "structured_output":{"title":format!("Draft of {session}"),"description":description}}));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -291,6 +312,9 @@ fn main() {
         (None, Some(s)) => (false, s),
         _ => (false, "none".into()),
     };
+    if args.iter().any(|a| a == "--fork-session") {
+        return draft(&args, &session, resumed);
+    }
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {

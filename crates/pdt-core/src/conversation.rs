@@ -4,6 +4,7 @@
 pub mod claude;
 pub mod codex;
 pub mod composer;
+pub mod draft;
 
 use crate::activity::Activity;
 use serde::{Deserialize, Serialize};
@@ -107,6 +108,8 @@ pub enum MessageSource {
     Terminal,
     /// Sent while a turn was running and taken into it.
     Steer,
+    /// Sent by PDT itself, not typed by the user: news about the attempt's pull request (spec §14).
+    Notice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -186,6 +189,12 @@ pub struct RateLimitWindow {
     /// When the window resets (ms).
     #[ts(type = "number | null")]
     pub resets_at: Option<i64>,
+}
+
+/// Until when a hit limit stops the agent (ms; `i64::MAX` when the agent gave no reset time), or None when no window
+/// is at its limit. Nothing is sent automatically before then (spec §14).
+pub fn limited_until(windows: &[RateLimitWindow], now: i64) -> Option<i64> {
+    windows.iter().filter(|w| w.utilization >= 1.0).map(|w| w.resets_at.unwrap_or(i64::MAX)).filter(|&t| t > now).max()
 }
 
 /// The user's answer to a request.
@@ -421,6 +430,9 @@ pub struct PendingMessage {
     /// Attachment ids of the images it carries.
     #[serde(default)]
     pub images: Vec<String>,
+    /// PDT sent it on its own (a pull-request notice), not the user.
+    #[serde(default)]
+    pub notice: bool,
 }
 
 /// What a conversation is doing, pushed to every viewer on change.
@@ -597,6 +609,16 @@ pub fn valid_message(text: &str, images: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hit_limit_holds_until_it_resets() {
+        let w = |u: f64, r: Option<i64>| RateLimitWindow { name: "five_hour".into(), utilization: u, resets_at: r };
+        assert_eq!(limited_until(&[w(0.9, Some(500))], 100), None);
+        assert_eq!(limited_until(&[w(1.0, Some(500)), w(1.0, Some(900)), w(0.2, Some(2000))], 100), Some(900));
+        assert_eq!(limited_until(&[w(1.0, Some(50))], 100), None, "already reset");
+        assert_eq!(limited_until(&[w(1.0, None)], 100), Some(i64::MAX));
+        assert_eq!(limited_until(&[], 100), None);
+    }
 
     #[test]
     fn permission_modes_map_to_claude() {

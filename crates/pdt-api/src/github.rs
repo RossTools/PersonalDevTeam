@@ -5,8 +5,9 @@
 //! as a prompt, and lands on the ticket's timeline (`pr` event), which also makes each one news only once.
 
 use crate::routes::{AppState, now_ms};
+use pdt_core::conversation::SessionMode;
 use pdt_core::pr::{CiRun, CiState, CiStatus, Notice, PrState, PullRequestStatus, notices, queue_branch_prefix};
-use pdt_core::session::{SessionKind, SessionStatus};
+use pdt_core::session::{Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{Actor, AttemptSummary, EventKind, Ticket, TicketSummary};
 use pdt_github::{GhError, GithubApi};
 use pdt_store::AttemptInfo;
@@ -296,30 +297,44 @@ pub async fn deliver_notices(st: &AppState) {
             return;
         }
     };
-    // The newest running agent session of each attempt (the list is oldest first).
-    let mut target: HashMap<&str, &str> = HashMap::new();
-    for s in running.iter().filter(|s| s.kind == SessionKind::AgentTui && st.ptys.is_running(&s.id)) {
+    // The newest running agent session of each attempt (the list is oldest first): a terminal with its PTY, or a
+    // conversation (a parked one reopens to take the message).
+    let mut target: HashMap<&str, &Session> = HashMap::new();
+    for s in running.iter().filter(|s| {
+        s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id))
+    }) {
         if let Some(a) = s.attempt_id.as_deref() {
-            target.insert(a, s.id.as_str());
+            target.insert(a, s);
         }
     }
-    let mut by_session: HashMap<String, Vec<Pending>> = HashMap::new();
+    let mut by_session: HashMap<String, (&Session, Vec<Pending>)> = HashMap::new();
     let mut untold: Vec<Pending> = vec![];
     for p in pending {
         match target.get(p.attempt_id.as_str()) {
-            Some(sid) => by_session.entry(sid.to_string()).or_default().push(p),
+            Some(s) => by_session.entry(s.id.clone()).or_insert_with(|| (s, vec![])).1.push(p),
             None => untold.push(p),
         }
     }
     for p in untold {
         resolve(st, &p, None).await;
     }
-    for (sid, list) in by_session {
-        if !crate::activity::ready_for_message(st, &sid, QUIET_MS) {
+    for (sid, (session, list)) in by_session {
+        let conversation = session.mode == SessionMode::Conversation;
+        let ready = if conversation {
+            crate::conversations::ready_for_notice(st, &sid)
+        } else {
+            crate::activity::ready_for_message(st, &sid, QUIET_MS)
+        };
+        if !ready {
             continue;
         }
         let text = list.iter().map(|p| p.notice.text.as_str()).collect::<Vec<_>>().join("\n\n");
-        match crate::activity::type_message(st, &sid, &text).await {
+        let sent = if conversation {
+            crate::conversations::send_notice(st, session, &text).await.map_err(|e| e.message().to_string())
+        } else {
+            crate::activity::type_message(st, &sid, &text).await.map_err(|e| e.to_string())
+        };
+        match sent {
             Ok(()) => {
                 tracing::info!(session = %sid, notices = list.len(), "told the agent about its pull request");
                 for p in &list {

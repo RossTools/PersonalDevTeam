@@ -46,7 +46,8 @@ describe('Start dialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     expect(starts(calls)).toEqual([{
-      agent: 'codex', branch: 'feat/login', bypassPermissions: true, tab: { workspaceId: 'w1', position: 2 }, mode: 'check', cols: 120, rows: 32,
+      agent: 'codex', sessionMode: 'conversation', branch: 'feat/login', bypassPermissions: true, tab: { workspaceId: 'w1', position: 2 },
+      mode: 'check', cols: 120, rows: 32,
     }]);
     expect(onClose).toHaveBeenCalled();
     expect(localStorage.getItem('pdt.tickets.startAgent')).toBe('codex');
@@ -58,6 +59,19 @@ describe('Start dialog', () => {
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked();
+  });
+
+  it('starts a conversation by default, or the terminal when chosen (remembered)', async () => {
+    const calls = stub(ready);
+    const { onStarted } = open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    expect(within(dialog).getByRole('radio', { name: 'Conversation' })).toBeChecked();
+    expect(within(dialog).getByText('The ticket is its first message.')).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Terminal' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalled());
+    expect(starts(calls)[0]).toMatchObject({ sessionMode: 'terminal' });
+    expect(localStorage.getItem('pdt.tickets.startMode')).toBe('terminal');
   });
 
   it('lists open blockers and starts anyway with mode force', async () => {

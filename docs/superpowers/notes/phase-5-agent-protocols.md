@@ -85,6 +85,13 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   prompts. [V]
 - Samples: scratch logs from the verification run were not kept in the repo; re-record into the fake-agent fixtures.
 
+### Side requests (checked 2026-10-19, 2.1.302)
+
+`claude -p --resume <id> --fork-session --no-session-persistence --tools "" --output-format json --json-schema '<schema>'`
+with the prompt on stdin answers one `result` object whose `structured_output` holds the schema's object (`result`
+holds it as text; `num_turns` is 2: the schema is a tool). Nothing is saved: the project folder keeps only the original
+`<id>.jsonl`. Works while the conversation's own `-p` process is live. Make ticket uses it (5d).
+
 ## Codex: `codex app-server`
 
 - Handshake: `initialize {clientInfo:{name,version}, capabilities:{experimentalApi?}}` then the `initialized`
@@ -143,6 +150,14 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   {rateLimits:{primary,secondary:{usedPercent,windowDurationMins,resetsAt (s)},planType}}` (no threadId). Noise per
   turn: `turn/moderationMetadata`, `thread/readState/changed`, `mcpServer/startupStatus/updated`,
   `remoteControl/status/changed`, `account/updated`. [V]
+
+### Side requests (checked 2026-10-19, 0.163)
+
+`thread/fork {threadId, ephemeral: true, excludeTurns: true, sandbox: "read-only", approvalPolicy: "never"}` returns
+`{thread: {id}}` for a fork that is never written to disk (no rollout file); without `excludeTurns` an ephemeral fork
+is refused ("ephemeral paginated thread/fork requires `excludeTurns: true`"). It works from a thread's rollout after the
+server restarted. `turn/start` on the fork with `outputSchema` ends with an `agentMessage` whose text is the JSON
+object; its notifications name the fork's thread id, so they never reach the conversation. Make ticket uses it (5d).
 
 ## Devin CLI: `devin acp` (docs only)
 

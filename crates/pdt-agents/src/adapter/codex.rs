@@ -7,7 +7,7 @@ use super::{
     SessionChange,
 };
 use futures_util::{SinkExt, StreamExt};
-use pdt_core::conversation::codex::{CodexMapper, CodexOut, codex_policy, sandbox_policy};
+use pdt_core::conversation::codex::{CodexMapper, CodexOut, SideTurn, codex_policy, sandbox_policy};
 use pdt_core::conversation::{
     AgentCapabilities, AgentEvent, AgentModel, Answer, Delivery, NoticeLevel, PermissionMode,
 };
@@ -48,6 +48,7 @@ pub struct CodexEndpoint {
 }
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+type SideRoutes = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<(String, Value)>>>>;
 
 struct Route {
     mapper: Mutex<CodexMapper>,
@@ -112,6 +113,8 @@ pub struct CodexServer {
     config: CodexServerConfig,
     conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
     routes: Arc<Mutex<HashMap<String, Arc<Route>>>>,
+    /// Hidden side threads (Make ticket's draft): their notifications go here, never to a conversation.
+    side: SideRoutes,
     caps: Mutex<Option<AgentCapabilities>>,
     billing: Mutex<Option<String>>,
 }
@@ -195,6 +198,7 @@ impl CodexServer {
             config,
             conn: Default::default(),
             routes: Default::default(),
+            side: Default::default(),
             caps: Mutex::new(None),
             billing: Mutex::new(None),
         })
@@ -346,6 +350,7 @@ impl CodexServer {
         {
             let conn = conn.clone();
             let routes = self.routes.clone();
+            let side = self.side.clone();
             tokio::spawn(async move {
                 while let Some(Ok(msg)) = read.next().await {
                     let text = match msg {
@@ -372,6 +377,21 @@ impl CodexServer {
                         (Some(method), id) => {
                             let params = v.get("params").cloned().unwrap_or(Value::Null);
                             let thread = params.get("threadId").and_then(Value::as_str);
+                            let side_tx =
+                                thread.and_then(|t| side.lock().unwrap_or_else(|e| e.into_inner()).get(t).cloned());
+                            if let Some(tx) = side_tx {
+                                match id {
+                                    // A side thread never gets to ask (no tools, approval `never`): refuse.
+                                    Some(id) => {
+                                        let _ = conn.write(&json!({"jsonrpc": "2.0", "id": id,
+                                            "error": {"code": -32601, "message": "not allowed in a side request"}}));
+                                    }
+                                    None => {
+                                        let _ = tx.send((method.to_string(), params));
+                                    }
+                                }
+                                continue;
+                            }
                             let targets: Vec<Arc<Route>> = {
                                 let map = routes.lock().unwrap_or_else(|e| e.into_inner());
                                 match thread {
@@ -424,6 +444,7 @@ impl CodexServer {
                     }
                 };
                 let tail = stderr_tail.lock().unwrap_or_else(|e| e.into_inner()).trim().to_string();
+                side.lock().unwrap_or_else(|e| e.into_inner()).clear();
                 let all: Vec<Arc<Route>> =
                     routes.lock().unwrap_or_else(|e| e.into_inner()).drain().map(|(_, r)| r).collect();
                 for r in all {
@@ -555,6 +576,79 @@ impl AgentAdapter for CodexAdapter {
             settings: Mutex::new(Settings { model: spec.model, mode: spec.permission_mode }),
             open: AtomicBool::new(true),
         }))
+    }
+
+    async fn draft(&self, spec: OpenSpec, prompt: &str, schema: &Value) -> Result<Value, AdapterError> {
+        let thread = spec.external_id.clone().ok_or_else(|| AdapterError::Refused("no Codex thread yet".into()))?;
+        let conn = self.server.ensure().await?;
+        let cwd = spec.cwd.to_string_lossy().into_owned();
+        // An ephemeral fork: never written to disk, read-only, never asks.
+        let params = json!({"threadId": thread, "ephemeral": true, "excludeTurns": true, "cwd": cwd, "model": spec.model,
+                            "approvalPolicy": "never", "sandbox": "read-only"});
+        let r = conn.request("thread/fork", params).await?;
+        let fork = r
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AdapterError::Refused("thread/fork returned no thread".into()))?
+            .to_string();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        self.server.side.lock().unwrap_or_else(|e| e.into_inner()).insert(fork.clone(), tx);
+        // Also when the request is dropped midway (the browser gave up): the fork is let go.
+        let _guard = SideGuard { side: self.server.side.clone(), conn: conn.clone(), fork: fork.clone() };
+        let mut params = json!({"threadId": fork, "input": pdt_core::conversation::codex::user_input(prompt, &[]),
+                                "approvalPolicy": "never", "sandboxPolicy": sandbox_policy("read-only"),
+                                "outputSchema": schema});
+        if let Some(m) = &spec.model {
+            params["model"] = json!(m);
+        }
+        self.side_turn(&conn, &fork, &mut rx, params).await
+    }
+}
+
+/// Stops routing a side thread and unsubscribes from it when its request ends, however it ends.
+struct SideGuard {
+    side: SideRoutes,
+    conn: Arc<Conn>,
+    fork: String,
+}
+
+impl Drop for SideGuard {
+    fn drop(&mut self) {
+        self.side.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.fork);
+        let id = self.conn.next_id.fetch_add(1, Ordering::SeqCst);
+        let _ = self.conn.write(&json!({"jsonrpc": "2.0", "id": id, "method": "thread/unsubscribe",
+                                        "params": {"threadId": self.fork}}));
+    }
+}
+
+impl CodexAdapter {
+    async fn side_turn(
+        &self,
+        conn: &Conn,
+        thread: &str,
+        rx: &mut mpsc::UnboundedReceiver<(String, Value)>,
+        params: Value,
+    ) -> Result<Value, AdapterError> {
+        let started = conn.request("turn/start", params).await?;
+        let turn_id = started.pointer("/turn/id").and_then(Value::as_str).map(String::from);
+        let mut turn = SideTurn::default();
+        let wait = async {
+            while let Some((method, p)) = rx.recv().await {
+                if let Some(r) = turn.on_notification(&method, &p) {
+                    return r.map(Value::String).map_err(AdapterError::Refused);
+                }
+            }
+            Err(AdapterError::NotRunning)
+        };
+        match tokio::time::timeout(super::DRAFT_TIMEOUT, wait).await {
+            Ok(r) => r,
+            Err(_) => {
+                if let Some(t) = turn_id {
+                    let _ = conn.request("turn/interrupt", json!({"threadId": thread, "turnId": t})).await;
+                }
+                Err(AdapterError::Timeout)
+            }
+        }
     }
 }
 

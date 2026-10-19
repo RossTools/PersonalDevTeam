@@ -340,7 +340,7 @@ Hands-on checks before building it are listed in the notes file (org policy for 
   `thread/turns/list`, live shared terminal (§8.1).
 - **5c — the rest of the conversation**: QuestionCard, PlanCard, slash commands, images, `@` files, turn diffs, usage
   and rate limits, Claude's terminal handoff (§8.2) and history import, Continue after restart.
-- **5d — tickets**: Start in conversation mode, ticket Conversation tab, scratch chats → Make ticket.
+- **5d — tickets**: Start in conversation mode, ticket Conversation tab, scratch chats → Make ticket. Done (plan 2026-10-19-phase-5d-tickets.md); PR notices reach conversations too.
 
 ## 14. Terms and billing
 
