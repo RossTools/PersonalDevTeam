@@ -80,6 +80,32 @@ async fn a_project_without_a_file_has_an_empty_config() {
     let (_, v) = call(&app, "GET", &format!("/api/projects/{pid}/run-config"), None).await;
     assert_eq!(
         (v["file"].clone(), v["effective"].clone()),
-        (Value::Null, json!({"runs": [], "tests": [], "areas": []}))
+        (Value::Null, json!({"runs": [], "tests": [], "areas": [], "ignored": []}))
     );
+}
+
+#[tokio::test]
+async fn unknown_sections_in_the_file_are_skipped_but_refused_in_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, pid, repo) = setup(tmp.path()).await;
+    std::fs::write(
+        repo.join(".pdt").join("project.toml"),
+        "[[run]]\nname = \"web\"\ncommand = \"serve $PORT\"\n[[pipeline]]\nname = \"later\"\n",
+    )
+    .unwrap();
+    let (s, v) = call(&app, "GET", &format!("/api/projects/{pid}/run-config"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["error"], Value::Null, "{v}");
+    assert_eq!(v["effective"]["runs"][0]["name"], "web");
+    assert_eq!(v["effective"]["ignored"], json!(["pipeline"]));
+
+    let (s, v) = call(
+        &app,
+        "PUT",
+        &format!("/api/projects/{pid}/settings"),
+        Some(json!({"agentCredentials": null, "runOverrides": "[[runs]]\nname = \"web\"\n"})),
+    )
+    .await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_run_config")), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("`runs`"), "{v}");
 }
