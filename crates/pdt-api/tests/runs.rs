@@ -668,3 +668,21 @@ async fn data_reset_and_removal_need_a_stopped_run() {
     let (s, _) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn closing_a_run_tab_stops_and_removes_the_run() {
+    let env = setup().await;
+    let (s, r) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{r}");
+    let id = r["id"].as_str().unwrap();
+    wait_state(&env.app, id, &["running", "ready"]).await;
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let tab = list[0]["tabs"].as_array().unwrap().iter().find(|t| t["runId"] == id).unwrap()["id"].clone();
+    let (s, v) = call(&env.app, "DELETE", &format!("/api/tabs/{}", tab.as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let (s, _) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (_, active) = call(&env.app, "GET", "/api/runs", None).await;
+    assert_eq!(active, json!([]));
+    env.state.ptys.shutdown().await;
+}
