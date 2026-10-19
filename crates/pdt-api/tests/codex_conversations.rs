@@ -162,6 +162,7 @@ async fn a_codex_conversation_streams_and_keeps_its_thread() {
         who.contains("model=gpt-fake approval=on-request sandbox=readOnly") && who.contains("resumed=false"),
         "{who}"
     );
+    assert!(who.contains("instructions=true"), "PDT's instructions reach the thread: {who}");
     stop(&env, &id).await;
 }
 

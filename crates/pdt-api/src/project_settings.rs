@@ -3,6 +3,7 @@ use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use pdt_core::host::{CredentialPolicy, effective_credentials};
 use pdt_store::ProjectSettings;
 use serde::{Deserialize, Serialize};
@@ -17,15 +18,21 @@ pub struct ProjectSettingsView {
     pub effective_credentials: CredentialPolicy,
     /// Host overrides of the repo's `.pdt/project.toml`, as TOML text.
     pub run_overrides: Option<String>,
+    /// Given to every agent session in the project, after PDT's own context (kept on this host, not in the repo).
+    pub agent_instructions: Option<String>,
 }
 
-/// Replaces both fields.
+/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` is replaced when present ("" clears it), so a
+/// client that does not know it keeps it.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ProjectSettingsInput {
     pub agent_credentials: Option<CredentialPolicy>,
     pub run_overrides: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent_instructions: Option<String>,
 }
 
 pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSettingsView, ApiError> {
@@ -36,6 +43,7 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
         agent_credentials: p.agent_credentials,
         effective_credentials: effective_credentials(host, p.agent_credentials),
         run_overrides: p.run_overrides,
+        agent_instructions: p.agent_instructions,
     })
 }
 
@@ -57,8 +65,12 @@ pub(crate) async fn put_settings(
     if let Some(t) = &run_overrides {
         crate::runconfig::validate_overrides(t)?;
     }
-    st.store
-        .put_project_settings(&id, &ProjectSettings { run_overrides, agent_credentials: input.agent_credentials })
-        .await?;
+    let agent_instructions = match input.agent_instructions.as_deref() {
+        Some(text) => pdt_core::agent_context::clean_project_instructions(Some(text))
+            .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?,
+        None => st.store.get_project_settings(&id).await?.agent_instructions,
+    };
+    let settings = ProjectSettings { run_overrides, agent_credentials: input.agent_credentials, agent_instructions };
+    st.store.put_project_settings(&id, &settings).await?;
     Ok(Json(view(&st, &id).await?))
 }

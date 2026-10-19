@@ -2,7 +2,8 @@
 //! shapes follow the recorded run (crates/pdt-core/tests/fixtures/codex). What a turn's text does:
 //! - `run: <cmd>` — a command that asks for approval (`accept`, `acceptForSession`, `decline`, `cancel`).
 //! - `slow` — streams for ~20 s unless interrupted; `turn/steer` messages join it.
-//! - `who` — says the thread, whether it was resumed, and the turn's model, approval policy and sandbox.
+//! - `who` — says the thread, whether it was resumed, the turn's model, approval policy and sandbox, and whether the
+//!   thread got developer instructions.
 //! - `exit` — the server exits 3.
 //! - anything else — `echo: <text>` (plus `saw N images` when the input has `localImage`s).
 //!
@@ -81,6 +82,8 @@ struct Conn {
     /// Running turns by thread: (turn id, interrupt, steer).
     turns: Mutex<HashMap<String, RunningTurn>>,
     resumed: Mutex<std::collections::HashSet<String>>,
+    /// Threads started or resumed with `developerInstructions`.
+    instructed: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Conn {
@@ -151,6 +154,7 @@ async fn connection(server: Arc<Server>, tcp: tokio::net::TcpStream) {
         next_req: AtomicU64::new(0),
         turns: Mutex::new(HashMap::new()),
         resumed: Mutex::new(Default::default()),
+        instructed: Mutex::new(Default::default()),
     });
     while let Some(Ok(msg)) = read.next().await {
         let Message::Text(text) = msg else { continue };
@@ -188,6 +192,9 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
             let n = server.next.fetch_add(1, Ordering::SeqCst);
             let id = format!("thr-{}-{n}", std::process::id());
             server.store.lock().unwrap().loaded.insert(id.clone(), Vec::new());
+            if p.get("developerInstructions").and_then(Value::as_str).is_some_and(|t| t.contains("Running in")) {
+                conn.instructed.lock().unwrap().insert(id.clone());
+            }
             conn.notify("thread/started", json!({"thread": {"id": id}}));
             Ok(json!({"thread": {"id": id, "status": {"type": "idle"}}}))
         }
@@ -202,6 +209,9 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
                 }
             }
             conn.resumed.lock().unwrap().insert(thread.clone());
+            if p.get("developerInstructions").and_then(Value::as_str).is_some_and(|t| t.contains("Running in")) {
+                conn.instructed.lock().unwrap().insert(thread.clone());
+            }
             Ok(json!({"thread": {"id": thread}}))
         }
         "thread/turns/list" => {
@@ -401,8 +411,9 @@ async fn run_turn(
         std::process::exit(3);
     } else if t == "who" {
         let resumed = conn.resumed.lock().unwrap().contains(&thread);
+        let instructions = conn.instructed.lock().unwrap().contains(&thread);
         let s = format!(
-            "thread {thread} resumed={resumed} model={} approval={} sandbox={}",
+            "thread {thread} resumed={resumed} model={} approval={} sandbox={} instructions={instructions}",
             params.get("model").and_then(Value::as_str).unwrap_or("default"),
             params.get("approvalPolicy").and_then(Value::as_str).unwrap_or("?"),
             params.pointer("/sandboxPolicy/type").and_then(Value::as_str).unwrap_or("?"),

@@ -114,10 +114,17 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         return load(st, &session.id).await;
     }
     let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket_key });
-    if let Err(e) = start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref()) {
+    let started = match agent_instructions(st, &session).await {
+        Ok(instructions) => {
+            start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref(), instructions.as_ref())
+                .map_err(ApiError::from)
+        }
+        Err(e) => Err(e),
+    };
+    if let Err(e) = started {
         st.store.delete_session(&session.id).await?;
         let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
-        return Err(e.into());
+        return Err(e);
     }
     crate::activity::track(st, &session).await;
     if let Some(tab) = req.tab {
@@ -142,6 +149,46 @@ pub(crate) async fn credentials_for(
     let host = st.store.get_host_settings().await?.agent_credentials;
     let project = st.store.get_project_settings(project_id).await?.agent_credentials;
     Ok(pdt_core::host::effective_credentials(host, project))
+}
+
+/// PDT's instructions for an agent session (PDT-46): where PDT is, which session, project and checkout this is, and
+/// the project's own instructions from its settings. None for shells. Codex's text keeps the user's own
+/// `developer_instructions` first, since PDT's value replaces them. Written to `<session dir>/instructions.md`.
+pub(crate) async fn agent_instructions(
+    st: &AppState,
+    s: &Session,
+) -> Result<Option<pdt_agents::adapter::SessionInstructions>, ApiError> {
+    if s.kind != SessionKind::AgentTui {
+        return Ok(None);
+    }
+    let project = st.store.get_project(&s.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let branch = match &s.worktree_id {
+        Some(w) => st.store.get_worktree(w).await?.map(|w| w.branch),
+        None => None,
+    };
+    let settings = st.store.get_project_settings(&s.project_id).await?;
+    let ctx = pdt_core::agent_context::SessionContext {
+        port: st.listen_port,
+        session_id: &s.id,
+        project_id: &project.id,
+        project_name: &project.name,
+        project_key: &project.key,
+        checkout: &s.cwd,
+        branch: branch.as_deref(),
+        repo_path: &project.repo_path,
+        base_branch: &project.base_branch,
+    };
+    let ours = pdt_core::agent_context::session_instructions(&ctx, settings.agent_instructions.as_deref());
+    let text = match (s.agent, st.platform.codex_home.as_deref()) {
+        (Some(AgentKind::Codex), Some(home)) => {
+            let user = pdt_agents::instructions::user_codex_developer_instructions(home);
+            pdt_agents::instructions::combine(user.as_deref(), &ours)
+        }
+        _ => ours,
+    };
+    let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
+        .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
+    Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }))
 }
 
 fn is_codex(s: &Session) -> bool {
@@ -266,12 +313,24 @@ fn start_pty(
     resume: &Resume,
     creds: pdt_core::host::CredentialPolicy,
     prompt: Option<&InitialPrompt>,
+    instructions: Option<&pdt_agents::adapter::SessionInstructions>,
 ) -> Result<(), PtyError> {
     let l = launch(s.kind, s.agent, &st.platform, resume, &s.id, s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args)?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;
     let (program, mut args) = (resolved.program, resolved.args);
+    if let Some(i) = instructions.filter(|_| s.kind == SessionKind::AgentTui) {
+        match s.agent {
+            // Codex's flags go before its arguments (`resume <id>`), right after any cmd.exe prefix.
+            Some(AgentKind::Codex) => {
+                let at = args.len() - launch_args.len();
+                let extra = pdt_agents::instructions::codex_tui_args(&i.text, resolved.via_cmd, &i.file);
+                args.splice(at..at, extra);
+            }
+            _ => args.extend(pdt_agents::instructions::claude_args(&i.file)),
+        }
+    }
     if let Some(p) = prompt.filter(|_| s.kind == SessionKind::AgentTui) {
         if resolved.via_cmd {
             let dir = session_data_dir(st, &s.id);
@@ -483,9 +542,10 @@ pub(crate) async fn restart_locked(
         st.store.set_fresh_started_at(id, at).await?;
         session.fresh_started_at = Some(at);
     }
+    let instructions = agent_instructions(st, &session).await?;
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
-    if let Err(e) = start_pty(st, &session, size, &resume, creds, None) {
+    if let Err(e) = start_pty(st, &session, size, &resume, creds, None, instructions.as_ref()) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
             st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;

@@ -311,7 +311,7 @@ set /p x=
             name.to_string(),
             format!(
                 "#!/bin/sh
-echo \"$@\" >> \"{}\"
+printf '%s\\n' \"$*\" >> \"{}\"
 read x
 ",
                 args_file.display()
@@ -348,10 +348,16 @@ async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
     found
 }
 
-/// A recorded launch without PDT's activity-hook arguments (tests/activity.rs covers those): Codex's leading
-/// `-c notify=[…]` and Claude's trailing `--settings <file>`.
+/// A recorded launch without PDT's activity-hook and instructions arguments (tests/activity.rs and
+/// `sessions_get_pdts_instructions` cover those): Codex's leading `-c developer_instructions=… -c notify=[…]` and
+/// Claude's trailing `--settings <file> --append-system-prompt-file <file>`.
 fn without_hook_args(line: &str) -> String {
     let mut rest = line.trim();
+    if rest.starts_with("-c developer_instructions=")
+        && let Some(at) = rest.find("-c notify=")
+    {
+        rest = &rest[at..];
+    }
     if rest.starts_with("-c ")
         && let Some(at) = rest.find("codex-notify")
         && let Some(end) = rest[at..].find(']')
@@ -783,5 +789,47 @@ async fn claude_resume_falls_back_to_a_fresh_conversation_when_none_was_saved() 
     seed(&state, &pid, "saved", Some(Claude), &repo, Interrupted, 2).await;
     assert_eq!(pdt_api::resume_interrupted(&state).await, 1);
     assert_eq!(recorded_args(&bin, "fakeclaude").await, "--resume saved");
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn sessions_get_pdts_instructions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state, pid, _repo, bin, home) = codex_setup(tmp.path(), 0).await;
+    state.platform.claude_program = fake_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
+    std::fs::write(home.join("config.toml"), "developer_instructions = \"Be brief.\"\n").unwrap();
+    let app = router(state.clone(), None);
+    let settings = json!({"agentCredentials": null, "runOverrides": null, "agentInstructions": "Run make check."});
+    let (s, v) = call(&app, "PUT", &format!("/api/projects/{pid}/settings"), Some(settings)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    let (s, claude) = call(
+        &app,
+        "POST",
+        "/api/sessions",
+        Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "claude", "mode": "terminal", "cols": 80, "rows": 24})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{claude}");
+    let id = claude["id"].as_str().unwrap();
+    let file = state.data_dir.join("sessions").join(id).join("instructions.md");
+    let args = launches(&bin, "fakeclaude", 1).await;
+    let raw = std::fs::read_to_string(bin.join("fakeclaude.args")).unwrap();
+    assert!(raw.contains(&format!("--append-system-prompt-file {}", file.display())), "{raw} / {args:?}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains(&format!("This session: `{id}`")) && text.ends_with("Run make check.\n"), "{text}");
+
+    let codex = create_codex(&app, &pid).await;
+    launches(&bin, "fakecodex", 1).await;
+    let raw = std::fs::read_to_string(bin.join("fakecodex.args")).unwrap();
+    if cfg!(windows) {
+        // Through cmd.exe the agent is pointed at the file instead.
+        assert!(raw.contains("developer_instructions='Read "), "{raw}");
+    } else {
+        assert!(raw.starts_with("-c developer_instructions=\"Be brief.\\n\\n# Running in"), "{raw}");
+        assert!(raw.contains("Run make check."), "{raw}");
+    }
+    let codex_file = state.data_dir.join("sessions").join(codex["id"].as_str().unwrap()).join("instructions.md");
+    assert!(std::fs::read_to_string(codex_file).unwrap().starts_with("Be brief.\n\n"), "the user's own come first");
     state.ptys.shutdown().await;
 }

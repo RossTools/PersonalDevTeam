@@ -41,3 +41,25 @@ async fn project_credentials_override_the_host() {
     let (s, _) = call(&app, "GET", "/api/projects/nope/settings", None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn agent_instructions_are_kept_unless_sent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, pid) = setup(tmp.path()).await;
+    let uri = format!("/api/projects/{pid}/settings");
+    let (_, v) = call(&app, "GET", &uri, None).await;
+    assert_eq!(v["agentInstructions"], Value::Null);
+
+    let put = |b: Value| call(&app, "PUT", &uri, Some(b));
+    let (s, v) =
+        put(json!({"agentCredentials": null, "runOverrides": null, "agentInstructions": "  Use make.\n"})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["agentInstructions"], "Use make.", "trimmed");
+    let (_, v) = put(json!({"agentCredentials": "pass_through", "runOverrides": null})).await;
+    assert_eq!(v["agentInstructions"], "Use make.", "a client that leaves it out keeps it");
+    let (_, v) = put(json!({"agentCredentials": null, "runOverrides": null, "agentInstructions": ""})).await;
+    assert_eq!(v["agentInstructions"], Value::Null, "an empty text clears it");
+    let long = "x".repeat(pdt_core::agent_context::MAX_PROJECT_INSTRUCTIONS + 1);
+    let (s, v) = put(json!({"agentCredentials": null, "runOverrides": null, "agentInstructions": long})).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+}

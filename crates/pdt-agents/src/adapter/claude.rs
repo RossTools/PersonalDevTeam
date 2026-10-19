@@ -1,6 +1,8 @@
 //! Claude Code through `claude -p` stream-json: one process per live conversation (spec §3.2). The frame mapping is
 //! pdt-core's `ClaudeMapper`; this module owns the process, its pipes and control-request replies.
 
+#[cfg(test)]
+use super::SessionInstructions;
 use super::{
     AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
     SessionChange,
@@ -52,6 +54,9 @@ pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     if let Some(m) = &spec.model {
         a.push("--model".into());
         a.push(m.clone());
+    }
+    if let Some(i) = &spec.instructions {
+        a.extend(crate::instructions::claude_args(&i.file));
     }
     a
 }
@@ -430,6 +435,7 @@ mod tests {
             permission_mode: PermissionMode::AcceptEdits,
             env: vec![],
             env_remove: vec![],
+            instructions: None,
         }
     }
 
@@ -443,6 +449,10 @@ mod tests {
         let a = claude_args(&spec(true, Some("opus")));
         assert!(a.windows(2).any(|w| w == ["--resume", "sid"]));
         assert!(a.windows(2).any(|w| w == ["--model", "opus"]));
+        assert!(!a.iter().any(|x| x.starts_with("--append-system-prompt")));
+        let mut s = spec(false, None);
+        s.instructions = Some(SessionInstructions { text: "t".into(), file: "/d/instructions.md".into() });
+        assert!(claude_args(&s).windows(2).any(|w| w == ["--append-system-prompt-file", "/d/instructions.md"]));
     }
 
     #[test]

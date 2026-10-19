@@ -362,11 +362,16 @@ pub fn prompt_arg(prompt: &str) -> String {
 /// it), so a file path containing one is never put on such a command line.
 const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\n', '\r'];
 
+/// Whether `cmd.exe` would leave this argument alone.
+pub fn cmd_safe(arg: &str) -> bool {
+    !arg.contains(CMD_METACHARACTERS)
+}
+
 /// The short prompt given instead of the real one when the agent is a `.cmd` shim: the real prompt is in
 /// `prompt_file`. For a ticket (`ticket_key`, e.g. `PDT-4`) it names the ticket and the file, or only the ticket
 /// when the path is unsafe for cmd. Without a ticket it names the file; None (no prompt) when the path is unsafe.
 pub fn shim_prompt(ticket_key: Option<&str>, prompt_file: &str) -> Option<String> {
-    let safe = !prompt_file.contains(CMD_METACHARACTERS);
+    let safe = cmd_safe(prompt_file);
     match (ticket_key, safe) {
         (Some(key), true) => Some(format!("{key}: read {prompt_file} for the ticket, then start.")),
         (Some(key), false) => Some(format!("Start on ticket {key} (see {}).", crate::brand::SHORT_NAME)),
