@@ -279,6 +279,7 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         permission_mode: row.permission_mode.unwrap_or_default(),
         env: login_path_env(st),
         env_remove: scrubbed(creds),
+        instructions: crate::sessions::agent_instructions(st, &row).await?,
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
@@ -668,8 +669,10 @@ pub(crate) async fn forget(st: &AppState, id: &str) {
     }
 }
 
-/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`.
-pub async fn park_idle_conversations(st: &AppState) {
+/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`. Returns how
+/// many it parked.
+pub async fn park_idle_conversations(st: &AppState) -> usize {
+    let mut parked = 0;
     let convs: Vec<Arc<Conv>> =
         st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
     for c in convs {
@@ -684,8 +687,10 @@ pub async fn park_idle_conversations(st: &AppState) {
         if idle {
             tracing::info!(session = %c.id, "parking an idle conversation");
             park(st, &c).await;
+            parked += 1;
         }
     }
+    parked
 }
 
 /// Parks idle conversations every 30 s, until shutdown.

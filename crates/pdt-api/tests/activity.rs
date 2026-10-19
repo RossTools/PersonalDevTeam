@@ -209,12 +209,11 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
     output_until(&mut ws, "Trust this folder?").await;
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "ready").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, id).await["activity"], "idle", "trust acceptance is not a turn");
+    // The terminal can show "ready" before the tracker has applied the program's idle status, so wait for it.
+    wait_for_activity(&app, id, json!("idle")).await; // trust acceptance is not a turn
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "empty").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, id).await["activity"], "idle", "empty Enter is not a turn");
+    wait_for_activity(&app, id, json!("idle")).await; // empty Enter is not a turn
     type_in(&mut ws, "a prompt\r").await;
     wait_for_activity(&app, id, json!("working")).await;
     tokio::time::sleep(Duration::from_millis(600)).await;

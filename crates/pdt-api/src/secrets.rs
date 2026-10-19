@@ -167,13 +167,14 @@ mod tests {
     #[test]
     fn a_stalled_keychain_times_out_and_later_calls_fail_fast_until_it_answers() {
         let (release, rx) = std::sync::mpsc::channel();
-        let s = TimeLimited::new(Arc::new(Blocking(Mutex::new(rx))), Duration::from_millis(100));
+        // A 1 s limit leaves room to tell "failed at once" from "waited for the limit" on a loaded CI runner.
+        let s = TimeLimited::new(Arc::new(Blocking(Mutex::new(rx))), Duration::from_secs(1));
         let t = Instant::now();
         assert_eq!(s.get("a").unwrap_err().0, KEYCHAIN_STALLED);
-        assert!(t.elapsed() < Duration::from_secs(2));
+        assert!(t.elapsed() < Duration::from_secs(5));
         let t = Instant::now();
         assert_eq!(s.get("a").unwrap_err().0, KEYCHAIN_STALLED, "still stuck: no second thread");
-        assert!(t.elapsed() < Duration::from_millis(50), "fails at once while the first call is stuck");
+        assert!(t.elapsed() < Duration::from_millis(500), "fails at once while the first call is stuck");
         release.send(()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while s.busy.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < deadline {

@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod detached;
 pub mod hooks;
+pub mod instructions;
 pub mod launch;
 pub mod pty;
 

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{PNG, call, call_raw, git};
+use common::{PNG, call, call_raw, git, park_once_idle};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
 use pdt_store::Store;
@@ -137,6 +137,7 @@ async fn a_new_claude_tab_is_a_conversation_that_streams_replies() {
     send(&env, id, "who").await;
     let all = wait_turns(&env, id, 2).await;
     assert!(agent_text(&all)[1].contains("resumed=false"), "the process stays up between turns");
+    assert!(agent_text(&all)[1].contains("instructions=true"), "PDT's instructions reach claude -p");
     let (_, caps) = call(&env.app, "GET", "/api/agents/claude/capabilities", None).await;
     assert_eq!(caps["models"][1]["value"], "opus", "{caps}");
 
@@ -316,7 +317,7 @@ async fn idle_conversations_park_and_settings_apply_on_resume() {
     .await;
     assert_eq!(st.as_u16(), 200, "{v}");
     assert_eq!((v["permissionMode"].as_str(), &v["model"]), (Some("accept_edits"), &Value::Null));
-    pdt_api::park_idle_conversations(&env.state).await;
+    park_once_idle(&env.state).await;
     let s = session(&env, &id).await;
     assert_eq!(s["status"], "running", "a parked conversation is still open");
     let proj = env.claude_dir.join("projects").join("x");

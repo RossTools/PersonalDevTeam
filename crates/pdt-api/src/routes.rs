@@ -259,6 +259,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
         .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
+        .route("/guides", get(crate::guides::list))
+        .route("/guides/{name}", get(crate::guides::get_one))
         .route("/projects", get(crate::projects::list).post(crate::projects::create))
         .route("/projects/clone", axum::routing::post(crate::projects::clone))
         .route(
@@ -347,7 +349,9 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     // tiny bodies are left alone. Quality 4 keeps it fast on every response.
     let compression =
         tower_http::compression::CompressionLayer::new().quality(tower_http::compression::CompressionLevel::Precise(4));
-    app.layer(compression).layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+    app.layer(compression)
+        .layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+        .layer(axum::middleware::from_fn(crate::slow::log_slow))
 }
 
 /// Vite names every file in `/assets/` by its content hash, so browsers may keep them for good; everything else the

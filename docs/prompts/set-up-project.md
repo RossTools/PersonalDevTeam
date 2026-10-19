@@ -1,18 +1,21 @@
 # Prompt: set up a project's runs in PDT
 
-Start a Claude Code or Codex session from PDT in the project (its main checkout or a worktree), and paste
-everything below the line. It finds the project through PDT itself, so nothing needs filling in. The reference it
-follows is [../run-config.md](../run-config.md).
+PDT has this prompt built in: **Set up with an agent** in a project's Settings (Runs on this host) starts a session
+with it, and `GET /api/guides/set-up-project` serves it. By hand: start a Claude Code or Codex session from PDT in the
+project (its main checkout or a worktree), and paste everything below the line. It finds the project through PDT
+itself, so nothing needs filling in. The reference it follows is [../run-config.md](../run-config.md)
+(`GET /api/guides/run-config`).
 
 ---
 
 Set up this project so PDT (Personal Dev Team, which started this session) can run and test it: a **Run** that
 starts the app for development, and a **Test** for each test suite.
 
-**1. Find PDT and this project.** PDT's API is `http://127.0.0.1:$PDT_HOOK_PORT/api`.
-`curl -s 127.0.0.1:$PDT_HOOK_PORT/api/sessions/$PDT_SESSION_ID` gives this session's `projectId` and `worktreeId`.
-(If those variables are unset, this session didn't come from PDT: use port 7420 and match `repoPath` in
-`GET /api/projects` to the repo root.) Read `GET /api/projects/<projectId>/run-config?worktreeId=<worktreeId>` (leave
+**1. Find PDT and this project.** PDT's instructions for this session name its API (`http://127.0.0.1:<port>/api`)
+and this session's id; terminal sessions also have `$PDT_HOOK_PORT` and `$PDT_SESSION_ID`.
+`GET /api/sessions/<session id>` gives this session's `projectId` and `worktreeId`. (If you have neither, this session
+didn't come from PDT: use port 7420 and match `repoPath` in `GET /api/projects` to the repo root.) The full reference
+for the configuration is `GET /api/guides/run-config`. Read `GET /api/projects/<projectId>/run-config?worktreeId=<worktreeId>` (leave
 out `worktreeId` when null): it shows any existing `.pdt/project.toml` (`file`), host overrides (`overrides`), and
 the merged result or an `error`. If a working configuration already exists, say so and ask what to change.
 

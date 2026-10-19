@@ -131,7 +131,8 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
     assert!(wt.join("a.txt").is_file(), "the worktree is checked out");
     assert_eq!(attempt["worktreeId"], session["worktreeId"]);
 
-    // The agent got the ticket as its first prompt, after its flags (and after --settings for Claude).
+    // The agent got the ticket as its first prompt, after its flags (and after --settings and PDT's instructions for
+    // Claude).
     let launch = recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0);
     let sid = s(&session["id"]).to_string();
     if cfg!(windows) {
@@ -141,7 +142,8 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
         assert!(launch[0].contains("PDT-1"), "{launch:?}");
     } else {
         assert_eq!(launch[..2], ["--session-id".to_string(), sid.clone()]);
-        assert_eq!(launch[launch.len() - 3], "--settings");
+        assert_eq!(launch[launch.len() - 5], "--settings");
+        assert_eq!(launch[launch.len() - 3], "--append-system-prompt-file");
         assert_eq!(
             last_arg(&launch),
             "PDT-1: Fix the login\n\nSteps & notes:\n1. open\n\n(Ticket PDT-1 in PDT. Work in this worktree on \

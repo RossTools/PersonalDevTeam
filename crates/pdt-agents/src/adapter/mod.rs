@@ -70,6 +70,15 @@ pub struct OpenSpec {
     pub permission_mode: PermissionMode,
     pub env: Vec<(String, String)>,
     pub env_remove: Vec<String>,
+    /// PDT's instructions for the session (`crate::instructions`), when it has any.
+    pub instructions: Option<SessionInstructions>,
+}
+
+/// The instructions text, and the file it was written to (Claude reads the file; Codex takes the text).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionInstructions {
+    pub text: String,
+    pub file: std::path::PathBuf,
 }
 
 /// A live setting change.

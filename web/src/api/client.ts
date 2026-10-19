@@ -1,4 +1,5 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
+import type { GuideInfo } from './gen/GuideInfo';
 import type { Health } from './gen/Health';
 import type { TicketDraft } from './gen/TicketDraft';
 import type { HostChecks } from './gen/HostChecks';
@@ -75,6 +76,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+/** A plain-text response (PDT's guides are Markdown). */
+async function requestText(path: string): Promise<string> {
+  return (await send(path)).text();
+}
+
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
   if (!res.ok) {
     let body: Partial<ApiErrorBody> = {};
@@ -85,8 +97,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  return res;
 }
 
 const enc = encodeURIComponent;
@@ -225,6 +236,9 @@ export const api = {
   projectSettings: (projectId: string) => request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`),
   saveProjectSettings: (projectId: string, s: ProjectSettingsInput) =>
     request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
+  listGuides: () => request<GuideInfo[]>('/api/guides'),
+  /** A built-in guide or prompt, as Markdown. */
+  guide: (name: string) => requestText(`/api/guides/${enc(name)}`),
   hostSettings: () => request<HostSettingsView>('/api/host/settings'),
   saveHostSettings: (p: HostSettingsPatch) =>
     request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),

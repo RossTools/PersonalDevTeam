@@ -47,6 +47,7 @@ export function stubApi(routes: Record<string, Route>): Call[] {
     // A function route may return a promise, to hold the response until the test resolves it.
     const value = await (typeof route === 'function' ? (route as (c: Call) => unknown)(call) : route);
     if (value instanceof Reply) return new Response(JSON.stringify(value.body), { status: value.status });
+    if (value instanceof Response) return value;
     return value === undefined ? new Response(null, { status: 204 }) : new Response(JSON.stringify(value), { status: 200 });
   }));
   return calls;

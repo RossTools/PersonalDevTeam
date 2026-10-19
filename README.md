@@ -79,6 +79,7 @@ memory when `PDT_SECRET_STORE=memory`.
 - [AGENTS.md](AGENTS.md): the working guide for coding agents (and the most complete description of how PDT behaves)
 - [docs/SDLC.md](docs/SDLC.md): how a change goes from worktree to release
 - [docs/ROADMAP.md](docs/ROADMAP.md): where the roadmap lives now (PDT's own tickets)
-- [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it
+- [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it (built in: Settings → project → Set up with an agent)
+- [docs/agent-guide.md](docs/agent-guide.md): how agents use PDT (tickets, worktrees, runs). PDT serves it and the other guides at `/api/guides`, and a project's agent instructions live in its Settings, so a repo needs no PDT files
 - [docs/superpowers/specs](docs/superpowers/specs): designs; [plans](docs/superpowers/plans): build plans;
   [notes](docs/superpowers/notes): CI layout, carry-overs, incident notes

@@ -513,6 +513,8 @@ impl AgentAdapter for CodexAdapter {
             let _ = sink.send(AdapterOutput::Info(AgentInfo { billing, ..AgentInfo::default() }));
         }
         let (approval, sandbox) = codex_policy(spec.permission_mode);
+        // Null leaves Codex's own (the user's config).
+        let developer_instructions = spec.instructions.as_ref().map(|i| i.text.clone());
         let cwd = spec.cwd.to_string_lossy().into_owned();
         let route = Arc::new(Route { mapper: Mutex::new(CodexMapper::new()), sink: sink.clone() });
         let mut resumed = None;
@@ -520,7 +522,8 @@ impl AgentAdapter for CodexAdapter {
             // Listen before resuming, so nothing the thread does meanwhile is missed.
             self.server.routes.lock().unwrap_or_else(|e| e.into_inner()).insert(thread.clone(), route.clone());
             let params = json!({"threadId": thread, "excludeTurns": true, "cwd": cwd, "model": spec.model,
-                                "approvalPolicy": approval, "sandbox": sandbox});
+                                "approvalPolicy": approval, "sandbox": sandbox,
+                                "developerInstructions": developer_instructions});
             match conn.request("thread/resume", params).await {
                 Ok(_) => resumed = Some(thread),
                 Err(e) => {
@@ -556,7 +559,8 @@ impl AgentAdapter for CodexAdapter {
                 t
             }
             None => {
-                let params = json!({"cwd": cwd, "model": spec.model, "approvalPolicy": approval, "sandbox": sandbox});
+                let params = json!({"cwd": cwd, "model": spec.model, "approvalPolicy": approval, "sandbox": sandbox,
+                                    "developerInstructions": developer_instructions});
                 let r = conn.request("thread/start", params).await?;
                 let id = r
                     .pointer("/thread/id")

@@ -226,12 +226,13 @@ async fn removing_worktrees() {
     let (s, v) = call(&env.app, "DELETE", &uri, None).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("worktree_busy")));
     call(&env.app, "POST", &format!("/api/sessions/{sid}/kill"), None).await;
-    for _ in 0..100 {
+    for _ in 0..400 {
         if !env.state.ptys.is_running(&sid) {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
+    assert!(!env.state.ptys.is_running(&sid), "the killed shell never exited");
 
     // Dirty: refused without force.
     std::fs::write(path.join("wip.txt"), "x").unwrap();
