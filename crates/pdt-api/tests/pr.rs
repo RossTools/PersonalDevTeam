@@ -5,7 +5,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
-use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
+use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval};
 use pdt_github::PullRequest;
 use pdt_github::testing::FakeGithub;
 use pdt_store::Store;
@@ -76,6 +76,7 @@ fn pr() -> PullRequest {
         auto_merge: true,
         in_merge_queue: false,
         queue_position: None,
+        queue_removal: None,
     }
 }
 
@@ -169,6 +170,30 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(events[1]["data"]["notice"], "conflict");
     assert_eq!(events[1]["data"]["told"], false);
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_removal_from_the_merge_queue_is_told_even_when_never_seen_queued() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    // Queued and dropped between two looks (a conflict is found within seconds): only the timeline knows.
+    let mut removed = pr();
+    removed.auto_merge = false;
+    removed.queue_removal =
+        Some(QueueRemoval { id: "RFMQE_1".into(), reason: "merge_conflict".into(), by_queue: true });
+    env.gh.set_pr(BRANCH, Some(removed.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::deliver_notices(&env.state).await;
+    let events = pr_events(&env).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["data"]["notice"], "queue_left");
+    assert_eq!(events[0]["data"]["key"], "queue_removed:RFMQE_1");
+    assert_eq!(events[0]["data"]["told"], true);
+    assert!(events[0]["data"]["text"].as_str().unwrap().contains("it conflicts with main"));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::deliver_notices(&env.state).await;
+    assert_eq!(pr_events(&env).await.len(), 1, "one removal is news once");
     env.state.ptys.shutdown().await;
 }
 

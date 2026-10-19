@@ -2,7 +2,7 @@
 //! user's own `gh` login. Check runs are not read: the fine-grained token PDT's users have cannot see them, so CI
 //! comes from the Actions runs API. Blocking; call from `spawn_blocking` in async code.
 
-use pdt_core::pr::{CiRun, Mergeable, PrState};
+use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 use serde_json::Value;
 use std::io::Read;
 use std::path::PathBuf;
@@ -18,7 +18,9 @@ const RUN_FIELDS: &str = "databaseId,attempt,workflowName,status,conclusion,head
 const PR_QUERY: &str = "query($owner:String!,$name:String!,$head:String!){repository(owner:$owner,name:$name){\
 pullRequests(headRefName:$head,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number url title state \
 isDraft headRefOid baseRefName mergeable mergeStateStatus isInMergeQueue mergeQueueEntry{position} \
-autoMergeRequest{enabledAt}}}}}";
+autoMergeRequest{enabledAt} \
+timelineItems(itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{__typename \
+...on RemovedFromMergeQueueEvent{id reason actor{login}}}}}}}}";
 
 /// A branch's pull request as GitHub reports it (CI is read separately).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,8 @@ pub struct PullRequest {
     pub auto_merge: bool,
     pub in_merge_queue: bool,
     pub queue_position: Option<u32>,
+    /// Its newest merge-queue event, when that is a removal.
+    pub queue_removal: Option<QueueRemoval>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -144,7 +148,20 @@ pub fn parse_pull_request(out: &str) -> Result<Option<PullRequest>, GhError> {
         auto_merge: !n["autoMergeRequest"].is_null(),
         in_merge_queue: n["isInMergeQueue"].as_bool().unwrap_or(false),
         queue_position: n["mergeQueueEntry"]["position"].as_u64().and_then(|p| u32::try_from(p).ok()).map(|p| p + 1),
+        queue_removal: queue_removal(&n["timelineItems"]["nodes"][0]),
     }))
+}
+
+/// The newest merge-queue event, when it is a removal.
+fn queue_removal(e: &Value) -> Option<QueueRemoval> {
+    if e["__typename"] != "RemovedFromMergeQueueEvent" {
+        return None;
+    }
+    Some(QueueRemoval {
+        id: s(e, "id"),
+        reason: s(e, "reason"),
+        by_queue: e["actor"]["login"].as_str().is_some_and(QueueRemoval::is_queue_actor),
+    })
 }
 
 /// `gh run list --json RUN_FIELDS`.
@@ -388,12 +405,24 @@ mod tests {
         assert_eq!(pr.queue_position, Some(1));
         assert_eq!(pr.mergeable, Mergeable::Conflicting);
         assert_eq!((pr.head_sha.as_str(), pr.base_branch.as_str()), ("b", "main"));
+        assert_eq!(pr.queue_removal, None, "no timeline in the answer");
 
         let merged = r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":3,"url":"u","title":"t",
           "state":"MERGED","isDraft":false,"headRefOid":"c","baseRefName":"main","mergeable":"UNKNOWN",
           "mergeStateStatus":"UNKNOWN","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}]}}}}"#;
         let pr = parse_pull_request(merged).unwrap().unwrap();
         assert_eq!((pr.state, pr.auto_merge, pr.queue_position), (PrState::Merged, false, None));
+        let removed = r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":49,"url":"u","title":"t",
+          "state":"OPEN","isDraft":false,"headRefOid":"c","baseRefName":"main","mergeable":"MERGEABLE",
+          "mergeStateStatus":"CLEAN","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null,
+          "timelineItems":{"nodes":[{"__typename":"RemovedFromMergeQueueEvent","id":"RFMQE_x",
+          "reason":"merge_conflict","actor":{"login":"github-merge-queue"}}]}}]}}}}"#;
+        let r = parse_pull_request(removed).unwrap().unwrap().queue_removal.unwrap();
+        assert_eq!((r.id.as_str(), r.reason.as_str(), r.by_queue), ("RFMQE_x", "merge_conflict", true));
+        let requeued = removed.replace("RemovedFromMergeQueueEvent", "AddedToMergeQueueEvent");
+        assert_eq!(parse_pull_request(&requeued).unwrap().unwrap().queue_removal, None, "queued again since");
+        let by_hand = removed.replace("github-merge-queue", "someone");
+        assert!(!parse_pull_request(&by_hand).unwrap().unwrap().queue_removal.unwrap().by_queue);
         let none = r#"{"data":{"repository":{"pullRequests":{"nodes":[]}}}}"#;
         assert_eq!(parse_pull_request(none).unwrap(), None);
         let err = r#"{"data":null,"errors":[{"message":"Could not resolve to a Repository"}]}"#;
