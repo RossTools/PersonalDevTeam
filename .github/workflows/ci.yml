@@ -28,8 +28,11 @@ env:
 # - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`): every other job is skipped.
 # - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types)
 #   and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
-# - build (macos-latest): every other PR, on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break:
-#   clippy, nextest and the desktop crate.
+# - build (macos-latest): on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break: clippy, nextest
+#   and the desktop crate. It is most of the Namespace bill (60 units a minute against linux-8's 8), so it runs in
+#   the merge queue, and on a PR only with the `macos` label or a change under `.github/`.
+# - A push to main skips the Linux and macOS checks: the queue just ran them on the same tree (group size 1, squash
+#   merge). Windows checks and the bundles still run there.
 # - Repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER override those runners (e.g. ubuntu-latest / macos-latest if
 #   Namespace is down); .github/actions/setup picks the cache to match.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
@@ -45,6 +48,8 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.pick.outputs.code }}
+      linux: ${{ steps.pick.outputs.linux }}
+      macos: ${{ steps.pick.outputs.macos }}
       windows: ${{ steps.pick.outputs.windows }}
       bundle: ${{ steps.pick.outputs.bundle }}
     steps:
@@ -58,7 +63,9 @@ jobs:
           QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
         run: |
-          all() { { echo "code=true"; echo "windows=true"; echo "bundle=true"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5"
+            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          all() { out true true true true true; }
           case "$EVENT" in
             pull_request)
               files="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)" ;;
@@ -71,7 +78,10 @@ jobs:
               n="$(printf '%s' "$QUEUE_REF" | sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p')"
               LABELS='[]'
               if [ -n "$n" ]; then LABELS="$(gh pr view "$n" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')"; fi ;;
-            # Main and dispatches run everything.
+            # A push to main (a merge from the queue) only builds the release: the queue ran the Linux and macOS
+            # checks on this tree. Windows checks run here because PRs and the queue run them only when asked.
+            push) out true false false true true ;;
+            # Dispatches run everything.
             *) all ;;
           esac
           printf 'Changed files:\n%s\n' "$files"
@@ -83,13 +93,15 @@ jobs:
           windows=false; bundle=false
           if has windows || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
           if has bundle || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qE '^(desktop/|scripts/|\.github/)'; }; then bundle=true; fi
-          echo "code=$code windows=$windows bundle=$bundle"
-          { echo "code=$code"; echo "windows=$windows"; echo "bundle=$bundle"; } >> "$GITHUB_OUTPUT"
+          # macOS: always in the queue; on a PR only with the label or a change to CI itself.
+          macos=false
+          if has macos || { [ "$code" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
+          out "$code" "$code" "$macos" "$windows" "$bundle"
 
   lint-linux:
     name: lint (linux)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.linux == 'true'
     runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
     timeout-minutes: 30
     steps:
@@ -101,7 +113,7 @@ jobs:
   test-linux:
     name: test (linux)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.linux == 'true'
     runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
     timeout-minutes: 30
     steps:
@@ -119,7 +131,7 @@ jobs:
   web-linux:
     name: web (linux)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.linux == 'true'
     runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
     timeout-minutes: 30
     steps:
@@ -142,8 +154,8 @@ jobs:
   build-macos:
     name: build (macos-latest)
     needs: changes
-    # Skipped for docs-only PRs (the skipped check counts as passing).
-    if: needs.changes.outputs.code == 'true'
+    # Skipped for docs-only PRs, unlabelled PRs and pushes to main (the skipped check counts as passing).
+    if: needs.changes.outputs.macos == 'true'
     # The job name is a required check, so it keeps "macos-latest" whichever Mac runs it.
     runs-on: ${{ vars.PDT_MACOS_RUNNER || 'namespace-profile-macos-6' }}
     timeout-minutes: 30
@@ -213,7 +225,11 @@ jobs:
     # Every push to main becomes a GitHub release v0.1.<run number>, with SHA256SUMS; hosts' pdtd checks for it
     # through the GitHub REST API and pdt-host installs it.
     needs: [lint-linux, test-linux, web-linux, build-macos, build-windows, bundle-macos, bundle-windows]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # A push to main skips the Linux and macOS checks, and a skipped need would skip this job without `always()`;
+    # it still waits for every need and runs only when none failed or was cancelled.
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: write
