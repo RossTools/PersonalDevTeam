@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { IconButton } from './IconButton';
@@ -28,6 +28,18 @@ export interface PromptBoxProps {
   toolbar?: ReactNode;
   /** Right of the bottom row, before the buttons: quiet text (a readout, a key hint). */
   meta?: ReactNode;
+  /** Over the box, e.g. completions for what is being typed (`SuggestionList`). */
+  above?: ReactNode;
+  /** Inside the box, over the text: the attachments so far (`ImageThumb`s). */
+  attachments?: ReactNode;
+  /** Files pasted or dropped onto the box (the paste's text is kept when it has no files). */
+  onFiles?: (files: File[]) => void;
+  /** The send button is enabled (default: there is text). E.g. an image alone may be sent. */
+  canSend?: boolean;
+  /** The text area, for the caret position. */
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  /** While `above` lists completions: the listbox id and the highlighted option's id. */
+  completion?: { listId: string; activeId?: string };
   className?: string;
 }
 
@@ -51,22 +63,56 @@ export function PromptBox({
   autoFocus = false,
   toolbar,
   meta,
+  above,
+  attachments,
+  onFiles,
+  canSend,
+  inputRef,
+  completion,
   className,
 }: PromptBoxProps) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const own = useRef<HTMLTextAreaElement>(null);
+  const ref = inputRef ?? own;
+  const [dragging, setDragging] = useState(false);
   const empty = !value.trim();
+  const sendable = canSend ?? !empty;
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.files];
+    if (onFiles && files.length) {
+      e.preventDefault();
+      onFiles(files);
+    }
+  };
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
-  const showSend = !onStop || !empty;
+  const showSend = !onStop || sendable;
   return (
+    <div className={cn('relative', className)}>
+    {above && <div className="absolute inset-x-0 bottom-full z-(--pdt-z-popover) mb-1">{above}</div>}
     <div
       data-slot="prompt-box"
+      data-dragging={dragging || undefined}
       className={cn(
         'flex flex-col rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring motion-reduce:transition-none',
+        dragging && 'border-primary ring-2 ring-ring',
         disabled && 'opacity-60',
-        className,
       )}
+      onDragOver={(e) => {
+        if (!onFiles || !e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!onFiles) return;
+        e.preventDefault();
+        setDragging(false);
+        const files = [...e.dataTransfer.files];
+        if (files.length) onFiles(files);
+      }}
       // A click on the box's padding focuses the text, as if the whole box were the field.
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
@@ -75,9 +121,15 @@ export function PromptBox({
         }
       }}
     >
+      {attachments && <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">{attachments}</div>}
       <Textarea
         ref={ref}
         aria-label={label}
+        aria-autocomplete={completion ? 'list' : undefined}
+        aria-controls={completion?.listId}
+        aria-activedescendant={completion?.activeId}
+        aria-expanded={completion ? true : undefined}
+        onPaste={onPaste}
         rows={1}
         value={value}
         disabled={disabled}
@@ -100,7 +152,7 @@ export function PromptBox({
             shortcut={sendShortcut}
             variant="primary"
             pending={pending}
-            disabled={empty || disabled}
+            disabled={!sendable || disabled}
             onClick={onSend}
             className="rounded-full"
           >
@@ -108,6 +160,7 @@ export function PromptBox({
           </IconButton>
         )}
       </div>
+    </div>
     </div>
   );
 }

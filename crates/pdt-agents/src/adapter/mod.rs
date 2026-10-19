@@ -34,6 +34,22 @@ pub struct AgentInfo {
     pub version: Option<String>,
     /// Claude: `none` when it bills the plan login.
     pub api_key_source: Option<String>,
+    /// Who pays, as the composer footer says it ("ChatGPT plan"); Claude's comes from `api_key_source`.
+    pub billing: Option<String>,
+}
+
+/// An image a message carries, stored by PDT (`<data dir>/sessions/<id>/attachments/`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageFile {
+    pub path: PathBuf,
+    pub media_type: String,
+}
+
+/// A message for the agent.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Outgoing {
+    pub text: String,
+    pub images: Vec<ImageFile>,
 }
 
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
@@ -91,7 +107,7 @@ pub trait AgentAdapter: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait LiveConversation: Send + Sync {
-    async fn send(&self, text: &str, delivery: Delivery) -> Result<(), AdapterError>;
+    async fn send(&self, msg: &Outgoing, delivery: Delivery) -> Result<(), AdapterError>;
     async fn answer(&self, request_id: &str, answer: &Answer) -> Result<(), AdapterError>;
     async fn interrupt(&self) -> Result<(), AdapterError>;
     async fn set(&self, change: &SessionChange) -> Result<(), AdapterError>;

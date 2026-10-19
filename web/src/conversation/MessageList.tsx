@@ -6,6 +6,7 @@ import {
   Button,
   Dialog,
   DiffStat,
+  ImageThumb,
   DiffViewer,
   diffStats,
   MessageBubble,
@@ -34,6 +35,8 @@ export interface MessageListProps {
   pending: PendingMessage[];
   /** Answers an open request (`request` event `id`). */
   onAnswer: (requestId: string, answer: ApprovalAnswer) => Promise<unknown>;
+  /** Where a message's attached image is served (by attachment id). */
+  imageUrl?: (attachmentId: string) => string;
   /** Which agent: Claude's plans can be approved straight into Accept edits. */
   agent?: 'claude' | 'codex';
   /** Offered under the last turn when it was interrupted (a restart, a crash, Stop): picks up where it left off. */
@@ -51,8 +54,25 @@ interface ListContext {
   continueTurn: string | null;
   onContinue?: () => Promise<unknown>;
   agent: 'claude' | 'codex';
+  imageUrl?: (attachmentId: string) => string;
 }
 const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude' });
+
+/** PDT's attachment ids are UUIDs; anything else is the agent's own note ("image/png") with nothing to show. */
+const isAttachment = (s: string) => /^[0-9a-f-]{36}$/i.test(s);
+
+function Images({ images }: { images: string[] }) {
+  const { imageUrl } = useContext(ListCtx);
+  if (!images.length) return null;
+  return (
+    <>
+      {images.map((img, i) => {
+        const src = isAttachment(img) && imageUrl ? imageUrl(img) : undefined;
+        return <ImageThumb key={`${img}-${i}`} src={src} href={src} alt={`Image ${i + 1}`} />;
+      })}
+    </>
+  );
+}
 
 /** Offscreen rows skip layout and paint, so a long history stays cheap without a virtualiser. */
 const ROW = '[content-visibility:auto] [contain-intrinsic-size:auto_3rem]';
@@ -250,7 +270,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
   switch (ev.kind) {
     case 'user_message':
       return (
-        <MessageBubble meta={ev.source === 'terminal' ? 'From the terminal' : undefined}>{ev.text}</MessageBubble>
+        <MessageBubble meta={ev.source === 'terminal' ? 'From the terminal' : undefined} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
+          {ev.text || undefined}
+        </MessageBubble>
       );
     case 'agent_message': {
       const streamed = r.itemId ? streams[r.itemId]?.markdown : undefined;
@@ -345,6 +367,7 @@ export function MessageList({
   onAnswer,
   agent = 'claude',
   onContinue,
+  imageUrl,
   empty,
   className,
 }: MessageListProps) {
@@ -363,8 +386,8 @@ export function MessageList({
     const last = [...rows].reverse().find((r) => r.event.kind === 'turn' || r.event.kind === 'user_message');
     const cut = last?.event.kind === 'turn' && last.event.phase === 'ended' && last.event.status === 'interrupted';
     const continueTurn = cut && !turnRunning && pending.length === 0 ? last.itemId ?? null : null;
-    return { turnDiffs, continueTurn, onContinue, agent };
-  }, [rows, turnRunning, pending.length, onContinue, agent]);
+    return { turnDiffs, continueTurn, onContinue, agent, imageUrl };
+  }, [rows, turnRunning, pending.length, onContinue, agent, imageUrl]);
 
   const toBottom = useCallback(() => {
     const el = scroller.current;
@@ -415,8 +438,13 @@ export function MessageList({
             </div>
           ))}
           {pending.map((p) => (
-            <MessageBubble key={p.id} tone="pending" label={p.delivery === 'now' ? 'Sending now' : 'Queued'}>
-              {p.text}
+            <MessageBubble
+              key={p.id}
+              tone="pending"
+              label={p.delivery === 'now' ? 'Sending now' : 'Queued'}
+              images={p.images.length ? <Images images={p.images} /> : undefined}
+            >
+              {p.text || undefined}
             </MessageBubble>
           ))}
           {turnRunning && <WorkingRow rows={rows} />}

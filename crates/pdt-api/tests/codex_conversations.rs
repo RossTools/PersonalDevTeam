@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{call, git};
+use common::{PNG, call, call_raw, git};
 use futures_util::{SinkExt, StreamExt};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -405,4 +405,40 @@ async fn the_live_terminal_opens_on_the_thread_after_the_first_turn() {
     stop(&env, c["id"].as_str().unwrap()).await;
     stop(&env, &id).await;
     pdt_api::shutdown_conversations(&env.state).await;
+}
+
+#[tokio::test]
+async fn codex_commands_run_their_rpcs_and_images_go_as_local_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_codex(&env, json!({})).await;
+    let (_, caps) = call(&env.app, "GET", "/api/agents/codex/capabilities", None).await;
+    let names: Vec<&str> = caps["commands"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["compact", "review"]);
+
+    send(&env, &id, "/compact", "next").await;
+    let all = wait_turns(&env, &id, 1).await;
+    assert!(all.iter().any(|e| e["event"]["kind"] == "compaction"), "{all:#?}");
+    let first_user = all.iter().find(|e| e["event"]["kind"] == "user_message").unwrap();
+    assert_eq!(first_user["event"]["text"], "/compact");
+    wait_activity(&env, &id, "idle").await;
+
+    send(&env, &id, "/review", "next").await;
+    let all = wait_turns(&env, &id, 2).await;
+    assert!(said(&all).contains(&"reviewed: uncommittedChanges".to_string()), "{:?}", said(&all));
+
+    let (s, _, body) = call_raw(&env.app, "POST", &format!("/api/sessions/{id}/attachments"), PNG.to_vec()).await;
+    assert_eq!(s.as_u16(), 201);
+    let aid = serde_json::from_slice::<Value>(&body).unwrap()["id"].as_str().unwrap().to_string();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/sessions/{id}/messages"),
+        Some(json!({"text": "what is this", "images": [aid]})),
+    )
+    .await;
+    assert_eq!(s, 202, "{v}");
+    let all = wait_turns(&env, &id, 3).await;
+    assert!(said(&all).contains(&"saw 1 images".to_string()), "{:?}", said(&all));
+    stop(&env, &id).await;
 }
