@@ -484,7 +484,7 @@ const runConfig = {
 };
 const runOf = (id: string) => ({
   id, projectId: project.id, worktreeId: null, branch: 'main', name: 'web', kind: 'run', state: 'starting',
-  port: 8401, url: null, dataDir: '/d', cwd: '/r', exitCode: null, error: null, createdAt: 1, updatedAt: 1,
+  port: 8401, url: null, dataDir: '/d', cwd: '/r', exitCode: null, error: null, detached: false, createdAt: 1, updatedAt: 1,
 });
 
 describe('new-tab chooser', () => {

@@ -1,5 +1,9 @@
 //! Drives run instances (spec §4.2): setup, command, readiness, Tailscale mapping, stop, resume after a restart.
 //!
+//! A detached run (`detach = true`, PDT-32) starts its command outside PDT's terminals (`pdt_agents::detached`), so
+//! it keeps running when pdtd exits; the run's Output terminal follows its log. The next pdtd finds it again by the
+//! `process` stored on the row and watches it (reattach) instead of starting it again.
+//!
 //! Tailscale (controller ruling on Task 7): a pdtd maps a run's port only once it has (re)started that run on that
 //! port itself, and it never unmaps a port it did not map. The machine's other instance (stable or dev) may own any
 //! port a stored row mentions.
@@ -8,12 +12,15 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::http::StatusCode;
 use pdt_agents::SpawnSpec;
+use pdt_agents::detached::{self, DetachedSpec};
 use pdt_core::host::CredentialPolicy;
 use pdt_core::run::{Run, RunKind, RunState, RunStep, pick_port, pty_id, step_launch};
 use pdt_core::runconfig::{RunDef, RunVars, expand, run_env, uses_run_host};
 use pdt_core::session::{SessionKind, is_scrubbed};
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -34,6 +41,8 @@ pub(crate) struct RunControl {
     web_port: Option<u16>,
     /// The run's definition uses `$PDT_RUN_HOST` / `$PDT_RUN_URL`: it restarts when remote access changes the host.
     uses_host: bool,
+    /// A detached command's processes, once started: what `stop` ends.
+    process: std::sync::Mutex<Option<String>>,
 }
 
 impl RunControl {
@@ -130,6 +139,7 @@ pub(crate) async fn relaunch(st: &AppState, mut run: Run, def: RunDef) -> Result
     run.state = first;
     run.exit_code = None;
     run.error = None;
+    run.detached = def.detach;
     start(st, run.clone(), def);
     Ok(run)
 }
@@ -170,6 +180,31 @@ pub(crate) fn scripts_dir(st: &AppState, run_id: &str) -> PathBuf {
     st.data_dir.join("runs").join("scripts").join(run_id)
 }
 
+/// Where a detached run's command writes its output (`<data>/runs/logs/<run id>.log`).
+pub fn log_path(st: &AppState, run_id: &str) -> PathBuf {
+    st.data_dir.join("runs").join("logs").join(format!("{run_id}.log"))
+}
+
+/// How to run `command` as `step`: on Windows this writes the step's script.
+fn launch(st: &AppState, run: &Run, step: RunStep, command: &str) -> Result<pdt_core::run::StepLaunch, String> {
+    let script = scripts_dir(st, &run.id).join(format!("{}.cmd", step.as_str()));
+    let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
+    let l = step_launch(st.platform.windows, &comspec, command, &script);
+    if let Some(text) = &l.script {
+        std::fs::create_dir_all(script.parent().expect("script dir")).map_err(|e| e.to_string())?;
+        std::fs::write(&script, text).map_err(|e| format!("writing {}: {e}", script.display()))?;
+    }
+    Ok(l)
+}
+
+/// The inherited variables a run's processes must not see.
+fn scrubbed_env() -> Vec<String> {
+    std::env::vars_os()
+        .filter_map(|(k, _)| k.into_string().ok())
+        .filter(|k| is_scrubbed(SessionKind::Shell, k, CredentialPolicy::PassThrough))
+        .collect()
+}
+
 /// Blocking (it may kill a previous terminal with taskkill): run it on the blocking pool.
 fn spawn_step(
     st: &AppState,
@@ -180,27 +215,57 @@ fn spawn_step(
 ) -> Result<oneshot::Receiver<i32>, String> {
     let id = pty_id(&run.id, step);
     st.ptys.remove(&id);
-    let script = scripts_dir(st, &run.id).join(format!("{}.cmd", step.as_str()));
-    let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
-    let l = step_launch(st.platform.windows, &comspec, command, &script);
-    if let Some(text) = &l.script {
-        std::fs::create_dir_all(script.parent().expect("script dir")).map_err(|e| e.to_string())?;
-        std::fs::write(&script, text).map_err(|e| format!("writing {}: {e}", script.display()))?;
-    }
+    let l = launch(st, run, step, command)?;
     let spec = SpawnSpec {
         id,
         program: PathBuf::from(l.program),
         args: l.args,
         cwd: PathBuf::from(&run.cwd),
-        env_remove: std::env::vars_os()
-            .filter_map(|(k, _)| k.into_string().ok())
-            .filter(|k| is_scrubbed(SessionKind::Shell, k, CredentialPolicy::PassThrough))
-            .collect(),
+        env_remove: scrubbed_env(),
         env: env.to_vec(),
         cols: 120,
         rows: 30,
     };
     st.ptys.spawn(spec).map_err(|e| e.to_string())
+}
+
+/// Starts a detached command and follows its log in the Output terminal. Blocking. Honours a stop that arrived
+/// while it was starting, like `start_step`.
+fn spawn_detached(
+    st: &AppState,
+    ctl: &RunControl,
+    run: &Run,
+    command: &str,
+    env: &[(String, String)],
+) -> Result<detached::Detached, String> {
+    let id = pty_id(&run.id, RunStep::Command);
+    st.ptys.remove(&id);
+    let l = launch(st, run, RunStep::Command, command)?;
+    let mut env = env.to_vec();
+    // Python buffers output that goes to a file, so the log would stay empty for a long time.
+    if std::env::var_os("PYTHONUNBUFFERED").is_none() && !env.iter().any(|(k, _)| k == "PYTHONUNBUFFERED") {
+        env.push(("PYTHONUNBUFFERED".into(), "1".into()));
+    }
+    let log = log_path(st, &run.id);
+    let spec = DetachedSpec {
+        id: run.id.clone(),
+        program: PathBuf::from(l.program),
+        args: l.args,
+        cwd: PathBuf::from(&run.cwd),
+        env_remove: scrubbed_env(),
+        env,
+        log: log.clone(),
+    };
+    let d = detached::spawn(&spec)?;
+    *ctl.process.lock().unwrap_or_else(|e| e.into_inner()) = Some(d.process.clone());
+    // `stop` sets the flag before reading `process`, so either it ends these processes or this does.
+    if ctl.stopping() {
+        detached::terminate(&d.process);
+    }
+    if let Err(e) = st.ptys.follow_log(&id, log) {
+        tracing::warn!(run = %run.id, error = %e, "could not follow a detached run's log");
+    }
+    Ok(d)
 }
 
 /// Starts a step, then honours a stop that arrived while it was starting: `stop` sets the flag before killing, so
@@ -237,7 +302,11 @@ async fn answers(port: u16) -> bool {
 
 type Outcome = (RunState, Option<i32>, Option<String>);
 
+/// Resolves with the command's exit code once it has ended (`None`: unknown, for a detached command).
+type ExitFuture = Pin<Box<dyn Future<Output = Option<i32>> + Send>>;
+
 async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) -> Outcome {
+    let _ = st.store.set_run_process(&run.id, def.detach, None).await;
     let v = vars(st, run);
     let pairs = v.pairs();
     let mut env = pdt_core::session::terminal_env();
@@ -269,9 +338,24 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     }
     let first = if run.kind == RunKind::Test { RunState::Running } else { RunState::Starting };
     let _ = st.store.set_run_state(&run.id, first, now_ms()).await;
-    let mut exit = match start_step(st, ctl, run, RunStep::Command, expand(&def.command, &pairs), &env).await {
-        Ok(rx) => rx,
-        Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
+    let command = expand(&def.command, &pairs);
+    let exit: ExitFuture = if def.detach && run.kind == RunKind::Run {
+        let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
+        let started = tokio::task::spawn_blocking(move || spawn_detached(&st2, &ctl2, &run2, &command, &env))
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+        let d = match started {
+            Ok(d) => d,
+            Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
+        };
+        let _ = st.store.set_run_process(&run.id, true, Some(&d.process)).await;
+        let rx = detached::watch(d.process, Some(d.main));
+        Box::pin(async move { rx.await.ok().flatten() })
+    } else {
+        match start_step(st, ctl, run, RunStep::Command, command, &env).await {
+            Ok(rx) => Box::pin(async move { Some(rx.await.unwrap_or(-1)) }),
+            Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
+        }
     };
     if let Some(p) = ctl.web_port {
         // Only while remote access is active; otherwise this runs no tailscale command (ruling F1).
@@ -282,9 +366,21 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
         let _ = st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await;
         ready = true;
     }
+    watch_command(st, ctl, run, def.detach, ready, exit).await
+}
+
+/// Follows a started command until it ends: readiness for a web run, then the outcome.
+async fn watch_command(
+    st: &AppState,
+    ctl: &Arc<RunControl>,
+    run: &Run,
+    detach: bool,
+    mut ready: bool,
+    mut exit: ExitFuture,
+) -> Outcome {
     let code = loop {
         tokio::select! {
-            c = &mut exit => break c.unwrap_or(-1),
+            c = &mut exit => break c,
             _ = tokio::time::sleep(PROBE_EVERY), if !ready => {
                 if let Some(p) = run.port
                     && answers(p).await
@@ -301,13 +397,20 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     {
         crate::remote::unmap_run_port(st, p).await;
     }
-    if ctl.stopping() {
-        return (RunState::Stopped, Some(code), stop_reason(ctl));
+    if detach && !st.shutting_down.load(Ordering::SeqCst) {
+        st.ptys.end_log(&pty_id(&run.id, RunStep::Command), code);
     }
-    match run.kind {
-        RunKind::Test if code == 0 => (RunState::Passed, Some(0), None),
-        RunKind::Test => (RunState::Failed, Some(code), Some(format!("tests failed (exit code {code})"))),
-        RunKind::Run => (RunState::Failed, Some(code), Some(format!("the command exited with code {code}"))),
+    if ctl.stopping() {
+        return (RunState::Stopped, code, stop_reason(ctl));
+    }
+    let shown = code.map_or("unknown".to_string(), |c| c.to_string());
+    match (run.kind, code) {
+        (RunKind::Test, Some(0)) => (RunState::Passed, code, None),
+        (RunKind::Test, _) => (RunState::Failed, code, Some(format!("tests failed (exit code {shown})"))),
+        (RunKind::Run, Some(c)) => (RunState::Failed, code, Some(format!("the command exited with code {c}"))),
+        (RunKind::Run, None) => {
+            (RunState::Failed, None, Some("the command and every process it started have exited".into()))
+        }
     }
 }
 
@@ -322,10 +425,42 @@ pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
         uses_host: uses_run_host(&def),
         ..Default::default()
     });
+    let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
+    supervise(st, run, ctl, async move { drive(&st2, &ctl2, &run2, &def).await });
+}
+
+/// Watches a detached run a previous pdtd started, whose processes are still alive: its log in the Output
+/// terminal, readiness, the port mapping and the outcome, as if this pdtd had started it. `def` (when the
+/// configuration still has the run) says whether it depends on the run's host.
+fn reattach(st: &AppState, run: Run, process: String, def: Option<RunDef>) {
+    let ctl = Arc::new(RunControl {
+        web_port: run.port,
+        uses_host: def.as_ref().is_some_and(uses_run_host),
+        process: std::sync::Mutex::new(Some(process.clone())),
+        ..Default::default()
+    });
+    let id = pty_id(&run.id, RunStep::Command);
+    st.ptys.remove(&id);
+    if let Err(e) = st.ptys.follow_log(&id, log_path(st, &run.id)) {
+        tracing::warn!(run = %run.id, error = %e, "could not follow a detached run's log");
+    }
+    let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
+    supervise(st, run, ctl, async move {
+        let rx = detached::watch(process, None);
+        if let Some(p) = ctl2.web_port {
+            crate::remote::map_run_port(&st2, p).await;
+        }
+        let ready = run2.state == RunState::Ready || run2.port.is_none();
+        watch_command(&st2, &ctl2, &run2, true, ready, Box::pin(async move { rx.await.ok().flatten() })).await
+    });
+}
+
+/// Registers `ctl` as the run's driver and runs `driver` in the background, recording its outcome.
+fn supervise(st: &AppState, run: Run, ctl: Arc<RunControl>, driver: impl Future<Output = Outcome> + Send + 'static) {
     st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).insert(run.id.clone(), ctl.clone());
     let st = st.clone();
     tokio::spawn(async move {
-        let (state, code, error) = drive(&st, &ctl, &run, &def).await;
+        let (state, code, error) = driver.await;
         // During shutdown the row stays active, so the next pdtd resumes it.
         if !st.shutting_down.load(Ordering::SeqCst)
             && let Err(e) = st.store.finish_run(&run.id, state, code, error.as_deref(), now_ms()).await
@@ -353,6 +488,10 @@ pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) -> boo
             for step in [RunStep::Setup, RunStep::Command] {
                 let _ = st.kill_pty(&pty_id(id, step)).await;
             }
+            let process = ctl.process.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if let Some(p) = process {
+                let _ = tokio::task::spawn_blocking(move || detached::terminate(&p)).await;
+            }
             let wait = async {
                 while !ctl.finished.load(Ordering::SeqCst) {
                     // Registered before the check, so a notification in between is not missed.
@@ -373,6 +512,10 @@ pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) -> boo
             if let Ok(Some(r)) = st.store.get_run(id).await
                 && r.state.is_active()
             {
+                // A detached command a previous pdtd started, not reattached yet.
+                if let Some(p) = r.process {
+                    let _ = tokio::task::spawn_blocking(move || detached::terminate(&p)).await;
+                }
                 let _ = st.store.finish_run(id, RunState::Stopped, None, reason.as_deref(), now_ms()).await;
             }
             true
@@ -380,9 +523,13 @@ pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) -> boo
     }
 }
 
-/// Restarts the runs a previous pdtd left active (spec §4.2 "Restarts"). Returns how many started. pdtd calls it
-/// after applying remote access (ruling F4), so links use the tailnet name; each run maps its port as it starts. A
-/// run that moves to another port leaves the old port's mapping alone: this process never made it.
+/// Restarts the runs a previous pdtd left active (spec §4.2 "Restarts"). Returns how many started (or, for a
+/// detached run still running, were reattached). pdtd calls it after applying remote access (ruling F4), so links
+/// use the tailnet name; each run maps its port as it starts. A run that moves to another port leaves the old port's
+/// mapping alone: this process never made it.
+///
+/// A detached run whose processes are still alive is reattached, never started again; one whose processes all
+/// exited while no pdtd was running is marked stopped (its exit code is unknown), and its log stays readable.
 pub async fn resume_runs(st: &AppState) -> usize {
     let _start = st.run_start_lock.lock().await;
     let Ok(active) = st.store.list_active_runs().await else { return 0 };
@@ -390,6 +537,29 @@ pub async fn resume_runs(st: &AppState) -> usize {
     for mut run in active {
         if st.shutting_down.load(Ordering::SeqCst) {
             break;
+        }
+        if let Some(process) = run.process.clone() {
+            let p = process.clone();
+            let alive = tokio::task::spawn_blocking(move || detached::alive(&p)).await.unwrap_or(false);
+            if alive {
+                if let Some(p) = run.port {
+                    let url = run_url(st, p);
+                    let _ = st.store.set_run_port(&run.id, Some(p), Some(&url)).await;
+                    run.url = Some(url);
+                }
+                let def = crate::runs::definition_for(st, &run).await.ok();
+                tracing::info!(run = %run.id, name = %run.name, "reattached a detached run that kept running");
+                reattach(st, run, process, def);
+                started += 1;
+            } else {
+                let msg = "the command exited while PDT was not running";
+                let _ = st.store.finish_run(&run.id, RunState::Stopped, None, Some(msg), now_ms()).await;
+                let id = pty_id(&run.id, RunStep::Command);
+                if st.ptys.follow_log(&id, log_path(st, &run.id)).is_ok() {
+                    st.ptys.end_log(&id, None);
+                }
+            }
+            continue;
         }
         let def = match crate::runs::definition_for(st, &run).await {
             Ok(d) => d,

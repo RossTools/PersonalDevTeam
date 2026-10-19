@@ -14,4 +14,9 @@ name: string, kind: RunKind, state: RunState, port: number | null, url: string |
 /**
  * Working directory, native separators.
  */
-cwd: string, exitCode: number | null, error: string | null, createdAt: number, updatedAt: number, };
+cwd: string, exitCode: number | null, error: string | null, 
+/**
+ * The command runs outside PDT's terminals (`detach = true`) and outlives pdtd restarts; its Output tab shows
+ * its log, read-only.
+ */
+detached: boolean, createdAt: number, updatedAt: number, };

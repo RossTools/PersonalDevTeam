@@ -1,6 +1,7 @@
 //! Process adapters: PTY terminals and the structured agent adapters (conversations).
 
 pub mod adapter;
+pub mod detached;
 pub mod hooks;
 pub mod launch;
 pub mod pty;
