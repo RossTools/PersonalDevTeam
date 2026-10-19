@@ -34,6 +34,9 @@ pub struct Config {
     /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
     /// (`update_disabled_reason`).
     pub supervised: bool,
+    /// `PDT_UPDATES_UNSUPPORTED`: why the pdt-host that started this pdtd cannot install updates (e.g. the app runs
+    /// from a read-only folder, PDT-51); updates are then off with that reason.
+    pub updates_unsupported: Option<String>,
     /// `PDT_SEED=demo`: fill an empty database with demo data at startup (dev instances only; `seed.rs`).
     pub seed: Option<Seed>,
 }
@@ -87,6 +90,7 @@ impl Config {
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
         let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
+        let updates_unsupported = lookup("PDT_UPDATES_UNSUPPORTED").map(|v| v.trim().to_string());
         let seed = match lookup("PDT_SEED").as_deref().map(str::trim) {
             None => None,
             Some("demo") => Some(Seed::Demo),
@@ -106,6 +110,7 @@ impl Config {
             claude_program,
             codex_program,
             supervised,
+            updates_unsupported,
             seed,
         })
     }
@@ -118,7 +123,7 @@ impl Config {
         } else if !self.supervised {
             Some(pdt_api::update::UNSUPERVISED_REASON.into())
         } else {
-            None
+            self.updates_unsupported.as_ref().map(|why| format!("pdt-host cannot install updates here: {why}"))
         }
     }
 
@@ -246,6 +251,12 @@ mod tests {
         let dev = Some(DEV_UPDATE_REASON);
         assert_eq!(reason(&[("PDT_PROFILE", "dev"), ("PDT_SUPERVISED", "1")]).as_deref(), dev);
         assert_eq!(reason(&[("PDT_PROFILE", "dev")]).as_deref(), dev);
+        assert_eq!(
+            reason(&[("PDT_SUPERVISED", "1"), ("PDT_UPDATES_UNSUPPORTED", "its folder cannot be written to")])
+                .as_deref(),
+            Some("pdt-host cannot install updates here: its folder cannot be written to")
+        );
+        assert_eq!(reason(&[("PDT_SUPERVISED", "1"), ("PDT_UPDATES_UNSUPPORTED", " ")]), None);
     }
 
     #[test]
