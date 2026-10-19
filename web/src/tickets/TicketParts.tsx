@@ -1,7 +1,7 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
 import { useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Clock, Link2, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Clock, GitPullRequest, Link2, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
   Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline,
@@ -367,6 +367,7 @@ function iconFor(e: TicketEvent) {
   if (e.kind === 'linked' || e.kind === 'unlinked') return <Link2 aria-hidden />;
   if (e.kind === 'waiting') return <Clock aria-hidden />;
   if (e.kind === 'overlap') return <TriangleAlert aria-hidden />;
+  if (e.kind === 'pr') return <GitPullRequest aria-hidden />;
   return undefined;
 }
 

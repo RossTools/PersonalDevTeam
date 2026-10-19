@@ -4,6 +4,7 @@ mod conversations;
 mod error;
 mod files;
 mod folders;
+mod github;
 mod host;
 mod host_guard;
 mod identity_guard;
@@ -30,6 +31,7 @@ pub use conversations::{
     IDLE_PARK, park_idle_conversations, recover_conversations, run_conversation_ticker, shutdown_conversations,
 };
 pub use error::ApiErrorBody;
+pub use github::{deliver_notices, refresh_prs};
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, apply_remote_access};

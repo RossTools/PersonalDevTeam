@@ -15,10 +15,12 @@ import { PriorityIcon, PRIORITIES, type Priority } from '../../common/PriorityIc
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { agentState } from '../../common/AgentState';
 import type { Project } from '../../api/gen/Project';
+import type { PullRequestStatus } from '../../api/gen/PullRequestStatus';
 import type { Ticket as FullTicket } from '../../api/gen/Ticket';
 import type { TicketSummary } from '../../api/gen/TicketSummary';
 import { BoardCard } from '../../tickets/Board';
 import { StartDialog } from '../../tickets/StartDialog';
+import { PrDetails } from '../../tickets/PullRequest';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -270,7 +272,14 @@ const card = (n: number, over: Partial<TicketSummary> = {}): TicketSummary => ({
   stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [],
   createdAt: NOW, updatedAt: NOW, closedAt: null, ...over,
 });
-const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null, workspaceId: null };
+const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null, workspaceId: null, pr: null };
+const galleryPr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
+  number: 12, url: 'https://github.com/o/r/pull/12', title: 'Board and Start', state: 'open', draft: false, baseBranch: 'main',
+  headSha: 'abc1234', mergeable: 'mergeable', behind: false, autoMerge: true, inMergeQueue: false, queuePosition: null,
+  ci: { state: 'running', url: 'https://github.com/o/r/actions/runs/1', runs: [] }, queueCi: null, checkedAt: NOW, ...over,
+});
+const failedCi = { state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2',
+  runs: [{ id: 2, attempt: 1, workflow: 'ci', state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2', failedJobs: ['test (linux)', 'web (linux)'] }] };
 const noMenu = () => [{ label: 'Open', onSelect: () => {} }, { label: 'Start…', onSelect: () => {} }];
 
 function Cards() {
@@ -301,6 +310,26 @@ function Cards() {
               activity={agentState({ kind: 'agent_tui', status: 'running', activity: 'needs_you', unseen: true })} onOpen={() => {}} entries={noMenu} draggable />
             <BoardCard ticket={card(46, { stage: 'in_progress', attempt: { ...attempt, branch: 'feat/no-agent' }, title: 'Its session ended' })} onOpen={() => {}} entries={noMenu} draggable />
           </ul>
+        </Demo>
+      </div>
+      <div className="flex flex-col gap-2 rounded-md bg-surface-2 p-2">
+        <Demo label="In progress · pull request: CI running, CI failed, conflict, in the merge queue, passed">
+          <ul className="flex flex-col gap-2">
+            <BoardCard ticket={card(51, { stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-51-ci-running', pr: galleryPr() }, title: 'CI running' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(52, { stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-52-ci-failed', pr: galleryPr({ number: 13, ci: failedCi }) }, title: 'CI failed' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(53, { stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-53-conflict', pr: galleryPr({ number: 14, mergeable: 'conflicting' }) }, title: 'Conflicts with main' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(54, { stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-54-queued', pr: galleryPr({ number: 15, inMergeQueue: true, queuePosition: 2, ci: { ...failedCi, state: 'passed', runs: [] } }) }, title: 'In the merge queue' })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(55, { stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-55-passed', pr: galleryPr({ number: 16, ci: { ...failedCi, state: 'passed', runs: [] } }) }, title: 'CI passed, auto-merge on' })} onOpen={() => {}} entries={noMenu} draggable />
+          </ul>
+        </Demo>
+        <Demo label="Pull request details (ticket Attempt section)">
+          <div className="flex flex-col gap-3 rounded-md bg-card p-2">
+            <PrDetails pr={galleryPr({ ci: failedCi, behind: true })} />
+            <PrDetails pr={galleryPr({ mergeable: 'conflicting', autoMerge: false, ci: null })} />
+            <PrDetails pr={galleryPr({ inMergeQueue: true, queuePosition: 1, ci: { ...failedCi, state: 'passed', runs: [] }, queueCi: { state: 'running', url: 'https://github.com/o/r/actions/runs/3', runs: [] } })} />
+            <PrDetails pr={galleryPr({ autoMerge: false, ci: { ...failedCi, state: 'passed', runs: [] }, queueCi: failedCi })} />
+            <PrDetails pr={galleryPr({ state: 'merged' })} />
+          </div>
         </Demo>
       </div>
       <div className="flex flex-col gap-2 rounded-md bg-surface-2 p-2">

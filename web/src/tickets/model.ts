@@ -2,6 +2,7 @@
 // and timeline wording.
 import type { LinkedTicket } from '../api/gen/LinkedTicket';
 import type { Priority } from '../api/gen/Priority';
+import type { NoticeKind } from '../api/gen/NoticeKind';
 import type { TicketEvent } from '../api/gen/TicketEvent';
 import type { TicketQuery } from '../api/gen/TicketQuery';
 import type { TicketSort } from '../api/gen/TicketSort';
@@ -170,6 +171,20 @@ interface OverlapData { files?: string[]; level?: string }
 const stageName = (s: string | undefined) => (s && s in STAGE_LABEL ? STAGE_LABEL[s as TicketStage] : s ?? '?');
 
 /** One line for a timeline entry ("Moved from Draft to Ready", "Linked: blocked by PDT-12"). */
+/** What a `pr` event records (crates/pdt-api/src/github.rs). */
+interface PrEventData { notice?: NoticeKind; pr?: number | null; jobs?: string[]; told?: boolean }
+
+const NOTICE_TITLE: Record<NoticeKind, string> = {
+  ci_failed: 'CI failed', conflict: 'Conflicts with the base branch', queue_left: 'Left the merge queue', merged: 'Merged',
+};
+
+function prEventTitle(d: PrEventData | null): string {
+  const what = d?.notice ? NOTICE_TITLE[d.notice] : 'Pull request';
+  const pr = d?.pr ? ` (PR #${d.pr})` : '';
+  const jobs = d?.jobs?.length ? `: ${d.jobs.join(', ')}` : '';
+  return `${what}${pr}${jobs}${d?.told ? ' · told the agent' : ' · no agent running to tell'}`;
+}
+
 export function eventTitle(e: TicketEvent): string {
   const data = (e.data ?? {}) as LinkData & MovedData & EditedData & WaitingData & OverlapData;
   switch (e.kind) {
@@ -193,6 +208,7 @@ export function eventTitle(e: TicketEvent): string {
       return `${what} ${data.key ?? 'a ticket'}${n > 0 ? `: ${n} shared file${n === 1 ? '' : 's'}` : ''}`;
     }
     case 'waiting': return data.waiting === false ? 'Stopped waiting' : 'Waiting until clear';
+    case 'pr': return prEventTitle(e.data as PrEventData | null);
   }
 }
 

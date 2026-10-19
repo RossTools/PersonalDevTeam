@@ -18,6 +18,7 @@ import { runAction } from '../common/useAction';
 import { canStart, patchTicket, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { useAllSessions, useTicketPages } from './queries';
 import { useClearToStartToasts } from './clearToStart';
+import { PrBadge } from './PullRequest';
 import { TicketBadges } from './TicketBadges';
 import { LabelChips } from './TicketParts';
 
@@ -105,6 +106,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
             <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
               {activity ? <AgentDot state={activity} /> : <GitBranch aria-hidden className="size-3 shrink-0" />}
               <span className="min-w-0 truncate font-mono" title={t.attempt.branch}>{t.attempt.branch}</span>
+              {t.attempt.pr && <PrBadge pr={t.attempt.pr} />}
             </span>
           )}
         </button>

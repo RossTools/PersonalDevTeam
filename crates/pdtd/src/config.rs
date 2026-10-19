@@ -21,6 +21,9 @@ pub struct Config {
     /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
     /// nothing, so they never reach the machine's Tailscale).
     pub tailscale_bin: Option<PathBuf>,
+    /// `PDT_GH_BIN`: the GitHub CLI to use instead of the detected one (tests point it at nothing, so they never
+    /// reach GitHub).
+    pub gh_bin: Option<PathBuf>,
     /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
     /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -79,6 +82,7 @@ impl Config {
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
         let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
+        let gh_bin = lookup("PDT_GH_BIN").map(PathBuf::from);
         let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
@@ -97,6 +101,7 @@ impl Config {
             owner_login,
             memory_secrets,
             tailscale_bin,
+            gh_bin,
             remote_https_port,
             claude_program,
             codex_program,

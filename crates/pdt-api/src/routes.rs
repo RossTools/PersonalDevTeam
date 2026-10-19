@@ -53,6 +53,11 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
+    /// The GitHub CLI for attempts' pull requests. `new` installs [`pdt_github::Unavailable`], which runs nothing;
+    /// only pdtd's production wiring installs the real CLI, so tests never reach GitHub.
+    pub github: std::sync::Arc<dyn pdt_github::GithubApi>,
+    /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
+    pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
     /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -127,6 +132,8 @@ impl AppState {
             listen_port: 0,
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
+            github: std::sync::Arc::new(pdt_github::Unavailable),
+            pr_watch: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),

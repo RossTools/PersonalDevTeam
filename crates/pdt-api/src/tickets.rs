@@ -32,6 +32,7 @@ pub(crate) async fn list(
     let mut page = st.store.query_tickets(&filter).await?;
     for t in page.items.iter_mut() {
         idx.apply_summary(t);
+        crate::github::apply_summary(&st, t);
     }
     Ok(Json(page))
 }

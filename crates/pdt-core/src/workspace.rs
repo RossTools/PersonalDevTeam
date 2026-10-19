@@ -20,6 +20,27 @@ pub struct Workspace {
     pub created_at: i64,
     /// In order.
     pub tabs: Vec<Tab>,
+    /// The ticket whose Start made this workspace (its newest attempt's), so the sidebar can list it apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ticket: Option<WorkspaceTicket>,
+}
+
+/// A ticket workspace's ticket: what its sidebar row shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceTicket {
+    pub id: String,
+    pub project_id: String,
+    /// `PDT-42`.
+    pub key: String,
+    pub title: String,
+    pub stage: crate::ticket::TicketStage,
+    pub attempt_id: String,
+    pub attempt_state: crate::ticket::AttemptState,
+    /// The attempt's pull request as pdtd last saw it (filled in by the API).
+    pub pr: Option<crate::pr::PullRequestStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
