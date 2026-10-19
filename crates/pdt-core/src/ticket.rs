@@ -214,6 +214,8 @@ pub struct AttemptSession {
     pub status: crate::session::SessionStatus,
     pub agent: Option<crate::session::AgentKind>,
     pub attempt_id: String,
+    /// A conversation or the agent's terminal (the ticket tab's Conversation shows conversations).
+    pub mode: crate::conversation::SessionMode,
 }
 
 /// A row of the backlog.

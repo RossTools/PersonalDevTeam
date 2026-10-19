@@ -49,13 +49,13 @@ const view = (onOpen = vi.fn()) =>
 const patches = (calls: Call[]) => calls.filter((c) => c.method === 'PATCH').map((c) => c.body);
 
 describe('ticket tab', () => {
-  it('shows the header, the Overview with description, activity, details and links, and disabled later tabs', async () => {
+  it('shows the header, the Overview with description, activity, details and links, and the later tabs', async () => {
     stub();
     view();
     expect(await screen.findByRole('heading', { name: /Fix login/ })).toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Stage' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: /Conversation/ })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: 'Conversation' })).toBeEnabled();
     expect(screen.getByRole('tab', { name: /Changes/ })).toHaveTextContent('Phase 6');
     expect(screen.getByText('open')).toBeInTheDocument();
     const activity = await screen.findByRole('list', { name: 'Activity' });

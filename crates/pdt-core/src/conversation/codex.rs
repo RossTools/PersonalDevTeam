@@ -867,9 +867,68 @@ pub fn user_input(text: &str, image_paths: &[String]) -> Value {
     Value::Array(items)
 }
 
+/// Follows a hidden side turn (Make ticket's draft): keeps the last agent message and says how the turn ended.
+#[derive(Debug, Default)]
+pub struct SideTurn {
+    last: Option<String>,
+}
+
+impl SideTurn {
+    /// Some once the turn is over: the last agent message, or why there is none.
+    pub fn on_notification(&mut self, method: &str, p: &Value) -> Option<Result<String, String>> {
+        match method {
+            "item/completed" if p.pointer("/item/type").and_then(Value::as_str) == Some("agentMessage") => {
+                self.last = p.pointer("/item/text").and_then(Value::as_str).map(String::from);
+                None
+            }
+            "turn/completed" => {
+                let turn = &p["turn"];
+                match turn.get("status").and_then(Value::as_str) {
+                    Some("interrupted") => Some(Err("the side request was interrupted".into())),
+                    Some("failed") => Some(Err(turn
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("the side request failed")
+                        .to_string())),
+                    _ => Some(self.last.take().ok_or_else(|| "Codex gave no answer".to_string())),
+                }
+            }
+            "error" if !p.get("willRetry").and_then(Value::as_bool).unwrap_or(false) => Some(Err(p
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Codex reported an error")
+                .to_string())),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_side_turn_answers_with_its_last_message() {
+        let mut t = SideTurn::default();
+        let msg = |text: &str| json!({"item": {"type": "agentMessage", "id": "i", "text": text}});
+        assert_eq!(t.on_notification("item/completed", &msg("first")), None);
+        assert_eq!(t.on_notification("item/completed", &json!({"item": {"type": "reasoning"}})), None);
+        assert_eq!(t.on_notification("item/completed", &msg("{\"title\":\"x\"}")), None);
+        assert_eq!(
+            t.on_notification("turn/completed", &json!({"turn": {"status": "completed"}})),
+            Some(Ok("{\"title\":\"x\"}".into()))
+        );
+        let mut empty = SideTurn::default();
+        assert!(matches!(empty.on_notification("turn/completed", &json!({"turn": {}})), Some(Err(_))));
+        let failed = json!({"turn": {"status": "failed", "error": {"message": "usage limit reached"}}});
+        assert_eq!(
+            SideTurn::default().on_notification("turn/completed", &failed),
+            Some(Err("usage limit reached".into()))
+        );
+        let retrying = json!({"error": {"message": "reconnecting"}, "willRetry": true});
+        assert_eq!(SideTurn::default().on_notification("error", &retrying), None);
+        assert!(matches!(SideTurn::default().on_notification("error", &json!({"error": {}})), Some(Err(_))));
+    }
 
     #[test]
     fn commands_map_to_their_rpcs_and_images_to_local_paths() {

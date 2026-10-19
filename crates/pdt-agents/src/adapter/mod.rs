@@ -112,7 +112,19 @@ pub trait AgentAdapter: Send + Sync {
     fn agent(&self) -> AgentKind;
     /// Starts or resumes the agent's conversation for a session; outputs arrive on `sink`.
     async fn open(&self, spec: OpenSpec, sink: EventSink) -> Result<Box<dyn LiveConversation>, AdapterError>;
+    /// A hidden one-turn side request (Make ticket, spec §10): forks the saved conversation, asks `prompt` with no
+    /// tools, saves nothing and returns the answer, shaped by the JSON Schema `schema` (an object, or text holding
+    /// one). The conversation itself is untouched. `spec.resume` and `spec.permission_mode` don't apply.
+    async fn draft(
+        &self,
+        spec: OpenSpec,
+        prompt: &str,
+        schema: &serde_json::Value,
+    ) -> Result<serde_json::Value, AdapterError>;
 }
+
+/// How long a side request may take.
+pub const DRAFT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[async_trait::async_trait]
 pub trait LiveConversation: Send + Sync {

@@ -47,7 +47,12 @@ async fn ticket(env: &Env, body: Value) -> String {
     v["id"].as_str().unwrap().to_string()
 }
 
+/// Starts a ticket; a terminal unless the body says (these tests read the agent's argv).
 async fn start(env: &Env, id: &str, body: Value) -> (StatusCode, Value) {
+    let mut body = body;
+    if body.get("sessionMode").is_none() && body.get("fromSession").is_none() {
+        body["sessionMode"] = json!("terminal");
+    }
     call(&env.app, "POST", &format!("/api/tickets/{id}/start"), Some(body)).await
 }
 

@@ -205,7 +205,7 @@ export const section = {
       </Demo>
       <Demo label="MessageList · a finished turn (collapsed) and a running one">
         <div className="flex h-96 flex-col rounded-lg border border-border">
-          <MessageList rows={sample} provisional={[]} streams={{}} turnRunning pending={[{ id: 'p', text: 'Then push it.', delivery: 'next', images: [] }]} onAnswer={async () => {}} />
+          <MessageList rows={sample} provisional={[]} streams={{}} turnRunning pending={[{ id: 'p', text: 'Then push it.', delivery: 'next', images: [], notice: false }]} onAnswer={async () => {}} />
         </div>
       </Demo>
       <Demo label="MessageList · a turn cut off by a restart (Continue)">

@@ -16,6 +16,7 @@ use pdt_agents::adapter::{
     AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, Outgoing, SessionChange,
 };
 use pdt_core::activity::{Activity, needs_attention};
+use pdt_core::conversation::draft::{DRAFT_PROMPT, TicketDraft, draft_schema};
 use pdt_core::conversation::{
     ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, ConversationServerMessage, ConversationState,
     Delivery, DeltaField, NoticeLevel, PendingMessage, PermissionMode, RequestState, SendMessage, SessionMode,
@@ -44,6 +45,8 @@ pub struct Conversations {
     generation: Arc<AtomicU64>,
     /// Parks a live process idle this long (tests shorten it).
     pub idle_park: Duration,
+    /// How long a conversation must be quiet before PDT sends a notice of its own (tests shorten it).
+    pub notice_quiet: Duration,
     /// PDT's `codex app-server`, made on first use.
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
 }
@@ -55,6 +58,7 @@ impl Default for Conversations {
             caps: Default::default(),
             generation: Arc::new(AtomicU64::new(1)),
             idle_park: IDLE_PARK,
+            notice_quiet: Duration::from_secs(20),
             codex: Default::default(),
         }
     }
@@ -121,6 +125,8 @@ struct ConvState {
     generation: u64,
     terminal_open: bool,
     billing: Option<String>,
+    /// A rate limit is hit until then (ms): nothing is sent on PDT's own (spec §14).
+    limited_until: Option<i64>,
 }
 
 impl ConvState {
@@ -229,6 +235,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             generation: 0,
             terminal_open: false,
             billing: None,
+            limited_until: None,
         }),
         activity_write: tokio::sync::Mutex::new(()),
         exits: tokio::sync::watch::channel(0).0,
@@ -417,14 +424,20 @@ async fn append(
     event: AgentEvent,
     raw: Option<&str>,
 ) {
-    // The agent echoes a message without PDT's attachment ids: the stored row names them, for the thumbnails.
+    // The agent echoes a message without PDT's attachment ids (the stored row names them, for the thumbnails) and
+    // without saying that PDT sent it on its own.
     let mut event = event;
     if let AgentEvent::UserMessage { text, images, source } = &mut event
         && *source != pdt_core::conversation::MessageSource::Terminal
     {
         let s = c.state();
-        if let Some(p) = pending_match(&s.pending, text).filter(|p| !p.images.is_empty()) {
-            *images = p.images.clone();
+        if let Some(p) = pending_match(&s.pending, text) {
+            if !p.images.is_empty() {
+                *images = p.images.clone();
+            }
+            if p.notice && p.text.trim() == text.trim() {
+                *source = pdt_core::conversation::MessageSource::Notice;
+            }
         }
     }
     let row = match st
@@ -463,6 +476,10 @@ async fn append(
             AgentEvent::Error { .. } => {
                 s.errored = true;
                 true
+            }
+            AgentEvent::Usage { rate_limits, .. } if !rate_limits.is_empty() => {
+                s.limited_until = pdt_core::conversation::limited_until(rate_limits, now_ms());
+                false
             }
             AgentEvent::UserMessage { text, source, .. }
                 if *source != pdt_core::conversation::MessageSource::Terminal =>
@@ -529,7 +546,7 @@ pub(crate) async fn start(st: &AppState, session: &Session, first: Option<String
     let c = conv(st, session).await?;
     ensure_live(st, &c, session).await?;
     if let Some(text) = first {
-        send_message(st, session, &text, &[], Delivery::Next).await?;
+        send_message(st, session, &text, &[], Delivery::Next, false).await?;
     }
     Ok(())
 }
@@ -540,6 +557,7 @@ async fn send_message(
     text: &str,
     image_ids: &[String],
     delivery: Delivery,
+    notice: bool,
 ) -> Result<PendingMessage, ApiError> {
     if !valid_message(text, image_ids.len()) {
         return Err(ApiError::new(
@@ -556,6 +574,7 @@ async fn send_message(
         text: text.to_string(),
         delivery,
         images: image_ids.to_vec(),
+        notice,
     };
     {
         let mut s = c.state();
@@ -573,6 +592,27 @@ async fn send_message(
         return Err(adapter_error(e));
     }
     Ok(pending)
+}
+
+/// Whether PDT may send a message of its own now (a PR notice, spec §14): no turn running, nothing asked or queued,
+/// no rate limit hit, its terminal not open beside it, and nothing happening for `notice_quiet`. A conversation not
+/// loaded since pdtd started is idle.
+pub(crate) fn ready_for_notice(st: &AppState, id: &str) -> bool {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else {
+        return true;
+    };
+    let s = c.state();
+    !s.turn_running
+        && s.open_requests.is_empty()
+        && s.pending.is_empty()
+        && !s.terminal_open
+        && s.limited_until.is_none_or(|t| t <= now_ms())
+        && s.last_active.elapsed() >= st.conversations.notice_quiet
+}
+
+/// Sends PDT's own message (a PR notice) as the next message; it shows as PDT's, not the user's.
+pub(crate) async fn send_notice(st: &AppState, session: &Session, text: &str) -> Result<(), ApiError> {
+    send_message(st, session, text, &[], Delivery::Next, true).await.map(|_| ())
 }
 
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
@@ -1116,7 +1156,7 @@ pub(crate) async fn post_message(
     let Json(body) = payload?;
     let session = conversation_session(&st, &id).await?;
     let images = body.images.unwrap_or_default();
-    let pending = send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default()).await?;
+    let pending = send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), false).await?;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }
 
@@ -1133,6 +1173,56 @@ pub(crate) async fn post_answer(
     live.answer(&request_id, &body.answer).await.map_err(adapter_error)?;
     c.state().last_active = Instant::now();
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/sessions/{id}/ticket-draft`: Make ticket's draft (spec §10). A hidden one-turn side request forks the
+/// saved conversation (Claude: `--fork-session --no-session-persistence`; Codex: an ephemeral `thread/fork`), asks
+/// for a title and description with no tools, and saves nothing; the conversation and its process are untouched.
+/// Only the user's click sends it, and nothing retries.
+pub(crate) async fn ticket_draft(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<TicketDraft>, ApiError> {
+    let session = conversation_session(&st, &id).await?;
+    let adapter = adapter_for(&st, session.agent).await?;
+    let creds = crate::sessions::credentials_for(&st, &session.project_id).await?;
+    let (program, saved) = match session.agent {
+        Some(AgentKind::Codex) => (st.platform.codex_program.clone(), session.external_session_id.is_some()),
+        _ => {
+            let on_disk = st
+                .platform
+                .claude_config_dir
+                .as_deref()
+                .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &session.id));
+            (st.platform.claude_program.clone(), on_disk && st.store.last_session_event_seq(&session.id).await? > 0)
+        }
+    };
+    if !saved {
+        return Err(conflict("nothing_to_draft", "the agent has no conversation to draft a ticket from yet"));
+    }
+    let spec = OpenSpec {
+        session_id: session.id.clone(),
+        external_id: session.external_session_id.clone(),
+        resume: true,
+        cwd: PathBuf::from(&session.cwd),
+        program,
+        search_path: st.platform.login_path.clone(),
+        model: session.model.clone(),
+        permission_mode: PermissionMode::Ask,
+        env: login_path_env(&st),
+        env_remove: scrubbed(creds),
+        // The fork carries the conversation as it is; the side request adds nothing to it.
+        instructions: None,
+    };
+    let answer = adapter.draft(spec, DRAFT_PROMPT, &draft_schema()).await.map_err(|e| match e {
+        AdapterError::Timeout => {
+            ApiError::new(StatusCode::GATEWAY_TIMEOUT, "draft_timeout", "the agent took too long to draft a ticket")
+        }
+        e => adapter_error(e),
+    })?;
+    TicketDraft::from_value(&answer).map(Json).ok_or_else(|| {
+        ApiError::new(StatusCode::BAD_GATEWAY, "agent_error", "the agent's answer was not a ticket draft")
+    })
 }
 
 /// `POST /api/sessions/{id}/interrupt`: stops the running turn (nothing to do when none runs).

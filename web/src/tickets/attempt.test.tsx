@@ -17,8 +17,8 @@ const attempt = (over: Partial<AttemptSummary> = {}): AttemptSummary => ({
 });
 
 const sessions = [
-  { id: 's1', title: 'Claude · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: 'a1' },
-  { id: 's0', title: 'Codex · ALP-1', status: 'finished' as const, agent: 'codex' as const, attemptId: 'a0' },
+  { id: 's1', title: 'Claude · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: 'a1', mode: 'terminal' as const },
+  { id: 's0', title: 'Codex · ALP-1', status: 'finished' as const, agent: 'codex' as const, attemptId: 'a0', mode: 'terminal' as const },
 ];
 
 const active = ticket(1, { title: 'Fix login', stage: 'in_progress', attempt: attempt(), attempts: [attempt()], sessions });
