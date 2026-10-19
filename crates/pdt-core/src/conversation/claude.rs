@@ -539,7 +539,8 @@ impl ClaudeMapper {
                 let trigger = str_field(v, "trigger").unwrap_or_else(|| "clear".into());
                 out.push(self.event(None, AgentEvent::ConversationReset { trigger }));
             }
-            "keep_alive" => {}
+            // A running tool's heartbeat; its row already shows it running.
+            "keep_alive" | "tool_progress" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
         out
@@ -603,9 +604,32 @@ impl ClaudeMapper {
                     out.push(MapOut::Init(ClaudeInit { permission_mode: Some(mode), ..ClaudeInit::default() }));
                 }
             }
+            // e.g. `gh pr create` or a push to a pull request's branch.
+            "code_change_published" => {
+                let action = str_field(v, "action").unwrap_or_else(|| "published".into());
+                let id = str_field(v, "identifier").unwrap_or_default();
+                let target = match str_field(v, "repo") {
+                    Some(repo) if !id.is_empty() => format!("{repo}#{id}"),
+                    Some(repo) => repo,
+                    None => str_field(v, "url").unwrap_or_else(|| format!("#{id}")),
+                };
+                let text = match action.as_str() {
+                    "pushed" => format!("Pushed to {target}"),
+                    "created" => format!("Created {target}"),
+                    other => format!("Code change {other}: {target}"),
+                };
+                out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
+            }
             // Progress Claude reports for its own bookkeeping; the tool calls carry what matters.
-            "task_started" | "task_progress" | "task_notification" | "hook_started" | "hook_response"
-            | "hook_progress" | "files_persisted" | "thinking_tokens" => {}
+            "task_started"
+            | "task_progress"
+            | "task_notification"
+            | "hook_started"
+            | "hook_response"
+            | "hook_progress"
+            | "files_persisted"
+            | "thinking_tokens"
+            | "background_tasks_changed" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
     }
@@ -1288,6 +1312,26 @@ not json"#,
         assert!(matches!(&ev[3].1, AgentEvent::Unknown { .. }));
         assert_eq!(ev.len(), 4);
         assert!(out.iter().any(|o| matches!(o, MapOut::Send(v) if v["response"]["subtype"] == "error")));
+    }
+
+    #[test]
+    fn progress_frames_are_quiet_and_a_published_change_is_a_notice() {
+        let mut m = ClaudeMapper::new();
+        let out = run(
+            &mut m,
+            r#"{"type":"tool_progress","elapsed_time_seconds":30,"heartbeat":true,"tool_name":"Bash","tool_use_id":"t1"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"Wait for CI","task_id":"b1","task_type":"local_bash"}]}
+{"type":"system","subtype":"code_change_published","action":"pushed","identifier":"69","provider":"github","repo":"o/r","url":"https://github.com/o/r/pull/69"}
+{"type":"system","subtype":"code_change_published","action":"merged","url":"https://example.com/x"}"#,
+        );
+        let texts: Vec<_> = events(&out)
+            .into_iter()
+            .map(|(_, e)| match e {
+                AgentEvent::Notice { text, .. } => text,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, ["Pushed to o/r#69", "Code change merged: https://example.com/x"]);
     }
 
     #[test]
