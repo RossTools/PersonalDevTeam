@@ -43,6 +43,7 @@ export * from './FilterBar';
 export * from './BulkActionBar';
 export * from './Timeline';
 export * from './TreeView';
+export * from './FolderPicker';
 export * from './ViewHeader';
 export * from './Page';
 

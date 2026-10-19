@@ -1,0 +1,94 @@
+name: bench
+# Times the CI work on several runners, cold then warm, to compare hosts (docs/superpowers/notes/runners.md).
+# On demand only: it spends minutes, and larger or third-party runners are paid per minute.
+#
+# Runner list, first one set wins: the `runners` input, the repo variable PDT_BENCH_RUNNERS, else the default below.
+# Format: [{"os":"linux|macos|windows","runner":"<runs-on label>"}, ...]. Namespace labels are
+# `namespace-profile-<name>` (give the profile a cache volume). Results: the `summary` job's run summary.
+on:
+  workflow_dispatch:
+    inputs:
+      runners:
+        description: 'JSON list of {"os": "linux|macos|windows", "runner": "<label>"}; empty for PDT_BENCH_RUNNERS or the default'
+        required: false
+        default: ""
+  # Lets a branch run it before bench.yml is on main (workflow_dispatch needs that).
+  push:
+    branches: ["bench/**"]
+
+concurrency:
+  group: bench-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      runners: ${{ steps.pick.outputs.runners }}
+    steps:
+      - id: pick
+        env:
+          INPUT: ${{ inputs.runners }}
+          VAR: ${{ vars.PDT_BENCH_RUNNERS }}
+        run: |
+          default='[{"os":"linux","runner":"ubuntu-latest"},{"os":"macos","runner":"macos-latest"},{"os":"macos","runner":"macos-latest-xlarge"},{"os":"windows","runner":"windows-latest"}]'
+          list="${INPUT:-${VAR:-$default}}"
+          echo "runners=$(printf '%s' "$list" | jq -c .)" >> "$GITHUB_OUTPUT"
+          printf '%s' "$list" | jq .
+
+  cold:
+    needs: plan
+    name: cold ${{ matrix.os }} ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.runners) }}
+    uses: ./.github/workflows/bench-job.yml
+    with:
+      os: ${{ matrix.os }}
+      runner: ${{ matrix.runner }}
+
+  warm:
+    needs: [plan, cold]
+    if: ${{ !cancelled() }}
+    name: warm ${{ matrix.os }} ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.runners) }}
+    uses: ./.github/workflows/bench-job.yml
+    with:
+      os: ${{ matrix.os }}
+      runner: ${{ matrix.runner }}
+
+  summary:
+    needs: [cold, warm]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Step times
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > jobs.json
+          python3 - jobs.json >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json, sys
+          from datetime import datetime
+          t = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
+          secs = lambda x: int((t(x["completed_at"]) - t(x["started_at"])).total_seconds())
+          keep = ["clippy", "nextest", "web test", "web build", "desktop clippy", "desktop test"]
+          print("| Job | Result | Total | " + " | ".join(keep) + " |")
+          print("|---|---|---|" + "---|" * len(keep))
+          for j in json.load(open(sys.argv[1]))["jobs"]:
+              if not j["name"].startswith(("cold", "warm")) or not j.get("completed_at"):
+                  continue
+              steps = {s["name"]: s for s in j["steps"] if s.get("started_at") and s.get("completed_at")}
+              cells = [f"{secs(steps[k])}s" if k in steps and steps[k]["conclusion"] != "skipped" else "" for k in keep]
+              name = j["name"].replace(" / bench", "")
+              print(f"| {name} | {j['conclusion']} | {secs(j) / 60:.1f} min | " + " | ".join(cells) + " |")
+          EOF
+          cat "$GITHUB_STEP_SUMMARY"

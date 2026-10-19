@@ -2,6 +2,7 @@ mod activity;
 mod checks;
 mod error;
 mod files;
+mod folders;
 mod host;
 mod host_guard;
 mod identity_guard;

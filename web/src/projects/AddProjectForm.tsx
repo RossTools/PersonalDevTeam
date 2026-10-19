@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Alert, Button, Field, Input, SegmentedControl } from '@ui';
 import { api } from '../api/client';
+import { FolderField } from '../common/FolderField';
 import type { Project } from '../api/gen/Project';
 
 type Mode = 'path' | 'clone';
@@ -20,7 +21,7 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
   const [repoPath, setRepoPath] = useState('');
   const [url, setUrl] = useState('');
   const [parentDir, setParentDir] = useState('');
-  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, enabled: mode === 'clone' });
+  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
   const done = (p: Project) => {
     setName('');
     setKey('');
@@ -52,7 +53,14 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
             <Input required autoFocus={autoFocus} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="Repository path">
-            <Input required mono value={repoPath} onChange={(e) => setRepoPath(e.target.value)} />
+            <FolderField
+              required
+              title="Choose the repository"
+              start={host.data?.projectsDir ?? ''}
+              value={repoPath}
+              onChange={setRepoPath}
+              onPick={(f) => { if (!name.trim()) setName(f.name); }}
+            />
           </Field>
         </>
       ) : (
@@ -61,7 +69,13 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
             <Input required autoFocus={autoFocus} mono placeholder="https://github.com/owner/repo" value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
           <Field label="Into folder">
-            <Input mono placeholder={host.data?.projectsDir ?? '~/work'} value={parentDir} onChange={(e) => setParentDir(e.target.value)} />
+            <FolderField
+              title="Clone into"
+              placeholder={host.data?.projectsDir ?? '~/work'}
+              start={host.data?.projectsDir ?? ''}
+              value={parentDir}
+              onChange={setParentDir}
+            />
           </Field>
           <Field label="Name">
             <Input placeholder="the repository's name" value={name} onChange={(e) => setName(e.target.value)} />

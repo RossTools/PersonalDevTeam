@@ -179,8 +179,9 @@ impl Store {
         Ok(true)
     }
 
-    /// Deletes a free-form workspace, moving its tabs to the end of their projects' workspaces.
-    pub async fn delete_workspace(&self, id: &str) -> Result<DeleteWorkspace, StoreError> {
+    /// Deletes a free-form workspace, moving its tabs to the end of their projects' workspaces, or closing them with
+    /// `close_tabs` (their sessions, runs and tickets stay).
+    pub async fn delete_workspace(&self, id: &str, close_tabs: bool) -> Result<DeleteWorkspace, StoreError> {
         let mut tx = self.pool.begin().await?;
         let row: Option<(Option<String>,)> =
             sqlx::query_as("SELECT project_id FROM workspaces WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
@@ -188,6 +189,9 @@ impl Store {
             None => return Ok(DeleteWorkspace::NotFound),
             Some((Some(_),)) => return Ok(DeleteWorkspace::ProjectWorkspace),
             Some((None,)) => {}
+        }
+        if close_tabs {
+            sqlx::query("DELETE FROM workspace_tabs WHERE workspace_id = ?").bind(id).execute(&mut *tx).await?;
         }
         let homes: Vec<(String, String)> = sqlx::query_as(
             "SELECT t.id, w.id FROM workspace_tabs t \
@@ -458,12 +462,19 @@ mod tests {
         }
         store.open_tab("ta", &home, &s("a"), None, 1).await.unwrap();
         store.open_tab("tb", "f", &s("b"), None, 1).await.unwrap();
-        assert_eq!(store.delete_workspace(&home).await.unwrap(), DeleteWorkspace::ProjectWorkspace);
-        assert_eq!(store.delete_workspace("nope").await.unwrap(), DeleteWorkspace::NotFound);
-        assert_eq!(store.delete_workspace("f").await.unwrap(), DeleteWorkspace::Deleted);
+        assert_eq!(store.delete_workspace(&home, false).await.unwrap(), DeleteWorkspace::ProjectWorkspace);
+        assert_eq!(store.delete_workspace("nope", false).await.unwrap(), DeleteWorkspace::NotFound);
+        assert_eq!(store.delete_workspace("f", false).await.unwrap(), DeleteWorkspace::Deleted);
         assert_eq!(tab_items(&ws(&store, &home).await), ["a", "b"]);
         let list = store.list_workspaces().await.unwrap();
         assert_eq!(list.iter().map(|w| (w.name.as_str(), w.position)).collect::<Vec<_>>(), [("G", 0), ("P", 1)]);
+
+        // Closing the tabs instead: they are gone, their sessions stay.
+        store.open_tab("tb2", "g", &s("b"), None, 2).await.unwrap();
+        assert_eq!(store.delete_workspace("g", true).await.unwrap(), DeleteWorkspace::Deleted);
+        assert_eq!(tab_items(&ws(&store, &home).await), ["a"]);
+        assert!(store.get_session("b").await.unwrap().is_some());
+        assert_eq!(store.list_workspaces().await.unwrap().len(), 1);
     }
 
     /// Applies migrations up to 0007, adds rows, then opens with 0008 and checks the seeded workspaces and tabs.

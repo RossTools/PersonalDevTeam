@@ -270,7 +270,7 @@ const card = (n: number, over: Partial<TicketSummary> = {}): TicketSummary => ({
   stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [],
   createdAt: NOW, updatedAt: NOW, closedAt: null, ...over,
 });
-const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null };
+const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null, workspaceId: null };
 const noMenu = () => [{ label: 'Open', onSelect: () => {} }, { label: 'Start…', onSelect: () => {} }];
 
 function Cards() {

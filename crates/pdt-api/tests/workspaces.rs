@@ -143,6 +143,15 @@ async fn free_form_workspaces_and_moving_tabs() {
     let list = workspaces(&app).await;
     assert_eq!(list.len(), 1);
     assert_eq!(tab_sessions(&list[0]), [a]);
+    // `closeTabs` closes them instead.
+    let (_, gone) = call(&app, "POST", "/api/workspaces", Some(json!({"name": "Gone"}))).await;
+    let gid = gone["id"].as_str().unwrap().to_string();
+    call(&app, "POST", &format!("/api/workspaces/{gid}/tabs"), Some(json!({"sessionId": a}))).await;
+    let (s, _) = call(&app, "DELETE", &format!("/api/workspaces/{gid}?closeTabs=true"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let list = workspaces(&app).await;
+    assert_eq!(list.len(), 1);
+    assert!(tab_sessions(&list[0]).is_empty());
     let (s, _) = call(&app, "PATCH", "/api/workspaces/nope", Some(json!({"name": "x"}))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     state.ptys.shutdown().await;
