@@ -69,6 +69,8 @@ pub struct AttemptInfo {
     pub project_id: String,
     pub repo_path: String,
     pub base_commit: String,
+    /// Merge detection has seen the branch hold commits that are not in its base (sticky).
+    pub own_commits: bool,
     /// None when the worktree record is gone.
     pub worktree_path: Option<String>,
 }
@@ -76,8 +78,9 @@ pub struct AttemptInfo {
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
                               a.ended_at, a.last_head, a.workspace_id FROM attempts a";
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
-                                   a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, t.project_id, \
-                                   COALESCE(p.key, '') AS pkey, t.number, p.repo_path, w.path AS worktree_path \
+                                   a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, a.own_commits, \
+                                   t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
+                                   w.path AS worktree_path \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
 
@@ -90,6 +93,7 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
         project_id: r.try_get("project_id")?,
         repo_path: r.try_get("repo_path")?,
         base_commit: r.try_get("base_commit")?,
+        own_commits: r.try_get::<i64, _>("own_commits")? != 0,
         worktree_path: r.try_get("worktree_path")?,
     })
 }
@@ -1116,10 +1120,12 @@ impl Store {
         Ok(Some(ticket_id))
     }
 
-    /// Remembers the attempt's branch head (merge detection).
-    pub async fn set_attempt_head(&self, id: &str, head: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE attempts SET last_head = ? WHERE id = ?")
+    /// Remembers the attempt's branch head (merge detection), and that the branch has commits of its own once
+    /// `own_commits` is true (never cleared).
+    pub async fn set_attempt_head(&self, id: &str, head: &str, own_commits: bool) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET last_head = ?, own_commits = MAX(own_commits, ?) WHERE id = ?")
             .bind(head)
+            .bind(own_commits)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1991,8 +1997,14 @@ mod tests {
         assert_eq!(info.worktree_path, None);
         assert_eq!(store.active_attempt("a").await.unwrap().map(|a| a.attempt.id), Some("at1".into()));
 
-        assert!(store.set_attempt_head("at1", "def").await.unwrap());
-        assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.last_head.as_deref(), Some("def"));
+        assert!(!info.own_commits);
+        assert!(store.set_attempt_head("at1", "def", false).await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert_eq!((info.attempt.last_head.as_deref(), info.own_commits), (Some("def"), false));
+        assert!(store.set_attempt_head("at1", "ghi", true).await.unwrap());
+        assert!(store.set_attempt_head("at1", "def", false).await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert_eq!((info.attempt.last_head.as_deref(), info.own_commits), (Some("def"), true), "own commits stick");
 
         // The workspace Start made is remembered, and forgotten when the workspace is deleted.
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
