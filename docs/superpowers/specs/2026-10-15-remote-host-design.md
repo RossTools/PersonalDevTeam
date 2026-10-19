@@ -67,6 +67,9 @@ is specific to PDT developing itself: self-hosting is one use of the generic fea
   - **macOS:** a per-user launchd agent (`~/Library/LaunchAgents`, `RunAtLoad` and `KeepAlive` on). It must be
     per-user: Claude Code and Codex keep their logins in the user's account (macOS Keychain), so PDT runs in the
     user's login session. The Mac mini logs in automatically after a reboot; hermes-agent already relies on this.
+    The agent runs `pdt-host` from the app bundle, never a copy: a login item whose program is rewritten after every
+    update is what malware hiding in a persistence item looks like, and endpoint security (SentinelOne) flags it
+    (PDT-40).
   - **Windows:** a per-user logon task.
   - **Registration:** installers register these.
 - **The tray app** becomes an optional view of the host: Open (default browser), status, Update, Quit. Its code
@@ -109,7 +112,8 @@ is specific to PDT developing itself: self-hosting is one use of the generic fea
 4. `pdt-host` starts the new `pdtd` and waits up to 60 s for `/api/health`. If that check fails, it reinstalls the
    previous version and starts it. The UI then shows "Update to v0.1.N failed and was rolled back", with the log.
 5. Sessions auto-resume (Phase 1 behaviour).
-6. If the release changes `pdt-host` itself, `pdt-host` replaces itself last and restarts.
+6. If the release changes `pdt-host` itself, `pdt-host` restarts last: on Windows it first replaces its copy in the
+   data folder; on macOS the new bundle already holds the new `pdt-host`.
 
 **Versions:** release builds report `0.1.<run>`. Local builds report `0.1.0-local` and never count as newer than a
 release.

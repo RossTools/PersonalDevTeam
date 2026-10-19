@@ -1,10 +1,12 @@
-//! Spec §3.4 step 6: when a release changes pdt-host itself, it replaces its own copy last and restarts.
+//! Spec §3.4 step 6: when a release changes pdt-host itself, it restarts last. On Windows it first replaces its own copy
+//! in the data folder; on macOS it runs from the bundle, which the update has already swapped.
 
 use sha2::Digest;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-fn sha(path: &Path) -> Option<String> {
+/// The SHA-256 of a file, if it can be read.
+pub fn digest(path: &Path) -> Option<String> {
     let mut f = std::fs::File::open(path).ok()?;
     let mut h = sha2::Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
@@ -20,7 +22,7 @@ fn sha(path: &Path) -> Option<String> {
 
 /// The bundled copy differs from the one running.
 pub fn needs_replace(running: &Path, bundled: &Path) -> bool {
-    match (sha(running), sha(bundled)) {
+    match (digest(running), digest(bundled)) {
         (Some(a), Some(b)) => a != b,
         _ => false,
     }
