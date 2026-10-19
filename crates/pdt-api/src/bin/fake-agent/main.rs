@@ -6,6 +6,8 @@
 //! - `exit` — writes to stderr and exits 3.
 //! - `env: NAME` — says whether NAME is set.
 //! - `who` — says the session id, whether it was resumed, its model and mode, and whether it got PDT's instructions.
+//! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
+//! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
 //!
 //! Started without `-p` (Claude's TUI, in a terminal) it reads lines and leaves on `/exit`.
@@ -173,7 +175,24 @@ impl Agent {
     fn turn(&mut self, v: Value) {
         let started = Instant::now();
         self.init();
+        let images: Vec<String> = v["message"]["content"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|b| b["type"] == "image" && b["source"]["data"].as_str().is_some_and(|d| !d.is_empty()))
+                    .map(|b| b["source"]["media_type"].as_str().unwrap_or("?").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if v["message"]["content"].as_str().map(str::trim) == Some("/local") {
+            self.say("local command output");
+            return self.result("success", started);
+        }
         self.replay(&v);
+        if !images.is_empty() {
+            self.say(&format!("saw {} images ({})", images.len(), images.join(", ")));
+            return self.result("success", started);
+        }
         let text = v["message"]["content"].as_str().map(String::from).unwrap_or_else(|| {
             v["message"]["content"]
                 .as_array()

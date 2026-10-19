@@ -376,6 +376,56 @@ async fn merges_are_detected_on_demand_and_by_the_loop() {
     env.state.ptys.shutdown().await;
 }
 
+/// PDT-45: Start branches from `origin/main` when it is ahead of the local main, and a branch that only caught up
+/// with main (fast-forwarded, no commits of its own) is not called merged; once it has its own work, a squash is.
+#[tokio::test]
+async fn a_branch_that_only_caught_up_with_main_is_not_merged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let upstream = tmp.path().join("upstream");
+    git(tmp.path(), &["clone", "-q", &env.repo.to_string_lossy(), &upstream.to_string_lossy()]);
+    git(&env.repo, &["remote", "add", "origin", &upstream.to_string_lossy()]);
+    let commit_upstream = |file: &str| {
+        std::fs::write(upstream.join(file), "up\n").unwrap();
+        git(&upstream, &["add", "-A"]);
+        git(&upstream, &["commit", "-q", "-m", file]);
+        pdt_git::rev_parse(&upstream, "HEAD").unwrap()
+    };
+    let ahead = commit_upstream("u1.txt");
+
+    let a = ticket(&env, json!({"title": "Catch up"})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    let wt = env.repo.join(".worktrees/pdt-PDT-1-catch-up");
+    assert_eq!(pdt_git::rev_parse(&wt, "HEAD"), Some(ahead), "the branch starts from origin/main, which was ahead");
+    assert_ne!(pdt_git::rev_parse(&env.repo, "main"), pdt_git::rev_parse(&wt, "HEAD"), "local main untouched");
+    let upstream_branch = std::process::Command::new("git")
+        .current_dir(&wt)
+        .args(["rev-parse", "--abbrev-ref", "@{upstream}"])
+        .output()
+        .unwrap();
+    assert!(!upstream_branch.status.success(), "the branch does not track origin/main");
+
+    // origin/main moves on and the branch fast-forwards to it: nothing of its own, so not merged.
+    commit_upstream("u2.txt");
+    git(&env.repo, &["fetch", "-q", "origin"]);
+    git(&wt, &["merge", "-q", "--ff-only", "origin/main"]);
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "active", "{t}");
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(get_ticket(&env, &a).await["attempts"][0]["state"], "active");
+
+    // Its own work, squash-merged into main: merged.
+    work_in(&env, "pdt-PDT-1-catch-up", "w.txt");
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "active");
+    git(&env.repo, &["merge", "-q", "--ff-only", "origin/main"]);
+    git(&env.repo, &["merge", "-q", "--squash", "pdt/PDT-1-catch-up"]);
+    git(&env.repo, &["commit", "-q", "-m", "squashed"]);
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "merged");
+    env.state.ptys.shutdown().await;
+}
+
 #[tokio::test]
 async fn closing_a_ticket_ends_its_attempt() {
     let tmp = tempfile::tempdir().unwrap();

@@ -4,8 +4,10 @@
 #[cfg(test)]
 use super::SessionInstructions;
 use super::{
-    AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, SessionChange,
+    AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
+    SessionChange,
 };
+use base64::Engine as _;
 use pdt_core::conversation::claude::{AnswerError, ClaudeMapper, MapOut, user_line};
 use pdt_core::conversation::{AgentCapabilities, AgentCommandInfo, AgentModel, Answer, Delivery, PermissionMode};
 use pdt_core::session::AgentKind;
@@ -80,7 +82,14 @@ pub fn capabilities_from_initialize(v: &Value, version: Option<String>) -> Agent
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|c| serde_json::from_value::<AgentCommandInfo>(c.clone()).ok()).collect())
         .unwrap_or_default();
-    AgentCapabilities { conversation: true, permission_modes: PermissionMode::ALL.to_vec(), models, commands, version }
+    AgentCapabilities {
+        conversation: true,
+        permission_modes: PermissionMode::ALL.to_vec(),
+        models,
+        commands,
+        terminal_commands: vec![],
+        version,
+    }
 }
 
 pub struct ClaudeAdapter;
@@ -95,6 +104,20 @@ struct Shared {
     pid: Option<u32>,
     sink: EventSink,
     version: Mutex<Option<String>>,
+    /// What `initialize` reported, completed by the TUI-only commands that each turn's `init` lists.
+    caps: Mutex<Option<AgentCapabilities>>,
+    terminal_commands: Mutex<Vec<String>>,
+}
+
+impl Shared {
+    /// Sends the capabilities once both halves may have arrived (in either order).
+    fn publish_caps(&self) {
+        let caps = self.caps.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(mut c) = caps {
+            c.terminal_commands = self.terminal_commands.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let _ = self.sink.send(AdapterOutput::Capabilities(c));
+        }
+    }
 }
 
 impl Shared {
@@ -112,6 +135,17 @@ impl Shared {
                 }
                 MapOut::Delta { item_id, field, text } => AdapterOutput::Delta { item_id, field, text },
                 MapOut::Init(i) => {
+                    if !i.terminal_commands.is_empty() {
+                        let changed = {
+                            let mut t = self.terminal_commands.lock().unwrap_or_else(|e| e.into_inner());
+                            let changed = *t != i.terminal_commands;
+                            *t = i.terminal_commands.clone();
+                            changed
+                        };
+                        if changed {
+                            self.publish_caps();
+                        }
+                    }
                     if i.version.is_some() {
                         *self.version.lock().unwrap_or_else(|e| e.into_inner()) = i.version.clone();
                     }
@@ -120,6 +154,7 @@ impl Shared {
                         permission_mode: i.permission_mode.as_deref().and_then(PermissionMode::from_claude),
                         version: i.version,
                         api_key_source: i.api_key_source,
+                        billing: None,
                     })
                 }
                 MapOut::Reply { request_id, result } => {
@@ -210,6 +245,8 @@ impl ClaudeLive {
             pid: child.id(),
             sink,
             version: Mutex::new(None),
+            caps: Mutex::new(None),
+            terminal_commands: Mutex::new(Vec::new()),
         });
 
         // Writer: one line per message; stdin closes when every sender is gone.
@@ -278,7 +315,9 @@ impl ClaudeLive {
             tokio::spawn(async move {
                 if let Ok(v) = shared.control("initialize", json!({})).await {
                     let version = shared.version.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    let _ = shared.sink.send(AdapterOutput::Capabilities(capabilities_from_initialize(&v, version)));
+                    *shared.caps.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(capabilities_from_initialize(&v, version));
+                    shared.publish_caps();
                 }
             });
         }
@@ -307,15 +346,25 @@ impl ClaudeLive {
 
 #[async_trait::async_trait]
 impl LiveConversation for ClaudeLive {
-    async fn send(&self, text: &str, delivery: Delivery) -> Result<(), AdapterError> {
+    async fn send(&self, msg: &Outgoing, delivery: Delivery) -> Result<(), AdapterError> {
         let now = delivery == Delivery::Now;
-        if now {
+        let mut images = Vec::new();
+        for img in &msg.images {
+            let bytes = tokio::fs::read(&img.path)
+                .await
+                .map_err(|e| AdapterError::Spawn(format!("reading an attached image: {e}")))?;
+            images.push((img.media_type.clone(), base64::engine::general_purpose::STANDARD.encode(bytes)));
+        }
+        {
             let mut m = self.shared.mapper.lock().unwrap_or_else(|e| e.into_inner());
-            if m.turn().is_some() {
+            if now && m.turn().is_some() {
                 m.note_interrupt();
             }
+            if msg.text.trim_start().starts_with('/') && images.is_empty() {
+                m.note_sent_command(&msg.text);
+            }
         }
-        self.shared.write(&user_line(&self.shared.session_id, text, now))
+        self.shared.write(&user_line(&self.shared.session_id, &msg.text, &images, now))
     }
 
     async fn answer(&self, request_id: &str, answer: &Answer) -> Result<(), AdapterError> {

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{call, git};
+use common::{PNG, call, call_raw, git};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
 use pdt_store::Store;
@@ -544,6 +544,73 @@ async fn an_old_claude_terminal_becomes_a_conversation() {
     let (s, v) = switch(&env, shell["id"].as_str().unwrap(), json!({"mode": "conversation"})).await;
     assert_eq!((s, v["code"].as_str()), (409, Some("switch_unsupported")));
     call(&env.app, "DELETE", &format!("/api/sessions/{}", shell["id"].as_str().unwrap()), None).await;
+}
+
+#[tokio::test]
+async fn images_are_attached_and_shown_on_the_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_conversation(&env, json!({})).await["id"].as_str().unwrap().to_string();
+    let up = format!("/api/sessions/{id}/attachments");
+    let (s, _, body) = call_raw(&env.app, "POST", &up, b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec()).await;
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((s.as_u16(), v["code"].as_str()), (400, Some("unsupported_image")));
+    let (s, _, body) = call_raw(&env.app, "POST", &up, PNG.to_vec()).await;
+    assert_eq!(s.as_u16(), 201);
+    let att: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(att["mediaType"], "image/png");
+    let aid = att["id"].as_str().unwrap().to_string();
+
+    let msg = format!("/api/sessions/{id}/messages");
+    let (s, v) =
+        call(&env.app, "POST", &msg, Some(json!({"text": "", "images": ["01a1546a-0000-0000-0000-000000000000"]})))
+            .await;
+    assert_eq!((s.as_u16(), v["code"].as_str()), (400, Some("unknown_attachment")));
+    let (s, v) = call(&env.app, "POST", &msg, Some(json!({"text": "", "images": [aid]}))).await;
+    assert_eq!(s.as_u16(), 202, "an image needs no text: {v}");
+    assert_eq!(v["images"], json!([aid]));
+    let all = wait_turns(&env, &id, 1).await;
+    assert_eq!(agent_text(&all), ["saw 1 images (image/png)"]);
+    let user = all.iter().find(|e| e["event"]["kind"] == "user_message").unwrap();
+    assert_eq!(user["event"]["images"], json!([aid]), "the row names the attachment, for its thumbnail");
+    let (s, ct, bytes) = call_raw(&env.app, "GET", &format!("{up}/{aid}"), vec![]).await;
+    assert_eq!((s.as_u16(), ct.as_deref(), bytes.as_slice()), (200, Some("image/png"), PNG));
+    let (s, _, _) = call_raw(&env.app, "GET", &format!("{up}/..%2F..%2Fpdt.db"), vec![]).await;
+    assert_eq!(s.as_u16(), 404);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn slash_commands_show_even_when_claude_does_not_echo_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_conversation(&env, json!({"initialPrompt": "/local"})).await["id"].as_str().unwrap().to_string();
+    let all = wait_turns(&env, &id, 1).await;
+    let kinds: Vec<&str> = all.iter().map(|e| e["event"]["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["turn", "user_message", "agent_message", "usage", "turn"], "{all:#?}");
+    assert_eq!(all[1]["event"]["text"], "/local");
+    // Nothing stays queued: the session goes idle.
+    wait_activity(&env, &id, "idle").await;
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn at_suggests_files_from_the_sessions_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(repo.join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(repo.join("README.md"), "hi").unwrap();
+    std::fs::write(repo.join(".gitignore"), "secret.txt\n").unwrap();
+    std::fs::write(repo.join("secret.txt"), "x").unwrap();
+    let id = new_conversation(&env, json!({})).await["id"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/files?q=main"), None).await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    assert_eq!(v, json!(["src/main.rs"]));
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/files?q="), None).await;
+    assert!(!v.as_array().unwrap().iter().any(|p| p == "secret.txt"), "ignored files stay out: {v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
 #[tokio::test]

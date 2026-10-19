@@ -2,7 +2,10 @@
 //! capability token (the real TUI can attach to it with `--remote`), one client connection multiplexing every thread,
 //! and a `CodexLive` per conversation. The frame mapping is pdt-core's `CodexMapper`.
 
-use super::{AdapterError, AdapterOutput, AgentAdapter, EventSink, LiveConversation, OpenSpec, SessionChange};
+use super::{
+    AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
+    SessionChange,
+};
 use futures_util::{SinkExt, StreamExt};
 use pdt_core::conversation::codex::{CodexMapper, CodexOut, codex_policy, sandbox_policy};
 use pdt_core::conversation::{
@@ -110,6 +113,7 @@ pub struct CodexServer {
     conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
     routes: Arc<Mutex<HashMap<String, Arc<Route>>>>,
     caps: Mutex<Option<AgentCapabilities>>,
+    billing: Mutex<Option<String>>,
 }
 
 fn random_token() -> String {
@@ -163,7 +167,8 @@ pub fn capabilities_from_models(v: &Value) -> AgentCapabilities {
         conversation: true,
         permission_modes: PermissionMode::ALL.to_vec(),
         models,
-        commands: vec![],
+        commands: pdt_core::conversation::codex::commands(),
+        terminal_commands: vec![],
         version: None,
     }
 }
@@ -186,7 +191,13 @@ fn emit(route: &Route, outs: Vec<CodexOut>, raw: Option<&str>, conn: &Conn) {
 
 impl CodexServer {
     pub fn new(config: CodexServerConfig) -> Arc<Self> {
-        Arc::new(Self { config, conn: Default::default(), routes: Default::default(), caps: Mutex::new(None) })
+        Arc::new(Self {
+            config,
+            conn: Default::default(),
+            routes: Default::default(),
+            caps: Mutex::new(None),
+            billing: Mutex::new(None),
+        })
     }
 
     /// The running server's endpoint, if it runs.
@@ -433,6 +444,10 @@ impl CodexServer {
         if let Ok(v) = conn.request("model/list", json!({})).await {
             *self.caps.lock().unwrap_or_else(|e| e.into_inner()) = Some(capabilities_from_models(&v));
         }
+        // Only the account's type is read (the composer says who pays); never its tokens.
+        if let Ok(v) = conn.request("account/read", json!({})).await {
+            *self.billing.lock().unwrap_or_else(|e| e.into_inner()) = pdt_core::conversation::codex::billing_label(&v);
+        }
         Ok(conn)
     }
 }
@@ -456,8 +471,9 @@ pub struct CodexLive {
     open: AtomicBool,
 }
 
-fn text_input(text: &str) -> Value {
-    json!([{"type": "text", "text": text}])
+fn input(msg: &Outgoing) -> Value {
+    let paths: Vec<String> = msg.images.iter().map(|i| i.path.to_string_lossy().into_owned()).collect();
+    pdt_core::conversation::codex::user_input(&msg.text, &paths)
 }
 
 #[async_trait::async_trait]
@@ -470,6 +486,10 @@ impl AgentAdapter for CodexAdapter {
         let conn = self.server.ensure().await?;
         if let Some(caps) = self.server.capabilities() {
             let _ = sink.send(AdapterOutput::Capabilities(caps));
+        }
+        let billing = self.server.billing.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if billing.is_some() {
+            let _ = sink.send(AdapterOutput::Info(AgentInfo { billing, ..AgentInfo::default() }));
         }
         let (approval, sandbox) = codex_policy(spec.permission_mode);
         // Null leaves Codex's own (the user's config).
@@ -547,10 +567,10 @@ impl CodexLive {
         self.route.mapper.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    async fn start_turn(&self, text: &str) -> Result<(), AdapterError> {
+    async fn start_turn(&self, msg: &Outgoing) -> Result<(), AdapterError> {
         let s = self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let (approval, sandbox) = codex_policy(s.mode);
-        let mut params = json!({"threadId": self.thread, "input": text_input(text), "approvalPolicy": approval,
+        let mut params = json!({"threadId": self.thread, "input": input(msg), "approvalPolicy": approval,
                                 "sandboxPolicy": sandbox_policy(sandbox)});
         if let Some(m) = s.model {
             params["model"] = json!(m);
@@ -567,18 +587,37 @@ impl CodexLive {
 
 #[async_trait::async_trait]
 impl LiveConversation for CodexLive {
-    async fn send(&self, text: &str, delivery: Delivery) -> Result<(), AdapterError> {
+    async fn send(&self, msg: &Outgoing, delivery: Delivery) -> Result<(), AdapterError> {
+        // `/compact` and `/review` go to their RPCs; the conversation shows the command as sent.
+        if let Some((method, mut params)) =
+            pdt_core::conversation::codex::slash_command(&msg.text).filter(|_| msg.images.is_empty())
+        {
+            params["threadId"] = json!(self.thread);
+            // Shown first: the command's turn may start before the request returns.
+            let _ = self.route.sink.send(AdapterOutput::Event {
+                item_id: Some(format!("u:cmd-{}", uuid::Uuid::now_v7())),
+                turn_id: None,
+                event: AgentEvent::UserMessage {
+                    text: msg.text.trim().to_string(),
+                    images: vec![],
+                    source: pdt_core::conversation::MessageSource::Pdt,
+                },
+                raw: None,
+            });
+            self.conn.request(method, params).await?;
+            return Ok(());
+        }
         let running = self.mapper().turn().map(String::from);
         match (running, delivery) {
             (Some(turn), Delivery::Next) => {
                 self.mapper().note_sent();
-                let params = json!({"threadId": self.thread, "expectedTurnId": turn, "input": text_input(text)});
+                let params = json!({"threadId": self.thread, "expectedTurnId": turn, "input": input(msg)});
                 match self.conn.request("turn/steer", params).await {
                     Ok(_) => Ok(()),
                     // The turn ended meanwhile: run it as a new turn.
                     Err(AdapterError::Refused(_)) => {
                         self.mapper().note_unsent();
-                        self.start_turn(text).await
+                        self.start_turn(msg).await
                     }
                     Err(e) => Err(e),
                 }
@@ -586,9 +625,9 @@ impl LiveConversation for CodexLive {
             (Some(turn), Delivery::Now) => {
                 self.mapper().note_interrupt();
                 let _ = self.conn.request("turn/interrupt", json!({"threadId": self.thread, "turnId": turn})).await;
-                self.start_turn(text).await
+                self.start_turn(msg).await
             }
-            (None, _) => self.start_turn(text).await,
+            (None, _) => self.start_turn(msg).await,
         }
     }
 
@@ -601,7 +640,7 @@ impl LiveConversation for CodexLive {
         emit(&self.route, a.events, None, &self.conn);
         if let Some(note) = a.follow_up {
             // Codex's decline has no message: the note goes to it as the next message.
-            self.send(&note, Delivery::Next).await?;
+            self.send(&Outgoing { text: note, images: vec![] }, Delivery::Next).await?;
         }
         Ok(())
     }

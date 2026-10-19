@@ -1,4 +1,5 @@
 mod activity;
+mod attachments;
 mod checks;
 mod conversations;
 mod error;

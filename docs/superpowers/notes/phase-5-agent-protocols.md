@@ -66,6 +66,13 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   `result`: a turn ends at the next real prompt, at `[Request interrupted by user]`, or (TUI turns) at
   `system/turn_duration {durationMs}`. Local commands appear as `<command-name>/x</command-name>…<command-args>` and
   `<local-command-stdout>…`. [V]
+- **Slash commands in `-p` (checked 2026-10-19)**: a custom command (`.claude/commands/hi.md`) is replayed as
+  `<command-message>hi</command-message>\n<command-name>/hi</command-name>` (plus `<command-args>`); a local one
+  (`/context`) is not replayed at all: an `assistant` message and a `result` follow. [V]
+- **Codex schema (codex-cli 0.163.0, `codex app-server generate-json-schema`)**: `thread/compact/start {threadId}` → `{}`;
+  `review/start {threadId, target: {type: uncommittedChanges} | {type: baseBranch, branch} | {type: commit, sha} |
+  {type: custom, instructions}, delivery?}`; `turn/start` input items include `{type: localImage, path}`;
+  `account/read` → `{account: {type: apiKey} | {type: chatgpt, email, planType} | {type: amazonBedrock}}`. [D]
 - **The TUI leaves on a typed `/exit`** (written, then Enter 150 ms later so it isn't read as a paste): a fresh TUI in
   a trusted folder exited 0 about 1 s after Enter. [V]
 - Windows `claude -p`: not checked by hand (no Windows machine here). The adapter pipes stdio with no PTY, through

@@ -313,6 +313,14 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/interrupt", axum::routing::post(crate::conversations::post_interrupt))
         .route("/sessions/{id}/mode", axum::routing::post(crate::conversations::switch_mode))
         .route(
+            "/sessions/{id}/attachments",
+            axum::routing::post(crate::attachments::upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route("/sessions/{id}/attachments/{attachment_id}", get(crate::attachments::get))
+        .route("/sessions/{id}/files", get(crate::attachments::files))
+        .route(
             "/sessions/{id}/terminal",
             axum::routing::post(crate::conversations::open_terminal).delete(crate::conversations::close_terminal),
         )

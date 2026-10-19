@@ -12,7 +12,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::claude::ClaudeAdapter;
 use pdt_agents::adapter::codex::{CodexAdapter, CodexServer, CodexServerConfig, TOKEN_ENV};
-use pdt_agents::adapter::{AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, SessionChange};
+use pdt_agents::adapter::{
+    AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, Outgoing, SessionChange,
+};
 use pdt_core::activity::{Activity, needs_attention};
 use pdt_core::conversation::{
     ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, ConversationServerMessage, ConversationState,
@@ -118,6 +120,7 @@ struct ConvState {
     activity: Option<Activity>,
     generation: u64,
     terminal_open: bool,
+    billing: Option<String>,
 }
 
 impl ConvState {
@@ -132,6 +135,7 @@ impl ConvState {
             stopped: self.stopped.clone(),
             agent_version: self.agent_version.clone(),
             terminal_open: self.terminal_open,
+            billing: self.billing.clone(),
         }
     }
 
@@ -224,6 +228,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             activity: session.activity,
             generation: 0,
             terminal_open: false,
+            billing: None,
         }),
         activity_write: tokio::sync::Mutex::new(()),
         exits: tokio::sync::watch::channel(0).0,
@@ -331,6 +336,15 @@ async fn pump(
                     if info.version.is_some() {
                         s.agent_version = info.version.clone();
                     }
+                    // Claude says how it bills each turn; Codex once, from its account.
+                    let billing = info.billing.clone().or_else(|| {
+                        info.api_key_source
+                            .as_deref()
+                            .map(|k| if k == "none" { "Claude plan" } else { "API key" }.to_string())
+                    });
+                    if billing.is_some() {
+                        s.billing = billing;
+                    }
                     match info.permission_mode {
                         Some(m) if m != s.permission_mode => {
                             s.permission_mode = m;
@@ -403,6 +417,16 @@ async fn append(
     event: AgentEvent,
     raw: Option<&str>,
 ) {
+    // The agent echoes a message without PDT's attachment ids: the stored row names them, for the thumbnails.
+    let mut event = event;
+    if let AgentEvent::UserMessage { text, images, source } = &mut event
+        && *source != pdt_core::conversation::MessageSource::Terminal
+    {
+        let s = c.state();
+        if let Some(p) = pending_match(&s.pending, text).filter(|p| !p.images.is_empty()) {
+            *images = p.images.clone();
+        }
+    }
     let row = match st
         .store
         .upsert_session_event(&c.id, NewEvent { ts: now_ms(), item_id, turn_id, event: &event, raw })
@@ -444,14 +468,8 @@ async fn append(
                 if *source != pdt_core::conversation::MessageSource::Terminal =>
             {
                 // The agent took a message: it is no longer pending.
-                match s.pending.iter().position(|p| p.text.trim() == text.trim()) {
-                    Some(i) => {
-                        s.pending.remove(i);
-                    }
-                    None if !s.pending.is_empty() => {
-                        s.pending.remove(0);
-                    }
-                    None => {}
+                if let Some(i) = pending_index(&s.pending, text) {
+                    s.pending.remove(i);
                 }
                 true
             }
@@ -463,6 +481,15 @@ async fn append(
         c.push_state();
         refresh_activity(st, c).await;
     }
+}
+
+/// The pending message an echoed one is: the same text, else the oldest.
+fn pending_index(pending: &[PendingMessage], text: &str) -> Option<usize> {
+    pending.iter().position(|p| p.text.trim() == text.trim()).or((!pending.is_empty()).then_some(0))
+}
+
+fn pending_match<'a>(pending: &'a [PendingMessage], text: &str) -> Option<&'a PendingMessage> {
+    pending_index(pending, text).map(|i| &pending[i])
 }
 
 /// Recomputes the session's activity and records it when it changed (with attention when it now needs the user).
@@ -502,7 +529,7 @@ pub(crate) async fn start(st: &AppState, session: &Session, first: Option<String
     let c = conv(st, session).await?;
     ensure_live(st, &c, session).await?;
     if let Some(text) = first {
-        send_message(st, session, &text, Delivery::Next).await?;
+        send_message(st, session, &text, &[], Delivery::Next).await?;
     }
     Ok(())
 }
@@ -511,18 +538,25 @@ async fn send_message(
     st: &AppState,
     session: &Session,
     text: &str,
+    image_ids: &[String],
     delivery: Delivery,
 ) -> Result<PendingMessage, ApiError> {
-    if !valid_message(text) {
+    if !valid_message(text, image_ids.len()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_message",
-            "a message must not be blank or over 64 KB",
+            "a message must have text or an image, and not be over 64 KB",
         ));
     }
+    let images = crate::attachments::resolve(st, &session.id, image_ids)?;
     let c = conv(st, session).await?;
     let live = ensure_live(st, &c, session).await?;
-    let pending = PendingMessage { id: uuid::Uuid::now_v7().to_string(), text: text.to_string(), delivery };
+    let pending = PendingMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        text: text.to_string(),
+        delivery,
+        images: image_ids.to_vec(),
+    };
     {
         let mut s = c.state();
         s.pending.push(pending.clone());
@@ -532,7 +566,7 @@ async fn send_message(
     }
     c.push_state();
     refresh_activity(st, &c).await;
-    if let Err(e) = live.send(text, delivery).await {
+    if let Err(e) = live.send(&Outgoing { text: text.to_string(), images }, delivery).await {
         c.state().pending.retain(|p| p.id != pending.id);
         c.push_state();
         refresh_activity(st, &c).await;
@@ -1077,7 +1111,8 @@ pub(crate) async fn post_message(
 ) -> Result<(StatusCode, Json<PendingMessage>), ApiError> {
     let Json(body) = payload?;
     let session = conversation_session(&st, &id).await?;
-    let pending = send_message(&st, &session, &body.text, body.delivery.unwrap_or_default()).await?;
+    let images = body.images.unwrap_or_default();
+    let pending = send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default()).await?;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }
 
