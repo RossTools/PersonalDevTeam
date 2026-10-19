@@ -81,6 +81,39 @@ describe('ApprovalCard', () => {
     expect(onAnswer).toHaveBeenCalledWith({ type: 'question', answers: { 'Which database?': ['Postgres'], 'Which extras?': ['FTS', 'JSON'] } });
   });
 
+  it('takes an answer in the user’s own words', async () => {
+    const onAnswer = vi.fn();
+    render(
+      <ApprovalCard
+        kind="question"
+        title="Claude asks"
+        questions={[{ question: 'Which word?', options: [{ label: 'apple', description: 'A fruit' }, { label: 'pear' }] }]}
+        onAnswer={onAnswer}
+      />,
+    );
+    expect(screen.getByText('A fruit')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'apple' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Other…' }));
+    expect(screen.getByRole('button', { name: 'apple' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Your answer' }), ' plum {Enter}');
+    expect(onAnswer).toHaveBeenCalledWith({ type: 'question', answers: { 'Which word?': ['plum'] } });
+  });
+
+  it('approves a plan into Accept edits when offered', async () => {
+    const onAnswer = vi.fn();
+    render(<ApprovalCard kind="plan" title="Approve this plan?" plan={<p>1. Do it</p>} planAcceptEdits onAnswer={onAnswer} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve, accept edits' }));
+    expect(onAnswer).toHaveBeenLastCalledWith({ type: 'plan', approve: true, mode: 'accept_edits' });
+    await userEvent.click(screen.getByRole('button', { name: 'Approve, ask before edits' }));
+    expect(onAnswer).toHaveBeenLastCalledWith({ type: 'plan', approve: true });
+  });
+
+  it('shows a preview of the change', () => {
+    render(<ApprovalCard title="Edit this file?" subject="a.rs" preview={<p>the diff</p>} onAnswer={() => {}} />);
+    expect(screen.getByRole('region', { name: 'Edit this file?' })).toHaveTextContent('the diff');
+  });
+
   it('approves a plan or keeps planning with feedback', async () => {
     const onAnswer = vi.fn();
     render(<ApprovalCard kind="plan" title="Approve this plan?" plan={<p>1. Do it</p>} onAnswer={onAnswer} />);

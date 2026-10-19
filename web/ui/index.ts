@@ -54,3 +54,6 @@ export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './t
 export * from './MessageBubble';
 export * from './ToolCallRow';
 export * from './ApprovalCard';
+export * from './DiffViewer';
+export * from './ImageThumb';
+export * from './SuggestionList';

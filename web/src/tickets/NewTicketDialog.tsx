@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, SegmentedControl, Select, Textarea } from '@ui';
+import { Alert, Button, Dialog, Field, Input, SegmentedControl, Select, Textarea, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { Project } from '../api/gen/Project';
@@ -39,8 +39,32 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const known = useLabels(projectId);
   const ready = !!projectId && !!title.trim();
+  const confirm = useConfirm();
+  // Anything typed or chosen (a title from quick add counts: that row clears when the form opens).
+  const edited = !!title.trim() || !!description.trim() || stage !== 'draft' || priority !== 'none' || labels.length > 0 || areas.length > 0;
+
+  /** Cancel, Escape, the close button or a click outside: asks first when closing would lose what was typed. */
+  const requestClose = async () => {
+    if (edited) {
+      const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const { ok } = await confirm({
+        title: 'Discard this ticket?',
+        body: 'What you typed in the new ticket form is lost.',
+        action: 'Discard',
+        cancel: 'Keep editing',
+        danger: true,
+      });
+      if (!ok) {
+        // The question opens outside the form's dialog, so focus doesn't come back to the form by itself.
+        requestAnimationFrame(() => (back && back !== document.body ? back : titleRef.current)?.focus());
+        return;
+      }
+    }
+    onClose();
+  };
 
   const submit = async () => {
     if (!ready || pending) return;
@@ -69,12 +93,12 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
   return (
     <Dialog
       open
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => { if (!o) void requestClose(); }}
       title="New ticket"
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={() => void requestClose()}>Cancel</Button>
           <Button type="submit" form="new-ticket" variant="primary" pending={pending} disabled={!ready}>Create ticket</Button>
         </>
       }
@@ -92,7 +116,7 @@ export function NewTicketDialog({ projects, projectId: initialProject, title: in
             </Field>
           )}
           <Field label="Title">
-            <Input autoFocus value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing" />
+            <Input ref={titleRef} autoFocus value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing" />
           </Field>
         </div>
         <div className="flex flex-col gap-1.5">

@@ -1,6 +1,21 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown } from 'lucide-react';
-import { Alert, ApprovalCard, Button, MessageBubble, Spinner, ToolCallRow, ToolOutput, type ApprovalAnswer } from '@ui';
+import {
+  Alert,
+  ApprovalCard,
+  Button,
+  Dialog,
+  DiffStat,
+  ImageThumb,
+  DiffViewer,
+  diffStats,
+  MessageBubble,
+  parseDiff,
+  Spinner,
+  ToolCallRow,
+  ToolOutput,
+  type ApprovalAnswer,
+} from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
@@ -20,9 +35,43 @@ export interface MessageListProps {
   pending: PendingMessage[];
   /** Answers an open request (`request` event `id`). */
   onAnswer: (requestId: string, answer: ApprovalAnswer) => Promise<unknown>;
+  /** Where a message's attached image is served (by attachment id). */
+  imageUrl?: (attachmentId: string) => string;
+  /** Which agent: Claude's plans can be approved straight into Accept edits. */
+  agent?: 'claude' | 'codex';
+  /** Offered under the last turn when it was interrupted (a restart, a crash, Stop): picks up where it left off. */
+  onContinue?: () => Promise<unknown>;
   /** Shown when there is nothing yet. */
   empty?: ReactNode;
   className?: string;
+}
+
+/** What rows need from the whole conversation, without threading it through every block. */
+interface ListContext {
+  /** Each turn's diff, by turn id. */
+  turnDiffs: Map<string, string>;
+  /** The item id of the last ended turn, when it may be continued. */
+  continueTurn: string | null;
+  onContinue?: () => Promise<unknown>;
+  agent: 'claude' | 'codex';
+  imageUrl?: (attachmentId: string) => string;
+}
+const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude' });
+
+/** PDT's attachment ids are UUIDs; anything else is the agent's own note ("image/png") with nothing to show. */
+const isAttachment = (s: string) => /^[0-9a-f-]{36}$/i.test(s);
+
+function Images({ images }: { images: string[] }) {
+  const { imageUrl } = useContext(ListCtx);
+  if (!images.length) return null;
+  return (
+    <>
+      {images.map((img, i) => {
+        const src = isAttachment(img) && imageUrl ? imageUrl(img) : undefined;
+        return <ImageThumb key={`${img}-${i}`} src={src} href={src} alt={`Image ${i + 1}`} />;
+      })}
+    </>
+  );
 }
 
 /** Offscreen rows skip layout and paint, so a long history stays cheap without a virtualiser. */
@@ -69,8 +118,17 @@ function WorkingRow({ rows }: { rows: ConversationEvent[] }) {
 function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
   const ev = node.row.event as Ev<'tool_call'>;
   const output = (node.row.itemId && streams[node.row.itemId]?.output) || ev.output;
-  const input = inputText(ev.tool, ev.input);
-  const meta = ev.exitCode != null && ev.exitCode !== 0 ? `exit ${ev.exitCode}` : undefined;
+  // A file change shows its diff instead of the raw input, and its output only when it failed.
+  const diff = ev.diff || null;
+  const input = diff ? '' : inputText(ev.tool, ev.input);
+  const shownOutput = diff && ev.status !== 'failed' ? '' : output;
+  const stats = diff ? diffStats(diff) : null;
+  const meta =
+    ev.exitCode != null && ev.exitCode !== 0
+      ? `exit ${ev.exitCode}`
+      : stats && ev.status === 'done'
+        ? <DiffStat added={stats.added} removed={stats.removed} />
+        : undefined;
   return (
     <ToolCallRow
       verb={toolVerb(ev.tool)}
@@ -78,11 +136,11 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
       status={ev.status}
       meta={meta}
       details={
-        input || output || ev.diff ? (
+        input || shownOutput || diff ? (
           <>
             {input && <ToolOutput label="Input">{input}</ToolOutput>}
-            {ev.diff && <ToolOutput label="Diff">{ev.diff}</ToolOutput>}
-            {output && <ToolOutput label="Output" tone={ev.status === 'failed' ? 'error' : 'default'}>{output}</ToolOutput>}
+            {diff && <DiffViewer diff={diff} hideHeaders={!!ev.title && parseDiff(diff).length === 1} className="max-h-96 overflow-auto" />}
+            {shownOutput && <ToolOutput label="Output" tone={ev.status === 'failed' ? 'error' : 'default'}>{shownOutput}</ToolOutput>}
           </>
         ) : undefined
       }
@@ -110,13 +168,16 @@ function resolvedText(ev: Ev<'request'>): string {
 }
 
 function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: boolean; onAnswer: MessageListProps['onAnswer'] }) {
+  const { agent } = useContext(ListCtx);
   if (ev.state === 'open') {
     const plan = ev.requestKind === 'plan' ? planOf(ev.input) : null;
     return (
       <ApprovalCard
         kind={ev.requestKind}
         title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : approvalTitle(ev.tool)}
-        subject={ev.requestKind === 'approval' ? ev.title || undefined : undefined}
+        subject={ev.requestKind === 'approval' && !ev.diff ? ev.title || undefined : undefined}
+        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : undefined}
+        planAcceptEdits={agent === 'claude'}
         description={ev.description}
         canAlways={ev.canAlways}
         questions={ev.requestKind === 'question' ? questionsOf(ev.input) : undefined}
@@ -140,7 +201,41 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
   );
 }
 
-function TurnFooter({ ev }: { ev: Ev<'turn'> }) {
+function ChangesButton({ diff }: { diff: string }) {
+  const [open, setOpen] = useState(false);
+  const stats = diffStats(diff);
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)} className="h-auto px-1.5 py-0.5 text-meta">
+        Changes <DiffStat added={stats.added} removed={stats.removed} />
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen} title="Changes in this turn" size="lg">
+        <DiffViewer diff={diff} />
+      </Dialog>
+    </>
+  );
+}
+
+function ContinueButton({ onContinue }: { onContinue: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try {
+      await onContinue();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button variant="secondary" size="sm" pending={busy} disabled={busy} onClick={() => void go()}>
+      Continue
+    </Button>
+  );
+}
+
+function TurnFooter({ ev, row }: { ev: Ev<'turn'>; row: ConversationEvent }) {
+  const { turnDiffs, continueTurn, onContinue } = useContext(ListCtx);
+  const diff = row.turnId ? turnDiffs.get(row.turnId) : undefined;
   const took = ev.durationMs != null ? duration(ev.durationMs) : null;
   const text =
     ev.status === 'interrupted'
@@ -155,6 +250,8 @@ function TurnFooter({ ev }: { ev: Ev<'turn'> }) {
         {text}
         {ev.reason && ev.reason.toLowerCase() !== ev.status ? ` · ${ev.reason}` : ''}
       </span>
+      {diff && <ChangesButton diff={diff} />}
+      {onContinue && continueTurn !== null && continueTurn === row.itemId && <ContinueButton onContinue={onContinue} />}
       <span className="h-px flex-1 bg-border" aria-hidden />
     </div>
   );
@@ -173,7 +270,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
   switch (ev.kind) {
     case 'user_message':
       return (
-        <MessageBubble meta={ev.source === 'terminal' ? 'From the terminal' : undefined}>{ev.text}</MessageBubble>
+        <MessageBubble meta={ev.source === 'terminal' ? 'From the terminal' : undefined} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
+          {ev.text || undefined}
+        </MessageBubble>
       );
     case 'agent_message': {
       const streamed = r.itemId ? streams[r.itemId]?.markdown : undefined;
@@ -196,7 +295,7 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'request':
       return <RequestRow ev={ev} keyboard={keyboard} onAnswer={onAnswer ?? (async () => {})} />;
     case 'turn':
-      return ev.phase === 'ended' ? <TurnFooter ev={ev} /> : null;
+      return ev.phase === 'ended' ? <TurnFooter ev={ev} row={r} /> : null;
     case 'notice':
       return (
         <p className={cn('text-center text-meta text-muted-foreground', ev.level === 'warning' && 'text-waiting')}>
@@ -259,7 +358,19 @@ const BlockView = memo(function BlockView({ block, streams, keyboardFor, onAnswe
  * The conversation: rows in order, pinned to the bottom while new content arrives unless the reader scrolled up
  * ("Jump to latest" then brings them back).
  */
-export function MessageList({ rows, provisional, streams, turnRunning, pending, onAnswer, empty, className }: MessageListProps) {
+export function MessageList({
+  rows,
+  provisional,
+  streams,
+  turnRunning,
+  pending,
+  onAnswer,
+  agent = 'claude',
+  onContinue,
+  imageUrl,
+  empty,
+  className,
+}: MessageListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -268,6 +379,15 @@ export function MessageList({ rows, provisional, streams, turnRunning, pending, 
   // y / n go to the newest open request only.
   const openRequest = [...rows].reverse().find((r) => r.event.kind === 'request' && r.event.state === 'open');
   const keyboardFor = openRequest?.event.kind === 'request' ? openRequest.event.id : null;
+  const ctx = useMemo<ListContext>(() => {
+    const turnDiffs = new Map<string, string>();
+    for (const r of rows) if (r.event.kind === 'turn_diff' && r.turnId && r.event.diff) turnDiffs.set(r.turnId, r.event.diff);
+    // Continue: the conversation's last turn was cut off and nothing has happened since.
+    const last = [...rows].reverse().find((r) => r.event.kind === 'turn' || r.event.kind === 'user_message');
+    const cut = last?.event.kind === 'turn' && last.event.phase === 'ended' && last.event.status === 'interrupted';
+    const continueTurn = cut && !turnRunning && pending.length === 0 ? last.itemId ?? null : null;
+    return { turnDiffs, continueTurn, onContinue, agent, imageUrl };
+  }, [rows, turnRunning, pending.length, onContinue, agent, imageUrl]);
 
   const toBottom = useCallback(() => {
     const el = scroller.current;
@@ -302,6 +422,7 @@ export function MessageList({ rows, provisional, streams, turnRunning, pending, 
 
   const nothing = rows.length === 0 && provisional.length === 0 && pending.length === 0 && !turnRunning;
   return (
+    <ListCtx.Provider value={ctx}>
     <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto" role="log" aria-label="Conversation" aria-live="off">
         <div ref={content} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
@@ -317,8 +438,13 @@ export function MessageList({ rows, provisional, streams, turnRunning, pending, 
             </div>
           ))}
           {pending.map((p) => (
-            <MessageBubble key={p.id} tone="pending" label={p.delivery === 'now' ? 'Sending now' : 'Queued'}>
-              {p.text}
+            <MessageBubble
+              key={p.id}
+              tone="pending"
+              label={p.delivery === 'now' ? 'Sending now' : 'Queued'}
+              images={p.images.length ? <Images images={p.images} /> : undefined}
+            >
+              {p.text || undefined}
             </MessageBubble>
           ))}
           {turnRunning && <WorkingRow rows={rows} />}
@@ -335,5 +461,6 @@ export function MessageList({ rows, provisional, streams, turnRunning, pending, 
         </Button>
       )}
     </div>
+    </ListCtx.Provider>
   );
 }

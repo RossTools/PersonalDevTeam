@@ -207,6 +207,8 @@ check|force|wait}`
   attempt: merged if `git merge-base --is-ancestor <branch> <base>` (a regular merge) or, for squash merges, the
   branch has no changes left against the base (`git diff --quiet <base>...<branch>` is empty and the branch has
   commits). Also merged when the branch is gone locally but its last known head is an ancestor of the base.
+  Either only counts once a check has seen the branch hold commits not in the base (`attempts.own_commits`, PDT-45):
+  a branch that only fast-forwarded to a newer base is not merged. Start branches from `origin/<base>` when it is ahead.
 - When merged: attempt → `merged`, timeline event, and the ticket shows a banner "Merged into main — Move to Done and
   remove the worktree" (one click: stage Done + `DELETE /api/worktrees/{id}` with the usual busy/dirty handling). The
   ticket never moves to Done without the user.

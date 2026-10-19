@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{call, git, park_once_idle};
+use common::{PNG, call, call_raw, git, park_once_idle};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
 use pdt_store::Store;
@@ -399,6 +399,7 @@ async fn recovery_closes_a_turn_left_running_by_a_crash() {
         input: json!({}),
         tool_call_id: None,
         can_always: false,
+        diff: None,
         state: RequestState::Open,
         answer: None,
     };
@@ -418,9 +419,197 @@ async fn recovery_closes_a_turn_left_running_by_a_crash() {
         (end["event"]["status"].as_str(), end["event"]["reason"].as_str()),
         (Some("interrupted"), Some("PDT restarted"))
     );
-    assert!(all.iter().any(|e| e["event"]["kind"] == "notice"));
+    assert!(!all.iter().any(|e| e["event"]["kind"] == "notice"), "the web offers Continue instead");
     // Interrupted conversations are never auto-resumed as terminals.
     assert!(pdt_api::plan_resume_interrupted(&env.state).await.is_empty());
+}
+
+/// Writes Claude's transcript for a session the way Claude would (one folder per working directory).
+fn write_transcript(env: &Env, id: &str, entries: &[Value]) {
+    let dir = env.claude_dir.join("projects").join("-repo");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut text = String::new();
+    for e in entries {
+        text.push_str(&e.to_string());
+        text.push('\n');
+    }
+    let file = dir.join(format!("{id}.jsonl"));
+    let mut old = std::fs::read_to_string(&file).unwrap_or_default();
+    old.push_str(&text);
+    std::fs::write(file, old).unwrap();
+}
+
+fn prompt(uuid: &str, text: &str) -> Value {
+    json!({"type": "user", "uuid": uuid, "message": {"role": "user", "content": text}})
+}
+
+fn said(uuid: &str, msg: &str, text: &str) -> Value {
+    json!({"type": "assistant", "uuid": uuid, "message": {"id": msg, "content": [{"type": "text", "text": text}]}})
+}
+
+async fn switch(env: &Env, id: &str, body: Value) -> (u16, Value) {
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/mode"), Some(body)).await;
+    (s.as_u16(), v)
+}
+
+#[tokio::test]
+async fn claude_hands_over_to_its_terminal_and_back_with_the_tui_turns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let s = new_conversation(&env, json!({"initialPrompt": "hello"})).await;
+    let id = s["id"].as_str().unwrap().to_string();
+    let cwd = s["cwd"].as_str().unwrap().to_string();
+    wait_turns(&env, &id, 1).await;
+    // What Claude saved of that turn.
+    write_transcript(&env, &id, &[prompt("p-1", "hello"), said("a-1", "msg-1", "echo: hello")]);
+
+    send(&env, &id, "slow").await;
+    wait_activity(&env, &id, "working").await;
+    let (s, v) = switch(&env, &id, json!({"mode": "terminal", "cols": 100, "rows": 30})).await;
+    assert_eq!((s, v["code"].as_str()), (409, Some("turn_running")), "{v}");
+    let (s, v) = switch(&env, &id, json!({"mode": "terminal", "cols": 100, "rows": 30, "interrupt": true})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["mode"].as_str(), v["status"].as_str()), (Some("terminal"), Some("running")));
+    assert!(env.state.ptys.is_running(&id), "the TUI runs in the session's terminal");
+    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events"), None).await;
+    assert_eq!((s.as_u16(), v["code"].as_str()), (409, Some("not_conversation")), "the log waits for the switch back");
+
+    // Typed in the TUI: a prompt, an edit and an answer.
+    let file = format!("{cwd}/a.txt");
+    write_transcript(
+        &env,
+        &id,
+        &[
+            prompt("t-1", "from the tui"),
+            json!({"type": "assistant", "uuid": "t-2", "message": {"id": "msg-t", "content": [{"type": "tool_use",
+                "id": "tool-1", "name": "Edit", "input": {"file_path": file, "old_string": "x", "new_string": "y"}}]}}),
+            json!({"type": "user", "uuid": "t-3", "message": {"role": "user", "content": [{"type": "tool_result",
+                "tool_use_id": "tool-1", "content": "ok"}]}, "toolUseResult": {"structuredPatch": [{"oldStart": 1,
+                "oldLines": 1, "newStart": 1, "newLines": 1, "lines": ["-x", "+y"]}]}}),
+            said("t-4", "msg-t2", "edited it"),
+            json!({"type": "system", "uuid": "t-5", "subtype": "turn_duration", "durationMs": 1200}),
+        ],
+    );
+    let (s, v) = switch(&env, &id, json!({"mode": "conversation"})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["mode"], "conversation");
+    assert!(!env.state.ptys.is_running(&id), "the TUI left on /exit");
+    let all = events(&env, &id).await;
+    let users: Vec<(&str, &str)> = all
+        .iter()
+        .filter(|e| e["event"]["kind"] == "user_message")
+        .map(|e| (e["event"]["text"].as_str().unwrap(), e["event"]["source"].as_str().unwrap()))
+        .collect();
+    assert_eq!(users, [("hello", "pdt"), ("slow", "pdt"), ("from the tui", "terminal")], "nothing imported twice");
+    let edit = all.iter().find(|e| e["event"]["kind"] == "tool_call" && e["event"]["tool"] == "Edit").unwrap();
+    assert_eq!(edit["event"]["diff"], "--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-x\n+y\n");
+    assert!(all.iter().any(|e| e["event"]["kind"] == "turn_diff"));
+    assert_eq!(agent_text(&all).last().map(String::as_str), Some("edited it"));
+    assert!(all.iter().any(|e| e["event"]["text"] == "Continued in the terminal."));
+    wait_activity(&env, &id, "idle").await;
+
+    // The next message resumes Claude headless on the same conversation.
+    send(&env, &id, "who").await;
+    let all = wait_for(&env, &id, "who's answer", |e| {
+        e["kind"] == "agent_message" && e["markdown"].as_str().is_some_and(|m| m.starts_with("session"))
+    })
+    .await;
+    assert!(agent_text(&all).last().unwrap().contains("resumed=true"), "{:?}", agent_text(&all));
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn an_old_claude_terminal_becomes_a_conversation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let s = new_conversation(&env, json!({"mode": "terminal"})).await;
+    let id = s["id"].as_str().unwrap().to_string();
+    assert!(env.state.ptys.is_running(&id));
+    write_transcript(&env, &id, &[prompt("p-1", "typed in the tui"), said("a-1", "msg-1", "sure")]);
+    let (s, v) = switch(&env, &id, json!({"mode": "conversation"})).await;
+    assert_eq!(s, 200, "{v}");
+    let all = events(&env, &id).await;
+    assert_eq!(agent_text(&all), ["sure"]);
+    assert!(all.iter().any(|e| e["event"]["source"] == "terminal"));
+
+    let (s, shell) = call(
+        &env.app,
+        "POST",
+        "/api/sessions",
+        Some(json!({"projectId": env.pid, "kind": "shell", "cols": 80, "rows": 24})),
+    )
+    .await;
+    assert_eq!(s, 201, "{shell}");
+    let (s, v) = switch(&env, shell["id"].as_str().unwrap(), json!({"mode": "conversation"})).await;
+    assert_eq!((s, v["code"].as_str()), (409, Some("switch_unsupported")));
+    call(&env.app, "DELETE", &format!("/api/sessions/{}", shell["id"].as_str().unwrap()), None).await;
+}
+
+#[tokio::test]
+async fn images_are_attached_and_shown_on_the_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_conversation(&env, json!({})).await["id"].as_str().unwrap().to_string();
+    let up = format!("/api/sessions/{id}/attachments");
+    let (s, _, body) = call_raw(&env.app, "POST", &up, b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec()).await;
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!((s.as_u16(), v["code"].as_str()), (400, Some("unsupported_image")));
+    let (s, _, body) = call_raw(&env.app, "POST", &up, PNG.to_vec()).await;
+    assert_eq!(s.as_u16(), 201);
+    let att: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(att["mediaType"], "image/png");
+    let aid = att["id"].as_str().unwrap().to_string();
+
+    let msg = format!("/api/sessions/{id}/messages");
+    let (s, v) =
+        call(&env.app, "POST", &msg, Some(json!({"text": "", "images": ["01a1546a-0000-0000-0000-000000000000"]})))
+            .await;
+    assert_eq!((s.as_u16(), v["code"].as_str()), (400, Some("unknown_attachment")));
+    let (s, v) = call(&env.app, "POST", &msg, Some(json!({"text": "", "images": [aid]}))).await;
+    assert_eq!(s.as_u16(), 202, "an image needs no text: {v}");
+    assert_eq!(v["images"], json!([aid]));
+    let all = wait_turns(&env, &id, 1).await;
+    assert_eq!(agent_text(&all), ["saw 1 images (image/png)"]);
+    let user = all.iter().find(|e| e["event"]["kind"] == "user_message").unwrap();
+    assert_eq!(user["event"]["images"], json!([aid]), "the row names the attachment, for its thumbnail");
+    let (s, ct, bytes) = call_raw(&env.app, "GET", &format!("{up}/{aid}"), vec![]).await;
+    assert_eq!((s.as_u16(), ct.as_deref(), bytes.as_slice()), (200, Some("image/png"), PNG));
+    let (s, _, _) = call_raw(&env.app, "GET", &format!("{up}/..%2F..%2Fpdt.db"), vec![]).await;
+    assert_eq!(s.as_u16(), 404);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn slash_commands_show_even_when_claude_does_not_echo_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_conversation(&env, json!({"initialPrompt": "/local"})).await["id"].as_str().unwrap().to_string();
+    let all = wait_turns(&env, &id, 1).await;
+    let kinds: Vec<&str> = all.iter().map(|e| e["event"]["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["turn", "user_message", "agent_message", "usage", "turn"], "{all:#?}");
+    assert_eq!(all[1]["event"]["text"], "/local");
+    // Nothing stays queued: the session goes idle.
+    wait_activity(&env, &id, "idle").await;
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn at_suggests_files_from_the_sessions_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(repo.join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(repo.join("README.md"), "hi").unwrap();
+    std::fs::write(repo.join(".gitignore"), "secret.txt\n").unwrap();
+    std::fs::write(repo.join("secret.txt"), "x").unwrap();
+    let id = new_conversation(&env, json!({})).await["id"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/files?q=main"), None).await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    assert_eq!(v, json!(["src/main.rs"]));
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/files?q="), None).await;
+    assert!(!v.as_array().unwrap().iter().any(|p| p == "secret.txt"), "ignored files stay out: {v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
 #[tokio::test]

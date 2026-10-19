@@ -6,13 +6,13 @@ steps in `.github/actions/bundle`.
 Linux does every check that doesn't depend on the OS, split into parallel jobs. macOS and Windows run only what they
 can break on their own: clippy (for `cfg` code) and the Rust tests (paths, processes, PTYs).
 
-| Check | Runs on | Does | Pull requests | main / nightly |
+| Check | Runs on | Does | Pull requests | main |
 |---|---|---|---|---|
-| lint (linux) | Namespace `linux-8` | fmt, clippy | unless docs only | always / nightly |
-| test (linux) | Namespace `linux-8` | nextest, generated TS types are committed | unless docs only | always / nightly |
-| web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | always / nightly |
-| build (macos-latest) ✱ | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | unless docs only | always / nightly |
-| build (windows-latest) ✱ | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | always / nightly |
+| lint (linux) | Namespace `linux-8` | fmt, clippy | unless docs only | always |
+| test (linux) | Namespace `linux-8` | nextest, generated TS types are committed | unless docs only | always |
+| web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | always |
+| build (macos-latest) ✱ | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | unless docs only | always |
+| build (windows-latest) ✱ | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | always |
 | bundle (macos-latest, app) ✱ | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | always (release) |
 | bundle (windows-latest, nsis) ✱ | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | always (release) |
 
@@ -47,9 +47,9 @@ the ruleset's required check names. Renaming a job means editing the "Main" rule
 Why: on GitHub's 2-vCPU runners (this internal repo's size) vitest alone took ~3 min on Linux and 6m37s on Windows,
 and the web code is the same on every OS. Namespace ran the Linux checks in 1.8 min (vs 6.4) and macOS in 1.4 (vs
 2.7–3.9). CI no longer runs on the Mac mini, which also runs the agents and the stable PDT
-(docs/superpowers/notes/runners.md). A Windows-only break is caught on
-the next main push or the nightly run instead of on the PR; add the `windows` label to a PR that touches
-platform-specific code (`cfg(windows)`, process spawning, paths).
+(docs/superpowers/notes/runners.md). A Windows-only break is caught on the push to main that merges it instead of
+on the PR (and that push publishes no release); add the `windows` label to a PR that touches platform-specific code
+(`cfg(windows)`, process spawning, paths).
 
 ## Merge queue
 

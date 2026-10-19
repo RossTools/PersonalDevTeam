@@ -1,7 +1,7 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR through `gh` every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and tells the
-//! attempt's agent session when CI fails, the branch conflicts with its base, the PR leaves the merge queue without
-//! merging, or the work is merged. A notice waits until the session is idle and nobody is typing in it, is typed in
+//! attempt's agent session when CI fails, the branch conflicts with its base, the merge queue removes the PR without
+//! merging it, or the work is merged. A notice waits until the session is idle and nobody is typing in it, is typed in
 //! as a prompt, and lands on the ticket's timeline (`pr` event), which also makes each one news only once.
 
 use crate::routes::{AppState, now_ms};
@@ -163,7 +163,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, queue_runs: 
         return;
     };
     now.checked_at = now_ms();
-    let news = notices(prev.as_ref(), &now, &info.attempt.branch);
+    let news = notices(&now, &info.attempt.branch);
     {
         let mut w = watch(st);
         w.jobs.extend(jobs);
@@ -175,7 +175,8 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, queue_runs: 
 type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
 
 /// The PR of `branch` with its CI and merge-queue CI, failed jobs filled in (from `known` where already asked).
-/// Merge-queue runs are read only while the PR is queued or just left the queue (`was_queued`), once per repo.
+/// Merge-queue runs are read only while the PR is queued, just left the queue (`was_queued`) or was removed from it
+/// for failed checks and not handled yet, once per repo.
 fn read_pr(
     gh: &dyn GithubApi,
     repo: &str,
@@ -204,7 +205,8 @@ fn read_pr(
     }
     let mut fresh_queue = None;
     let mut queue_ci = None;
-    if pr.state == PrState::Open && (pr.in_merge_queue || was_queued) {
+    let removed_for_checks = pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
+    if pr.state == PrState::Open && (pr.in_merge_queue || was_queued || removed_for_checks) {
         let runs = match queue_cache {
             Some(r) => r,
             None => {
@@ -240,6 +242,7 @@ fn read_pr(
         queue_position: pr.queue_position,
         ci,
         queue_ci,
+        queue_removal: pr.queue_removal,
         checked_at: 0,
     };
     Ok((Some(status), fresh_queue, fetched_jobs))
@@ -367,6 +370,7 @@ mod tests {
             auto_merge: true,
             in_merge_queue: queued,
             queue_position: queued.then_some(1),
+            queue_removal: None,
         }
     }
 
@@ -433,7 +437,7 @@ mod tests {
         let (status, ..) = read_pr(&gh, "o/r", "b", true, None, &HashMap::new()).unwrap();
         let status = status.unwrap();
         assert!(status.ci.is_none());
-        assert_eq!(notices(None, &status, "b")[0].kind, NoticeKind::Merged);
+        assert_eq!(notices(&status, "b")[0].kind, NoticeKind::Merged);
         assert_eq!(gh.calls.lock().unwrap().len(), 1);
     }
 }

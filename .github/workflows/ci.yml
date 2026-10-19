@@ -6,9 +6,6 @@ on:
   pull_request:
     # `labeled`: adding the `windows` or `bundle` label runs those jobs on the PR.
     types: [opened, synchronize, reopened, labeled]
-  # Nightly: the Windows checks on main, in case something only Windows sees slipped in.
-  schedule:
-    - cron: "0 7 * * *"
   # The merge queue (the "Main" ruleset): each queued PR is checked on main plus the PR before it is merged.
   merge_group:
     types: [checks_requested]
@@ -36,7 +33,7 @@ env:
 # - Repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER override those runners (e.g. ubuntu-latest / macos-latest if
 #   Namespace is down); .github/actions/setup picks the cache to match.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
-#   always on main and nightly.
+#   always on main.
 # - bundles: only with the `bundle` label or a change to what they pack; always on main (releases).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
 # those required checks, so they must not change without changing the ruleset.
@@ -74,7 +71,7 @@ jobs:
               n="$(printf '%s' "$QUEUE_REF" | sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p')"
               LABELS='[]'
               if [ -n "$n" ]; then LABELS="$(gh pr view "$n" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')"; fi ;;
-            # Main, nightly and dispatches run everything.
+            # Main and dispatches run everything.
             *) all ;;
           esac
           printf 'Changed files:\n%s\n' "$files"
@@ -182,7 +179,7 @@ jobs:
   bundle-macos:
     name: bundle (macos-latest, app)
     needs: changes
-    if: needs.changes.outputs.bundle == 'true' && github.event_name != 'schedule'
+    if: needs.changes.outputs.bundle == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -201,7 +198,7 @@ jobs:
   bundle-windows:
     name: bundle (windows-latest, nsis)
     needs: changes
-    if: needs.changes.outputs.bundle == 'true' && github.event_name != 'schedule'
+    if: needs.changes.outputs.bundle == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7

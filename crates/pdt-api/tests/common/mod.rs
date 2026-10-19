@@ -23,6 +23,24 @@ pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Valu
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 
+/// Sends raw bytes (e.g. an image upload) and returns the status, the content type and the body bytes.
+pub async fn call_raw(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Vec<u8>,
+) -> (StatusCode, Option<String>, Vec<u8>) {
+    let req = Request::builder().method(method).uri(uri).body(Body::from(body)).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let ct = res.headers().get("content-type").and_then(|v| v.to_str().ok()).map(String::from);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, ct, bytes)
+}
+
+/// The smallest bytes PDT takes for a PNG (it reads the signature, not the pixels).
+pub const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRfake";
+
 /// Runs `git` in `dir` (with a throwaway identity, and no line-ending conversion so its warnings stay out of the
 /// test output) and asserts it succeeds.
 pub fn git(dir: &std::path::Path, args: &[&str]) {

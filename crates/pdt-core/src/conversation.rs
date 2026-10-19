@@ -3,6 +3,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod composer;
 
 use crate::activity::Activity;
 use serde::{Deserialize, Serialize};
@@ -79,6 +80,15 @@ impl PermissionMode {
             PermissionMode::AcceptEdits => "acceptEdits",
             PermissionMode::Plan => "plan",
             PermissionMode::Bypass => "bypassPermissions",
+        }
+    }
+    /// How the UI and notices name it.
+    pub fn label(self) -> &'static str {
+        match self {
+            PermissionMode::Ask => "Ask",
+            PermissionMode::AcceptEdits => "Accept edits",
+            PermissionMode::Plan => "Plan",
+            PermissionMode::Bypass => "Bypass",
         }
     }
     /// The PDT mode for Claude's value; None for modes PDT does not offer (e.g. `auto`, `dontAsk`).
@@ -197,13 +207,17 @@ pub enum Answer {
     },
     /// Answers to a question request: question text → chosen labels (or the user's own text).
     Question { answers: BTreeMap<String, Vec<String>> },
-    /// A plan request: approve it, or keep planning with feedback.
+    /// A plan request: approve it (optionally going on in `mode`, e.g. Accept edits), or keep planning with feedback.
     Plan {
         approve: bool,
         #[serde(default)]
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         feedback: Option<String>,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        mode: Option<PermissionMode>,
     },
 }
 
@@ -264,6 +278,10 @@ pub enum AgentEvent {
         tool_call_id: Option<String>,
         /// Whether "Always allow in this session" is offered.
         can_always: bool,
+        /// The change a file-edit request would make (unified diff).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        diff: Option<String>,
         state: RequestState,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -400,6 +418,9 @@ pub struct PendingMessage {
     pub id: String,
     pub text: String,
     pub delivery: Delivery,
+    /// Attachment ids of the images it carries.
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 /// What a conversation is doing, pushed to every viewer on change.
@@ -427,6 +448,10 @@ pub struct ConversationState {
     pub agent_version: Option<String>,
     /// Codex: the agent's own TUI is open on this conversation (live, beside it).
     pub terminal_open: bool,
+    /// Who pays: "Claude plan", "API key", "ChatGPT plan" (spec §14), once the agent has said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub billing: Option<String>,
 }
 
 /// Server → client frames on `WS /api/sessions/{id}/events`.
@@ -457,11 +482,17 @@ pub enum ConversationServerMessage {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SendMessage {
+    #[serde(default)]
     pub text: String,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery: Option<Delivery>,
+    /// Ids from `POST /api/sessions/{id}/attachments`.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub images: Option<Vec<String>>,
 }
 
 /// `POST /api/sessions/{id}/requests/{requestId}`.
@@ -508,6 +539,9 @@ pub struct AgentCapabilities {
     pub permission_modes: Vec<PermissionMode>,
     pub models: Vec<AgentModel>,
     pub commands: Vec<AgentCommandInfo>,
+    /// Commands that work only in the agent's own TUI (Claude's `terminal_slash_commands`).
+    #[serde(default)]
+    pub terminal_commands: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub version: Option<String>,
@@ -555,9 +589,9 @@ pub fn valid_model(m: &str) -> bool {
     !m.is_empty() && m.len() <= 100 && !m.contains(char::is_whitespace)
 }
 
-/// A user message as sent: trimmed of nothing, but never blank or longer than `MAX_MESSAGE`.
-pub fn valid_message(text: &str) -> bool {
-    !text.trim().is_empty() && text.len() <= MAX_MESSAGE
+/// A user message as sent: never longer than `MAX_MESSAGE`, and blank only when it carries images.
+pub fn valid_message(text: &str, images: usize) -> bool {
+    (images > 0 || !text.trim().is_empty()) && text.len() <= MAX_MESSAGE && images <= composer::MAX_IMAGES
 }
 
 #[cfg(test)]
@@ -607,7 +641,7 @@ mod tests {
         let a: Answer = serde_json::from_str(r#"{"type":"approve"}"#).unwrap();
         assert_eq!(a, Answer::Approve { always: false });
         let a: Answer = serde_json::from_str(r#"{"type":"plan","approve":false,"feedback":"more"}"#).unwrap();
-        assert_eq!(a, Answer::Plan { approve: false, feedback: Some("more".into()) });
+        assert_eq!(a, Answer::Plan { approve: false, feedback: Some("more".into()), mode: None });
     }
 
     #[test]
@@ -615,6 +649,7 @@ mod tests {
         assert_eq!(cap_text("abc", 5), "abc");
         let s = cap_text("ééé", 3);
         assert!(s.starts_with('é') && s.contains("cut: 4 more bytes"), "{s}");
-        assert!(valid_message("hi") && !valid_message("  \n") && !valid_message(&"x".repeat(MAX_MESSAGE + 1)));
+        assert!(valid_message("hi", 0) && !valid_message("  \n", 0) && !valid_message(&"x".repeat(MAX_MESSAGE + 1), 0));
+        assert!(valid_message("", 1) && !valid_message("x", composer::MAX_IMAGES + 1));
     }
 }

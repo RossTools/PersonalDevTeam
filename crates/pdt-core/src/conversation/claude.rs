@@ -2,8 +2,8 @@
 //! frames → normalized events, and the lines PDT writes to stdin. Pure; the adapter in pdt-agents owns the process.
 
 use super::{
-    AgentEvent, Answer, DeltaField, MAX_TOOL_OUTPUT, MessagePhase, MessageSource, NoticeLevel, RateLimitWindow,
-    RequestKind, RequestState, ToolStatus, TurnPhase, TurnStatus, cap_text,
+    AgentEvent, Answer, DeltaField, MAX_TOOL_OUTPUT, MessagePhase, MessageSource, NoticeLevel, PermissionMode,
+    RateLimitWindow, RequestKind, RequestState, ToolStatus, TurnPhase, TurnStatus, cap_text,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -32,6 +32,8 @@ pub struct ClaudeInit {
     /// `none` when Claude uses the plan login.
     pub api_key_source: Option<String>,
     pub slash_commands: Vec<String>,
+    /// Commands that work only in the TUI.
+    pub terminal_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -81,6 +83,107 @@ pub struct ClaudeMapper {
     model: Option<String>,
     permission_mode: Option<String>,
     next_control: u64,
+    /// The session's folder: diffs name files relative to it, and a turn's diff keeps only files inside it.
+    cwd: Option<String>,
+    /// The files the running turn changed, in the order first changed.
+    turn_files: Vec<FileDiff>,
+    /// Slash commands PDT sent that Claude has not shown yet (local ones, like `/context`, are never echoed).
+    sent_commands: std::collections::VecDeque<String>,
+    shown_commands: u64,
+}
+
+/// One file's part of a diff: `--- a/path` / `+++ b/path` (or `/dev/null` for a new file), then hunks.
+#[derive(Debug, Clone, PartialEq)]
+struct FileDiff {
+    path: String,
+    created: bool,
+    hunks: String,
+}
+
+impl FileDiff {
+    fn render(&self) -> String {
+        let side = |prefix: &str| {
+            if is_absolute(&self.path) { self.path.clone() } else { format!("{prefix}{}", self.path) }
+        };
+        let old = if self.created { "/dev/null".to_string() } else { side("a/") };
+        format!("--- {old}\n+++ {}\n{}", side("b/"), self.hunks)
+    }
+}
+
+fn is_absolute(p: &str) -> bool {
+    p.starts_with('/') || p.starts_with('\\') || p.as_bytes().get(1) == Some(&b':')
+}
+
+/// The tools whose calls change files.
+fn edits_files(tool: &str) -> bool {
+    matches!(tool, "Edit" | "MultiEdit" | "Write")
+}
+
+/// `-` lines then `+` lines, for a change known only by its text (no line numbers).
+fn text_hunk(old: &str, new: &str) -> String {
+    let mut h = String::from("@@ @@\n");
+    for l in old.lines() {
+        h.push('-');
+        h.push_str(l);
+        h.push('\n');
+    }
+    for l in new.lines() {
+        h.push('+');
+        h.push_str(l);
+        h.push('\n');
+    }
+    h
+}
+
+/// The change a file tool's input asks for (no line numbers: the agent has not read the file for us).
+fn input_hunks(tool: &str, input: &Value) -> Option<String> {
+    let field = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    match tool {
+        "Edit" => Some(text_hunk(&field(input, "old_string"), &field(input, "new_string"))),
+        "MultiEdit" => input
+            .get("edits")
+            .and_then(Value::as_array)
+            .map(|edits| edits.iter().map(|e| text_hunk(&field(e, "old_string"), &field(e, "new_string"))).collect()),
+        "Write" => input.get("content").and_then(Value::as_str).map(|c| text_hunk("", c)),
+        _ => None,
+    }
+}
+
+/// The change a file tool made, from its structured result: hunks with line numbers, or a whole new file.
+fn result_hunks(result: &Value) -> Option<(bool, String)> {
+    if let Some(patch) = result.get("structuredPatch").and_then(Value::as_array).filter(|p| !p.is_empty()) {
+        let n = |h: &Value, k: &str| h.get(k).and_then(Value::as_i64).unwrap_or(0);
+        let mut out = String::new();
+        for h in patch {
+            out.push_str(&format!(
+                "@@ -{},{} +{},{} @@\n",
+                n(h, "oldStart"),
+                n(h, "oldLines"),
+                n(h, "newStart"),
+                n(h, "newLines")
+            ));
+            for l in h.get("lines").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+        return Some((false, out));
+    }
+    if result.get("type").and_then(Value::as_str) == Some("create") {
+        let content = result.get("content").and_then(Value::as_str).unwrap_or("");
+        let lines: Vec<&str> = content.lines().collect();
+        if lines.is_empty() {
+            return Some((true, String::new()));
+        }
+        let mut out = format!("@@ -0,0 +1,{} @@\n", lines.len());
+        for l in lines {
+            out.push('+');
+            out.push_str(l);
+            out.push('\n');
+        }
+        return Some((true, out));
+    }
+    None
 }
 
 pub fn message_item(id: &str) -> String {
@@ -94,11 +197,24 @@ pub fn request_item(id: &str) -> String {
 }
 pub const USAGE_ITEM: &str = "usage";
 
-/// A user turn as a stdin line. `now` aborts what Claude is doing and runs it as a fresh turn.
-pub fn user_line(session_id: &str, text: &str, now: bool) -> Value {
+/// A user turn as a stdin line, with images as `(media type, base64 data)` before the text. `now` aborts what Claude
+/// is doing and runs it as a fresh turn.
+pub fn user_line(session_id: &str, text: &str, images: &[(String, String)], now: bool) -> Value {
+    let content = if images.is_empty() {
+        json!(text)
+    } else {
+        let mut blocks: Vec<Value> = images
+            .iter()
+            .map(|(media, data)| json!({"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}))
+            .collect();
+        if !text.trim().is_empty() {
+            blocks.push(json!({"type": "text", "text": text}));
+        }
+        Value::Array(blocks)
+    };
     let mut v = json!({
         "type": "user",
-        "message": {"role": "user", "content": text},
+        "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "session_id": session_id,
     });
@@ -162,6 +278,52 @@ impl ClaudeMapper {
         Self::default()
     }
 
+    /// PDT sent a slash command: if Claude never echoes it, it is shown when its turn starts.
+    pub fn note_sent_command(&mut self, text: &str) {
+        self.sent_commands.push_back(text.trim().to_string());
+    }
+
+    /// A mapper for a session working in `cwd`.
+    pub fn with_cwd(cwd: impl Into<String>) -> Self {
+        Self { cwd: Some(cwd.into()), ..Self::default() }
+    }
+
+    /// `path` relative to the session's folder when inside it, else as given.
+    fn shown_path(&self, path: &str) -> String {
+        self.inside(path).unwrap_or_else(|| path.to_string())
+    }
+
+    /// The path relative to the folder, when `path` is inside it (always, with no folder known).
+    fn inside(&self, path: &str) -> Option<String> {
+        let Some(cwd) = &self.cwd else { return Some(path.to_string()) };
+        let cwd = cwd.trim_end_matches(['/', '\\']);
+        let rest = path.strip_prefix(cwd)?;
+        let rest = rest.strip_prefix(['/', '\\'])?;
+        (!rest.is_empty()).then(|| rest.replace('\\', "/"))
+    }
+
+    /// The diff of a file tool's call: what it did (`result`), else what it asked for.
+    fn tool_diff(&self, tool: &str, input: &Value, result: Option<&Value>) -> Option<FileDiff> {
+        if !edits_files(tool) {
+            return None;
+        }
+        let path = input.get("file_path").and_then(Value::as_str)?;
+        let (created, hunks) = match result.and_then(result_hunks) {
+            Some(r) => r,
+            None => (false, input_hunks(tool, input)?),
+        };
+        Some(FileDiff { path: self.shown_path(path), created, hunks })
+    }
+
+    /// Adds a finished edit to the turn's diff, when the file is inside the folder.
+    fn note_turn_edit(&mut self, input: &Value, d: &FileDiff) {
+        let Some(path) = input.get("file_path").and_then(Value::as_str).and_then(|p| self.inside(p)) else { return };
+        match self.turn_files.iter_mut().find(|f| f.path == path) {
+            Some(f) => f.hunks.push_str(&d.hunks),
+            None => self.turn_files.push(FileDiff { path, created: d.created, hunks: d.hunks.clone() }),
+        }
+    }
+
     /// The turn that is running, if any.
     pub fn turn(&self) -> Option<&str> {
         self.turn.as_deref()
@@ -200,9 +362,18 @@ impl ClaudeMapper {
         });
     }
 
+    /// Starts a turn that began without an echoed prompt: a local slash command's, which then shows as sent.
     fn ensure_turn(&mut self, fallback_id: &str, out: &mut Vec<MapOut>) {
         if self.turn.is_none() {
             self.start_turn(format!("x-{fallback_id}"), out);
+            if let Some(cmd) = self.sent_commands.pop_front() {
+                self.shown_commands += 1;
+                let item = format!("u:cmd-{fallback_id}-{}", self.shown_commands);
+                out.push(self.event(
+                    Some(item),
+                    AgentEvent::UserMessage { text: cmd, images: vec![], source: MessageSource::Pdt },
+                ));
+            }
         }
     }
 
@@ -219,6 +390,7 @@ impl ClaudeMapper {
                 input: r.input.clone(),
                 tool_call_id: r.tool_use_id.clone(),
                 can_always: r.kind == RequestKind::Approval && !session_rules(&r.suggestions).is_empty(),
+                diff: self.tool_diff(&r.tool, &r.input, None).map(|d| d.render()),
                 state,
                 answer,
             },
@@ -252,6 +424,9 @@ impl ClaudeMapper {
     /// The process ended: open requests expire and a running turn ends as interrupted (`reason`).
     pub fn on_exit(&mut self, reason: &str) -> Vec<MapOut> {
         let mut out = self.expire_requests();
+        if let Some(diff) = self.turn_diff_event() {
+            out.push(diff);
+        }
         if let Some(id) = self.turn.take() {
             out.push(MapOut::Event {
                 item_id: Some(format!("turn-end:{id}")),
@@ -267,6 +442,56 @@ impl ClaudeMapper {
         self.messages.clear();
         self.last_message = None;
         out
+    }
+
+    /// The running turn's diff (and forgets it), when the turn changed files in the folder.
+    fn turn_diff_event(&mut self) -> Option<MapOut> {
+        let files = std::mem::take(&mut self.turn_files);
+        let turn = self.turn.clone()?;
+        if files.is_empty() {
+            return None;
+        }
+        let diff = files.iter().map(FileDiff::render).collect::<String>();
+        Some(MapOut::Event {
+            item_id: Some(format!("diff:{turn}")),
+            turn_id: Some(turn),
+            event: AgentEvent::TurnDiff { diff },
+        })
+    }
+
+    /// The turn's last top-level message becomes its answer (once).
+    fn finalize_message(&mut self, out: &mut Vec<MapOut>) {
+        if let Some(id) = self.last_message.take()
+            && let Some(markdown) = self.messages.get(&id).cloned()
+        {
+            out.push(
+                self.event(
+                    Some(message_item(&id)),
+                    AgentEvent::AgentMessage { id, markdown, phase: MessagePhase::Final },
+                ),
+            );
+        }
+    }
+
+    /// Ends the running turn: its last message becomes the answer, then its diff, then the turn's end.
+    fn close_turn(
+        &mut self,
+        status: TurnStatus,
+        duration_ms: Option<i64>,
+        reason: Option<String>,
+        out: &mut Vec<MapOut>,
+    ) {
+        self.finalize_message(out);
+        out.extend(self.turn_diff_event());
+        let id = self.turn.take().unwrap_or_default();
+        out.push(MapOut::Event {
+            item_id: Some(format!("turn-end:{id}")),
+            turn_id: Some(id),
+            event: AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(status), duration_ms, reason },
+        });
+        self.interrupt_requested = false;
+        self.messages.clear();
+        self.tools.retain(|_, t| t.parent.is_some());
     }
 
     /// Maps one stdout line (a JSON frame). Lines that are not JSON objects map to nothing.
@@ -325,6 +550,11 @@ impl ClaudeMapper {
                         .and_then(Value::as_array)
                         .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
                         .unwrap_or_default(),
+                    terminal_commands: v
+                        .get("terminal_slash_commands")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+                        .unwrap_or_default(),
                 };
                 if let (Some(old), Some(new)) = (&self.model, &init.model)
                     && old != new
@@ -351,8 +581,21 @@ impl ClaudeMapper {
                 let text = format!("Claude is retrying a failed request (attempt {attempt})");
                 out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None }));
             }
+            "status" => {
+                // A mode change (e.g. leaving plan mode) shows here at once; the next turn's init repeats it.
+                if let Some(mode) = str_field(v, "permissionMode")
+                    && self.permission_mode.as_deref() != Some(mode.as_str())
+                {
+                    let name =
+                        PermissionMode::from_claude(&mode).map_or_else(|| mode.clone(), |m| m.label().to_string());
+                    let text = format!("Permission mode: {name}");
+                    out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
+                    self.permission_mode = Some(mode.clone());
+                    out.push(MapOut::Init(ClaudeInit { permission_mode: Some(mode), ..ClaudeInit::default() }));
+                }
+            }
             // Progress Claude reports for its own bookkeeping; the tool calls carry what matters.
-            "status" | "task_started" | "task_progress" | "task_notification" | "hook_started" | "hook_response"
+            "task_started" | "task_progress" | "task_notification" | "hook_started" | "hook_response"
             | "hook_progress" | "files_persisted" | "thinking_tokens" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
@@ -376,7 +619,13 @@ impl ClaudeMapper {
                 _ => Vec::new(),
             };
             let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
-            out.push(self.event(item, AgentEvent::UserMessage { text: text_of(content), images, source }));
+            // A custom command comes back expanded (`<command-name>/x</command-name>…`): show what was typed.
+            let raw = text_of(content);
+            let text = command_text(raw.trim()).unwrap_or(raw);
+            if let Some(i) = self.sent_commands.iter().position(|c| *c == text.trim()) {
+                self.sent_commands.remove(i);
+            }
+            out.push(self.event(item, AgentEvent::UserMessage { text, images, source }));
             return;
         }
         let Value::Array(blocks) = content else {
@@ -407,6 +656,13 @@ impl ClaudeMapper {
                 parent: None,
             });
             let exit_code = v.pointer("/tool_use_result/exitCode").and_then(Value::as_i64).map(|c| c as i32);
+            let result = (status == ToolStatus::Done).then(|| v.get("tool_use_result")).flatten();
+            let diff = self.tool_diff(&info.tool, &info.input, result);
+            // Sub-agents' edits change files too: they count toward the turn's diff.
+            if let Some(d) = diff.as_ref().filter(|_| status == ToolStatus::Done) {
+                self.note_turn_edit(&info.input, d);
+            }
+            let diff = diff.map(|d| d.render());
             out.push(self.event(
                 Some(tool_item(id)),
                 AgentEvent::ToolCall {
@@ -417,7 +673,7 @@ impl ClaudeMapper {
                     status,
                     output: Some(output),
                     exit_code,
-                    diff: None,
+                    diff,
                     parent_id: info.parent,
                 },
             ));
@@ -458,6 +714,7 @@ impl ClaudeMapper {
                     let tool = str_field(b, "name").unwrap_or_else(|| "tool".into());
                     let input = b.get("input").cloned().unwrap_or(Value::Null);
                     let title = tool_title(&tool, &input);
+                    let diff = self.tool_diff(&tool, &input, None).map(|d| d.render());
                     let info = ToolInfo {
                         tool: tool.clone(),
                         title: title.clone(),
@@ -479,7 +736,7 @@ impl ClaudeMapper {
                             status: ToolStatus::Running,
                             output: None,
                             exit_code: None,
-                            diff: None,
+                            diff,
                             parent_id: parent.clone(),
                         },
                     ));
@@ -563,16 +820,7 @@ impl ClaudeMapper {
         let fallback = str_field(v, "uuid").unwrap_or_default();
         self.ensure_turn(&fallback, out);
         out.extend(self.expire_requests());
-        if let Some(id) = self.last_message.take()
-            && let Some(markdown) = self.messages.get(&id).cloned()
-        {
-            out.push(
-                self.event(
-                    Some(message_item(&id)),
-                    AgentEvent::AgentMessage { id, markdown, phase: MessagePhase::Final },
-                ),
-            );
-        }
+        self.finalize_message(out);
         let subtype = v.get("subtype").and_then(Value::as_str).unwrap_or("");
         let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false) || subtype != "success";
         let interrupted = is_error && (self.interrupt_requested || subtype == "error_during_execution");
@@ -624,20 +872,7 @@ impl ClaudeMapper {
             self.cost_usd = Some(c);
         }
         out.push(self.usage_event());
-        let id = self.turn.take().unwrap_or_default();
-        out.push(MapOut::Event {
-            item_id: Some(format!("turn-end:{id}")),
-            turn_id: Some(id),
-            event: AgentEvent::Turn {
-                phase: TurnPhase::Ended,
-                status: Some(status),
-                duration_ms: v.get("duration_ms").and_then(Value::as_i64),
-                reason,
-            },
-        });
-        self.interrupt_requested = false;
-        self.messages.clear();
-        self.tools.retain(|_, t| t.parent.is_some());
+        self.close_turn(status, v.get("duration_ms").and_then(Value::as_i64), reason, out);
     }
 
     /// Builds the `control_response` line answering an open request, and the events it changes (the request, and a
@@ -672,8 +907,15 @@ impl ClaudeMapper {
                 input["answers"] = Value::Object(joined);
                 (allow(input), false)
             }
-            (_, Answer::Plan { approve: true, .. }) => (allow(r.input.clone()), false),
-            (_, Answer::Plan { approve: false, feedback }) => {
+            (_, Answer::Plan { approve: true, mode, .. }) => {
+                let mut resp = allow(r.input.clone());
+                if let Some(m) = mode {
+                    resp["updatedPermissions"] =
+                        json!([{"type": "setMode", "mode": m.claude(), "destination": "session"}]);
+                }
+                (resp, false)
+            }
+            (_, Answer::Plan { approve: false, feedback, .. }) => {
                 let f = feedback.as_deref().map(str::trim).filter(|f| !f.is_empty());
                 (deny(f.unwrap_or("Keep planning: the user wants changes before you start.")), true)
             }
@@ -688,6 +930,125 @@ impl ClaudeMapper {
         });
         let ev = self.request_event(request_id, &r, RequestState::Answered, Some(answer.clone()));
         Ok((line, vec![ev]))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum HistoryError {
+    #[error("the transcript no longer has the entry PDT's log ends at")]
+    AnchorMissing,
+}
+
+/// The uuid of a transcript's last conversation entry: where PDT's log ends when the TUI takes over.
+pub fn last_uuid(transcript: &str) -> Option<String> {
+    transcript
+        .lines()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|e| matches!(e.get("type").and_then(Value::as_str), Some("user" | "assistant" | "system")))
+        .and_then(|e| str_field(&e, "uuid"))
+}
+
+/// `<command-name>/model</command-name>…<command-args>opus</command-args>` → `/model opus`.
+fn command_text(s: &str) -> Option<String> {
+    let between = |open: &str, close: &str| {
+        let start = s.find(open)? + open.len();
+        let end = s[start..].find(close)? + start;
+        Some(s[start..end].trim().to_string())
+    };
+    let name = between("<command-name>", "</command-name>")?;
+    let args = between("<command-args>", "</command-args>").unwrap_or_default();
+    Some(if args.is_empty() { name } else { format!("{name} {args}") })
+}
+
+/// Events for the turns a session's transcript (Claude's `<id>.jsonl`) has after the entry `after` (all of them
+/// without one): what was typed and done in the TUI (spec §8.3). Same mapping as the live stream; turns end at the
+/// next prompt, an interrupt, or the TUI's `turn_duration`. Usage is left out (the transcript has no totals).
+pub fn history_events(transcript: &str, after: Option<&str>, cwd: Option<&str>) -> Result<Vec<MapOut>, HistoryError> {
+    let entries: Vec<Value> =
+        transcript.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(Value::is_object).collect();
+    let start = match after {
+        None => 0,
+        Some(a) => {
+            entries
+                .iter()
+                .position(|e| e.get("uuid").and_then(Value::as_str) == Some(a))
+                .ok_or(HistoryError::AnchorMissing)?
+                + 1
+        }
+    };
+    let mut m = match cwd {
+        Some(c) => ClaudeMapper::with_cwd(c),
+        None => ClaudeMapper::new(),
+    };
+    let mut out = Vec::new();
+    for e in &entries[start..] {
+        if e.get("isSidechain").and_then(Value::as_bool) == Some(true)
+            || e.get("isMeta").and_then(Value::as_bool) == Some(true)
+        {
+            continue;
+        }
+        match e.get("type").and_then(Value::as_str).unwrap_or("") {
+            "assistant" => out
+                .extend(m.on_frame(&json!({"type": "assistant", "message": e["message"], "parent_tool_use_id": null}))),
+            "user" => m.history_user(e, &mut out),
+            "system" if e.get("subtype").and_then(Value::as_str) == Some("turn_duration") && m.turn.is_some() => {
+                m.close_turn(TurnStatus::Completed, e.get("durationMs").and_then(Value::as_i64), None, &mut out);
+            }
+            _ => {}
+        }
+    }
+    if m.turn.is_some() {
+        m.close_turn(TurnStatus::Completed, None, None, &mut out);
+    }
+    out.retain(|o| matches!(o, MapOut::Event { event, .. } if event.kind() != "usage"));
+    Ok(out)
+}
+
+impl ClaudeMapper {
+    /// One `user` transcript entry: a prompt (a new turn), a tool result, an interrupt or a local command.
+    fn history_user(&mut self, e: &Value, out: &mut Vec<MapOut>) {
+        let content = &e["message"]["content"];
+        let is_result = content
+            .as_array()
+            .is_some_and(|b| b.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("tool_result")));
+        if is_result {
+            let frame = json!({"type": "user", "message": e["message"], "tool_use_result": e.get("toolUseResult")});
+            out.extend(self.on_frame(&frame));
+            return;
+        }
+        let text = text_of(content);
+        let trimmed = text.trim();
+        if trimmed.starts_with("[Request interrupted by user") {
+            if self.turn.is_some() {
+                self.close_turn(TurnStatus::Interrupted, None, Some("Interrupted".into()), out);
+            }
+            return;
+        }
+        if let Some(body) = strip_tag(trimmed, "local-command-stdout") {
+            let text = body.to_string();
+            out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
+            return;
+        }
+        let prompt = command_text(trimmed).unwrap_or_else(|| trimmed.to_string());
+        if prompt.is_empty() {
+            return;
+        }
+        if self.turn.is_some() {
+            self.close_turn(TurnStatus::Completed, None, None, out);
+        }
+        let uuid = str_field(e, "uuid").unwrap_or_default();
+        self.start_turn(uuid.clone(), out);
+        let images = match content {
+            Value::Array(b) => b
+                .iter()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("image"))
+                .map(|b| b.pointer("/source/media_type").and_then(Value::as_str).unwrap_or("image").to_string())
+                .collect(),
+            _ => Vec::new(),
+        };
+        let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
+        out.push(self.event(item, AgentEvent::UserMessage { text: prompt, images, source: MessageSource::Terminal }));
     }
 }
 
@@ -810,7 +1171,7 @@ mod tests {
         let answers = BTreeMap::from([("Which?".to_string(), vec!["A".to_string(), "B".to_string()])]);
         let (line, _) = m.answer("q", &Answer::Question { answers }).unwrap();
         assert_eq!(line["response"]["response"]["updatedInput"]["answers"], json!({"Which?": "A, B"}));
-        let (line, _) = m.answer("p", &Answer::Plan { approve: false, feedback: None }).unwrap();
+        let (line, _) = m.answer("p", &Answer::Plan { approve: false, feedback: None, mode: None }).unwrap();
         assert_eq!(line["response"]["response"]["behavior"], "deny");
     }
 
@@ -894,14 +1255,252 @@ not json"#,
         );
     }
 
+    const PLAN: &str = include_str!("../../tests/fixtures/claude/plan.jsonl");
+    const TRANSCRIPT: &str = include_str!("../../tests/fixtures/claude/transcript.jsonl");
+
+    fn tool_calls(ev: &[(Option<String>, AgentEvent)], tool: &str) -> Vec<AgentEvent> {
+        ev.iter()
+            .filter(|(_, e)| matches!(e, AgentEvent::ToolCall { tool: t, .. } if t == tool))
+            .map(|(_, e)| e.clone())
+            .collect()
+    }
+
+    fn diff_of(e: &AgentEvent) -> &str {
+        match e {
+            AgentEvent::ToolCall { diff, .. } | AgentEvent::Request { diff, .. } => diff.as_deref().unwrap_or(""),
+            AgentEvent::TurnDiff { diff } => diff,
+            _ => "",
+        }
+    }
+
+    #[test]
+    fn a_recorded_plan_turn_answers_the_question_and_plan_and_diffs_its_edits() {
+        let mut m = ClaudeMapper::with_cwd("/work/probe");
+        let mut out = Vec::new();
+        let mut answered = Vec::new();
+        for line in PLAN.lines() {
+            let mapped = m.on_line(line);
+            for (_, e) in events(&mapped) {
+                let AgentEvent::Request { id, request_kind, state: RequestState::Open, input, .. } = e else {
+                    continue;
+                };
+                let answer = match request_kind {
+                    RequestKind::Question => {
+                        let q = input["questions"][0]["question"].as_str().unwrap().to_string();
+                        Answer::Question { answers: BTreeMap::from([(q, vec!["pear".to_string()])]) }
+                    }
+                    RequestKind::Plan => {
+                        Answer::Plan { approve: true, feedback: None, mode: Some(PermissionMode::AcceptEdits) }
+                    }
+                    RequestKind::Approval => Answer::Approve { always: false },
+                };
+                let (line, _) = m.answer(&id, &answer).unwrap();
+                answered.push((request_kind, line));
+            }
+            out.extend(mapped);
+        }
+        let kinds: Vec<RequestKind> = answered.iter().map(|(k, _)| *k).collect();
+        assert_eq!(kinds, [RequestKind::Question, RequestKind::Plan], "edits ran without asking in Accept edits");
+        let plan = &answered[1].1["response"]["response"];
+        assert_eq!(
+            plan["updatedPermissions"],
+            json!([{"type": "setMode", "mode": "acceptEdits", "destination": "session"}])
+        );
+        assert!(
+            out.iter().any(|o| matches!(o, MapOut::Init(i) if i.permission_mode.as_deref() == Some("acceptEdits"))),
+            "system/status reports the new mode at once"
+        );
+
+        let ev = events(&out);
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "unknown"), "{ev:#?}");
+        let edit = tool_calls(&ev, "Edit");
+        let done = edit.iter().find(|e| matches!(e, AgentEvent::ToolCall { status: ToolStatus::Done, .. })).unwrap();
+        let d = diff_of(done);
+        assert!(
+            d.starts_with("--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n line one\n-line two\n+pear\n"),
+            "{d}"
+        );
+        let running =
+            edit.iter().find(|e| matches!(e, AgentEvent::ToolCall { status: ToolStatus::Running, .. })).unwrap();
+        assert!(diff_of(running).contains("-line two\n+pear"), "a running edit shows its input: {}", diff_of(running));
+
+        let writes = tool_calls(&ev, "Write");
+        let fruit = writes.iter().rev().find(|e| diff_of(e).contains("fruit.txt")).unwrap();
+        assert!(
+            diff_of(fruit).starts_with("--- /dev/null\n+++ b/fruit.txt\n@@ -0,0 +1,1 @@\n+pear"),
+            "{}",
+            diff_of(fruit)
+        );
+
+        let turn_diffs: Vec<&AgentEvent> = ev.iter().map(|(_, e)| e).filter(|e| e.kind() == "turn_diff").collect();
+        assert_eq!(turn_diffs.len(), 1);
+        let td = diff_of(turn_diffs[0]);
+        assert!(td.contains("+++ b/notes.txt") && td.contains("+++ b/fruit.txt"), "{td}");
+        assert!(!td.contains("plans/"), "files outside the folder (the plan file) stay out: {td}");
+        let pos = |k: &str| ev.iter().rposition(|(_, e)| e.kind() == k).unwrap();
+        assert!(pos("turn_diff") < pos("turn"), "the diff comes before the turn ends");
+    }
+
+    #[test]
+    fn edit_requests_carry_the_change_and_plans_can_switch_mode() {
+        let mut m = ClaudeMapper::with_cwd("/w");
+        let out = run(
+            &mut m,
+            r#"{"type":"control_request","request_id":"e","request":{"subtype":"can_use_tool","tool_name":"Edit","input":{"file_path":"/w/src/a.rs","old_string":"let a = 1;","new_string":"let a = 2;\nlet b = 3;"},"tool_use_id":"t1"}}
+{"type":"control_request","request_id":"w","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"/elsewhere/b.md","content":"hi\n"}}}
+{"type":"control_request","request_id":"p","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"plan":"x"}}}"#,
+        );
+        let ev = events(&out);
+        assert_eq!(diff_of(&ev[0].1), "--- a/src/a.rs\n+++ b/src/a.rs\n@@ @@\n-let a = 1;\n+let a = 2;\n+let b = 3;\n");
+        assert_eq!(diff_of(&ev[1].1), "--- /elsewhere/b.md\n+++ /elsewhere/b.md\n@@ @@\n+hi\n");
+        assert_eq!(diff_of(&ev[2].1), "");
+        let (line, _) = m.answer("p", &Answer::Plan { approve: true, feedback: None, mode: None }).unwrap();
+        assert!(line["response"]["response"].get("updatedPermissions").is_none());
+        let out =
+            m.on_line(r#"{"type":"system","subtype":"status","status":null,"permissionMode":"bypassPermissions"}"#);
+        assert!(
+            events(&out)
+                .iter()
+                .any(|(_, e)| matches!(e, AgentEvent::Notice { text, .. } if text == "Permission mode: Bypass"))
+        );
+        assert!(m.on_line(r#"{"type":"system","subtype":"status","permissionMode":"bypassPermissions"}"#).is_empty());
+    }
+
+    #[test]
+    fn history_from_a_transcript_becomes_terminal_turns() {
+        let out = history_events(TRANSCRIPT, None, Some("/work/probe")).unwrap();
+        let ev = events(&out);
+        assert!(out.iter().all(|o| matches!(o, MapOut::Event { .. })), "only events: {out:?}");
+        assert!(!ev.iter().any(|(_, e)| matches!(e.kind(), "usage" | "unknown")), "{ev:#?}");
+        assert!(matches!(&ev[0].1, AgentEvent::Turn { phase: TurnPhase::Started, .. }));
+        assert!(
+            matches!(&ev[1].1, AgentEvent::UserMessage { source: MessageSource::Terminal, text, .. } if text.starts_with("Use AskUserQuestion"))
+        );
+        let edit = tool_calls(&ev, "Edit");
+        assert!(diff_of(edit.last().unwrap()).contains("@@ -1,3 +1,3 @@"));
+        assert!(matches!(
+            &ev.last().unwrap().1,
+            AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. }
+        ));
+        assert!(ev.iter().any(|(_, e)| matches!(e, AgentEvent::AgentMessage { phase: MessagePhase::Final, markdown, .. } if markdown.contains("pear"))));
+        assert!(ev.iter().any(|(_, e)| e.kind() == "turn_diff"));
+
+        // After an anchor: only what follows it (here the Write call, its result and the answer).
+        let last = last_uuid(TRANSCRIPT).unwrap();
+        assert!(history_events(TRANSCRIPT, Some(&last), None).unwrap().is_empty());
+        let lines: Vec<&str> = TRANSCRIPT.lines().collect();
+        let anchor = lines
+            .iter()
+            .rev()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["type"] == "user")
+            .nth(1)
+            .and_then(|v| v["uuid"].as_str().map(String::from))
+            .unwrap();
+        let tail = events(&history_events(TRANSCRIPT, Some(&anchor), None).unwrap());
+        let kinds: Vec<&str> = tail.iter().map(|(_, e)| e.kind()).collect();
+        assert_eq!(
+            kinds,
+            ["turn", "tool_call", "tool_call", "agent_message", "agent_message", "turn_diff", "turn"],
+            "{tail:#?}"
+        );
+        assert_eq!(history_events(TRANSCRIPT, Some("nope"), None), Err(HistoryError::AnchorMissing));
+    }
+
+    #[test]
+    fn history_handles_commands_interrupts_and_turn_durations() {
+        let t = r#"{"type":"user","uuid":"a","message":{"role":"user","content":"first"}}
+{"type":"assistant","uuid":"b","message":{"id":"m1","content":[{"type":"text","text":"working"}]}}
+{"type":"user","uuid":"c","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+{"type":"user","uuid":"d","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>x</local-command-caveat>"}}
+{"type":"user","uuid":"e","message":{"role":"user","content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>opus</command-args>"}}
+{"type":"user","uuid":"f","message":{"role":"user","content":"<local-command-stdout>Set model to opus</local-command-stdout>"}}
+{"type":"user","uuid":"g","message":{"role":"user","content":"second"}}
+{"type":"assistant","uuid":"h","isSidechain":true,"message":{"id":"side","content":[{"type":"text","text":"sub"}]}}
+{"type":"assistant","uuid":"i","message":{"id":"m2","content":[{"type":"text","text":"done"}]}}
+{"type":"system","uuid":"j","subtype":"turn_duration","durationMs":1500}"#;
+        let ev = events(&history_events(t, None, None).unwrap());
+        let summary: Vec<String> = ev
+            .iter()
+            .map(|(_, e)| match e {
+                AgentEvent::Turn { phase: TurnPhase::Started, .. } => "start".into(),
+                AgentEvent::Turn { status, duration_ms, .. } => format!("end {status:?} {duration_ms:?}"),
+                AgentEvent::UserMessage { text, .. } => format!("user {text}"),
+                AgentEvent::AgentMessage { markdown, phase, .. } => format!("{phase:?} {markdown}"),
+                AgentEvent::Notice { text, .. } => format!("notice {text}"),
+                e => e.kind().to_string(),
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                "start",
+                "user first",
+                "Commentary working",
+                "Final working",
+                "end Some(Interrupted) None",
+                "start",
+                "user /model opus",
+                "notice Set model to opus",
+                "end Some(Completed) None",
+                "start",
+                "user second",
+                "Commentary done",
+                "Final done",
+                "end Some(Completed) Some(1500)",
+            ]
+        );
+    }
+
+    #[test]
+    fn slash_commands_show_as_sent_whether_or_not_claude_echoes_them() {
+        let mut m = ClaudeMapper::new();
+        // A custom command comes back expanded.
+        m.note_sent_command("/hi there");
+        let ev = events(&m.on_line(
+            r#"{"type":"user","message":{"role":"user","content":"<command-message>hi</command-message>\n<command-name>/hi</command-name>\n<command-args>there</command-args>"},"uuid":"u1","isReplay":true}"#,
+        ));
+        assert!(matches!(&ev[1].1, AgentEvent::UserMessage { text, .. } if text == "/hi there"), "{ev:?}");
+        run(&mut m, r#"{"type":"result","subtype":"success","is_error":false}"#);
+        // A local command (`/context`) is never echoed: its turn starts with it.
+        m.note_sent_command("/context");
+        let ev = events(&m.on_line(
+            r#"{"type":"assistant","message":{"id":"m9","content":[{"type":"text","text":"Context usage"}]},"parent_tool_use_id":null}"#,
+        ));
+        let kinds: Vec<&str> = ev.iter().map(|(_, e)| e.kind()).collect();
+        assert_eq!(kinds, ["turn", "user_message", "agent_message"]);
+        assert!(
+            matches!(&ev[1].1, AgentEvent::UserMessage { text, source: MessageSource::Pdt, .. } if text == "/context")
+        );
+        assert!(ev[1].0.is_some(), "it has its own row");
+        run(&mut m, r#"{"type":"result","subtype":"success","is_error":false}"#);
+        // Nothing is left over for the next turn.
+        let ev =
+            events(&m.on_line(r#"{"type":"assistant","message":{"id":"m10","content":[{"type":"text","text":"x"}]}}"#));
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "user_message"));
+    }
+
+    #[test]
+    fn messages_with_images_send_image_blocks_first() {
+        let images = vec![("image/png".to_string(), "AAAA".to_string())];
+        let l = user_line("s", "what is this?", &images, false);
+        assert_eq!(
+            l["message"]["content"],
+            json!([{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+                   {"type": "text", "text": "what is this?"}])
+        );
+        let l = user_line("s", "  ", &images, false);
+        assert_eq!(l["message"]["content"].as_array().unwrap().len(), 1, "no empty text block");
+    }
+
     #[test]
     fn titles_and_user_lines() {
         assert_eq!(tool_title("Edit", &json!({"file_path": "src/a.rs"})), "src/a.rs");
         assert_eq!(tool_title("Mystery", &json!({"x": 1})), "");
         let long = "x".repeat(300);
         assert_eq!(tool_title("Bash", &json!({"command": long})).chars().count(), 201);
-        let l = user_line("s", "hi", true);
+        let l = user_line("s", "hi", &[], true);
         assert_eq!((l["priority"].as_str(), l["message"]["content"].as_str()), (Some("now"), Some("hi")));
-        assert!(user_line("s", "hi", false).get("priority").is_none());
+        assert!(user_line("s", "hi", &[], false).get("priority").is_none());
     }
 }

@@ -203,6 +203,36 @@ describe('new ticket form', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  it('closes an untouched form without asking', async () => {
+    stubApi({ [`GET /api/projects/${project.id}/labels`]: [] });
+    const onClose = vi.fn();
+    renderWithQuery(<NewTicketDialog projects={[project]} projectId={project.id} onClose={onClose} />);
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('asks before closing a form with something typed in it', async () => {
+    stubApi({ [`GET /api/projects/${project.id}/labels`]: [] });
+    const onClose = vi.fn();
+    renderWithQuery(<NewTicketDialog projects={[project]} projectId={project.id} onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: 'New ticket' });
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Why');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    const ask = await screen.findByRole('alertdialog', { name: 'Discard this ticket?' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('Why');
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+
+    await userEvent.keyboard('{Escape}');
+    const again = await screen.findByRole('alertdialog', { name: 'Discard this ticket?' });
+    await userEvent.click(within(again).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
   it('shows the error from a refused create', async () => {
     stubApi({
       [`GET /api/projects/${project.id}/labels`]: [],

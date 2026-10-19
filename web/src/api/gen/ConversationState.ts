@@ -18,4 +18,8 @@ stopped?: string, agentVersion?: string,
 /**
  * Codex: the agent's own TUI is open on this conversation (live, beside it).
  */
-terminalOpen: boolean, };
+terminalOpen: boolean, 
+/**
+ * Who pays: "Claude plan", "API key", "ChatGPT plan" (spec §14), once the agent has said.
+ */
+billing?: string, };

@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, HashMap};
 
 /// What one message from the server turns into.
 #[derive(Debug, Clone, PartialEq)]
+// Short-lived (mapped, then stored or sent at once): boxing the event would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum CodexOut {
     Event {
         item_id: Option<String>,
@@ -280,6 +282,11 @@ impl CodexMapper {
                 input: r.input.clone(),
                 tool_call_id: (r.kind == RequestKind::Approval).then(|| id.to_string()),
                 can_always: r.can_always,
+                diff: (r.tool == "Edit")
+                    .then(|| {
+                        file_diff(r.input.get("changes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]))
+                    })
+                    .flatten(),
                 state,
                 answer,
             },
@@ -810,9 +817,80 @@ pub fn history_events(turns: &[Value], known_turns: &std::collections::HashSet<S
     out
 }
 
+/// The Codex commands PDT runs (Codex has no generic "run a slash command"; spec §7.2).
+pub fn commands() -> Vec<super::AgentCommandInfo> {
+    vec![
+        super::AgentCommandInfo {
+            name: "compact".into(),
+            description: "Summarise the conversation to free up context".into(),
+            argument_hint: None,
+        },
+        super::AgentCommandInfo {
+            name: "review".into(),
+            description: "Review the uncommitted changes (or follow your instructions)".into(),
+            argument_hint: Some("[instructions]".into()),
+        },
+    ]
+}
+
+/// A message that is one of [`commands`]: the RPC and its params (without `threadId`). Anything else is a message.
+pub fn slash_command(text: &str) -> Option<(&'static str, Value)> {
+    let t = text.trim();
+    let (name, args) = t.strip_prefix('/')?.split_once(char::is_whitespace).unwrap_or((t.strip_prefix('/')?, ""));
+    let args = args.trim();
+    match name {
+        "compact" if args.is_empty() => Some(("thread/compact/start", json!({}))),
+        "review" if args.is_empty() => Some(("review/start", json!({"target": {"type": "uncommittedChanges"}}))),
+        "review" => Some(("review/start", json!({"target": {"type": "custom", "instructions": args}}))),
+        _ => None,
+    }
+}
+
+/// Who pays, from `account/read` (only the account's type is read): "ChatGPT plan", "API key", "Amazon Bedrock".
+pub fn billing_label(account_read: &Value) -> Option<String> {
+    let label = match account_read.pointer("/account/type").and_then(Value::as_str)? {
+        "chatgpt" => "ChatGPT plan",
+        "apiKey" => "API key",
+        "amazonBedrock" => "Amazon Bedrock",
+        _ => return None,
+    };
+    Some(label.to_string())
+}
+
+/// A turn's input: the text, then each image by its local path.
+pub fn user_input(text: &str, image_paths: &[String]) -> Value {
+    let mut items = Vec::new();
+    if !text.trim().is_empty() || image_paths.is_empty() {
+        items.push(json!({"type": "text", "text": text}));
+    }
+    items.extend(image_paths.iter().map(|p| json!({"type": "localImage", "path": p})));
+    Value::Array(items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commands_map_to_their_rpcs_and_images_to_local_paths() {
+        assert_eq!(slash_command(" /compact "), Some(("thread/compact/start", json!({}))));
+        assert_eq!(slash_command("/review"), Some(("review/start", json!({"target": {"type": "uncommittedChanges"}}))));
+        assert_eq!(
+            slash_command("/review  the auth code"),
+            Some(("review/start", json!({"target": {"type": "custom", "instructions": "the auth code"}})))
+        );
+        assert_eq!(slash_command("/compact now"), None);
+        assert_eq!(slash_command("/model gpt"), None);
+        assert_eq!(slash_command("compact"), None);
+        assert_eq!(commands().len(), 2);
+        assert_eq!(
+            billing_label(&json!({"account": {"type": "chatgpt", "email": "x", "planType": "pro"}})).as_deref(),
+            Some("ChatGPT plan")
+        );
+        assert_eq!(billing_label(&json!({"account": null})), None);
+        assert_eq!(user_input("hi", &[]), json!([{"type": "text", "text": "hi"}]));
+        assert_eq!(user_input("", &["/d/a.png".into()]), json!([{"type": "localImage", "path": "/d/a.png"}]));
+    }
 
     const APPROVAL: &str = include_str!("../../tests/fixtures/codex/approval.jsonl");
 
@@ -952,7 +1030,13 @@ mod tests {
         let AgentEvent::ToolCall { title, diff, .. } = &ev[0].1 else { panic!() };
         assert_eq!(title, "a.rs +1 more");
         assert!(diff.as_deref().unwrap().contains("+++ b/a.rs"));
-        m.on_server_request(json!(4), "item/fileChange/requestApproval", &json!({"itemId": "f", "turnId": "t1"}));
+        let ev = events(&m.on_server_request(
+            json!(4),
+            "item/fileChange/requestApproval",
+            &json!({"itemId": "f", "turnId": "t1"}),
+        ));
+        let AgentEvent::Request { diff, .. } = &ev[0].1 else { panic!() };
+        assert!(diff.as_deref().is_some_and(|d| d.contains("+++ b/b.rs")), "the card shows the change: {diff:?}");
         m.note_interrupt();
         let ev = events(&m.on_notification("turn/completed", &json!({"turn": {"id": "t1", "status": "interrupted"}})));
         assert!(

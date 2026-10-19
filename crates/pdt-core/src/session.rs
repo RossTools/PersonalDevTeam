@@ -284,7 +284,8 @@ pub struct Platform {
     pub claude_program: String,
     pub codex_program: String,
     /// The user's login-shell PATH, when pdtd's own PATH is not it (a macOS app started by launchd gets only
-    /// /usr/bin:/bin:/usr/sbin:/sbin). Programs are looked up on it and sessions run with it.
+    /// /usr/bin:/bin:/usr/sbin:/sbin), plus the standard install folders it lacks. Programs are looked up on it and
+    /// sessions run with it.
     pub login_path: Option<String>,
     /// Codex's home directory (`$CODEX_HOME`, else `~/.codex`), where it saves conversations. None when it cannot be
     /// determined.

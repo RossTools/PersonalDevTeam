@@ -4,7 +4,10 @@
 //! - `slow` — streams for ~20 s unless interrupted; `turn/steer` messages join it.
 //! - `who` — says the thread, whether it was resumed, and the turn's model, approval policy and sandbox.
 //! - `exit` — the server exits 3.
-//! - anything else — `echo: <text>`.
+//! - anything else — `echo: <text>` (plus `saw N images` when the input has `localImage`s).
+//!
+//! `thread/compact/start` and `review/start` run a short turn (a compaction item; a review answer), and
+//! `account/read` reports a ChatGPT account.
 //!
 //! Threads that took a turn are saved in `<token dir>/fake-threads.json`, so a restarted server resumes them (and
 //! refuses threads that never took one, as Codex does). The server's URL is written to `<token dir>/fake-url`.
@@ -207,6 +210,34 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
             Ok(json!({"data": turns, "nextCursor": null, "backwardsCursor": null}))
         }
         "thread/unsubscribe" => Ok(json!({})),
+        "account/read" => {
+            Ok(json!({"account": {"type": "chatgpt", "email": null, "planType": "pro"}, "requiresOpenaiAuth": true}))
+        }
+        "thread/compact/start" | "review/start" => {
+            let n = server.next.fetch_add(1, Ordering::SeqCst);
+            let turn = format!("turn-{n}");
+            let item = if method == "review/start" {
+                let target = p.pointer("/target/type").and_then(Value::as_str).unwrap_or("?");
+                json!({"type": "agentMessage", "id": format!("msg-{n}"), "text": format!("reviewed: {target}"),
+                       "phase": "final_answer"})
+            } else {
+                json!({"type": "contextCompaction", "id": format!("compact-{n}")})
+            };
+            let conn = conn.clone();
+            tokio::spawn(async move {
+                let note = |m: &str, mut v: Value| {
+                    v["threadId"] = json!(thread);
+                    conn.notify(m, v);
+                };
+                note("turn/started", json!({"turn": {"id": turn, "items": [], "status": "inProgress"}}));
+                note("item/completed", json!({"turnId": turn, "item": item}));
+                note(
+                    "turn/completed",
+                    json!({"turn": {"id": turn, "status": "completed", "durationMs": 1, "items": []}}),
+                );
+            });
+            Ok(json!({}))
+        }
         "turn/start" => {
             if !server.store.lock().unwrap().loaded.contains_key(&thread) {
                 return Err("thread not loaded".into());
@@ -379,6 +410,13 @@ async fn run_turn(
         say(&s, &mut items);
     } else {
         say(&format!("echo: {t}"), &mut items);
+        let images = params
+            .get("input")
+            .and_then(Value::as_array)
+            .map_or(0, |a| a.iter().filter(|i| i["type"] == "localImage" && i["path"].is_string()).count());
+        if images > 0 {
+            say(&format!("saw {images} images"), &mut items);
+        }
     }
     // Messages steered into the turn are taken before it ends.
     if status == "completed" {

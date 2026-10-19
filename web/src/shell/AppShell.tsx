@@ -27,6 +27,7 @@ import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
+import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
 import { nextNeedingYou } from '../workspaces/model';
@@ -52,6 +53,7 @@ const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted
 /** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n sessions need the user; [dev] on a dev instance. */
 function useAttentionTitle(count: number) {
   useDevTitle(count);
+  useReloadOnNewBuild();
 }
 
 // The ticket screens (and the Markdown libraries they use) load the first time they're shown.

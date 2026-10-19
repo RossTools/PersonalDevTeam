@@ -1,6 +1,8 @@
 //! Starting pdt-host at login (spec §3.1): a per-user launchd LaunchAgent on macOS (RunAtLoad, KeepAlive), and a
 //! per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on Windows (decision 14; no admin needed).
-//! pdt-host runs from a copy in the data folder, so installers can replace the install folder.
+//! On Windows pdt-host runs from a copy in the data folder, so the installer can replace the install folder while it
+//! runs. On macOS it runs from the app bundle: a bundle can be swapped while its programs run, and a login item whose
+//! program is rewritten after every update looks like malware hiding in a persistence item (PDT-40, SentinelOne).
 //!
 //! Every command goes through a [`Runner`], so tests check the exact command lines without registering anything.
 
@@ -12,8 +14,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+/// The Windows copy of pdt-host in the data folder (also where older macOS versions kept one).
 pub fn installed_host_path(data_dir: &Path) -> PathBuf {
     data_dir.join("host").join(format!("{HOST_BIN}{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// The pdt-host in the install folder (the app bundle's on macOS).
+pub fn bundled_host_path(install_dir: &Path) -> PathBuf {
+    install_dir.join(format!("{HOST_BIN}{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// The program the login registration starts: the bundle's pdt-host on macOS, the data folder copy on Windows.
+pub fn registered_program(os: Os, cfg: &HostConfig) -> PathBuf {
+    if os == Os::Mac { bundled_host_path(&cfg.install_dir) } else { installed_host_path(&cfg.data_dir) }
 }
 
 pub fn launch_agent_path(home: &Path) -> PathBuf {
@@ -157,8 +170,9 @@ where
     cmd
 }
 
-/// Copies this executable into the data folder (unless a running pdt-host owns that copy; it replaces itself after
-/// updates), registers the copy to start at login, and starts it if no pdt-host is running.
+/// Registers pdt-host to start at login and starts it if no pdt-host is running. Windows registers a copy in the data
+/// folder (made unless a running pdt-host owns it; that one replaces itself after updates); macOS registers the bundle's
+/// own pdt-host and removes the copy older versions made.
 pub fn install(cfg: &HostConfig) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let home = std::env::home_dir();
@@ -172,25 +186,16 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
     if cfg.dev {
         return Err("only the stable profile is started at login; unset PDT_PROFILE to register pdt-host".into());
     }
-    let program = installed_host_path(&cfg.data_dir);
+    let program = registered_program(target.os, cfg);
     let running = host_running(&cfg.data_dir);
-    // A running copy is locked (Windows) and replaces itself; a missing one is copied even then, so the registration
-    // never points at nothing.
-    if !running || !program.is_file() {
-        std::fs::create_dir_all(program.parent().expect("host dir")).map_err(|e| e.to_string())?;
-        if target.exe != program {
-            std::fs::copy(target.exe, &program)
-                .map_err(|e| format!("copying {} to {}: {e}", target.exe.display(), program.display()))?;
-        }
-    }
     match target.os {
         Os::Mac => {
+            if !program.is_file() {
+                return Err(format!("{} does not exist", program.display()));
+            }
             let home = target.home.ok_or("no home folder")?;
             let plist = launch_agent_path(home);
-            let log = cfg.data_dir.join("logs").join(format!("{HOST_BIN}.launchd.log"));
-            let _ = std::fs::create_dir_all(log.parent().expect("logs"));
-            std::fs::create_dir_all(plist.parent().expect("LaunchAgents")).map_err(|e| e.to_string())?;
-            std::fs::write(&plist, launchd_plist(&program, &cfg.install_dir, &log)).map_err(|e| e.to_string())?;
+            write_launch_agent(cfg, &plist)?;
             if !running {
                 let domain = launchd_domain(runner)?;
                 // A stale registration (e.g. from an older install) fails bootstrap; it may not exist.
@@ -199,9 +204,20 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
                 if !runner.status(bootstrap)? {
                     return Err("launchctl bootstrap failed".into());
                 }
+                // launchd now runs the bundle's pdt-host; nothing uses an older version's copy any more.
+                remove_old_copy(&cfg.data_dir);
             }
         }
         Os::Windows => {
+            // A running copy is locked and replaces itself; a missing one is copied even then, so the registration
+            // never points at nothing.
+            if !running || !program.is_file() {
+                std::fs::create_dir_all(program.parent().expect("host dir")).map_err(|e| e.to_string())?;
+                if target.exe != program {
+                    std::fs::copy(target.exe, &program)
+                        .map_err(|e| format!("copying {} to {}: {e}", target.exe.display(), program.display()))?;
+                }
+            }
             let mut reg = Command::new("reg");
             reg.args(["add", RUN_KEY, "/v", HOST_AUTOSTART_NAME, "/t", "REG_SZ", "/d"])
                 .arg(run_key_command(&program, &cfg.install_dir))
@@ -231,6 +247,35 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
     Ok(())
 }
 
+fn write_launch_agent(cfg: &HostConfig, plist: &Path) -> Result<(), String> {
+    let log = cfg.data_dir.join("logs").join(format!("{HOST_BIN}.launchd.log"));
+    let _ = std::fs::create_dir_all(log.parent().expect("logs"));
+    std::fs::create_dir_all(plist.parent().expect("LaunchAgents")).map_err(|e| e.to_string())?;
+    let text = launchd_plist(&bundled_host_path(&cfg.install_dir), &cfg.install_dir, &log);
+    std::fs::write(plist, text).map_err(|e| e.to_string())
+}
+
+/// Removes the data folder copy of pdt-host that older macOS versions registered.
+pub fn remove_old_copy(data_dir: &Path) {
+    let dir = installed_host_path(data_dir).parent().expect("host dir").to_path_buf();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// macOS, at startup: an agent written by an older version still names the data folder copy; it is rewritten to name
+/// the bundle's pdt-host (launchd reads it again at the next login, or when `install` bootstraps it). Returns whether it
+/// was rewritten. A missing agent (pdt-host started by the tray or by hand) is left missing.
+pub fn migrate_launch_agent(cfg: &HostConfig, home: &Path) -> Result<bool, String> {
+    let plist = launch_agent_path(home);
+    let Ok(text) = std::fs::read_to_string(&plist) else { return Ok(false) };
+    let program = bundled_host_path(&cfg.install_dir);
+    if cfg.dev || !program.is_file() || text.contains(&format!("<string>{}</string>", xml(&program.to_string_lossy())))
+    {
+        return Ok(false);
+    }
+    write_launch_agent(cfg, &plist)?;
+    Ok(true)
+}
+
 /// Stops this data folder's pdt-host and pdtd (so the install folder can be removed), then removes the login
 /// registration.
 pub fn uninstall(cfg: &HostConfig) -> Result<(), String> {
@@ -252,6 +297,7 @@ pub fn uninstall_with(cfg: &HostConfig, os: Os, home: Option<&Path>, runner: &mu
         Os::Mac => {
             let home = home.ok_or("no home folder")?;
             let _ = std::fs::remove_file(launch_agent_path(home));
+            remove_old_copy(&cfg.data_dir);
         }
         Os::Windows => {
             let mut reg = Command::new("reg");
@@ -297,14 +343,14 @@ mod tests {
     use std::collections::VecDeque;
 
     #[test]
-    fn launch_agent_runs_the_data_folder_copy_at_load_and_keeps_it_alive() {
+    fn launch_agent_runs_the_program_at_load_and_keeps_it_alive() {
         let p = launchd_plist(
-            Path::new("/Users/me/Library/Application Support/pdt/host/pdt-host"),
+            Path::new("/Users/me/Applications/A & B.app/Contents/MacOS/pdt-host"),
             Path::new("/Users/me/Applications/A & B.app/Contents/MacOS"),
             Path::new("/tmp/h.log"),
         );
         assert!(p.contains("<key>Label</key><string>dev.personaldevteam.host</string>"));
-        assert!(p.contains("<string>/Users/me/Library/Application Support/pdt/host/pdt-host</string>"));
+        assert!(p.contains("<string>/Users/me/Applications/A &amp; B.app/Contents/MacOS/pdt-host</string>"));
         assert!(p.contains("<string>/Users/me/Applications/A &amp; B.app/Contents/MacOS</string>"));
         assert!(p.contains("<key>RunAtLoad</key><true/>") && p.contains("<key>KeepAlive</key><true/>"));
         assert_eq!(
@@ -477,17 +523,34 @@ mod tests {
         assert!(r.spawned.is_empty());
     }
 
+    /// The bundle's own pdt-host, as an installed app has it.
+    fn bundle_host(s: &Setup) -> PathBuf {
+        let p = bundled_host_path(&s.cfg.install_dir);
+        std::fs::write(&p, "bundled host").unwrap();
+        p
+    }
+
+    /// The data folder copy an older version registered.
+    fn old_copy(s: &Setup) -> PathBuf {
+        let p = installed_host_path(&s.cfg.data_dir);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "old copy").unwrap();
+        p
+    }
+
     #[test]
-    fn mac_install_writes_the_agent_and_bootstraps_it() {
+    fn mac_install_registers_the_bundles_host_without_copying_it() {
         let s = setup();
+        let program = bundle_host(&s);
+        let copy = old_copy(&s);
         let mut r = Recorder::default();
         install_with(&s.cfg, &target(&s, Os::Mac), &mut r).unwrap();
-        let program = installed_host_path(&s.cfg.data_dir);
         let plist = launch_agent_path(&s.home);
         let text = std::fs::read_to_string(&plist).unwrap();
         assert!(text.contains(&format!("<string>{}</string>", program.display())), "{text}");
         assert!(text.contains(&format!("<string>{}</string>", s.cfg.install_dir.display())), "{text}");
         assert!(text.contains("pdt-host.launchd.log"), "{text}");
+        assert!(!text.contains(&copy.display().to_string()), "{text}");
         assert_eq!(
             r.ran,
             [
@@ -497,25 +560,73 @@ mod tests {
             ]
         );
         assert!(r.spawned.is_empty());
+        assert_eq!(std::fs::read_to_string(&program).unwrap(), "bundled host", "the bundle is never written");
+        assert!(!copy.parent().unwrap().exists(), "the old copy is removed once launchd runs the bundle's");
+    }
+
+    #[test]
+    fn mac_install_refuses_without_the_bundles_host() {
+        let s = setup();
+        let mut r = Recorder::default();
+        let err = install_with(&s.cfg, &target(&s, Os::Mac), &mut r).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(r.ran.is_empty());
+        assert!(!launch_agent_path(&s.home).exists());
+        assert!(!installed_host_path(&s.cfg.data_dir).exists());
     }
 
     #[test]
     fn mac_install_while_a_host_runs_rewrites_the_agent_without_launchctl() {
         let s = setup();
+        bundle_host(&s);
+        let copy = old_copy(&s);
         let _lock = hold_lock(&s.cfg);
         let mut r = Recorder::default();
         install_with(&s.cfg, &target(&s, Os::Mac), &mut r).unwrap();
         assert!(launch_agent_path(&s.home).is_file());
         assert!(r.ran.is_empty(), "{:?}", r.ran);
+        assert!(copy.is_file(), "launchd may still run the old copy until it reads the agent again");
     }
 
     #[test]
     fn mac_install_reports_a_failed_bootstrap() {
         let s = setup();
+        bundle_host(&s);
         // bootout may fail (nothing registered); bootstrap must not.
         let mut r = Recorder { statuses: [false, false].into(), ..Default::default() };
         let err = install_with(&s.cfg, &target(&s, Os::Mac), &mut r).unwrap_err();
         assert!(err.contains("bootstrap failed"), "{err}");
+    }
+
+    #[test]
+    fn an_agent_naming_the_old_copy_is_rewritten_to_name_the_bundles_host() {
+        let mut s = setup();
+        let program = bundle_host(&s);
+        let copy = old_copy(&s);
+        assert!(!migrate_launch_agent(&s.cfg, &s.home).unwrap(), "no agent: nothing is written");
+        assert!(!launch_agent_path(&s.home).exists());
+
+        let plist = launch_agent_path(&s.home);
+        std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
+        std::fs::write(&plist, launchd_plist(&copy, &s.cfg.install_dir, Path::new("l.log"))).unwrap();
+        assert!(migrate_launch_agent(&s.cfg, &s.home).unwrap());
+        let text = std::fs::read_to_string(&plist).unwrap();
+        assert!(text.contains(&format!("<string>{}</string>", program.display())), "{text}");
+        assert!(!text.contains(&copy.display().to_string()), "{text}");
+        assert!(!migrate_launch_agent(&s.cfg, &s.home).unwrap(), "already the bundle's");
+
+        std::fs::write(&plist, "old").unwrap();
+        s.cfg.dev = true;
+        assert!(!migrate_launch_agent(&s.cfg, &s.home).unwrap(), "a dev host never touches it");
+        assert_eq!(std::fs::read_to_string(&plist).unwrap(), "old");
+    }
+
+    #[test]
+    fn mac_uninstall_removes_the_old_copy() {
+        let s = setup();
+        let copy = old_copy(&s);
+        uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut Recorder::default()).unwrap();
+        assert!(!copy.exists());
     }
 
     #[test]

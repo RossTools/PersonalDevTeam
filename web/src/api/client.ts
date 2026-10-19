@@ -21,7 +21,9 @@ import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
 import type { RunConfigView } from './gen/RunConfigView';
+import type { Attachment } from './gen/Attachment';
 import type { Session } from './gen/Session';
+import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
 import type { UpdateStatus } from './gen/UpdateStatus';
 import type { WhoAmI } from './gen/WhoAmI';
@@ -150,7 +152,23 @@ export const api = {
   openSessionTerminal: (id: string, size: TerminalSize) =>
     request<void>(`/api/sessions/${enc(id)}/terminal`, { method: 'POST', body: JSON.stringify(size) }),
   closeSessionTerminal: (id: string) => request<void>(`/api/sessions/${enc(id)}/terminal`, { method: 'DELETE' }),
+  /** Claude: hand the session between the conversation and its own TUI (`interrupt` stops a running turn). */
+  switchSessionMode: (id: string, body: { mode: SessionMode; cols?: number; rows?: number; interrupt?: boolean }) =>
+    request<Session>(`/api/sessions/${enc(id)}/mode`, { method: 'POST', body: JSON.stringify(body) }),
   agentCapabilities: (agent: AgentKind) => request<AgentCapabilities>(`/api/agents/${enc(agent)}/capabilities`),
+  /** Stores an image for a message (PNG, JPEG, GIF or WebP, ≤ 10 MB); send its id in `images`. */
+  uploadAttachment: (sessionId: string, file: Blob) =>
+    request<Attachment>(`/api/sessions/${enc(sessionId)}/attachments`, {
+      method: 'POST',
+      body: file,
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+    }),
+  /** Where an attached image is served (thumbnails). */
+  attachmentUrl: (sessionId: string, attachmentId: string) =>
+    `/api/sessions/${enc(sessionId)}/attachments/${enc(attachmentId)}`,
+  /** The session folder's files best matching an `@` query. */
+  sessionFiles: (sessionId: string, q: string) =>
+    request<string[]>(`/api/sessions/${enc(sessionId)}/files${queryString({ q })}`),
   listWorkspaces: () => request<Workspace[]>('/api/workspaces'),
   createWorkspace: (w: NewWorkspace) => request<Workspace>('/api/workspaces', { method: 'POST', body: JSON.stringify(w) }),
   updateWorkspace: (id: string, p: WorkspacePatch) =>

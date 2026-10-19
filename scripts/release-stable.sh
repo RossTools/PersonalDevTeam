@@ -62,7 +62,7 @@ fi
 
 dest="$HOME/Applications/$product.app"
 # A registered pdt-host that cannot take the update (KeepAlive) would start pdtd again: stop and unregister it. The
-# new app registers it again when it starts, copying the new pdt-host.
+# new app registers it again when it starts, pointing it at the new bundle's pdt-host.
 agent="$HOME/Library/LaunchAgents/dev.personaldevteam.host.plist"
 launchctl bootout "gui/$(id -u)/dev.personaldevteam.host" 2>/dev/null || true
 rm -f "$agent"

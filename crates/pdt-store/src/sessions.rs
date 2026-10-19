@@ -253,6 +253,32 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Switches how an agent session is driven, with the transcript entry PDT's log ends at (spec §8.3; None once
+    /// imported).
+    pub async fn switch_session_mode(
+        &self,
+        id: &str,
+        mode: SessionMode,
+        history_from: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET mode = ?, history_from = ? WHERE id = ?")
+            .bind(mode.as_str())
+            .bind(history_from)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// The transcript entry PDT's log ends at, while the agent's TUI has the session.
+    pub async fn history_from(&self, id: &str) -> Result<Option<String>, StoreError> {
+        let v: Option<Option<String>> = sqlx::query_scalar("SELECT history_from FROM sessions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(v.flatten())
+    }
+
     /// Sessions made before permission modes existed get theirs from `bypass_permissions`.
     pub(crate) async fn backfill_permission_modes(&self) -> Result<(), StoreError> {
         sqlx::query(
@@ -390,6 +416,21 @@ mod tests {
         assert!(store.rename_session("a", "New name").await.unwrap());
         assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "New name");
         assert!(!store.rename_session("zz", "x").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn mode_and_history_anchor_switch() {
+        use pdt_core::conversation::SessionMode;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        assert_eq!(store.history_from("a").await.unwrap(), None);
+        assert!(store.switch_session_mode("a", SessionMode::Conversation, Some("uuid-9")).await.unwrap());
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().mode, SessionMode::Conversation);
+        assert_eq!(store.history_from("a").await.unwrap().as_deref(), Some("uuid-9"));
+        assert!(store.switch_session_mode("a", SessionMode::Terminal, None).await.unwrap());
+        assert_eq!(store.history_from("a").await.unwrap(), None);
+        assert!(!store.switch_session_mode("zz", SessionMode::Terminal, None).await.unwrap());
     }
 
     #[tokio::test]
