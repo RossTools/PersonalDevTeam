@@ -7,4 +7,8 @@ import type { PermissionMode } from "./PermissionMode";
  * `GET /api/agents/{agent}/capabilities`: what the composer offers. Empty lists until a conversation has started
  * once in this pdtd (the agent reports them).
  */
-export type AgentCapabilities = { conversation: boolean, permissionModes: Array<PermissionMode>, models: Array<AgentModel>, commands: Array<AgentCommandInfo>, version?: string, };
+export type AgentCapabilities = { conversation: boolean, permissionModes: Array<PermissionMode>, models: Array<AgentModel>, commands: Array<AgentCommandInfo>, 
+/**
+ * Commands that work only in the agent's own TUI (Claude's `terminal_slash_commands`).
+ */
+terminalCommands: Array<string>, version?: string, };

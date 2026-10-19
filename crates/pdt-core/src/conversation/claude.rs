@@ -32,6 +32,8 @@ pub struct ClaudeInit {
     /// `none` when Claude uses the plan login.
     pub api_key_source: Option<String>,
     pub slash_commands: Vec<String>,
+    /// Commands that work only in the TUI.
+    pub terminal_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -85,6 +87,9 @@ pub struct ClaudeMapper {
     cwd: Option<String>,
     /// The files the running turn changed, in the order first changed.
     turn_files: Vec<FileDiff>,
+    /// Slash commands PDT sent that Claude has not shown yet (local ones, like `/context`, are never echoed).
+    sent_commands: std::collections::VecDeque<String>,
+    shown_commands: u64,
 }
 
 /// One file's part of a diff: `--- a/path` / `+++ b/path` (or `/dev/null` for a new file), then hunks.
@@ -192,11 +197,24 @@ pub fn request_item(id: &str) -> String {
 }
 pub const USAGE_ITEM: &str = "usage";
 
-/// A user turn as a stdin line. `now` aborts what Claude is doing and runs it as a fresh turn.
-pub fn user_line(session_id: &str, text: &str, now: bool) -> Value {
+/// A user turn as a stdin line, with images as `(media type, base64 data)` before the text. `now` aborts what Claude
+/// is doing and runs it as a fresh turn.
+pub fn user_line(session_id: &str, text: &str, images: &[(String, String)], now: bool) -> Value {
+    let content = if images.is_empty() {
+        json!(text)
+    } else {
+        let mut blocks: Vec<Value> = images
+            .iter()
+            .map(|(media, data)| json!({"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}))
+            .collect();
+        if !text.trim().is_empty() {
+            blocks.push(json!({"type": "text", "text": text}));
+        }
+        Value::Array(blocks)
+    };
     let mut v = json!({
         "type": "user",
-        "message": {"role": "user", "content": text},
+        "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "session_id": session_id,
     });
@@ -258,6 +276,11 @@ fn strip_tag<'a>(s: &'a str, tag: &str) -> Option<&'a str> {
 impl ClaudeMapper {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// PDT sent a slash command: if Claude never echoes it, it is shown when its turn starts.
+    pub fn note_sent_command(&mut self, text: &str) {
+        self.sent_commands.push_back(text.trim().to_string());
     }
 
     /// A mapper for a session working in `cwd`.
@@ -339,9 +362,18 @@ impl ClaudeMapper {
         });
     }
 
+    /// Starts a turn that began without an echoed prompt: a local slash command's, which then shows as sent.
     fn ensure_turn(&mut self, fallback_id: &str, out: &mut Vec<MapOut>) {
         if self.turn.is_none() {
             self.start_turn(format!("x-{fallback_id}"), out);
+            if let Some(cmd) = self.sent_commands.pop_front() {
+                self.shown_commands += 1;
+                let item = format!("u:cmd-{fallback_id}-{}", self.shown_commands);
+                out.push(self.event(
+                    Some(item),
+                    AgentEvent::UserMessage { text: cmd, images: vec![], source: MessageSource::Pdt },
+                ));
+            }
         }
     }
 
@@ -518,6 +550,11 @@ impl ClaudeMapper {
                         .and_then(Value::as_array)
                         .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
                         .unwrap_or_default(),
+                    terminal_commands: v
+                        .get("terminal_slash_commands")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+                        .unwrap_or_default(),
                 };
                 if let (Some(old), Some(new)) = (&self.model, &init.model)
                     && old != new
@@ -582,7 +619,13 @@ impl ClaudeMapper {
                 _ => Vec::new(),
             };
             let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
-            out.push(self.event(item, AgentEvent::UserMessage { text: text_of(content), images, source }));
+            // A custom command comes back expanded (`<command-name>/x</command-name>…`): show what was typed.
+            let raw = text_of(content);
+            let text = command_text(raw.trim()).unwrap_or(raw);
+            if let Some(i) = self.sent_commands.iter().position(|c| *c == text.trim()) {
+                self.sent_commands.remove(i);
+            }
+            out.push(self.event(item, AgentEvent::UserMessage { text, images, source }));
             return;
         }
         let Value::Array(blocks) = content else {
@@ -1410,13 +1453,54 @@ not json"#,
     }
 
     #[test]
+    fn slash_commands_show_as_sent_whether_or_not_claude_echoes_them() {
+        let mut m = ClaudeMapper::new();
+        // A custom command comes back expanded.
+        m.note_sent_command("/hi there");
+        let ev = events(&m.on_line(
+            r#"{"type":"user","message":{"role":"user","content":"<command-message>hi</command-message>\n<command-name>/hi</command-name>\n<command-args>there</command-args>"},"uuid":"u1","isReplay":true}"#,
+        ));
+        assert!(matches!(&ev[1].1, AgentEvent::UserMessage { text, .. } if text == "/hi there"), "{ev:?}");
+        run(&mut m, r#"{"type":"result","subtype":"success","is_error":false}"#);
+        // A local command (`/context`) is never echoed: its turn starts with it.
+        m.note_sent_command("/context");
+        let ev = events(&m.on_line(
+            r#"{"type":"assistant","message":{"id":"m9","content":[{"type":"text","text":"Context usage"}]},"parent_tool_use_id":null}"#,
+        ));
+        let kinds: Vec<&str> = ev.iter().map(|(_, e)| e.kind()).collect();
+        assert_eq!(kinds, ["turn", "user_message", "agent_message"]);
+        assert!(
+            matches!(&ev[1].1, AgentEvent::UserMessage { text, source: MessageSource::Pdt, .. } if text == "/context")
+        );
+        assert!(ev[1].0.is_some(), "it has its own row");
+        run(&mut m, r#"{"type":"result","subtype":"success","is_error":false}"#);
+        // Nothing is left over for the next turn.
+        let ev =
+            events(&m.on_line(r#"{"type":"assistant","message":{"id":"m10","content":[{"type":"text","text":"x"}]}}"#));
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "user_message"));
+    }
+
+    #[test]
+    fn messages_with_images_send_image_blocks_first() {
+        let images = vec![("image/png".to_string(), "AAAA".to_string())];
+        let l = user_line("s", "what is this?", &images, false);
+        assert_eq!(
+            l["message"]["content"],
+            json!([{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+                   {"type": "text", "text": "what is this?"}])
+        );
+        let l = user_line("s", "  ", &images, false);
+        assert_eq!(l["message"]["content"].as_array().unwrap().len(), 1, "no empty text block");
+    }
+
+    #[test]
     fn titles_and_user_lines() {
         assert_eq!(tool_title("Edit", &json!({"file_path": "src/a.rs"})), "src/a.rs");
         assert_eq!(tool_title("Mystery", &json!({"x": 1})), "");
         let long = "x".repeat(300);
         assert_eq!(tool_title("Bash", &json!({"command": long})).chars().count(), 201);
-        let l = user_line("s", "hi", true);
+        let l = user_line("s", "hi", &[], true);
         assert_eq!((l["priority"].as_str(), l["message"]["content"].as_str()), (Some("now"), Some("hi")));
-        assert!(user_line("s", "hi", false).get("priority").is_none());
+        assert!(user_line("s", "hi", &[], false).get("priority").is_none());
     }
 }
