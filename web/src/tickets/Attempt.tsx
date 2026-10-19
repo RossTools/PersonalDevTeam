@@ -97,8 +97,17 @@ export function MergedBanner({ ticket: t, className }: { ticket: Ticket; classNa
       role="status"
       className={className}
       actions={
-        <Button size="sm" compact variant="primary" pending={pending} onClick={() => void finish()}>
-          Move to Done and remove the worktree
+        // The full label needs ~24rem; in a narrower banner (phone peek, thin pane) it would be clipped, so say less.
+        <Button
+          size="sm"
+          compact
+          variant="primary"
+          pending={pending}
+          aria-label="Move to Done and remove the worktree"
+          onClick={() => void finish()}
+        >
+          <span className="hidden @sm:inline">Move to Done and remove the worktree</span>
+          <span className="@sm:hidden">Move to Done</span>
         </Button>
       }
     >
