@@ -353,7 +353,7 @@ impl ClaudeMapper {
             }
             // Progress Claude reports for its own bookkeeping; the tool calls carry what matters.
             "status" | "task_started" | "task_progress" | "task_notification" | "hook_started" | "hook_response"
-            | "hook_progress" | "files_persisted" => {}
+            | "hook_progress" | "files_persisted" | "thinking_tokens" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
     }
@@ -862,6 +862,7 @@ mod tests {
 {"type":"user","message":{"content":[{"type":"text","text":"two"},{"type":"image","source":{"media_type":"image/png"}}]},"uuid":"u2","isReplay":true}
 {"type":"mystery","x":1}
 {"type":"system","subtype":"status","status":"requesting"}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":222,"estimated_tokens_delta":172}
 {"type":"control_request","request_id":"h1","request":{"subtype":"hook_callback"}}
 not json"#,
         );
