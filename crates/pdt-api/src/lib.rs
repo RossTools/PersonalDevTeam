@@ -5,6 +5,7 @@ mod error;
 mod files;
 mod folders;
 mod github;
+pub mod guides;
 mod host;
 mod host_guard;
 mod identity_guard;

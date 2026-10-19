@@ -1,10 +1,11 @@
 # Run configuration
 
-How PDT runs and tests a project: what **Run** and **Test** on a branch or worktree do. Design: remote-host spec §4
-(docs/superpowers/specs/2026-10-15-remote-host-design.md). Code: crates/pdt-core/src/runconfig.rs.
+How PDT runs and tests a project: what **Run** and **Test** on a branch or worktree do. PDT serves this reference
+itself at `GET /api/guides/run-config`. (In PDT's repository: docs/run-config.md; design: remote-host spec §4; code:
+crates/pdt-core/src/runconfig.rs.)
 
-To have an agent write the configuration for you, paste [prompts/set-up-project.md](prompts/set-up-project.md) into
-an agent session started from PDT in that project.
+To have an agent write the configuration for you, use **Set up with an agent** in the project's Settings (Runs on
+this host): it starts an agent session in the project with PDT's set-up prompt (`GET /api/guides/set-up-project`).
 
 ## Where it lives
 
@@ -116,7 +117,7 @@ by name like runs. An invalid area makes the whole configuration invalid, as a b
   share them and Reset data works.
 - **Windows:** `&&` between steps works, `||`, `;` and `|` are not split, a first word that is a path needs
   backslashes (prefer a command on PATH, like `cargo run -p x`), and `%` is expanded twice.
-  Details: docs/superpowers/notes/phase-2-carryover.md.
+  (In PDT's repository: docs/superpowers/notes/phase-2-carryover.md.)
 
 ## API
 
@@ -129,8 +130,9 @@ The address of PDT is `127.0.0.1:7420` for the stable instance. Agent sessions s
 | `GET /api/projects` | projects (`id`, `repoPath`, …) |
 | `GET /api/projects/{id}/run-config[?worktreeId=…]` | `file`, `overrides`, the merged `effective` config (`runs`, `tests`, `areas`, `ignored` sections), or `error` |
 | `GET /api/projects/{id}/areas` | `{ areas: [{ name, paths, exclusive }], error }` from the main checkout and the overrides |
-| `GET /api/projects/{id}/settings` | `{ agentCredentials, effectiveCredentials, runOverrides }` |
-| `PUT /api/projects/{id}/settings` | `{ agentCredentials, runOverrides }`; replaces **both**, so send back the `agentCredentials` you read. An empty `runOverrides` clears them. Text that isn't valid TOML, or has an unknown section, is refused (`invalid_run_config`); check `run-config`'s `error` for the rest |
+| `GET /api/projects/{id}/settings` | `{ agentCredentials, effectiveCredentials, runOverrides, agentInstructions }` |
+| `PUT /api/projects/{id}/settings` | `{ agentCredentials, runOverrides, agentInstructions? }`; replaces `agentCredentials` and `runOverrides`, so send back the `agentCredentials` you read. An empty `runOverrides` clears them. Text that isn't valid TOML, or has an unknown section, is refused (`invalid_run_config`); check `run-config`'s `error` for the rest. `agentInstructions` is kept when left out (`""` clears it) |
+| `GET /api/guides` · `/api/guides/{name}` | PDT's built-in guides (Markdown): `agents`, `run-config` (this page), `set-up-project`, `set-up-workflow` |
 | `POST /api/projects/{id}/runs` | `{ name, kind: "run" \| "test", worktreeId? }`; without `worktreeId` (or `branch`) it uses the main checkout. Opens a tab in the project's workspace |
 | `GET /api/runs/{id}` | `state` (`setting_up`, `starting`, `ready`, `running`, `passed`, `failed`, `stopped`), `url`, `exitCode`, `error` |
 | `POST /api/runs/{id}/stop` · `/restart` · `/reset-data` | as named |

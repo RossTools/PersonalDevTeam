@@ -9,4 +9,8 @@ agentCredentials: CredentialPolicy | null, effectiveCredentials: CredentialPolic
 /**
  * Host overrides of the repo's `.pdt/project.toml`, as TOML text.
  */
-runOverrides: string | null, };
+runOverrides: string | null, 
+/**
+ * Given to every agent session in the project, after PDT's own context (kept on this host, not in the repo).
+ */
+agentInstructions: string | null, };

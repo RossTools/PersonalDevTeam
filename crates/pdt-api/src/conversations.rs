@@ -267,6 +267,7 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         permission_mode: row.permission_mode.unwrap_or_default(),
         env: login_path_env(st),
         env_remove: scrubbed(creds),
+        instructions: crate::sessions::agent_instructions(st, &row).await?,
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);

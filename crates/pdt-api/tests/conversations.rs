@@ -137,6 +137,7 @@ async fn a_new_claude_tab_is_a_conversation_that_streams_replies() {
     send(&env, id, "who").await;
     let all = wait_turns(&env, id, 2).await;
     assert!(agent_text(&all)[1].contains("resumed=false"), "the process stays up between turns");
+    assert!(agent_text(&all)[1].contains("instructions=true"), "PDT's instructions reach claude -p");
     let (_, caps) = call(&env.app, "GET", "/api/agents/claude/capabilities", None).await;
     assert_eq!(caps["models"][1]["value"], "opus", "{caps}");
 

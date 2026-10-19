@@ -5,7 +5,7 @@
 //! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
 //! - `exit` — writes to stderr and exits 3.
 //! - `env: NAME` — says whether NAME is set.
-//! - `who` — says the session id and whether it was resumed.
+//! - `who` — says the session id, whether it was resumed, its model and mode, and whether it got PDT's instructions.
 //! - anything else — streams `echo: <text>` back.
 //!
 //! Started without `-p` (Claude's TUI, in a terminal) it reads lines and leaves on `/exit`.
@@ -27,6 +27,8 @@ struct Agent {
     resumed: bool,
     model: String,
     mode: String,
+    /// PDT's instructions arrived (`--append-system-prompt-file` names a readable file).
+    instructions: bool,
     msg: u64,
     queue: Vec<Value>,
     rx: mpsc::Receiver<Option<Value>>,
@@ -244,8 +246,10 @@ impl Agent {
             let set = std::env::var_os(name).is_some();
             self.say(&format!("{name} is {}", if set { "set" } else { "unset" }));
         } else if text == "who" {
-            let s =
-                format!("session {} resumed={} model={} mode={}", self.session, self.resumed, self.model, self.mode);
+            let s = format!(
+                "session {} resumed={} model={} mode={} instructions={}",
+                self.session, self.resumed, self.model, self.mode, self.instructions
+            );
             self.say(&s);
         } else {
             self.say(&format!("echo: {text}"));
@@ -291,6 +295,9 @@ fn main() {
         resumed,
         model: flag("--model").unwrap_or_else(|| "default".into()),
         mode: flag("--permission-mode").unwrap_or_else(|| "default".into()),
+        instructions: flag("--append-system-prompt-file")
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .is_some_and(|t| t.contains("Running in")),
         msg: 0,
         queue: Vec::new(),
         rx,

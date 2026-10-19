@@ -5,6 +5,7 @@ import type { Project } from '../api/gen/Project';
 import type { Run } from '../api/gen/Run';
 import { toast } from '@ui';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { OpenSessionContext } from '../tickets/actions';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
 import { RunView } from './RunView';
@@ -243,8 +244,51 @@ describe('ProjectSettingsPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('not valid');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
-    expect(calls.filter((c) => c.method === 'PUT')[1].body).toEqual({ agentCredentials: 'pass_through', runOverrides: 'bad' });
+    expect(calls.filter((c) => c.method === 'PUT')[1].body).toEqual({ agentCredentials: 'pass_through', runOverrides: 'bad', agentInstructions: '' });
     const status = await screen.findByRole('status');
     expect(within(status).getByText('Saved')).toBeInTheDocument();
+  });
+
+  it('saves the agent instructions', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: 'Use make.' },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({ agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, ...(c.body as object) }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const box = screen.getByRole('textbox', { name: 'Agent instructions' });
+    await waitFor(() => expect(box).toHaveValue('Use make.'));
+    await userEvent.type(box, ' Then test.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, agentInstructions: 'Use make. Then test.' });
+  });
+
+  it('starts an agent session in the main checkout with a built-in set-up prompt', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null },
+      'GET /api/projects/p/run-config': config,
+      'GET /api/guides/set-up-project': () => new Response('Set up this project so PDT can run it.', { status: 200 }),
+      'GET /api/guides/set-up-workflow': () => new Response('Help me write the agent instructions.', { status: 200 }),
+      'POST /api/sessions': { id: 's1', projectId: 'p' },
+    });
+    const opened: string[] = [];
+    renderWithQuery(
+      <OpenSessionContext.Provider value={(s) => opened.push(s.id)}>
+        <ProjectSettingsPanel project={project} />
+      </OpenSessionContext.Provider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Set up with an agent' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Codex' }));
+    await waitFor(() => expect(opened).toEqual(['s1']));
+    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({
+      projectId: 'p', kind: 'agent_tui', agent: 'codex', mode: 'conversation', initialPrompt: 'Set up this project so PDT can run it.',
+    });
+    expect(calls.find((c) => c.method === 'POST')!.body).not.toHaveProperty('worktreeId');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Write instructions with an agent' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Claude' }));
+    await waitFor(() => expect(opened).toEqual(['s1', 's1']));
+    expect(calls.filter((c) => c.method === 'POST')[1].body).toMatchObject({ agent: 'claude', initialPrompt: 'Help me write the agent instructions.' });
   });
 });
