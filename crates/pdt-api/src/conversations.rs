@@ -1211,6 +1211,8 @@ pub(crate) async fn ticket_draft(
         permission_mode: PermissionMode::Ask,
         env: login_path_env(&st),
         env_remove: scrubbed(creds),
+        // The fork carries the conversation as it is; the side request adds nothing to it.
+        instructions: None,
     };
     let answer = adapter.draft(spec, DRAFT_PROMPT, &draft_schema()).await.map_err(|e| match e {
         AdapterError::Timeout => {
