@@ -104,6 +104,10 @@ pub(crate) async fn start(
             bypass_permissions: v.bypass_permissions,
             size: v.size,
             initial_prompt: Some(ticket_prompt(&key, &ticket.summary.title, &ticket.description, &branch)),
+            // Start opens a terminal until conversation mode reaches it (5d).
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         },
         title: Some(started_session_title(&ticket.summary.title)),
         attempt_id: Some(attempt_id.clone()),

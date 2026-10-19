@@ -1,5 +1,6 @@
 mod activity;
 mod checks;
+mod conversations;
 mod error;
 mod files;
 mod folders;
@@ -25,6 +26,9 @@ mod worktrees;
 
 pub use activity::run_activity_ticker;
 pub use checks::{HostChecks, run_host_checks};
+pub use conversations::{
+    IDLE_PARK, park_idle_conversations, recover_conversations, run_conversation_ticker, shutdown_conversations,
+};
 pub use error::ApiErrorBody;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use overlap::refresh_overlaps;

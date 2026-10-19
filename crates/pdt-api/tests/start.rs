@@ -418,8 +418,8 @@ async fn closing_a_ticket_ends_its_attempt() {
 async fn new_sessions_take_an_initial_prompt() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
-    let body = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24,
-                      "initialPrompt": "Say hi\nthen stop"});
+    let body = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "claude", "mode": "terminal", "cols": 80,
+                      "rows": 24, "initialPrompt": "Say hi\nthen stop"});
     let (st, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(st, StatusCode::CREATED, "{v}");
     assert_eq!((&v["attemptId"], &v["ticket"]), (&Value::Null, &Value::Null));

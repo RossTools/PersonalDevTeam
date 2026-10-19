@@ -52,6 +52,7 @@ pub async fn serve(listener: TcpListener, app: axum::Router, state: AppState) ->
             Err(e) => tracing::error!(error = %e, "failed to mark sessions interrupted"),
         }
         st.ptys.shutdown().await;
+        pdt_api::shutdown_conversations(&st).await;
         let _ = cleaned_tx.send(());
     };
     // TCP_NODELAY: terminal echoes are tiny WebSocket frames; with Nagle's algorithm one can wait for the ACK of the

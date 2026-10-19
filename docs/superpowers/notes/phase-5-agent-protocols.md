@@ -47,7 +47,15 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   message and `result num_turns:0`; `/compact` works (`compact_boundary`). [V]
 - Resume: `--resume <id>` keeps id and context; **nothing is replayed on stdout**. History lives in
   `<config dir>/projects/<cwd key>/<id>.jsonl` (the same file the TUI uses; entries linked by `uuid`/`parentUuid`,
-  `entrypoint:"sdk-cli"`). [V] Interactive `claude --resume <id>` on a headless session: [?] (same file; not driven).
+  `entrypoint:"sdk-cli"`). [V]
+- **TUI ↔ `-p` round trip (checked 2026-10-18, 5a's first task)**: interactive `claude --resume <id>` on a session made
+  by `-p --session-id <id>` opens it with its history shown, keeps the same id and file, and appends its turns with
+  `entrypoint:"cli"`; a later `-p --resume <id>` sees the TUI's turns too. The TUI shows its folder-trust prompt in a
+  folder never trusted before (`-p` skips it), so the handoff (5c) must expect that prompt in a fresh folder. [V]
+- The `control_response` PDT sends for `can_use_tool` is echoed back on stdout (same `request_id`); ignore it. [V]
+- Windows `claude -p`: not checked by hand (no Windows machine here). The adapter pipes stdio with no PTY, through
+  `cmd.exe /d /c` for a `.cmd` shim (flags only, no free text on the command line); the fake-agent tests cover that
+  path on the Windows CI.
 - Billing: the claude.ai subscription (`apiKeySource:"none"`, `subscriptionType:"Claude Max"`, subscription rate-limit
   windows). [V] Agent SDK docs: "Unless previously approved, Anthropic does not allow third party developers to offer
   claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK." [D]

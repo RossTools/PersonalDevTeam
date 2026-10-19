@@ -158,7 +158,7 @@ impl Handle {
 
 /// Ends `pid` and every process it started (`taskkill /T /F`), waiting for taskkill to finish.
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // The system copy, not whatever `taskkill` the PATH would find first.

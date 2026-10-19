@@ -397,6 +397,9 @@ async fn seed_with(
         unseen: false,
         attempt_id: None,
         ticket: None,
+        mode: pdt_core::conversation::SessionMode::Terminal,
+        model: None,
+        permission_mode: None,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {

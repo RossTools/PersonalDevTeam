@@ -113,6 +113,8 @@ async fn run() -> anyhow::Result<()> {
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;
+    // Conversations need no restart: a turn the previous run left running ends as interrupted, open requests expire.
+    pdt_api::recover_conversations(&state).await;
     let app = with_host_guard(router(state.clone(), cfg.web_dir.clone()), state.allowed_hosts.clone());
     tracing::info!(
         profile = ?cfg.profile, port = cfg.port, data_dir = %cfg.data_dir.display(),
@@ -164,6 +166,7 @@ async fn run() -> anyhow::Result<()> {
     }
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
+    tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
     {
         let st = state.clone();

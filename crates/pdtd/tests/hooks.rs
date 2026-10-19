@@ -114,8 +114,7 @@ fn hook_events_change_a_sessions_activity() {
         "/api/projects",
         Some(&serde_json::json!({"name": "P", "repoPath": repo.to_string_lossy()}).to_string()),
     );
-    let body =
-        serde_json::json!({"projectId": p["id"], "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24});
+    let body = serde_json::json!({"projectId": p["id"], "kind": "agent_tui", "agent": "claude", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, sess) = http(port, "POST", "/api/sessions", Some(&body.to_string()));
     assert_eq!(s, 201, "{sess}");
     let id = sess["id"].as_str().unwrap().to_string();

@@ -15,7 +15,7 @@ pub enum SessionKind {
     AgentTui,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum AgentKind {
@@ -115,6 +115,12 @@ pub struct Session {
     pub attempt_id: Option<String>,
     /// The attempt's ticket.
     pub ticket: Option<crate::ticket::SessionTicket>,
+    /// Agents: shown as the agent's terminal or as a conversation. Shells are always `terminal`.
+    pub mode: crate::conversation::SessionMode,
+    /// Conversations: the model asked for (None: the agent's default).
+    pub model: Option<String>,
+    /// Conversations: PDT's permission setting.
+    pub permission_mode: Option<crate::conversation::PermissionMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -154,10 +160,22 @@ pub struct NewSession {
     #[ts(optional)]
     pub tab: Option<crate::workspace::TabPlacement>,
     /// Agents only: the first prompt, given after the agent's flags when the session is created (restarts resume the
-    /// conversation and never repeat it). At most 16 KB.
+    /// conversation and never repeat it); in a conversation it is the first message. At most 16 KB.
     #[serde(default)]
     #[ts(optional)]
     pub initial_prompt: Option<String>,
+    /// Agents only: `conversation` (Claude's default) or `terminal`. Codex is terminal-only for now.
+    #[serde(default)]
+    #[ts(optional)]
+    pub mode: Option<crate::conversation::SessionMode>,
+    /// Conversations only: the model (None: the agent's default).
+    #[serde(default)]
+    #[ts(optional)]
+    pub model: Option<String>,
+    /// Conversations only: the permission mode (default `ask`, or `bypass` when `bypassPermissions` is set).
+    #[serde(default)]
+    #[ts(optional)]
+    pub permission_mode: Option<crate::conversation::PermissionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -169,6 +187,9 @@ pub struct ValidSession {
     pub bypass_permissions: bool,
     pub size: TerminalSize,
     pub initial_prompt: Option<String>,
+    pub mode: crate::conversation::SessionMode,
+    pub model: Option<String>,
+    pub permission_mode: Option<crate::conversation::PermissionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -185,6 +206,12 @@ pub enum SessionValidationError {
     PromptForShell,
     #[error("an initial prompt must not be blank and at most 16 KB")]
     BadPrompt,
+    #[error("only an agent session can be a conversation")]
+    ConversationForShell,
+    #[error("Codex conversations are not available yet; open Codex in a terminal")]
+    CodexConversation,
+    #[error("a model name must be 1 to 100 characters with no spaces")]
+    BadModel,
 }
 
 impl NewSession {
@@ -210,6 +237,35 @@ impl NewSession {
             }
             Some(p) => Some(p.clone()),
         };
+        use crate::conversation::{PermissionMode, SessionMode};
+        let mode = match (self.kind, self.agent, self.mode) {
+            (SessionKind::Shell, _, Some(SessionMode::Conversation)) => {
+                return Err(SessionValidationError::ConversationForShell);
+            }
+            (SessionKind::Shell, _, _) => SessionMode::Terminal,
+            (_, Some(AgentKind::Codex), Some(SessionMode::Conversation)) => {
+                return Err(SessionValidationError::CodexConversation);
+            }
+            (_, Some(AgentKind::Codex), _) => SessionMode::Terminal,
+            (_, _, m) => m.unwrap_or(SessionMode::Conversation),
+        };
+        let conversation = mode == SessionMode::Conversation;
+        let model = match self.model.as_deref().map(str::trim).filter(|m| !m.is_empty() && conversation) {
+            Some(m) if !crate::conversation::valid_model(m) => return Err(SessionValidationError::BadModel),
+            m => m.map(String::from),
+        };
+        let permission_mode = conversation.then(|| {
+            self.permission_mode.unwrap_or(if bypass_permissions {
+                PermissionMode::Bypass
+            } else {
+                PermissionMode::Ask
+            })
+        });
+        // The two settings agree: bypass is a permission mode for a conversation.
+        let bypass_permissions = match permission_mode {
+            Some(m) => m == PermissionMode::Bypass,
+            None => bypass_permissions,
+        };
         Ok(ValidSession {
             project_id: project_id.into(),
             worktree_id,
@@ -218,6 +274,9 @@ impl NewSession {
             bypass_permissions,
             size,
             initial_prompt,
+            mode,
+            model,
+            permission_mode,
         })
     }
 }
@@ -654,7 +713,42 @@ mod tests {
             rows,
             tab: None,
             initial_prompt: None,
+            mode: None,
+            model: None,
+            permission_mode: None,
         }
+    }
+
+    #[test]
+    fn claude_agents_default_to_conversations() {
+        use crate::conversation::{PermissionMode, SessionMode};
+        let v = new(SessionKind::AgentTui, Some(AgentKind::Claude), 80, 24).validate().unwrap();
+        assert_eq!((v.mode, v.permission_mode), (SessionMode::Conversation, Some(PermissionMode::Ask)));
+        let mut bypass = new(SessionKind::AgentTui, Some(AgentKind::Claude), 80, 24);
+        bypass.bypass_permissions = Some(true);
+        assert_eq!(bypass.validate().unwrap().permission_mode, Some(PermissionMode::Bypass));
+        let mut plan = new(SessionKind::AgentTui, Some(AgentKind::Claude), 80, 24);
+        plan.permission_mode = Some(PermissionMode::Bypass);
+        plan.model = Some(" opus ".into());
+        let v = plan.validate().unwrap();
+        assert!(v.bypass_permissions, "bypass mode and the bypass flag agree");
+        assert_eq!(v.model.as_deref(), Some("opus"));
+        plan.model = Some("two words".into());
+        assert_eq!(plan.validate().unwrap_err(), SessionValidationError::BadModel);
+        let mut term = new(SessionKind::AgentTui, Some(AgentKind::Claude), 80, 24);
+        term.mode = Some(SessionMode::Terminal);
+        term.model = Some("opus".into());
+        let v = term.validate().unwrap();
+        assert_eq!((v.mode, v.permission_mode, v.model), (SessionMode::Terminal, None, None));
+        let codex = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24).validate().unwrap();
+        assert_eq!(codex.mode, SessionMode::Terminal, "Codex stays a terminal until 5b");
+        let mut codex = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24);
+        codex.mode = Some(SessionMode::Conversation);
+        assert_eq!(codex.validate().unwrap_err(), SessionValidationError::CodexConversation);
+        let mut shell = new(SessionKind::Shell, None, 80, 24);
+        assert_eq!(shell.clone().validate().unwrap().mode, SessionMode::Terminal);
+        shell.mode = Some(SessionMode::Conversation);
+        assert_eq!(shell.validate().unwrap_err(), SessionValidationError::ConversationForShell);
     }
 
     #[test]

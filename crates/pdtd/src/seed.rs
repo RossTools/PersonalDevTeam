@@ -115,6 +115,9 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         unseen: false,
         attempt_id: None,
         ticket: None,
+        mode: pdt_core::conversation::SessionMode::Terminal,
+        model: None,
+        permission_mode: None,
     };
     let sessions = [
         session(&app, None, None, "main", 3 * DAY - HOUR),

@@ -100,6 +100,8 @@ pub struct AppState {
     pub instance: pdt_core::instance::InstanceInfo,
     /// The home folder the folder picker starts in and writes as `~`. `new` reads it from the OS; tests set it.
     pub home_dir: Option<std::path::PathBuf>,
+    /// Conversation sessions' runtimes (structured agents).
+    pub conversations: crate::conversations::Conversations,
 }
 
 impl AppState {
@@ -149,6 +151,7 @@ impl AppState {
             checks: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
             home_dir: std::env::home_dir(),
+            conversations: Default::default(),
         }
     }
 }
@@ -289,7 +292,12 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))
         .route("/tabs/{id}", axum::routing::patch(crate::workspaces::update_tab).delete(crate::workspaces::close_tab))
         .route("/sessions", axum::routing::post(sessions::create))
-        .route("/sessions/{id}", get(sessions::get_one).patch(sessions::rename).delete(sessions::remove))
+        .route("/sessions/{id}", get(sessions::get_one).patch(sessions::update).delete(sessions::remove))
+        .route("/sessions/{id}/events", get(crate::conversations::events))
+        .route("/sessions/{id}/messages", axum::routing::post(crate::conversations::post_message))
+        .route("/sessions/{id}/requests/{request_id}", axum::routing::post(crate::conversations::post_answer))
+        .route("/sessions/{id}/interrupt", axum::routing::post(crate::conversations::post_interrupt))
+        .route("/agents/{agent}/capabilities", get(crate::conversations::capabilities))
         .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
         .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
         .route("/sessions/{id}/pty", get(pty_ws::connect))

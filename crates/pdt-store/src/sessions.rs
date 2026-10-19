@@ -1,5 +1,6 @@
 use crate::{Store, StoreError};
 use pdt_core::activity::Activity;
+use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{SessionTicket, format_key};
 use sqlx::Row;
@@ -8,7 +9,8 @@ use sqlx::sqlite::SqliteRow;
 /// Sessions with their attempt's ticket (id and key), for `WHERE s.…` clauses.
 const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent, s.bypass_permissions, s.title, s.cwd, \
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
-                      s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, t.id AS ticket_id, \
+                      s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
+                      t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
                       LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN projects p ON p.id = t.project_id";
@@ -21,6 +23,8 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let attention_at: Option<i64> = r.try_get("attention_at")?;
     let last_viewed_at: Option<i64> = r.try_get("last_viewed_at")?;
     let corrupt = |what: &str, v: &str| StoreError::Corrupt(format!("unknown session {what} {v:?}"));
+    let mode: String = r.try_get("mode")?;
+    let permission_mode: Option<String> = r.try_get("permission_mode")?;
     let ticket_id: Option<String> = r.try_get("ticket_id")?;
     let ticket = match ticket_id {
         Some(id) => {
@@ -57,6 +61,12 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         unseen: pdt_core::activity::is_unseen(attention_at, last_viewed_at),
         attempt_id: r.try_get("attempt_id")?,
         ticket,
+        mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("mode", &mode))?,
+        model: r.try_get("model")?,
+        permission_mode: match permission_mode {
+            Some(m) => Some(PermissionMode::parse(&m).ok_or_else(|| corrupt("permission mode", &m))?),
+            None => None,
+        },
     })
 }
 
@@ -64,8 +74,8 @@ impl Store {
     pub async fn insert_session(&self, s: &Session) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
-             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id, mode, model, \
+             permission_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -85,6 +95,9 @@ impl Store {
         .bind(s.attention_at)
         .bind(s.last_viewed_at)
         .bind(&s.attempt_id)
+        .bind(s.mode.as_str())
+        .bind(&s.model)
+        .bind(s.permission_mode.map(PermissionMode::as_str))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -212,6 +225,35 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// A conversation's model (None: the agent's default).
+    pub async fn set_session_model(&self, id: &str, model: Option<&str>) -> Result<bool, StoreError> {
+        let r =
+            sqlx::query("UPDATE sessions SET model = ? WHERE id = ?").bind(model).bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// A conversation's permission mode (bypass also sets `bypass_permissions`, which a terminal launch reads).
+    pub async fn set_session_permission_mode(&self, id: &str, mode: PermissionMode) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET permission_mode = ?, bypass_permissions = ? WHERE id = ?")
+            .bind(mode.as_str())
+            .bind(mode == PermissionMode::Bypass)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Sessions made before permission modes existed get theirs from `bypass_permissions`.
+    pub(crate) async fn backfill_permission_modes(&self) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE sessions SET permission_mode = CASE WHEN bypass_permissions THEN 'bypass' ELSE 'ask' END \
+             WHERE permission_mode IS NULL AND kind = 'agent_tui'",
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<bool, StoreError> {
         let r =
             sqlx::query("UPDATE sessions SET title = ? WHERE id = ?").bind(title).bind(id).execute(&self.pool).await?;
@@ -263,6 +305,9 @@ mod tests {
             unseen: false,
             attempt_id: None,
             ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
         }
     }
 
