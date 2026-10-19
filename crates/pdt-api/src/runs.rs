@@ -332,12 +332,26 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     if run.state.is_active() {
         return Err(conflict("run_active", "stop the run before removing it"));
     }
-    for step in [RunStep::Setup, RunStep::Command] {
-        st.remove_pty(&pty_id(&id, step)).await;
-    }
-    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(&st, &id));
-    st.store.delete_run(&id).await?;
+    delete(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete(st: &AppState, id: &str) -> Result<(), ApiError> {
+    for step in [RunStep::Setup, RunStep::Command] {
+        st.remove_pty(&pty_id(id, step)).await;
+    }
+    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, id));
+    st.store.delete_run(id).await?;
+    Ok(())
+}
+
+/// Stops a run if it is active, then deletes it (closing its tab, PDT-28). A run that is already gone is fine.
+pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiError> {
+    let Some(run) = st.store.get_run(id).await? else { return Ok(()) };
+    if run.state.is_active() && !run_manager::stop(st, id, None).await {
+        return Err(still_stopping());
+    }
+    delete(st, id).await
 }
 
 pub(crate) async fn pty(

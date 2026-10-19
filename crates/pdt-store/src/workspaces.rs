@@ -310,6 +310,14 @@ impl Store {
         self.get_tab(id).await
     }
 
+    /// Closes the gaps a deleted session or run leaves in a workspace's tab positions.
+    pub async fn renumber_workspace_tabs(&self, workspace_id: &str) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        renumber_tabs(&mut tx, workspace_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn close_tab(&self, id: &str) -> Result<bool, StoreError> {
         let Some(tab) = self.get_tab(id).await? else { return Ok(false) };
         let mut tx = self.pool.begin().await?;

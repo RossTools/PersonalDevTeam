@@ -232,12 +232,36 @@ describe('workspaces', () => {
     const menu = await screen.findByRole('menu', { name: 'Agent Codex B' });
     expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Open', 'Rename']);
   });
-  it('closes a tab without stopping its session', async () => {
+  it('asks before closing a running session\'s tab, which stops and removes it', async () => {
     const calls = stubWorkspaces({ 'DELETE /api/tabs/tb': undefined });
     renderWithQuery(<AppShell />);
     await userEvent.click(await screen.findByRole('button', { name: 'Close Codex B' }));
+    let dialog = await screen.findByRole('alertdialog', { name: 'Close Codex B?' });
+    expect(dialog).toHaveTextContent(/stops the agent and removes it/);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close Codex B' }));
+    dialog = await screen.findByRole('alertdialog', { name: 'Close Codex B?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop and close' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tb')).toBe(true));
-    expect(calls.some((c) => c.path.includes('/kill'))).toBe(false);
+  });
+
+  it('closes an ended session\'s tab without asking', async () => {
+    const calls = stubWorkspaces({
+      [`GET /api/projects/${project.id}/sessions`]: [
+        sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude' }),
+        sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', status: 'finished' }),
+      ],
+      'DELETE /api/tabs/tb': undefined,
+    });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Codex B/ });
+    await waitFor(() => expect(within(screen.getByRole('tab', { name: /Codex B/ })).queryByRole('img', { name: 'Ended' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Close Codex B' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tb')).toBe(true));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('switches tabs and opens the key help with the prefix keys', async () => {
@@ -427,6 +451,7 @@ describe('workspaces', () => {
     stubWorkspaces({ 'DELETE /api/tabs/tb': new Reply(500, { code: 'internal', message: 'Tab store is locked' }) });
     renderWithQuery(<AppShell />);
     await userEvent.click(await screen.findByRole('button', { name: 'Close Codex B' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop and close' }));
     expect(await screen.findByText('Tab store is locked')).toBeInTheDocument();
     fireEvent.contextMenu(screen.getByRole('tab', { name: /Claude A/ }));
     stubWorkspaces({ 'PATCH /api/tabs/ta': new Reply(409, { code: 'conflict', message: 'Workspace is gone' }) });
@@ -571,6 +596,7 @@ describe('command palette', () => {
     await userEvent.keyboard('{Control>}]{/Control}k');
     const palette = await screen.findByRole('dialog', { name: 'Command palette' });
     await userEvent.click(within(palette).getByRole('menuitem', { name: /Close tab/ }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop and close' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/ta')).toBe(true));
   });
 

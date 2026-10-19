@@ -537,12 +537,44 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     if st.ptys.is_running(&id) {
         return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "stop the session before removing it"));
     }
-    settle_exit(&st, &id).await;
-    st.remove_pty(&id).await;
-    st.store.delete_session(&id).await?;
-    // Best-effort: the session's hook settings.
-    let _ = std::fs::remove_dir_all(session_data_dir(&st, &id));
-    crate::activity::forget(&st, &id);
-    st.forget_session_lock(&id);
+    remove_locked(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a session that has no running process. The caller holds the session lock.
+async fn remove_locked(st: &AppState, id: &str) -> Result<(), ApiError> {
+    settle_exit(st, id).await;
+    st.remove_pty(id).await;
+    st.store.delete_session(id).await?;
+    // Best-effort: the session's hook settings.
+    let _ = std::fs::remove_dir_all(session_data_dir(st, id));
+    crate::activity::forget(st, id);
+    st.forget_session_lock(id);
+    Ok(())
+}
+
+/// How long closing a tab waits for its session's process to exit after the kill.
+const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Stops a session if it runs, waits for it to exit, then deletes it (closing its tab, PDT-28). A session that is
+/// already gone is fine. Fails with 409 `session_running` when the process outlives the kill.
+pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiError> {
+    let _guard = st.lock_session(id).await;
+    if st.store.get_session(id).await?.is_none() {
+        st.forget_session_lock(id);
+        return Ok(());
+    }
+    if st.ptys.is_running(id) {
+        let _ = st.kill_pty(id).await;
+        let exited = tokio::time::timeout(STOP_WAIT, async {
+            while st.ptys.is_running(id) {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        if exited.is_err() {
+            return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "the session did not stop in time"));
+        }
+    }
+    remove_locked(st, id).await
 }

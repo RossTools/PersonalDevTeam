@@ -127,11 +127,18 @@ async fn free_form_workspaces_and_moving_tabs() {
     assert_eq!(tab_sessions(&workspaces(&app).await[0]), [b, a]);
     let (s, _) = call(&app, "PATCH", &format!("/api/tabs/{tid}"), Some(json!({"workspaceId": "nope"}))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+    // Closing a running session's tab stops and removes the session (PDT-28).
+    assert!(state.ptys.is_running(b));
     let (s, _) = call(&app, "DELETE", &format!("/api/tabs/{tid}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(!state.ptys.is_running(b));
+    let (s, _) = call(&app, "GET", &format!("/api/sessions/{b}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = call(&app, "DELETE", &format!("/api/tabs/{tid}"), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+    let home_tabs = &workspaces(&app).await[0]["tabs"];
     assert_eq!(tab_sessions(&workspaces(&app).await[0]), [a]);
+    assert_eq!(home_tabs[0]["position"].as_u64(), Some(0), "the strip is renumbered");
 
     // Rename and reorder workspaces; deleting a free-form one sends its tabs home.
     let (s, w) =
@@ -154,5 +161,31 @@ async fn free_form_workspaces_and_moving_tabs() {
     assert!(tab_sessions(&list[0]).is_empty());
     let (s, _) = call(&app, "PATCH", "/api/workspaces/nope", Some(json!({"name": "x"}))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+    state.ptys.shutdown().await;
+}
+
+#[tokio::test]
+async fn closing_a_ticket_tab_keeps_the_ticket_and_an_ended_session_tab_removes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, pid) = setup(tmp.path()).await;
+    let home = workspaces(&app).await[0]["id"].as_str().unwrap().to_string();
+    let (s, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Fix it"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let ticket = t["id"].as_str().unwrap();
+    let (_, tab) = call(&app, "POST", &format!("/api/workspaces/{home}/tabs"), Some(json!({"ticketId": ticket}))).await;
+    let (s, _) = call(&app, "DELETE", &format!("/api/tabs/{}", tab["id"].as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = call(&app, "GET", &format!("/api/tickets/{ticket}"), None).await;
+    assert_eq!(s, StatusCode::OK, "the ticket stays");
+
+    let (_, sess) = shell(&app, &pid, None).await;
+    let id = sess["id"].as_str().unwrap();
+    call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    let tab = workspaces(&app).await[0]["tabs"][0]["id"].as_str().unwrap().to_string();
+    let (s, _) = call(&app, "DELETE", &format!("/api/tabs/{tab}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(workspaces(&app).await[0]["tabs"], json!([]));
     state.ptys.shutdown().await;
 }
