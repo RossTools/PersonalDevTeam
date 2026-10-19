@@ -175,15 +175,17 @@ async fn approvals_always_allow_for_the_session_and_deny_notes_follow() {
         (Some("done"), Some("ran touch a"))
     );
 
-    // Deny with a note: Codex's decline has no message, so the note follows as the next message (steered into the
-    // turn that is still running).
+    // Deny with a note: Codex's decline has no message, so the note follows as the next message.
     send(&env, &id, "run: rm -rf /", "next").await;
     let all = wait_for(&env, &id, "a second request", |a| open_request(a).is_some()).await;
     let req = open_request(&all).unwrap();
     assert_eq!(answer(&env, &id, &req, json!({"type": "deny", "message": "too risky"})).await.0, 204);
     let all = wait_for(&env, &id, "the note's answer", |a| said(a).contains(&"echo: too risky".to_string())).await;
     assert!(said(&all).contains(&"Not running it.".to_string()), "{:?}", said(&all));
-    assert_eq!(ended(&all).len(), 2, "the note joined the running turn");
+    // It joins the turn if that is still running, else it starts the next one: either way the agent hears it once.
+    let notes =
+        all.iter().filter(|e| e["event"]["kind"] == "user_message" && e["event"]["text"] == "too risky").count();
+    assert_eq!(notes, 1, "{all:#?}");
     let declined = all.iter().filter(|e| e["event"]["kind"] == "tool_call").nth(1).unwrap();
     assert_eq!(declined["event"]["status"], "declined");
     stop(&env, &id).await;
