@@ -23,6 +23,8 @@ use std::time::Duration;
 
 /// The longest a `git fetch` of a base branch may take.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// The longest Start waits for a fetch of the base branch.
+const START_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn conflict(code: &'static str, message: String) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, message)
@@ -87,7 +89,10 @@ pub(crate) async fn start(
             let existing = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch);
             let wt = match existing {
                 Some(w) => w,
-                None => crate::worktrees::make_worktree(&st, &project, &branch, &base, true).await?,
+                None => {
+                    let from = newest_base(&project.repo_path, &base).await;
+                    crate::worktrees::make_worktree(&st, &project, &branch, &from, true).await?
+                }
             };
             (wt, branch)
         }
@@ -230,6 +235,24 @@ async fn open_tab_before_chat(
     }
 }
 
+/// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so
+/// the branch and its `base_commit` start from the newest base (PDT-45). A failed fetch keeps the refs there are.
+async fn newest_base(repo_path: &str, base: &str) -> String {
+    let (repo, base) = (PathBuf::from(repo_path), base.to_string());
+    let fallback = base.clone();
+    tokio::task::spawn_blocking(move || {
+        if pdt_git::remote_url(&repo, "origin").is_none() {
+            return base;
+        }
+        if let Err(e) = pdt_git::fetch(&repo, "origin", &base, START_FETCH_TIMEOUT) {
+            tracing::info!(error = %e, "could not fetch the base branch before Start; using the local refs");
+        }
+        pdt_git::start_point(&repo, &base)
+    })
+    .await
+    .unwrap_or(fallback)
+}
+
 fn plural(n: usize) -> &'static str {
     if n == 1 { "is" } else { "are" }
 }
@@ -329,12 +352,13 @@ pub(crate) async fn end_for_close(st: &AppState, ticket_id: &str, stage: TicketS
 /// Whether the attempt's branch is merged into its base, and remembers the branch head it saw. A deleted branch is
 /// judged by its last known head. Merged means GitHub merged the attempt's PR at that head (the merge queue squashes
 /// onto a newer base, which git's patch check can miss), or git finds the head or its whole patch in the base (locally
-/// or on `origin`, fetched first with `fetch`; for projects not on GitHub). Git runs on a blocking thread; any
-/// failure counts as not merged.
+/// or on `origin`, fetched first with `fetch`; for projects not on GitHub) after the branch has been seen with commits
+/// of its own. Git runs on a blocking thread; any failure counts as not merged.
 async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool) -> bool {
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
     let (base_commit, last_head) = (info.base_commit.clone(), info.attempt.last_head.clone());
+    let seen_own = info.own_commits;
     let attempt = info.attempt.id.clone();
     let pr = crate::github::watched_pr(st, &info.attempt.id);
     let found = tokio::task::spawn_blocking(move || {
@@ -346,18 +370,22 @@ async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool) -> bool {
         }
         let head = pdt_git::rev_parse(&repo, &format!("refs/heads/{branch}")).or(last_head)?;
         if pr.is_some_and(|p| p.merged_at(&head)) {
-            return Some((head, true));
+            return Some((head, seen_own, true));
         }
         let origin = format!("origin/{base}");
-        let merged = pdt_git::is_merged(&repo, &head, &base_commit, &[&base, &origin]);
-        Some((head, merged))
+        let bases = [base.as_str(), origin.as_str()];
+        // A head already in the base when first seen only caught up with it (PDT-45): not merged until the branch
+        // has held commits of its own.
+        let own = seen_own || pdt_git::has_own_commits(&repo, &head, &base_commit, &bases);
+        let merged = own && pdt_git::is_merged(&repo, &head, &base_commit, &bases);
+        Some((head, own, merged))
     })
     .await
     .ok()
     .flatten();
-    let Some((head, merged)) = found else { return false };
-    if info.attempt.last_head.as_deref() != Some(head.as_str())
-        && let Err(e) = st.store.set_attempt_head(&info.attempt.id, &head).await
+    let Some((head, own, merged)) = found else { return false };
+    if (info.attempt.last_head.as_deref() != Some(head.as_str()) || own != info.own_commits)
+        && let Err(e) = st.store.set_attempt_head(&info.attempt.id, &head, own).await
     {
         tracing::warn!(attempt = %info.attempt.id, error = %e, "could not record the branch head");
     }
