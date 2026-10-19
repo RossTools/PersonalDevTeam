@@ -344,20 +344,21 @@ mod tests {
 
     #[test]
     fn devin_user_config_location() {
-        let home = Some(PathBuf::from("/u"));
+        // Absolute on every OS ("/x" is not absolute on Windows).
+        let home = std::env::temp_dir().join("u");
+        let xdg = std::env::temp_dir().join("x");
+        let default = home.join(".config").join("devin").join("config.json");
+        assert_eq!(devin_user_config_file(false, None, None, Some(home.clone())), Some(default.clone()));
         assert_eq!(
-            devin_user_config_file(false, None, None, home.clone()),
-            Some(PathBuf::from("/u/.config/devin/config.json"))
+            devin_user_config_file(false, None, Some(xdg.clone()), Some(home.clone())),
+            Some(xdg.join("devin").join("config.json"))
         );
         assert_eq!(
-            devin_user_config_file(false, None, Some(PathBuf::from("/x")), home.clone()),
-            Some(PathBuf::from("/x/devin/config.json"))
-        );
-        assert_eq!(
-            devin_user_config_file(false, None, Some(PathBuf::from("rel")), home.clone()),
-            Some(PathBuf::from("/u/.config/devin/config.json")),
+            devin_user_config_file(false, None, Some(PathBuf::from("rel")), Some(home.clone())),
+            Some(default),
             "a relative XDG_CONFIG_HOME is ignored"
         );
+        let home = Some(home);
         let appdata = PathBuf::from(r"C:\Users\me\AppData\Roaming");
         assert_eq!(
             devin_user_config_file(true, Some(appdata.clone()), None, home),
