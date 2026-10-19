@@ -12,6 +12,10 @@ import { ConversationView } from './ConversationView';
 import { FakeSocket } from './fakeSocket';
 import { MessageList } from './MessageList';
 
+vi.mock('../terminal/TerminalView', () => ({
+  TerminalView: ({ sessionId }: { sessionId: string }) => <div data-testid="terminal-view">{sessionId}</div>,
+}));
+
 const ev = (seq: number, event: AgentEvent, extra: Partial<ConversationEvent> = {}): ConversationEvent =>
   ({ seq, pos: seq, ts: 1_000_000 + seq * 1000, event, itemId: `i${seq}`, turnId: 'u1', ...extra });
 
@@ -20,10 +24,11 @@ const session: Session = {
   status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null, activity: 'idle',
   attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation', model: null, permissionMode: 'ask',
 };
-const idle: ConversationState = { live: true, turnRunning: false, permissionMode: 'ask', pending: [] };
+const idle: ConversationState = { live: true, turnRunning: false, permissionMode: 'ask', pending: [], terminalOpen: false };
 
 afterEach(() => {
   FakeSocket.all = [];
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -97,6 +102,17 @@ describe('MessageList', () => {
     expect(screen.getByText('Streaming…')).toBeInTheDocument();
     expect(screen.getByText('Queued')).toBeInTheDocument();
     expect(screen.getByText('also do X')).toBeInTheDocument();
+  });
+
+  it('says where a turn or an answer came from when it was the terminal', () => {
+    list([
+      ev(1, { kind: 'user_message', text: 'typed in the TUI', images: [], source: 'terminal' }),
+      ev(2, { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Bash', title: 'ls', input: {}, canAlways: false, state: 'answered' }),
+      ev(3, { kind: 'request', id: 'r2', requestKind: 'approval', tool: 'Bash', title: 'pwd', input: {}, canAlways: false, state: 'expired' }),
+    ]);
+    expect(screen.getByText('From the terminal')).toBeInTheDocument();
+    expect(screen.getByText('Answered in the terminal')).toBeInTheDocument();
+    expect(screen.getByText('Expired')).toBeInTheDocument();
   });
 
   it('an open request is an approval card; y answers the newest one', async () => {
@@ -249,5 +265,90 @@ describe('SessionView for a conversation', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Compose' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Restart' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
+  });
+});
+
+describe('SessionView for a Codex conversation', () => {
+  const codex: Session = { ...session, agent: 'codex' };
+  const caps = { conversation: true, permissionModes: [], models: [], commands: [] };
+  const server = () => FakeSocket.all[FakeSocket.all.length - 1];
+  const routes = {
+    'GET /api/agents/codex/capabilities': caps,
+    'GET /api/projects': [],
+    'POST /api/sessions/s1/view': undefined,
+    'POST /api/sessions/s1/terminal': undefined,
+    'DELETE /api/sessions/s1/terminal': undefined,
+  };
+  const show = (rows: ConversationEvent[], state: ConversationState = idle) => {
+    renderWithQuery(<SessionView session={codex} onRemoved={() => {}} socketFactory={(u) => new FakeSocket(u)} />);
+    act(() => {
+      server().open();
+      for (const r of rows) server().send({ type: 'event', event: r });
+      server().send({ type: 'state', state });
+      server().send({ type: 'ready' });
+    });
+  };
+  const turn = [ev(1, { kind: 'user_message', text: 'hi', images: [], source: 'pdt' }), ev(2, { kind: 'turn', phase: 'started' })];
+
+  it('cannot open the terminal before the first turn', () => {
+    stubApi(routes);
+    show([]);
+    expect(screen.getByRole('radio', { name: 'Conversation' })).toBeChecked();
+    const terminal = screen.getByRole('radio', { name: 'Terminal' });
+    expect(terminal).toBeDisabled();
+    expect(terminal.closest('[title]')).toHaveAttribute('title', 'Send a first message, then open the terminal');
+  });
+
+  it('opens the TUI, goes back to the conversation, and closes it from the menu', async () => {
+    const calls = stubApi(routes);
+    show(turn);
+    expect(FakeSocket.all).toHaveLength(1);
+    await userEvent.click(screen.getByRole('radio', { name: 'Terminal' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/sessions/s1/terminal')?.body).toEqual({ cols: 120, rows: 32 }));
+    expect(await screen.findByTestId('terminal-view')).toHaveTextContent('s1');
+    act(() => server().send({ type: 'state', state: { ...idle, terminalOpen: true } }));
+    expect(screen.getByRole('radio', { name: 'Terminal' })).toBeChecked();
+
+    // Back to the conversation: the TUI keeps running, and says so.
+    await userEvent.click(screen.getByRole('radio', { name: 'Conversation' }));
+    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
+    expect(screen.getByRole('log', { name: 'Conversation' })).toBeInTheDocument();
+    expect(screen.getByText('Also open in the terminal')).toBeInTheDocument();
+    // Showing it again doesn't open a second one.
+    await userEvent.click(screen.getByRole('radio', { name: 'Terminal' }));
+    expect(await screen.findByTestId('terminal-view')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/sessions/s1/terminal')).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Close terminal' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/sessions/s1/terminal')).toBe(true));
+    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
+    // One events socket for the header and the views.
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('goes back to the conversation when the TUI exits by itself', async () => {
+    stubApi(routes);
+    show(turn, { ...idle, terminalOpen: true });
+    await userEvent.click(screen.getByRole('radio', { name: 'Terminal' }));
+    expect(await screen.findByTestId('terminal-view')).toBeInTheDocument();
+    act(() => server().send({ type: 'state', state: idle }));
+    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Conversation' })).toBeChecked();
+    expect(screen.queryByText('Also open in the terminal')).not.toBeInTheDocument();
+  });
+
+  it('explains a refused open', async () => {
+    stubApi({ ...routes, 'POST /api/sessions/s1/terminal': new Reply(409, { code: 'no_turn_yet', message: 'no turn' }) });
+    show(turn);
+    await userEvent.click(screen.getByRole('radio', { name: 'Terminal' }));
+    expect(await screen.findByText('Send a first message, then open the terminal.')).toBeInTheDocument();
+    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
+  });
+
+  it('Claude conversations have no switch yet', () => {
+    stubApi({ ...routes, 'GET /api/agents/claude/capabilities': caps });
+    renderWithQuery(<SessionView session={session} onRemoved={() => {}} socketFactory={(u) => new FakeSocket(u)} />);
+    expect(screen.queryByRole('radiogroup', { name: 'Show as' })).not.toBeInTheDocument();
   });
 });

@@ -65,8 +65,11 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         }
         None => (None, project.repo_path.clone(), project.name.clone()),
     };
-    // A fresh Codex launch is matched to its conversation by start time, so launches in a folder are spaced out.
-    let codex = valid.kind == SessionKind::AgentTui && valid.agent == Some(AgentKind::Codex);
+    // A fresh Codex terminal is matched to its conversation by start time, so launches in a folder are spaced out.
+    // (A Codex conversation knows its thread id from the start.)
+    let codex = valid.kind == SessionKind::AgentTui
+        && valid.agent == Some(AgentKind::Codex)
+        && valid.mode == SessionMode::Terminal;
     let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(st, &cwd).await) } else { None };
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),

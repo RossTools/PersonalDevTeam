@@ -2,6 +2,7 @@
 //! user answers, the WebSocket frames, and activity derived from events. Pure.
 
 pub mod claude;
+pub mod codex;
 
 use crate::activity::Activity;
 use serde::{Deserialize, Serialize};
@@ -424,6 +425,8 @@ pub struct ConversationState {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub agent_version: Option<String>,
+    /// Codex: the agent's own TUI is open on this conversation (live, beside it).
+    pub terminal_open: bool,
 }
 
 /// Server → client frames on `WS /api/sessions/{id}/events`.

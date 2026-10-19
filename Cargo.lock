@@ -3154,6 +3154,7 @@ name = "pdt-agents"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "jiff",
  "libc",
  "pdt-core",
@@ -3162,8 +3163,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "toml 1.1.8+spec-1.1.0",
  "tracing",
+ "uuid",
  "which",
  "windows-sys 0.61.2",
 ]

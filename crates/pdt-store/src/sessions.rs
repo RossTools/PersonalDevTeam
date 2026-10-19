@@ -179,6 +179,16 @@ impl Store {
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
+    /// Sets a conversation session's agent conversation id (Codex's thread), replacing one that could not be resumed.
+    pub async fn set_external_session_id(&self, id: &str, external_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET external_session_id = ? WHERE id = ?")
+            .bind(external_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Binds an agent conversation id to a session that has none. Returns false when the session already has one,
     /// does not exist, or another session owns that conversation.
     pub async fn bind_external_session_id(&self, id: &str, external_id: &str) -> Result<bool, StoreError> {

@@ -107,6 +107,21 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   of app-server auth is not permitted. [V/D]
 - `-c notify=[…]` still fires per completed turn under app-server (also for turns from an attached TUI). [V]
 
+- **5b checks (2026-10-18, codex-cli 0.163.0, macOS)**: `codex app-server --listen ws://127.0.0.1:<port> --ws-auth
+  capability-token --ws-token-file <file>` accepts clients sending `Authorization: Bearer <token>`; `/readyz` answers
+  when it is listening. The real TUI attaches with `codex resume <thread> --remote ws://127.0.0.1:<port>
+  --remote-auth-token-env <VAR>` and shares the thread live with another client (that client saw the TUI's whole
+  turn after a `thread/resume {excludeTurns:true}`). So PDT uses loopback ws + a capability token on every OS
+  instead of a unix socket: one transport, the same on Windows (plain TCP), and the token file is 0600 in PDT's data
+  dir. [V on macOS; Windows: same TCP path, not run by hand]
+- Server→client requests have their own JSON-RPC ids (starting at 0, per connection); approvals name the item
+  (`itemId`), and `serverRequest/resolved {requestId}` follows the answer. `item/commandExecution/requestApproval`
+  carries `command`, `cwd`, `commandActions`, `availableDecisions` (accept, acceptWithExecpolicyAmendment, …). [V]
+- `thread/tokenUsage/updated {tokenUsage:{total,last,modelContextWindow}}`; `account/rateLimits/updated
+  {rateLimits:{primary,secondary:{usedPercent,windowDurationMins,resetsAt (s)},planType}}` (no threadId). Noise per
+  turn: `turn/moderationMetadata`, `thread/readState/changed`, `mcpServer/startupStatus/updated`,
+  `remoteControl/status/changed`, `account/updated`. [V]
+
 ## Devin CLI: `devin acp` (docs only)
 
 - Local agent working in its cwd; macOS/Linux/Windows; `~/.local/bin/devin`. [D] https://docs.devin.ai/cli/index

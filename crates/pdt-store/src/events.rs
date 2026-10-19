@@ -153,6 +153,16 @@ impl Store {
         Ok(raw.flatten())
     }
 
+    /// The agent turn ids the log has (for importing only the turns it lacks).
+    pub async fn session_turn_ids(&self, session_id: &str) -> Result<std::collections::HashSet<String>, StoreError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT turn_id FROM session_events WHERE session_id = ? AND turn_id IS NOT NULL")
+                .bind(session_id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(t,)| t).collect())
+    }
+
     /// The newest `seq` (0 when the conversation is empty).
     pub async fn last_session_event_seq(&self, session_id: &str) -> Result<i64, StoreError> {
         Ok(sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id = ?")

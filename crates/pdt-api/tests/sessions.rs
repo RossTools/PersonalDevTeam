@@ -203,7 +203,7 @@ async fn missing_program_is_400_and_leaves_no_row() {
         &app,
         "POST",
         "/api/sessions",
-        Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24})),
+        Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "codex", "mode": "terminal", "cols": 80, "rows": 24})),
     )
     .await;
     assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::BAD_REQUEST, "program_not_found"));
@@ -576,7 +576,7 @@ async fn create_codex(app: &axum::Router, pid: &str) -> Value {
         app,
         "POST",
         "/api/sessions",
-        Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24})),
+        Some(json!({"projectId": pid, "kind": "agent_tui", "agent": "codex", "mode": "terminal", "cols": 80, "rows": 24})),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{sess}");

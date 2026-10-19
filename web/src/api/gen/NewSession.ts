@@ -20,7 +20,7 @@ tab?: TabPlacement,
  */
 initialPrompt?: string, 
 /**
- * Agents only: `conversation` (Claude's default) or `terminal`. Codex is terminal-only for now.
+ * Agents only: `conversation` (the default) or `terminal`.
  */
 mode?: SessionMode, 
 /**

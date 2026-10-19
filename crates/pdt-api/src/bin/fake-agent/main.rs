@@ -9,6 +9,11 @@
 //! - anything else — streams `echo: <text>` back.
 //!
 //! `FAKE_AGENT_LOG` (a file path), when set, gets every stdin line and the argv.
+//!
+//! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), and `fake-agent resume …` the Codex
+//! TUI attached to it.
+
+mod codex;
 
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
@@ -249,6 +254,11 @@ impl Agent {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("app-server") => return codex::serve(&args),
+        Some("resume") => return codex::tui(&args),
+        _ => {}
+    }
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let mut log = std::env::var_os("FAKE_AGENT_LOG")
         .and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());

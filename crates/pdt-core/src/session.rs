@@ -164,7 +164,7 @@ pub struct NewSession {
     #[serde(default)]
     #[ts(optional)]
     pub initial_prompt: Option<String>,
-    /// Agents only: `conversation` (Claude's default) or `terminal`. Codex is terminal-only for now.
+    /// Agents only: `conversation` (the default) or `terminal`.
     #[serde(default)]
     #[ts(optional)]
     pub mode: Option<crate::conversation::SessionMode>,
@@ -208,8 +208,6 @@ pub enum SessionValidationError {
     BadPrompt,
     #[error("only an agent session can be a conversation")]
     ConversationForShell,
-    #[error("Codex conversations are not available yet; open Codex in a terminal")]
-    CodexConversation,
     #[error("a model name must be 1 to 100 characters with no spaces")]
     BadModel,
 }
@@ -243,10 +241,6 @@ impl NewSession {
                 return Err(SessionValidationError::ConversationForShell);
             }
             (SessionKind::Shell, _, _) => SessionMode::Terminal,
-            (_, Some(AgentKind::Codex), Some(SessionMode::Conversation)) => {
-                return Err(SessionValidationError::CodexConversation);
-            }
-            (_, Some(AgentKind::Codex), _) => SessionMode::Terminal,
             (_, _, m) => m.unwrap_or(SessionMode::Conversation),
         };
         let conversation = mode == SessionMode::Conversation;
@@ -720,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_agents_default_to_conversations() {
+    fn agents_default_to_conversations() {
         use crate::conversation::{PermissionMode, SessionMode};
         let v = new(SessionKind::AgentTui, Some(AgentKind::Claude), 80, 24).validate().unwrap();
         assert_eq!((v.mode, v.permission_mode), (SessionMode::Conversation, Some(PermissionMode::Ask)));
@@ -741,10 +735,10 @@ mod tests {
         let v = term.validate().unwrap();
         assert_eq!((v.mode, v.permission_mode, v.model), (SessionMode::Terminal, None, None));
         let codex = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24).validate().unwrap();
-        assert_eq!(codex.mode, SessionMode::Terminal, "Codex stays a terminal until 5b");
+        assert_eq!(codex.mode, SessionMode::Conversation);
         let mut codex = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24);
-        codex.mode = Some(SessionMode::Conversation);
-        assert_eq!(codex.validate().unwrap_err(), SessionValidationError::CodexConversation);
+        codex.mode = Some(SessionMode::Terminal);
+        assert_eq!(codex.validate().unwrap().mode, SessionMode::Terminal);
         let mut shell = new(SessionKind::Shell, None, 80, 24);
         assert_eq!(shell.clone().validate().unwrap().mode, SessionMode::Terminal);
         shell.mode = Some(SessionMode::Conversation);

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
 import { EmptyState, toast, type ApprovalAnswer } from '@ui';
@@ -10,7 +11,7 @@ import { latestUsage } from './blocks';
 import { ConversationComposer } from './ConversationComposer';
 import type { EventsSocketLike } from './eventsSocket';
 import { MessageList } from './MessageList';
-import { useConversation } from './useConversation';
+import { useConversation, type ConversationData } from './useConversation';
 
 const thousands = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -31,8 +32,19 @@ export function ConversationView({ session, socketFactory, className }: {
   socketFactory?: (url: string) => EventsSocketLike;
   className?: string;
 }) {
-  const qc = useQueryClient();
   const conv = useConversation(session.id, socketFactory);
+  return <ConversationPane session={session} conv={conv} className={className} />;
+}
+
+/** The conversation for events the caller follows (SessionView shares one socket between its header and this). */
+export function ConversationPane({ session, conv, banner, className }: {
+  session: Session;
+  conv: ConversationData;
+  /** A quiet line over the composer (e.g. "Also open in the terminal"). */
+  banner?: ReactNode;
+  className?: string;
+}) {
+  const qc = useQueryClient();
   const state = conv.state;
   const turnRunning = state?.turnRunning ?? false;
   const agent = session.agent ?? 'claude';
@@ -83,6 +95,7 @@ export function ConversationView({ session, socketFactory, className }: {
           ) : null
         }
       />
+      {banner}
       {conv.status === 'reconnecting' && (
         <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">Reconnecting…</p>
       )}

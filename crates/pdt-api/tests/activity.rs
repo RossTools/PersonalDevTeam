@@ -184,7 +184,7 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
         "POST",
         "/api/sessions",
         Some(json!({
-            "projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24
+            "projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "mode": "terminal", "cols": 80, "rows": 24
         })),
     )
     .await;
@@ -257,7 +257,7 @@ async fn codex_activity_follows_its_approval_screen_and_input() {
     tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
 
     let (_, projects) = call(&app, "GET", "/api/projects", None).await;
-    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "cols": 80, "rows": 24});
+    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "codex", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, created) = call(&app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{created}");
     let id = created["id"].as_str().unwrap().to_string();
