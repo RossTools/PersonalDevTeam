@@ -15,7 +15,8 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
-6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --squash --auto`. Once the PR's required
+6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --auto`, with no merge-method flag (the queue
+   sets the method; `--squash` only prints "The merge strategy for main is set by the merge queue"). Once the PR's required
    checks pass it joins main's **merge queue**: GitHub builds main plus the PR on a temporary branch, runs CI on it
    and squash-merges the PR when that passes, so nobody sits in a shell watching CI and nobody updates the branch
    with main. PRs are squash-merged (the only merge mode on the repo); the PR title becomes the commit subject on
