@@ -116,7 +116,7 @@ describe('Start dialog', () => {
   });
 
   it('does not offer Start for a ticket with an active attempt', async () => {
-    stub({ ...ready, stage: 'in_progress', attempt: { id: 'a1', branch: 'b', baseBranch: 'main', worktreeId: null, state: 'active', createdAt: 1, endedAt: null, lastHead: null, workspaceId: null } });
+    stub({ ...ready, stage: 'in_progress', attempt: { id: 'a1', branch: 'b', baseBranch: 'main', worktreeId: null, state: 'active', createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr: null } });
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     expect(within(dialog).getByText(/already has an active attempt/)).toBeInTheDocument();

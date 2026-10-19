@@ -173,6 +173,7 @@ fn to_attempt(r: &SqliteRow) -> Result<AttemptSummary, StoreError> {
         ended_at: r.try_get("ended_at")?,
         last_head: r.try_get("last_head")?,
         workspace_id: r.try_get("workspace_id")?,
+        pr: None,
     })
 }
 
@@ -1230,6 +1231,22 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    /// The keys of the pull-request notices already recorded for an attempt (`pr` events), so each is told once,
+    /// across pdtd restarts too.
+    pub async fn pr_notice_keys(&self, ticket_id: &str, attempt_id: &str) -> Result<HashSet<String>, StoreError> {
+        let rows: Vec<(Option<String>,)> =
+            sqlx::query_as("SELECT data FROM ticket_events WHERE ticket_id = ? AND kind = 'pr'")
+                .bind(ticket_id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(d,)| serde_json::from_str::<serde_json::Value>(&d?).ok())
+            .filter(|v| v.get("attemptId").and_then(|a| a.as_str()) == Some(attempt_id))
+            .filter_map(|v| v.get("key").and_then(|k| k.as_str()).map(String::from))
+            .collect())
     }
 
     /// Adds an event to a ticket's timeline (e.g. `session` when Start made one).

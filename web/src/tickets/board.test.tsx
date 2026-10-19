@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const attempt = { id: 'a1', branch: 'pdt/ALP-2-cache', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null };
+const attempt = { id: 'a1', branch: 'pdt/ALP-2-cache', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr: null };
 const columns = {
   todo: [summary(1, { stage: 'todo', priority: 'high', labels: ['ui'] }), summary(4, { stage: 'todo', blockedBy: 1 })],
   in_progress: [summary(2, { stage: 'in_progress', title: 'Cache', attempt })],

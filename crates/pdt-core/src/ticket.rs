@@ -135,11 +135,14 @@ pub enum EventKind {
     Comment,
     /// "Wait until clear" was set or cleared: `{waiting}`.
     Waiting,
+    /// News about the attempt's pull request (CI failed, conflict, left the merge queue, merged) and whether the
+    /// agent was told: `{attemptId, notice, key, pr, url, jobs, sessionId, told}`.
+    Pr,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
-    Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting",
+    Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -186,6 +189,9 @@ pub struct AttemptSummary {
     /// The workspace Start made for this attempt (gone with it when the ticket is finished); None when its tabs went
     /// into an existing workspace or the workspace was deleted.
     pub workspace_id: Option<String>,
+    /// Its pull request on GitHub as pdtd last saw it (active attempts of projects on GitHub; kept in memory).
+    #[serde(default)]
+    pub pr: Option<crate::pr::PullRequestStatus>,
 }
 
 /// The ticket a session works on (through its attempt), for the sidebar and tab titles.

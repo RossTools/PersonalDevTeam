@@ -204,10 +204,13 @@ pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) 
 /// `POST /api/tickets/{id}/check-merge`: merge detection for the ticket's active attempt, now.
 pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
     st.store.get_ticket_summary(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
-    if let Some(info) = st.store.active_attempt(&id).await?
-        && is_merged(&st, &info, true).await
-    {
-        st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, now_ms()).await?;
+    if let Some(info) = st.store.active_attempt(&id).await? {
+        crate::github::refresh_attempt(&st, &info).await;
+        if is_merged(&st, &info, true).await
+            && st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, now_ms()).await?.is_some()
+        {
+            crate::github::notify_merged(&st, &info).await;
+        }
     }
     Ok(Json(load_ticket(&st, &id).await?))
 }
@@ -271,8 +274,11 @@ pub async fn check_merges(st: &AppState) {
         let fetch = fetched.insert((info.project_id.clone(), info.attempt.base_branch.clone()));
         if is_merged(st, &info, fetch).await {
             match st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, now_ms()).await {
-                Ok(Some(_)) => tracing::info!(ticket = %info.ticket_key, branch = %info.attempt.branch,
-                    "the attempt's branch was merged"),
+                Ok(Some(_)) => {
+                    tracing::info!(ticket = %info.ticket_key, branch = %info.attempt.branch,
+                        "the attempt's branch was merged");
+                    crate::github::notify_merged(st, &info).await;
+                }
                 Ok(None) => {}
                 Err(e) => tracing::warn!(attempt = %info.attempt.id, error = %e, "could not end the merged attempt"),
             }

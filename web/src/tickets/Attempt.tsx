@@ -14,6 +14,7 @@ import { useAction } from '../common/useAction';
 import { abandonAttempt, finishMerged, useOpenSession } from './actions';
 import { isClosed } from './model';
 import { useAllSessions } from './queries';
+import { PrDetails } from './PullRequest';
 import { OverviewSection } from './TicketParts';
 
 const STATE_LABEL: Record<AttemptState, string> = { active: 'Active', merged: 'Merged', abandoned: 'Abandoned' };
@@ -50,6 +51,7 @@ export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket;
         <span className="min-w-0 flex-1 truncate font-mono" title={a.branch}>{a.branch}</span>
         <AttemptBadge state={a.state} />
       </div>
+      {a.pr && <PrDetails pr={a.pr} />}
       {!compact && <p className="text-meta text-muted-foreground">Base {a.baseBranch}{t.attempts.length > 1 && ` · attempt ${t.attempts.length}`}</p>}
       {sessions.length > 0 ? (
         <ul aria-label="Sessions" className="flex flex-col gap-0.5">

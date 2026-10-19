@@ -40,6 +40,7 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         .env("PDT_SECRET_STORE", "memory")
         // Never the machine's Tailscale (it serves the stable instance): any call would find no CLI.
         .env("PDT_TAILSCALE_BIN", data.join("no-such-tailscale"))
+        .env("PDT_GH_BIN", data.join("no-such-gh"))
         .envs(extra_env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
