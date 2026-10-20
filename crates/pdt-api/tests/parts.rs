@@ -139,7 +139,7 @@ async fn a_parent_starts_through_its_next_part_and_rolls_up() {
 }
 
 #[tokio::test]
-async fn parts_share_their_parents_workspace_which_goes_with_the_parent() {
+async fn each_part_gets_its_own_workspace_and_the_parent_closes_after_its_parts() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
     let parent = ticket(&env, json!({"title": "Phase 5"})).await;
@@ -148,45 +148,25 @@ async fn parts_share_their_parents_workspace_which_goes_with_the_parent() {
     let ra = start(&env, &a, json!({"agent": "claude", "newWorkspace": true})).await.1;
     let rb = start(&env, &b, json!({"agent": "claude", "newWorkspace": true})).await.1;
     let (sa, sb) = (s(&ra["session"]["id"]).to_string(), s(&rb["session"]["id"]).to_string());
-    assert_eq!(ra["attempt"]["workspaceId"], Value::Null, "the workspace is the parent's, not the attempt's");
 
-    let ws = workspace(&env, "PDT-1").await.expect("one workspace named after the parent");
-    assert_eq!(
-        tabs(&ws),
-        [
-            ("ticket", parent.clone()),
-            ("ticket", a.clone()),
-            ("session", sa.clone()),
-            ("ticket", b.clone()),
-            ("session", sb.clone()),
-        ]
-    );
-    assert!(workspace(&env, "PDT-2").await.is_none() && workspace(&env, "PDT-3").await.is_none());
-    // The sidebar shows the parent, its newest active part's attempt and the roll-up.
-    assert_eq!(ws["ticket"]["id"], parent.as_str());
-    assert_eq!(ws["ticket"]["attemptId"], rb["attempt"]["id"]);
-    assert_eq!(ws["ticket"]["parts"]["progress"], 2);
+    // A workspace holds one worktree: each part's, named after the part, remembered by its attempt.
+    let wa = workspace(&env, "PDT-2").await.expect("5a's workspace");
+    let wb = workspace(&env, "PDT-3").await.expect("5b's workspace");
+    assert_eq!(tabs(&wa), [("ticket", a.clone()), ("session", sa)]);
+    assert_eq!(tabs(&wb), [("ticket", b.clone()), ("session", sb)]);
+    assert_eq!(ra["attempt"]["workspaceId"], wa["id"]);
+    assert_eq!(wa["ticket"]["id"], a.as_str());
+    assert!(workspace(&env, "PDT-1").await.is_none(), "no workspace for the parent");
 
-    // The parent can't close while a part is open; closing the parts leaves the workspace.
+    // The parent can't close while a part is open; once they are closed it can.
     let (st, v) = patch(&env, &parent, json!({"stage": "done"})).await;
     assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "parts_open"), "{v}");
     assert!(s(&v["message"]).contains("PDT-2, PDT-3"), "{v}");
     for id in [&a, &b] {
         assert_eq!(patch(&env, id, json!({"stage": "done"})).await.0, StatusCode::OK);
     }
-    assert!(workspace(&env, "PDT-1").await.is_some());
-
-    // With its sessions' tabs still there the workspace stays when the parent closes; with only ticket tabs it goes.
     let (st, v) = patch(&env, &parent, json!({"stage": "done"})).await;
     assert_eq!(st, StatusCode::OK, "{v}");
-    let ws = workspace(&env, "PDT-1").await.expect("kept: it still has session tabs");
-    for t in ws["tabs"].as_array().unwrap().iter().filter(|t| t["sessionId"].is_string()) {
-        let (st, v) = call(&env.app, "DELETE", &format!("/api/tabs/{}", s(&t["id"])), None).await;
-        assert!(st.is_success(), "{v}");
-    }
-    assert_eq!(patch(&env, &parent, json!({"stage": "in_progress"})).await.0, StatusCode::OK);
-    assert_eq!(patch(&env, &parent, json!({"stage": "done"})).await.0, StatusCode::OK);
-    assert!(workspace(&env, "PDT-1").await.is_none(), "only ticket tabs were left");
     env.state.ptys.shutdown().await;
 }
 

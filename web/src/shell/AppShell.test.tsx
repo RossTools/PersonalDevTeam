@@ -182,27 +182,6 @@ describe('workspaces', () => {
     expect(within(general).getByRole('row', { name: /Release/ })).toBeInTheDocument();
   });
 
-  it("shows a parent's shared workspace with its parts' progress and no attempt of its own", async () => {
-    stubWorkspaces({
-      'GET /api/workspaces': [
-        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0)] },
-        {
-          id: 'wp', name: 'ALP-2', projectId: null, position: 1, createdAt: 3, tabs: [],
-          ticket: {
-            id: 't2', projectId: project.id, key: 'ALP-2', title: 'Phase 5', stage: 'in_progress', attemptId: null, attemptState: null, pr: null,
-            parts: { total: 2, done: 1, merged: 0, review: 0, progress: 0, todo: 1, backlog: 0, segments: ['done', 'todo'] },
-          },
-        },
-      ],
-    });
-    renderWithQuery(<AppShell />);
-    const tickets = await screen.findByRole('region', { name: 'Ticket workspaces' });
-    const row = await within(tickets).findByRole('row', { name: /Phase 5/ });
-    expect(within(row).getByRole('button', { name: 'ALP-2' })).toBeInTheDocument();
-    expect(within(row).getByRole('img', { name: '1 of 2 parts done, 1 to do' })).toBeInTheDocument();
-    expect(within(row).queryByText('Merged')).toBeNull();
-  });
-
   it('shows the workspace tabs with their status and the current tab', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);

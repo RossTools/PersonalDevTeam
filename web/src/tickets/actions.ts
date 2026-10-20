@@ -318,7 +318,6 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
   const ticketTab = workspaces.flatMap((w) => w.tabs).find((tab) => tab.ticketId === t.id);
   if (workspace && ticketTab && ticketTab.workspaceId !== workspace.id) await api.closeTab(ticketTab.id).catch(ignoreMissing);
   // A part's tabs live in its parent's shared workspace (PDT-38), which stays: close just the part's tab.
-  if (!workspace && t.parent && ticketTab) await api.closeTab(ticketTab.id).catch(ignoreMissing);
   let workspaceRemoved = false;
   if (workspace) {
     workspaceRemoved = await api.deleteWorkspace(workspace.id, { closeTabs: true }).then(() => true, (e) => (ignoreMissing(e), false));

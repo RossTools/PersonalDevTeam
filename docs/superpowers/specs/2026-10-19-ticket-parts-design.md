@@ -68,7 +68,6 @@ One migration (`0018_ticket_parts.sql`, the next free number; the migrations are
 
 ```sql
 ALTER TABLE tickets ADD COLUMN parent_id TEXT REFERENCES tickets(id) ON DELETE SET NULL;  -- the store refuses to delete a parent
-ALTER TABLE tickets ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL;  -- a parent's shared workspace
 CREATE INDEX tickets_by_parent ON tickets (parent_id, rank) WHERE parent_id IS NOT NULL;
 ALTER TABLE attempts ADD COLUMN stacked_on TEXT REFERENCES attempts(id) ON DELETE SET NULL;  -- PR 2 (§6)
 ```
@@ -93,12 +92,10 @@ starts.
 - **Prompt for a part:** today's prompt, plus a short "Part of" block: the parent's key and title, the parent's
   description (cut first when the 8 KB cap is reached), and one line per other part (`PDT-46 5a: Done (#44)`,
   `PDT-47 5b: in review (#50)`, `PDT-48 5d: To do`). That gives the new session what the old long-running one carried.
-- **Workspace:** a part's Start with "new workspace" uses the **parent's workspace** (made by the first part's Start,
-  named `<parent key>`, holding the parent ticket tab; stored as `tickets.workspace_id` on the parent, while the
-  part's `attempts.workspace_id` stays empty), adding the part's ticket and session tabs. The sidebar shows that
-  workspace as the parent, with its newest active part's PR. "Move to Done and
-  remove the worktree" on a part (`finishMerged`) removes that part's worktree, sessions and tabs, and leaves the
-  shared workspace. Closing the parent removes the workspace when it holds only ticket tabs.
+- **Workspace:** a part's Start works like any ticket's: with "new workspace" it gets its own workspace named after
+  the part, which "Move to Done and remove the worktree" removes with it. A workspace holds one worktree, so Run and
+  everything else in it act on that part. (A workspace shared by the parent's parts was built first and dropped after
+  the user's review: it mixed worktrees.)
 - **Merge detection** is unchanged: it runs on parts' attempts. A part merging can only close that part.
 
 ## 6. Stacked parts (second PR)
@@ -192,7 +189,7 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
 ## 11. Build order
 
 - **PR 1, parts:** migration, pdt-core rules and roll-up (TDD), store, API (parent, parts, roll-up, Start refusal and
-  `next`, parent stage, close rules), part prompts, the shared workspace and `finishMerged` change; web Parts section,
+  `next`, parent stage, close rules), part prompts; web Parts section,
   parent chips and progress, Parent picker, board lanes by parent, Make into parts…, palette entry. Then convert
   PDT-2.
 - **PR 2, stacking:** `stacked_on`, Start "Stack on", changed files from the blocker's head, the restack notice and
@@ -205,7 +202,7 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
   (parent description cut first).
 - pdt-store: `parent_id` and refusing to delete a parent, list by parent, bulk part creation all-or-nothing.
 - pdt-api: Start refused on parents and `next`; parent to In progress on the first part's start; a parent moves
-  to Done by PATCH, bulk or board drag once every part is closed and `parts_open` before; the shared workspace survives a part's finish.
+  to Done by PATCH, bulk or board drag once every part is closed and `parts_open` before.
 - pdt-git (PR 2): `rebase --onto` after a squash merge applies cleanly where `merge main` conflicts (temp repo);
   changed files from the blocker's head.
 - pdt-api: `hasParts` filter.

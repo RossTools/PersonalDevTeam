@@ -149,7 +149,7 @@ pub(crate) async fn start(
         {
             tracing::warn!(ticket = %id, error = %e, "could not record the chat on the timeline");
         }
-        open_tab_before_chat(&st, &project.id, &key, &id, &attempt_id, &chat.id, &v, parent.as_ref()).await;
+        open_tab_before_chat(&st, &project.id, &key, &id, &attempt_id, &chat.id, &v).await;
         if let Some(p) = &parent {
             part_started(&st, p).await;
         }
@@ -212,7 +212,7 @@ pub(crate) async fn start(
     if let Err(e) = st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await {
         tracing::warn!(ticket = %id, error = %e, "could not record the started session on the timeline");
     }
-    open_tabs(&st, &project.id, &key, &id, &attempt_id, &session.id, &v, parent.as_ref()).await;
+    open_tabs(&st, &project.id, &key, &id, &attempt_id, &session.id, &v).await;
     if let Some(p) = &parent {
         part_started(&st, p).await;
     }
@@ -256,7 +256,6 @@ async fn startable_chat(
 
 /// Start from a chat: the ticket's tab goes just before the chat's (which stays where it is); a chat with no tab gets
 /// both, as a new start would.
-#[allow(clippy::too_many_arguments)]
 async fn open_tab_before_chat(
     st: &AppState,
     project_id: &str,
@@ -265,7 +264,6 @@ async fn open_tab_before_chat(
     attempt_id: &str,
     session_id: &str,
     v: &ValidStart,
-    parent: Option<&TicketParent>,
 ) {
     match st.store.tab_for(&TabItem::Session(session_id.to_string())).await {
         Ok(Some(tab)) => {
@@ -275,7 +273,7 @@ async fn open_tab_before_chat(
                 tracing::warn!(error = %e, "could not open the ticket's tab");
             }
         }
-        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, session_id, v, parent).await,
+        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, session_id, v).await,
     }
 }
 
@@ -284,37 +282,6 @@ async fn part_started(st: &AppState, parent: &TicketParent) {
     if let Err(e) = st.store.part_started(&parent.id, now_ms()).await {
         tracing::warn!(ticket = %parent.key, error = %e, "could not move the parent to In progress");
     }
-}
-
-/// The workspace a parent's parts share (PDT-38): the one it has, else a new one named after the parent with the
-/// parent's ticket tab first. None when it could not be made.
-async fn parent_workspace(st: &AppState, parent: &TicketParent) -> Option<String> {
-    if let Ok(Some(w)) = st.store.ticket_workspace(&parent.id).await
-        && matches!(st.store.get_workspace(&w).await, Ok(Some(_)))
-    {
-        return Some(w);
-    }
-    let w = Workspace {
-        id: uuid::Uuid::now_v7().to_string(),
-        name: valid_workspace_name(&parent.key).unwrap_or_else(|_| parent.key.chars().take(60).collect()),
-        project_id: None,
-        position: 0,
-        created_at: now_ms(),
-        tabs: vec![],
-        ticket: None,
-    };
-    if let Err(e) = st.store.insert_workspace(&w).await {
-        tracing::warn!(error = %e, "could not make the parent's workspace");
-        return None;
-    }
-    if let Err(e) = st.store.set_ticket_workspace(&parent.id, Some(&w.id)).await {
-        tracing::warn!(error = %e, "could not remember the parent's workspace");
-    }
-    let item = TabItem::Ticket(parent.id.clone());
-    if let Err(e) = st.store.open_tab(&uuid::Uuid::now_v7().to_string(), &w.id, &item, Some(0), now_ms()).await {
-        tracing::warn!(error = %e, "could not open the parent's tab");
-    }
-    Some(w.id)
 }
 
 /// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so
@@ -341,7 +308,6 @@ fn plural(n: usize) -> &'static str {
 
 /// The ticket's tab, then the session's right after it: in a new workspace named after the ticket, where asked, or
 /// at the end of the project's workspace (the attempt remembers a new workspace). A failure is logged: the session runs and can be opened from the sidebar.
-#[allow(clippy::too_many_arguments)]
 async fn open_tabs(
     st: &AppState,
     project_id: &str,
@@ -350,13 +316,8 @@ async fn open_tabs(
     attempt_id: &str,
     session_id: &str,
     v: &ValidStart,
-    parent: Option<&TicketParent>,
 ) {
-    let target = if let (true, Some(p)) = (v.new_workspace, parent) {
-        // A part's tabs go to the end of its parent's workspace; the attempt has no workspace of its own, so
-        // finishing the part leaves the shared one.
-        parent_workspace(st, p).await.map(|w| (w, None))
-    } else if v.new_workspace {
+    let target = if v.new_workspace {
         let w = Workspace {
             id: uuid::Uuid::now_v7().to_string(),
             name: valid_workspace_name(key).unwrap_or_else(|_| key.chars().take(60).collect()),

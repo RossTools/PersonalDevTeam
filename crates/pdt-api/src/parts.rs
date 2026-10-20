@@ -14,7 +14,6 @@ use pdt_core::parts::{
 use pdt_core::pr::PrState;
 use pdt_core::start::PartContext;
 use pdt_core::ticket::{AttemptState, Ticket, TicketSummary};
-use pdt_core::workspace::Workspace;
 use pdt_store::PartRow;
 use std::collections::HashMap;
 
@@ -55,16 +54,6 @@ pub(crate) async fn apply(st: &AppState, t: &mut Ticket) -> Result<(), ApiError>
     t.summary.parts = rollups(st, std::slice::from_ref(&t.summary.id)).await?.remove(&t.summary.id);
     for p in t.part_list.iter_mut() {
         crate::github::apply_summary(st, p);
-    }
-    Ok(())
-}
-
-/// Fills in the roll-up of parents' shared workspaces in the sidebar.
-pub(crate) async fn apply_workspaces(st: &AppState, list: &mut [Workspace]) -> Result<(), ApiError> {
-    let ids: Vec<String> = list.iter().filter_map(|w| w.ticket.as_ref().map(|t| t.id.clone())).collect();
-    let mut roll = rollups(st, &ids).await?;
-    for t in list.iter_mut().filter_map(|w| w.ticket.as_mut()) {
-        t.parts = roll.remove(&t.id);
     }
     Ok(())
 }
@@ -118,21 +107,6 @@ pub(crate) async fn next(st: &AppState, parent: &str) -> Result<Result<String, N
         })
         .collect();
     Ok(next_part(&facts).map(|i| rows[i].id.clone()))
-}
-
-/// A closed parent's shared workspace goes when it holds nothing but ticket tabs (a session or run tab keeps it, so
-/// nothing running disappears). Logged, never fails the close.
-pub(crate) async fn closed(st: &AppState, ticket_id: &str) {
-    let Ok(Some(w)) = st.store.ticket_workspace(ticket_id).await else { return };
-    match st.store.get_workspace(&w).await {
-        Ok(Some(ws)) if ws.tabs.iter().all(|t| t.ticket_id.is_some()) => {
-            if let Err(e) = st.store.delete_workspace(&w, true).await {
-                tracing::warn!(ticket = %ticket_id, error = %e, "could not remove the parent's workspace");
-            }
-        }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(ticket = %ticket_id, error = %e, "could not read the parent's workspace"),
-    }
 }
 
 /// `POST /api/tickets/{id}/parts`: makes several parts in order after the existing ones (all or none).

@@ -932,23 +932,6 @@ impl Store {
         Ok(out)
     }
 
-    /// A parent's shared workspace (PDT-38), if it has one.
-    pub async fn ticket_workspace(&self, id: &str) -> Result<Option<String>, StoreError> {
-        let row: Option<(Option<String>,)> =
-            sqlx::query_as("SELECT workspace_id FROM tickets WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
-        Ok(row.and_then(|(w,)| w))
-    }
-
-    /// Remembers (or forgets, with None) a parent's shared workspace.
-    pub async fn set_ticket_workspace(&self, id: &str, workspace_id: Option<&str>) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE tickets SET workspace_id = ? WHERE id = ?")
-            .bind(workspace_id)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(r.rows_affected() > 0)
-    }
-
     /// A part started: its parent moves to In progress if it was Draft, Ready or To do (a system `moved` event).
     /// Returns whether it moved.
     pub async fn part_started(&self, parent: &str, now: i64) -> Result<bool, StoreError> {
@@ -2714,7 +2697,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_part_starting_moves_its_parent_once_and_its_workspace_shows_the_parent() {
+    async fn a_part_starting_moves_its_parent_once() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         add(&store, "par", ValidNewTicket { stage: TicketStage::Todo, ..new("Parent") }).await;
@@ -2723,23 +2706,7 @@ mod tests {
         assert!(!store.part_started("par", 3).await.unwrap());
         assert_eq!(store.get_ticket("par").await.unwrap().unwrap().summary.stage, TicketStage::InProgress);
 
-        let w = pdt_core::workspace::Workspace {
-            id: "w".into(),
-            name: "PX-1".into(),
-            project_id: None,
-            position: 0,
-            created_at: 1,
-            tabs: vec![],
-            ticket: None,
-        };
-        store.insert_workspace(&w).await.unwrap();
-        assert!(store.set_ticket_workspace("par", Some("w")).await.unwrap());
-        assert_eq!(store.ticket_workspace("par").await.unwrap().as_deref(), Some("w"));
-        let t = store.get_workspace("w").await.unwrap().unwrap().ticket.unwrap();
-        assert_eq!((t.key.as_str(), t.attempt_id), ("PX-1", None));
         store.start_attempt("at", "a", None, "b", "main", "c", json!({}), 4).await.unwrap();
-        let t = store.get_workspace("w").await.unwrap().unwrap().ticket.unwrap();
-        assert_eq!((t.attempt_id.as_deref(), t.attempt_state), (Some("at"), Some(AttemptState::Active)));
         let rows = store.part_rows(&["par".into()]).await.unwrap();
         assert_eq!(rows[0].attempt, Some(("at".into(), AttemptState::Active)));
     }

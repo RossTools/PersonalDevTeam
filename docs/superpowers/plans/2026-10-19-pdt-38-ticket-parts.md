@@ -6,8 +6,8 @@ the spec, this plan and the code (merging the spec alone would end PDT-38's only
 
 **Goal:** a ticket can have parts (child tickets, one level). Parents can't be started; "Start next part" starts the
 first open, unblocked part. A parent moves to In progress when its first part starts and to Done like any ticket once
-every part is closed (refused before). A part's first prompt carries the parent and the other parts. Parts share the
-parent's workspace. The board has a lane per parent; the backlog and ticket views show parents, parts and progress.
+every part is closed (refused before). A part's first prompt carries the parent and the other parts. Each part gets
+its own workspace, like any ticket. The board has a lane per parent; the backlog and ticket views show parents, parts and progress.
 "Make into parts…" turns a ticket's Scope list into parts. Then PDT-2 is converted (with the user's go-ahead).
 
 **Not in this PR (PR 2):** stacking (`attempts.stacked_on`, Stack on, changed files from the blocker's head, restack
@@ -15,13 +15,8 @@ notice and button). Backlog grouping by parent.
 
 **Decisions made while planning** (the spec is updated to match):
 - **Migration number:** `0018_ticket_parts.sql` (main has 0016 and 0017 now).
-- **The shared workspace belongs to the parent:** `tickets.workspace_id` (the parent's workspace, made by the first
-  part's Start with "new workspace"). Parts' attempts leave `attempts.workspace_id` empty, so finishing a part never
-  deletes the shared workspace. `Workspace.ticket` for that workspace is the parent, with the attempt and PR of its
-  newest active part (`WorkspaceTicket.attemptId`, `attemptState` become optional; new `parts: PartsProgress`).
-- **Closing a parent removes its workspace** server-side (PATCH, bulk and board drag all go through it) when the
-  workspace holds only ticket tabs; with a session or run tab it is left alone (the web sees it in the workspace
-  list).
+- ~~The shared workspace belongs to the parent~~ (built, then dropped in review: a workspace holds one worktree so
+  Run acts on that part; parts get their own workspaces like any ticket).
 - **Name clash:** web/src/tickets/TicketParts.tsx already means "pieces of the Overview". The new UI goes in
   `PartsSection.tsx` and `BoardLanes.tsx`; the roll-up type is `PartsProgress`. No renames of existing files.
 - **Roll-up is computed in pdt-api** (`parts.rs`), like overlap and PR status, because `review` needs the in-memory PR
@@ -83,8 +78,7 @@ Routes:
   then the ticket's (with the existing note). Tests: block present, order, parent text cut first, leaf prompt unchanged.
 
 ### 3. Migration and store — crates/pdt-store
-- `0018_ticket_parts.sql`: `tickets.parent_id` (REFERENCES tickets ON DELETE SET NULL; the store refuses deleting a parent, since RESTRICT would break a project's cascade), `tickets.workspace_id`
-  (REFERENCES workspaces ON DELETE SET NULL), `tickets_by_parent` index.
+- `0018_ticket_parts.sql`: `tickets.parent_id` (REFERENCES tickets ON DELETE SET NULL; the store refuses deleting a parent, since RESTRICT would break a project's cascade), `tickets_by_parent` index.
   
 - Row mapping: `parent` on summaries (join for key/title); raw part rows for the roll-up (`part_rows(parent_ids)`:
   id, key, title, stage, rank, active attempt id/state, open-blocker count) in one query per page.
@@ -92,8 +86,6 @@ Routes:
   events); `patch_ticket` parent set/clear; `create_parts` (one transaction); `delete_ticket` refuses parents;
   `patch_ticket`/`bulk_tickets` refuse closing a parent with open parts (check inside the transaction).
 - Filters: `parent = ?` / `parent_id IS NULL`, `hasParts` (EXISTS).
-- `set_ticket_workspace`, and `Workspace.ticket` for a parent's workspace (from `tickets.workspace_id`, attempt from
-  its newest active part).
 - Tests: rules enforced in the store too (races), parent delete refused, part ordering, bulk all-or-nothing with a parent,
   filters, workspace ticket.
 

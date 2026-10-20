@@ -171,26 +171,6 @@ describe('a part', () => {
     await userEvent.click(await within(dialog).findByRole('menuitem', { name: /ALP-7 · Accounts/ }));
     expect(await within(dialog).findByText('the parent is itself a part; parts are one level deep')).toBeInTheDocument();
   });
-
-  it('closes its own tab when finished, leaving the shared workspace', async () => {
-    const merged = { ...active, state: 'merged' as const };
-    const done = ticket(3, { title: '5b', parent: parentRef, stage: 'in_progress', attempt: merged, attempts: [merged] });
-    const calls = stub(done, {
-      'GET /api/workspaces': [{
-        id: 'ws1', name: 'ALP-1', projectId: null, position: 1, createdAt: 1,
-        tabs: [{ id: 'tp', workspaceId: 'ws1', sessionId: null, runId: null, ticketId: 't1', position: 0 }, { id: 'tt', workspaceId: 'ws1', sessionId: null, runId: null, ticketId: 't3', position: 1 }],
-      }],
-      'GET /api/runs': [],
-      'DELETE /api/worktrees/w2': undefined,
-      'DELETE /api/tabs/tt': undefined,
-      [`POST /api/projects/${project.id}/pull`]: { branch: 'main', outcome: 'up_to_date', message: null },
-    });
-    view('t3');
-    await userEvent.click(await screen.findByRole('button', { name: 'Move to Done and remove the worktree' }));
-    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tt')).toBe(true));
-    expect(calls.some((c) => c.method === 'DELETE' && c.path.startsWith('/api/workspaces/'))).toBe(false);
-    expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tp')).toBe(false);
-  });
 });
 
 describe('make into parts', () => {

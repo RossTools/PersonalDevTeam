@@ -78,7 +78,7 @@ pub(crate) fn apply(st: &AppState, t: &mut Ticket) {
 pub(crate) fn apply_workspaces(st: &AppState, list: &mut [pdt_core::workspace::Workspace]) {
     let w = watch(st);
     for t in list.iter_mut().filter_map(|x| x.ticket.as_mut()) {
-        t.pr = t.attempt_id.as_ref().and_then(|a| w.by_attempt.get(a).cloned());
+        t.pr = w.by_attempt.get(&t.attempt_id).cloned();
     }
 }
 
