@@ -4,7 +4,7 @@ import { Compartment, EditorState, RangeSet, StateEffect, StateField, Text, type
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, gutterLineClass, lineNumbers, type DecorationSet } from '@codemirror/view';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
-import { Chunk, MergeView, getChunks, presentableDiff, unifiedMergeView } from '@codemirror/merge';
+import { Chunk, MergeView, getChunks, presentableDiff, uncollapseUnchanged, unifiedMergeView } from '@codemirror/merge';
 import type { CommentSide } from '../api/gen/CommentSide';
 import { codeTheme, languageFor, v } from '../files/codeTheme';
 
@@ -34,7 +34,7 @@ export interface CodeDiffProps {
   wholeFile: boolean;
   anchors: DiffAnchor[];
   renderAnchor: (id: string) => ReactNode;
-  /** "+" on a line, or `c` with lines selected. */
+  /** "+" on a line (on the picked lines when it is one of them), or `c` with lines picked or selected. */
   onComment: (range: LineRange) => void;
 }
 
@@ -77,6 +77,79 @@ function anchorField(host: (id: string) => HTMLElement) {
     },
     provide: (f) => EditorView.decorations.from(f),
   });
+}
+
+/** Lines picked in the line-number gutter (a click, then Shift+click to extend from `anchor`). */
+interface Picked {
+  anchor: number;
+  line: number;
+  endLine: number;
+}
+
+const setPicked = StateEffect.define<Picked | null>();
+
+const pickedLine = Decoration.line({ class: 'cm-picked-line' });
+
+/** The picked lines, tinted. */
+const pickedField = StateField.define<{ picked: Picked | null; deco: DecorationSet }>({
+  create: () => ({ picked: null, deco: Decoration.none }),
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (!e.is(setPicked)) continue;
+      const p = e.value;
+      const doc = tr.state.doc;
+      if (!p || p.line < 1 || p.endLine > doc.lines) return { picked: null, deco: Decoration.none };
+      const ranges = [];
+      for (let n = p.line; n <= p.endLine; n++) ranges.push(pickedLine.range(doc.line(n).from));
+      return { picked: p, deco: Decoration.set(ranges) };
+    }
+    return value;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
+});
+
+class PickedGutter extends GutterMarker {
+  elementClass = 'cm-picked-gutter';
+}
+const PICKED_GUTTER = new PickedGutter();
+
+/** Tints the picked lines' gutter cells too. */
+const pickedGutter = gutterLineClass.compute([pickedField], (state) => {
+  const p = state.field(pickedField).picked;
+  if (!p) return RangeSet.empty;
+  const marks = [];
+  for (let n = p.line; n <= p.endLine && n <= state.doc.lines; n++) marks.push(PICKED_GUTTER.range(state.doc.line(n).from));
+  return RangeSet.of(marks);
+});
+
+/** Lines `anchor`..`to` in order. */
+export function pickRange(anchor: number, to: number): Picked {
+  return { anchor, line: Math.min(anchor, to), endLine: Math.max(anchor, to) };
+}
+
+/** Where the collapsed unchanged runs (`@codemirror/merge`'s widget) that hide any of `positions` start. */
+export function collapsedHolding(view: EditorView, positions: number[]): number[] {
+  const out = new Set<number>();
+  if (positions.length === 0) return [];
+  for (const source of view.state.facet(EditorView.decorations)) {
+    if (typeof source === 'function') continue;
+    source.between(0, view.state.doc.length, (from, to, deco) => {
+      const type = (deco.spec.widget as { type?: string } | undefined)?.type;
+      if (type === 'collapsed-unchanged-code' && positions.some((p) => p >= from && p <= to)) out.add(from);
+    });
+  }
+  return [...out];
+}
+
+/** A position in one side of a split diff, in the other (as the merge view maps a collapsed run's start). */
+function otherSidePos(pos: number, chunks: readonly Chunk[], isA: boolean): number {
+  let ours = 0;
+  let theirs = 0;
+  for (const c of chunks) {
+    if ((isA ? c.fromA : c.fromB) >= pos) break;
+    [ours, theirs] = isA ? [c.toA, c.toB] : [c.toB, c.toA];
+  }
+  return theirs + (pos - ours);
 }
 
 /** The sign column: `+` / `−` on changed lines (as on GitHub); hovering any line shows the comment button instead. */
@@ -178,7 +251,7 @@ const githubHighlight = syntaxHighlighting(HighlightStyle.define([
 /** GitHub's pull request diff: soft line colours, stronger number cells and changed words, blue collapsed rows. */
 const diffTheme = EditorView.theme({
   '.cm-gutters': { backgroundColor: v('bg'), borderRight: 'none' },
-  '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px', minWidth: '40px' },
+  '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px', minWidth: '40px', cursor: 'pointer' },
   '.cm-gutterElement.cm-gh-add': { backgroundColor: v('diff-add-gutter'), color: v('fg') },
   '.cm-gutterElement.cm-gh-del': { backgroundColor: v('diff-del-gutter'), color: v('fg') },
   '.cm-comment-gutter .cm-gutterElement': { cursor: 'pointer', width: '20px', textAlign: 'center', position: 'relative' },
@@ -206,6 +279,8 @@ const diffTheme = EditorView.theme({
     cursor: 'pointer',
   },
   '.cm-collapsedLines:hover': { color: v('accent') },
+  '.cm-line.cm-picked-line': { backgroundImage: `linear-gradient(${v('diff-picked')}, ${v('diff-picked')})` },
+  '.cm-gutterElement.cm-picked-gutter': { backgroundImage: `linear-gradient(${v('diff-picked')}, ${v('diff-picked')})` },
   '.cm-review-anchor': {
     whiteSpace: 'normal', fontFamily: v('font-sans'), padding: '6px 8px', maxWidth: '48rem', cursor: 'auto',
   },
@@ -245,8 +320,9 @@ function textOf(doc: Text, line: number, endLine: number): string {
 
 /**
  * The diff of one file (`@codemirror/merge`): split (old left, new right) or unified, unchanged runs collapsed unless
- * `wholeFile`. Threads and the composer render under their lines; "+" in the gutter or `c` on a selection asks for a
- * new comment.
+ * `wholeFile` (a run that holds a thread is expanded). Threads and the composer render under their lines. A click on a
+ * line number picks that line and Shift+click extends the pick; "+" in the gutter (on the picked lines when it is one
+ * of them) or `c` on picked or selected lines asks for a new comment.
  */
 export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, renderAnchor, onComment }: CodeDiffProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -274,15 +350,46 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     const vs = views.current;
     if (!vs) return;
     const list = anchorsRef.current;
+    const at = (view: EditorView, lines: number[]) =>
+      lines.filter((n) => n >= 1 && n <= view.state.doc.lines).map((n) => view.state.doc.line(n).to);
     if (vs.old) {
-      vs.old.dispatch({ effects: setAnchors.of(list.filter((a) => a.side === 'old').map(({ id, line }) => ({ id, line }))) });
-      vs.new.dispatch({ effects: setAnchors.of(list.filter((a) => a.side === 'new').map(({ id, line }) => ({ id, line }))) });
+      const old = list.filter((a) => a.side === 'old').map(({ id, line }) => ({ id, line }));
+      const neu = list.filter((a) => a.side === 'new').map(({ id, line }) => ({ id, line }));
+      vs.old.dispatch({ effects: setAnchors.of(old) });
+      vs.new.dispatch({ effects: setAnchors.of(neu) });
+      // A thread inside a collapsed run would be hidden: expand the run on both sides.
+      const chunks = getChunks(vs.new.state)?.chunks ?? [];
+      const starts = [
+        ...collapsedHolding(vs.old, at(vs.old, old.map((a) => a.line))).map((p) => [p, otherSidePos(p, chunks, true)] as const),
+        ...collapsedHolding(vs.new, at(vs.new, neu.map((a) => a.line))).map((p) => [otherSidePos(p, chunks, false), p] as const),
+      ];
+      if (starts.length) {
+        vs.old.dispatch({ effects: starts.map(([a]) => uncollapseUnchanged.of(a)) });
+        vs.new.dispatch({ effects: starts.map(([, b]) => uncollapseUnchanged.of(b)) });
+      }
     } else {
       const chunks = getChunks(vs.new.state)?.chunks ?? [];
       const a = EditorState.create({ doc: oldText }).doc;
       const mapped = list.map(({ id, side, line }) => ({ id, line: side === 'old' ? oldToNewLine(chunks, a, vs.new.state.doc, line) : line }));
       vs.new.dispatch({ effects: setAnchors.of(mapped) });
+      const starts = collapsedHolding(vs.new, at(vs.new, mapped.map((m) => m.line)));
+      if (starts.length) vs.new.dispatch({ effects: starts.map((p) => uncollapseUnchanged.of(p)) });
     }
+  };
+
+  /** Picks lines in `view` (and none in the other side). */
+  const pick = (view: EditorView, p: Picked | null) => {
+    const vs = views.current;
+    for (const other of [vs?.old, vs?.new]) {
+      if (other && other !== view && other.state.field(pickedField).picked) other.dispatch({ effects: setPicked.of(null) });
+    }
+    view.dispatch({ effects: setPicked.of(p) });
+  };
+
+  /** Asks for a comment on lines of `view`, and drops the pick. */
+  const commentOn = (view: EditorView, s: CommentSide, line: number, endLine: number) => {
+    if (view.state.field(pickedField).picked) view.dispatch({ effects: setPicked.of(null) });
+    onCommentRef.current({ side: s, line, endLine, lineText: textOf(view.state.doc, line, endLine) });
   };
 
   useEffect(() => {
@@ -298,15 +405,33 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     const lineMarks = (doc: Text, lines: Set<number>, mark: LineClass) =>
       gutterLineClass.of(RangeSet.of([...lines].sort((x, y) => x - y).map((n) => mark.range(doc.line(n).from))));
     const side = (s: CommentSide, language: Compartment, changed: Set<number>): Extension[] => [
-      lineNumbers(),
+      lineNumbers({
+        domEventHandlers: {
+          mousedown(view, block, event) {
+            const n = view.state.doc.lineAt(block.from).number;
+            const current = view.state.field(pickedField).picked;
+            const shift = (event as MouseEvent).shiftKey;
+            if (shift && current) pick(view, pickRange(current.anchor, n));
+            else if (!shift && current && current.line === n && current.endLine === n) pick(view, null);
+            else pick(view, pickRange(n, n));
+            view.contentDOM.focus({ preventScroll: true });
+            return true;
+          },
+        },
+      }),
       gutter({
         class: 'cm-comment-gutter',
         lineMarker: (view, block) => SIGNS[changed.has(view.state.doc.lineAt(block.from).number) ? (s === 'old' ? '−' : '+') : ''],
         initialSpacer: () => SIGNS['+'],
         domEventHandlers: {
-          mousedown(view, block) {
+          mousedown(view, block, event) {
             const n = view.state.doc.lineAt(block.from).number;
-            onCommentRef.current({ side: s, line: n, endLine: n, lineText: view.state.doc.line(n).text });
+            const p = view.state.field(pickedField).picked;
+            if (p && (event as MouseEvent).shiftKey) {
+              const r = pickRange(p.anchor, n);
+              commentOn(view, s, r.line, r.endLine);
+            } else if (p && n >= p.line && n <= p.endLine) commentOn(view, s, p.line, p.endLine);
+            else commentOn(view, s, n, n);
             return true;
           },
         },
@@ -321,6 +446,8 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
       githubHighlight,
       language.of([]),
       anchorField(container),
+      pickedField,
+      pickedGutter,
     ];
     const langOld = new Compartment();
     const langNew = new Compartment();
@@ -388,11 +515,19 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     if (t.closest('textarea, input, [contenteditable="true"], .cm-review-anchor')) return;
     const vs = views.current;
     if (!vs) return;
-    const pick = [vs.old, vs.new].find((x) => x?.hasFocus) ?? [vs.new, vs.old].find((x) => x && !x.state.selection.main.empty);
-    if (!pick) return;
-    const { line, endLine } = selectedLines(pick);
+    const sideOf = (view: EditorView): CommentSide => (view === vs.old ? 'old' : 'new');
+    const picked = [vs.old, vs.new].find((x) => x?.state.field(pickedField).picked);
+    if (picked) {
+      const p = picked.state.field(pickedField).picked!;
+      e.preventDefault();
+      commentOn(picked, sideOf(picked), p.line, p.endLine);
+      return;
+    }
+    const view = [vs.old, vs.new].find((x) => x?.hasFocus) ?? [vs.new, vs.old].find((x) => x && !x.state.selection.main.empty);
+    if (!view) return;
+    const { line, endLine } = selectedLines(view);
     e.preventDefault();
-    onCommentRef.current({ side: pick === vs.old ? 'old' : 'new', line, endLine, lineText: textOf(pick.state.doc, line, endLine) });
+    commentOn(view, sideOf(view), line, endLine);
   };
 
   return (

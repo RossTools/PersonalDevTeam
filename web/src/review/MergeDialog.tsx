@@ -1,14 +1,34 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, Link, Skeleton, toast, useConfirm } from '@ui';
+import { Alert, Button, Checkbox, Dialog, Link, SegmentedControl, Skeleton, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { MergePreview } from '../api/gen/MergePreview';
+import type { MergeStyle } from '../api/gen/MergeStyle';
 import type { Ticket } from '../api/gen/Ticket';
 import { actionError } from '../common/useAction';
 import { finishMerged, patchTicket } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const styleKey = (projectId: string) => `pdt.review.mergeStyle.${projectId}`;
+
+/** How this project last merged locally in this browser (a merge commit at first). */
+function loadStyle(projectId: string): MergeStyle {
+  try {
+    return localStorage.getItem(styleKey(projectId)) === 'squash' ? 'squash' : 'merge';
+  } catch {
+    return 'merge';
+  }
+}
+
+function saveStyle(projectId: string, s: MergeStyle) {
+  try {
+    localStorage.setItem(styleKey(projectId), s);
+  } catch {
+    // Storage blocked: remembered for this dialog only.
+  }
+}
 
 /** Why Merge can't go ahead, as an Alert (with a button that asks the agent when it can fix it). */
 function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; sending: boolean }) {
@@ -56,7 +76,7 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
 }
 
 /**
- * Merge…: into the base branch locally (a merge commit; then the ticket moves to Done and, by default, the worktree
+ * Merge…: into the base branch locally (a merge commit or a squash, remembered per project; then the ticket moves to Done and, by default, the worktree
  * goes), or, when the attempt has an open pull request, auto-merge on GitHub. Problems show instead of the button.
  */
 export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; attemptId: string; onClose: () => void }) {
@@ -65,6 +85,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
   const preview = useQuery({ queryKey: ['merge-preview', attemptId], queryFn: () => api.mergePreview(attemptId), staleTime: 0, gcTime: 0 });
   const [removeWorktree, setRemoveWorktree] = useState(true);
   const [deleteBranch, setDeleteBranch] = useState(false);
+  const [style, setStyle] = useState<MergeStyle>(() => loadStyle(ticket.projectId));
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const p = preview.data;
@@ -86,7 +107,9 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     if (!p) return;
     setBusy(true);
     try {
-      const r = await api.mergeAttempt(attemptId);
+      const github = p.method === 'github';
+      if (!github) saveStyle(ticket.projectId, style);
+      const r = await api.mergeAttempt(attemptId, github ? {} : { style });
       invalidateTickets(qc, [ticket.id]);
       onClose();
       if (r.outcome === 'queued') {
@@ -97,7 +120,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
       if (removeWorktree) await finishMerged(confirm, qc, fresh, { deleteBranch });
       else {
         await patchTicket(qc, ticket.id, { stage: 'done' });
-        toast.success(`Merged ${p.branch} into ${p.base}; ${ticket.key} moved to Done.`);
+        toast.success(`${style === 'squash' ? 'Squashed' : 'Merged'} ${p.branch} into ${p.base}; ${ticket.key} moved to Done.`);
       }
     } catch (e) {
       toast.error(actionError(e));
@@ -118,7 +141,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {p && !p.problem && (
             <Button variant="primary" pending={busy} onClick={() => void merge()}>
-              {github ? (p.pr?.queue ? 'Add to merge queue' : 'Turn on auto-merge') : 'Merge'}
+              {github ? (p.pr?.queue ? 'Add to merge queue' : 'Turn on auto-merge') : style === 'squash' ? 'Squash and merge' : 'Merge'}
             </Button>
           )}
         </>
@@ -138,14 +161,22 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
           ) : (
             !github && p.problem !== 'inactive' && (
               <p>
-                Merge <span className="font-mono">{p.branch}</span> into <span className="font-mono">{p.base}</span> with a merge commit
-                {p.commits > 0 ? ` (${plural(p.commits, 'commit')})` : ''}, then move {ticket.key} to Done.
+                Merge <span className="font-mono">{p.branch}</span>
+                {p.commits > 0 ? ` (${plural(p.commits, 'commit')})` : ''} into <span className="font-mono">{p.base}</span>
+                {style === 'squash' ? ' as one new commit' : ' with a merge commit'}, then move {ticket.key} to Done.
               </p>
             )
           )}
           <Problem p={p} onAsk={() => void ask()} sending={sending} />
           {!github && !p.problem && (
             <div className="flex flex-col gap-1.5">
+              <SegmentedControl<MergeStyle>
+                aria-label="Merge as"
+                className="mb-1 self-start"
+                options={[{ value: 'merge', label: 'Merge commit' }, { value: 'squash', label: 'Squash' }]}
+                value={style}
+                onChange={setStyle}
+              />
               <Checkbox checked={removeWorktree} onChange={(v) => { setRemoveWorktree(v); if (!v) setDeleteBranch(false); }}>
                 Remove the worktree
               </Checkbox>

@@ -29,6 +29,7 @@
   --pdt-diff-del-sign: #cf222e;
   --pdt-diff-hunk: #ddf4ff;
   --pdt-diff-hunk-fg: #57606a;
+  --pdt-diff-picked: rgba(234, 201, 63, 0.3);
   --pdt-code-keyword: #cf222e;
   --pdt-code-string: #0a3069;
   --pdt-code-constant: #0550ae;
@@ -104,6 +105,7 @@
     --pdt-diff-del-sign: #f85149;
     --pdt-diff-hunk: rgba(56, 139, 253, 0.15);
     --pdt-diff-hunk-fg: #8b949e;
+    --pdt-diff-picked: rgba(187, 128, 9, 0.25);
     --pdt-code-keyword: #ff7b72;
     --pdt-code-string: #a5d6ff;
     --pdt-code-constant: #79c0ff;
@@ -164,6 +166,7 @@
   --pdt-diff-del-sign: #f85149;
   --pdt-diff-hunk: rgba(56, 139, 253, 0.15);
   --pdt-diff-hunk-fg: #8b949e;
+  --pdt-diff-picked: rgba(187, 128, 9, 0.25);
   --pdt-code-keyword: #ff7b72;
   --pdt-code-string: #a5d6ff;
   --pdt-code-constant: #79c0ff;

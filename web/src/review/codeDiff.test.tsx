@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Chunk } from '@codemirror/merge';
 import { Text } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { CodeDiff, oldToNewLine, wordChanges } from './CodeDiff';
 
 const text = (s: string) => Text.of(s.split('\n'));
@@ -62,4 +63,71 @@ describe('CodeDiff', () => {
       expect(screen.getAllByText('TWO').length).toBeGreaterThan(0);
     });
   }
+});
+
+describe('CodeDiff collapsed runs and picked lines', () => {
+  const lines = (n: number, change?: number) =>
+    Array.from({ length: n }, (_, i) => (i + 1 === change ? `CHANGED ${i + 1}` : `line ${i + 1}`)).join('\n');
+
+  for (const mode of ['split', 'unified'] as const) {
+    it(`expands a collapsed run that holds a thread (${mode})`, async () => {
+      const { container } = render(
+        <CodeDiff
+          path="a.txt"
+          oldText={lines(40)}
+          newText={lines(40, 2)}
+          mode={mode}
+          wholeFile={false}
+          anchors={[{ id: 'deep', side: 'new', line: 30 }]}
+          renderAnchor={(id) => <p>thread {id}</p>}
+          onComment={vi.fn()}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText('thread deep')).toBeInTheDocument());
+      // Only the run that held the thread opened: nothing else collapses (2 + 3 margin, then 6..40 is one run).
+      expect(container.querySelectorAll('.cm-collapsedLines')).toHaveLength(0);
+    });
+  }
+
+  it('keeps runs without threads collapsed', () => {
+    const { container } = render(
+      <CodeDiff
+        path="a.txt"
+        oldText={lines(40)}
+        newText={lines(40, 20)}
+        mode="unified"
+        wholeFile={false}
+        anchors={[{ id: 'near', side: 'new', line: 30 }]}
+        renderAnchor={(id) => <p>thread {id}</p>}
+        onComment={vi.fn()}
+      />,
+    );
+    // Lines 1..16 collapse; 24..40 held the thread and opened.
+    expect(container.querySelectorAll('.cm-collapsedLines')).toHaveLength(1);
+  });
+
+  it('picks lines in the number gutter and comments on them with c', () => {
+    const onComment = vi.fn();
+    const { container } = render(
+      <CodeDiff
+        path="a.txt"
+        oldText={lines(6)}
+        newText={lines(6, 2)}
+        mode="unified"
+        wholeFile
+        anchors={[]}
+        renderAnchor={() => null}
+        onComment={onComment}
+      />,
+    );
+    const gutter = container.querySelector('.cm-lineNumbers')!;
+    const view = EditorView.findFromDOM(container.querySelector('.cm-editor') as HTMLElement)!;
+    const y = (n: number) => view.documentTop + view.lineBlockAt(view.state.doc.line(n).from).top + 1;
+    fireEvent.mouseDown(gutter, { clientY: y(3) });
+    fireEvent.mouseDown(gutter, { clientY: y(5), shiftKey: true });
+    expect(container.querySelectorAll('.cm-picked-line')).toHaveLength(3);
+    fireEvent.keyDown(view.contentDOM, { key: 'c' });
+    expect(onComment).toHaveBeenCalledWith({ side: 'new', line: 3, endLine: 5, lineText: 'line 3\nline 4\nline 5' });
+    expect(container.querySelectorAll('.cm-picked-line')).toHaveLength(0);
+  });
 });

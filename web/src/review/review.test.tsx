@@ -135,7 +135,7 @@ describe('MergeDialog', () => {
 
   it('shows the commits and the cleanup choices for a clean local merge', async () => {
     open(preview());
-    expect(await screen.findByText(/with a merge commit \(2 commits\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/\(2 commits\) into/)).toHaveTextContent(/with a merge commit/);
     expect(screen.getByRole('checkbox', { name: 'Remove the worktree' })).toBeChecked();
     const del = screen.getByRole('checkbox', { name: 'Delete the branch' });
     expect(del).not.toBeChecked();
@@ -195,7 +195,26 @@ describe('MergeDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH' && c.path === '/api/tickets/t1')).toBe(true));
     expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ stage: 'done' });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ style: 'merge' });
     expect(await screen.findByText(/Merged pdt\/ALP-1-fix-login into main/)).toBeInTheDocument();
+  });
+
+  it('squashes when asked, and remembers it for the project', async () => {
+    localStorage.removeItem(`pdt.review.mergeStyle.${t1.projectId}`);
+    const { calls } = open(preview(), {
+      'POST /api/attempts/a1/merge': { outcome: 'merged', commit: 'abc' },
+      'GET /api/tickets/t1': t1,
+      'PATCH /api/tickets/t1': { ...t1, stage: 'done' },
+    });
+    await userEvent.click(await screen.findByRole('radio', { name: 'Squash' }));
+    expect(screen.getByText(/\(2 commits\) into/)).toHaveTextContent(/as one new commit/);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Remove the worktree' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Squash and merge' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH' && c.path === '/api/tickets/t1')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ style: 'squash' });
+    expect(await screen.findByText(/Squashed pdt\/ALP-1-fix-login into main/)).toBeInTheDocument();
+    expect(localStorage.getItem(`pdt.review.mergeStyle.${t1.projectId}`)).toBe('squash');
+    localStorage.removeItem(`pdt.review.mergeStyle.${t1.projectId}`);
   });
 });
 
