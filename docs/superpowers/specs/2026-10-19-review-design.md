@@ -36,9 +36,9 @@ Review/Accept stages (Phase 7), GitHub review state (PDT-12), commenting on a PR
    edited or deleted. **Send feedback** puts all of the worktree's drafts into one message (§5), sends it to the
    coder session and marks them sent (`sent_at`, `session_id`). Sent comments can't be edited (they are in the
    agent's history); they can be resolved and replied to. Resolved threads collapse.
-5. **The coder session.** For an attempt's worktree: the newest of the attempt's agent sessions
-   (`sessions.attempt_id`) that can take a message now; otherwise the same among the agent sessions whose `worktree_id`
-   is the worktree. A conversation always can: it gets the message as the user's next message (queued if a turn runs;
+5. **The coder session.** The newest agent session that can take a message now among the attempt's sessions
+   (`sessions.attempt_id`) and the worktree's sessions that belong to no attempt (a chat started there by hand); for a
+   worktree with no attempt, among its sessions. A conversation always can: it gets the message as the user's next message (queued if a turn runs;
    a parked or stopped conversation reopens). A terminal session can while its PTY runs, and gets one bracketed paste
    plus Enter. Agent sessions but none that can: `409 session_not_running` (restart it). None at all:
    `409 no_agent_session`. The ticket timeline records a `feedback` event (count, session).
