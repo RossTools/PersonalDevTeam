@@ -12,6 +12,7 @@ import type { Ticket } from '../api/gen/Ticket';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { AGENT_KINDS, useAgentAvailability } from '../common/useAgentAvailability';
+import { useAgentDefaults } from '../common/useAgentDefaults';
 import { INITIAL_SIZE } from '../sessions/status';
 import { isClosed, linkRole } from './model';
 import { setWaiting } from './actions';
@@ -19,43 +20,7 @@ import { AreaChips } from './Areas';
 import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
 
-const AGENT_KEY = 'pdt.tickets.startAgent';
 const AGENT_LABEL: Record<AgentKind, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
-const MODE_KEY = 'pdt.tickets.startMode';
-
-function loadAgent(): AgentKind {
-  try {
-    const saved = localStorage.getItem(AGENT_KEY);
-    return saved === 'codex' || saved === 'devin' ? saved : 'claude';
-  } catch {
-    return 'claude';
-  }
-}
-
-function saveAgent(a: AgentKind) {
-  try {
-    localStorage.setItem(AGENT_KEY, a);
-  } catch {
-    // Storage blocked: remembered for this page only.
-  }
-}
-
-/** Conversation unless this browser last chose Terminal. */
-function loadMode(): SessionMode {
-  try {
-    return localStorage.getItem(MODE_KEY) === 'terminal' ? 'terminal' : 'conversation';
-  } catch {
-    return 'conversation';
-  }
-}
-
-function saveMode(m: SessionMode) {
-  try {
-    localStorage.setItem(MODE_KEY, m);
-  } catch {
-    // Storage blocked: remembered for this page only.
-  }
-}
 
 /** The tickets that block this one and aren't Done or Won't do. */
 export const openBlockers = (t: Pick<Ticket, 'links'>) => t.links.filter((l) => linkRole(l) === 'blockedBy' && !isClosed(l.stage));
@@ -82,13 +47,17 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const areaConfig = useProjectAreas(t?.projectId ?? null);
   const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;
   const project = projects.data?.find((p) => p.id === t?.projectId) ?? null;
-  const [chosenAgent, setAgentState] = useState<AgentKind>(loadAgent);
+  // The host's default agent and view until this dialog picks others.
+  const defaults = useAgentDefaults();
+  const [pickedAgent, setAgent] = useState<AgentKind | null>(null);
+  const chosenAgent = pickedAgent ?? defaults.agent;
   const availability = useAgentAvailability();
   // A host with none of them still lists them all (starting one then says what is missing).
   const offeredAgents = AGENT_KINDS.some(availability.offered) ? AGENT_KINDS.filter(availability.offered) : AGENT_KINDS;
-  // The remembered agent unless this host lacks it (then the first it has); every agent until the checks load.
+  // The chosen agent unless this host lacks it (then the first it has); every agent until the checks load.
   const agent: AgentKind = offeredAgents.includes(chosenAgent) ? chosenAgent : offeredAgents[0] ?? chosenAgent;
-  const [sessionMode, setModeState] = useState<SessionMode>(loadMode);
+  const [pickedMode, setMode] = useState<SessionMode | null>(null);
+  const sessionMode = pickedMode ?? defaults.mode;
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [bypass, setBypass] = useState(true);
@@ -99,14 +68,6 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const [pending, setPending] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
 
-  const setAgent = (a: AgentKind) => {
-    setAgentState(a);
-    saveAgent(a);
-  };
-  const setMode = (m: SessionMode) => {
-    setModeState(m);
-    saveMode(m);
-  };
   const blockers = t ? openBlockers(t) : [];
   const overlaps = t?.overlaps ?? [];
   const conflict = overlaps.some((o) => o.level === 'conflict');

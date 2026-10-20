@@ -14,11 +14,15 @@ const ready = ticket(1, { title: 'Fix login', stage: 'ready', defaultBranch: 'pd
 const session = { id: 's1', projectId: project.id } as Session;
 const started = (t: Ticket) => ({ ticket: { ...t, stage: 'in_progress' }, attempt: { id: 'a1' }, session });
 
-function stub(t: Ticket, start: Parameters<typeof stubApi>[0][string] = () => started(t)): Call[] {
+/** Host settings with the given default agent and view (only the fields the dialog reads). */
+const hostDefaults = (defaultAgent: string, defaultSessionMode: string) => ({ settings: { defaultAgent, defaultSessionMode } });
+
+function stub(t: Ticket, start: Parameters<typeof stubApi>[0][string] = () => started(t), defaults?: object): Call[] {
   return stubApi({
     'GET /api/tickets/t1': t,
     'GET /api/projects': [{ ...project, baseBranch: 'trunk' }],
     'POST /api/tickets/t1/start': start,
+    ...(defaults ? { 'GET /api/host/settings': defaults } : {}),
   });
 }
 
@@ -32,7 +36,7 @@ function open(props: Partial<Parameters<typeof StartDialog>[0]> = {}) {
 }
 
 describe('Start dialog', () => {
-  it('starts with a check, the remembered agent, typed branch and base, and the tab placement', async () => {
+  it('starts with a check, the chosen agent, typed branch and base, and the tab placement', async () => {
     const calls = stub(ready);
     const { onStarted, onClose } = open({ placement: { workspaceId: 'w1', position: 2 } });
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
@@ -50,48 +54,48 @@ describe('Start dialog', () => {
       mode: 'check', cols: 120, rows: 32,
     }]);
     expect(onClose).toHaveBeenCalled();
-    expect(localStorage.getItem('pdt.tickets.startAgent')).toBe('codex');
   });
 
-  it('remembers the last agent', async () => {
-    localStorage.setItem('pdt.tickets.startAgent', 'codex');
-    stub(ready);
+  it("starts with the host's default agent and view", async () => {
+    const calls = stub(ready, undefined, hostDefaults('codex', 'terminal'));
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked();
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked());
+    expect(within(dialog).getByRole('radio', { name: 'Terminal' })).toBeChecked();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'codex', sessionMode: 'terminal' }));
   });
 
   it('can start Devin as a conversation or a terminal', async () => {
-    localStorage.setItem('pdt.tickets.startAgent', 'devin');
-    const calls = stub(ready);
+    const calls = stub(ready, undefined, hostDefaults('devin', 'conversation'));
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    expect(within(dialog).getByRole('radio', { name: 'Devin' })).toBeChecked();
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: 'Devin' })).toBeChecked());
     expect(within(dialog).getByRole('radio', { name: 'Conversation' })).toBeChecked();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'devin', sessionMode: 'conversation' }));
   });
 
   it('offers only the agents the host has, a logged-out one with a hint', async () => {
-    localStorage.setItem('pdt.tickets.startAgent', 'devin');
     const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
     const calls = stubApi({
       'GET /api/tickets/t1': ready,
       'GET /api/projects': [project],
       'GET /api/host/checks': { claude: tool(true, false), codex: tool(true, true), devin: tool(false, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 },
+      'GET /api/host/settings': hostDefaults('devin', 'conversation'),
       'POST /api/tickets/t1/start': () => started(ready),
     });
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     await waitFor(() => expect(within(dialog).queryByRole('radio', { name: /Devin/ })).toBeNull());
-    // The remembered Devin is missing: the first agent the host has instead.
+    // The default Devin is missing: the first agent the host has instead.
     expect(within(dialog).getByRole('radio', { name: 'Claude · not logged in' })).toBeChecked();
     expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'claude' }));
   });
 
-  it('starts a conversation by default, or the terminal when chosen (remembered)', async () => {
+  it('starts a conversation by default, or the terminal when chosen', async () => {
     const calls = stub(ready);
     const { onStarted } = open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
@@ -101,7 +105,6 @@ describe('Start dialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     expect(starts(calls)[0]).toMatchObject({ sessionMode: 'terminal' });
-    expect(localStorage.getItem('pdt.tickets.startMode')).toBe('terminal');
   });
 
   it('lists open blockers and starts anyway with mode force', async () => {

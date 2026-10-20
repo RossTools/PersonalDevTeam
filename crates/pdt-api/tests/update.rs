@@ -93,7 +93,7 @@ async fn setup_with(tmp: &std::path::Path, supervised: bool, current: &str) -> (
     let mut state = pdt_api::AppState::new(store, tmp.join("data"));
     let mut svc = pdt_api::UpdateService::new(&base, "o/r", supervised, current);
     svc.first_check_delay = Duration::ZERO;
-    svc.check_interval = Duration::from_millis(50);
+    svc.check_interval = Some(Duration::from_millis(50));
     state.update = Arc::new(svc);
     (pdt_api::router(state.clone(), None), state, fake)
 }

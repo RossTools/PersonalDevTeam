@@ -8,6 +8,7 @@ import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
+import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
@@ -247,12 +248,14 @@ export function AppShell() {
     startNextPart: (t) => void runAction(() => startNextPart(startTicket, t)),
   };
   const agents = useAgentAvailability();
+  const defaults = useAgentDefaults();
   const items = paletteOpen
     ? paletteItems({
         workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
         tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
         ticketProjectId: view === 'tickets' ? backlog.projectId : null,
         agents: agents.of,
+        defaults,
       })
     : [];
 

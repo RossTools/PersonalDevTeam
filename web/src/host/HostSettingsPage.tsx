@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
 import { api } from '../api/client';
+import type { AgentKind } from '../api/gen/AgentKind';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
+import type { SessionMode } from '../api/gen/SessionMode';
 import type { TokenState } from '../api/gen/TokenState';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { FolderField } from '../common/FolderField';
@@ -25,6 +27,32 @@ const updatePolicies: { value: UpdatePolicy; label: string }[] = [
   { value: 'auto_when_idle', label: 'Install automatically when idle' },
   { value: 'notify', label: 'Notify only' },
   { value: 'manual', label: 'Manual (no checks)' },
+];
+/** How often the host checks for updates, in minutes. */
+const checkIntervals: { value: number; label: string }[] = [
+  { value: 15, label: 'Every 15 minutes' },
+  { value: 30, label: 'Every 30 minutes' },
+  { value: 60, label: 'Every hour' },
+  { value: 180, label: 'Every 3 hours' },
+  { value: 360, label: 'Every 6 hours' },
+  { value: 720, label: 'Every 12 hours' },
+  { value: 1440, label: 'Once a day' },
+];
+
+/** The choices, plus the stored value when it is not one of them (set through the API). */
+function intervalOptions(current: number) {
+  const all = checkIntervals.some((o) => o.value === current) ? checkIntervals : [...checkIntervals, { value: current, label: `Every ${current} minutes` }].sort((a, b) => a.value - b.value);
+  return all.map((o) => ({ value: String(o.value), label: o.label }));
+}
+
+const agentChoices: { value: AgentKind; label: string }[] = [
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'devin', label: 'Devin' },
+];
+const viewChoices: { value: SessionMode; label: string }[] = [
+  { value: 'conversation', label: 'Conversation' },
+  { value: 'terminal', label: 'Terminal' },
 ];
 const credentialPolicies: { value: CredentialPolicy; label: string }[] = [
   { value: 'subscription', label: 'Subscription (remove API keys)' },
@@ -144,6 +172,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const update = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus });
   const policy = useSaveSettings();
+  const interval = useSaveSettings();
   const [secret, setSecret] = useState('');
   const token = useMutation({
     mutationFn: (t: string) => api.saveToken(t),
@@ -175,6 +204,17 @@ function Updates({ v }: { v: HostSettingsView }) {
       <SettingsRow label="Install updates">
         <SaveNote s={policy} />
         <Select aria-label="Update policy" className="w-64" options={updatePolicies} value={v.settings.updatePolicy} onChange={(p) => policy.mutate({ updatePolicy: p })} />
+      </SettingsRow>
+      <SettingsRow label="Check for updates" description={v.settings.updatePolicy === 'manual' ? 'Off while updates are manual.' : undefined}>
+        <SaveNote s={interval} />
+        <Select
+          aria-label="Update check interval"
+          className="w-64"
+          options={intervalOptions(v.settings.updateCheckMinutes)}
+          value={String(v.settings.updateCheckMinutes)}
+          disabled={v.settings.updatePolicy === 'manual'}
+          onChange={(m) => interval.mutate({ updateCheckMinutes: Number(m) })}
+        />
       </SettingsRow>
       {v.tokenError && (
         <Alert tone="error" title="Token: cannot be read.">
@@ -243,8 +283,18 @@ function Runs({ v }: { v: HostSettingsView }) {
 
 function Agents({ v }: { v: HostSettingsView }) {
   const save = useSaveSettings();
+  const agent = useSaveSettings();
+  const view = useSaveSettings();
   return (
     <Section label="Agents">
+      <SettingsRow label="Default agent" description="Picked first when you start a ticket, and listed first for a new tab and in the palette.">
+        <SaveNote s={agent} />
+        <Select aria-label="Default agent" className="w-40" options={agentChoices} value={v.settings.defaultAgent} onChange={(a) => agent.mutate({ defaultAgent: a })} />
+      </SettingsRow>
+      <SettingsRow label="Default view" description="Whether a new agent session is a conversation or the agent's own terminal. You can switch a session later.">
+        <SaveNote s={view} />
+        <Select aria-label="Default view" className="w-40" options={viewChoices} value={v.settings.defaultSessionMode} onChange={(m) => view.mutate({ defaultSessionMode: m })} />
+      </SettingsRow>
       <SettingsRow label="Credentials" description="Subscription removes ANTHROPIC_API_KEY and OPENAI_API_KEY from agents' environment; pass through keeps them (API keys, Bedrock/Vertex, proxies). A project can override it.">
         <SaveNote s={save} />
         <Select aria-label="Host agent credentials" className="w-72 max-w-full" options={credentialPolicies} value={v.settings.agentCredentials} onChange={(c) => save.mutate({ agentCredentials: c })} />
