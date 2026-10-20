@@ -624,6 +624,8 @@ impl ClaudeMapper {
             "task_started"
             | "task_progress"
             | "task_notification"
+            | "task_updated"
+            | "vcs_state_changed"
             | "hook_started"
             | "hook_response"
             | "hook_progress"
@@ -1321,6 +1323,8 @@ not json"#,
             &mut m,
             r#"{"type":"tool_progress","elapsed_time_seconds":30,"heartbeat":true,"tool_name":"Bash","tool_use_id":"t1"}
 {"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"Wait for CI","task_id":"b1","task_type":"local_bash"}]}
+{"type":"system","subtype":"task_updated","task_id":"b1","patch":{"end_time":1792463355379,"status":"completed"}}
+{"type":"system","subtype":"vcs_state_changed","kind":"push","cwd":"/w"}
 {"type":"system","subtype":"code_change_published","action":"pushed","identifier":"69","provider":"github","repo":"o/r","url":"https://github.com/o/r/pull/69"}
 {"type":"system","subtype":"code_change_published","action":"merged","url":"https://example.com/x"}"#,
         );
