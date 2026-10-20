@@ -225,8 +225,8 @@ and the user's Accept is a gate.
 
 ## 11. Open items (see also §12)
 
-- **Event log vs. existing tables:** whether ticket events, `pr` events and session events move into one log or stay
-  separate with the log beside them (engine spec).
+- **Event log vs. existing tables:** decided in the 7a spec (2026-10-20-phase-7a-engine-design.md §2.1): the log sits
+  beside them; ticket timeline changes are mirrored into it in the same transaction, conversation events are not.
 - **External events without a public address:** polling is the default; webhooks only via the local or Tailscale
   address. Is that enough for work (Jira, Slack)?
 - **Phones:** the non-graph view and the Inbox are the phone UI for workflows; the graph view may be read-only there.

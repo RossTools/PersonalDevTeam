@@ -264,6 +264,12 @@ pub(crate) async fn pull(
     };
     let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let branch = input.branch.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| project.base_branch.clone());
+    Ok(Json(pull_branch(&project, branch).await?))
+}
+
+/// Fast-forwards `branch` of `project` to `origin`'s (see `pull`).
+pub(crate) async fn pull_branch(project: &pdt_core::project::Project, branch: String) -> Result<PullResult, ApiError> {
+    let id = project.id.clone();
     let repo = PathBuf::from(&project.repo_path);
     let b = branch.clone();
     let ff = tokio::task::spawn_blocking(move || {
@@ -287,5 +293,5 @@ pub(crate) async fn pull(
     if let Some(m) = &message {
         tracing::info!(project = %id, branch = %branch, ?outcome, message = %m, "pull left the branch as it was");
     }
-    Ok(Json(PullResult { branch, outcome, message }))
+    Ok(PullResult { branch, outcome, message })
 }

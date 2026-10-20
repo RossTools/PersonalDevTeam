@@ -44,6 +44,21 @@ When work you were given as a ticket turns up follow-up work, add it as a new ti
 and comment on the ticket with anything the person should know. Move a ticket to `done` only when the person says the
 work is finished (PDT also does it when it sees the branch merged).
 
+## Workflows and events
+
+PDT reacts to what happens (CI results, pull request news, merges, comments) through workflows: a trigger on an
+event, then conditions, gates, waits and actions. Messages that start with `[PDT]` in your session come from one,
+for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge queue, merged). Workflows are
+changed only when the person asks.
+
+| Call | Gives |
+|---|---|
+| `GET /api/events?ticket=<id>` | what PDT logged about a ticket (`type`, `payload`), newest first |
+| `GET /api/workflows?project=<id>` | the workflows that apply to the project, with `enabled` |
+| `GET /api/workflows/catalog` | every trigger, condition and action, with its config schema and ports |
+| `GET /api/workflow-runs?ticket=<id>` | the runs about a ticket; `GET /api/workflow-runs/<id>` has each step's input, output and port |
+| `POST /api/workflows/validate` · `/dry-run` | `{doc}` checks a document; `{doc or workflowId, event: {type, payload}}` shows what each step would do, changing nothing |
+
 ## Worktrees
 
 PDT keeps each branch's checkout at `<repo>/.worktrees/<branch>`, with `/` in the branch name replaced by `-` (listed in `.git/info/exclude`, so nothing is

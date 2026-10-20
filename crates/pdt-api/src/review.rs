@@ -543,9 +543,9 @@ pub(crate) async fn merge(
     if let Ok(Some(head)) = tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &branch_ref)).await {
         let _ = st.store.set_attempt_head(&info.attempt.id, &head, true).await;
     }
-    if st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::User, now_ms()).await?.is_some() {
-        crate::github::notify_merged(&st, &info).await;
-    }
+    let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
+    let via = Some(pdt_core::workflow::events::MergeVia::MergedHere);
+    st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::User, via, pr, now_ms()).await?;
     Ok(Json(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
 }
 

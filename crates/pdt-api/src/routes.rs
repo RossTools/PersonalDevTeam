@@ -107,6 +107,10 @@ pub struct AppState {
     pub home_dir: Option<std::path::PathBuf>,
     /// Conversation sessions' runtimes (structured agents).
     pub conversations: crate::conversations::Conversations,
+    /// Serializes the workflow engine's ticks and the commands that change runs.
+    pub(crate) engine_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The built-in workflows were installed or updated in this daemon run.
+    pub(crate) builtins_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -159,6 +163,8 @@ impl AppState {
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
             home_dir: std::env::home_dir(),
             conversations: Default::default(),
+            engine_lock: Default::default(),
+            builtins_installed: Default::default(),
         }
     }
 }
@@ -310,6 +316,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
+        .route("/tickets/{id}/finish", axum::routing::post(crate::finish::finish_route))
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
         .route("/attempts/{id}/approve", axum::routing::post(crate::review::approve))
         .route("/attempts/{id}/merge", get(crate::review::merge_preview).post(crate::review::merge))
@@ -344,6 +351,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/pty", get(pty_ws::connect))
         .route("/sessions/{id}/activity", axum::routing::post(crate::activity::post_report))
         .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
+        .merge(crate::workflow::routes::router())
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")

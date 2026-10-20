@@ -28,6 +28,7 @@ pdt-update.workspace = true
 flate2 = "1.1.10"
 tokio-tungstenite = "0.30.0"
 sha2 = "0.11.1"
+schemars = "1.2.3"
 
 [dev-dependencies]
 tower.workspace = true

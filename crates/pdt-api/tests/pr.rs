@@ -144,7 +144,7 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     assert_eq!(t["attempts"][0]["pr"]["number"], 12);
     let (_, list) = call(&env.app, "GET", "/api/tickets", None).await;
     assert_eq!(list["items"][0]["attempt"]["pr"]["ci"]["state"], "running", "the board's cards carry it too");
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     assert!(pr_events(&env).await.is_empty());
 
     // CI fails: the agent is told once, with the failed jobs.
@@ -152,7 +152,7 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     env.gh.set_jobs(7, &["test (linux)"]);
     pdt_api::refresh_prs(&env.state).await;
     assert_eq!(ticket(&env).await["attempt"]["pr"]["ci"]["runs"][0]["failedJobs"][0], "test (linux)");
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     let events = pr_events(&env).await;
     assert_eq!(events.len(), 1, "{events:?}");
     let data = &events[0]["data"];
@@ -169,7 +169,7 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
         assert!(screen(&env).contains("test (linux)"), "{}", screen(&env));
     }
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     assert_eq!(pr_events(&env).await.len(), 1, "the same failure is news once");
 
     // The stand-in agent took its one line and exited; news with no running session is recorded as not told.
@@ -181,7 +181,7 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     conflicting.mergeable = Mergeable::Conflicting;
     env.gh.set_pr(BRANCH, Some(conflicting));
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     let events = pr_events(&env).await;
     assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(events[1]["data"]["notice"], "conflict");
@@ -200,7 +200,7 @@ async fn a_removal_from_the_merge_queue_is_told_even_when_never_seen_queued() {
         Some(QueueRemoval { id: "RFMQE_1".into(), reason: "merge_conflict".into(), by_queue: true });
     env.gh.set_pr(BRANCH, Some(removed.clone()));
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     let events = pr_events(&env).await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(events[0]["data"]["notice"], "queue_left");
@@ -208,7 +208,7 @@ async fn a_removal_from_the_merge_queue_is_told_even_when_never_seen_queued() {
     assert_eq!(events[0]["data"]["told"], true);
     assert!(events[0]["data"]["text"].as_str().unwrap().contains("it conflicts with main"));
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     assert_eq!(pr_events(&env).await.len(), 1, "one removal is news once");
     env.state.ptys.shutdown().await;
 }
@@ -230,7 +230,7 @@ async fn a_busy_agent_is_told_later_and_a_merge_is_news() {
     merged.state = PrState::Merged;
     env.gh.set_pr(BRANCH, Some(merged));
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     assert!(pr_events(&env).await.is_empty(), "waits while the agent works");
     let (s, _) = call(
         &env.app,
@@ -240,7 +240,7 @@ async fn a_busy_agent_is_told_later_and_a_merge_is_news() {
     )
     .await;
     assert!(s.is_success());
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     let events = pr_events(&env).await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(events[0]["data"]["notice"], "merged");
@@ -383,7 +383,7 @@ async fn a_conversation_is_told_as_pdt_once_it_is_idle() {
     env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
     env.gh.set_jobs(7, &["test (linux)"]);
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     let events = pr_events(&env).await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!((&events[0]["data"]["told"], &events[0]["data"]["sessionId"]), (&json!(true), &json!(env.session)));
@@ -394,7 +394,7 @@ async fn a_conversation_is_told_as_pdt_once_it_is_idle() {
     assert!(told[1]["event"]["text"].as_str().unwrap().contains("CI failed on PR #12"), "{}", told[1]);
     // Told once.
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     assert_eq!(pr_events(&env).await.len(), 1);
 }
 
@@ -423,7 +423,7 @@ async fn an_ended_attempts_pr_is_read_again_until_it_is_not_open() {
     assert_eq!(t["attempts"][0]["pr"]["inMergeQueue"], true);
 
     // GitHub catches up: the next look reads it, and tells nothing new.
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     let told = pr_events(&env).await.len();
     assert_eq!(told, 1);
     let mut merged = pr();
@@ -433,7 +433,7 @@ async fn an_ended_attempts_pr_is_read_again_until_it_is_not_open() {
     let t = ticket(&env).await;
     assert_eq!(t["attempts"][0]["pr"]["state"], "merged");
     assert_eq!(t["attempts"][0]["pr"]["inMergeQueue"], false);
-    pdt_api::deliver_notices(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
     assert_eq!(pr_events(&env).await.len(), told);
     env.state.ptys.shutdown().await;
 }

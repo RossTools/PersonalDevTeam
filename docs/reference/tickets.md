@@ -91,13 +91,25 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   check has seen the branch hold commits not in the base (`attempts.own_commits`, sticky; PDT-45: a branch that only
   fast-forwarded to a newer main is not merged), or GitHub says its PR merged at that head (`attempt.pr`; the merge
   queue squashes onto a newer base, which the patch check can miss).
+- Ending an attempt as merged logs `attempt.merged` (with `via`: `detected` by this check, `merged_here` by a local
+  Merge…, `closed` when the ticket was moved to Done or Won't do) for workflows (docs/reference/workflows.md).
+- Finishing is one server command, `POST /api/tickets/{id}/finish {stopRunning, discardChanges, deleteBranch,
+  keepWorktree}` (pdt-api `finish.rs`, PDT-76). It checks first and changes nothing when something would be lost:
+  `outcome: blocked` with `blocked {sessions, runs, dirty}` for sessions or runs still going (unless `stopRunning`)
+  or uncommitted changes (unless `discardChanges`). Otherwise it moves the ticket to Done, stops every session and run
+  in the worktree, the attempt's sessions and everything in the workspace Start made for the ticket
+  (`attempts.workspace_id`), removes the worktree (and the branch with `deleteBranch`; `branchNote` when it stayed),
+  closes the ticket's tab elsewhere, deletes that workspace with its tabs, and pulls the base branch (`pull`).
+  `keepWorktree` only moves to Done and pulls (`outcome: kept`).
 - A merged attempt shows the banner "Move to Done and remove the worktree" (web/src/tickets/actions.ts
   `finishMerged`; in the ticket peek, and above every tab of the ticket's workspace while it is on screen, PDT-71,
-  else in the ticket tab): after one question it stops every session and run in the worktree, the attempt's sessions and
-  everything in the workspace Start made for the ticket (`attempts.workspace_id`), removes the worktree, deletes that
-  workspace's sessions and then the workspace with its tabs (`DELETE /api/workspaces/{id}?closeTabs=true`), the
-  ticket's among them.
-- Meanwhile it pulls the base branch (PDT-56; `POST /api/projects/{id}/pull {branch?}`, pdt-git `fast_forward`): fetch
+  else in the ticket tab). It calls the command, asks once to stop what still runs and once to discard uncommitted
+  changes when the command says so, and calls it again; declining moves the ticket to Done and keeps the rest.
+- Merge… on a pull request can ask to finish once it merges (`attempts.finish_on_merge`, PDT-75): the built-in
+  workflow "Finish merged tickets" then calls the command (stopping what runs, never discarding changes; a dirty
+  worktree leaves the banner for the user). Its runs are listed at `GET /api/workflow-runs?ticket=<id>`, and the
+  `moved` event names the workflow and run.
+- The pull (PDT-56; also `POST /api/projects/{id}/pull {branch?}`, pdt-git `fast_forward`): fetch
   `origin/<base>` and fast-forward only, in whichever checkout has the branch (`git merge --ff-only`, which refuses
   rather than touch uncommitted changes) or just the ref; no origin, no branch, diverged, blocked or a failed fetch
   come back as `outcome` (200), never an error, and the toast says what happened.
@@ -119,14 +131,19 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   `PrBadge`, web/src/tickets/PullRequest.tsx). An attempt that ended while its PR was last seen open has the PR read
   again each tick for an hour after (no news), and the web shows a merged attempt's still-open PR as Merged (PDT-59:
   git's merge check can end the attempt while GitHub still says queued).
-- News: CI failed (per run attempt), a conflict (per head), the merge queue removing the PR without merging it (per
-  `RemovedFromMergeQueueEvent`, read in the same query, so a PR queued and dropped between two looks or across a
-  restart still counts; not when a person dequeued it, it was queued again or auto-merge is back on), merged (also
-  when git's merge check ends the attempt). Each is typed into the attempt's newest running agent session as one
-  bracketed paste plus Enter once it is idle and nobody has typed in it for 20 s (a 5 s delivery loop), then recorded
-  as a `pr` event (`told`, `sessionId`); with no running agent session it is recorded as not told. The `pr` events'
-  `key`s make each notice news once, across restarts too. Conversations: see
-  [conversations.md](conversations.md#tickets-5d).
+- News is logged as events (PDT-76; docs/reference/workflows.md): CI failed (`ci.run_failed`, per set of failed run
+  attempts), CI passed (`ci.run_passed`), a conflict (`pr.conflict`, per head), the merge queue removing the PR
+  without merging it (`pr.queue_left`, per `RemovedFromMergeQueueEvent`, read in the same query, so a PR queued and
+  dropped between two looks or across a restart still counts; not when a person dequeued it, it was queued again or
+  auto-merge is back on), merged (`pr.merged`, and `attempt.merged` when the merge check ends the attempt), and behind
+  its base while it waits to merge with auto-merge on and no merge queue (`pr.behind`). Each carries the `notice` PDT
+  would type. The built-in workflow "PR notices" (on by default) sends it with `session.send`: typed into the
+  attempt's newest running agent session as one bracketed paste plus Enter once it is idle and nobody has typed in it
+  for 20 s, then recorded as a `pr` event (`told`, `sessionId`, `workflowId`, `runId`); with no running agent session
+  it is recorded as not told. Each notice key is sent once per attempt, across restarts too. Turning the workflow off
+  stops the notices. Conversations: see [conversations.md](conversations.md#tickets-5d).
+- A comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments to
+  the agent"); Start already puts the earlier comments in the first prompt.
 
 ## Areas and overlap (Phase 4c)
 

@@ -25,7 +25,7 @@ pub enum Mergeable {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum CiState {
@@ -174,7 +174,7 @@ pub fn queue_branch_prefix(base: &str, number: u32) -> String {
     format!("gh-readonly-queue/{base}/pr-{number}-")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum NoticeKind {
@@ -182,10 +182,14 @@ pub enum NoticeKind {
     Conflict,
     QueueLeft,
     Merged,
+    /// Behind its base while it waits to merge without a merge queue (PDT-24).
+    Behind,
 }
 
 /// Something to tell the attempt's agent. `key` says when it is the same news again (it is told once per key).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Notice {
     pub kind: NoticeKind,
     pub key: String,
@@ -283,6 +287,26 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
         });
     }
     out
+}
+
+/// An open PR with auto-merge on, not in a merge queue, that is behind its base: it can't merge until the base is
+/// merged in (PDT-24). Once per head commit.
+pub fn behind_notice(now: &PullRequestStatus, branch: &str) -> Option<Notice> {
+    if now.state != PrState::Open || !now.behind || !now.auto_merge || now.in_merge_queue {
+        return None;
+    }
+    let (n, base) = (now.number, &now.base_branch);
+    Some(Notice {
+        kind: NoticeKind::Behind,
+        key: format!("behind:{}", now.head_sha),
+        pr: Some(n),
+        url: Some(now.url.clone()),
+        jobs: vec![],
+        text: format!(
+            "[PDT] {base} moved while PR #{n} ({branch}) waits to merge, and the PR is now behind it. Merge it in \
+             (`git fetch origin && git merge origin/{base}`), run the checks and push."
+        ),
+    })
 }
 
 /// The branch's work is in the base: by its PR (`pr`) or as git found it.

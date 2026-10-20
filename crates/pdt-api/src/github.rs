@@ -1,22 +1,19 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR through `gh` every 60 s
-//! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and tells the
-//! attempt's agent session when CI fails, the branch conflicts with its base, the merge queue removes the PR without
-//! merging it, or the work is merged. A notice waits until the session is idle and nobody is typing in it, is typed in
-//! as a prompt, and lands on the ticket's timeline (`pr` event), which also makes each one news only once.
+//! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and logs what is
+//! news as events (Phase 7a): `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
+//! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent.
 
 use crate::routes::{AppState, now_ms};
-use pdt_core::conversation::SessionMode;
-use pdt_core::pr::{CiRun, CiState, CiStatus, Notice, PrState, PullRequestStatus, notices, queue_branch_prefix};
-use pdt_core::session::{Session, SessionKind, SessionStatus};
-use pdt_core::ticket::{Actor, AttemptSummary, EventKind, Ticket, TicketSummary};
+use pdt_core::pr::{
+    CiRun, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, notices, queue_branch_prefix,
+};
+use pdt_core::ticket::{AttemptSummary, Ticket, TicketSummary};
+use pdt_core::workflow::api::NewLogEvent;
+use pdt_core::workflow::events::{self as ev, AttemptRef, CiEvent, CiRunRef, PrEvent};
 use pdt_github::{GhError, GithubApi};
 use pdt_store::AttemptInfo;
-use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-
-/// How long nobody may have typed into a session before pdtd types a notice into it.
-const QUIET_MS: i64 = 20_000;
 
 /// How long after an attempt ends pdtd keeps reading a PR it last saw open (PDT-59: git's merge check can end the
 /// attempt in the same tick GitHub still reports the PR queued).
@@ -29,20 +26,8 @@ pub(crate) struct PrWatch {
     by_attempt: HashMap<String, PullRequestStatus>,
     /// The failed jobs of each run attempt already asked for.
     jobs: HashMap<(u64, u32), Vec<String>>,
-    /// Notices waiting for their session to be ready.
-    pending: Vec<Pending>,
-    /// (attempt, key) of the notices resolved in this pdtd run: a look that read the timeline before one was
-    /// recorded must not queue it again.
-    resolved: HashSet<(String, String)>,
     /// The last error per project, so a broken `gh` is logged once rather than every minute.
     errors: HashMap<String, String>,
-}
-
-#[derive(Clone)]
-struct Pending {
-    attempt_id: String,
-    ticket_id: String,
-    notice: Notice,
 }
 
 pub(crate) type SharedPrWatch = Arc<std::sync::Mutex<PrWatch>>;
@@ -196,15 +181,110 @@ async fn refresh_one(
         return;
     };
     now.checked_at = now_ms();
-    let news = notices(&now, &info.attempt.branch);
     {
         let mut w = watch(st);
         w.jobs.extend(jobs);
-        w.by_attempt.insert(info.attempt.id.clone(), now);
+        w.by_attempt.insert(info.attempt.id.clone(), now.clone());
     }
     if tell {
-        queue_news(st, &info.attempt.id, &info.ticket_id, news).await;
+        for e in news_events(info, &now) {
+            if let Err(x) = st.store.emit_event(&e, now_ms()).await {
+                tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event");
+            }
+        }
     }
+}
+
+fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
+    AttemptRef {
+        project_id: info.project_id.clone(),
+        ticket_id: info.ticket_id.clone(),
+        ticket_key: info.ticket_key.clone(),
+        attempt_id: info.attempt.id.clone(),
+        branch: info.attempt.branch.clone(),
+        base_branch: info.attempt.base_branch.clone(),
+    }
+}
+
+fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
+    ci.runs
+        .iter()
+        .map(|r| CiRunRef {
+            id: r.id,
+            attempt: r.attempt,
+            workflow: r.workflow.clone(),
+            state: r.state,
+            url: r.url.clone(),
+            failed_jobs: r.failed_jobs.clone(),
+        })
+        .collect()
+}
+
+/// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
+pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<NewLogEvent> {
+    let a = attempt_ref(info);
+    let key = |k: &str| format!("{}:{k}", a.attempt_id);
+    let pr_event = |n: Notice| PrEvent {
+        attempt: a.clone(),
+        pr: now.number,
+        url: now.url.clone(),
+        head_sha: now.head_sha.clone(),
+        auto_merge: now.auto_merge,
+        in_merge_queue: now.in_merge_queue,
+        notice: n,
+    };
+    let mut out = vec![];
+    let mut all = notices(now, &info.attempt.branch);
+    all.extend(pdt_core::pr::behind_notice(now, &info.attempt.branch));
+    for n in all {
+        let k = key(&n.key);
+        let e = match n.kind {
+            NoticeKind::CiFailed => {
+                let ci = now.ci.as_ref();
+                NewLogEvent::new(
+                    ev::CI_RUN_FAILED,
+                    k,
+                    "pr_poller",
+                    CiEvent {
+                        attempt: a.clone(),
+                        provider: ev::GITHUB_ACTIONS.into(),
+                        pr: Some(now.number),
+                        head_sha: now.head_sha.clone(),
+                        url: ci.map(|c| c.url.clone()).unwrap_or_default(),
+                        runs: ci.map(run_refs).unwrap_or_default(),
+                        jobs: n.jobs.clone(),
+                        notice: Some(n),
+                    },
+                )
+            }
+            NoticeKind::Conflict => NewLogEvent::new(ev::PR_CONFLICT, k, "pr_poller", pr_event(n)),
+            NoticeKind::QueueLeft => NewLogEvent::new(ev::PR_QUEUE_LEFT, k, "pr_poller", pr_event(n)),
+            NoticeKind::Merged => NewLogEvent::new(ev::PR_MERGED, k, "pr_poller", pr_event(n)),
+            NoticeKind::Behind => NewLogEvent::new(ev::PR_BEHIND, k, "pr_poller", pr_event(n)),
+        };
+        out.push(e);
+    }
+    if now.state == PrState::Open
+        && let Some(ci) = now.ci.as_ref().filter(|c| c.state == CiState::Passed)
+    {
+        let ids: Vec<String> = ci.runs.iter().map(|r| format!("{}.{}", r.id, r.attempt)).collect();
+        out.push(NewLogEvent::new(
+            ev::CI_RUN_PASSED,
+            key(&format!("ci_passed:{}", ids.join(","))),
+            "pr_poller",
+            CiEvent {
+                attempt: a.clone(),
+                provider: ev::GITHUB_ACTIONS.into(),
+                pr: Some(now.number),
+                head_sha: now.head_sha.clone(),
+                url: ci.url.clone(),
+                runs: run_refs(ci),
+                jobs: vec![],
+                notice: None,
+            },
+        ));
+    }
+    out
 }
 
 type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
@@ -283,119 +363,9 @@ fn read_pr(
     Ok((Some(status), fresh_queue, fetched_jobs))
 }
 
-/// Queues the notices that are news: not told before (on the timeline) and not already waiting.
-async fn queue_news(st: &AppState, attempt_id: &str, ticket_id: &str, news: Vec<Notice>) {
-    if news.is_empty() {
-        return;
-    }
-    let told = match st.store.pr_notice_keys(ticket_id, attempt_id).await {
-        Ok(k) => k,
-        Err(e) => {
-            tracing::warn!(ticket = %ticket_id, error = %e, "could not read the PR notices already sent");
-            return;
-        }
-    };
-    let mut w = watch(st);
-    for notice in news {
-        let waiting = w.pending.iter().any(|p| p.attempt_id == attempt_id && p.notice.key == notice.key);
-        let resolved = w.resolved.contains(&(attempt_id.to_string(), notice.key.clone()));
-        if !waiting && !resolved && !told.contains(&notice.key) {
-            w.pending.push(Pending { attempt_id: attempt_id.into(), ticket_id: ticket_id.into(), notice });
-        }
-    }
-}
-
 /// The attempt's PR as last seen (None when it has none, or the project is not on GitHub).
 pub(crate) fn watched_pr(st: &AppState, attempt_id: &str) -> Option<PullRequestStatus> {
     watch(st).by_attempt.get(attempt_id).cloned()
-}
-
-/// The attempt's branch was found merged (git or GitHub) and the attempt ended: tell its agent.
-pub(crate) async fn notify_merged(st: &AppState, info: &AttemptInfo) {
-    let pr = watch(st).by_attempt.get(&info.attempt.id).map(|p| p.number);
-    let notice = pdt_core::pr::merged_notice(pr, &info.attempt.branch, &info.attempt.base_branch);
-    queue_news(st, &info.attempt.id, &info.ticket_id, vec![notice]).await;
-}
-
-/// Delivers waiting notices whose session is ready: all of a session's notices go in one message. A notice whose
-/// attempt has no running agent session is recorded as not told. pdtd runs it every few seconds.
-pub async fn deliver_notices(st: &AppState) {
-    let pending = watch(st).pending.clone();
-    if pending.is_empty() {
-        return;
-    }
-    let running = match st.store.list_sessions_by_status(SessionStatus::Running).await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(error = %e, "could not list sessions to deliver PR notices");
-            return;
-        }
-    };
-    // The newest running agent session of each attempt (the list is oldest first): a terminal with its PTY, or a
-    // conversation (a parked one reopens to take the message).
-    let mut target: HashMap<&str, &Session> = HashMap::new();
-    for s in running.iter().filter(|s| {
-        s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id))
-    }) {
-        if let Some(a) = s.attempt_id.as_deref() {
-            target.insert(a, s);
-        }
-    }
-    let mut by_session: HashMap<String, (&Session, Vec<Pending>)> = HashMap::new();
-    let mut untold: Vec<Pending> = vec![];
-    for p in pending {
-        match target.get(p.attempt_id.as_str()) {
-            Some(s) => by_session.entry(s.id.clone()).or_insert_with(|| (s, vec![])).1.push(p),
-            None => untold.push(p),
-        }
-    }
-    for p in untold {
-        resolve(st, &p, None).await;
-    }
-    for (sid, (session, list)) in by_session {
-        let conversation = session.mode == SessionMode::Conversation;
-        let ready = if conversation {
-            crate::conversations::ready_for_notice(st, &sid)
-        } else {
-            crate::activity::ready_for_message(st, &sid, QUIET_MS)
-        };
-        if !ready {
-            continue;
-        }
-        let text = list.iter().map(|p| p.notice.text.as_str()).collect::<Vec<_>>().join("\n\n");
-        let sent = if conversation {
-            crate::conversations::send_notice(st, session, &text).await.map_err(|e| e.message().to_string())
-        } else {
-            crate::activity::type_message(st, &sid, &text).await.map_err(|e| e.to_string())
-        };
-        match sent {
-            Ok(()) => {
-                tracing::info!(session = %sid, notices = list.len(), "told the agent about its pull request");
-                for p in &list {
-                    resolve(st, p, Some(&sid)).await;
-                }
-            }
-            Err(e) => tracing::warn!(session = %sid, error = %e, "could not type a PR notice into the session"),
-        }
-    }
-}
-
-/// Records a notice on the timeline (told to `session`, or to nobody) and stops waiting with it.
-async fn resolve(st: &AppState, p: &Pending, session: Option<&str>) {
-    let n = &p.notice;
-    let data = json!({
-        "attemptId": p.attempt_id, "notice": n.kind, "key": n.key, "pr": n.pr, "url": n.url, "jobs": n.jobs,
-        "text": n.text, "sessionId": session, "told": session.is_some(),
-    });
-    if let Err(e) =
-        st.store.add_ticket_event(&p.ticket_id, EventKind::Pr, Actor::System, None, Some(data), now_ms()).await
-    {
-        tracing::warn!(ticket = %p.ticket_id, error = %e, "could not record a PR notice");
-        return;
-    }
-    let mut w = watch(st);
-    w.resolved.insert((p.attempt_id.clone(), n.key.clone()));
-    w.pending.retain(|q| !(q.attempt_id == p.attempt_id && q.notice.key == n.key));
 }
 
 #[cfg(test)]

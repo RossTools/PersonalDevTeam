@@ -1,4 +1,5 @@
 mod error;
+mod event_log;
 mod events;
 mod host;
 mod migrate;
@@ -6,13 +7,16 @@ mod review;
 mod runs;
 mod sessions;
 mod tickets;
+mod workflows;
 mod workspaces;
 mod worktrees;
 
 pub use error::StoreError;
+pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::NewEvent;
 pub use host::ProjectSettings;
 pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt, TicketError};
+pub use workflows::{RUN_RETENTION_MS, RunFilter, SessionMessage};
 pub use workspaces::DeleteWorkspace;
 
 use pdt_core::project::Project;
