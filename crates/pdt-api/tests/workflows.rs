@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{argv_agent, call, git};
+use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -15,6 +15,24 @@ struct Env {
     state: AppState,
     project: String,
     _tmp: tempfile::TempDir,
+}
+
+/// A stand-in agent that keeps reading input (a multi-line message is several lines; one `read` would exit on the
+/// first and fail the Enter that follows).
+fn reading_agent(dir: &std::path::Path) -> std::path::PathBuf {
+    let (file, body) = if cfg!(windows) {
+        ("reader.cmd", "@echo off\r\n:again\r\nset /p x=\r\ngoto again\r\n")
+    } else {
+        ("reader", "#!/bin/sh\nwhile read x; do :; done\n")
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
 }
 
 async fn setup() -> Env {
@@ -30,7 +48,7 @@ async fn setup() -> Env {
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
-    state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
+    state.platform.claude_program = reading_agent(&bin).to_string_lossy().into_owned();
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "Proj", "repoPath": repo.to_string_lossy()}))).await;
