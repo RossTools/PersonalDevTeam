@@ -381,9 +381,24 @@ async fn a_comment_on_a_started_ticket_goes_to_its_agent_and_events_are_logged()
     let (_, events) = call(&env.app, "GET", &format!("/api/events?ticket={ticket}"), None).await;
     let kinds: Vec<&str> = events.as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect();
     assert!(kinds.contains(&"ticket.commented") && kinds.contains(&"attempt.started"), "{kinds:?}");
-    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={ticket}"), None).await;
-    let r = runs.as_array().unwrap().iter().find(|r| r["workflowName"] == "Ticket comments to the agent").unwrap();
-    assert_eq!(r["status"], "succeeded", "{runs}");
+    // The message waits until the agent is ready (idle, nobody typing), which can take a few ticks.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={ticket}"), None).await;
+        let r = runs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["workflowName"] == "Ticket comments to the agent")
+            .cloned()
+            .unwrap();
+        if r["status"] != "waiting" || std::time::Instant::now() > deadline {
+            break r["status"].clone();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        pdt_api::run_workflows(&env.state).await;
+    };
+    assert_eq!(status, "succeeded");
     if cfg!(unix) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let screen = || String::from_utf8_lossy(&env.state.ptys.attach(&session).unwrap().scrollback).into_owned();
