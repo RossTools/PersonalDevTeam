@@ -21,12 +21,13 @@ pub const START_COLS: std::ops::RangeInclusive<u16> = 20..=500;
 pub const START_ROWS: std::ops::RangeInclusive<u16> = 5..=300;
 pub const DEFAULT_SIZE: TerminalSize = TerminalSize { cols: 120, rows: 30 };
 
-/// `pdt/<KEY>-<n>-<slug of the title>`, or `pdt/<KEY>-<n>` when the title has no ASCII letters or digits.
+/// `pdt-<KEY>-<n>-<slug of the title>`, or `pdt-<KEY>-<n>` when the title has no ASCII letters or digits. No `/`:
+/// some third-party tools break on slashes in branch names.
 pub fn attempt_branch(project_key: &str, number: u32, title: &str) -> String {
     let s = slug(title);
     debug_assert!(s.len() <= MAX_SLUG);
     let key = format_key(project_key, number);
-    if s.is_empty() { format!("{SLUG}/{key}") } else { format!("{SLUG}/{key}-{s}") }
+    if s.is_empty() { format!("{SLUG}-{key}") } else { format!("{SLUG}-{key}-{s}") }
 }
 
 /// The parent and the other parts, for a part's first prompt (PDT-38).
@@ -285,15 +286,16 @@ mod tests {
 
     #[test]
     fn default_branches_carry_the_key_and_a_short_slug() {
-        assert_eq!(attempt_branch("PDT", 42, "Fix the Login bug!"), "pdt/PDT-42-fix-the-login-bug");
-        assert_eq!(attempt_branch("PDT", 7, "日本語"), "pdt/PDT-7");
-        assert_eq!(attempt_branch("AB", 1, "  "), "pdt/AB-1");
+        assert_eq!(attempt_branch("PDT", 42, "Fix the Login bug!"), "pdt-PDT-42-fix-the-login-bug");
+        assert_eq!(attempt_branch("PDT", 7, "日本語"), "pdt-PDT-7");
+        assert_eq!(attempt_branch("AB", 1, "  "), "pdt-AB-1");
         let long = attempt_branch("PDT", 3, "a very long ticket title that keeps going well past forty characters");
-        assert_eq!(long, "pdt/PDT-3-a-very-long-ticket-title-that-keeps");
-        // Always a valid branch name.
+        assert_eq!(long, "pdt-PDT-3-a-very-long-ticket-title-that-keeps");
+        // Always a valid branch name, and never a slash.
         for t in ["x..y", "a/b", "trailing.", "-lead", "~^:?*[\\"] {
             let b = attempt_branch("PDT", 1, t);
             assert!(NewWorktree { branch: b.clone(), base: None }.validate().is_ok(), "{b}");
+            assert!(!b.contains('/'), "{b}");
         }
     }
 

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
-const BRANCH: &str = "pdt/PDT-1-ship-it";
+const BRANCH: &str = "pdt-PDT-1-ship-it";
 
 struct Env {
     app: axum::Router,
@@ -268,7 +268,7 @@ async fn a_ticket_workspace_carries_its_ticket_and_pr() {
     let mut p = pr();
     p.number = 13;
     p.mergeable = Mergeable::Conflicting;
-    env.gh.set_pr("pdt/PDT-2-own-space", Some(p));
+    env.gh.set_pr("pdt-PDT-2-own-space", Some(p));
     pdt_api::refresh_prs(&env.state).await;
     let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
     let list = list.as_array().unwrap();

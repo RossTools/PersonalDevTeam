@@ -230,6 +230,6 @@ describe('ChangesButton', () => {
     const button = screen.getByRole('button', { name: /Changes/ });
     await waitFor(() => expect(button).toHaveTextContent('+5−5'));
     await userEvent.click(button);
-    expect(open).toHaveBeenCalledWith({ id: 'w1', projectId: 'p1' });
+    expect(open).toHaveBeenCalledWith({ id: 'w1', projectId: 'p1' }, { here: true });
   });
 });

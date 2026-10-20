@@ -75,7 +75,7 @@ describe('RunBranchForm', () => {
 });
 
 describe('RunView', () => {
-  it('shows the run in the header: dot, name, branch chip, state and a primary action', async () => {
+  it('shows the run in the header: dot, name, branch chip, state, Stop and Restart', async () => {
     stubApi({ 'GET /api/projects': [{ ...project, githubRepo: 'o/r' }] });
     const { rerender } = renderWithQuery(<RunView run={run({ branch: 'feature/x' })} onRemoved={() => {}} />);
     const h = screen.getByRole('banner');
@@ -83,8 +83,9 @@ describe('RunView', () => {
     expect(await within(h).findByRole('button', { name: 'Branch feature/x' })).toBeInTheDocument();
     expect(within(h).getByText('ready')).toBeInTheDocument();
     expect(within(h).getByRole('button', { name: 'Stop' })).toBeInTheDocument();
-    expect(within(h).queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
+    expect(within(h).getByRole('button', { name: 'Restart' })).toBeInTheDocument();
     rerender(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    expect(within(screen.getByRole('banner')).queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
     expect(within(screen.getByRole('banner')).getByRole('button', { name: 'Restart' })).toBeInTheDocument();
   });
 

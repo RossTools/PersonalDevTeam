@@ -34,8 +34,8 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 ## Worktrees
 
 Worktrees live at `.worktrees/<branch>` inside the repo (`/` in a branch name becomes `-`); `/.worktrees/` is in
-`.git/info/exclude`. Ticket Start names branches `pdt/<KEY>-<n>-<slug>` (folder `.worktrees/pdt-<KEY>-<n>-<slug>`); other branch names are
-short and kebab-case, e.g. `sdlc-docs`.
+`.git/info/exclude`. Ticket Start names branches `pdt-<KEY>-<n>-<slug>` (no `/`: some third-party tools break on it); other branch names
+are short and kebab-case, e.g. `sdlc-docs`.
 
 Create them **through the stable PDT**, not with `git worktree add`, so PDT knows about them: its sessions group under
 the branch and Run uses that checkout. Start from an up-to-date `main`:

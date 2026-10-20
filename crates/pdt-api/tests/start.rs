@@ -112,12 +112,12 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
     let id =
         ticket(&env, json!({"title": "Fix the login", "description": "Steps & notes:\n1. open", "stage": "ready"}))
             .await;
-    assert_eq!(get_ticket(&env, &id).await["defaultBranch"], "pdt/PDT-1-fix-the-login");
+    assert_eq!(get_ticket(&env, &id).await["defaultBranch"], "pdt-PDT-1-fix-the-login");
 
     let r = started(&env, &id, json!({"agent": "claude", "cols": 100, "rows": 40})).await;
     let (t, attempt, session) = (&r["ticket"], &r["attempt"], &r["session"]);
     assert_eq!(t["stage"], "in_progress");
-    assert_eq!((s(&attempt["branch"]), s(&attempt["state"])), ("pdt/PDT-1-fix-the-login", "active"));
+    assert_eq!((s(&attempt["branch"]), s(&attempt["state"])), ("pdt-PDT-1-fix-the-login", "active"));
     assert_eq!(attempt["baseBranch"], "main");
     assert_eq!(attempt["lastHead"], Value::Null);
     assert_eq!(s(&session["title"]), "Fix the login");
@@ -147,7 +147,7 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
         assert_eq!(
             last_arg(&launch),
             "PDT-1: Fix the login\n\nSteps & notes:\n1. open\n\n(Ticket PDT-1 in PDT. Work in this worktree on \
-             branch pdt/PDT-1-fix-the-login.)"
+             branch pdt-PDT-1-fix-the-login.)"
         );
     }
 
@@ -356,7 +356,7 @@ async fn merges_are_detected_on_demand_and_by_the_loop() {
     assert_eq!(t["attempts"][0]["state"], "active");
     assert!(t["attempts"][0]["lastHead"].is_string());
 
-    git(&env.repo, &["merge", "-q", "--no-ff", "-m", "merge", "pdt/PDT-1-merge-me"]);
+    git(&env.repo, &["merge", "-q", "--no-ff", "-m", "merge", "pdt-PDT-1-merge-me"]);
     let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
     assert_eq!(t["attempts"][0]["state"], "merged");
     assert_eq!(t["stage"], "in_progress", "the ticket never moves to Done by itself");
@@ -368,12 +368,12 @@ async fn merges_are_detected_on_demand_and_by_the_loop() {
     work_in(&env, "pdt-PDT-2-squash-me", "s.txt");
     pdt_api::check_merges(&env.state).await;
     assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "active");
-    git(&env.repo, &["merge", "-q", "--squash", "pdt/PDT-2-squash-me"]);
+    git(&env.repo, &["merge", "-q", "--squash", "pdt-PDT-2-squash-me"]);
     git(&env.repo, &["commit", "-q", "-m", "squashed"]);
     // Free the branch so it can be deleted. Detached rather than removed: on Windows the agent still running in the
     // folder keeps it from being deleted.
     git(&env.repo.join(".worktrees/pdt-PDT-2-squash-me"), &["checkout", "-q", "--detach"]);
-    git(&env.repo, &["branch", "-q", "-D", "pdt/PDT-2-squash-me"]);
+    git(&env.repo, &["branch", "-q", "-D", "pdt-PDT-2-squash-me"]);
     pdt_api::check_merges(&env.state).await;
     assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "merged");
     let (_, check) = call(&env.app, "POST", "/api/tickets/nope/check-merge", None).await;
@@ -424,7 +424,7 @@ async fn a_branch_that_only_caught_up_with_main_is_not_merged() {
     let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
     assert_eq!(t["attempts"][0]["state"], "active");
     git(&env.repo, &["merge", "-q", "--ff-only", "origin/main"]);
-    git(&env.repo, &["merge", "-q", "--squash", "pdt/PDT-1-catch-up"]);
+    git(&env.repo, &["merge", "-q", "--squash", "pdt-PDT-1-catch-up"]);
     git(&env.repo, &["commit", "-q", "-m", "squashed"]);
     let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
     assert_eq!(t["attempts"][0]["state"], "merged");
@@ -448,7 +448,7 @@ async fn closing_a_ticket_ends_its_attempt() {
     let b = ticket(&env, json!({"title": "Ship"})).await;
     started(&env, &b, json!({"agent": "claude"})).await;
     work_in(&env, "pdt-PDT-2-ship", "ship.txt");
-    git(&env.repo, &["merge", "-q", "--ff-only", "pdt/PDT-2-ship"]);
+    git(&env.repo, &["merge", "-q", "--ff-only", "pdt-PDT-2-ship"]);
     let (_, t) = call(&env.app, "PATCH", &format!("/api/tickets/{b}"), Some(json!({"stage": "done"}))).await;
     assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("done", "merged"));
 

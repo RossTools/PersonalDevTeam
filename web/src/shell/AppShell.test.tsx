@@ -250,6 +250,23 @@ describe('workspaces', () => {
     expect(secondary(/Claude A/)).toBe('Alpha');
   });
 
+  it('opens a session\'s changes in the workspace on screen, after its tab', async () => {
+    const calls = stubWorkspaces({
+      [`GET /api/projects/${project.id}/worktrees`]: [{ id: 'wt1', projectId: project.id, branch: 'feat-login', path: '/r/.worktrees/feat-login', baseCommit: 'x', createdAt: 2 }],
+      [`GET /api/projects/${project.id}/sessions`]: [sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', worktreeId: 'wt1', cwd: '/r/.worktrees/feat-login' })],
+      'GET /api/workspaces': [
+        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [] },
+        { id: 'wr', name: 'Release', projectId: null, position: 1, createdAt: 2, tabs: [tabOf('tb', 'wr', 'b', 0)] },
+      ],
+      'POST /api/workspaces/wr/tabs': { id: 'tc', workspaceId: 'wr', sessionId: null, runId: null, worktreeId: 'wt1', position: 1 },
+    });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await within(await screen.findByRole('region', { name: 'Workspaces' })).findByRole('row', { name: /Release/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Changes/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wr/tabs', body: { worktreeId: 'wt1', position: 1 } }));
+    expect(calls.some((c) => c.path === '/api/workspaces/wa/tabs')).toBe(false);
+  });
+
   it('keeps the agents list a plain view: no drag handles, and a menu without tab movement', async () => {
     stubWorkspaces({});
     renderWithQuery(<AppShell />);
