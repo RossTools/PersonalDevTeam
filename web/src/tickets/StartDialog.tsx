@@ -218,30 +218,30 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
             </Alert>
           )}
           <Field
-            label="Agent"
+            label="Session"
             hint={
               noSession
                 ? 'No agent yet: just the branch, worktree and the ticket in its workspace.'
                 : sessionMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."
             }
           >
-            <div className="flex flex-wrap items-center gap-2">
-              {!noSession && (
-                <SegmentedControl
-                  aria-label="Agent"
-                  options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${AGENT_LABEL[a]} · ${availability.hint(a)}` : AGENT_LABEL[a] }))}
-                  value={agent}
-                  onChange={setAgent}
-                />
-              )}
-              <SegmentedControl<SessionMode | 'none'>
-                aria-label="Show as"
-                options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }, { value: 'none', label: 'No session' }]}
-                value={view}
-                onChange={setMode}
-              />
-            </div>
+            <SegmentedControl<SessionMode | 'none'>
+              aria-label="Session"
+              options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }, { value: 'none', label: 'No session' }]}
+              value={view}
+              onChange={setMode}
+            />
           </Field>
+          {!noSession && (
+            <Field label="Agent">
+              <SegmentedControl
+                aria-label="Agent"
+                options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${AGENT_LABEL[a]} · ${availability.hint(a)}` : AGENT_LABEL[a] }))}
+                value={agent}
+                onChange={setAgent}
+              />
+            </Field>
+          )}
           <Field label="Branch" hint="Made from the base with a worktree; an existing .worktrees folder for it is reused.">
             <Input mono value={branch} placeholder={t.defaultBranch} maxLength={200} onChange={(e) => setBranch(e.target.value)} />
           </Field>
