@@ -5,6 +5,7 @@
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -13,8 +14,9 @@ use pdt_core::pr::{Mergeable, PrState};
 use pdt_core::project::Project;
 use pdt_core::review::{
     ChangeStatus, ChangedFile, Changes, FeedbackItem, FeedbackResult, FileSides, MAX_COMMENT_BYTES, MAX_SIDE_BYTES,
-    MergeMethod, MergeOutcome, MergePr, MergePreview, MergeProblem, MergeResult, NewReviewComment, ReviewComment,
-    ReviewCommentPatch, conflict_message, feedback_message, merge_message, open_pr_message,
+    MergeMethod, MergeOutcome, MergePr, MergePreview, MergeProblem, MergeRequest, MergeResult, MergeStyle,
+    NewReviewComment, ReviewComment, ReviewCommentPatch, conflict_message, feedback_message, feedback_record,
+    merge_message, open_pr_message, squash_message,
 };
 use pdt_core::session::{Session, SessionKind};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, Ticket};
@@ -354,8 +356,12 @@ pub(crate) async fn feedback(
     let ids: Vec<String> = drafts.iter().map(|c| c.id.clone()).collect();
     let sent = st.store.mark_review_comments_sent(&ids, &session.id, now_ms()).await? as u32;
     if let Some(a) = &attempt {
+        // The comments go with the worktree; the timeline keeps what was sent.
+        let record = feedback_record(&items);
         let data = json!({"worktreeId": id, "sessionId": session.id, "count": sent});
-        st.store.add_ticket_event(&a.ticket_id, EventKind::Feedback, Actor::User, None, Some(data), now_ms()).await?;
+        st.store
+            .add_ticket_event(&a.ticket_id, EventKind::Feedback, Actor::User, Some(&record), Some(data), now_ms())
+            .await?;
     }
     Ok(Json(FeedbackResult { session_id: session.id, sent }))
 }
@@ -480,7 +486,18 @@ fn blocked(problem: MergeProblem) -> ApiError {
 }
 
 /// `POST /api/attempts/{id}/merge`: merges locally (the attempt ends as merged) or turns on auto-merge for its PR.
-pub(crate) async fn merge(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<MergeResult>, ApiError> {
+pub(crate) async fn merge(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<MergeResult>, ApiError> {
+    // The body is optional: empty means a merge commit.
+    let input: MergeRequest = if body.iter().all(u8::is_ascii_whitespace) {
+        MergeRequest::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
+    };
     let info = load_attempt(&st, &id).await?;
     let p = preview(&st, &info).await?;
     if let Some(problem) = p.problem {
@@ -503,11 +520,13 @@ pub(crate) async fn merge(State(st): State<AppState>, Path(id): Path<String>) ->
         crate::github::refresh_attempt(&st, &info).await;
         return Ok(Json(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
     }
-    let title = st.store.get_ticket_summary(&info.ticket_id).await?.map(|t| t.title).unwrap_or_default();
+    let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
+    let (key, title) = ticket.map(|t| (t.key, t.title)).unwrap_or_default();
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
-    let message = merge_message(&branch, &title);
-    let outcome = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &branch, &base, &message))
+    let squash = input.style == Some(MergeStyle::Squash);
+    let message = if squash { squash_message(&key, &title, &branch) } else { merge_message(&branch, &title) };
+    let outcome = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &branch, &base, &message, squash))
         .await
         .map_err(ApiError::internal)?
         .map_err(|e| conflict("merge_failed", e.to_string()))?;

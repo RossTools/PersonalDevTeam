@@ -68,6 +68,7 @@ import type { Changes } from './gen/Changes';
 import type { FeedbackResult } from './gen/FeedbackResult';
 import type { FileSides } from './gen/FileSides';
 import type { MergePreview } from './gen/MergePreview';
+import type { MergeRequest } from './gen/MergeRequest';
 import type { MergeResult } from './gen/MergeResult';
 import type { NewReviewComment } from './gen/NewReviewComment';
 import type { ReviewComment } from './gen/ReviewComment';
@@ -235,7 +236,8 @@ export const api = {
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
   approveAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/approve`, { method: 'POST' }),
   mergePreview: (id: string) => request<MergePreview>(`/api/attempts/${enc(id)}/merge`),
-  mergeAttempt: (id: string) => request<MergeResult>(`/api/attempts/${enc(id)}/merge`, { method: 'POST' }),
+  mergeAttempt: (id: string, body: MergeRequest = {}) =>
+    request<MergeResult>(`/api/attempts/${enc(id)}/merge`, { method: 'POST', body: JSON.stringify(body) }),
   askAgentToFixMerge: (id: string) => request<FeedbackResult>(`/api/attempts/${enc(id)}/ask-agent`, { method: 'POST' }),
   getChanges: (worktreeId: string) => request<Changes>(`/api/worktrees/${enc(worktreeId)}/changes`),
   getFileSides: (worktreeId: string, path: string, oldPath?: string | null) =>

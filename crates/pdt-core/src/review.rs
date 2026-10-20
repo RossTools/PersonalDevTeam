@@ -260,9 +260,37 @@ pub struct MergeResult {
     pub commit: Option<String>,
 }
 
+/// How a local merge lands on the base branch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeStyle {
+    /// A merge commit (`--no-ff`): the branch's commits stay in the history.
+    #[default]
+    Merge,
+    /// One new commit on the base with the branch's changes.
+    Squash,
+}
+
+/// `POST /api/attempts/{id}/merge` (an empty body is a merge commit). `style` is for a local merge only; a pull
+/// request merges the way GitHub's settings say.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MergeRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub style: Option<MergeStyle>,
+}
+
 /// The local merge commit's message.
 pub fn merge_message(branch: &str, title: &str) -> String {
     format!("Merge {branch}: {title}")
+}
+
+/// The local squash commit's message (as GitHub's squash: the ticket, then where it came from).
+pub fn squash_message(key: &str, title: &str, branch: &str) -> String {
+    format!("{key}: {title}\n\nSquashed from {branch}.")
 }
 
 /// One comment as the feedback message shows it.
@@ -345,6 +373,52 @@ pub fn feedback_message(branch: &str, items: &[FeedbackItem]) -> String {
     out.trim_end().to_string()
 }
 
+/// A code fence for `text`: longer than any run of backticks in it.
+fn fence(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    "`".repeat(longest.max(2) + 1)
+}
+
+/// What the ticket timeline keeps of sent comments (the `feedback` event's Markdown body; the comments themselves go
+/// with the worktree): each comment in the message's order, its place, the lines it is about and its text. Over
+/// [`MAX_FEEDBACK_BYTES`], the last ones are counted instead.
+pub fn feedback_record(items: &[FeedbackItem]) -> String {
+    let mut sorted: Vec<&FeedbackItem> = items.iter().collect();
+    sorted.sort_by(|a, b| (a.path.as_str(), a.line).cmp(&(b.path.as_str(), b.line)));
+    let mut parts: Vec<String> = Vec::new();
+    let mut size = 0;
+    for (i, item) in sorted.iter().enumerate() {
+        let range = if item.end_line > item.line {
+            format!("{}:{}-{}", item.path, item.line, item.end_line)
+        } else {
+            format!("{}:{}", item.path, item.line)
+        };
+        let removed = if item.side == CommentSide::Old { " (removed lines)" } else { "" };
+        let mut part = match &item.reply_to {
+            Some(root) => format!("**Reply on `{range}`**{removed} (\"{}\")\n\n", cut(root, REPLY_QUOTE_CHARS)),
+            None => {
+                let lines: Vec<&str> = item.line_text.lines().collect();
+                let mut quoted = lines.iter().take(QUOTE_LINES).copied().collect::<Vec<_>>().join("\n");
+                if lines.len() > QUOTE_LINES {
+                    quoted.push_str("\n…");
+                }
+                let f = fence(&quoted);
+                format!("**`{range}`**{removed}\n\n{f}\n{quoted}\n{f}\n\n")
+            }
+        };
+        part.push_str(item.body.trim());
+        let left = sorted.len() - i;
+        let tail = format!("…and {left} more comment{}.", if left == 1 { "" } else { "s" });
+        if size + part.len() + tail.len() + 2 > MAX_FEEDBACK_BYTES {
+            parts.push(tail);
+            break;
+        }
+        size += part.len() + 2;
+        parts.push(part);
+    }
+    parts.join("\n\n")
+}
+
 /// The message Send to agent puts into the coder session when the merge conflicts.
 pub fn conflict_message(branch: &str, base: &str, files: &[String]) -> String {
     let list = files.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n");
@@ -425,6 +499,39 @@ mod tests {
     fn a_blank_quoted_line_has_no_trailing_space() {
         let msg = feedback_message("b", &[item("a", 1, 3, "x\n\ny", "z")]);
         assert!(msg.contains("   > x\n   >\n   > y\n"));
+    }
+
+    #[test]
+    fn the_record_keeps_each_comment_with_its_place_and_lines() {
+        let mut reply = item("docs/a.md", 3, 3, "x", "Still there.");
+        reply.reply_to = Some("Use the API path".into());
+        let mut removed = item("web/x.tsx", 40, 40, "const a = `b`;", "Why?");
+        removed.side = CommentSide::Old;
+        let rec =
+            feedback_record(&[removed, item("crates/a.rs", 19, 20, "fn a(\n```", "Name it.\n\nAnd test it."), reply]);
+        assert_eq!(
+            rec,
+            "**`crates/a.rs:19-20`**\n\n````\nfn a(\n```\n````\n\nName it.\n\nAnd test it.\n\n\
+             **Reply on `docs/a.md:3`** (\"Use the API path\")\n\nStill there.\n\n\
+             **`web/x.tsx:40`** (removed lines)\n\n```\nconst a = `b`;\n```\n\nWhy?"
+        );
+    }
+
+    #[test]
+    fn a_long_record_counts_what_it_leaves_out() {
+        let big = "y".repeat(10_000);
+        let many: Vec<_> = (1..=6).map(|i| item("f", i, i, "l", &big)).collect();
+        let rec = feedback_record(&many);
+        assert!(rec.len() <= MAX_FEEDBACK_BYTES);
+        assert!(rec.ends_with("…and 3 more comments."), "{}", &rec[rec.len() - 40..]);
+    }
+
+    #[test]
+    fn the_squash_message_names_the_ticket_and_branch() {
+        assert_eq!(
+            squash_message("PDT-3", "Review", "pdt/PDT-3-review"),
+            "PDT-3: Review\n\nSquashed from pdt/PDT-3-review."
+        );
     }
 
     #[test]

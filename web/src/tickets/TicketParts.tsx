@@ -390,6 +390,17 @@ function toItem(e: TicketEvent): TimelineItem {
     title: eventTitle(e),
     ...(icon ? { icon } : {}),
     ...(e.kind === 'comment' && e.body ? { body: <Markdown>{e.body}</Markdown> } : {}),
+    // The review comments sent (they go with the worktree once it is removed; the timeline keeps them).
+    ...(e.kind === 'feedback' && e.body
+      ? {
+          body: (
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show the comments</summary>
+              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
+            </details>
+          ),
+        }
+      : {}),
   };
 }
 

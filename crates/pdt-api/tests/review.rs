@@ -273,6 +273,10 @@ async fn send_feedback_puts_every_draft_into_the_conversation_once() {
     let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{}/events", env.ticket), None).await;
     let fb = ev["items"].as_array().unwrap().iter().find(|e| e["kind"] == "feedback").cloned().unwrap();
     assert_eq!(fb["data"]["count"], json!(2));
+    // The timeline keeps what was sent: the comments go with the worktree.
+    let body = fb["body"].as_str().unwrap();
+    assert!(body.starts_with("**`a.txt:2`**\n\n```\ntwo\n```\n\nMake it TWO."), "{body}");
+    assert!(body.contains("**`b.rs:1-2`** (removed lines)"), "{body}");
 }
 
 #[tokio::test]
@@ -362,6 +366,34 @@ async fn a_local_merge_checks_first_then_merges_and_ends_the_attempt() {
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await;
     assert_eq!(t["attempt"]["state"], "merged");
     assert_eq!(preview(&env).await["problem"], "inactive");
+}
+
+#[tokio::test]
+async fn a_local_merge_can_squash() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    std::fs::write(env.wt_path.join("a.txt"), "one\nmine\nthree\n").unwrap();
+    commit_all(&env.wt_path, "mine");
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "c");
+    let (s, e) =
+        call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), Some(json!({"style": "nope"}))).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
+
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), Some(json!({"style": "squash"}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert_eq!(r["outcome"], "merged");
+    let log = |args: &[&str]| {
+        let out = std::process::Command::new("git").current_dir(&env.repo).args(args).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await;
+    let key = t["key"].as_str().unwrap();
+    assert_eq!(log(&["log", "-1", "--format=%B"]), format!("{key}: Ship it\n\nSquashed from {}.", env.branch));
+    assert_eq!(log(&["rev-list", "--parents", "-n1", "HEAD"]).split(' ').count(), 2, "one parent");
+    assert_eq!(std::fs::read_to_string(env.repo.join("c.txt")).unwrap(), "c\n");
+    assert_eq!(t["attempt"]["state"], "merged");
 }
 
 #[tokio::test]
