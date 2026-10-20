@@ -18,6 +18,7 @@ fn unknown_workspace() -> ApiError {
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Workspace>>, ApiError> {
     let mut list = st.store.list_workspaces().await?;
     crate::github::apply_workspaces(&st, &mut list);
+    crate::parts::apply_workspaces(&st, &mut list).await?;
     Ok(Json(list))
 }
 
@@ -56,6 +57,7 @@ pub(crate) async fn update(
     }
     let mut w = st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?;
     crate::github::apply_workspaces(&st, std::slice::from_mut(&mut w));
+    crate::parts::apply_workspaces(&st, std::slice::from_mut(&mut w)).await?;
     Ok(Json(w))
 }
 

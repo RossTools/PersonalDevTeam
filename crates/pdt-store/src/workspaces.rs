@@ -160,10 +160,40 @@ impl Store {
                 title: r.try_get("title")?,
                 stage: TicketStage::parse(&stage)
                     .ok_or_else(|| StoreError::Corrupt(format!("ticket stage {stage}")))?,
-                attempt_id: r.try_get("attempt_id")?,
-                attempt_state: AttemptState::parse(&state)
-                    .ok_or_else(|| StoreError::Corrupt(format!("attempt state {state}")))?,
+                attempt_id: Some(r.try_get("attempt_id")?),
+                attempt_state: Some(
+                    AttemptState::parse(&state).ok_or_else(|| StoreError::Corrupt(format!("attempt state {state}")))?,
+                ),
                 pr: None,
+                parts: None,
+            };
+            out.insert(r.try_get::<String, _>("workspace_id")?, t);
+        }
+        // A parent's workspace, shared by its parts (PDT-38): the parent, with its newest active part's attempt.
+        let rows = sqlx::query(
+            "SELECT t.workspace_id, t.id, t.project_id, t.number, t.title, t.stage, COALESCE(p.key, '') AS pkey, \
+             (SELECT a.id FROM attempts a JOIN tickets c ON c.id = a.ticket_id WHERE c.parent_id = t.id \
+              AND a.state = 'active' ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS attempt_id \
+             FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.workspace_id IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &rows {
+            let stage: String = r.try_get("stage")?;
+            let number: i64 = r.try_get("number")?;
+            let pkey: String = r.try_get("pkey")?;
+            let attempt_id: Option<String> = r.try_get("attempt_id")?;
+            let t = WorkspaceTicket {
+                id: r.try_get("id")?,
+                project_id: r.try_get("project_id")?,
+                key: format!("{pkey}-{number}"),
+                title: r.try_get("title")?,
+                stage: TicketStage::parse(&stage)
+                    .ok_or_else(|| StoreError::Corrupt(format!("ticket stage {stage}")))?,
+                attempt_state: attempt_id.as_ref().map(|_| AttemptState::Active),
+                attempt_id,
+                pr: None,
+                parts: None,
             };
             out.insert(r.try_get::<String, _>("workspace_id")?, t);
         }

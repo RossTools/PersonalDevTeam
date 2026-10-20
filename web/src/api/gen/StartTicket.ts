@@ -34,4 +34,9 @@ sessionMode?: SessionMode,
  * new session: the attempt takes its worktree and branch, and nothing is sent to the agent. `agent`, `branch`,
  * `base` and `bypassPermissions` don't apply.
  */
-fromSession?: string, cols?: number, rows?: number, };
+fromSession?: string, 
+/**
+ * On a parent: start its next part (the first open part, by rank, that is not started or merged and has no
+ * open blockers) instead of refusing with `ticket_has_parts`.
+ */
+next?: boolean, cols?: number, rows?: number, };

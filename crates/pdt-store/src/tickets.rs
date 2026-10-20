@@ -4,13 +4,14 @@
 use crate::{Store, StoreError};
 use pdt_core::conversation::SessionMode;
 use pdt_core::links::would_cycle;
+use pdt_core::parts::{ParentFacts, TicketParent, ValidParts, open_parts, valid_parent};
 use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
 use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
     Actor, AttemptSession, AttemptState, AttemptSummary, EventKind, EventPage, LinkDirection, LinkKind, LinkedTicket,
-    MAX_LABELS, OverlapLevel, Priority, RankEdge, Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort,
-    TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
+    MAX_LABELS, OverlapLevel, ParentFilter, Priority, RankEdge, Ticket, TicketEvent, TicketFilter, TicketPage,
+    TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
 };
 use serde_json::json;
 use sqlx::sqlite::SqliteRow;
@@ -29,8 +30,23 @@ pub enum TicketError {
     /// The ticket (by key) has an active attempt.
     #[error("{0} has an active attempt")]
     Active(String),
+    /// The ticket can't be that parent's part (PDT-38).
+    #[error("{0}")]
+    InvalidParent(pdt_core::parts::ParentRule),
+    /// A parent (by key) can't close while these parts are open.
+    #[error("{key} still has open parts: {}", open.join(", "))]
+    PartsOpen { key: String, open: Vec<String> },
+    /// The ticket (by key) has parts, so it can't be deleted.
+    #[error("{0} has parts; delete or detach them first")]
+    HasParts(String),
     #[error(transparent)]
     Store(#[from] StoreError),
+}
+
+impl From<pdt_core::parts::ParentRule> for TicketError {
+    fn from(e: pdt_core::parts::ParentRule) -> Self {
+        TicketError::InvalidParent(e)
+    }
 }
 
 impl From<sqlx::Error> for TicketError {
@@ -48,6 +64,8 @@ pub enum DeleteTicket {
     NotFound,
     /// It has an active attempt.
     Active,
+    /// It has parts.
+    HasParts,
 }
 
 /// What `start_attempt` changed, so `undo_start` can take it back.
@@ -116,18 +134,35 @@ pub struct OverlapRow {
     pub areas: Vec<String>,
 }
 
+/// A part, for its parent's roll-up and "Start next part" (see `Store::part_rows`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartRow {
+    pub parent_id: String,
+    pub id: String,
+    /// `PDT-46`.
+    pub key: String,
+    pub title: String,
+    pub stage: TicketStage,
+    /// The active attempt, else the latest one: id and state.
+    pub attempt: Option<(String, AttemptState)>,
+    /// Open tickets blocking it.
+    pub open_blockers: u32,
+}
+
 /// Priority as a number (higher is more urgent), for sorting.
 const PRIORITY_WEIGHT: &str = "(CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 \
                                WHEN 'low' THEN 1 ELSE 0 END)";
 /// How many open tickets block `t`.
 const BLOCKED_BY: &str = "(SELECT COUNT(*) FROM ticket_links l JOIN tickets b ON b.id = l.from_id \
                           WHERE l.to_id = t.id AND l.kind = 'blocks' AND b.stage NOT IN ('done', 'wont_do'))";
-const FROM: &str = " FROM tickets t JOIN projects p ON p.id = t.project_id";
+const FROM: &str =
+    " FROM tickets t JOIN projects p ON p.id = t.project_id LEFT JOIN tickets par ON par.id = t.parent_id";
 
 fn summary_select() -> String {
     format!(
         "SELECT t.id, t.project_id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, t.priority, t.rank, \
-         t.waiting, t.created_at, t.updated_at, t.closed_at, {BLOCKED_BY} AS blocked_by, {PRIORITY_WEIGHT} AS pw{FROM}"
+         t.waiting, t.created_at, t.updated_at, t.closed_at, {BLOCKED_BY} AS blocked_by, {PRIORITY_WEIGHT} AS pw, \
+         t.parent_id, par.number AS parent_number, par.title AS parent_title{FROM}"
     )
 }
 
@@ -163,6 +198,15 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
         closed_at: r.try_get("closed_at")?,
+        parent: match r.try_get::<Option<String>, _>("parent_id")? {
+            Some(id) => Some(TicketParent {
+                id,
+                key: format_key(&pkey, u32::try_from(r.try_get::<i64, _>("parent_number")?).unwrap_or(0)),
+                title: r.try_get("parent_title")?,
+            }),
+            None => None,
+        },
+        parts: None,
     })
 }
 
@@ -282,6 +326,24 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, f: &TicketFilter) {
     if !f.except_ids.is_empty() {
         qb.push(" AND t.id NOT IN ");
         push_in(qb, &f.except_ids);
+    }
+    match &f.parent {
+        Some(ParentFilter::Of(id)) => {
+            qb.push(" AND t.parent_id = ").push_bind(id.clone());
+        }
+        Some(ParentFilter::None) => {
+            qb.push(" AND t.parent_id IS NULL");
+        }
+        None => {}
+    }
+    match f.has_parts {
+        Some(true) => {
+            qb.push(" AND EXISTS (SELECT 1 FROM tickets c WHERE c.parent_id = t.id)");
+        }
+        Some(false) => {
+            qb.push(" AND NOT EXISTS (SELECT 1 FROM tickets c WHERE c.parent_id = t.id)");
+        }
+        None => {}
     }
     if let Some(after) = f.closed_after {
         qb.push(" AND (t.closed_at IS NULL OR t.closed_at >= ").push_bind(after).push(")");
@@ -599,52 +661,303 @@ async fn delete_rows(conn: &mut SqliteConnection, ids: &[String]) -> Result<(), 
     Ok(())
 }
 
+/// The facts `valid_parent` needs for making `child` (None: a new ticket) a part of `parent`.
+async fn parent_facts(
+    conn: &mut SqliteConnection,
+    child: Option<(&str, &str)>,
+    parent: &str,
+) -> TResult<(ParentFacts, String, String)> {
+    let row: Option<(String, Option<String>, String, String, i64)> = sqlx::query_as(
+        "SELECT t.project_id, t.parent_id, t.stage, COALESCE(p.key, ''), t.number FROM tickets t \
+         JOIN projects p ON p.id = t.project_id WHERE t.id = ?",
+    )
+    .bind(parent)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((parent_project, grand, stage, pkey, number)) = row else {
+        return Err(TicketError::Invalid("the parent ticket does not exist".into()));
+    };
+    let (child_id, child_project) = child.unwrap_or(("", &parent_project));
+    let child_has_parts = if child_id.is_empty() {
+        false
+    } else {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tickets WHERE parent_id = ?")
+            .bind(child_id)
+            .fetch_one(&mut *conn)
+            .await?;
+        n > 0
+    };
+    let facts = ParentFacts {
+        same_project: child_project == parent_project,
+        is_self: child_id == parent,
+        parent_has_parent: grand.is_some(),
+        child_has_parts,
+        parent_has_active_attempt: has_active_attempt(conn, parent).await?,
+        parent_closed: stage_of(&stage)?.is_closed(),
+    };
+    Ok((facts, format_key(&pkey, u32::try_from(number).unwrap_or(0)), parent_project))
+}
+
+/// The parent's last part by rank (id), if it has any.
+async fn last_part(conn: &mut SqliteConnection, parent: &str) -> Result<Option<String>, StoreError> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM tickets WHERE parent_id = ? ORDER BY rank DESC, id DESC LIMIT 1")
+            .bind(parent)
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(row.map(|(id,)| id))
+}
+
+/// `parted` events on a parent and a part.
+async fn parted_events(
+    conn: &mut SqliteConnection,
+    (parent, parent_key): (&str, &str),
+    (part, part_key): (&str, &str),
+    removed: bool,
+    now: i64,
+) -> Result<(), StoreError> {
+    let data =
+        json!({"parentId": parent, "parentKey": parent_key, "partId": part, "partKey": part_key, "removed": removed});
+    insert_event(conn, parent, EventKind::Parted, Actor::User, None, Some(data.clone()), now).await?;
+    insert_event(conn, part, EventKind::Parted, Actor::User, None, Some(data), now).await?;
+    Ok(())
+}
+
+/// Inserts a ticket with the project's next number (see `Store::create_ticket`). A part (`t.parent`) is checked
+/// against the parent rules, goes after the parent's last part (or right after the parent) unless `before`/`after`
+/// say otherwise, and with `blocked_by_previous` is blocked by that last part.
+async fn insert_ticket(
+    conn: &mut SqliteConnection,
+    id: &str,
+    project_id: &str,
+    t: &ValidNewTicket,
+    now: i64,
+) -> TResult<()> {
+    let number: Option<(i64,)> = sqlx::query_as(
+        "UPDATE projects SET next_ticket_number = next_ticket_number + 1 WHERE id = ? \
+         RETURNING next_ticket_number - 1",
+    )
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((number,)) = number else { return Err(TicketError::NotFound("project")) };
+    let mut previous = None;
+    let mut parent_key = String::new();
+    if let Some(parent) = &t.parent {
+        let (facts, key, _) = parent_facts(conn, Some(("", project_id)), parent).await?;
+        valid_parent(&facts)?;
+        parent_key = key;
+        previous = last_part(conn, parent).await?;
+    }
+    let place = if t.before.is_some() || t.after.is_some() {
+        Place::Between { after: t.after.clone(), before: t.before.clone() }
+    } else if let Some(parent) = &t.parent {
+        Place::Between { after: Some(previous.clone().unwrap_or_else(|| parent.clone())), before: None }
+    } else {
+        Place::Edge(RankEdge::Top, t.stage)
+    };
+    let key = rank_for(conn, project_id, None, &place).await?;
+    let closed_at = if t.stage.is_closed() { Some(now) } else { None };
+    sqlx::query(
+        "INSERT INTO tickets (id, seq, project_id, number, title, description, stage, priority, rank, created_at, \
+         updated_at, closed_at, parent_id) \
+         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(project_id)
+    .bind(number)
+    .bind(&t.title)
+    .bind(&t.description)
+    .bind(t.stage.as_str())
+    .bind(t.priority.as_str())
+    .bind(&key)
+    .bind(now)
+    .bind(now)
+    .bind(closed_at)
+    .bind(&t.parent)
+    .execute(&mut *conn)
+    .await?;
+    replace_set(conn, "ticket_labels", "label", id, &t.labels).await?;
+    replace_set(conn, "ticket_areas", "area", id, &t.areas).await?;
+    if rank::needs_rebalance(&key) {
+        rebalance(conn, project_id).await?;
+    }
+    insert_event(conn, id, EventKind::Created, Actor::User, None, Some(json!({"stage": t.stage})), now).await?;
+    if let Some(parent) = &t.parent {
+        let (pkey,): (String,) = sqlx::query_as("SELECT COALESCE(key, '') FROM projects WHERE id = ?")
+            .bind(project_id)
+            .fetch_one(&mut *conn)
+            .await?;
+        let own_key = format_key(&pkey, u32::try_from(number).unwrap_or(0));
+        parted_events(conn, (parent, &parent_key), (id, &own_key), false, now).await?;
+        if let (true, Some(prev)) = (t.blocked_by_previous, previous) {
+            sqlx::query("INSERT INTO ticket_links (from_id, to_id, kind, created_at) VALUES (?, ?, 'blocks', ?)")
+                .bind(&prev)
+                .bind(id)
+                .bind(now)
+                .execute(&mut *conn)
+                .await?;
+            let prev_key = ticket_head(conn, &prev).await?.map(|h| h.1).unwrap_or_default();
+            link_events(conn, EventKind::Linked, LinkKind::Blocks, (&prev, &prev_key), (id, &own_key), now).await?;
+        }
+    }
+    Ok(())
+}
+
+/// The keys of a ticket's open parts, rank order (ignoring `except`).
+async fn open_part_keys(
+    conn: &mut SqliteConnection,
+    parent: &str,
+    except: &HashSet<String>,
+) -> Result<Vec<String>, StoreError> {
+    let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+        "SELECT t.id, COALESCE(p.key, ''), t.number, t.stage FROM tickets t JOIN projects p ON p.id = t.project_id \
+         WHERE t.parent_id = ? ORDER BY t.rank, t.id",
+    )
+    .bind(parent)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut list = vec![];
+    for (id, k, n, st) in rows {
+        if !except.contains(&id) {
+            list.push((format_key(&k, u32::try_from(n).unwrap_or(0)), stage_of(&st)?));
+        }
+    }
+    Ok(open_parts(list.iter().map(|(k, s)| (k.as_str(), *s))))
+}
+
+async fn has_parts(conn: &mut SqliteConnection, id: &str) -> Result<bool, StoreError> {
+    let (n,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM tickets WHERE parent_id = ?").bind(id).fetch_one(&mut *conn).await?;
+    Ok(n > 0)
+}
+
 impl Store {
     /// Adds a ticket with the project's next number, at the top of its stage (or where `before`/`after` say), with a
     /// `created` event. NotFound("project") if there is no such project.
     pub async fn create_ticket(&self, id: &str, project_id: &str, t: &ValidNewTicket, now: i64) -> TResult<Ticket> {
         let mut tx = self.pool.begin().await?;
-        let number: Option<(i64,)> = sqlx::query_as(
-            "UPDATE projects SET next_ticket_number = next_ticket_number + 1 WHERE id = ? \
-             RETURNING next_ticket_number - 1",
-        )
-        .bind(project_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some((number,)) = number else { return Err(TicketError::NotFound("project")) };
-        let place = if t.before.is_some() || t.after.is_some() {
-            Place::Between { after: t.after.clone(), before: t.before.clone() }
-        } else {
-            Place::Edge(RankEdge::Top, t.stage)
-        };
-        let key = rank_for(&mut tx, project_id, None, &place).await?;
-        let closed_at = if t.stage.is_closed() { Some(now) } else { None };
-        sqlx::query(
-            "INSERT INTO tickets (id, seq, project_id, number, title, description, stage, priority, rank, created_at, \
-             updated_at, closed_at) \
-             VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(project_id)
-        .bind(number)
-        .bind(&t.title)
-        .bind(&t.description)
-        .bind(t.stage.as_str())
-        .bind(t.priority.as_str())
-        .bind(&key)
-        .bind(now)
-        .bind(now)
-        .bind(closed_at)
-        .execute(&mut *tx)
-        .await?;
-        replace_set(&mut tx, "ticket_labels", "label", id, &t.labels).await?;
-        replace_set(&mut tx, "ticket_areas", "area", id, &t.areas).await?;
-        if rank::needs_rebalance(&key) {
-            rebalance(&mut tx, project_id).await?;
-        }
-        insert_event(&mut tx, id, EventKind::Created, Actor::User, None, Some(json!({"stage": t.stage})), now).await?;
+        insert_ticket(&mut tx, id, project_id, t, now).await?;
         tx.commit().await?;
         self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))
+    }
+
+    /// Makes several parts of `parent`, in order after its existing parts, in one transaction (PDT-38). With
+    /// `blocked_by_previous`, each is blocked by the part before it.
+    pub async fn create_parts(&self, parent: &str, v: &ValidParts, now: i64) -> TResult<Vec<TicketSummary>> {
+        let mut tx = self.pool.begin().await?;
+        let Some((project_id, _, _)) = ticket_head(&mut tx, parent).await? else {
+            return Err(TicketError::NotFound("ticket"));
+        };
+        let mut ids = vec![];
+        for (title, description) in &v.parts {
+            let id = uuid::Uuid::now_v7().to_string();
+            let t = ValidNewTicket {
+                title: title.clone(),
+                description: description.clone(),
+                stage: TicketStage::Draft,
+                priority: Priority::None,
+                labels: vec![],
+                areas: vec![],
+                before: None,
+                after: None,
+                parent: Some(parent.to_string()),
+                blocked_by_previous: v.blocked_by_previous,
+            };
+            insert_ticket(&mut tx, &id, &project_id, &t, now).await?;
+            ids.push(id);
+        }
+        tx.commit().await?;
+        let mut out = vec![];
+        for id in ids {
+            out.extend(self.get_ticket_summary(&id).await?);
+        }
+        Ok(out)
+    }
+
+    /// The parts of each of `parents`, in rank order (PDT-38).
+    pub async fn part_rows(&self, parents: &[String]) -> Result<Vec<PartRow>, StoreError> {
+        let mut out = vec![];
+        if parents.is_empty() {
+            return Ok(out);
+        }
+        let mut conn = self.pool.acquire().await?;
+        for chunk in parents.chunks(500) {
+            let mut qb = QueryBuilder::<Sqlite>::new(format!(
+                "SELECT t.parent_id, t.id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, \
+                 {BLOCKED_BY} AS blocked_by, \
+                 (SELECT a.id FROM attempts a WHERE a.ticket_id = t.id \
+                  ORDER BY a.state = 'active' DESC, a.created_at DESC, a.id DESC LIMIT 1) AS attempt_id \
+                 FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.parent_id IN "
+            ));
+            push_in(&mut qb, chunk);
+            qb.push(" ORDER BY t.parent_id, t.rank, t.id");
+            let rows = qb.build().fetch_all(&mut *conn).await?;
+            let attempt_ids: Vec<String> =
+                rows.iter().filter_map(|r| r.try_get::<Option<String>, _>("attempt_id").ok().flatten()).collect();
+            let mut states: HashMap<String, AttemptState> = HashMap::new();
+            for ids in attempt_ids.chunks(500) {
+                let mut qb = QueryBuilder::<Sqlite>::new("SELECT id, state FROM attempts WHERE id IN ");
+                push_in(&mut qb, ids);
+                for r in qb.build().fetch_all(&mut *conn).await? {
+                    let state: String = r.try_get("state")?;
+                    states.insert(
+                        r.try_get("id")?,
+                        AttemptState::parse(&state).ok_or_else(|| corrupt("attempt state", &state))?,
+                    );
+                }
+            }
+            for r in &rows {
+                let pkey: String = r.try_get("pkey")?;
+                let attempt_id: Option<String> = r.try_get("attempt_id")?;
+                out.push(PartRow {
+                    parent_id: r.try_get("parent_id")?,
+                    id: r.try_get("id")?,
+                    key: format_key(&pkey, u32::try_from(r.try_get::<i64, _>("number")?).unwrap_or(0)),
+                    title: r.try_get("title")?,
+                    stage: stage_of(&r.try_get::<String, _>("stage")?)?,
+                    attempt: attempt_id.and_then(|id| states.get(&id).map(|s| (id, *s))),
+                    open_blockers: u32::try_from(r.try_get::<i64, _>("blocked_by")?).unwrap_or(0),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// A parent's shared workspace (PDT-38), if it has one.
+    pub async fn ticket_workspace(&self, id: &str) -> Result<Option<String>, StoreError> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT workspace_id FROM tickets WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
+        Ok(row.and_then(|(w,)| w))
+    }
+
+    /// Remembers (or forgets, with None) a parent's shared workspace.
+    pub async fn set_ticket_workspace(&self, id: &str, workspace_id: Option<&str>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE tickets SET workspace_id = ? WHERE id = ?")
+            .bind(workspace_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// A part started: its parent moves to In progress if it was Draft, Ready or To do (a system `moved` event).
+    /// Returns whether it moved.
+    pub async fn part_started(&self, parent: &str, now: i64) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let Some((_, _, stage)) = ticket_head(&mut tx, parent).await? else { return Ok(false) };
+        if !matches!(stage, TicketStage::Draft | TicketStage::Ready | TicketStage::Todo) {
+            return Ok(false);
+        }
+        sqlx::query("UPDATE tickets SET stage = 'in_progress', updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(parent)
+            .execute(&mut *tx)
+            .await?;
+        let data = json!({"from": stage, "to": TicketStage::InProgress});
+        insert_event(&mut tx, parent, EventKind::Moved, Actor::System, None, Some(data), now).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     pub async fn get_ticket_summary(&self, id: &str) -> Result<Option<TicketSummary>, StoreError> {
@@ -721,7 +1034,20 @@ impl Store {
         .collect::<Result<Vec<_>, StoreError>>()?;
         let pkey = s.key.rsplit_once('-').map(|(k, _)| k).unwrap_or("");
         let default_branch = attempt_branch(pkey, s.number, &s.title);
-        Ok(Some(Ticket { summary: s, description, links, attempts, default_branch, sessions, overlaps: vec![] }))
+        let sql = format!("{} WHERE t.parent_id = ? ORDER BY t.rank, t.id", summary_select());
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_all(&mut *conn).await?;
+        let mut part_list = rows.iter().map(to_summary).collect::<Result<Vec<_>, _>>()?;
+        decorate(&mut conn, &mut part_list).await?;
+        Ok(Some(Ticket {
+            summary: s,
+            description,
+            links,
+            attempts,
+            default_branch,
+            sessions,
+            overlaps: vec![],
+            part_list,
+        }))
     }
 
     /// The backlog: filtered, searched, sorted and paged with a keyset cursor, plus the total that match.
@@ -784,8 +1110,33 @@ impl Store {
             insert_event(&mut tx, id, EventKind::Edited, Actor::User, None, Some(json!({"fields": fields})), now)
                 .await?;
         }
+        if let Some(parent) = &p.parent {
+            let current = cur.parent.as_ref().map(|x| x.id.as_str());
+            if current != parent.as_deref() {
+                if let Some(old) = &cur.parent {
+                    parted_events(&mut tx, (&old.id, &old.key), (id, &cur.key), true, now).await?;
+                }
+                if let Some(new) = parent {
+                    let (facts, key, _) = parent_facts(&mut tx, Some((id, &cur.project_id)), new).await?;
+                    valid_parent(&facts)?;
+                    parted_events(&mut tx, (new, &key), (id, &cur.key), false, now).await?;
+                }
+                sqlx::query("UPDATE tickets SET parent_id = ?, updated_at = ? WHERE id = ?")
+                    .bind(parent)
+                    .bind(now)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
         let stage = p.stage.unwrap_or(cur.stage);
         if stage != cur.stage {
+            if stage.is_closed() {
+                let open = open_part_keys(&mut tx, id, &HashSet::new()).await?;
+                if !open.is_empty() {
+                    return Err(TicketError::PartsOpen { key: cur.key.clone(), open });
+                }
+            }
             change_stage(&mut tx, id, cur.stage, stage, now).await?;
         }
         if let Some(waiting) = p.waiting {
@@ -833,6 +1184,9 @@ impl Store {
         }
         if has_active_attempt(&mut tx, id).await? {
             return Ok(DeleteTicket::Active);
+        }
+        if has_parts(&mut tx, id).await? {
+            return Ok(DeleteTicket::HasParts);
         }
         delete_rows(&mut tx, &[id.to_string()]).await?;
         tx.commit().await?;
@@ -885,6 +1239,18 @@ impl Store {
         let mut count = 0u32;
         match action {
             ValidBulk::Stage(to) => {
+                if to.is_closed() {
+                    // A parent closes only when its parts are closed already or close with it.
+                    let closing: HashSet<String> = ids.iter().cloned().collect();
+                    for (id, (_, key, from)) in &heads {
+                        if !from.is_closed() {
+                            let open = open_part_keys(&mut tx, id, &closing).await?;
+                            if !open.is_empty() {
+                                return Err(TicketError::PartsOpen { key: key.clone(), open });
+                            }
+                        }
+                    }
+                }
                 for (id, (_, _, from)) in &heads {
                     if from != to {
                         change_stage(&mut tx, id, *from, *to, now).await?;
@@ -960,6 +1326,21 @@ impl Store {
                 for (id, (_, key, _)) in &heads {
                     if has_active_attempt(&mut tx, id).await? {
                         return Err(TicketError::Active(key.clone()));
+                    }
+                    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tickets WHERE parent_id = ?")
+                        .bind(id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    if left > 0 {
+                        let (gone,): (i64,) = {
+                            let mut qb = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM tickets WHERE parent_id = ");
+                            qb.push_bind(id.clone()).push(" AND id IN ");
+                            push_in(&mut qb, &ids);
+                            qb.build_query_as().fetch_one(&mut *tx).await?
+                        };
+                        if gone < left {
+                            return Err(TicketError::HasParts(key.clone()));
+                        }
                     }
                 }
                 delete_rows(&mut tx, &ids).await?;
@@ -1461,7 +1842,13 @@ mod tests {
             areas: vec![],
             before: None,
             after: None,
+            parent: None,
+            blocked_by_previous: false,
         }
+    }
+
+    fn part(title: &str, parent: &str) -> ValidNewTicket {
+        ValidNewTicket { parent: Some(parent.into()), ..new(title) }
     }
 
     async fn add(store: &Store, id: &str, t: ValidNewTicket) -> Ticket {
@@ -2199,5 +2586,152 @@ mod tests {
         ev("b", &["x", "z"], 4).await.unwrap();
         assert_eq!(store.last_overlap_files("a", "b").await.unwrap(), Some(vec!["x".into(), "z".into()]));
         assert_eq!(store.last_overlap_files("a", "c").await.unwrap(), Some(vec!["y".into()]));
+    }
+
+    #[tokio::test]
+    async fn parts_follow_their_parent_in_order_and_can_block_each_other() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "other", new("Other")).await;
+        add(&store, "par", new("Parent")).await;
+        add(&store, "top", new("Top")).await;
+        let a = add(&store, "a", part("5a", "par")).await;
+        assert_eq!(a.summary.parent.as_ref().map(|p| p.key.as_str()), Some("PX-2"));
+        let b = store
+            .create_ticket("b", "p", &ValidNewTicket { blocked_by_previous: true, ..part("5b", "par") }, 2)
+            .await
+            .unwrap();
+        assert_eq!(b.summary.blocked_by, 1, "5a blocks 5b");
+        // Parts sit right after the parent, in the order made.
+        assert_eq!(ids(&store, in_project()).await, ["top", "par", "a", "b", "other"]);
+        let parent = store.get_ticket("par").await.unwrap().unwrap();
+        assert_eq!(parent.part_list.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert!(events(&store, "par").await.contains(&EventKind::Parted));
+        assert!(events(&store, "a").await.contains(&EventKind::Parted));
+        // Filters.
+        let only = |q: TicketQuery| ids(&store, TicketQuery { project: Some("p".into()), ..q });
+        assert_eq!(only(TicketQuery { parent: Some("par".into()), ..Default::default() }).await, ["a", "b"]);
+        assert_eq!(
+            only(TicketQuery { parent: Some("none".into()), ..Default::default() }).await,
+            ["top", "par", "other"]
+        );
+        assert_eq!(only(TicketQuery { has_parts: Some(true), ..Default::default() }).await, ["par"]);
+        assert_eq!(only(TicketQuery { has_parts: Some(false), ..Default::default() }).await.len(), 4);
+        // Several at once, after the existing ones, each blocked by the one before.
+        let v = ValidParts {
+            parts: vec![("5c".into(), "c".into()), ("5d".into(), String::new())],
+            blocked_by_previous: true,
+        };
+        let made = store.create_parts("par", &v, 3).await.unwrap();
+        assert_eq!(made.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), ["5c", "5d"]);
+        assert!(made.iter().all(|t| t.blocked_by == 1));
+        let rows = store.part_rows(&["par".into()]).await.unwrap();
+        assert_eq!(rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["5a", "5b", "5c", "5d"]);
+        assert_eq!(rows.iter().map(|r| r.open_blockers).collect::<Vec<_>>(), [0, 1, 1, 1]);
+        assert!(rows.iter().all(|r| r.attempt.is_none() && r.parent_id == "par"));
+    }
+
+    #[tokio::test]
+    async fn the_parent_rules_hold_in_the_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "par", new("Parent")).await;
+        add(&store, "a", part("A", "par")).await;
+        add(&store, "x", new("X")).await;
+        let err = |r: TResult<Option<Ticket>>| match r {
+            Err(TicketError::InvalidParent(rule)) => rule,
+            other => panic!("{other:?}"),
+        };
+        use pdt_core::parts::ParentRule;
+        let to = |p: &str| ValidPatch { parent: Some(Some(p.into())), ..Default::default() };
+        assert_eq!(err(store.patch_ticket("x", &to("a"), 2).await), ParentRule::ParentIsAPart);
+        assert_eq!(err(store.patch_ticket("par", &to("x"), 2).await), ParentRule::ChildHasParts);
+        assert_eq!(err(store.patch_ticket("x", &to("x"), 2).await), ParentRule::Itself);
+        assert!(matches!(
+            store.create_ticket("y", "p", &part("Y", "a"), 2).await,
+            Err(TicketError::InvalidParent(ParentRule::ParentIsAPart))
+        ));
+        store.start_attempt("at", "x", None, "b", "main", "c", json!({}), 3).await.unwrap();
+        assert!(matches!(
+            store.create_ticket("y", "p", &part("Y", "x"), 2).await,
+            Err(TicketError::InvalidParent(ParentRule::ParentActive))
+        ));
+        // Move a ticket in, then detach it.
+        add(&store, "z", new("Z")).await;
+        let z = store.patch_ticket("z", &to("par"), 4).await.unwrap().unwrap();
+        assert_eq!(z.summary.parent.map(|p| p.id), Some("par".into()));
+        let z = store
+            .patch_ticket("z", &ValidPatch { parent: Some(None), ..Default::default() }, 5)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(z.summary.parent, None);
+        assert_eq!(events(&store, "z").await.iter().filter(|e| **e == EventKind::Parted).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_parent_closes_only_after_its_parts_and_is_not_deleted_with_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "par", new("Parent")).await;
+        add(&store, "a", part("A", "par")).await;
+        add(&store, "b", part("B", "par")).await;
+        let done = ValidPatch { stage: Some(TicketStage::Done), ..Default::default() };
+        match store.patch_ticket("par", &done, 2).await {
+            Err(TicketError::PartsOpen { key, open }) => {
+                assert_eq!((key.as_str(), open), ("PX-1", vec!["PX-2".to_string(), "PX-3".to_string()]))
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(store.delete_ticket("par").await.unwrap(), DeleteTicket::HasParts);
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(matches!(
+            store.bulk_tickets(&ids(&["par", "a"]), &ValidBulk::Stage(TicketStage::Done), 3).await,
+            Err(TicketError::PartsOpen { .. })
+        ));
+        assert!(matches!(
+            store.bulk_tickets(&ids(&["par", "a"]), &ValidBulk::Delete, 3).await,
+            Err(TicketError::HasParts(_))
+        ));
+        // Closing the parent with all its parts in one bulk move works; so does a move once they are closed.
+        store.bulk_tickets(&ids(&["a"]), &ValidBulk::Stage(TicketStage::WontDo), 4).await.unwrap();
+        store.bulk_tickets(&ids(&["par", "b"]), &ValidBulk::Stage(TicketStage::Done), 5).await.unwrap();
+        assert_eq!(store.get_ticket("par").await.unwrap().unwrap().summary.stage, TicketStage::Done);
+        // Deleting a parent with all its parts at once is fine, and removing the project still works with parts.
+        store.bulk_tickets(&ids(&["par", "a", "b"]), &ValidBulk::Delete, 6).await.unwrap();
+        add(&store, "p2", new("P2")).await;
+        add(&store, "c", part("C", "p2")).await;
+        assert!(store.delete_project("p").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_part_starting_moves_its_parent_once_and_its_workspace_shows_the_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "par", ValidNewTicket { stage: TicketStage::Todo, ..new("Parent") }).await;
+        add(&store, "a", part("A", "par")).await;
+        assert!(store.part_started("par", 2).await.unwrap());
+        assert!(!store.part_started("par", 3).await.unwrap());
+        assert_eq!(store.get_ticket("par").await.unwrap().unwrap().summary.stage, TicketStage::InProgress);
+
+        let w = pdt_core::workspace::Workspace {
+            id: "w".into(),
+            name: "PX-1".into(),
+            project_id: None,
+            position: 0,
+            created_at: 1,
+            tabs: vec![],
+            ticket: None,
+        };
+        store.insert_workspace(&w).await.unwrap();
+        assert!(store.set_ticket_workspace("par", Some("w")).await.unwrap());
+        assert_eq!(store.ticket_workspace("par").await.unwrap().as_deref(), Some("w"));
+        let t = store.get_workspace("w").await.unwrap().unwrap().ticket.unwrap();
+        assert_eq!((t.key.as_str(), t.attempt_id), ("PX-1", None));
+        store.start_attempt("at", "a", None, "b", "main", "c", json!({}), 4).await.unwrap();
+        let t = store.get_workspace("w").await.unwrap().unwrap().ticket.unwrap();
+        assert_eq!((t.attempt_id.as_deref(), t.attempt_state), (Some("at"), Some(AttemptState::Active)));
+        let rows = store.part_rows(&["par".into()]).await.unwrap();
+        assert_eq!(rows[0].attempt, Some(("at".into(), AttemptState::Active)));
     }
 }

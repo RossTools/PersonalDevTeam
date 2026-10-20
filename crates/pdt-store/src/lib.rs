@@ -11,7 +11,7 @@ mod worktrees;
 pub use error::StoreError;
 pub use events::NewEvent;
 pub use host::ProjectSettings;
-pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, StartedAttempt, TicketError};
+pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt, TicketError};
 pub use workspaces::DeleteWorkspace;
 
 use pdt_core::project::Project;

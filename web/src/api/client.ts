@@ -44,6 +44,8 @@ import type { EventPage } from './gen/EventPage';
 import type { EventQuery } from './gen/EventQuery';
 import type { NewComment } from './gen/NewComment';
 import type { NewTicket } from './gen/NewTicket';
+import type { NewParts } from './gen/NewParts';
+import type { PartsCreated } from './gen/PartsCreated';
 import type { RankMove } from './gen/RankMove';
 import type { ProjectAreas } from './gen/ProjectAreas';
 import type { Ticket } from './gen/Ticket';
@@ -216,6 +218,9 @@ export const api = {
     request<EventPage>(`/api/tickets/${enc(id)}/events${queryString(q)}`),
   commentOnTicket: (id: string, body: string) =>
     request<TicketEvent>(`/api/tickets/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ body } satisfies NewComment) }),
+  /** Several parts of a parent, in order after its existing parts (PDT-38). */
+  createParts: (id: string, b: NewParts) =>
+    request<PartsCreated>(`/api/tickets/${enc(id)}/parts`, { method: 'POST', body: JSON.stringify(b) }),
   startTicket: (id: string, b: StartTicket) =>
     request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),

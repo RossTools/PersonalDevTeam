@@ -37,7 +37,7 @@ Types (pdt-core `ticket.rs`, ts-rs, camelCase):
 - `Ticket` gains `partList: TicketSummary[]` (rank order; empty for a leaf). (`parts` is the roll-up on the summary.)
 - `NewTicket` gains `parent?: string`, `blockedByPrevious?: boolean` (with `parent`: a `blocks` link from the
   parent's last part by rank, if any). With `parent` and no `before`/`after`, the part goes after the parent's last part.
-- `TicketPatch` gains `parent?: string | null` (null detaches).
+- `TicketPatch` gains `parent?: string` (`""` detaches; ts-rs cannot express absent vs null without a warning).
 - `TicketQuery` gains `parent?: string` (`<id>` or `none`) and `hasParts?: boolean`.
 - `StartTicket` gains `next?: boolean` (on a parent: start its next part).
 - `NewParts { parts: { title, description? }[], blockedByPrevious?: boolean }` → `{ items: TicketSummary[] }`.
@@ -74,9 +74,9 @@ Routes:
   then the ticket's (with the existing note). Tests: block present, order, parent text cut first, leaf prompt unchanged.
 
 ### 3. Migration and store — crates/pdt-store
-- `0018_ticket_parts.sql`: `tickets.parent_id` (REFERENCES tickets ON DELETE RESTRICT), `tickets.workspace_id`
-  (REFERENCES workspaces ON DELETE SET NULL), `tickets_by_parent` index. Check RESTRICT works with the store's
-  `foreign_keys` pragma.
+- `0018_ticket_parts.sql`: `tickets.parent_id` (REFERENCES tickets ON DELETE SET NULL; the store refuses deleting a parent, since RESTRICT would break a project's cascade), `tickets.workspace_id`
+  (REFERENCES workspaces ON DELETE SET NULL), `tickets_by_parent` index.
+  
 - Row mapping: `parent` on summaries (join for key/title); raw part rows for the roll-up (`part_rows(parent_ids)`:
   id, key, title, stage, rank, active attempt id/state, open-blocker count) in one query per page.
 - `create_ticket` with parent (validate in the transaction; rank after the last part; optional blocks link; `parted`
@@ -85,7 +85,7 @@ Routes:
 - Filters: `parent = ?` / `parent_id IS NULL`, `hasParts` (EXISTS).
 - `set_ticket_workspace`, and `Workspace.ticket` for a parent's workspace (from `tickets.workspace_id`, attempt from
   its newest active part).
-- Tests: rules enforced in the store too (races), RESTRICT delete, part ordering, bulk all-or-nothing with a parent,
+- Tests: rules enforced in the store too (races), parent delete refused, part ordering, bulk all-or-nothing with a parent,
   filters, workspace ticket.
 
 ### 4. pdt-api

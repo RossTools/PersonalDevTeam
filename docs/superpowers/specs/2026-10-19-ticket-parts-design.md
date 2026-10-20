@@ -67,7 +67,7 @@ stepper is kept as the parent's progress display (§7).
 One migration (`0018_ticket_parts.sql`, the next free number; the migrations area is exclusive):
 
 ```sql
-ALTER TABLE tickets ADD COLUMN parent_id TEXT REFERENCES tickets(id) ON DELETE RESTRICT;
+ALTER TABLE tickets ADD COLUMN parent_id TEXT REFERENCES tickets(id) ON DELETE SET NULL;  -- the store refuses to delete a parent
 ALTER TABLE tickets ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL;  -- a parent's shared workspace
 CREATE INDEX tickets_by_parent ON tickets (parent_id, rank) WHERE parent_id IS NOT NULL;
 ALTER TABLE attempts ADD COLUMN stacked_on TEXT REFERENCES attempts(id) ON DELETE SET NULL;  -- PR 2 (§6)
@@ -167,7 +167,7 @@ the squash commit as different changes to the same lines. The fix is to replay o
 | Route | Change |
 |---|---|
 | `POST /api/projects/{id}/tickets` | `parent?`; `after?` defaults to the parent's last part; `blockedByPrevious?` adds the `blocks` link |
-| `PATCH /api/tickets/{id}` | `parent: id \| null` (rules in §4; `409 invalid_parent` names the broken rule); closing a parent with open parts → `409 parts_open` |
+| `PATCH /api/tickets/{id}` | `parent: id \| ""` (`""` detaches) (rules in §4; `409 invalid_parent` names the broken rule); closing a parent with open parts → `409 parts_open` |
 | `GET /api/tickets` | `parent=<id>\|none`, `hasParts=true\|false`; summaries carry `parent {id, key, title}` and `parts: PartsProgress` |
 | `GET /api/tickets/{id}` | `parts: [TicketSummary]` in rank order |
 | `POST /api/tickets/{id}/start` | refused on a parent (`409 ticket_has_parts`); `next: true` on a parent starts its next part; `stack: true` (PR 2) |
@@ -203,7 +203,7 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
 
 - pdt-core: valid-parent rules (each refusal), roll-up states and order, next part, prompt with parts and the cap
   (parent description cut first).
-- pdt-store: `parent_id` and the RESTRICT delete, list by parent, bulk part creation all-or-nothing.
+- pdt-store: `parent_id` and refusing to delete a parent, list by parent, bulk part creation all-or-nothing.
 - pdt-api: Start refused on parents and `next`; parent to In progress on the first part's start; a parent moves
   to Done by PATCH, bulk or board drag once every part is closed and `parts_open` before; the shared workspace survives a part's finish.
 - pdt-git (PR 2): `rebase --onto` after a squash merge applies cleanly where `merge main` conflicts (temp repo);

@@ -340,6 +340,8 @@ async fn seed_tickets(store: &Store, project_id: &str, wt: &Worktree, now: i64) 
             areas: Some(areas.iter().map(|a| (*a).to_string()).collect()),
             before: Option::None,
             after: Option::None,
+            parent: Option::None,
+            blocked_by_previous: Option::None,
         };
         let valid = new.validate().context("demo ticket")?;
         let t = store.create_ticket(&uuid::Uuid::now_v7().to_string(), project_id, &valid, now).await?;
@@ -349,6 +351,20 @@ async fn seed_tickets(store: &Store, project_id: &str, wt: &Worktree, now: i64) 
     // "Remember the signed-in user" blocks "Password reset by email".
     store.add_link(&ids[1], &ids[2], LinkKind::Blocks, now).await?;
     store.add_comment(&ids[0], "Validation messages should match the design doc.", now).await?;
+    // A ticket that takes several PRs (PDT-38): "Accounts" with the first three as its parts.
+    let accounts = NewTicket {
+        title: "Accounts".into(),
+        description: Some("Sign in, stay signed in, reset a password: one PR each.".into()),
+        stage: Some(InProgress),
+        before: Some(ids[0].clone()),
+        ..Default::default()
+    };
+    let accounts = accounts.validate().context("demo parent")?;
+    let parent = store.create_ticket(&uuid::Uuid::now_v7().to_string(), project_id, &accounts, now).await?.summary.id;
+    for id in &ids[..3] {
+        let patch = pdt_core::ticket::ValidPatch { parent: Some(Some(parent.clone())), ..Default::default() };
+        store.patch_ticket(id, &patch, now).await?;
+    }
     // The login form is being worked on in the feature worktree.
     let attempt = uuid::Uuid::now_v7().to_string();
     store.insert_attempt(&attempt, &ids[0], Some(&wt.id), &wt.branch, "main", &wt.base_commit, now - 5 * HOUR).await?;
@@ -459,7 +475,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(tickets.total, 10);
+        assert_eq!(tickets.total, 11);
+        let parts: Vec<&str> = tickets.items.iter().filter(|t| t.parent.is_some()).map(|t| t.title.as_str()).collect();
+        assert_eq!(parts.len(), 3, "Accounts has three parts: {parts:?}");
         let with_areas = tickets.items.iter().filter(|t| !t.areas.is_empty()).count();
         assert_eq!(with_areas, 5);
         // The login form has an active attempt on the feature worktree, whose changes are in its areas' files.

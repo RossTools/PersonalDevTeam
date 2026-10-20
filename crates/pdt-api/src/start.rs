@@ -11,8 +11,9 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::conversation::{PermissionMode, SessionMode};
+use pdt_core::parts::TicketParent;
 use pdt_core::session::{SessionKind, ValidSession};
-use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, started_session_title, ticket_prompt};
+use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, part_prompt, started_session_title};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
 use pdt_core::workspace::{TabItem, Workspace, valid_workspace_name};
 use pdt_store::{AttemptInfo, TicketError};
@@ -45,8 +46,27 @@ pub(crate) async fn start(
     let Json(input) = payload?;
     let v = input.validate()?;
     let guard = st.ticket_start_lock.lock().await;
-    let ticket = load_ticket(&st, &id).await?;
+    let mut ticket = load_ticket(&st, &id).await?;
+    // A parent is never started itself (PDT-38): `next` starts its next part instead.
+    let mut id = id;
+    if !ticket.part_list.is_empty() {
+        let key = ticket.summary.key.clone();
+        if !v.next {
+            return Err(conflict(
+                "ticket_has_parts",
+                format!("{key} has parts; start one of them (or its next part) instead"),
+            ));
+        }
+        match crate::parts::next(&st, &id).await? {
+            Ok(part) => {
+                id = part;
+                ticket = load_ticket(&st, &id).await?;
+            }
+            Err(why) => return Err(conflict("no_next_part", format!("{key} has no part to start: {why}"))),
+        }
+    }
     let key = ticket.summary.key.clone();
+    let parent = ticket.summary.parent.clone();
     if ticket.summary.stage.is_closed() {
         return Err(conflict("ticket_closed", format!("{key} is closed; move it back to Ready to start it")));
     }
@@ -129,7 +149,10 @@ pub(crate) async fn start(
         {
             tracing::warn!(ticket = %id, error = %e, "could not record the chat on the timeline");
         }
-        open_tab_before_chat(&st, &project.id, &key, &id, &attempt_id, &chat.id, &v).await;
+        open_tab_before_chat(&st, &project.id, &key, &id, &attempt_id, &chat.id, &v, parent.as_ref()).await;
+        if let Some(p) = &parent {
+            part_started(&st, p).await;
+        }
         let session = st.store.get_session(&chat.id).await?.ok_or_else(|| ApiError::not_found("session"))?;
         let ticket = load_ticket(&st, &id).await?;
         let attempt =
@@ -137,6 +160,13 @@ pub(crate) async fn start(
         return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session })));
     }
 
+    let part_context = match crate::parts::context(&st, &ticket).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(ticket = %id, error = ?e, "could not read the part's parent for its prompt");
+            None
+        }
+    };
     let conversation = v.session_mode == SessionMode::Conversation;
     let permission_mode =
         conversation.then_some(if v.bypass_permissions { PermissionMode::Bypass } else { PermissionMode::Ask });
@@ -149,7 +179,13 @@ pub(crate) async fn start(
             bypass_permissions: v.bypass_permissions,
             size: v.size,
             // A conversation gets it as its first message, a terminal as the agent's last argument.
-            initial_prompt: Some(ticket_prompt(&key, &ticket.summary.title, &ticket.description, &branch)),
+            initial_prompt: Some(part_prompt(
+                &key,
+                &ticket.summary.title,
+                &ticket.description,
+                &branch,
+                part_context.as_ref(),
+            )),
             mode: v.session_mode,
             model: None,
             permission_mode,
@@ -173,7 +209,10 @@ pub(crate) async fn start(
     if let Err(e) = st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await {
         tracing::warn!(ticket = %id, error = %e, "could not record the started session on the timeline");
     }
-    open_tabs(&st, &project.id, &key, &id, &attempt_id, &session.id, &v).await;
+    open_tabs(&st, &project.id, &key, &id, &attempt_id, &session.id, &v, parent.as_ref()).await;
+    if let Some(p) = &parent {
+        part_started(&st, p).await;
+    }
     let ticket = load_ticket(&st, &id).await?;
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
@@ -214,6 +253,7 @@ async fn startable_chat(
 
 /// Start from a chat: the ticket's tab goes just before the chat's (which stays where it is); a chat with no tab gets
 /// both, as a new start would.
+#[allow(clippy::too_many_arguments)]
 async fn open_tab_before_chat(
     st: &AppState,
     project_id: &str,
@@ -222,6 +262,7 @@ async fn open_tab_before_chat(
     attempt_id: &str,
     session_id: &str,
     v: &ValidStart,
+    parent: Option<&TicketParent>,
 ) {
     match st.store.tab_for(&TabItem::Session(session_id.to_string())).await {
         Ok(Some(tab)) => {
@@ -231,8 +272,46 @@ async fn open_tab_before_chat(
                 tracing::warn!(error = %e, "could not open the ticket's tab");
             }
         }
-        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, session_id, v).await,
+        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, session_id, v, parent).await,
     }
+}
+
+/// A part started: its parent moves to In progress (if it had not yet). Logged, never fails Start.
+async fn part_started(st: &AppState, parent: &TicketParent) {
+    if let Err(e) = st.store.part_started(&parent.id, now_ms()).await {
+        tracing::warn!(ticket = %parent.key, error = %e, "could not move the parent to In progress");
+    }
+}
+
+/// The workspace a parent's parts share (PDT-38): the one it has, else a new one named after the parent with the
+/// parent's ticket tab first. None when it could not be made.
+async fn parent_workspace(st: &AppState, parent: &TicketParent) -> Option<String> {
+    if let Ok(Some(w)) = st.store.ticket_workspace(&parent.id).await
+        && matches!(st.store.get_workspace(&w).await, Ok(Some(_)))
+    {
+        return Some(w);
+    }
+    let w = Workspace {
+        id: uuid::Uuid::now_v7().to_string(),
+        name: valid_workspace_name(&parent.key).unwrap_or_else(|_| parent.key.chars().take(60).collect()),
+        project_id: None,
+        position: 0,
+        created_at: now_ms(),
+        tabs: vec![],
+        ticket: None,
+    };
+    if let Err(e) = st.store.insert_workspace(&w).await {
+        tracing::warn!(error = %e, "could not make the parent's workspace");
+        return None;
+    }
+    if let Err(e) = st.store.set_ticket_workspace(&parent.id, Some(&w.id)).await {
+        tracing::warn!(error = %e, "could not remember the parent's workspace");
+    }
+    let item = TabItem::Ticket(parent.id.clone());
+    if let Err(e) = st.store.open_tab(&uuid::Uuid::now_v7().to_string(), &w.id, &item, Some(0), now_ms()).await {
+        tracing::warn!(error = %e, "could not open the parent's tab");
+    }
+    Some(w.id)
 }
 
 /// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so
@@ -259,6 +338,7 @@ fn plural(n: usize) -> &'static str {
 
 /// The ticket's tab, then the session's right after it: in a new workspace named after the ticket, where asked, or
 /// at the end of the project's workspace (the attempt remembers a new workspace). A failure is logged: the session runs and can be opened from the sidebar.
+#[allow(clippy::too_many_arguments)]
 async fn open_tabs(
     st: &AppState,
     project_id: &str,
@@ -267,8 +347,13 @@ async fn open_tabs(
     attempt_id: &str,
     session_id: &str,
     v: &ValidStart,
+    parent: Option<&TicketParent>,
 ) {
-    let target = if v.new_workspace {
+    let target = if let (true, Some(p)) = (v.new_workspace, parent) {
+        // A part's tabs go to the end of its parent's workspace; the attempt has no workspace of its own, so
+        // finishing the part leaves the shared one.
+        parent_workspace(st, p).await.map(|w| (w, None))
+    } else if v.new_workspace {
         let w = Workspace {
             id: uuid::Uuid::now_v7().to_string(),
             name: valid_workspace_name(key).unwrap_or_else(|_| key.chars().take(60).collect()),

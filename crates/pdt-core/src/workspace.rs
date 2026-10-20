@@ -37,10 +37,14 @@ pub struct WorkspaceTicket {
     pub key: String,
     pub title: String,
     pub stage: crate::ticket::TicketStage,
-    pub attempt_id: String,
-    pub attempt_state: crate::ticket::AttemptState,
+    /// The attempt the workspace was made for; for a parent's workspace (PDT-38), its newest active part's attempt,
+    /// if any.
+    pub attempt_id: Option<String>,
+    pub attempt_state: Option<crate::ticket::AttemptState>,
     /// The attempt's pull request as pdtd last saw it (filled in by the API).
     pub pr: Option<crate::pr::PullRequestStatus>,
+    /// For a parent's workspace: the roll-up of its parts (filled in by the API).
+    pub parts: Option<crate::parts::PartsProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

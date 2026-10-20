@@ -11,6 +11,7 @@ mod host;
 mod host_guard;
 mod identity_guard;
 mod overlap;
+mod parts;
 mod project_settings;
 mod projects;
 mod pty_ws;

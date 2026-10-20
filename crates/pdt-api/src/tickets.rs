@@ -34,6 +34,7 @@ pub(crate) async fn list(
         idx.apply_summary(t);
         crate::github::apply_summary(&st, t);
     }
+    crate::parts::apply_page(&st, &mut page.items).await?;
     Ok(Json(page))
 }
 
@@ -69,7 +70,11 @@ pub(crate) async fn update(
         // Closing a ticket ends its attempt (tickets spec §6).
         crate::start::end_for_close(&st, &id, stage).await?;
     }
-    reply(&st, st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?).await
+    let t = st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?;
+    if patch.stage.is_some_and(|s| s.is_closed()) {
+        crate::parts::closed(&st, &id).await;
+    }
+    reply(&st, t).await
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -79,6 +84,10 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
         DeleteTicket::Active => {
             let key = st.store.get_ticket_summary(&id).await?.map(|t| t.key).unwrap_or(id);
             Err(TicketError::Active(key).into())
+        }
+        DeleteTicket::HasParts => {
+            let key = st.store.get_ticket_summary(&id).await?.map(|t| t.key).unwrap_or(id);
+            Err(TicketError::HasParts(key).into())
         }
     }
 }
@@ -107,6 +116,7 @@ pub(crate) async fn bulk(
     {
         for id in &req.ids {
             crate::start::end_for_close(&st, id, stage).await?;
+            crate::parts::closed(&st, id).await;
         }
     }
     Ok(Json(BulkResult { count }))

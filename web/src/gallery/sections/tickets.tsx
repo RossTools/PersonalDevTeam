@@ -270,7 +270,7 @@ function Backlog() {
 const card = (n: number, over: Partial<TicketSummary> = {}): TicketSummary => ({
   id: `g${n}`, projectId: 'gp', key: `PDT-${n}`, number: n, title: 'Board cards show the title on up to two lines, then cut it off with an ellipsis',
   stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [],
-  createdAt: NOW, updatedAt: NOW, closedAt: null, ...over,
+  createdAt: NOW, updatedAt: NOW, closedAt: null, parent: null, parts: null, ...over,
 });
 const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null, workspaceId: null, pr: null };
 const galleryPr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
@@ -344,7 +344,7 @@ function Cards() {
 }
 
 const startTicket = (over: Partial<FullTicket> = {}): FullTicket => ({
-  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], overlaps: [], ...over,
+  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], overlaps: [], partList: [], ...over,
 });
 const START_STATES: { label: string; ticket: FullTicket }[] = [
   { label: 'Ready', ticket: startTicket() },

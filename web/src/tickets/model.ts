@@ -17,6 +17,24 @@ export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progres
 export const BACKLOG_STAGES: TicketStage[] = ['draft', 'ready'];
 export const isClosed = (s: TicketStage) => s === 'done' || s === 'wont_do';
 
+// ---------------------------------------------------------------------------------------------------------------
+// Parts (PDT-38)
+
+/**
+ * The part "Start next part" starts (pdtd's rule, pdt-core `parts::next_part`): the first open part, in rank order,
+ * with no active or merged attempt and no open blockers. A string says why there is none.
+ */
+export function nextPart(parts: TicketSummary[]): TicketSummary | string {
+  if (parts.length === 0) return 'it has no parts';
+  if (parts.every((p) => isClosed(p.stage))) return 'all its parts are closed';
+  const startable = parts.filter((p) => !isClosed(p.stage) && p.attempt?.state !== 'active' && p.attempt?.state !== 'merged');
+  const next = startable.find((p) => p.blockedBy === 0);
+  if (next) return next;
+  return startable.length > 0
+    ? `its next parts are blocked: ${startable.map((p) => p.key).join(', ')}`
+    : 'every open part is started or merged';
+}
+
 export type GroupBy = 'none' | 'stage' | 'priority' | 'label';
 
 export interface BacklogFilters {
@@ -209,6 +227,12 @@ export function eventTitle(e: TicketEvent): string {
     }
     case 'waiting': return data.waiting === false ? 'Stopped waiting' : 'Waiting until clear';
     case 'pr': return prEventTitle(e.data as PrEventData | null);
+    case 'parted': {
+      const d = (e.data ?? {}) as { parentId?: string; parentKey?: string; partKey?: string; removed?: boolean };
+      return e.ticketId === d.parentId
+        ? `${d.removed ? 'Part removed' : 'Part added'}: ${d.partKey ?? 'a ticket'}`
+        : `${d.removed ? 'No longer a part of' : 'Made a part of'} ${d.parentKey ?? 'a ticket'}`;
+    }
   }
 }
 

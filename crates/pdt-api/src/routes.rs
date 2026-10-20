@@ -299,6 +299,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/links", axum::routing::post(crate::tickets::add_link).delete(crate::tickets::remove_link))
         .route("/tickets/{id}/events", get(crate::tickets::events))
         .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
+        .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
