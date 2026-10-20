@@ -56,6 +56,8 @@ async fn setup(tmp: &Path, mode: &str) -> Env {
     git(&repo, &["config", "user.name", "t"]);
     git(&repo, &["config", "user.email", "t@t"]);
     git(&repo, &["config", "commit.gpgsign", "false"]);
+    // The merges under test check files out with git's own settings (Windows CI sets autocrlf true).
+    git(&repo, &["config", "core.autocrlf", "false"]);
     std::fs::write(repo.join("a.txt"), "one\ntwo\nthree\n").unwrap();
     std::fs::write(repo.join("old.txt"), "old\n").unwrap();
     git(&repo, &["add", "-A"]);
