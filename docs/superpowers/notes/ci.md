@@ -11,10 +11,10 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | lint (linux) | Namespace `linux-8` | fmt, clippy | unless docs only | unless docs only | never |
 | test (linux) | Namespace `linux-8` | nextest, generated TS types are committed | unless docs only | unless docs only | never |
 | web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only | never |
-| build (macos-latest) ✱ | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | never |
-| build (windows-latest) ✱ | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
-| bundle (macos-latest, app) ✱ | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | same | always (release) |
-| bundle (windows-latest, nsis) ✱ | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | same | always (release) |
+| build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | never |
+| build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
+| bundle (macos-latest, app) | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | same | always (release) |
+| bundle (windows-latest, nsis) | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | same | always (release) |
 
 **Why main skips the Linux and macOS checks:** the merge queue (group size 1, squash) has just run them on the tree
 that lands on main, so running them again on the push only cost money. Windows checks still run on main, the one
@@ -44,12 +44,12 @@ PR, which never reaches main); add the `macos` label to a PR that touches macOS-
   setup-node's pnpm cache on GitHub's runners instead.
 - Comparing hosts: `.github/workflows/bench.yml` times the same work on any list of runners.
 
-✱ required by the "Main" ruleset. The Linux checks must be added to it too (Settings → Rules → Main → required
-status checks), or a PR can merge with them failing.
+Every job in the table is a required check of the "Main" ruleset.
 
 **Docs-only PRs** (every changed file under `docs/` or ending in `.md`) skip every job but `changes`; a `windows`,
-`macos` or `bundle` label still runs those jobs. No code reads a Markdown file today; if one ever does (an `include_str!` of a
-`.md`, release notes from a file), narrow the rule in the `changes` job. Pushes to main always run everything.
+`macos` or `bundle` label still runs those jobs. The guides pdtd builds in with `include_str!` (`docs/agent-guide.md`,
+`docs/run-config.md`, `docs/prompts/*`; crates/pdt-api/src/guides.rs) count as code, since their tests check them.
+If other code starts reading a Markdown file, add it to that rule in the `changes` job.
 
 A job skipped by its `if` still reports its check, and a skipped check counts as passing, so the job names must stay
 the ruleset's required check names. Renaming a job means editing the "Main" ruleset first.
@@ -74,10 +74,7 @@ merges when they pass. A PR that conflicts with main or fails there leaves the q
 So each merge runs the Linux checks on every PR push and in the queue, macOS in the queue, and on main only Windows
 and the release. The queue runs only once a PR is ready.
 
-## The old Mac mini runner (unused)
-CI ran `build (macos-latest)` on a self-hosted runner on the Mac mini until PDT-27; no job targets it now.
-- It lives in `~/actions-runner-pdt` (LaunchAgent `actions.runner.ross-game-tools-PersonalDevTeam.*`, labels
-  `self-hosted, macOS, ARM64, pdt-mini`) and built under `~/.cache/pdt-ci`.
-- To retire it (the user, by hand): `cd ~/actions-runner-pdt && ./svc.sh stop && ./svc.sh uninstall`, remove it under
-  repo Settings → Actions → Runners, then delete `~/actions-runner-pdt` and `~/.cache/pdt-ci`.
-- While it is registered, never make the repo public.
+## The old Mac mini runner (retired)
+CI ran `build (macos-latest)` on a self-hosted runner on the Mac mini until PDT-27; no job targets it now and its
+folders (`~/actions-runner-pdt`, `~/.cache/pdt-ci`) are gone. If it is still listed under repo Settings → Actions →
+Runners, remove it there; while it is registered, never make the repo public.

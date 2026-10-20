@@ -10,9 +10,10 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    docs/superpowers/specs and a plan in docs/superpowers/plans first.
 2. **Make a worktree** for a new branch (below). Never commit on `main` in the main checkout.
 3. **Build it test-first** in the worktree (TDD for core logic). Run the checks before every push (below).
-4. **Push and open a PR** against `main`. CI runs the full checks on Linux and the macOS checks on macOS (both on Namespace); Windows checks and the bundles
-   run on a PR only with the `windows` / `bundle` label or when it touches their files, and always on main
-   (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
+4. **Push and open a PR** against `main`. CI runs the full checks on Linux on every push (Namespace); the macOS checks
+   run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks and the
+   bundles run on a PR only with the `windows` / `bundle` label or when it touches their files, and always on main.
+   Docs-only PRs skip CI (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
 6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --auto`, with no merge-method flag (the queue
@@ -33,7 +34,8 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 ## Worktrees
 
 Worktrees live at `.worktrees/<branch>` inside the repo (`/` in a branch name becomes `-`); `/.worktrees/` is in
-`.git/info/exclude`. Branch names are short and kebab-case, e.g. `sdlc-docs`, `phase-3-workspaces`.
+`.git/info/exclude`. Ticket Start names branches `pdt/<KEY>-<n>-<slug>` (folder `.worktrees/pdt-<KEY>-<n>-<slug>`); other branch names are
+short and kebab-case, e.g. `sdlc-docs`.
 
 Create them **through the stable PDT**, not with `git worktree add`, so PDT knows about them: its sessions group under
 the branch and Run uses that checkout. Start from an up-to-date `main`:
@@ -45,7 +47,7 @@ curl -s -X POST 127.0.0.1:7420/api/projects/<project id>/worktrees \
   -H 'content-type: application/json' -d '{"branch":"<branch>"}'           # optional "base": branch or commit
 ```
 
-The new branch starts at the project's base branch (`main`). Then `cd .worktrees/<branch>` and work there.
+The new branch starts at the project's base branch (`main`). Then `cd` into the returned `path` and work there.
 
 A folder made with plain `git worktree add` is unknown to PDT, and Run on that branch then fails with
 `worktree_path_taken`. If that happens, either remove it and recreate it as above, or skip Run and start a dev
@@ -91,7 +93,7 @@ from the phone over Tailscale too. Several branches can run side by side. After 
 rebuilds. The same menu offers **Test rust** and **Test web** (the `[[test]]` entries).
 
 `.pdt/project.toml` is the run configuration for this repo; change it in a PR like any other code. Its comments
-explain each setting. Windows run-step limits: docs/superpowers/notes/phase-2-carryover.md.
+explain each setting. Windows run-step limits: docs/run-config.md "Traps".
 
 **By hand** (when Run is not an option):
 
@@ -109,12 +111,17 @@ script without it, never run a built installer, never run `pdt-host install`/`un
 
 ## After merge
 
-Check it merged (`gh pr view <n> --json state` says `MERGED`), stop the branch's runs in PDT, and `cd` out of the
+For a ticket's branch, the ticket's merge banner ("Move to Done and remove the worktree") does all of this once PDT
+sees the merge: it stops the worktree's sessions and runs, removes the worktree and the ticket's workspace, moves the
+ticket to Done and fast-forwards `main` (the local branch stays; `git branch -D` it if wanted). The user clicks it;
+an agent working in that worktree has nothing to do.
+
+By hand: check it merged (`gh pr view <n> --json state` says `MERGED`), stop the branch's runs in PDT, and `cd` out of the
 worktree (a shell whose folder is removed fails every command after). Then, in this order:
 
 ```sh
 git -C <repo> fetch --prune origin && git -C <repo> merge --ff-only origin/main
-git -C <repo> worktree remove .worktrees/<branch>
+git -C <repo> worktree remove <worktree path>
 git -C <repo> branch -D <branch>                  # -D: squash merges don't look merged to git
 ```
 
@@ -122,8 +129,7 @@ GitHub deletes the remote branch when the PR merges (the repo setting is on); `f
 tracking ref.
 
 Removing it from the project's Settings page (`DELETE /api/worktrees/{id}`) does the worktree step and keeps PDT's list
-right, but the stable PDT may be a release behind main and lack that route (404); check `/api/health`. A worktree
-removed by hand shows as "folder missing" in PDT until it is removed there too.
+right. A worktree removed by hand shows as "folder missing" in PDT until it is removed there too.
 
 ## Safety rules (from AGENTS.md)
 

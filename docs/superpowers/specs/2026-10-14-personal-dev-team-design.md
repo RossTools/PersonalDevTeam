@@ -1,7 +1,7 @@
 # Personal Dev Team — Design Spec (Milestone 1)
 
 - **Date:** 2026-10-14
-- **Status:** Draft, awaiting review
+- **Status:** Accepted; phases 0–6 are built (later specs beside this one amend it). Current behaviour: docs/reference.
 - **Codename:** Personal Dev Team (PDT). This is a working name and will be renamed before any public release (see §12).
 
 ---

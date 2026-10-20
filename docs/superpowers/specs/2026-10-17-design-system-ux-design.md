@@ -1,6 +1,6 @@
 # Personal Dev Team — Design System and UX Pass (Phase 3c), and the UX of Phases 4–7
 
-Status: draft, 2026-10-17, awaiting the user's review. Amends the main spec (`2026-10-14-personal-dev-team-design.md`
+Status: built (Phase 3c), 2026-10-17. Amends the main spec (`2026-10-14-personal-dev-team-design.md`
 §7) and the workspaces spec (`2026-10-17-workspaces-design.md`). Mockups: the "PDT UX pass" canvas
 (https://claude.ai/artifact/1EKGuHdvGce3SNSFKFgNqY, private to the user).
 

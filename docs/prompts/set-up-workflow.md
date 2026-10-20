@@ -1,6 +1,6 @@
 # Prompt: write a project's agent instructions in PDT
 
-PDT has this prompt built in: **Write with an agent** under a project's Agent instructions in Settings starts a
+PDT has this prompt built in: **Write instructions with an agent** under a project's Agent instructions in Settings starts a
 session with it, and `GET /api/guides/set-up-workflow` serves it. It writes the project's **agent instructions**,
 which PDT keeps on the host and gives to every agent session in the project, so a repository you cannot (or would
 rather not) commit an AGENTS.md or CLAUDE.md to still gets a workflow.
@@ -8,7 +8,7 @@ rather not) commit an AGENTS.md or CLAUDE.md to still gets a workflow.
 ---
 
 Help me write the **agent instructions** for this project in PDT (Personal Dev Team, which started this session). PDT
-keeps them on this host, not in the repository, and adds them to every Claude Code and Codex session it starts in the
+keeps them on this host, not in the repository, and adds them to every Claude Code, Codex and Devin session it starts in the
 project, after the repository's own CLAUDE.md / AGENTS.md. They are how I want agents to work here.
 
 **1. Find PDT and this project.** PDT's instructions for this session name its API (`http://127.0.0.1:<port>/api`)
