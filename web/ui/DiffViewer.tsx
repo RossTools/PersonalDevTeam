@@ -104,6 +104,9 @@ export function DiffStat({ added, removed, className }: { added: number; removed
 
 const SIGN: Record<DiffLineKind, string> = { add: '+', del: '-', ctx: ' ' };
 const ROW: Record<DiffLineKind, string> = { add: 'bg-diff-add', del: 'bg-diff-del', ctx: '' };
+/** Line-number cells and signs, as GitHub tints them. */
+const NUM: Record<DiffLineKind, string> = { add: 'bg-diff-add-gutter text-foreground', del: 'bg-diff-del-gutter text-foreground', ctx: 'text-muted-foreground' };
+const SIGN_TONE: Record<DiffLineKind, string> = { add: 'text-diff-add-sign', del: 'text-diff-del-sign', ctx: 'text-muted-foreground' };
 
 export interface DiffViewerProps {
   /** A unified diff: `--- a/x` / `+++ b/x` file headers, then hunks. */
@@ -136,15 +139,15 @@ export function DiffViewer({ diff, hideHeaders = false, className }: DiffViewerP
             <table className="w-full border-collapse font-mono text-xs leading-5">
               <tbody>
                 {f.hunks.map((h, hi) => [
-                  <tr key={`h${hi}`} className="bg-muted text-muted-foreground">
+                  <tr key={`h${hi}`} className="bg-diff-hunk text-diff-hunk-fg">
                     <td colSpan={3} className="px-2 select-none">{/\d/.test(h.header) ? h.header : '⋯'}</td>
                   </tr>,
                   ...h.lines.map((l, li) => (
                     <tr key={`${hi}:${li}`} data-kind={l.kind} className={ROW[l.kind]}>
-                      <td className="w-px px-1.5 text-right whitespace-nowrap text-muted-foreground tabular-nums select-none">{l.old ?? ''}</td>
-                      <td className="w-px px-1.5 text-right whitespace-nowrap text-muted-foreground tabular-nums select-none">{l.new ?? ''}</td>
+                      <td className={cn('w-px px-1.5 text-right whitespace-nowrap tabular-nums select-none', NUM[l.kind])}>{l.old ?? ''}</td>
+                      <td className={cn('w-px px-1.5 text-right whitespace-nowrap tabular-nums select-none', NUM[l.kind])}>{l.new ?? ''}</td>
                       <td className="pr-2 whitespace-pre">
-                        <span aria-hidden className="inline-block w-3 select-none text-muted-foreground">{SIGN[l.kind]}</span>
+                        <span aria-hidden className={cn('inline-block w-3 select-none', SIGN_TONE[l.kind])}>{SIGN[l.kind]}</span>
                         <span className="sr-only">{l.kind === 'add' ? 'Added: ' : l.kind === 'del' ? 'Removed: ' : ''}</span>
                         {l.text}
                       </td>

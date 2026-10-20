@@ -1,10 +1,12 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Compartment, EditorState, RangeSet, StateEffect, StateField, type Extension, type Text } from '@codemirror/state';
-import { Decoration, EditorView, GutterMarker, WidgetType, gutter, lineNumbers, type DecorationSet } from '@codemirror/view';
-import { MergeView, getChunks, unifiedMergeView, type Chunk } from '@codemirror/merge';
+import { Compartment, EditorState, RangeSet, StateEffect, StateField, Text, type Extension } from '@codemirror/state';
+import { Decoration, EditorView, GutterMarker, WidgetType, gutter, gutterLineClass, lineNumbers, type DecorationSet } from '@codemirror/view';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
+import { Chunk, MergeView, getChunks, unifiedMergeView } from '@codemirror/merge';
 import type { CommentSide } from '../api/gen/CommentSide';
-import { codeHighlight, codeTheme, languageFor, v } from '../files/codeTheme';
+import { codeTheme, languageFor, v } from '../files/codeTheme';
 
 /** Something shown under a line of the diff (a thread, or the new-comment composer), after line `line` of `side`. */
 export interface DiffAnchor {
@@ -77,30 +79,92 @@ function anchorField(host: (id: string) => HTMLElement) {
   });
 }
 
-class PlusMarker extends GutterMarker {
+/** The sign column: `+` / `−` on changed lines (as on GitHub); hovering any line shows the comment button instead. */
+class SignMarker extends GutterMarker {
+  constructor(readonly sign: '+' | '−' | '') {
+    super();
+  }
+  eq(other: SignMarker) {
+    return other.sign === this.sign;
+  }
   toDOM() {
     const el = document.createElement('span');
-    el.textContent = '+';
-    el.className = 'cm-comment-plus';
-    el.title = 'Comment on this line';
+    el.className = 'cm-diff-sign';
+    const sign = document.createElement('span');
+    sign.className = this.sign === '+' ? 'cm-sign cm-sign-add' : this.sign === '−' ? 'cm-sign cm-sign-del' : 'cm-sign';
+    sign.textContent = this.sign;
+    const plus = document.createElement('span');
+    plus.className = 'cm-comment-plus';
+    plus.textContent = '+';
+    plus.title = 'Comment on this line';
+    el.append(sign, plus);
     return el;
   }
 }
-const plus = new PlusMarker();
+const SIGNS = { '+': new SignMarker('+'), '−': new SignMarker('−'), '': new SignMarker('') };
 
+/** Tints a changed line's gutter cells (line number, sign), as GitHub tints the number column. */
+class LineClass extends GutterMarker {
+  constructor(readonly elementClass: string) {
+    super();
+  }
+}
+const ADD_LINE = new LineClass('cm-gh-add');
+const DEL_LINE = new LineClass('cm-gh-del');
+
+/** The 1-based lines of `doc` inside the chunks' ranges on one side. */
+function changedLines(chunks: readonly Chunk[], doc: Text, side: 'a' | 'b'): Set<number> {
+  const out = new Set<number>();
+  for (const c of chunks) {
+    const [from, to, end] = side === 'a' ? [c.fromA, c.toA, c.endA] : [c.fromB, c.toB, c.endB];
+    if (to <= from) continue;
+    const last = doc.lineAt(Math.min(end, doc.length)).number;
+    for (let n = doc.lineAt(Math.min(from, doc.length)).number; n <= last; n++) out.add(n);
+  }
+  return out;
+}
+
+/** GitHub's syntax colours (Primer "prettylights"), from the code tokens. */
+const githubHighlight = syntaxHighlighting(HighlightStyle.define([
+  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: v('code-keyword') },
+  { tag: [t.string, t.special(t.string), t.regexp, t.escape], color: v('code-string') },
+  { tag: [t.number, t.bool, t.null, t.atom, t.constant(t.variableName), t.attributeName, t.propertyName], color: v('code-constant') },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: v('code-comment') },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: v('code-function') },
+  { tag: [t.typeName, t.className, t.namespace, t.self], color: v('code-type') },
+  { tag: [t.tagName, t.heading], color: v('code-tag') },
+  { tag: t.strong, fontWeight: 'bold' },
+  { tag: t.emphasis, fontStyle: 'italic' },
+  { tag: t.link, textDecoration: 'underline' },
+  { tag: t.invalid, color: v('failed') },
+]));
+
+/** GitHub's pull request diff: soft line colours, stronger number cells and changed words, blue collapsed rows. */
 const diffTheme = EditorView.theme({
-  '.cm-comment-gutter .cm-gutterElement': { cursor: 'pointer', padding: '0 4px', color: 'transparent' },
-  '.cm-comment-gutter .cm-gutterElement:hover': { color: v('accent'), fontWeight: 'bold' },
+  '.cm-gutters': { backgroundColor: v('bg'), borderRight: 'none' },
+  '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 12px', minWidth: '40px' },
+  '.cm-gutterElement.cm-gh-add': { backgroundColor: v('diff-add-gutter'), color: v('fg') },
+  '.cm-gutterElement.cm-gh-del': { backgroundColor: v('diff-del-gutter'), color: v('fg') },
+  '.cm-comment-gutter .cm-gutterElement': { cursor: 'pointer', width: '20px', textAlign: 'center', position: 'relative' },
+  '.cm-sign-add': { color: v('diff-add-sign') },
+  '.cm-sign-del': { color: v('diff-del-sign') },
+  '.cm-comment-plus': {
+    display: 'none', position: 'absolute', inset: '1px 1px', borderRadius: '4px', backgroundColor: v('accent'),
+    color: v('on-accent'), fontWeight: 'bold', lineHeight: '1.3',
+  },
+  '.cm-comment-gutter .cm-gutterElement:hover .cm-comment-plus': { display: 'block' },
+  '.cm-comment-gutter .cm-gutterElement:hover .cm-sign': { visibility: 'hidden' },
   '.cm-changedLine, .cm-insertedLine, &.cm-merge-b .cm-changedLine': { backgroundColor: v('diff-add') },
   '&.cm-merge-a .cm-changedLine, .cm-deletedChunk, .cm-deletedLine': { backgroundColor: v('diff-del') },
   '.cm-changedText, &.cm-merge-b .cm-changedText, .cm-insertedLine .cm-changedText': { background: v('diff-add-strong') },
-  '&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText, .cm-deletedLine .cm-changedText': { background: v('diff-del-strong') },
-  '.cm-changeGutter': { width: '3px', paddingLeft: '0' },
-  '.cm-changedLineGutter, &.cm-merge-b .cm-changedLineGutter': { background: v('running') },
-  '&.cm-merge-a .cm-changedLineGutter, .cm-deletedLineGutter': { background: v('failed') },
-  '.cm-collapsedLines': {
-    background: v('surface-2'), color: v('muted'), fontFamily: v('font-sans'), fontSize: '11px', padding: '2px 8px', cursor: 'pointer',
+  '&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText, .cm-deletedLine .cm-changedText, .cm-deletedChunk del': {
+    background: v('diff-del-strong'), textDecoration: 'none',
   },
+  '.cm-collapsedLines': {
+    background: v('diff-hunk'), color: v('diff-hunk-fg'), fontFamily: v('font-sans'), fontSize: '12px', padding: '4px 12px',
+    cursor: 'pointer',
+  },
+  '.cm-collapsedLines:hover': { color: v('accent') },
   '.cm-review-anchor': {
     whiteSpace: 'normal', fontFamily: v('font-sans'), padding: '6px 8px', maxWidth: '48rem', cursor: 'auto',
   },
@@ -183,12 +247,20 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
   useEffect(() => {
     const parent = host.current!;
     const collapse = wholeFile ? undefined : { margin: 3, minSize: 4 };
-    const side = (s: CommentSide, language: Compartment): Extension[] => [
+    // The same diff the merge view draws (its default scan limit), for the gutters' signs and tints.
+    const docA = Text.of(oldText.split('\n'));
+    const docB = Text.of(newText.split('\n'));
+    const chunks = Chunk.build(docA, docB, { scanLimit: 500 });
+    const delLines = changedLines(chunks, docA, 'a');
+    const addLines = changedLines(chunks, docB, 'b');
+    const lineMarks = (doc: Text, lines: Set<number>, mark: LineClass) =>
+      gutterLineClass.of(RangeSet.of([...lines].sort((x, y) => x - y).map((n) => mark.range(doc.line(n).from))));
+    const side = (s: CommentSide, language: Compartment, changed: Set<number>): Extension[] => [
       lineNumbers(),
       gutter({
         class: 'cm-comment-gutter',
-        lineMarker: () => plus,
-        initialSpacer: () => plus,
+        lineMarker: (view, block) => SIGNS[changed.has(view.state.doc.lineAt(block.from).number) ? (s === 'old' ? '−' : '+') : ''],
+        initialSpacer: () => SIGNS['+'],
         domEventHandlers: {
           mousedown(view, block) {
             const n = view.state.doc.lineAt(block.from).number;
@@ -204,7 +276,7 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
       EditorView.contentAttributes.of({ tabindex: '0', 'aria-label': `${s === 'old' ? 'Before' : 'After'}: ${path}` }),
       codeTheme,
       diffTheme,
-      codeHighlight,
+      githubHighlight,
       language.of([]),
       anchorField(container),
     ];
@@ -214,11 +286,11 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     let single: EditorView | null = null;
     if (mode === 'split') {
       merge = new MergeView({
-        a: { doc: oldText, extensions: side('old', langOld) },
-        b: { doc: newText, extensions: side('new', langNew) },
+        a: { doc: oldText, extensions: [side('old', langOld, delLines), lineMarks(docA, delLines, DEL_LINE)] },
+        b: { doc: newText, extensions: [side('new', langNew, addLines), lineMarks(docB, addLines, ADD_LINE)] },
         parent,
         highlightChanges: true,
-        gutter: true,
+        gutter: false,
         ...(collapse ? { collapseUnchanged: collapse } : {}),
       });
       views.current = { old: merge.a, new: merge.b };
@@ -228,8 +300,9 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
         state: EditorState.create({
           doc: newText,
           extensions: [
-            ...side('new', langNew),
-            unifiedMergeView({ original: oldText, mergeControls: false, highlightChanges: true, gutter: true, syntaxHighlightDeletions: true, ...(collapse ? { collapseUnchanged: collapse } : {}) }),
+            ...side('new', langNew, addLines),
+            lineMarks(docB, addLines, ADD_LINE),
+            unifiedMergeView({ original: oldText, mergeControls: false, highlightChanges: true, gutter: false, syntaxHighlightDeletions: true, ...(collapse ? { collapseUnchanged: collapse } : {}) }),
           ],
         }),
       });
