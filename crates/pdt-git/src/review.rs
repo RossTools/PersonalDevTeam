@@ -366,6 +366,8 @@ mod tests {
         git(&repo, &["config", "user.name", "t"]);
         git(&repo, &["config", "user.email", "t@t"]);
         git(&repo, &["config", "commit.gpgsign", "false"]);
+        // The merge under test runs git without the helpers' `-c core.autocrlf=false` (Windows CI sets it true).
+        git(&repo, &["config", "core.autocrlf", "false"]);
         write(&repo, "a.txt", b"one\ntwo\nthree\n");
         write(&repo, "src/b.rs", b"fn b() {}\n");
         write(&repo, "src/old.rs", b"old\nfile\nhere\nwith\nlines\n");

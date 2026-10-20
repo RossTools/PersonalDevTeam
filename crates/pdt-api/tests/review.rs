@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{argv_agent, call, git};
+use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{Mergeable, PrState};
 use pdt_github::testing::FakeGithub;
@@ -16,6 +16,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
+
+/// A stand-in terminal agent that reads input until it is killed (a pasted multi-line message must not end it).
+fn reading_agent(dir: &Path) -> PathBuf {
+    let (file, body) = if cfg!(windows) {
+        ("fakeclaude.cmd", "@echo off\r\n:again\r\nset /p x=\r\ngoto again\r\n")
+    } else {
+        ("fakeclaude", "#!/bin/sh\nwhile true; do read x || sleep 1; done\n")
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
 
 struct Env {
     app: axum::Router,
@@ -49,11 +66,8 @@ async fn setup(tmp: &Path, mode: &str) -> Env {
     let mut state = AppState::new(store, tmp.join("data"));
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
     state.platform.login_path = None;
-    state.platform.claude_program = if mode == "conversation" {
-        FAKE.to_string()
-    } else {
-        argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned()
-    };
+    state.platform.claude_program =
+        if mode == "conversation" { FAKE.to_string() } else { reading_agent(&bin).to_string_lossy().into_owned() };
     let gh = Arc::new(FakeGithub::default());
     state.github = gh.clone();
     let app = router(state.clone(), None);
