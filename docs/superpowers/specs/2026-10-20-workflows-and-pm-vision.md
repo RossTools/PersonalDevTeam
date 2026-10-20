@@ -69,7 +69,10 @@ the fixed `.pdt/workflow.toml` stage machine becomes the first template on a gen
   - *Action*: a domain command or an external call.
   - *Agent step*: runs a persona in a session (new or existing, per the session rules of main spec §6.2) with a
     declared outcome set; its outcome selects the next edge.
-  - *Human gate*: creates an inbox item with the choices it allows and waits; the choice selects the next edge.
+  - *Human gate*: creates an inbox item with the choices it allows and waits; the choice selects the next edge. A
+    gate can be **answered ahead of time**: a choice the user makes earlier in a dialog (PDT-75's "Move to Done and
+    clean up once it merges" in Merge…) is recorded on the attempt, and the gate then passes without asking. The
+    recorded choice is the consent (principle 5).
   - *Wait / timer*: until an event, a time, or a condition becomes true ("until CI finishes", "20 s idle").
   - *Loop limit, retry, error handler*: per edge or per node.
   - *Sub-workflow*: call another workflow (how templates compose).
@@ -151,10 +154,14 @@ Reactions move; sensors and core rules don't.
 | Today (hard-coded) | Becomes |
 |---|---|
 | PR notices: CI failed, conflict, dropped from the merge queue, merged → typed into the attempt's session | Built-in template "PR reactions" (`pr.*` triggers → `session.send` with the same idle-and-20 s delivery rule) |
-| Merged attempt → "Move to Done and remove the worktree" banner | `attempt.merged` → human gate (rendered as that banner) → finish (stop sessions, remove worktree, pull base) |
+| Merged attempt → "Move to Done and remove the worktree" banner (web `finishMerged`), or, since PDT-75, finished without questions when Merge… asked for it (`attempts.finish_on_merge`, pdt-api `finish.rs`), unless the worktree has uncommitted changes | `attempt.merged` → condition: worktree clean → human gate (answered ahead of time by Merge…'s choice, else rendered as that banner) → `ticket.finish` (Done, stop and remove the sessions and runs, remove the worktree and maybe the branch, delete the Start workspace, pull base). A dirty worktree always goes to the banner |
 | PDT-24: main moved while a PR waits | `base.pushed` trigger → update or re-queue action, per policy |
 | Phase 7 pipeline (Refine → Code → Review → QA → Accept) | Built-in template "Pipeline" (§8) |
 | Merge detection, PR/CI polling, overlap, one attempt per ticket | Stay in code (sensors and domain rules) |
+
+Finishing is the clearest case for principle 7. After PDT-75 it exists twice: the banner's `finishMerged` runs the
+steps from the web (with its questions), and `finish.rs` repeats them in pdtd. 7a makes it one domain command,
+`ticket.finish`, which the banner, the API, the workflow action and pdt-mcp all call.
 
 The delivery rule for messages into sessions (idle, nobody typing, never during a rate limit, terminal vs.
 conversation) becomes the `session.send` action, shared with PDT-53's cross-session messages.
@@ -207,7 +214,11 @@ Per project, read by workflows and enforced by the domain commands (so a workflo
 - who may merge (agents, the user only, nobody: external), auto-merge;
 - required gates (a person approves before merge, before start);
 - loop limit, running-attempt cap, host concurrency cap;
-- what the PM may do without asking.
+- what the PM may do without asking;
+- agent permission modes. PDT-75 added host defaults (`ticketPermissionMode`, default bypass; `sessionPermissionMode`,
+  default ask) and a mode on Start. In the engine, a persona version's permission profile sets the mode for its steps,
+  a project can override it (a strict work project might never bypass), and the host defaults apply to everything
+  else.
 
 A strict work project might be: agents never merge, PR review by external reviewers is a `pr.review_approved` wait,
 and the user's Accept is a gate.
