@@ -190,8 +190,14 @@ const diffTheme = EditorView.theme({
   },
   '.cm-comment-gutter .cm-gutterElement:hover .cm-comment-plus': { display: 'block' },
   '.cm-comment-gutter .cm-gutterElement:hover .cm-sign': { visibility: 'hidden' },
-  '.cm-changedLine, .cm-insertedLine, &.cm-merge-b .cm-changedLine': { backgroundColor: v('diff-add') },
-  '&.cm-merge-a .cm-changedLine, .cm-deletedChunk, .cm-deletedLine': { backgroundColor: v('diff-del') },
+  // The colour goes on the line (and a unified view's removed block) only. The merge view also wraps the text inside a
+  // changed line in <ins>/<del> marks (and each removed line in a div); colouring those too paints it twice behind
+  // the text.
+  '.cm-line.cm-changedLine, &.cm-merge-b .cm-line.cm-changedLine': { backgroundColor: v('diff-add') },
+  '&.cm-merge-a .cm-line.cm-changedLine, .cm-deletedChunk': { backgroundColor: v('diff-del') },
+  'ins.cm-insertedLine, del.cm-deletedLine, .cm-deletedChunk .cm-deletedLine': {
+    backgroundColor: 'transparent', textDecoration: 'none',
+  },
   '.cm-word-add': { backgroundColor: v('diff-add-strong'), borderRadius: '2px' },
   '.cm-word-del': { backgroundColor: v('diff-del-strong'), borderRadius: '2px' },
   '.cm-deletedChunk del': { textDecoration: 'none' },
