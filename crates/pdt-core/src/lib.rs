@@ -17,6 +17,7 @@ pub mod pr;
 pub mod project;
 pub mod rank;
 pub mod release;
+pub mod review;
 pub mod run;
 pub mod runconfig;
 pub mod session;

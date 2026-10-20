@@ -9,6 +9,7 @@ const tab = (id: string, workspaceId: string, item: Item, position = 0): Tab => 
   sessionId: item.kind === 'session' ? item.id : null,
   runId: item.kind === 'run' ? item.id : null,
   ticketId: item.kind === 'ticket' ? item.id : null,
+  worktreeId: item.kind === 'changes' ? item.id : null,
   position,
 });
 const ws = (id: string, tabs: Tab[], projectId: string | null = null): Workspace => ({

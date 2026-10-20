@@ -672,7 +672,7 @@ describe('settings page', () => {
     const main = screen.getByRole('main');
     await within(main).findByRole('region', { name: 'Project' });
     expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Danger zone']);
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Danger zone']);
     expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
   });
 });

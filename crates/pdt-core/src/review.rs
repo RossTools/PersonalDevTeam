@@ -1,0 +1,447 @@
+//! Review (Phase 6; docs/superpowers/specs/2026-10-19-review-design.md): a worktree's changes, line comments, the
+//! feedback message sent to the coder session, and merging.
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ChangeStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+}
+
+/// One file a worktree's branch changed (committed or not) since its merge base.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChangedFile {
+    /// Checkout-relative, `/`-separated (a deleted file's old path).
+    pub path: String,
+    /// The name before a rename.
+    pub old_path: Option<String>,
+    pub status: ChangeStatus,
+    /// A new file git does not track yet.
+    pub untracked: bool,
+    pub binary: bool,
+    pub added: u32,
+    pub removed: u32,
+    /// Changes whenever either side of the file does ("Viewed" resets then).
+    pub version: String,
+}
+
+/// `GET /api/worktrees/{id}/changes`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Changes {
+    pub worktree_id: String,
+    pub branch: String,
+    /// The base branch the changes are measured against.
+    pub base: String,
+    /// The commit they are measured from.
+    pub merge_base: String,
+    pub head: String,
+    /// Uncommitted changes (untracked files included).
+    pub dirty: bool,
+    pub files: Vec<ChangedFile>,
+    /// The attempt working in this worktree (its active one, else the newest), and its ticket.
+    pub attempt_id: Option<String>,
+    pub ticket_id: Option<String>,
+    /// The attempt is active (Approve and Merge are offered).
+    pub attempt_active: bool,
+    /// The user approved the attempt at the current head.
+    pub approved: bool,
+}
+
+/// `GET /api/worktrees/{id}/changes/file`: a file at the merge base and in the working tree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileSides {
+    pub path: String,
+    /// None for an added file (or when not served: binary, too large).
+    pub old: Option<String>,
+    /// None for a deleted file (or when not served).
+    pub new: Option<String>,
+    pub binary: bool,
+    /// A side is over [`MAX_SIDE_BYTES`].
+    pub too_large: bool,
+}
+
+/// The largest side of a file the diff serves.
+pub const MAX_SIDE_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CommentSide {
+    /// Lines the change removed (numbered as in the merge base).
+    Old,
+    /// Lines in the working tree.
+    New,
+}
+
+impl CommentSide {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CommentSide::Old => "old",
+            CommentSide::New => "new",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "old" => Some(CommentSide::Old),
+            "new" => Some(CommentSide::New),
+            _ => None,
+        }
+    }
+}
+
+/// A line comment on a worktree's changes. A root starts a thread; a reply has `parent_id` (its root) and the root's
+/// anchor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewComment {
+    pub id: String,
+    pub worktree_id: String,
+    pub parent_id: Option<String>,
+    pub path: String,
+    pub side: CommentSide,
+    /// 1-based first line on `side`.
+    pub line: u32,
+    /// Last line (= `line` for one line).
+    pub end_line: u32,
+    /// The anchored lines when the comment was made, to find them again after the file changes.
+    pub line_text: String,
+    pub body: String,
+    /// `user` (agent reviewers come in Phase 7).
+    pub author: String,
+    /// None while a draft.
+    #[ts(type = "number | null")]
+    pub sent_at: Option<i64>,
+    /// The session it was sent to.
+    pub session_id: Option<String>,
+    /// Roots only.
+    #[ts(type = "number | null")]
+    pub resolved_at: Option<i64>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+/// Longest comment body, in bytes.
+pub const MAX_COMMENT_BYTES: usize = 16 * 1024;
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NewReviewComment {
+    pub path: String,
+    pub side: CommentSide,
+    pub line: u32,
+    #[serde(default)]
+    #[ts(optional)]
+    pub end_line: Option<u32>,
+    pub line_text: String,
+    pub body: String,
+    /// Reply to this comment's thread.
+    #[serde(default)]
+    #[ts(optional)]
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewCommentPatch {
+    /// Drafts only.
+    #[serde(default)]
+    #[ts(optional)]
+    pub body: Option<String>,
+    /// Roots only.
+    #[serde(default)]
+    #[ts(optional)]
+    pub resolved: Option<bool>,
+}
+
+/// `POST /api/worktrees/{id}/feedback`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FeedbackResult {
+    pub session_id: String,
+    /// Comments sent.
+    pub sent: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeMethod {
+    /// A merge commit on the local base branch.
+    Local,
+    /// Auto-merge of the attempt's open pull request.
+    Github,
+}
+
+/// Why Merge can't go ahead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeProblem {
+    /// The attempt is not active.
+    Inactive,
+    /// The worktree has uncommitted changes.
+    Dirty,
+    /// The merge would conflict (`conflicts`).
+    Conflict,
+    /// The checkout that has the base branch checked out has uncommitted changes.
+    BaseDirty,
+    /// The branch has no commits the base lacks.
+    Nothing,
+    /// GitHub says the PR can't merge (conflicts) or it is a draft.
+    PrNotMergeable,
+    /// Auto-merge is already on, or the PR is in the merge queue.
+    PrQueued,
+    /// The project merges through pull requests and the attempt has no open one yet.
+    NoPr,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MergePr {
+    pub number: u32,
+    pub url: String,
+    /// The base branch has a merge queue (it picks the method).
+    pub queue: bool,
+}
+
+/// `GET /api/attempts/{id}/merge`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MergePreview {
+    pub method: MergeMethod,
+    pub branch: String,
+    pub base: String,
+    /// Commits on the branch the base lacks.
+    pub commits: u32,
+    pub problem: Option<MergeProblem>,
+    /// With `conflict`: the files.
+    pub conflicts: Vec<String>,
+    /// With `base_dirty`: the checkout.
+    pub base_checkout: Option<String>,
+    pub pr: Option<MergePr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeOutcome {
+    /// Merged locally; the attempt ended as merged.
+    Merged,
+    /// Auto-merge is on: GitHub merges once the checks pass (the merge check then ends the attempt).
+    Queued,
+}
+
+/// `POST /api/attempts/{id}/merge`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MergeResult {
+    pub outcome: MergeOutcome,
+    pub commit: Option<String>,
+}
+
+/// The local merge commit's message.
+pub fn merge_message(branch: &str, title: &str) -> String {
+    format!("Merge {branch}: {title}")
+}
+
+/// One comment as the feedback message shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeedbackItem {
+    pub path: String,
+    pub side: CommentSide,
+    pub line: u32,
+    pub end_line: u32,
+    pub line_text: String,
+    pub body: String,
+    /// For a reply: the body of its thread's first comment.
+    pub reply_to: Option<String>,
+}
+
+/// Quoted lines per comment before `> …`.
+const QUOTE_LINES: usize = 6;
+/// How much of a thread's first comment a reply quotes.
+const REPLY_QUOTE_CHARS: usize = 80;
+/// The whole message's limit.
+pub const MAX_FEEDBACK_BYTES: usize = 32 * 1024;
+
+fn cut(s: &str, chars: usize) -> String {
+    let one_line = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= chars {
+        one_line
+    } else {
+        format!("{}…", one_line.chars().take(chars).collect::<String>().trim_end())
+    }
+}
+
+fn indent(text: &str) -> String {
+    text.lines().map(|l| if l.is_empty() { String::new() } else { format!("   {l}") }).collect::<Vec<_>>().join("\n")
+}
+
+fn render(n: usize, item: &FeedbackItem) -> String {
+    let range = if item.end_line > item.line {
+        format!("{}:{}-{}", item.path, item.line, item.end_line)
+    } else {
+        format!("{}:{}", item.path, item.line)
+    };
+    let removed = if item.side == CommentSide::Old { " (removed lines)" } else { "" };
+    let mut out = match &item.reply_to {
+        Some(root) => format!("{n}. Reply on {range}{removed} (\"{}\"):\n", cut(root, REPLY_QUOTE_CHARS)),
+        None => {
+            let mut s = format!("{n}. {range}{removed}\n");
+            let lines: Vec<&str> = item.line_text.lines().collect();
+            for l in lines.iter().take(QUOTE_LINES) {
+                s.push_str(&format!("   > {l}\n").replace("   > \n", "   >\n"));
+            }
+            if lines.len() > QUOTE_LINES {
+                s.push_str("   > …\n");
+            }
+            s
+        }
+    };
+    out.push_str(&indent(item.body.trim()));
+    out
+}
+
+/// The one message Send feedback puts into the coder session: a heading, then each comment in file and line order
+/// (a reply right after its thread's earlier comments, as given), with the lines it is about quoted. Over
+/// [`MAX_FEEDBACK_BYTES`], the last comments are left out and counted.
+pub fn feedback_message(branch: &str, items: &[FeedbackItem]) -> String {
+    let mut sorted: Vec<&FeedbackItem> = items.iter().collect();
+    sorted.sort_by(|a, b| (a.path.as_str(), a.line).cmp(&(b.path.as_str(), b.line)));
+    let count = if sorted.len() == 1 { "1 comment".to_string() } else { format!("{} comments", sorted.len()) };
+    let mut out =
+        format!("Review feedback on {branch} ({count}). Address each one, then say briefly what you changed.\n");
+    for (i, item) in sorted.iter().enumerate() {
+        let part = format!("\n{}\n", render(i + 1, item));
+        let left = sorted.len() - i;
+        let tail = format!("\n…and {left} more comment{}, see the Changes view.\n", if left == 1 { "" } else { "s" });
+        if out.len() + part.len() + tail.len() > MAX_FEEDBACK_BYTES {
+            out.push_str(&tail);
+            return out.trim_end().to_string();
+        }
+        out.push_str(&part);
+    }
+    out.trim_end().to_string()
+}
+
+/// The message Send to agent puts into the coder session when the merge conflicts.
+pub fn conflict_message(branch: &str, base: &str, files: &[String]) -> String {
+    let list = files.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n");
+    format!(
+        "Merging {branch} into {base} conflicts in these files:\n{list}\n\nMerge {base} into {branch}, resolve the \
+         conflicts, run the checks and commit."
+    )
+}
+
+/// The message Ask the agent puts into the coder session when the project merges through pull requests and the
+/// branch has none yet.
+pub fn open_pr_message(branch: &str, base: &str) -> String {
+    format!(
+        "{branch} is ready to merge, and this project merges through pull requests. Commit anything left, push \
+         {branch} and open a pull request against {base}."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(path: &str, line: u32, end: u32, text: &str, body: &str) -> FeedbackItem {
+        FeedbackItem {
+            path: path.into(),
+            side: CommentSide::New,
+            line,
+            end_line: end,
+            line_text: text.into(),
+            body: body.into(),
+            reply_to: None,
+        }
+    }
+
+    #[test]
+    fn the_message_lists_comments_in_file_and_line_order_with_their_lines() {
+        let mut removed = item("web/x.tsx", 40, 40, "const a = 1;", "Why was this removed?");
+        removed.side = CommentSide::Old;
+        let mut reply = item("docs/a.md", 3, 3, "see the repo path", "Done? It still says the repo path.");
+        reply.reply_to = Some("Use the API path,\nnot the repo path, everywhere in this guide please thanks".into());
+        let msg = feedback_message(
+            "pdt/PDT-3-x",
+            &[
+                removed,
+                item("crates/a.rs", 19, 21, "pub fn a(\n    x: u32,\n) {", "Name the fallback.\n\nAnd test it."),
+                reply,
+            ],
+        );
+        assert_eq!(
+            msg,
+            "Review feedback on pdt/PDT-3-x (3 comments). Address each one, then say briefly what you changed.\n\
+             \n\
+             1. crates/a.rs:19-21\n   > pub fn a(\n   >     x: u32,\n   > ) {\n   Name the fallback.\n\n   And test it.\n\
+             \n\
+             2. Reply on docs/a.md:3 (\"Use the API path, not the repo path, everywhere in this guide please thanks\"):\n   \
+             Done? It still says the repo path.\n\
+             \n\
+             3. web/x.tsx:40 (removed lines)\n   > const a = 1;\n   Why was this removed?"
+        );
+    }
+
+    #[test]
+    fn long_quotes_and_long_messages_are_cut() {
+        let text = (1..=9).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let msg = feedback_message("b", &[item("a", 1, 9, &text, "x")]);
+        assert!(msg.starts_with("Review feedback on b (1 comment)."));
+        assert!(msg.contains("   > line 6\n   > …\n   x"));
+        assert!(!msg.contains("line 7"));
+
+        let big = "y".repeat(10_000);
+        let many: Vec<_> = (1..=6).map(|i| item("f", i, i, "l", &big)).collect();
+        let msg = feedback_message("b", &many);
+        assert!(msg.len() <= MAX_FEEDBACK_BYTES);
+        assert!(msg.ends_with("…and 3 more comments, see the Changes view."), "{}", &msg[msg.len() - 80..]);
+    }
+
+    #[test]
+    fn a_blank_quoted_line_has_no_trailing_space() {
+        let msg = feedback_message("b", &[item("a", 1, 3, "x\n\ny", "z")]);
+        assert!(msg.contains("   > x\n   >\n   > y\n"));
+    }
+
+    #[test]
+    fn the_open_pr_message_names_the_branches() {
+        assert_eq!(
+            open_pr_message("f", "main"),
+            "f is ready to merge, and this project merges through pull requests. Commit anything left, push f and \
+             open a pull request against main."
+        );
+    }
+
+    #[test]
+    fn the_conflict_message_names_the_files() {
+        assert_eq!(
+            conflict_message("f", "main", &["a.txt".into(), "b.rs".into()]),
+            "Merging f into main conflicts in these files:\n- a.txt\n- b.rs\n\nMerge main into f, resolve the \
+             conflicts, run the checks and commit."
+        );
+    }
+}

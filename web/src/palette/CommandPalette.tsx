@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   ArrowRightLeft, BellRing, Bot, Check, Keyboard, Layers, PanelTop, Pencil, Play, Plus, Server, Settings, SunMoon, Ticket,
-  Files, X,
+  FileDiff, Files, X,
 } from 'lucide-react';
 import { Button, CommandList, Dialog, Field, Input, type CommandItem } from '@ui';
 import { AgentDot } from '../common/AgentState';
@@ -30,6 +30,7 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   add: <Plus aria-hidden />,
   ticket: <Ticket aria-hidden />,
   files: <Files aria-hidden />,
+  changes: <FileDiff aria-hidden />,
 };
 
 function toCommand(it: PaletteItem): CommandItem {

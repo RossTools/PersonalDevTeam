@@ -49,6 +49,25 @@ const view = (onOpen = vi.fn()) =>
 const patches = (calls: Call[]) => calls.filter((c) => c.method === 'PATCH').map((c) => c.body);
 
 describe('ticket tab', () => {
+  it('opens on the section last shown for that ticket, with the diff size on Changes', async () => {
+    const attempt = { id: 'a1', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr: null };
+    const active = { ...base, stage: 'in_progress' as const, attempt, attempts: [attempt] };
+    const changes = {
+      worktreeId: 'w1', branch: attempt.branch, base: 'main', mergeBase: 'abc', head: 'def', dirty: false, attemptId: 'a1', ticketId: 't1',
+      attemptActive: true, approved: false,
+      files: [{ path: 'a.ts', oldPath: null, status: 'modified', untracked: false, binary: false, added: 7, removed: 2, version: '1' }],
+    };
+    stub({ 'GET /api/tickets/t1': active, 'POST /api/tickets/t1/check-merge': active, 'GET /api/worktrees/w1/changes': changes, 'GET /api/worktrees/w1/comments': [] });
+    const { unmount } = view();
+    const tab = await screen.findByRole('tab', { name: /Changes/ });
+    await waitFor(() => expect(tab).toHaveTextContent('+7−2'));
+    await userEvent.click(tab);
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+    unmount();
+    view();
+    expect(await screen.findByRole('tab', { name: /Changes/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('shows the header, the Overview with description, activity, details and links, and the later tabs', async () => {
     stub();
     view();
@@ -56,7 +75,7 @@ describe('ticket tab', () => {
     expect(screen.getByRole('list', { name: 'Stage' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Conversation' })).toBeEnabled();
-    expect(screen.getByRole('tab', { name: /Changes/ })).toHaveTextContent('Phase 6');
+    expect(screen.getByRole('tab', { name: 'Changes' })).toBeEnabled();
     expect(screen.getByText('open')).toBeInTheDocument();
     const activity = await screen.findByRole('list', { name: 'Activity' });
     const entries = within(activity).getAllByRole('listitem');

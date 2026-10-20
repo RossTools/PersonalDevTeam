@@ -21,6 +21,7 @@ import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
+import { OpenChangesContext } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import { looksLikeKey } from '../tickets/model';
@@ -61,6 +62,7 @@ function useAttentionTitle(count: number) {
 const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
 const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
+const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
 const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
 
 export function AppShell() {
@@ -93,6 +95,10 @@ export function AppShell() {
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
+  }, [ws.focusItem]);
+  const openChanges = useCallback((w: { id: string; projectId: string }) => {
+    setView('sessions');
+    void runAction(() => ws.focusItem({ kind: 'changes', id: w.id }, w.projectId));
   }, [ws.focusItem]);
   // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
   // otherwise the server puts them at the end of the project workspace.
@@ -297,6 +303,7 @@ export function AppShell() {
   return (
     <OpenTicketContext.Provider value={openTicket}>
     <OpenSessionContext.Provider value={openSession}>
+    <OpenChangesContext.Provider value={openChanges}>
     <StartTicketContext.Provider value={startTicket}>
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail
@@ -385,6 +392,8 @@ export function AppShell() {
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} onDeleted={() => void ws.refresh()} /></Suspense>
+            ) : ws.tab?.worktreeId ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></Suspense>
             ) : current?.run ? (
               <RunView
                 key={current.run.id}
@@ -415,6 +424,7 @@ export function AppShell() {
       </main>
     </div>
     </StartTicketContext.Provider>
+    </OpenChangesContext.Provider>
     </OpenSessionContext.Provider>
     </OpenTicketContext.Provider>
   );

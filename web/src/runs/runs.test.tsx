@@ -251,6 +251,21 @@ describe('ProjectSettingsPanel', () => {
     expect(await within(runs).findByRole('status')).toHaveTextContent('Saved');
   });
 
+  it('saves merging through pull requests as soon as it is switched', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, mergeViaPr: false },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'subscription', agentInstructions: null, mergeViaPr: false, ...(c.body as object) }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const toggle = await screen.findByRole('switch', { name: 'Merge through pull requests' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, mergeViaPr: true });
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
   it('saves the credential policy as soon as it is chosen, keeping unsaved overrides on screen', async () => {
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: 'x = 1', agentInstructions: null },

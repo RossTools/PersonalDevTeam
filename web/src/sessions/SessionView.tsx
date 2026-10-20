@@ -18,6 +18,8 @@ import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
+import { useOpenChanges } from '../review/open';
+import { ChangesButton } from '../review/ChangesButton';
 
 export interface SessionViewProps {
   session: Session;
@@ -119,6 +121,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
   // A scratch chat (a conversation with no ticket) can become a ticket (spec §10).
   const [makingTicket, setMakingTicket] = useState(false);
+  const openChanges = useOpenChanges();
   const scratch = conversation && isAgent && !session.attemptId;
 
   // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread (spec §8.1).
@@ -275,7 +278,13 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         meta={
           <>
             {theBranch ? (
-              <BranchChip branch={theBranch} repo={theRepo} base={theBase} className="min-w-0" />
+              <BranchChip
+                branch={theBranch}
+                repo={theRepo}
+                base={theBase}
+                {...(session.worktreeId ? { onReview: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }) } : {})}
+                className="min-w-0"
+              />
             ) : (
               !session.worktreeId && theKey && <ProjectKey projectKey={theKey} />
             )}
@@ -284,6 +293,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         }
         actions={
           <>
+            {session.worktreeId && <ChangesButton worktreeId={session.worktreeId} projectId={session.projectId} />}
             {oneAtATime && (
               <SegmentedControl<SessionMode>
                 aria-label="Show as"

@@ -47,6 +47,7 @@ export * from './TreeView';
 export * from './FolderPicker';
 export * from './ViewHeader';
 export * from './Page';
+export * from './SplitPane';
 
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';
 
@@ -57,3 +58,6 @@ export * from './ApprovalCard';
 export * from './DiffViewer';
 export * from './ImageThumb';
 export * from './SuggestionList';
+
+// Review
+export * from './Comment';

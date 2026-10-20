@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, EmptyState, MenuButton, Skeleton, useConfirm, ViewHeader } from '@ui';
+import { Button, DiffStat, EmptyState, MenuButton, Skeleton, useConfirm, ViewHeader } from '@ui';
 import type { Ticket } from '../api/gen/Ticket';
 import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
@@ -17,6 +17,10 @@ import { PartsStepper } from '../common/PartsStepper';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { TicketConversation } from './TicketConversation';
+import { ChangesView } from '../review/ChangesView';
+import { MergeDialog } from '../review/MergeDialog';
+import { useOpenChanges } from '../review/open';
+import { useDiffSize } from '../review/queries';
 import { useCheckMerge, useTicket } from './queries';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
@@ -27,11 +31,38 @@ type HubTab = 'overview' | 'conversation' | 'changes';
 const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'conversation', label: 'Conversation' },
-  { id: 'changes', label: 'Changes', arrives: 'Phase 6' },
+  { id: 'changes', label: 'Changes' },
 ];
 
-/** Overview · Conversation · Changes; Changes arrives with review (6). */
-function HubTabs({ value, onChange }: { value: HubTab; onChange: (t: HubTab) => void }) {
+const SECTION_KEY = (ticketId: string) => `pdt.ticket.section.${ticketId}`;
+
+/** The section last shown for a ticket on this browser (Overview the first time). */
+function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
+  const [tab, setTab] = useState<HubTab>(() => {
+    try {
+      const v = localStorage.getItem(SECTION_KEY(ticketId));
+      return HUB_TABS.some((t) => t.id === v) ? (v as HubTab) : 'overview';
+    } catch {
+      return 'overview';
+    }
+  });
+  const set = (t: HubTab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(SECTION_KEY(ticketId), t);
+    } catch {
+      // Storage blocked: remembered for this page only.
+    }
+  };
+  return [tab, set];
+}
+
+/** Overview · Conversation · Changes (with the branch's diff size). */
+function HubTabs({ value, onChange, diff }: {
+  value: HubTab;
+  onChange: (t: HubTab) => void;
+  diff?: { added: number; removed: number; files: number } | null;
+}) {
   return (
     <div role="tablist" aria-label="Ticket sections" className="flex shrink-0 items-center gap-1 border-b border-border px-3">
       {HUB_TABS.map((t) => (
@@ -53,6 +84,7 @@ function HubTabs({ value, onChange }: { value: HubTab; onChange: (t: HubTab) => 
         >
           {t.label}
           {t.arrives && <span className="ml-1 text-2xs">({t.arrives})</span>}
+          {t.id === 'changes' && diff && diff.files > 0 && <DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" />}
         </button>
       ))}
     </div>
@@ -65,6 +97,8 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   const start = useStartTicket();
   const attempt = ticket.attempt;
   const [making, setMaking] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const openChanges = useOpenChanges();
   return (
     <>
     <ViewHeader
@@ -83,7 +117,14 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           <TicketBadges ticket={ticket} />
           {ticket.parts && <PartsStepper parts={ticket.parts} showCount className="hidden w-28 sm:flex" />}
           <LabelChips labels={ticket.labels} className="hidden sm:flex" />
-          {attempt && <BranchChip branch={attempt.branch} base={attempt.baseBranch} className="hidden max-w-60 md:inline-flex" />}
+          {attempt && (
+            <BranchChip
+              branch={attempt.branch}
+              base={attempt.baseBranch}
+              {...(attempt.worktreeId ? { onReview: () => openChanges({ id: attempt.worktreeId!, projectId: ticket.projectId }) } : {})}
+              className="hidden max-w-60 md:inline-flex"
+            />
+          )}
         </>
       }
       actions={
@@ -102,6 +143,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
                 ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, ticket)) }]
                 : []),
               ...(canMakeParts(ticket) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
+              ...(attempt?.state === 'active' ? [{ label: 'Merge…', onSelect: () => setMerging(true) }] : []),
               ...(attempt?.state === 'active'
                 ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
                 : []),
@@ -117,15 +159,17 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
       }
     />
     {making && <MakePartsDialog ticket={ticket} onClose={() => setMaking(false)} />}
+    {merging && attempt && <MergeDialog ticket={ticket} attemptId={attempt.id} onClose={() => setMerging(false)} />}
     </>
   );
 }
 
 /** A ticket tab: header, the section tabs, then the Overview (description and activity; details and links aside) or
- * the Conversation (its agent sessions). */
+ * the Conversation (its agent sessions) or the Changes (its attempt's diff and review). */
 export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDeleted?: () => void }) {
   const q = useTicket(ticketId);
-  const [tab, setTab] = useState<HubTab>('overview');
+  const [tab, setTab] = useSection(ticketId);
+  const diff = useDiffSize(q.data?.attempt?.state === 'active' ? q.data.attempt.worktreeId : null);
   useCheckMerge(q.data);
   useClearToStartToasts(q.data ? [q.data] : []);
   if (q.isPending) return <div className="p-4"><Skeleton lines={3} label="Loading ticket" /></div>;
@@ -141,10 +185,18 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       <MergedBanner ticket={t} />
-      <HubTabs value={tab} onChange={setTab} />
+      <HubTabs value={tab} onChange={setTab} diff={diff} />
       {tab === 'conversation' ? (
         <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
           <TicketConversation ticket={t} />
+        </div>
+      ) : tab === 'changes' ? (
+        <div role="tabpanel" aria-labelledby="ticket-tab-changes" className="flex min-h-0 flex-1 flex-col">
+          {t.attempt?.worktreeId ? (
+            <ChangesView key={t.attempt.worktreeId} worktreeId={t.attempt.worktreeId} ticket={t} />
+          ) : (
+            <EmptyState>{t.attempt ? 'The worktree of this attempt is gone.' : 'Start the ticket to see its changes here.'}</EmptyState>
+          )}
         </div>
       ) : (
         <div role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">

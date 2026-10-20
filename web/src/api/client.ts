@@ -64,6 +64,14 @@ import type { ConversationEvent } from './gen/ConversationEvent';
 import type { PendingMessage } from './gen/PendingMessage';
 import type { PermissionMode } from './gen/PermissionMode';
 import type { SendMessage } from './gen/SendMessage';
+import type { Changes } from './gen/Changes';
+import type { FeedbackResult } from './gen/FeedbackResult';
+import type { FileSides } from './gen/FileSides';
+import type { MergePreview } from './gen/MergePreview';
+import type { MergeResult } from './gen/MergeResult';
+import type { NewReviewComment } from './gen/NewReviewComment';
+import type { ReviewComment } from './gen/ReviewComment';
+import type { ReviewCommentPatch } from './gen/ReviewCommentPatch';
 
 /** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
 export interface SessionPatch {
@@ -225,6 +233,20 @@ export const api = {
     request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
+  approveAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/approve`, { method: 'POST' }),
+  mergePreview: (id: string) => request<MergePreview>(`/api/attempts/${enc(id)}/merge`),
+  mergeAttempt: (id: string) => request<MergeResult>(`/api/attempts/${enc(id)}/merge`, { method: 'POST' }),
+  askAgentToFixMerge: (id: string) => request<FeedbackResult>(`/api/attempts/${enc(id)}/ask-agent`, { method: 'POST' }),
+  getChanges: (worktreeId: string) => request<Changes>(`/api/worktrees/${enc(worktreeId)}/changes`),
+  getFileSides: (worktreeId: string, path: string, oldPath?: string | null) =>
+    request<FileSides>(`/api/worktrees/${enc(worktreeId)}/changes/file${queryString({ path, oldPath })}`),
+  listReviewComments: (worktreeId: string) => request<ReviewComment[]>(`/api/worktrees/${enc(worktreeId)}/comments`),
+  createReviewComment: (worktreeId: string, c: NewReviewComment) =>
+    request<ReviewComment>(`/api/worktrees/${enc(worktreeId)}/comments`, { method: 'POST', body: JSON.stringify(c) }),
+  updateReviewComment: (id: string, p: ReviewCommentPatch) =>
+    request<ReviewComment>(`/api/review-comments/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteReviewComment: (id: string) => request<void>(`/api/review-comments/${enc(id)}`, { method: 'DELETE' }),
+  sendFeedback: (worktreeId: string) => request<FeedbackResult>(`/api/worktrees/${enc(worktreeId)}/feedback`, { method: 'POST' }),
   projectLabels: (projectId: string) => request<string[]>(`/api/projects/${enc(projectId)}/labels`),
   /** The areas `.pdt/project.toml` (and the host overrides) declare, or why there are none. */
   getProjectAreas: (projectId: string) => request<ProjectAreas>(`/api/projects/${enc(projectId)}/areas`),

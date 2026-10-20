@@ -9,6 +9,7 @@ import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { useAction } from '../common/useAction';
 import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { repoUrl } from './github';
+import { useOpenChanges } from '../review/open';
 
 /** Name and key: one form, one Save (spec §6.1). Folder and GitHub link below. */
 function Identity({ project }: { project: Project }) {
@@ -70,6 +71,7 @@ function Identity({ project }: { project: Project }) {
 function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const openChanges = useOpenChanges();
   const settle = () => {
     void qc.invalidateQueries({ queryKey: ['worktrees', project.id] });
     void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
@@ -119,9 +121,15 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
   return (
     <li className="flex flex-col gap-1 px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <BranchChip branch={wt.branch} repo={wt.missing ? null : project.githubRepo} base={project.baseBranch} />
+        <BranchChip
+          branch={wt.branch}
+          repo={wt.missing ? null : project.githubRepo}
+          base={project.baseBranch}
+          {...(wt.missing ? {} : { onReview: () => openChanges({ id: wt.id, projectId: project.id }) })}
+        />
         {wt.missing && <Badge tone="waiting">folder missing</Badge>}
         <span className="flex-1" />
+        {!wt.missing && <Button size="sm" variant="ghost" onClick={() => openChanges({ id: wt.id, projectId: project.id })}>Review changes</Button>}
         {wt.missing ? (
           <Button size="sm" pending={forgetting} onClick={() => void forget()}>Forget</Button>
         ) : (

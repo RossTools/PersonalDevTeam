@@ -2,12 +2,17 @@ import type { OpenTab } from '../api/gen/OpenTab';
 import type { Tab } from '../api/gen/Tab';
 import type { Workspace } from '../api/gen/Workspace';
 
-/** What a tab shows. */
-export type Item = { kind: 'session'; id: string } | { kind: 'run'; id: string } | { kind: 'ticket'; id: string };
+/** What a tab shows (`changes`: a worktree's review, by worktree id). */
+export type Item =
+  | { kind: 'session'; id: string }
+  | { kind: 'run'; id: string }
+  | { kind: 'ticket'; id: string }
+  | { kind: 'changes'; id: string };
 
 export function itemOf(tab: Tab): Item {
   if (tab.sessionId) return { kind: 'session', id: tab.sessionId };
   if (tab.ticketId) return { kind: 'ticket', id: tab.ticketId };
+  if (tab.worktreeId) return { kind: 'changes', id: tab.worktreeId };
   return { kind: 'run', id: tab.runId! };
 }
 
@@ -17,6 +22,7 @@ export function openTabBody(item: Item): OpenTab {
     case 'session': return { sessionId: item.id };
     case 'run': return { runId: item.id };
     case 'ticket': return { ticketId: item.id };
+    case 'changes': return { worktreeId: item.id };
   }
 }
 

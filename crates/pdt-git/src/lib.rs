@@ -8,10 +8,12 @@ mod changes;
 mod manage;
 mod merge;
 mod pull;
+mod review;
 pub use changes::*;
 pub use manage::*;
 pub use merge::*;
 pub use pull::*;
+pub use review::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoInfo {
@@ -71,6 +73,37 @@ fn git_with_env(dir: &Path, args: &[&str], inherited_env: &[(&str, &str)]) -> Re
             };
         }
         Ok(Err(Failed { code, stderr }))
+    }
+}
+
+/// Runs `git -C dir args…` like [`git_with_env`], but hands back stdout's bytes untouched (file contents), with
+/// `stdin` written to git's input when given.
+fn git_bytes(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Result<Vec<u8>, Failed>, GitError> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut cmd = Command::new("git");
+    cmd.env("LC_ALL", "C").env("LANGUAGE", "C");
+    for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
+        cmd.env_remove(var);
+    }
+    cmd.arg("-C").arg(dir).args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == ErrorKind::NotFound { GitError::GitMissing } else { GitError::Command(e.to_string()) }
+    })?;
+    if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        // A writer thread, so a large input can't deadlock against git filling its stdout.
+        let input = input.to_vec();
+        std::thread::spawn(move || {
+            let _ = pipe.write_all(&input);
+        });
+    }
+    let output = child.wait_with_output().map_err(|e| GitError::Command(e.to_string()))?;
+    if output.status.success() {
+        Ok(Ok(output.stdout))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(Err(Failed { code: output.status.code(), stderr }))
     }
 }
 

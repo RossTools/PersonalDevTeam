@@ -20,10 +20,12 @@ pub struct ProjectSettingsView {
     pub run_overrides: Option<String>,
     /// Given to every agent session in the project, after PDT's own context (kept on this host, not in the repo).
     pub agent_instructions: Option<String>,
+    /// Merge… goes through the attempt's pull request only (no local merge into the base branch).
+    pub merge_via_pr: bool,
 }
 
-/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` is replaced when present ("" clears it), so a
-/// client that does not know it keeps it.
+/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it) and `mergeViaPr` are replaced
+/// when present, so a client that does not know them keeps them.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -33,6 +35,9 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub agent_instructions: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub merge_via_pr: Option<bool>,
 }
 
 pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSettingsView, ApiError> {
@@ -44,6 +49,7 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
         effective_credentials: effective_credentials(host, p.agent_credentials),
         run_overrides: p.run_overrides,
         agent_instructions: p.agent_instructions,
+        merge_via_pr: p.merge_via_pr,
     })
 }
 
@@ -65,12 +71,18 @@ pub(crate) async fn put_settings(
     if let Some(t) = &run_overrides {
         crate::runconfig::validate_overrides(t)?;
     }
+    let current = st.store.get_project_settings(&id).await?;
     let agent_instructions = match input.agent_instructions.as_deref() {
         Some(text) => pdt_core::agent_context::clean_project_instructions(Some(text))
             .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?,
-        None => st.store.get_project_settings(&id).await?.agent_instructions,
+        None => current.agent_instructions,
     };
-    let settings = ProjectSettings { run_overrides, agent_credentials: input.agent_credentials, agent_instructions };
+    let settings = ProjectSettings {
+        run_overrides,
+        agent_credentials: input.agent_credentials,
+        agent_instructions,
+        merge_via_pr: input.merge_via_pr.unwrap_or(current.merge_via_pr),
+    };
     st.store.put_project_settings(&id, &settings).await?;
     Ok(Json(view(&st, &id).await?))
 }

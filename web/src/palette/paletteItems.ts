@@ -17,7 +17,7 @@ export const ACTIONS = 'Actions';
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
   | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'shell' | 'run' | 'rename' | 'close'
-  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files';
+  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes';
 
 /**
  * A second step: another list (Move tab → workspaces), a text field (New workspace → its name), or a ticket search
@@ -206,6 +206,25 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       { id: 'new:shell', label: 'New shell here', group: ACTIONS, icon: 'shell', keywords: words, run: () => h.newSession('shell', place) },
     );
   }
+  // Review: the changes of the worktree on screen (a session's or run's, or the open ticket's attempt).
+  const openTicket = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
+  const placeInfo = place?.worktreeId ? ctx.infos.find((i) => i.worktreeId === place.worktreeId && branchOf(i)) : undefined;
+  const review = place?.worktreeId
+    ? { worktreeId: place.worktreeId, projectId: place.projectId, branch: placeInfo ? branchOf(placeInfo) : null }
+    : openTicket?.attempt?.worktreeId
+      ? { worktreeId: openTicket.attempt.worktreeId, projectId: openTicket.projectId, branch: openTicket.attempt.branch }
+      : null;
+  if (review && tab?.worktreeId !== review.worktreeId) {
+    const r = review;
+    actions.push({
+      id: 'review:changes',
+      label: r.branch ? `Review changes of ${r.branch}` : 'Review changes here',
+      group: ACTIONS,
+      icon: 'changes',
+      keywords: ['diff', 'review', 'comments', 'merge'],
+      run: () => h.focusItem({ kind: 'changes', id: r.worktreeId }, r.projectId),
+    });
+  }
   if (projects.length > 0) {
     actions.push(
       { id: 'tickets:new', label: 'New ticket', group: ACTIONS, icon: 'add', keywords: ['create', 'issue', 'task'], run: h.newTicket },
@@ -218,7 +237,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
         next: { kind: 'tickets', title: 'Open ticket', projectId: ctx.ticketProjectId ?? null, run: (t) => h.openTicket(t) },
       },
     );
-    const open = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
+    const open = openTicket;
     if (open?.parts && !['done', 'wont_do'].includes(open.stage)) {
       // A parent is started through its parts.
       const t = open;

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Field, MenuButton, Section, Select, SettingsRow, Skeleton, Textarea } from '@ui';
+import { Alert, Button, Field, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
@@ -69,6 +69,7 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
       <RunConfiguration project={project} settings={settings.data} setUpEntries={agentEntries('set-up-project')} />
       <Instructions project={project} settings={settings.data} writeEntries={agentEntries('set-up-workflow')} />
       <Credentials project={project} settings={settings.data} />
+      <Merging project={project} settings={settings.data} />
     </>
   );
 }
@@ -200,6 +201,27 @@ function Credentials({ project, settings }: { project: Project; settings: Projec
           value={value}
           disabled={!settings}
           onChange={(c) => save.mutate({ agentCredentials: c === HOST ? null : c }, { onSuccess: () => setSaved(true) })}
+        />
+      </SettingsRow>
+    </Section>
+  );
+}
+
+/** Merge through pull requests (review spec §2.7): a switch, so it saves at once. */
+function Merging({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
+  const save = useSaveProjectSettings(project, settings);
+  return (
+    <Section label="Review">
+      <SettingsRow
+        label="Merge through pull requests"
+        description="Merge… only turns on auto-merge for the ticket's pull request (or asks the agent to open one); it never merges into the base branch on this machine."
+      >
+        {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
+        <Switch
+          aria-label="Merge through pull requests"
+          checked={settings?.mergeViaPr ?? false}
+          disabled={!settings || save.isPending}
+          onChange={(on) => save.mutate({ mergeViaPr: on })}
         />
       </SettingsRow>
     </Section>

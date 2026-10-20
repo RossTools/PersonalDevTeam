@@ -305,6 +305,15 @@ fn short(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
 }
 
+/// The `gh pr merge --auto` method flag for a repository: none when the base branch has a merge queue (the queue
+/// sets the method, and gh refuses one), else the first the repository allows of squash, merge commit and rebase.
+pub fn merge_flag(squash: bool, merge: bool, rebase: bool, queue: bool) -> Option<&'static str> {
+    if queue {
+        return None;
+    }
+    [(squash, "--squash"), (merge, "--merge"), (rebase, "--rebase")].into_iter().find(|(ok, _)| *ok).map(|(_, f)| f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,5 +500,14 @@ mod tests {
         assert_eq!(merged_notice(None, "b", "main").key, "merged");
         p.state = PrState::Closed;
         assert!(notices(&p, "b").is_empty());
+    }
+
+    #[test]
+    fn the_merge_flag_defers_to_a_queue_then_prefers_squash() {
+        assert_eq!(merge_flag(true, true, true, true), None);
+        assert_eq!(merge_flag(true, true, true, false), Some("--squash"));
+        assert_eq!(merge_flag(false, true, true, false), Some("--merge"));
+        assert_eq!(merge_flag(false, false, true, false), Some("--rebase"));
+        assert_eq!(merge_flag(false, false, false, false), None);
     }
 }

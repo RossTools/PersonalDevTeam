@@ -641,6 +641,12 @@ pub(crate) async fn send_notice(st: &AppState, session: &Session, text: &str) ->
     send_message(st, session, text, &[], Delivery::Next, true).await.map(|_| ())
 }
 
+/// Sends a message PDT composed for the user (review feedback) as the user's next message: queued while a turn runs;
+/// a parked or stopped conversation reopens to take it.
+pub(crate) async fn send_user_message(st: &AppState, session: &Session, text: &str) -> Result<(), ApiError> {
+    send_message(st, session, text, &[], Delivery::Next, false).await.map(|_| ())
+}
+
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
 pub(crate) async fn stop(st: &AppState, session: &Session) -> Result<(), ApiError> {
     let c = conv(st, session).await?;

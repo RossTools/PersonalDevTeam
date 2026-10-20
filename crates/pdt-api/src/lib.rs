@@ -16,6 +16,7 @@ mod project_settings;
 mod projects;
 mod pty_ws;
 pub mod remote;
+mod review;
 mod routes;
 mod run_manager;
 mod runconfig;

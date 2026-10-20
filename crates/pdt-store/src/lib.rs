@@ -2,6 +2,7 @@ mod error;
 mod events;
 mod host;
 mod migrate;
+mod review;
 mod runs;
 mod sessions;
 mod tickets;
