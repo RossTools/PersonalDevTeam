@@ -73,6 +73,11 @@ import type { MergeResult } from './gen/MergeResult';
 import type { NewReviewComment } from './gen/NewReviewComment';
 import type { ReviewComment } from './gen/ReviewComment';
 import type { ReviewCommentPatch } from './gen/ReviewCommentPatch';
+import type { FinishRequest } from './gen/FinishRequest';
+import type { FinishResult } from './gen/FinishResult';
+import type { Workflow } from './gen/Workflow';
+import type { WorkflowPatch } from './gen/WorkflowPatch';
+import type { WorkflowRun } from './gen/WorkflowRun';
 
 /** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
 export interface SessionPatch {
@@ -233,6 +238,14 @@ export const api = {
   startTicket: (id: string, b: StartTicket) =>
     request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
+  /** `ticket.finish`: Done, then everything Start made goes (or `blocked` says what stops it, changing nothing). */
+  finishTicket: (id: string, body: FinishRequest) =>
+    request<FinishResult>(`/api/tickets/${enc(id)}/finish`, { method: 'POST', body: JSON.stringify(body) }),
+  listWorkflows: (project?: string) => request<Workflow[]>(`/api/workflows${queryString({ project })}`),
+  patchWorkflow: (id: string, p: WorkflowPatch) =>
+    request<Workflow>(`/api/workflows/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  listWorkflowRuns: (q: { workflow?: string; ticket?: string; limit?: number } = {}) =>
+    request<WorkflowRun[]>(`/api/workflow-runs${queryString(q)}`),
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
   approveAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/approve`, { method: 'POST' }),
   mergePreview: (id: string) => request<MergePreview>(`/api/attempts/${enc(id)}/merge`),

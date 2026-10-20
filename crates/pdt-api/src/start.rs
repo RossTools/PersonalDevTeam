@@ -15,6 +15,7 @@ use pdt_core::parts::TicketParent;
 use pdt_core::session::{SessionKind, ValidSession};
 use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, start_prompt, started_session_title};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
+use pdt_core::workflow::events::MergeVia;
 use pdt_core::workspace::{TabItem, Workspace, valid_workspace_name};
 use pdt_store::{AttemptInfo, TicketError};
 use serde_json::json;
@@ -389,7 +390,7 @@ async fn open_tabs(
 /// nothing.
 pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
     let info = st.store.get_attempt(&id).await?.ok_or_else(|| ApiError::not_found("attempt"))?;
-    st.store.end_attempt(&id, AttemptState::Abandoned, Actor::User, now_ms()).await?;
+    st.store.end_attempt(&id, AttemptState::Abandoned, Actor::User, None, None, now_ms()).await?;
     Ok(Json(load_ticket(&st, &info.ticket_id).await?))
 }
 
@@ -398,11 +399,18 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
     st.store.get_ticket_summary(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
     if let Some(info) = st.store.active_attempt(&id).await? {
         crate::github::refresh_attempt(&st, &info).await;
-        if is_merged(&st, &info, true).await
-            && st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, now_ms()).await?.is_some()
-        {
-            crate::github::notify_merged(&st, &info).await;
-            crate::finish::on_merged(&st, &info);
+        if is_merged(&st, &info, true).await {
+            let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
+            st.store
+                .end_attempt(
+                    &info.attempt.id,
+                    AttemptState::Merged,
+                    Actor::System,
+                    Some(MergeVia::Detected),
+                    pr,
+                    now_ms(),
+                )
+                .await?;
         }
     }
     Ok(Json(load_ticket(&st, &id).await?))
@@ -414,7 +422,9 @@ pub(crate) async fn end_for_close(st: &AppState, ticket_id: &str, stage: TicketS
     if let Some(info) = st.store.active_attempt(ticket_id).await? {
         let merged = stage == TicketStage::Done || is_merged(st, &info, false).await;
         let state = if merged { AttemptState::Merged } else { AttemptState::Abandoned };
-        st.store.end_attempt(&info.attempt.id, state, Actor::User, now_ms()).await?;
+        let via = merged.then_some(MergeVia::Closed);
+        let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
+        st.store.end_attempt(&info.attempt.id, state, Actor::User, via, pr, now_ms()).await?;
     }
     Ok(())
 }
@@ -479,12 +489,12 @@ pub async fn check_merges(st: &AppState) {
         }
         let fetch = fetched.insert((info.project_id.clone(), info.attempt.base_branch.clone()));
         if is_merged(st, &info, fetch).await {
-            match st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, now_ms()).await {
+            let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
+            let via = Some(MergeVia::Detected);
+            match st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, via, pr, now_ms()).await {
                 Ok(Some(_)) => {
                     tracing::info!(ticket = %info.ticket_key, branch = %info.attempt.branch,
                         "the attempt's branch was merged");
-                    crate::github::notify_merged(st, &info).await;
-                    crate::finish::on_merged(st, &info);
                 }
                 Ok(None) => {}
                 Err(e) => tracing::warn!(attempt = %info.attempt.id, error = %e, "could not end the merged attempt"),

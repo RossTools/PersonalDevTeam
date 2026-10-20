@@ -7,8 +7,8 @@ mod shutdown;
 
 use anyhow::Context;
 use pdt_api::{
-    AppState, apply_remote_access, check_merges, deliver_notices, plan_resume_interrupted, refresh_overlaps,
-    refresh_prs, resume_runs, router, run_activity_ticker, sweep_gone_runs, with_host_guard,
+    AppState, apply_remote_access, check_merges, maintain_workflows, plan_resume_interrupted, refresh_overlaps,
+    refresh_prs, resume_runs, router, run_activity_ticker, run_workflows, sweep_gone_runs, with_host_guard,
 };
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
@@ -159,6 +159,8 @@ async fn run() -> anyhow::Result<()> {
                 // spec §6).
                 refresh_prs(&st).await;
                 check_merges(&st).await;
+                // Workflows kept in repos, and pruning old events and runs (Phase 7a).
+                maintain_workflows(&st).await;
             }
         });
     }
@@ -176,17 +178,19 @@ async fn run() -> anyhow::Result<()> {
             }
         });
     }
-    // Pull-request notices waiting for their agent session to be idle (PDT-25).
+    // The workflow engine (Phase 7a): new events start runs, runs go on, messages wait for their agent session to be
+    // idle. Built-in workflows (PR notices, finishing merged tickets) are installed on the first tick.
     {
         let st = state.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
                 if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
                 }
-                deliver_notices(&st).await;
+                run_workflows(&st).await;
             }
         });
     }

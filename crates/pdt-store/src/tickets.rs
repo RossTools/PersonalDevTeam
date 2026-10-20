@@ -450,10 +450,12 @@ async fn insert_event(
     .bind(kind.as_str())
     .bind(actor.as_str())
     .bind(body)
-    .bind(data.map(|d| d.to_string()))
+    .bind(data.as_ref().map(|d| d.to_string()))
     .bind(now)
     .execute(&mut *conn)
     .await?;
+    let row = crate::event_log::TimelineRow { id: &id, ticket_id, kind, actor, body, data: data.as_ref() };
+    crate::event_log::mirror_timeline(conn, row, now).await?;
     Ok(id)
 }
 
@@ -595,6 +597,19 @@ async fn change_stage(
     to: TicketStage,
     now: i64,
 ) -> Result<(), StoreError> {
+    change_stage_by(conn, id, from, to, Actor::User, None, now).await
+}
+
+/// [`change_stage`] by `actor`, with `extra` added to the `moved` event's data (the workflow and run that did it).
+async fn change_stage_by(
+    conn: &mut SqliteConnection,
+    id: &str,
+    from: TicketStage,
+    to: TicketStage,
+    actor: Actor,
+    extra: Option<&serde_json::Value>,
+    now: i64,
+) -> Result<(), StoreError> {
     let closed_at = if to.is_closed() { Some(now) } else { None };
     // A closed ticket no longer waits to start.
     sqlx::query(
@@ -610,7 +625,11 @@ async fn change_stage(
     .bind(id)
     .execute(&mut *conn)
     .await?;
-    insert_event(conn, id, EventKind::Moved, Actor::User, None, Some(json!({"from": from, "to": to})), now).await?;
+    let mut data = json!({"from": from, "to": to});
+    if let (Some(d), Some(serde_json::Value::Object(x))) = (data.as_object_mut(), extra) {
+        d.extend(x.clone());
+    }
+    insert_event(conn, id, EventKind::Moved, actor, None, Some(data), now).await?;
     if to.is_closed() && !from.is_closed() {
         let sql = format!(
             "SELECT t.id FROM ticket_links l JOIN tickets t ON t.id = l.to_id \
@@ -1471,11 +1490,40 @@ impl Store {
 
     /// Ends an active attempt as `state` (merged or abandoned) with its event. Returns its ticket's id, or None when
     /// there is no such active attempt (already ended, or unknown).
+    /// Moves a ticket to `stage` on behalf of `actor` (a workflow: `extra` names it on the `moved` event). Closing a
+    /// parent with open parts is refused as in [`Store::patch_ticket`]. None for an unknown ticket.
+    pub async fn move_ticket_by(
+        &self,
+        id: &str,
+        stage: TicketStage,
+        actor: Actor,
+        extra: Option<&serde_json::Value>,
+        now: i64,
+    ) -> TResult<Option<Ticket>> {
+        let mut tx = self.write_tx().await?;
+        let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
+        if stage != cur.stage {
+            if stage.is_closed() {
+                let open = open_part_keys(&mut tx, id, &HashSet::new()).await?;
+                if !open.is_empty() {
+                    return Err(TicketError::PartsOpen { key: cur.key.clone(), open });
+                }
+            }
+            change_stage_by(&mut tx, id, cur.stage, stage, actor, extra, now).await?;
+        }
+        tx.commit().await?;
+        Ok(self.get_ticket(id).await?)
+    }
+
+    /// Ends an active attempt (None when it wasn't active). A merge records how it was found (`via`) and the PR, which
+    /// the `attempt.merged` event carries.
     pub async fn end_attempt(
         &self,
         id: &str,
         state: AttemptState,
         actor: Actor,
+        via: Option<pdt_core::workflow::events::MergeVia>,
+        pr: Option<u32>,
         now: i64,
     ) -> Result<Option<String>, StoreError> {
         let kind = match state {
@@ -1494,7 +1542,11 @@ impl Store {
         .fetch_optional(&mut *tx)
         .await?;
         let Some((ticket_id, branch, base_branch)) = row else { return Ok(None) };
-        let data = json!({"attemptId": id, "branch": branch, "baseBranch": base_branch});
+        let mut data = json!({"attemptId": id, "branch": branch, "baseBranch": base_branch});
+        if state == AttemptState::Merged {
+            data["via"] = json!(via.unwrap_or(pdt_core::workflow::events::MergeVia::Detected));
+            data["pr"] = json!(pr);
+        }
         insert_event(&mut tx, &ticket_id, kind, actor, None, Some(data), now).await?;
         touch(&mut tx, &ticket_id, now).await?;
         tx.commit().await?;
@@ -1835,11 +1887,23 @@ impl Store {
 
     /// Adds a comment to the ticket's timeline. None if there is no such ticket.
     pub async fn add_comment(&self, ticket_id: &str, body: &str, now: i64) -> Result<Option<TicketEvent>, StoreError> {
+        self.add_comment_by(ticket_id, body, Actor::User, None, now).await
+    }
+
+    /// A comment by `actor`; `data` names the workflow and run that wrote a system comment.
+    pub async fn add_comment_by(
+        &self,
+        ticket_id: &str,
+        body: &str,
+        actor: Actor,
+        data: Option<serde_json::Value>,
+        now: i64,
+    ) -> Result<Option<TicketEvent>, StoreError> {
         let mut tx = self.write_tx().await?;
         if ticket_head(&mut tx, ticket_id).await?.is_none() {
             return Ok(None);
         }
-        let id = insert_event(&mut tx, ticket_id, EventKind::Comment, Actor::User, Some(body), None, now).await?;
+        let id = insert_event(&mut tx, ticket_id, EventKind::Comment, actor, Some(body), data, now).await?;
         touch(&mut tx, ticket_id, now).await?;
         let row =
             sqlx::query("SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE id = ?")
@@ -2472,10 +2536,10 @@ mod tests {
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
 
         assert_eq!(
-            store.end_attempt("at1", AttemptState::Merged, Actor::System, 9).await.unwrap().as_deref(),
+            store.end_attempt("at1", AttemptState::Merged, Actor::System, None, Some(4), 9).await.unwrap().as_deref(),
             Some("a")
         );
-        assert_eq!(store.end_attempt("at1", AttemptState::Abandoned, Actor::User, 10).await.unwrap(), None);
+        assert_eq!(store.end_attempt("at1", AttemptState::Abandoned, Actor::User, None, None, 10).await.unwrap(), None);
         let a = store.get_attempt("at1").await.unwrap().unwrap().attempt;
         assert_eq!((a.state, a.ended_at), (AttemptState::Merged, Some(9)));
         assert!(store.list_active_attempts().await.unwrap().is_empty());
@@ -2484,10 +2548,37 @@ mod tests {
             events(&store, "a").await,
             [EventKind::Created, EventKind::Moved, EventKind::Started, EventKind::Merged]
         );
+        // The domain events are mirrored into the event log with the change.
+        let log = store
+            .list_log_events(&crate::EventFilter { ticket_id: Some("a".into()), limit: 50, ..Default::default() })
+            .await
+            .unwrap();
+        let kinds: Vec<&str> = log.iter().map(|e| e.kind.as_str()).collect();
+        assert_eq!(kinds, ["ticket.stage_changed", "attempt.started", "attempt.merged"]);
+        let merged = &log[2].payload;
+        assert_eq!(
+            (merged["via"].as_str(), merged["pr"].as_u64(), merged["attemptId"].as_str()),
+            (Some("detected"), Some(4), Some("at1"))
+        );
+        assert!(merged["notice"]["text"].as_str().unwrap().contains("PR #4"));
+        assert_eq!(log[2].key, "at1:merged");
+        store.add_comment("a", "please also fix x", 10).await.unwrap();
+        let log = store
+            .list_log_events(&crate::EventFilter {
+                kind: Some("ticket.commented".into()),
+                limit: 5,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            (log[0].payload["body"].as_str(), log[0].payload["attemptId"].as_str()),
+            (Some("please also fix x"), None)
+        );
         // A new attempt can start after the last one ended.
         store.start_attempt("at2", "a", None, "br", "main", "abc", json!({}), 11).await.unwrap();
         assert_eq!(
-            store.end_attempt("at2", AttemptState::Abandoned, Actor::User, 12).await.unwrap().as_deref(),
+            store.end_attempt("at2", AttemptState::Abandoned, Actor::User, None, None, 12).await.unwrap().as_deref(),
             Some("a")
         );
         assert_eq!(events(&store, "a").await.last(), Some(&EventKind::Abandoned));

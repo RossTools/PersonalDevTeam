@@ -213,11 +213,11 @@ interface OverlapData { files?: string[]; level?: string }
 const stageName = (s: string | undefined) => (s && s in STAGE_LABEL ? STAGE_LABEL[s as TicketStage] : s ?? '?');
 
 /** One line for a timeline entry ("Moved from Draft to Ready", "Linked: blocked by PDT-12"). */
-/** What a `pr` event records (crates/pdt-api/src/github.rs). */
+/** What a `pr` event records (crates/pdt-api/src/workflow/nodes/session_send.rs and outbox.rs). */
 interface PrEventData { notice?: NoticeKind; pr?: number | null; jobs?: string[]; told?: boolean }
 
 const NOTICE_TITLE: Record<NoticeKind, string> = {
-  ci_failed: 'CI failed', conflict: 'Conflicts with the base branch', queue_left: 'Left the merge queue', merged: 'Merged',
+  ci_failed: 'CI failed', conflict: 'Conflicts with the base branch', queue_left: 'Left the merge queue', merged: 'Merged', behind: 'Behind its base branch',
 };
 
 function prEventTitle(d: PrEventData | null): string {

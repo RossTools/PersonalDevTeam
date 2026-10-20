@@ -59,6 +59,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - **Agent sessions** — docs/reference/agents.md: PDT's instructions to every agent (pdt-core `agent_context` + the project's agent instructions; built-in guides served from docs/ by pdt-api `guides.rs`), activity hooks, PTY terminals, Claude/Codex restart and resume, auto-resume, Devin, host defaults (default agent and view).
 - **Conversations** — docs/reference/conversations.md: the structured view (Claude stream-json, a PDT-owned Codex app-server, Devin ACP), its events API, Conversation | Terminal switching, attachments, Make ticket.
 - **Tickets** — docs/reference/tickets.md: tickets and the board, parts (parent tickets), Start (branch `pdt-<KEY>-<n>-<slug>`, worktree, attempt, agent session), merge detection, PR/CI tracking and notices, areas and overlap.
+- **Workflows** — docs/reference/workflows.md: the event log, workflow documents and versions, the engine (runs, steps, waits, retries), the node catalog, built-in workflows (PR notices, finishing merged tickets), `session.send`'s outbox, `ticket.finish`, connections.
 - **Review** — docs/reference/review.md: the Changes view, line comments, Send feedback, Approve, Merge.
 - **Workspaces, projects, worktrees, runs** — docs/reference/workspaces.md; run configuration in docs/run-config.md.
 - Invariants that are easy to break:
@@ -66,7 +67,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
   - A session or run has at most one tab, and closing its tab stops and removes it.
   - One active attempt per ticket; parent tickets are never started (their parts are).
   - PR state and file overlaps are computed in memory and added to ticket responses, not stored.
-  - Conversations are never auto-resumed as terminals, and nothing is sent to an agent without the user's click (PR notices aside).
+  - Conversations are never auto-resumed as terminals, and nothing is sent to an agent without the user's click or a workflow the user enabled (built-ins such as PR notices are enabled by default and can be turned off).
   - Guides served by pdtd link to each other by API path, never by repo path (a test checks).
 
 ## Rules

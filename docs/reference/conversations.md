@@ -86,7 +86,8 @@ Start too).
   --tools "" --output-format json --json-schema …` with the prompt on stdin (`structured_output`); Codex: an ephemeral
   read-only `thread/fork` (`excludeTurns: true`) plus a `turn/start` with `outputSchema`. 409 `nothing_to_draft`
   before the agent saved a turn, 504 `draft_timeout` after 120 s, no retries.
-- PR notices (PDT-44) also reach conversations: the newest running agent session of the attempt, once it is idle with
+- PR notices (PDT-44) and other `session.send` messages from workflows (docs/reference/workflows.md) also reach
+  conversations: the newest running agent session of the attempt, once it is idle with
   nothing queued, its terminal closed, no rate limit hit (`limited_until` from `usage` rate limits) and quiet for
   20 s; the message is `source: notice` ("Sent automatically").
 

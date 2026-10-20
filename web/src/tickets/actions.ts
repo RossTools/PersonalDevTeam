@@ -5,6 +5,7 @@ import { api, ApiError } from '../api/client';
 import type { AttemptSummary } from '../api/gen/AttemptSummary';
 import type { Ticket } from '../api/gen/Ticket';
 import type { Priority } from '../api/gen/Priority';
+import type { FinishRequest } from '../api/gen/FinishRequest';
 import type { PullResult } from '../api/gen/PullResult';
 import type { TicketPatch } from '../api/gen/TicketPatch';
 import type { TicketStage } from '../api/gen/TicketStage';
@@ -197,28 +198,7 @@ export async function abandonAttempt(confirm: Confirm, qc: QueryClient, t: Pick<
   invalidateTickets(qc, [t.id]);
 }
 
-const isCode = (e: unknown, code: string) => e instanceof ApiError && e.code === code;
-
-const BUSY_RETRIES = 10;
-const BUSY_RETRY_MS = 300;
-const pause = () => new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
-/** Retries `f` while it fails with `code` (a stopped process takes a moment to exit). */
-async function retryWhile(code: string, f: () => Promise<unknown>) {
-  for (let i = 0; ; i += 1) {
-    try {
-      return await f();
-    } catch (e) {
-      if (!isCode(e, code) || i >= BUSY_RETRIES) throw e;
-      await pause();
-    }
-  }
-}
-
-const ignoreMissing = (e: unknown) => {
-  if (!(e instanceof ApiError && e.status === 404)) throw e;
-};
 
 /** The base branch's pull, for the toast: a sentence to add to the success, or a problem to show on its own. */
 function pullNote(r: PullResult | null): { done?: string; problem?: string } {
@@ -242,101 +222,56 @@ function pullNote(r: PullResult | null): { done?: string; problem?: string } {
 }
 
 /**
- * The merged banner's action: moves the ticket to Done, stops what is still going (the sessions in the ticket's
- * workspace, the attempt's sessions, every session and run in its worktree, the workspace's runs) after asking once,
- * removes the worktree (asking to discard uncommitted changes), then deletes the workspace's sessions, closes the
- * ticket's tab and deletes the workspace Start made for it. Meanwhile the base branch is pulled (fast-forward only,
- * PDT-56) so the main checkout has the merged work. Results toast. `deleteBranch` also deletes the branch with the
- * worktree (Merge…'s choice).
+ * The merged banner's action, through the server's `ticket.finish` (PDT-76): moves the ticket to Done, stops and
+ * removes the sessions and runs in its worktree and workspace, removes the worktree, deletes the workspace Start made
+ * and pulls the base branch (fast-forward only, PDT-56). The server checks first and changes nothing while something
+ * would be lost: running sessions or runs (asked once, then stopped) and uncommitted changes (asked, then discarded).
+ * Declining either moves the ticket to Done and keeps the rest. Results toast. `deleteBranch` also deletes the branch
+ * with the worktree (Merge…'s choice).
  */
 export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket, opts: { deleteBranch?: boolean } = {}) {
-  const attempt = t.attempt;
-  await patchTicket(qc, t.id, { stage: 'done' });
-  const pulling = api.pullBranch(t.projectId, attempt ? { branch: attempt.baseBranch } : {}).catch(() => null);
-  const report = async (show: (m: string) => void, message: string) => {
-    const note = pullNote(await pulling);
-    void qc.invalidateQueries({ queryKey: ['branches', t.projectId] });
-    show(note.done ? `${message} ${note.done}` : message);
-    if (note.problem) toast.info(note.problem);
-  };
-  if (!attempt) return report(toast.success, `${t.key} moved to Done.`);
-  const worktreeId = attempt.worktreeId;
-  const workspaces = await api.listWorkspaces();
-  const workspace = attempt.workspaceId ? workspaces.find((w) => w.id === attempt.workspaceId) : undefined;
-  const tabs = workspace?.tabs ?? [];
-  const wsSessionIds = tabs.flatMap((tab) => (tab.sessionId ? [tab.sessionId] : []));
-  const wsRunIds = new Set(tabs.flatMap((tab) => (tab.runId ? [tab.runId] : [])));
-
-  // Everything still going: one question, then stop it all.
-  const projectSessions = await api.listSessions(t.projectId);
-  const wsSessions = (await Promise.all(wsSessionIds.map((id) => api.getSession(id).catch(() => null)))).filter((s) => s !== null);
-  const running = new Set([
-    ...t.sessions.filter((s) => s.attemptId === attempt.id && s.status === 'running').map((s) => s.id),
-    ...projectSessions.filter((s) => worktreeId && s.worktreeId === worktreeId && s.status === 'running').map((s) => s.id),
-    ...wsSessions.filter((s) => s.status === 'running').map((s) => s.id),
-  ]);
-  const runs = (await api.listActiveRuns()).filter((r) => (worktreeId && r.worktreeId === worktreeId) || wsRunIds.has(r.id));
-  if (running.size > 0 || runs.length > 0) {
-    const what = [running.size && plural(running.size, 'session'), runs.length && plural(runs.length, 'run')].filter(Boolean).join(' and ');
-    const { ok } = await confirm({
-      title: `Stop ${t.key}'s sessions?`,
-      body: `${what} ${running.size + runs.length === 1 ? 'is' : 'are'} still running. Stop and remove ${running.size + runs.length === 1 ? 'it' : 'them'}, the worktree${workspace ? ' and the workspace' : ''}?`,
-      action: 'Stop and remove',
-      danger: true,
-    });
-    if (!ok) return report(toast.info, `${t.key} moved to Done; the worktree was kept.`);
-    for (const id of running) await api.killSession(id).catch(ignoreMissing);
-    for (const r of runs) await api.stopRun(r.id).catch(ignoreMissing);
+  const req: FinishRequest = { stopRunning: false, discardChanges: false, deleteBranch: !!opts.deleteBranch, keepWorktree: false };
+  const workspace = !!t.attempt?.workspaceId;
+  let r = await api.finishTicket(t.id, req);
+  while (r.outcome === 'blocked' && r.blocked) {
+    const b = r.blocked;
+    if (b.sessions + b.runs > 0) {
+      const n = b.sessions + b.runs;
+      const what = [b.sessions && plural(b.sessions, 'session'), b.runs && plural(b.runs, 'run')].filter(Boolean).join(' and ');
+      const { ok } = await confirm({
+        title: `Stop ${t.key}'s sessions?`,
+        body: `${what} ${n === 1 ? 'is' : 'are'} still running. Stop and remove ${n === 1 ? 'it' : 'them'}, the worktree${workspace ? ' and the workspace' : ''}?`,
+        action: 'Stop and remove',
+        danger: true,
+      });
+      if (ok) req.stopRunning = true;
+      else req.keepWorktree = true;
+    } else if (b.dirty) {
+      const { ok } = await confirm({
+        title: 'The worktree has uncommitted changes',
+        body: `${t.attempt?.branch ?? 'The branch'} has changes that were never committed. Removing the worktree discards them.`,
+        action: 'Discard and remove',
+        danger: true,
+      });
+      if (ok) req.discardChanges = true;
+      else req.keepWorktree = true;
+    } else break;
+    r = await api.finishTicket(t.id, req);
   }
-
-  if (worktreeId) {
-    let force = false;
-    for (;;) {
-      try {
-        // A stopped session's process takes a moment to exit, and the worktree stays busy until it has.
-        await retryWhile('worktree_busy', () => api.removeWorktree(worktreeId, { force, deleteBranch: !!opts.deleteBranch }));
-        break;
-      } catch (e) {
-        // The worktree went; only the branch stayed (the message says why).
-        if (isCode(e, 'branch_not_deleted')) {
-          toast.info((e as Error).message);
-          break;
-        }
-        if (isCode(e, 'worktree_dirty') && !force) {
-          const { ok } = await confirm({
-            title: 'The worktree has uncommitted changes',
-            body: `${attempt.branch} has changes that were never committed. Removing the worktree discards them.`,
-            action: 'Discard and remove',
-            danger: true,
-          });
-          if (!ok) return report(toast.info, `${t.key} moved to Done; the worktree was kept.`);
-          force = true;
-          continue;
-        }
-        throw e;
-      }
-    }
-  }
-
-  // With a workspace of its own: its sessions are deleted (removing the worktree already deleted the ones in it), the
-  // ticket's tab closes wherever it is, and the workspace goes with every tab in it.
-  for (const s of wsSessions) await retryWhile('session_running', () => api.deleteSession(s.id)).catch(ignoreMissing);
-  const ticketTab = workspaces.flatMap((w) => w.tabs).find((tab) => tab.ticketId === t.id);
-  if (workspace && ticketTab && ticketTab.workspaceId !== workspace.id) await api.closeTab(ticketTab.id).catch(ignoreMissing);
-  // A part's tabs live in its parent's shared workspace (PDT-38), which stays: close just the part's tab.
-  let workspaceRemoved = false;
-  if (workspace) {
-    workspaceRemoved = await api.deleteWorkspace(workspace.id, { closeTabs: true }).then(() => true, (e) => (ignoreMissing(e), false));
-  }
-
+  invalidateTickets(qc, [t.id]);
   void qc.invalidateQueries({ queryKey: ['worktrees', t.projectId] });
   void qc.invalidateQueries({ queryKey: ['sessions'] });
   void qc.invalidateQueries({ queryKey: ['workspaces'] });
-  const removed = [worktreeId && 'worktree', workspaceRemoved && 'workspace'].filter(Boolean);
-  await report(
-    toast.success,
-    removed.length
-      ? `${t.key} is done and its ${removed.join(' and ')} ${removed.length === 1 ? 'is' : 'are'} removed.`
-      : `${t.key} moved to Done.`,
-  );
+  void qc.invalidateQueries({ queryKey: ['branches', t.projectId] });
+  if (r.branchNote) toast.info(r.branchNote);
+  const removed = [r.worktreeRemoved && 'worktree', r.workspaceRemoved && 'workspace'].filter(Boolean);
+  const message =
+    r.outcome === 'kept'
+      ? `${t.key} moved to Done; the worktree was kept.`
+      : removed.length
+        ? `${t.key} is done and its ${removed.join(' and ')} ${removed.length === 1 ? 'is' : 'are'} removed.`
+        : `${t.key} moved to Done.`;
+  const note = pullNote(r.pull);
+  (r.outcome === 'kept' ? toast.info : toast.success)(note.done ? `${message} ${note.done}` : message);
+  if (note.problem) toast.info(note.problem);
 }

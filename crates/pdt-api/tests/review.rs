@@ -545,16 +545,6 @@ async fn queue_with_finish(env: &Env) -> PullRequest {
     pr
 }
 
-async fn wait_for(what: &str, mut ok: impl AsyncFnMut() -> bool) {
-    for _ in 0..200 {
-        if ok().await {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
 #[tokio::test]
 async fn finish_on_merge_moves_to_done_and_cleans_up_once_github_merges() {
     let tmp = tempfile::tempdir().unwrap();
@@ -567,13 +557,23 @@ async fn finish_on_merge_moves_to_done_and_cleans_up_once_github_merges() {
     env.gh.set_pr(&env.branch, Some(pr));
     let (s, _) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
     assert_eq!(s, StatusCode::OK);
-    let (app, ticket) = (env.app.clone(), env.ticket.clone());
-    wait_for("the ticket to be done", async || {
-        call(&app, "GET", &format!("/api/tickets/{ticket}"), None).await.1["stage"] == "done"
-    })
-    .await;
-    let wt_path = env.wt_path.clone();
-    wait_for("the worktree to go", async || !wt_path.exists()).await;
+    // The built-in "Finish merged tickets" workflow does it, on the engine's next tick.
+    pdt_api::run_workflows(&env.state).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+    assert!(!env.wt_path.exists(), "the worktree went");
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let finish = runs.as_array().unwrap().iter().find(|r| r["workflowName"] == "Finish merged tickets").unwrap();
+    assert_eq!(finish["status"], "succeeded", "{runs}");
+    let (_, run) = call(&env.app, "GET", &format!("/api/workflow-runs/{}", finish["id"].as_str().unwrap()), None).await;
+    let ports: Vec<&str> = run["steps"].as_array().unwrap().iter().filter_map(|s| s["port"].as_str()).collect();
+    assert_eq!(ports, ["out", "finish", "finished"], "{run}");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{}/events", env.ticket), None).await;
+    let moved = events["items"].as_array().unwrap().iter().rev().find(|e| e["kind"] == "moved").unwrap().clone();
+    assert_eq!(
+        (moved["actor"].as_str(), moved["data"]["workflowName"].as_str()),
+        (Some("system"), Some("Finish merged tickets"))
+    );
     let (s, _) = call(&env.app, "GET", &format!("/api/sessions/{}", env.session), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "the worktree's session is stopped and removed");
     let branches = String::from_utf8(
@@ -598,7 +598,10 @@ async fn finish_on_merge_leaves_uncommitted_changes_for_the_user() {
     env.gh.set_pr(&env.branch, Some(pr));
     let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
     assert_eq!(t["attempt"]["state"], "merged", "{t}");
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let finish = runs.as_array().unwrap().iter().find(|r| r["workflowName"] == "Finish merged tickets").unwrap();
+    assert_eq!(finish["status"], "quiet", "blocked: left for the banner. {runs}");
     let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
     assert_eq!(t["stage"], "in_progress", "the merged banner stays for the user");
     assert!(env.wt_path.join("scratch.txt").exists());
