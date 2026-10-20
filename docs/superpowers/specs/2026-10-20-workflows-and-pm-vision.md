@@ -111,8 +111,12 @@ engine, the builder or the agent tools:
   4. *Plugin node kinds*: an external process that registers its own triggers and actions over a small JSON-RPC
      protocol. Only if 1–3 leave real gaps.
 - **Connections.** An external service is a named connection: base URL plus credentials in the secret store
-  (Radarr, Sonarr, Plex, a Discord webhook, Google). Workflows reference the connection by name, never a URL or key
-  inline. The same connection is offered to agent sessions as tools (§9), so a workflow and the PM use one setup.
+  (Radarr, Sonarr, Plex, a Discord webhook, Google, Jira, Buildkite). Workflows reference the connection by name, never
+  a URL or key inline. The same connection is offered to agent sessions as tools (§9), so a workflow and the PM use one
+  setup.
+- **Work systems** (added 2026-10-20): Jira as a connection with issue triggers and actions (not a full sync: issues
+  assigned to the user become linked tickets, Done moves the issue to Done), and Buildkite as a CI sensor feeding the
+  same provider-neutral `ci.*` events as GitHub Actions (7e spec §6).
 - **Outputs are action kinds too.** Notify (PDT notification, PDT-8), post to Discord, create a calendar event, send
   an email, append to a feed archive. A workflow's delivery is just its last step, swappable per workflow.
 
@@ -181,7 +185,8 @@ that would be rebuilt later. Roughly:
 - **7d — Builder:** graph view, non-graph view, text view, runs view, dry-run, templates (spec:
   2026-10-20-phase-7d-builder-design.md).
 - **7e — More of the catalog:** command, HTTP and webhook, GitHub issues and PR comments, schedule; then MCP tools as
-  actions.
+  actions. Split into 7e-1 (generic triggers and actions, PDT-80), 7e-2 (Jira and Buildkite, PDT-85) and 7e-3 (media,
+  MCP tools, brief archive, PDT-86): docs/superpowers/specs/2026-10-20-phase-7e-integrations-design.md.
 
 7d can start once 7a's document format is fixed; it doesn't wait for 7b/7c. Each part gets its own spec and plan.
 
@@ -261,8 +266,9 @@ What this adds to the plan:
   the board, the timeline and the PM's queries work unchanged. Start makes no branch or worktree for such a project;
   the details go in the 7a/7b specs.
 - **First catalog for 7e**, from the table: schedule (cron and interval), `github.issue.opened`, command, HTTP,
-  Discord post (webhook first), Google Calendar upsert, email search/archive, brief archive; then Radarr/Sonarr/Plex
-  connections.
+  Discord post (webhook first), brief archive; then Radarr/Sonarr/Plex connections; and for the work setup, Jira and
+  Buildkite (added 2026-10-20). Google Calendar upsert and email search/archive are dropped for now (2026-10-20): those
+  jobs run their existing scripts as command steps.
 - **Moving over** one job at a time, Hermes's running alongside until the PDT workflow has run cleanly for a while.
   The existing scripts can run unchanged as command steps on day one; replacing them with native kinds is optional.
 - **Talking to the PM over Discord** (as the user does with Hermes) is wanted eventually (decided 2026-10-20). Until
