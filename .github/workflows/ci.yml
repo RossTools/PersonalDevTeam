@@ -25,7 +25,8 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 # What a pull request, and its run in the merge queue, waits for (docs/superpowers/notes/ci.md):
-# - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`): every other job is skipped.
+# - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`, except the guides pdtd builds in):
+#   every other job is skipped.
 # - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types)
 #   and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
 # - build (macos-latest): on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break: clippy, nextest
@@ -86,10 +87,12 @@ jobs:
           esac
           printf 'Changed files:\n%s\n' "$files"
           has() { printf '%s' "$LABELS" | grep -q "\"$1\""; }
-          # Docs only: every changed file is under docs/ or a Markdown file (no code reads any .md). An empty list
-          # (the diff could not be read) counts as code, so CI never skips by accident.
+          # Docs only: every changed file is under docs/ or a Markdown file, and none is a guide pdtd builds in with
+          # include_str! (crates/pdt-api/src/guides.rs; its tests check them). An empty list (the diff could not be
+          # read) counts as code, so CI never skips by accident.
           code=true
-          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^docs/|\.md$'; then code=false; fi
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^docs/|\.md$' \
+            && ! printf '%s\n' "$files" | grep -qE '^docs/(agent-guide\.md|run-config\.md|prompts/)'; then code=false; fi
           windows=false; bundle=false
           if has windows || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
           if has bundle || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qE '^(desktop/|scripts/|\.github/)'; }; then bundle=true; fi

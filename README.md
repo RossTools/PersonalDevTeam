@@ -20,11 +20,17 @@ instances of it.
 - **Runs.** A project describes how to run and test itself in `.pdt/project.toml`. Run on a branch starts it on its
   own port with its own data folder and gives you the link.
 - **Remote access.** Optional `tailscale serve` mapping, restricted to the owner's Tailscale login.
+- **Conversations.** Agent sessions can also run as a structured chat (messages, tool calls, approval cards, diffs,
+  images), switchable to the agent's own terminal UI.
+- **Tickets and a board.** A backlog and a To do / In progress / Done board per project, with parent tickets split into
+  parts. Start on a ticket makes its branch and worktree and starts an agent on it; PDT tracks the PR and CI and
+  tells the agent when CI fails or the merge queue drops it.
+- **Review.** A Changes view of a branch's diff with line comments sent back to the agent, Approve, and Merge (locally
+  or through the PR's auto-merge).
 - **Updates.** The `pdt-host` supervisor keeps the daemon running, installs new GitHub releases when idle, health
   checks them and rolls back on failure. An optional tray app opens the UI.
 
-Coming next (tracked as tickets in PDT itself): tickets and a board, structured agent views, code review, and a pipeline of agent
-personas that hand work to each other.
+Coming next (tracked as tickets in PDT itself): a pipeline of agent personas that hand work to each other.
 
 ## Install
 
@@ -67,19 +73,21 @@ memory when `PDT_SECRET_STORE=memory`.
 | `crates/pdt-host` | the supervisor: runs pdtd, installs updates, rolls back |
 | `crates/pdt-api` | HTTP and WebSocket routes (axum) |
 | `crates/pdt-store` | SQLite store and migrations |
-| `crates/pdt-agents` | PTY terminals and agent launching |
+| `crates/pdt-agents` | PTY terminals, agent launching and the conversation adapters |
 | `crates/pdt-core` | domain types and brand names |
-| `crates/pdt-git`, `pdt-tailscale`, `pdt-update` | git, Tailscale and GitHub release wrappers |
+| `crates/pdt-git`, `pdt-tailscale`, `pdt-github`, `pdt-update` | git, Tailscale, GitHub CLI and GitHub release wrappers |
 | `web/` | React + Vite UI; `web/ui` is the design system |
 | `desktop/src-tauri` | the optional tray app (Tauri v2) |
 | `.pdt/project.toml` | how PDT runs and tests this repo |
 
 ## Docs
 
-- [AGENTS.md](AGENTS.md): the working guide for coding agents (and the most complete description of how PDT behaves)
+- [AGENTS.md](AGENTS.md): the working guide for coding agents
+- [docs/reference](docs/reference): how each part of PDT behaves (host, agent sessions, conversations, tickets,
+  review, workspaces)
 - [docs/SDLC.md](docs/SDLC.md): how a change goes from worktree to release
 - [docs/ROADMAP.md](docs/ROADMAP.md): where the roadmap lives now (PDT's own tickets)
 - [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it (built in: Settings → project → Set up with an agent)
 - [docs/agent-guide.md](docs/agent-guide.md): how agents use PDT (tickets, worktrees, runs). PDT serves it and the other guides at `/api/guides`, and a project's agent instructions live in its Settings, so a repo needs no PDT files
 - [docs/superpowers/specs](docs/superpowers/specs): designs; [plans](docs/superpowers/plans): build plans;
-  [notes](docs/superpowers/notes): CI layout, carry-overs, incident notes
+  [notes](docs/superpowers/notes): CI layout, known limits, protocol facts, incident notes

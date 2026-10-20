@@ -1,7 +1,6 @@
 # Personal Dev Team — Phase 6: Review Design
 
-Status: written by the agent working PDT-3 (2026-10-19) from the main spec §7.3 and the UX spec §8.3; the decisions
-below are the agent's, for the user to review on the PR. Plan: docs/superpowers/plans/2026-10-19-phase-6-review.md.
+Status: written by the agent working PDT-3 (2026-10-19) from the main spec §7.3 and the UX spec §8.3; built in PR #75. Plan: docs/superpowers/plans/2026-10-19-phase-6-review.md.
 
 ## 1. Goal
 

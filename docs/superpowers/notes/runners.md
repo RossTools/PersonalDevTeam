@@ -3,6 +3,9 @@
 Research for PDT-27. Prices are from vendor pages fetched on 2026-10-18; ⚠ marks figures that are vendor claims,
 third-party, or could not be confirmed. Current setup: docs/superpowers/notes/ci.md.
 
+**Status (2026-10-20):** decided and done. The Linux and macOS checks run on Namespace, the merge queue replaced
+`update-prs.yml` (PDT-24) and the Mac mini runner is retired. "Today" below means 2026-10-18.
+
 ## Summary
 
 - Half of the Windows job's time does nothing Windows-specific: the browser-UI tests (vitest) take **6m37s** on

@@ -1,6 +1,6 @@
 # Personal Dev Team — Tickets that take several PRs (parts) Design
 
-Status: decisions made with the user, 2026-10-19 (PDT-38); ready for a plan. Amends the tickets spec
+Status: decisions made with the user, 2026-10-19 (PDT-38); built in PR #58. Amends the tickets spec
 (docs/superpowers/specs/2026-10-18-tickets-design.md §3, §5, §6, §8; it brings forward swimlanes from §12, grouped by parent only) and notes what Phase 7 inherits.
 
 ## 1. Problem
