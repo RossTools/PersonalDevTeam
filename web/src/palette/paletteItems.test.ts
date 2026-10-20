@@ -141,6 +141,13 @@ describe('paletteItems', () => {
     expect(ids(items)).toContain('new:shell');
   });
 
+  it("lists the host's default agent and view first", () => {
+    const items = paletteItems(ctx({ defaults: { agent: 'codex', mode: 'terminal' } }));
+    expect(ids(items).filter((i) => i.startsWith('new:'))).toEqual([
+      'new:codex-terminal', 'new:codex', 'new:claude-terminal', 'new:claude', 'new:devin-terminal', 'new:devin', 'new:shell',
+    ]);
+  });
+
   it('shows the Ctrl+] key for actions that have one', () => {
     const items = paletteItems(ctx());
     expect(byId(items, 'run').shortcut).toBe('Ctrl+] c');

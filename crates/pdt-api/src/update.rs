@@ -9,7 +9,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use pdt_core::activity::Activity;
 use pdt_core::handoff::{UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path};
-use pdt_core::host::UpdatePolicy;
+use pdt_core::host::{DEFAULT_UPDATE_CHECK_MINUTES, UpdatePolicy};
 use pdt_core::release::{HostOs, TokenState, Version, parse_version, token_state};
 use pdt_core::run::RunState;
 use pdt_core::session::SessionStatus;
@@ -75,9 +75,13 @@ pub struct UpdateService {
     running: Arc<tokio::sync::Mutex<()>>,
     /// `requested_at` of the request this pdtd handed to pdt-host, while it shows `installing`.
     handed_off_at: Mutex<Option<i64>>,
-    /// `run_update_loop`: the wait before its first check, and between checks.
+    /// `run_update_loop`: the wait before its first check, and between checks (None: the host's
+    /// `update_check_minutes`).
     pub first_check_delay: Duration,
-    pub check_interval: Duration,
+    pub check_interval: Option<Duration>,
+    /// `run_update_loop`: how often it wakes to look at the settings again, so a shorter interval or a policy that
+    /// stops being manual takes effect without waiting out the old interval.
+    pub settings_poll: Duration,
 }
 
 impl UpdateService {
@@ -109,7 +113,8 @@ impl UpdateService {
             running: Default::default(),
             handed_off_at: Mutex::new(None),
             first_check_delay: Duration::from_secs(30),
-            check_interval: Duration::from_secs(3600),
+            check_interval: None,
+            settings_poll: Duration::from_secs(60),
         }
     }
 
@@ -457,19 +462,33 @@ fn skipped(data_dir: &Path, version: &str) -> bool {
         .is_some_and(|skip| skip.version == version)
 }
 
-/// Checks every `check_interval` (unless the policy is manual), and installs when idle under auto-when-idle (spec
-/// §3.3). Runs only under pdt-host.
+/// The wait between automatic checks: the service's own (tests), else the host's setting.
+async fn check_interval(st: &AppState) -> Duration {
+    if let Some(d) = st.update.check_interval {
+        return d;
+    }
+    let minutes =
+        st.store.get_host_settings().await.map(|s| s.update_check_minutes).unwrap_or(DEFAULT_UPDATE_CHECK_MINUTES);
+    Duration::from_secs(u64::from(minutes) * 60)
+}
+
+/// Checks every `update_check_minutes` (unless the policy is manual), and installs when idle under auto-when-idle
+/// (spec §3.3). Runs only under pdt-host.
 pub async fn run_update_loop(st: AppState) {
     if !st.update.enabled {
         return;
     }
     tokio::time::sleep(st.update.first_check_delay).await;
+    let mut last_check: Option<tokio::time::Instant> = None;
     loop {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
+        let interval = check_interval(&st).await;
+        let due = last_check.is_none_or(|t| t.elapsed() >= interval);
         let policy = refresh_policy(&st).await;
-        if policy != UpdatePolicy::Manual {
+        if due && policy != UpdatePolicy::Manual {
+            last_check = Some(tokio::time::Instant::now());
             let s = check(&st).await;
             let failed_before = s.latest.as_ref().is_some_and(|l| skipped(&st.data_dir, &l.version));
             if failed_before {
@@ -484,7 +503,8 @@ pub async fn run_update_loop(st: AppState) {
                 tracing::warn!(error = e.message(), "automatic update did not start");
             }
         }
-        tokio::time::sleep(st.update.check_interval).await;
+        let wait = last_check.map_or(interval, |t| interval.saturating_sub(t.elapsed()));
+        tokio::time::sleep(wait.min(st.update.settings_poll)).await;
     }
 }
 
