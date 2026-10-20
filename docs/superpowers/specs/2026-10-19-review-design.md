@@ -22,8 +22,9 @@ Review/Accept stages (Phase 7), GitHub review state (PDT-12), commenting on a PR
    `base_commit` is used (as `changed_files` does). The main checkout has no Changes view (it has no base to compare).
 2. **The diff is drawn in the browser.** The API lists the changed files and serves each file's two texts (at the
    merge base, and in the working tree); `@codemirror/merge` computes and draws the diff, split (`MergeView`) or
-   unified (`unifiedMergeView`), with syntax highlighting. Unchanged runs collapse (`collapseUnchanged`, 3 lines of
-   margin) and expand on a click; **Whole file** turns collapsing off. A side over 1 MB, or a binary file, is not
+   unified (`unifiedMergeView`), with syntax highlighting. Long lines wrap (the split halves are narrow, and threads
+   under a line then fit the pane). Unchanged runs collapse (`collapseUnchanged`, 3 lines of margin) and expand on a
+   click; **Whole file** turns collapsing off. A thread on a line inside a collapsed run shows once the run expands. A side over 1 MB, or a binary file, is not
    served (`tooLarge` / `binary`) and the view says so.
 3. **Comments belong to the worktree.** `review_comments.worktree_id`, deleted with the worktree, so a changes tab on
    any worktree (attempt or not) can be reviewed. A comment anchors to a side (`old` for removed lines, else `new`),
@@ -35,11 +36,12 @@ Review/Accept stages (Phase 7), GitHub review state (PDT-12), commenting on a PR
    edited or deleted. **Send feedback** puts all of the worktree's drafts into one message (§5), sends it to the
    coder session and marks them sent (`sent_at`, `session_id`). Sent comments can't be edited (they are in the
    agent's history); they can be resolved and replied to. Resolved threads collapse.
-5. **The coder session.** For an attempt's worktree: the attempt's newest agent session (`sessions.attempt_id`);
-   otherwise the newest agent session whose `worktree_id` is the worktree. A conversation gets the message as the
-   user's next message (queued if a turn runs; a parked or stopped conversation reopens). A terminal session gets it
-   as one bracketed paste plus Enter, which needs its PTY running (`409 session_not_running` says to restart it). No
-   agent session: `409 no_agent_session`. The ticket timeline records a `feedback` event (count, session).
+5. **The coder session.** For an attempt's worktree: the newest of the attempt's agent sessions
+   (`sessions.attempt_id`) that can take a message now; otherwise the same among the agent sessions whose `worktree_id`
+   is the worktree. A conversation always can: it gets the message as the user's next message (queued if a turn runs;
+   a parked or stopped conversation reopens). A terminal session can while its PTY runs, and gets one bracketed paste
+   plus Enter. Agent sessions but none that can: `409 session_not_running` (restart it). None at all:
+   `409 no_agent_session`. The ticket timeline records a `feedback` event (count, session).
 6. **Approve** is a record, not a gate (there is no pipeline yet): a `review` ticket event with `{verdict:
    "approved", head}`. The review bar shows "Approved" while the branch head is still that commit. Only for attempts.
 7. **Merge… has two paths.**
@@ -61,8 +63,9 @@ Review/Accept stages (Phase 7), GitHub review state (PDT-12), commenting on a PR
      moves to Done and the worktree stays.
    Merge… is offered for active attempts only, from the review bar and the ticket menu.
 8. **Viewed** is per browser (localStorage), keyed by worktree, path and a version of the file (git's blob id of
-   both sides); a file that changes after it was marked becomes unviewed. Viewed files collapse in the list's count
-   ("4 / 9 viewed") and the tree dims them.
+   both sides); a file that changes after it was marked becomes unviewed. The checkbox is in the file's header (as on
+   GitHub: a control inside a tree row fights the tree's own keyboard and press handling), the list counts them
+   ("4 / 9 viewed") and the tree dims them with a check.
 9. **Where Changes opens.** The ticket tab's Changes section (its active attempt's worktree; the last attempt's while
    the worktree still exists). And a **changes tab** for any worktree: a new tab kind (`workspace_tabs.worktree_id`,
    one tab per worktree), opened from the worktree's `BranchChip` menu ("Review changes"), the project's worktree
@@ -101,7 +104,7 @@ the CHECK counting four columns. `EventKind` gains `feedback` and `review`.
 All JSON camelCase, types in pdt-core `review.rs` (ts-rs).
 
 - `GET /api/worktrees/{id}/changes` → `Changes { worktreeId, branch, base, mergeBase, head, dirty, files:
-  ChangedFile[] }`; `ChangedFile { path, oldPath?, status: added|modified|deleted|renamed, untracked, binary,
+  ChangedFile[], attemptId, ticketId, attemptActive, approved }`; `ChangedFile { path, oldPath?, status: added|modified|deleted|renamed, untracked, binary,
   added, removed, version }` (sorted by path; `version` changes when either side does). 404 for an unknown worktree,
   409 `worktree_missing` when its folder is gone.
 - `GET /api/worktrees/{id}/changes/file?path=&oldPath=` → `FileSides { path, old: string|null, new: string|null,
@@ -116,11 +119,13 @@ All JSON camelCase, types in pdt-core `review.rs` (ts-rs).
 - `POST /api/worktrees/{id}/feedback` → `{ sessionId, sent }` (409 `no_drafts`, `no_agent_session`,
   `session_not_running`).
 - `POST /api/attempts/{id}/approve` → the `review` event.
-- `GET /api/attempts/{id}/merge` → `MergePreview { method: local|github, base, commits, problem?: MergeProblem,
-  conflicts: string[], pr?: { number, url, queue } }`; `MergeProblem = dirty | conflict | base_dirty | nothing |
-  pr_not_mergeable | inactive`.
+- `GET /api/attempts/{id}/merge` → `MergePreview { method: local|github, branch, base, commits, problem?:
+  MergeProblem, conflicts: string[], baseCheckout?, pr?: { number, url, queue } }`; `MergeProblem = inactive | dirty |
+  conflict | base_dirty | nothing | pr_not_mergeable | pr_queued`.
 - `POST /api/attempts/{id}/merge` → `{ outcome: merged|queued, commit? }` (409 `merge_blocked` with the problem,
   `merge_failed` when git or `gh` failed).
+- `POST /api/attempts/{id}/conflicts` → `{ sessionId, sent: 0 }`: Send to agent for a conflicting merge (409
+  `no_conflict` otherwise).
 - Tabs: `NewTab`/`Tab` gain `worktreeId`.
 
 ## 5. The feedback message
@@ -158,7 +163,7 @@ The whole message is capped at 32 KB (later comments become "…and N more comme
 - The CodeMirror theme moves from `files/CodeViewer.tsx` into `files/codeTheme.ts`, shared by both.
 - Split | Unified is a `SegmentedControl` (remembered per browser; unified below 900px whatever the choice). Keys in
   the diff: `c` comments on the selected lines, `]`/`[` next/previous file, `v` toggles Viewed.
-- Phones: the file list is a sheet opened from the review bar; unified only.
+- Phones: a Files button in the review bar swaps the diff for the file list; unified only; the bar wraps.
 
 ## 7. Testing
 

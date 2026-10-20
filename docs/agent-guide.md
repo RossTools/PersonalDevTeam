@@ -33,6 +33,12 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 | `POST /api/tickets/<id>/comments` | `{body}` |
 | `POST /api/tickets/<id>/links` | `{kind: "blocks" \| "relates", to: <other ticket id>}` (this ticket blocks `to`) |
 
+The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts
+"Review feedback on <branch>": each comment names `file:line`, quotes the lines and says what to change. Address each
+one, then say briefly what you changed. A message saying a merge into the base conflicts lists the files: merge the base
+branch into yours, resolve them, run the checks and commit. `GET /api/worktrees/<id>/changes` lists what PDT counts
+as your changes (committed or not, against the merge base with the base branch).
+
 When work you were given as a ticket turns up follow-up work, add it as a new ticket rather than widening the change,
 and comment on the ticket with anything the person should know. Move a ticket to `done` only when the person says the
 work is finished (PDT also does it when it sees the branch merged).

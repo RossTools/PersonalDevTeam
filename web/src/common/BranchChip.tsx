@@ -12,20 +12,30 @@ export interface BranchChipProps {
   repo?: string | null;
   /** The project's base branch: adds "Open PR" (compare `base...branch`) unless this is the base branch. */
   base?: string;
+  /** A worktree's branch: the menu starts with "Review changes" (its changes tab). */
+  onReview?: () => void;
   className?: string;
 }
 
-/** A branch name in a mono chip; on GitHub projects a menu: Open on GitHub (tree), Open PR (compare), Copy name. */
-export function BranchChip({ branch, repo, base, className }: BranchChipProps) {
+/**
+ * A branch name in a mono chip. With a menu when there is something to offer: Review changes (a worktree's), and on
+ * GitHub projects Open on GitHub (tree), Open PR (compare) and Copy name.
+ */
+export function BranchChip({ branch, repo, base, onReview, className }: BranchChipProps) {
   const chip = (
-    <Chip icon={<GitBranch aria-hidden />} title={branch} className={repo ? undefined : className}>
+    <Chip icon={<GitBranch aria-hidden />} title={branch} className={repo || onReview ? undefined : className}>
       {branch}
     </Chip>
   );
-  if (!repo) return chip;
+  if (!repo && !onReview) return chip;
   const entries = (): MenuEntry[] => [
-    { label: 'Open on GitHub', onSelect: () => open(branchUrl(repo, branch)) },
-    ...(base && base !== branch ? [{ label: 'Open PR', onSelect: () => open(compareUrl(repo, base, branch)) }] : []),
+    ...(onReview ? [{ label: 'Review changes', onSelect: onReview }] : []),
+    ...(repo
+      ? [
+          { label: 'Open on GitHub', onSelect: () => open(branchUrl(repo, branch)) },
+          ...(base && base !== branch ? [{ label: 'Open PR', onSelect: () => open(compareUrl(repo, base, branch)) }] : []),
+        ]
+      : []),
     { label: 'Copy branch name', onSelect: () => void navigator.clipboard?.writeText(branch).catch(() => {}) },
   ];
   return (

@@ -24,7 +24,7 @@ const run: Run = {
 };
 
 const tab = (id: string, workspaceId: string, position: number, item: { sessionId?: string; runId?: string }): Tab => ({
-  id, workspaceId, position, sessionId: item.sessionId ?? null, runId: item.runId ?? null, ticketId: null,
+  id, workspaceId, position, sessionId: item.sessionId ?? null, runId: item.runId ?? null, ticketId: null, worktreeId: null,
 });
 
 const workspaces: Workspace[] = [
@@ -232,14 +232,14 @@ describe('paletteItems', () => {
   });
 
   it('labels a ticket tab with its key and title', () => {
-    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
     const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
     const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t, 0)] }));
     expect(byId(items, 'tab:tk').label).toBe('PDT-42 · Fix login');
   });
 
   it('starts the ticket on screen, and picks a ticket to start', () => {
-    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
     const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
     const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)], ticketProjectId: 'p1' });
     const items = paletteItems(c);
@@ -259,7 +259,7 @@ describe('paletteItems', () => {
   });
 
   it('starts the next part of a parent on screen, never the parent itself', () => {
-    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
     const parts = { total: 2, done: 0, merged: 0, review: 0, progress: 0, todo: 2, backlog: 0, segments: ['todo' as const, 'todo' as const] };
     const t = { ...summary, parts, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
     const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)] });

@@ -246,9 +246,10 @@ function pullNote(r: PullResult | null): { done?: string; problem?: string } {
  * workspace, the attempt's sessions, every session and run in its worktree, the workspace's runs) after asking once,
  * removes the worktree (asking to discard uncommitted changes), then deletes the workspace's sessions, closes the
  * ticket's tab and deletes the workspace Start made for it. Meanwhile the base branch is pulled (fast-forward only,
- * PDT-56) so the main checkout has the merged work. Results toast.
+ * PDT-56) so the main checkout has the merged work. Results toast. `deleteBranch` also deletes the branch with the
+ * worktree (Merge…'s choice).
  */
-export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket) {
+export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket, opts: { deleteBranch?: boolean } = {}) {
   const attempt = t.attempt;
   await patchTicket(qc, t.id, { stage: 'done' });
   const pulling = api.pullBranch(t.projectId, attempt ? { branch: attempt.baseBranch } : {}).catch(() => null);
@@ -293,9 +294,14 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
     for (;;) {
       try {
         // A stopped session's process takes a moment to exit, and the worktree stays busy until it has.
-        await retryWhile('worktree_busy', () => api.removeWorktree(worktreeId, { force }));
+        await retryWhile('worktree_busy', () => api.removeWorktree(worktreeId, { force, deleteBranch: !!opts.deleteBranch }));
         break;
       } catch (e) {
+        // The worktree went; only the branch stayed (the message says why).
+        if (isCode(e, 'branch_not_deleted')) {
+          toast.info((e as Error).message);
+          break;
+        }
         if (isCode(e, 'worktree_dirty') && !force) {
           const { ok } = await confirm({
             title: 'The worktree has uncommitted changes',

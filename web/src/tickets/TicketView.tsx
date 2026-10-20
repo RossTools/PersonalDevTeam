@@ -17,6 +17,9 @@ import { PartsStepper } from '../common/PartsStepper';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { TicketConversation } from './TicketConversation';
+import { ChangesView } from '../review/ChangesView';
+import { MergeDialog } from '../review/MergeDialog';
+import { useOpenChanges } from '../review/open';
 import { useCheckMerge, useTicket } from './queries';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
@@ -27,10 +30,10 @@ type HubTab = 'overview' | 'conversation' | 'changes';
 const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'conversation', label: 'Conversation' },
-  { id: 'changes', label: 'Changes', arrives: 'Phase 6' },
+  { id: 'changes', label: 'Changes' },
 ];
 
-/** Overview · Conversation · Changes; Changes arrives with review (6). */
+/** Overview · Conversation · Changes. */
 function HubTabs({ value, onChange }: { value: HubTab; onChange: (t: HubTab) => void }) {
   return (
     <div role="tablist" aria-label="Ticket sections" className="flex shrink-0 items-center gap-1 border-b border-border px-3">
@@ -65,6 +68,8 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   const start = useStartTicket();
   const attempt = ticket.attempt;
   const [making, setMaking] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const openChanges = useOpenChanges();
   return (
     <>
     <ViewHeader
@@ -83,7 +88,14 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           <TicketBadges ticket={ticket} />
           {ticket.parts && <PartsStepper parts={ticket.parts} showCount className="hidden w-28 sm:flex" />}
           <LabelChips labels={ticket.labels} className="hidden sm:flex" />
-          {attempt && <BranchChip branch={attempt.branch} base={attempt.baseBranch} className="hidden max-w-60 md:inline-flex" />}
+          {attempt && (
+            <BranchChip
+              branch={attempt.branch}
+              base={attempt.baseBranch}
+              {...(attempt.worktreeId ? { onReview: () => openChanges({ id: attempt.worktreeId!, projectId: ticket.projectId }) } : {})}
+              className="hidden max-w-60 md:inline-flex"
+            />
+          )}
         </>
       }
       actions={
@@ -102,6 +114,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
                 ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, ticket)) }]
                 : []),
               ...(canMakeParts(ticket) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
+              ...(attempt?.state === 'active' ? [{ label: 'Merge…', onSelect: () => setMerging(true) }] : []),
               ...(attempt?.state === 'active'
                 ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
                 : []),
@@ -117,12 +130,13 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
       }
     />
     {making && <MakePartsDialog ticket={ticket} onClose={() => setMaking(false)} />}
+    {merging && attempt && <MergeDialog ticket={ticket} attemptId={attempt.id} onClose={() => setMerging(false)} />}
     </>
   );
 }
 
 /** A ticket tab: header, the section tabs, then the Overview (description and activity; details and links aside) or
- * the Conversation (its agent sessions). */
+ * the Conversation (its agent sessions) or the Changes (its attempt's diff and review). */
 export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDeleted?: () => void }) {
   const q = useTicket(ticketId);
   const [tab, setTab] = useState<HubTab>('overview');
@@ -145,6 +159,14 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
       {tab === 'conversation' ? (
         <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
           <TicketConversation ticket={t} />
+        </div>
+      ) : tab === 'changes' ? (
+        <div role="tabpanel" aria-labelledby="ticket-tab-changes" className="flex min-h-0 flex-1 flex-col">
+          {t.attempt?.worktreeId ? (
+            <ChangesView key={t.attempt.worktreeId} worktreeId={t.attempt.worktreeId} ticket={t} />
+          ) : (
+            <EmptyState>{t.attempt ? 'The worktree of this attempt is gone.' : 'Start the ticket to see its changes here.'}</EmptyState>
+          )}
         </div>
       ) : (
         <div role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">

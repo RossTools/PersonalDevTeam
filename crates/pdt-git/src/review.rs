@@ -76,7 +76,11 @@ fn is_zero(oid: &str) -> bool {
 /// and untracked files that are not ignored. Sorted by path.
 pub fn diff_files(worktree: &Path, merge_base: &str) -> Result<Vec<DiffEntry>, GitError> {
     // `--raw`: status and blob ids (a working-tree side that differs from the index shows as zeros).
-    let raw = run_bytes(worktree, &["-c", "core.quotepath=off", "diff", "-M", "--raw", "-z", merge_base, "--"], None)?;
+    let raw = run_bytes(
+        worktree,
+        &["-c", "core.quotepath=off", "diff", "-M", "--raw", "--no-abbrev", "-z", merge_base, "--"],
+        None,
+    )?;
     let fields = nul_fields(&raw);
     let mut entries: BTreeMap<String, DiffEntry> = BTreeMap::new();
     let mut hash_later: Vec<String> = vec![];

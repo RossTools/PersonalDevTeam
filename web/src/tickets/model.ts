@@ -257,6 +257,11 @@ export function eventTitle(e: TicketEvent): string {
         ? `${d.removed ? 'Part removed' : 'Part added'}: ${d.partKey ?? 'a ticket'}`
         : `${d.removed ? 'No longer a part of' : 'Made a part of'} ${d.parentKey ?? 'a ticket'}`;
     }
+    case 'feedback': {
+      const n = (e.data as { count?: number } | null)?.count ?? 0;
+      return `Sent ${n} review comment${n === 1 ? '' : 's'} to the agent`;
+    }
+    case 'review': return 'Approved the changes';
   }
 }
 

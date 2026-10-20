@@ -10,6 +10,7 @@ import type { Tab } from '../api/gen/Tab';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
+import type { Worktree } from '../api/gen/Worktree';
 import { isActive, runDot } from '../runs/runState';
 import { toDot } from '../sessions/status';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
@@ -72,6 +73,14 @@ export function ticketInfo(t: Ticket, polledAt: number): ItemInfo {
   };
 }
 
+/** A changes tab: titled `Changes · <branch>`. */
+export function changesInfo(w: Worktree, polledAt: number): ItemInfo {
+  return {
+    item: { kind: 'changes', id: w.id }, title: `Changes · ${w.branch}`, status: 'idle', activity: null, unseen: false,
+    projectId: w.projectId, worktreeId: w.id, polledAt,
+  };
+}
+
 /** How often a ticket tab's title is refreshed (the open ticket's own view polls every 2 s). */
 const TICKET_TAB_POLL = 5000;
 
@@ -113,12 +122,25 @@ export function useWorkspaces() {
     // As above: the timestamps say when anything changed.
     [ticketQs.map((q) => q.dataUpdatedAt).join()],
   );
+  // Changes tabs: their worktrees, from the projects' worktree lists (read only while such a tab exists).
+  const hasChangesTab = workspaces.some((w) => w.tabs.some((t) => t.worktreeId));
+  const worktreeQs = useQueries({
+    queries: projectList.map((p) => ({
+      queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id), enabled: hasChangesTab, staleTime: 30_000,
+    })),
+  });
+  const changesInfos = useMemo(
+    () => worktreeQs.flatMap((q) => (q.data ?? []).map((w) => changesInfo(w, q.dataUpdatedAt))),
+    [worktreeQs.map((q) => q.dataUpdatedAt).join()],
+  );
   const info = useCallback(
     (item: Item) =>
       item.kind === 'ticket'
         ? ticketInfos.find((i) => i.item.id === item.id) ?? null
-        : infos.get(`${item.kind}:${item.id}`) ?? null,
-    [infos, ticketInfos],
+        : item.kind === 'changes'
+          ? changesInfos.find((i) => i.item.id === item.id) ?? null
+          : infos.get(`${item.kind}:${item.id}`) ?? null,
+    [infos, ticketInfos, changesInfos],
   );
   const allInfos = useMemo(() => [...infos.values()], [infos]);
 

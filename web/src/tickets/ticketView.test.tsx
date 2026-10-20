@@ -56,7 +56,7 @@ describe('ticket tab', () => {
     expect(screen.getByRole('list', { name: 'Stage' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Conversation' })).toBeEnabled();
-    expect(screen.getByRole('tab', { name: /Changes/ })).toHaveTextContent('Phase 6');
+    expect(screen.getByRole('tab', { name: 'Changes' })).toBeEnabled();
     expect(screen.getByText('open')).toBeInTheDocument();
     const activity = await screen.findByRole('list', { name: 'Activity' });
     const entries = within(activity).getAllByRole('listitem');
