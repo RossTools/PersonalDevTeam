@@ -9,12 +9,14 @@ import {
   DialogTrigger,
 } from './primitives/dialog';
 
-export type DialogSize = 'sm' | 'md' | 'lg';
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl';
 
 const sizes: Record<DialogSize, string> = {
   sm: 'sm:max-w-sm',
   md: 'sm:max-w-md',
   lg: 'sm:max-w-2xl',
+  /** Wide content: a diff. */
+  xl: 'sm:max-w-6xl',
 };
 
 /**

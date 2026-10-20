@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../api/gen/AgentEvent';
@@ -271,6 +271,28 @@ describe('ConversationComposer', () => {
   it('warns near a rate limit and says when one is hit', () => {
     setup({ limit: { text: 'Rate limited until 3:40 PM (5-hour limit)', reached: true } });
     expect(screen.getByRole('status')).toHaveTextContent('Rate limited until 3:40 PM (5-hour limit). Nothing is sent until you send again.');
+  });
+
+  it('keeps unsent text for the session when it unmounts and comes back; sending clears it', async () => {
+    const props: ConversationComposerProps = {
+      turnRunning: false, onSend: vi.fn(async () => {}), onInterrupt: vi.fn(), models: [], model: null, onModel: vi.fn(),
+      permissionModes: [], permissionMode: 'ask', onPermissionMode: vi.fn(), draftKey: 'draft-s1',
+    };
+    const first = render(<ConversationComposer {...props} />);
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'half a thought');
+    first.unmount();
+    const second = render(<ConversationComposer {...props} />);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('half a thought');
+    second.unmount();
+    render(<ConversationComposer {...props} draftKey="draft-s2" />);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+    cleanup();
+    render(<ConversationComposer {...props} />);
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), '{Enter}');
+    expect(props.onSend).toHaveBeenCalledWith('half a thought', undefined);
+    cleanup();
+    render(<ConversationComposer {...props} />);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
   });
 
   it('Enter sends; Shift+Enter adds a line', async () => {

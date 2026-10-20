@@ -247,7 +247,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
 }
 
 /// How long a pull's fetch may take.
-const PULL_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) const PULL_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Fast-forwards a branch (the base by default) to `origin`'s, in whichever checkout has it (PDT-56; "Move to Done
 /// and remove the worktree" calls it so the main checkout has the merged work). Never merges and never touches

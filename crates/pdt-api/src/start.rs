@@ -179,11 +179,11 @@ pub(crate) async fn start(
         }
     };
     let conversation = v.session_mode == SessionMode::Conversation;
-    let permission_mode = conversation.then_some(if v.bypass_permissions {
+    let permission_mode = conversation.then_some(v.permission_mode.unwrap_or(if v.bypass_permissions {
         PermissionMode::Bypass
     } else {
         v.agent.default_permission_mode()
-    });
+    }));
     let req = CreateSession {
         valid: ValidSession {
             project_id: project.id.clone(),
@@ -394,6 +394,7 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
             && st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, now_ms()).await?.is_some()
         {
             crate::github::notify_merged(&st, &info).await;
+            crate::finish::on_merged(&st, &info);
         }
     }
     Ok(Json(load_ticket(&st, &id).await?))
@@ -475,6 +476,7 @@ pub async fn check_merges(st: &AppState) {
                     tracing::info!(ticket = %info.ticket_key, branch = %info.attempt.branch,
                         "the attempt's branch was merged");
                     crate::github::notify_merged(st, &info).await;
+                    crate::finish::on_merged(st, &info);
                 }
                 Ok(None) => {}
                 Err(e) => tracing::warn!(attempt = %info.attempt.id, error = %e, "could not end the merged attempt"),

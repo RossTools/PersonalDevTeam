@@ -65,6 +65,23 @@ describe('ChangesView', () => {
     expect(screen.getByText('untracked')).toBeInTheDocument();
   });
 
+  it('shows a Markdown file rendered, before and after side by side', async () => {
+    stub({
+      'GET /api/worktrees/w1/changes/file': { path: 'README.md', old: '# Old title\n', new: '# New title\n', binary: false, tooLarge: false },
+    });
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    await userEvent.click(await screen.findByRole('radio', { name: 'Rendered' }));
+    expect(within(screen.getByRole('region', { name: 'Before' })).getByRole('heading', { name: 'Old title' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'After' })).getByRole('heading', { name: 'New title' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Whole file' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Diff' }));
+    expect(screen.queryByRole('region', { name: 'After' })).not.toBeInTheDocument();
+    // Not offered for other files.
+    await userEvent.click(within(await findTree()).getByText('login.ts'));
+    expect(await screen.findByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Rendered' })).not.toBeInTheDocument();
+  });
+
   it('marks a file viewed, which survives a reload until the file changes', async () => {
     stub();
     const { unmount } = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
@@ -179,10 +196,29 @@ describe('MergeDialog', () => {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     expect(await screen.findByText(/through the merge queue/)).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    // Finishing once it merges is on by default; deleting the branch is not, and goes with it.
+    const finish = screen.getByRole('checkbox', { name: 'Move to Done and clean up once it merges' });
+    expect(finish).toBeChecked();
+    const del = screen.getByRole('checkbox', { name: 'Delete the branch' });
+    expect(del).not.toBeChecked();
+    await userEvent.click(del);
     await userEvent.click(screen.getByRole('button', { name: 'Add to merge queue' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')).toBe(true);
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: true, deleteBranch: true });
+    expect(await screen.findByText(/then ALP-1 moves to Done/)).toBeInTheDocument();
+  });
+
+  it('turning off finishing once it merges turns off deleting the branch too', async () => {
+    const { calls } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: false } }), {
+      'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
+    });
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Delete the branch' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Move to Done and clean up once it merges' }));
+    expect(screen.getByRole('checkbox', { name: 'Delete the branch' })).toBeDisabled();
+    expect(screen.getByText(/offers to move ALP-1 to Done/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on auto-merge' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: false, deleteBranch: false });
   });
 
   it('merges locally and, keeping the worktree, moves the ticket to Done', async () => {

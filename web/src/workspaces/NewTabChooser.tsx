@@ -81,8 +81,11 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   const defaults = useAgentDefaults();
   const choicesHere = byDefault(AGENTS.filter(offered), (c) => c, defaults);
   const { place, setPicked } = usePlace(ws);
-  const [bypass, setBypass] = useState(false);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
+  // The host's default for new sessions (Ask unless changed) until picked here.
+  const [pickedBypass, setBypass] = useState<boolean | null>(null);
+  const [pickedMode, setPermissionMode] = useState<PermissionMode | null>(null);
+  const permissionMode = pickedMode ?? defaults.sessionPermissionMode;
+  const bypass = pickedBypass ?? defaults.sessionPermissionMode === 'bypass';
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'list' | 'branch' | 'ticket'>('list');
   const workspace = ws.workspace;

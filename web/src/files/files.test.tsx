@@ -48,6 +48,21 @@ describe('folder view', () => {
     expect(await screen.findByText('This is a binary file.')).toBeInTheDocument();
   });
 
+  it('shows a Markdown file rendered, or as its source', async () => {
+    stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/files?path=': [entry('README.md')],
+      'GET /api/projects/p/files/content?path=README.md': { path: 'README.md', size: 20, status: null, text: '# Hello\n\nSome *text*.\n', binary: false, tooLarge: false },
+    });
+    renderWithQuery(<Harness />);
+    await userEvent.click(await screen.findByRole('row', { name: /README/ }));
+    expect(await screen.findByRole('heading', { name: 'Hello', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByTestId('code')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Source' }));
+    expect(screen.getByTestId('code')).toHaveTextContent('# Hello');
+    expect(screen.queryByRole('heading', { name: 'Hello', level: 1 })).not.toBeInTheDocument();
+  });
+
   it('marks git status, strikes deleted files and shows a folder that failed to load', async () => {
     stubApi({
       'GET /api/projects/p/worktrees': [],

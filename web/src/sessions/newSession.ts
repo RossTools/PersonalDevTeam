@@ -13,14 +13,21 @@ export function agentOf(choice: Choice): AgentKind | null {
   return choice.startsWith('Codex') ? 'codex' : choice.startsWith('Devin') ? 'devin' : 'claude';
 }
 
-/** The host's default agent and view (Settings → This host → Agents). */
+/** The host's default agent, view and permission modes (Settings → This host → Agents). */
 export interface AgentDefaults {
   agent: AgentKind;
   mode: SessionMode;
+  /** What a ticket's Start offers first. */
+  ticketPermissionMode: PermissionMode;
+  /** What a new session offers first. */
+  sessionPermissionMode: PermissionMode;
 }
 
-/** What the app offers before the host settings load (or when they fail): a Claude conversation. */
-export const FALLBACK_DEFAULTS: AgentDefaults = { agent: 'claude', mode: 'conversation' };
+/**
+ * What the app offers before the host settings load (or when they fail): a Claude conversation; Bypass for a ticket
+ * (its agent works on its own branch), Ask for a new session.
+ */
+export const FALLBACK_DEFAULTS: AgentDefaults = { agent: 'claude', mode: 'conversation', ticketPermissionMode: 'bypass', sessionPermissionMode: 'ask' };
 
 const LABEL: Record<AgentKind, 'Claude' | 'Codex' | 'Devin'> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
 
@@ -33,7 +40,7 @@ export function choiceFor(agent: AgentKind, mode: SessionMode): Choice {
  * Pure: `items` with the default agent's choices first, each agent's default view before its other one; the other
  * agents keep their order and Shell stays last.
  */
-export function byDefault<T>(items: T[], choiceOf: (item: T) => Choice, d: AgentDefaults): T[] {
+export function byDefault<T>(items: T[], choiceOf: (item: T) => Choice, d: Pick<AgentDefaults, 'agent' | 'mode'>): T[] {
   const order: AgentKind[] = ['claude', 'codex', 'devin'];
   const weight = (item: T) => {
     const c = choiceOf(item);

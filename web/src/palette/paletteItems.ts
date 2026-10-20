@@ -99,7 +99,7 @@ export interface PaletteContext {
   /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing one. */
   agents?: (agent: AgentKind) => AgentAvailability;
   /** The host's default agent and view: their "New … here" comes first. */
-  defaults?: AgentDefaults;
+  defaults?: Pick<AgentDefaults, 'agent' | 'mode'>;
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;

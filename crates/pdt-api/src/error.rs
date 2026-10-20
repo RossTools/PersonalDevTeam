@@ -36,6 +36,10 @@ impl ApiError {
         &self.message
     }
 
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+
     pub fn not_found(what: &str) -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", format!("{what} not found"))
     }

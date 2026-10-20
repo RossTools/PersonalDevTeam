@@ -34,7 +34,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   `default_branch`). The project's Settings page changes it (`PATCH /api/projects/{id} {baseBranch}`, which must name
   a local branch or one on `origin`); existing attempts keep the base they started with.
 - The Files view reads checkouts through `/api/projects/{id}/files` (git's file list, `.gitignore` honoured; paths
-  stay inside the checkout, `.git` refused).
+  stay inside the checkout, `.git` refused). A Markdown file shows rendered (`Markdown`, as ticket text) with a
+  Rendered | Source switch.
 - Folder picker (PDT-5): `GET /api/host/folders` (`path` absolute or `~…`, empty = home; `hidden`; `nearest` walks up
   to a folder that exists) lists one folder's subfolders, never files, in the host's path form whatever the browser's
   OS (pure rules in pdt-core `host_path`, tested for both styles), marking git checkouts and projects;

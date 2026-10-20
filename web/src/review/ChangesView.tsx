@@ -9,7 +9,7 @@ import { api } from '../api/client';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { ReviewComment } from '../api/gen/ReviewComment';
 import type { Ticket } from '../api/gen/Ticket';
-import { Markdown } from '../common/Markdown';
+import { isMarkdownPath, Markdown } from '../common/Markdown';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { actionError, runAction } from '../common/useAction';
 import { PrBadge } from '../tickets/PullRequest';
@@ -212,6 +212,9 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
 }) {
   const qc = useQueryClient();
   const sides = useFileSides(worktreeId, file);
+  // A Markdown file can also be read rendered: before and after side by side (split), or as it is now (unified).
+  const markdown = isMarkdownPath(file.path) && !file.binary;
+  const [rendered, setRendered] = useState(false);
   const refresh = () => invalidateReview(qc, worktreeId);
   const act = (f: () => Promise<unknown>) => runAction(async () => { await f(); refresh(); });
 
@@ -285,6 +288,15 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
         {file.untracked && <Badge title="Not added to git yet">untracked</Badge>}
         {!file.binary && <DiffStat added={file.added} removed={file.removed} className="text-xs" />}
         <span className="ml-auto flex items-center gap-2">
+          {markdown && (
+            <SegmentedControl<'diff' | 'rendered'>
+              aria-label="Show"
+              size="sm"
+              value={rendered ? 'rendered' : 'diff'}
+              onChange={(v) => setRendered(v === 'rendered')}
+              options={[{ value: 'diff', label: 'Diff' }, { value: 'rendered', label: 'Rendered' }]}
+            />
+          )}
           {!narrow && (
             <SegmentedControl
               aria-label="Diff layout"
@@ -294,9 +306,11 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
               options={[{ value: 'split', label: 'Split' }, { value: 'unified', label: 'Unified' }]}
             />
           )}
-          <Button size="sm" variant="ghost" aria-pressed={wholeFile} onClick={() => onWholeFile(!wholeFile)}>
-            {wholeFile ? 'Changes only' : 'Whole file'}
-          </Button>
+          {!(markdown && rendered) && (
+            <Button size="sm" variant="ghost" aria-pressed={wholeFile} onClick={() => onWholeFile(!wholeFile)}>
+              {wholeFile ? 'Changes only' : 'Whole file'}
+            </Button>
+          )}
           <Checkbox checked={viewed} onChange={onViewed}>Viewed</Checkbox>
         </span>
       </header>
@@ -314,6 +328,8 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
           <Alert tone="error" className="m-3">{sides.error ? actionError(sides.error) : 'Could not read the file.'}</Alert>
         ) : s.tooLarge ? (
           <EmptyState>This file is over 1 MB; it isn't shown.</EmptyState>
+        ) : markdown && rendered ? (
+          <RenderedSides oldText={s.old} newText={s.new} split={mode === 'split'} />
         ) : (
           <Suspense fallback={<Skeleton lines={8} className="p-3" />}>
             <CodeDiff
@@ -331,4 +347,23 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
       </div>
     </div>
   );
+}
+
+/** A Markdown file's two sides rendered: Before | After in the split layout, else the file as it is now (or was). */
+function RenderedSides({ oldText, newText, split }: { oldText: string | null; newText: string | null; split: boolean }) {
+  const side = (label: string, text: string) => (
+    <section aria-label={label} className="min-w-0 flex-1 p-4">
+      <h3 className="mb-2 text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</h3>
+      <Markdown>{text}</Markdown>
+    </section>
+  );
+  if (split && oldText !== null && newText !== null) {
+    return (
+      <div className="flex divide-x divide-border">
+        {side('Before', oldText)}
+        {side('After', newText)}
+      </div>
+    );
+  }
+  return newText !== null ? side('After', newText) : side('Before', oldText ?? '');
 }
