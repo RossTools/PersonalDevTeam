@@ -73,6 +73,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   carry `ticket {id, key}` (sidebar and tab chips). Session titles never name the agent (a new session is titled with
   its branch, or the project for the main checkout); tabs, agent rows, the palette and the attempt list show it with
   `SessionKindIcon` (web/src/common).
+- `noSession: true` (PDT-72; the Start dialog's "No session") starts no agent session: the branch, worktree, attempt
+  and only the ticket's tab (still in its new workspace with `newWorkspace`); the result's `session` is `null`.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as
   merged, to Won't do as merged if detected, else abandoned.
 

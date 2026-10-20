@@ -181,6 +181,11 @@ pub struct StartTicket {
     #[serde(default)]
     #[ts(optional)]
     pub from_session: Option<String>,
+    /// Start without an agent session (PDT-72): the branch, worktree, attempt and the ticket's tab (in a new workspace
+    /// with `newWorkspace`) only. `agent`, `sessionMode` and `bypassPermissions` don't apply.
+    #[serde(default)]
+    #[ts(optional)]
+    pub no_session: Option<bool>,
     /// On a parent: start its next part (the first open part, by rank, that is not started or merged and has no
     /// open blockers) instead of refusing with `ticket_has_parts`.
     #[serde(default)]
@@ -207,6 +212,8 @@ pub struct ValidStart {
     pub mode: StartMode,
     pub session_mode: SessionMode,
     pub from_session: Option<String>,
+    /// Make no agent session.
+    pub no_session: bool,
     /// On a parent: start its next part.
     pub next: bool,
     pub size: TerminalSize,
@@ -227,6 +234,10 @@ impl StartTicket {
         let from_session = nonblank(&self.from_session);
         if from_session.is_some() && (branch.is_some() || nonblank(&self.base).is_some()) {
             return Err(TicketValidationError::Invalid("a start from a chat keeps the chat's branch".into()));
+        }
+        let no_session = self.no_session.unwrap_or(false);
+        if no_session && from_session.is_some() {
+            return Err(TicketValidationError::Invalid("a start from a chat keeps the chat's session".into()));
         }
         let cols = self.cols.unwrap_or(DEFAULT_SIZE.cols);
         let rows = self.rows.unwrap_or(DEFAULT_SIZE.rows);
@@ -250,6 +261,7 @@ impl StartTicket {
             mode: self.mode.unwrap_or_default(),
             session_mode,
             from_session,
+            no_session,
             next: self.next.unwrap_or(false),
             size: TerminalSize { cols, rows },
         })
@@ -263,7 +275,8 @@ impl StartTicket {
 pub struct StartResult {
     pub ticket: Ticket,
     pub attempt: AttemptSummary,
-    pub session: Session,
+    /// The agent session working on it; none for a start with `noSession`.
+    pub session: Option<Session>,
 }
 
 /// The ticket title, within the session title limit (the sidebar and tabs show the ticket key and the agent's icon
@@ -398,6 +411,7 @@ mod tests {
                 mode: StartMode::Check,
                 session_mode: SessionMode::Conversation,
                 from_session: None,
+                no_session: false,
                 next: false,
                 size: DEFAULT_SIZE,
             }
@@ -409,6 +423,7 @@ mod tests {
         assert_eq!(devin.session_mode, SessionMode::Conversation);
         let chat = start(serde_json::json!({"agent": "claude", "fromSession": " s1 "})).unwrap();
         assert_eq!(chat.from_session.as_deref(), Some("s1"));
+        assert!(start(serde_json::json!({"agent": "claude", "noSession": true})).unwrap().no_session);
         let v = start(serde_json::json!({
             "agent": "codex", "branch": " feature/x ", "base": " ", "bypassPermissions": true, "newWorkspace": true,
             "mode": "force", "cols": 20, "rows": 300, "tab": {"workspaceId": "w", "position": 2}
@@ -428,6 +443,7 @@ mod tests {
             serde_json::json!({"agent": "claude", "rows": 301}),
             serde_json::json!({"agent": "claude", "fromSession": "s1", "branch": "x"}),
             serde_json::json!({"agent": "claude", "fromSession": "s1", "base": "main"}),
+            serde_json::json!({"agent": "claude", "fromSession": "s1", "noSession": true}),
         ] {
             assert!(matches!(start(bad.clone()), Err(TicketValidationError::Invalid(_))), "{bad}");
         }

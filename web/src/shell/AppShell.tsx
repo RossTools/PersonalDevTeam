@@ -119,12 +119,14 @@ export function AppShell() {
   const onStarted = (r: StartResult) => {
     invalidateTickets(qc, [r.ticket.id]);
     qc.setQueryData(['ticket', r.ticket.id], r.ticket);
-    void qc.invalidateQueries({ queryKey: ['sessions', r.session.projectId] });
-    void qc.invalidateQueries({ queryKey: ['worktrees', r.session.projectId] });
+    const projectId = r.ticket.projectId;
+    void qc.invalidateQueries({ queryKey: ['sessions', projectId] });
+    void qc.invalidateQueries({ queryKey: ['worktrees', projectId] });
     setView('sessions');
     void runAction(async () => {
       await ws.refresh();
-      await ws.focusItem({ kind: 'session', id: r.session.id }, r.session.projectId);
+      // Started without a session: the ticket's tab.
+      await ws.focusItem(r.session ? { kind: 'session', id: r.session.id } : { kind: 'ticket', id: r.ticket.id }, projectId);
     });
   };
   const keyQuery = paletteQuery.trim();

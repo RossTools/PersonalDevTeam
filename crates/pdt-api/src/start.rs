@@ -1,5 +1,5 @@
 //! Ticket Start, attempts and merge detection (tickets spec §5, §6): Start makes the branch, worktree, attempt and an
-//! agent session whose first prompt is the ticket, and opens the ticket and the session as tabs; an attempt ends when
+//! agent session whose first prompt is the ticket (unless `noSession`), and opens the ticket and the session as tabs; an attempt ends when
 //! its branch is merged into the base (checked every 60 s and on demand), when it is abandoned, or when the ticket is
 //! closed.
 
@@ -157,7 +157,18 @@ pub(crate) async fn start(
         let ticket = load_ticket(&st, &id).await?;
         let attempt =
             ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
-        return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session })));
+        return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: Some(session) })));
+    }
+
+    if v.no_session {
+        open_tabs(&st, &project.id, &key, &id, &attempt_id, None, &v).await;
+        if let Some(p) = &parent {
+            part_started(&st, p).await;
+        }
+        let ticket = load_ticket(&st, &id).await?;
+        let attempt =
+            ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
+        return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: None })));
     }
 
     let part_context = match crate::parts::context(&st, &ticket).await {
@@ -212,14 +223,14 @@ pub(crate) async fn start(
     if let Err(e) = st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await {
         tracing::warn!(ticket = %id, error = %e, "could not record the started session on the timeline");
     }
-    open_tabs(&st, &project.id, &key, &id, &attempt_id, &session.id, &v).await;
+    open_tabs(&st, &project.id, &key, &id, &attempt_id, Some(&session.id), &v).await;
     if let Some(p) = &parent {
         part_started(&st, p).await;
     }
     let ticket = load_ticket(&st, &id).await?;
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
-    Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session })))
+    Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: Some(session) })))
 }
 
 /// The chat a Start from a chat adopts, with its worktree: a conversation session of this project with no ticket,
@@ -273,7 +284,7 @@ async fn open_tab_before_chat(
                 tracing::warn!(error = %e, "could not open the ticket's tab");
             }
         }
-        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, session_id, v).await,
+        _ => open_tabs(st, project_id, key, ticket_id, attempt_id, Some(session_id), v).await,
     }
 }
 
@@ -306,7 +317,7 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "is" } else { "are" }
 }
 
-/// The ticket's tab, then the session's right after it: in a new workspace named after the ticket, where asked, or
+/// The ticket's tab, then the session's (if any) right after it: in a new workspace named after the ticket, where asked, or
 /// at the end of the project's workspace (the attempt remembers a new workspace). A failure is logged: the session runs and can be opened from the sidebar.
 async fn open_tabs(
     st: &AppState,
@@ -314,7 +325,7 @@ async fn open_tabs(
     key: &str,
     ticket_id: &str,
     attempt_id: &str,
-    session_id: &str,
+    session_id: Option<&str>,
     v: &ValidStart,
 ) {
     let target = if v.new_workspace {
@@ -359,6 +370,7 @@ async fn open_tabs(
             None
         }
     };
+    let Some(session_id) = session_id else { return };
     let session_item = TabItem::Session(session_id.to_string());
     if let Err(e) = st.store.open_tab(&new_id(), &workspace_id, &session_item, after, now_ms()).await {
         tracing::warn!(error = %e, "could not open the started session's tab");
