@@ -161,14 +161,34 @@ describe('HostSettingsPage', () => {
       'DELETE /api/host/token': undefined,
     });
     renderWithQuery(<HostSettingsPage />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Remove token' }));
+    // Only in the Danger zone, never next to Check for updates.
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    expect(within(updates).queryByRole('button', { name: /Remove/ })).toBeNull();
+    const danger = screen.getByRole('region', { name: 'Danger zone' });
+    await userEvent.click(within(danger).getByRole('button', { name: 'Remove token…' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
-    await userEvent.click(screen.getByRole('button', { name: 'Remove token' }));
+    await userEvent.click(within(danger).getByRole('button', { name: 'Remove token…' }));
     const ask = await screen.findByRole('alertdialog', { name: 'Remove the GitHub token?' });
     await userEvent.click(within(ask).getByRole('button', { name: 'Remove token' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/host/token')).toBe(true));
+  });
+
+  it('checks for updates and shows a newer release; no Danger zone without a token', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'POST /api/host/update/check': update({ state: 'available', latest: release, lastCheckedAt: 1 }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
+    expect(await within(updates).findByText('v0.1.7 available')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/update/check')).toBe(true);
+    expect(screen.queryByRole('region', { name: 'Danger zone' })).toBeNull();
   });
 
   it('shows why the settings failed to load instead of loading forever', async () => {
@@ -191,8 +211,8 @@ describe('HostSettingsPage', () => {
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();
-    expect(screen.getByText(/expired or revoked/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument();
+    expect(screen.getByText('Expired or revoked')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check for updates' })).not.toBeInTheDocument();
     const claude = screen.getByText('claude').closest('li')!;
     expect(claude).toHaveTextContent('not found');
     expect(within(claude).getByRole('img', { name: 'not found' })).toHaveAttribute('data-status', 'failed');

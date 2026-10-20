@@ -51,6 +51,29 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
 - **Pending and errors.** Actions show `pending` on their control; forms show errors with `Alert`/`Field`; everything
   else toasts (`toast.error(message)`).
 
+## Settings pages
+
+Every settings page (host, project, and whatever comes next) is built the same way from `Page`, `Section` and
+`SettingsRow`, so a page reads the same everywhere and nothing destructive sits next to something routine:
+
+- **Page → Section cards → rows.** A `Section` is a heading (and description) over a bordered card; each child of
+  the card is a row, divided from the next. Group by what the user is configuring, not by API field; prefer more
+  small sections to one long one.
+- **One setting per row.** `SettingsRow`: label (and a one-line description) on the left, the control on the right.
+  `stacked` for wide controls (text areas, file views, folder fields). State goes in a `Badge`/`StatusDot` in the
+  row (Active, Stored, Expired), not in prose.
+- **Saving (spec §6.1).** A switch or select saves at once and shows "Saved" beside it. Text fields belong to a
+  form: the whole section is the form and its one Save goes in the `footer` (with "Saved" beside it), enabled only
+  when dirty. A section saves only its own fields. A lone text field in a section of instant controls (a token, the
+  owner) may carry its Save beside it.
+- **Buttons are buttons.** In settings every action is a bordered `secondary` button (or `primary` for Save);
+  `ghost` is for toolbars, and `Link` is only for navigating somewhere (a URL, another page), never for an action.
+  Section-wide actions that change nothing (Check for updates, Run checks again) go in the section's `actions`.
+- **Destructive actions live in the Danger zone.** Page-wide removals (remove the project, remove the token) go in
+  a `Section danger` at the bottom of the page, as `danger` buttons whose label ends in "…" and that confirm
+  (spec §6.2). The one exception is a per-item removal inside a list (a worktree): a secondary button with a trash
+  icon, still "…" and confirmed. Never put a destructive button beside a routine one.
+
 ## Tests
 
 - Vitest + Testing Library + user-event (`pnpm --dir web exec vitest run ui/<Name>.test.tsx`). Query by role and

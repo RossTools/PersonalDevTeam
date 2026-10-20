@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type Status } from '@ui';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
 import { api } from '../api/client';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
@@ -10,15 +10,15 @@ import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { FolderField } from '../common/FolderField';
 import { useAction } from '../common/useAction';
 
-/** Describes the stored token without ever showing it. */
-function tokenText(present: boolean, t: TokenState | undefined): string {
-  if (!present || t?.state === 'missing') return 'none';
-  if (t?.state === 'expired') return 'expired or revoked: replace it';
+/** The stored token's state as a badge (never the token itself). */
+function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
+  if (!present || t?.state === 'missing') return { tone: 'neutral', text: 'None' };
+  if (t?.state === 'expired') return { tone: 'failed', text: 'Expired or revoked' };
   if (t && 'expiresAt' in t && t.expiresAt !== null) {
     const when = new Date(t.expiresAt).toLocaleDateString();
-    return t.state === 'expires_soon' ? `expires soon (${when}): replace it` : `stored in the OS keychain; expires ${when}`;
+    return t.state === 'expires_soon' ? { tone: 'waiting', text: `Expires soon (${when})` } : { tone: 'running', text: `Stored · expires ${when}` };
   }
-  return 'stored in the OS keychain';
+  return { tone: 'running', text: 'Stored' };
 }
 
 const updatePolicies: { value: UpdatePolicy; label: string }[] = [
@@ -27,8 +27,8 @@ const updatePolicies: { value: UpdatePolicy; label: string }[] = [
   { value: 'manual', label: 'Manual (no checks)' },
 ];
 const credentialPolicies: { value: CredentialPolicy; label: string }[] = [
-  { value: 'subscription', label: 'Subscription (remove ANTHROPIC_API_KEY and OPENAI_API_KEY)' },
-  { value: 'pass_through', label: 'Pass through (API keys, Bedrock/Vertex, proxies)' },
+  { value: 'subscription', label: 'Subscription (remove API keys)' },
+  { value: 'pass_through', label: 'Pass through' },
 ];
 
 /**
@@ -76,6 +76,11 @@ function submit(fn: () => void) {
   };
 }
 
+/** "Saved" (or nothing) beside a form section's Save. */
+function SavedNote({ show }: { show: boolean }) {
+  return show ? <span role="status" className="text-xs text-muted-foreground">Saved</span> : null;
+}
+
 function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
   const s = v.settings;
   const qc = useQueryClient();
@@ -92,30 +97,41 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
   });
   const ownerError = useFormError(owner.error);
   const dirty = login.trim() !== (s.ownerLogin ?? '');
-  const status: ReactNode = v.remote.active && v.remote.url
-    ? <Link href={v.remote.url}>{v.remote.url}</Link>
-    : v.remote.error ?? (s.remoteAccess ? 'Not active' : 'Off');
+  const [tone, text]: [BadgeTone, string] = v.remote.active
+    ? ['running', 'Active']
+    : v.remote.error
+      ? ['failed', 'Not active']
+      : s.remoteAccess
+        ? ['waiting', 'Not active']
+        : ['neutral', 'Off'];
   return (
-    <Section
-      label="Remote access"
-      description="Reach this host from your other devices over Tailscale."
-      actions={<Button size="sm" variant="ghost" pending={retrying} onClick={() => void retry()}>Retry</Button>}
-    >
-      <SettingsRow label="Serve this host on the tailnet over HTTPS" description={status}>
+    <Section label="Remote access" description="Reach this host from your other devices over Tailscale.">
+      <SettingsRow label="Serve on the tailnet" description="Over HTTPS, through tailscale serve.">
         <SaveNote s={toggle} />
         <Switch aria-label="Remote access" checked={s.remoteAccess} onChange={(on) => toggle.mutate({ remoteAccess: on })} />
+      </SettingsRow>
+      <SettingsRow
+        label="Status"
+        description={
+          v.remote.active && v.remote.url ? <Link href={v.remote.url}>{v.remote.url}</Link>
+            : v.remote.error ? <span className="text-destructive">{v.remote.error}</span>
+              : undefined
+        }
+      >
+        <Badge tone={tone}>{text}</Badge>
+        <Button size="sm" pending={retrying} onClick={() => void retry()}>Check again</Button>
       </SettingsRow>
       <form onSubmit={submit(() => { if (dirty) owner.mutate({ ownerLogin: login.trim() }); })} className="flex flex-col gap-2">
         <SettingsRow
           label="Owner"
-          description={v.ownerFromEnv ? 'Set by PDT_OWNER_LOGIN' : 'Only this Tailscale user gets in.'}
+          description={v.ownerFromEnv ? 'Set by PDT_OWNER_LOGIN.' : 'Only this Tailscale user gets in.'}
         >
           <Input aria-label="Owner login" className="w-56" value={v.ownerFromEnv ?? login} disabled={!!v.ownerFromEnv} onChange={(e) => setLogin(e.target.value)} />
-          {!v.ownerFromEnv && (
-            <Button type="submit" aria-label="Save owner" disabled={!dirty} pending={owner.isPending && owner.variables?.ownerLogin === login.trim()}>Save</Button>
-          )}
           {!v.ownerFromEnv && me && me !== s.ownerLogin && (
-            <Button variant="secondary" onClick={() => owner.mutate({ ownerLogin: me })}>Use {me}</Button>
+            <Button size="sm" onClick={() => owner.mutate({ ownerLogin: me })}>Use {me}</Button>
+          )}
+          {!v.ownerFromEnv && (
+            <Button type="submit" size="sm" variant="primary" aria-label="Save owner" disabled={!dirty} pending={owner.isPending && owner.variables?.ownerLogin === login.trim()}>Save</Button>
           )}
         </SettingsRow>
         {ownerError}
@@ -126,7 +142,6 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
 
 function Updates({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
-  const confirm = useConfirm();
   const update = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus });
   const policy = useSaveSettings();
   const [secret, setSecret] = useState('');
@@ -139,34 +154,25 @@ function Updates({ v }: { v: HostSettingsView }) {
     },
   });
   const tokenError = useFormError(token.error);
-  const [removeToken, removingToken] = useAction(async () => {
-    const { ok } = await confirm({
-      title: 'Remove the GitHub token?',
-      body: 'It is deleted from the OS keychain; this host cannot check for updates until you save a new one.',
-      action: 'Remove token',
-      danger: true,
-    });
-    if (!ok) return;
-    await api.deleteToken();
-    void qc.invalidateQueries({ queryKey: ['host-settings'] });
-    void qc.invalidateQueries({ queryKey: ['host-update'] });
-  });
   const [check, checking] = useAction(async () => qc.setQueryData(['host-update'], await api.checkUpdate()));
   const u = update.data;
-  const updatesApply = u?.state === 'disabled';
+  const updatesOff = u?.state === 'disabled';
+  const badge = tokenBadge(v.tokenPresent, u?.token);
+  const checked = u?.lastCheckedAt ? `Last checked ${new Date(u.lastCheckedAt).toLocaleString()}.` : null;
   return (
-    <Section
-      label="Updates"
-      description={
-        <>
-          Version {u?.current ?? '…'}
-          {updatesApply && ` · Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`}
-          {u?.error && <span className="text-destructive"> · {u.error}</span>}
-        </>
-      }
-      actions={!updatesApply && <Button size="sm" variant="ghost" pending={checking} onClick={() => void check()}>Check now</Button>}
-    >
-      <SettingsRow label="Policy">
+    <Section label="Updates" description="New releases of PDT, from GitHub.">
+      <SettingsRow
+        label={`Version ${u?.current ?? '…'}`}
+        description={
+          updatesOff ? `Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`
+            : u?.error ? <span className="text-destructive">{u.error}</span>
+              : checked
+        }
+      >
+        {u?.state === 'available' && u.latest && <Badge tone="accent">v{u.latest.version} available</Badge>}
+        {!updatesOff && <Button size="sm" pending={checking || u?.state === 'checking'} onClick={() => void check()}>Check for updates</Button>}
+      </SettingsRow>
+      <SettingsRow label="Install updates">
         <SaveNote s={policy} />
         <Select aria-label="Update policy" className="w-64" options={updatePolicies} value={v.settings.updatePolicy} onChange={(p) => policy.mutate({ updatePolicy: p })} />
       </SettingsRow>
@@ -181,10 +187,12 @@ function Updates({ v }: { v: HostSettingsView }) {
         </Alert>
       )}
       <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
-        <SettingsRow label="Token" description={v.tokenError ? 'A GitHub token for checking releases.' : `A GitHub token for checking releases: ${tokenText(v.tokenPresent, u?.token)}`}>
+        <SettingsRow
+          label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
+          description={v.tokenPresent ? 'Kept in the OS keychain. Paste a new one to replace it.' : 'Lets this host read releases. Kept in the OS keychain.'}
+        >
           <Input aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
-          <Button type="submit" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
-          {v.tokenPresent && <Button variant="ghost" pending={removingToken} onClick={() => void removeToken()}>Remove token</Button>}
+          <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
         </SettingsRow>
         {tokenError}
       </form>
@@ -211,7 +219,13 @@ function Runs({ v }: { v: HostSettingsView }) {
     >
       <Section
         label="Runs"
-        actions={<Button type="submit" size="sm" variant="primary" aria-label="Save run settings" disabled={!portsChanged && !maxChanged} pending={save.isPending}>Save</Button>}
+        description="Dev instances and other runs started from a branch."
+        footer={
+          <>
+            <SavedNote show={save.saved && !portsChanged && !maxChanged} />
+            <Button type="submit" size="sm" variant="primary" aria-label="Save run settings" disabled={!portsChanged && !maxChanged} pending={save.isPending}>Save</Button>
+          </>
+        }
       >
         <SettingsRow label="Ports" description="Runs get a port from this range.">
           <Input aria-label="First run port" inputMode="numeric" className="w-20" value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} />
@@ -230,8 +244,8 @@ function Runs({ v }: { v: HostSettingsView }) {
 function Agents({ v }: { v: HostSettingsView }) {
   const save = useSaveSettings();
   return (
-    <Section label="Agent credentials">
-      <SettingsRow label="Credentials" description="What agents started on this host may use to sign in.">
+    <Section label="Agents">
+      <SettingsRow label="Credentials" description="Subscription removes ANTHROPIC_API_KEY and OPENAI_API_KEY from agents' environment; pass through keeps them (API keys, Bedrock/Vertex, proxies). A project can override it.">
         <SaveNote s={save} />
         <Select aria-label="Host agent credentials" className="w-72 max-w-full" options={credentialPolicies} value={v.settings.agentCredentials} onChange={(c) => save.mutate({ agentCredentials: c })} />
       </SettingsRow>
@@ -250,17 +264,23 @@ function ProjectsFolder({ v }: { v: HostSettingsView }) {
     <form onSubmit={submit(() => { if (dirty) save.mutate({ projectsDir: dir }); })}>
       <Section
         label="Projects folder"
-        description="Where “clone by URL” puts new repositories."
-        actions={<Button type="submit" size="sm" variant="primary" aria-label="Save projects folder" disabled={!dirty} pending={save.isPending}>Save</Button>}
+        footer={
+          <>
+            <SavedNote show={save.saved && !dirty} />
+            <Button type="submit" size="sm" variant="primary" aria-label="Save projects folder" disabled={!dirty} pending={save.isPending}>Save</Button>
+          </>
+        }
       >
-        <FolderField
-          aria-label="Projects folder"
-          title="Projects folder"
-          placeholder={v.projectsDir ?? '~/work'}
-          start={v.projectsDir ?? ''}
-          value={dir}
-          onChange={setDir}
-        />
+        <SettingsRow stacked label="Folder" description="Where “clone by URL” puts new repositories.">
+          <FolderField
+            aria-label="Projects folder"
+            title="Projects folder"
+            placeholder={v.projectsDir ?? '~/work'}
+            start={v.projectsDir ?? ''}
+            value={dir}
+            onChange={setDir}
+          />
+        </SettingsRow>
         {error}
       </Section>
     </form>
@@ -272,7 +292,11 @@ function Checks() {
   const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
   const [refresh, refreshing] = useAction(async () => qc.setQueryData(['host-checks'], await api.refreshChecks()));
   return (
-    <Section label="Checks" actions={<Button size="sm" variant="ghost" pending={refreshing} onClick={() => void refresh()}>Run checks again</Button>}>
+    <Section
+      label="Checks"
+      description="The programs PDT runs on this host."
+      actions={<Button size="sm" pending={refreshing} onClick={() => void refresh()}>Run checks again</Button>}
+    >
       {checks.isPending && <Skeleton lines={4} label="Loading checks" />}
       {checks.data && (
         <ul className="flex flex-col gap-1.5">
@@ -284,7 +308,7 @@ function Checks() {
             return (
               <li key={k} className="flex min-w-0 items-center gap-2">
                 <StatusDot status={status} label={text} />
-                <span className="font-medium">{k}</span>
+                <span className="w-20 shrink-0 font-medium">{k}</span>
                 <span className={c.ok || optional ? 'text-muted-foreground' : status === 'failed' ? 'text-destructive' : 'text-waiting'}>{text}</span>
                 {!optional && <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.detail}>{c.detail}</span>}
               </li>
@@ -292,6 +316,32 @@ function Checks() {
           })}
         </ul>
       )}
+    </Section>
+  );
+}
+
+/** Destructive host actions, apart from everything else. Shown only when there is something to remove. */
+function DangerZone({ v }: { v: HostSettingsView }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [removeToken, removingToken] = useAction(async () => {
+    const { ok } = await confirm({
+      title: 'Remove the GitHub token?',
+      body: 'It is deleted from the OS keychain; this host cannot check for updates until you save a new one.',
+      action: 'Remove token',
+      danger: true,
+    });
+    if (!ok) return;
+    await api.deleteToken();
+    void qc.invalidateQueries({ queryKey: ['host-settings'] });
+    void qc.invalidateQueries({ queryKey: ['host-update'] });
+  });
+  if (!v.tokenPresent) return null;
+  return (
+    <Section label="Danger zone" danger>
+      <SettingsRow label="Remove the GitHub token" description="Deletes it from the OS keychain. Update checks stop until you save a new one.">
+        <Button size="sm" variant="danger" pending={removingToken} onClick={() => void removeToken()}>Remove token…</Button>
+      </SettingsRow>
     </Section>
   );
 }
@@ -320,13 +370,14 @@ export function HostSettingsPage() {
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   return (
-    <Page title="This host">
-      <RemoteAccess v={v} me={me ?? null} />
+    <Page title="This host" description="Settings for the machine running PDT. Projects have their own pages.">
       <Updates v={v} />
-      <Runs v={v} />
+      <RemoteAccess v={v} me={me ?? null} />
       <Agents v={v} />
+      <Runs v={v} />
       <ProjectsFolder v={v} />
       <Checks />
+      <DangerZone v={v} />
     </Page>
   );
 }
