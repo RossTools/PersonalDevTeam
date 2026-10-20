@@ -93,6 +93,9 @@ impl From<TicketError> for ApiError {
                 "ticket_active",
                 format!("{key} has an active attempt; abandon it or finish the work first"),
             ),
+            TicketError::InvalidParent(_) => Self::new(StatusCode::CONFLICT, "invalid_parent", e.to_string()),
+            TicketError::PartsOpen { .. } => Self::new(StatusCode::CONFLICT, "parts_open", e.to_string()),
+            TicketError::HasParts(_) => Self::new(StatusCode::CONFLICT, "ticket_has_parts", e.to_string()),
             TicketError::Store(s) => s.into(),
         }
     }

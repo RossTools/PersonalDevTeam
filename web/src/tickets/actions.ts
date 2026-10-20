@@ -8,10 +8,11 @@ import type { Priority } from '../api/gen/Priority';
 import type { PullResult } from '../api/gen/PullResult';
 import type { TicketPatch } from '../api/gen/TicketPatch';
 import type { TicketStage } from '../api/gen/TicketStage';
+import type { PartsProgress } from '../api/gen/PartsProgress';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { runAction } from '../common/useAction';
-import { STAGES } from './model';
+import { isClosed, nextPart, STAGES } from './model';
 import { invalidateTickets } from './queries';
 
 /** Enough of a ticket to act on it (a backlog row or a full ticket). */
@@ -41,9 +42,45 @@ export const useStartTicket = () => useContext(StartTicketContext);
 export const OpenSessionContext = createContext<(s: { id: string; projectId: string }) => void>(() => {});
 export const useOpenSession = () => useContext(OpenSessionContext);
 
-/** Start is offered for Draft, Ready and To do tickets with no active attempt. */
-export const canStart = (t: { stage: TicketStage; attempt: Pick<AttemptSummary, 'state'> | null }) =>
-  (t.stage === 'draft' || t.stage === 'ready' || t.stage === 'todo') && t.attempt?.state !== 'active';
+/** Start is offered for Draft, Ready and To do tickets with no active attempt; never for a parent (it starts its parts). */
+export const canStart = (t: { stage: TicketStage; attempt: Pick<AttemptSummary, 'state'> | null; parts?: PartsProgress | null }) =>
+  (t.stage === 'draft' || t.stage === 'ready' || t.stage === 'todo') && t.attempt?.state !== 'active' && !t.parts;
+
+/**
+ * "Start next part" on a parent: opens the Start dialog for its next part (see `nextPart`), or says why there is
+ * none.
+ */
+export async function startNextPart(start: (t: { id: string; projectId: string }) => void, parent: { id: string; key: string }) {
+  const p = await api.getTicket(parent.id);
+  const next = nextPart(p.partList);
+  if (typeof next === 'string') {
+    toast.info(`${parent.key} has no part to start: ${next}.`);
+    return;
+  }
+  start(next);
+}
+
+/**
+ * Moves a ticket to another stage. A parent whose parts are still open can't close (409 `parts_open`): with
+ * `confirm`, PDT offers to close the open parts as Won't do first, then moves the parent.
+ */
+export async function moveTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>, stage: TicketStage, confirm?: Confirm) {
+  try {
+    return await patchTicket(qc, t.id, { stage });
+  } catch (e) {
+    if (!(confirm && e instanceof ApiError && e.code === 'parts_open')) throw e;
+    const p = await api.getTicket(t.id);
+    const open = p.partList.filter((x) => !isClosed(x.stage));
+    const { ok } = await confirm({
+      title: `${t.key} still has open parts`,
+      body: `${open.map((x) => `${x.key} ${x.title}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} not closed. Close ${open.length === 1 ? 'it' : 'them'} as Won't do and move ${t.key} to ${STAGE_LABEL[stage]}?`,
+      action: `Close ${open.length === 1 ? 'it' : 'them'} and move`,
+    });
+    if (!ok) return null;
+    await api.bulkTickets({ ids: open.map((x) => x.id), action: 'stage', value: 'wont_do' });
+    return patchTicket(qc, t.id, { stage });
+  }
+}
 
 export async function patchTicket(qc: QueryClient, id: string, patch: TicketPatch) {
   const t = await api.updateTicket(id, patch);
@@ -85,11 +122,11 @@ export async function deleteTicket(confirm: Confirm, qc: QueryClient, t: Pick<Ti
   return true;
 }
 
-/** "Move to ›": every stage but the ticket's own. */
-export function moveToEntries(qc: QueryClient, t: TicketRef): MenuEntry[] {
+/** "Move to ›": every stage but the ticket's own (with `confirm`, closing a parent offers to close its parts). */
+export function moveToEntries(qc: QueryClient, t: TicketRef, confirm?: Confirm): MenuEntry[] {
   return STAGES.filter((s) => s !== t.stage).map((s) => ({
     label: STAGE_LABEL[s],
-    onSelect: () => void runAction(() => patchTicket(qc, t.id, { stage: s })),
+    onSelect: () => void runAction(() => moveTicket(qc, t, s, confirm)),
   }));
 }
 
@@ -115,6 +152,8 @@ export function ticketMenu(opts: {
   onStart?: () => void;
   /** Adds Move to top / bottom (the backlog sorted by rank). */
   rank?: boolean;
+  /** Adds Make into parts… (callers offer it only where `canMakeParts` allows). */
+  onMakeParts?: () => void;
   onDeleted?: () => void;
 }): MenuEntry[] {
   const { qc, confirm, ticket: t } = opts;
@@ -127,7 +166,8 @@ export function ticketMenu(opts: {
     ...(opts.onOpen ? [{ label: 'Open', onSelect: opts.onOpen }] : []),
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-    { submenu: 'Move to', entries: moveToEntries(qc, t) },
+    ...(opts.onMakeParts ? [{ label: 'Make into parts…', onSelect: opts.onMakeParts }] : []),
+    { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },
     ...(opts.rank
       ? [{ label: 'Move to top', onSelect: rankTo('top') }, { label: 'Move to bottom', onSelect: rankTo('bottom') }]
@@ -277,6 +317,7 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
   for (const s of wsSessions) await retryWhile('session_running', () => api.deleteSession(s.id)).catch(ignoreMissing);
   const ticketTab = workspaces.flatMap((w) => w.tabs).find((tab) => tab.ticketId === t.id);
   if (workspace && ticketTab && ticketTab.workspaceId !== workspace.id) await api.closeTab(ticketTab.id).catch(ignoreMissing);
+  // A part's tabs live in its parent's shared workspace (PDT-38), which stays: close just the part's tab.
   let workspaceRemoved = false;
   if (workspace) {
     workspaceRemoved = await api.deleteWorkspace(workspace.id, { closeTabs: true }).then(() => true, (e) => (ignoreMissing(e), false));

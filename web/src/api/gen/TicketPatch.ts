@@ -9,4 +9,8 @@ export type TicketPatch = { title?: string, description?: string, stage?: Ticket
 /**
  * Wait until clear (true; it also goes to the top of its stage) or stop waiting.
  */
-waiting?: boolean, };
+waiting?: boolean, 
+/**
+ * Make it a part of this ticket (id), or `""` to detach it from its parent.
+ */
+parent?: string, };

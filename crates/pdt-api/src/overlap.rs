@@ -117,6 +117,7 @@ pub(crate) async fn index(st: &AppState, project: Option<&str>) -> Result<Overla
 pub(crate) async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, ApiError> {
     index(st, Some(&t.summary.project_id)).await?.apply(&mut t);
     crate::github::apply(st, &mut t);
+    crate::parts::apply(st, &mut t).await?;
     Ok(t)
 }
 

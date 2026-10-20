@@ -138,11 +138,15 @@ pub enum EventKind {
     /// News about the attempt's pull request (CI failed, conflict, left the merge queue, merged) and whether the
     /// agent was told: `{attemptId, notice, key, pr, url, jobs, sessionId, told}`.
     Pr,
+    /// A part was added to or removed from a parent (on both tickets): `{parentId, parentKey, partId, partKey,
+    /// removed}`.
+    Parted,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
+    Parted => "parted",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -255,6 +259,10 @@ pub struct TicketSummary {
     pub updated_at: i64,
     #[ts(type = "number | null")]
     pub closed_at: Option<i64>,
+    /// The parent, when this ticket is a part (PDT-38).
+    pub parent: Option<crate::parts::TicketParent>,
+    /// The roll-up of its parts, when it has any (filled in by the API).
+    pub parts: Option<crate::parts::PartsProgress>,
 }
 
 /// How a ticket overlaps another one that has an active attempt.
@@ -312,6 +320,8 @@ pub struct Ticket {
     pub sessions: Vec<AttemptSession>,
     /// Its overlaps with the project's tickets that have an active attempt, conflicts first.
     pub overlaps: Vec<TicketOverlap>,
+    /// Its parts in rank order (empty when it has none).
+    pub part_list: Vec<TicketSummary>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, TS)]
@@ -344,6 +354,14 @@ pub struct NewTicket {
     #[serde(default)]
     #[ts(optional)]
     pub after: Option<String>,
+    /// Make it a part of this ticket (id). Without `before`/`after` it goes after the parent's last part.
+    #[serde(default)]
+    #[ts(optional)]
+    pub parent: Option<String>,
+    /// With `parent`: the parent's last part (by rank) blocks the new one.
+    #[serde(default)]
+    #[ts(optional)]
+    pub blocked_by_previous: Option<bool>,
 }
 
 /// Edits a ticket; absent fields are left alone. `labels` and `areas` replace the whole set.
@@ -373,6 +391,10 @@ pub struct TicketPatch {
     #[serde(default)]
     #[ts(optional)]
     pub waiting: Option<bool>,
+    /// Make it a part of this ticket (id), or `""` to detach it from its parent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub parent: Option<String>,
 }
 
 /// A patch with its text checked and normalised.
@@ -385,6 +407,8 @@ pub struct ValidPatch {
     pub labels: Option<Vec<String>>,
     pub areas: Option<Vec<String>>,
     pub waiting: Option<bool>,
+    /// Some(None) detaches.
+    pub parent: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -507,6 +531,14 @@ pub struct TicketQuery {
     #[serde(default)]
     #[ts(optional, type = "number")]
     pub closed_after: Option<i64>,
+    /// One ticket's parts (its id), or `none` for tickets that are not parts.
+    #[serde(default)]
+    #[ts(optional)]
+    pub parent: Option<String>,
+    /// true: only tickets with parts; false: only tickets without.
+    #[serde(default)]
+    #[ts(optional)]
+    pub has_parts: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub cursor: Option<String>,
@@ -532,8 +564,19 @@ pub struct TicketFilter {
     pub except_ids: Vec<String>,
     pub sort: TicketSort,
     pub closed_after: Option<i64>,
+    pub parent: Option<ParentFilter>,
+    pub has_parts: Option<bool>,
     pub cursor: Option<String>,
     pub limit: u32,
+}
+
+/// `parent=` in a ticket query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParentFilter {
+    /// The parts of this ticket.
+    Of(String),
+    /// Tickets that are not parts.
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -804,6 +847,8 @@ impl TicketQuery {
             except_ids: vec![],
             sort: self.sort.unwrap_or_default(),
             closed_after: self.closed_after,
+            parent: nonblank(&self.parent).map(|p| if p == "none" { ParentFilter::None } else { ParentFilter::Of(p) }),
+            has_parts: self.has_parts,
             cursor: nonblank(&self.cursor),
             limit,
         })
@@ -821,6 +866,8 @@ pub struct ValidNewTicket {
     pub areas: Vec<String>,
     pub before: Option<String>,
     pub after: Option<String>,
+    pub parent: Option<String>,
+    pub blocked_by_previous: bool,
 }
 
 impl NewTicket {
@@ -835,6 +882,8 @@ impl NewTicket {
             areas: normalize_areas(self.areas.as_deref().unwrap_or(&[]))?,
             before: nonblank(&self.before),
             after: nonblank(&self.after),
+            parent: nonblank(&self.parent),
+            blocked_by_previous: self.blocked_by_previous.unwrap_or(false),
         })
     }
 }
@@ -849,6 +898,7 @@ impl TicketPatch {
             labels: self.labels.as_deref().map(normalize_labels).transpose()?,
             areas: self.areas.as_deref().map(normalize_areas).transpose()?,
             waiting: self.waiting,
+            parent: self.parent.as_deref().map(|p| Some(p.trim()).filter(|s| !s.is_empty()).map(String::from)),
         })
     }
 }
@@ -989,6 +1039,24 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_tells_absent_blank_and_a_parent_apart() {
+        let p: TicketPatch = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.validate().unwrap().parent, None);
+        let p: TicketPatch = serde_json::from_str(r#"{"parent":" "}"#).unwrap();
+        assert_eq!(p.validate().unwrap().parent, Some(None), "blank detaches");
+        let p: TicketPatch = serde_json::from_str(r#"{"parent":" t1 "}"#).unwrap();
+        assert_eq!(p.validate().unwrap().parent, Some(Some("t1".into())));
+        let q = TicketQuery { parent: Some("none".into()), has_parts: Some(true), ..Default::default() };
+        let f = q.validate().unwrap();
+        assert_eq!((f.parent, f.has_parts), (Some(ParentFilter::None), Some(true)));
+        let q = TicketQuery { parent: Some("t1".into()), ..Default::default() };
+        assert_eq!(q.validate().unwrap().parent, Some(ParentFilter::Of("t1".into())));
+        let n: NewTicket = serde_json::from_str(r#"{"title":"x","parent":"p","blockedByPrevious":true}"#).unwrap();
+        let v = n.validate().unwrap();
+        assert_eq!((v.parent.as_deref(), v.blocked_by_previous), (Some("p"), true));
+    }
+
+    #[test]
     fn bulk_actions_need_valid_values() {
         let b =
             |action, value: Option<&str>| BulkRequest { ids: vec!["a".into()], action, value: value.map(Into::into) };
@@ -1022,6 +1090,8 @@ mod tests {
             created_at: 1,
             updated_at: 2,
             closed_at: None,
+            parent: None,
+            parts: None,
         };
         let t = Ticket {
             summary: s,
@@ -1031,6 +1101,7 @@ mod tests {
             default_branch: "pdt/PDT-1-t".into(),
             sessions: vec![],
             overlaps: vec![],
+            part_list: vec![],
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["key"], "PDT-1");

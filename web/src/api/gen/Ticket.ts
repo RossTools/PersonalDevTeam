@@ -3,9 +3,12 @@ import type { AttemptSession } from "./AttemptSession";
 import type { AttemptSummary } from "./AttemptSummary";
 import type { LinkedTicket } from "./LinkedTicket";
 import type { OverlapLevel } from "./OverlapLevel";
+import type { PartsProgress } from "./PartsProgress";
 import type { Priority } from "./Priority";
 import type { TicketOverlap } from "./TicketOverlap";
+import type { TicketParent } from "./TicketParent";
 import type { TicketStage } from "./TicketStage";
+import type { TicketSummary } from "./TicketSummary";
 
 /**
  * A full ticket.
@@ -34,7 +37,11 @@ sessions: Array<AttemptSession>,
 /**
  * Its overlaps with the project's tickets that have an active attempt, conflicts first.
  */
-overlaps: Array<TicketOverlap>, id: string, projectId: string, 
+overlaps: Array<TicketOverlap>, 
+/**
+ * Its parts in rank order (empty when it has none).
+ */
+partList: Array<TicketSummary>, id: string, projectId: string, 
 /**
  * `<project key>-<number>`, e.g. `PDT-42`.
  */
@@ -74,4 +81,12 @@ overlap: OverlapLevel,
 /**
  * The keys of the tickets it overlaps, conflicts first.
  */
-overlapWith: Array<string>, createdAt: number, updatedAt: number, closedAt: number | null, };
+overlapWith: Array<string>, createdAt: number, updatedAt: number, closedAt: number | null, 
+/**
+ * The parent, when this ticket is a part (PDT-38).
+ */
+parent: TicketParent | null, 
+/**
+ * The roll-up of its parts, when it has any (filled in by the API).
+ */
+parts: PartsProgress | null, };
