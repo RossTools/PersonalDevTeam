@@ -1,6 +1,6 @@
 # Personal Dev Team — Tickets, Backlog and Board (Phase 4) Design
 
-Status: draft, 2026-10-18, awaiting the user's review. UX: docs/superpowers/specs/2026-10-17-design-system-ux-design.md
+Status: built (Phase 4), 2026-10-18. UX: docs/superpowers/specs/2026-10-17-design-system-ux-design.md
 §8.0–§8.1 (backlog, board, ticket tab, Start, links and blockers, avoiding conflicting work) and the "PDT UX pass"
 mockups (Backlog, Board, Ticket, Start dialog). This spec covers the model, the API, Start, attempts, links, areas and
 overlap detection, and the build order. It amends the main spec §4 (domain model) and §11 (Phase 4).
