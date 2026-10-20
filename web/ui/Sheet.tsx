@@ -13,7 +13,7 @@ if (typeof window !== 'undefined') {
   if (idle) idle(() => void load()); else setTimeout(() => void load(), 2000);
 }
 
-/** A panel from the left, right or bottom edge; opened by a button or `open`, closed by a swipe, Escape, Close or (modal only) a tap on the backdrop. */
+/** A panel from the left, right or bottom edge; opened by a button or `open`, closed by a swipe, Escape, Close or a tap on the backdrop (modal) or the page beside it (not modal). */
 export function Sheet(props: SheetProps) {
   return (
     <Suspense fallback={props.trigger ?? null}>

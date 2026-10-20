@@ -95,6 +95,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
   return (
     <li
       aria-label={`${t.key} ${t.title}`}
+      data-peek
       draggable={draggable}
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={() => setDragging(false)}
@@ -292,6 +293,7 @@ function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
     <div
       role="group"
       aria-label={`${parent.key} ${parent.title}`}
+      data-peek
       className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1', compact ? 'px-1 pt-3 pb-1' : 'px-1 pt-3 pb-1.5')}
     >
       <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>

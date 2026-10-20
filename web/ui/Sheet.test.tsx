@@ -49,21 +49,32 @@ describe('Sheet', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('stays open when not modal while the page beside it is used', async () => {
+  it('when not modal, closes on a click on the page beside it, not on one in a portal or on what keeps it open', async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(
       <>
         <button type="button">Beside</button>
-        <Sheet side="right" title="Peek" modal={false} open onOpenChange={onOpenChange}>body</Sheet>
+        <button type="button" data-row>Row</button>
+        <Sheet side="right" title="Peek" modal={false} open onOpenChange={onOpenChange} keepOpenOn={(t) => !!t.closest('[data-row]')}>
+          body
+        </Sheet>
       </>,
     );
     const sheet = await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
-    // The sheet takes focus once it opens; moving focus out of it must not close it either.
+    // The sheet takes focus once it opens; moving focus out of it must not close it.
     await waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true));
-    await user.click(screen.getByRole('button', { name: 'Beside' }));
-    expect(screen.getByRole('button', { name: 'Beside' })).toHaveFocus();
+    await user.click(within(sheet).getByText('body'));
+    // A menu or dialog the sheet opened renders in a portal of its own.
+    const portal = document.body.appendChild(document.createElement('div'));
+    portal.innerHTML = '<button type="button">In a menu</button>';
+    await user.click(screen.getByRole('button', { name: 'In a menu' }));
+    portal.remove();
+    await user.click(screen.getByRole('button', { name: 'Row' }));
+    expect(screen.getByRole('button', { name: 'Row' })).toHaveFocus();
     expect(onOpenChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Beside' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it('keeps a hidden title for screen readers', async () => {
