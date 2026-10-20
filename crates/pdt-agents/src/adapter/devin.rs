@@ -359,10 +359,11 @@ impl DevinLive {
         let mut loaded = false;
         if let Some(id) = spec.external_id.clone().filter(|_| spec.resume) {
             *sh.session.lock().unwrap_or_else(|e| e.into_inner()) = id.clone();
-            sh.mapper().set_loading(true);
+            sh.mapper().begin_load(spec.import_after);
             let r =
                 sh.request("session/load", json!({"sessionId": id, "cwd": cwd, "mcpServers": []}), START_TIMEOUT).await;
-            sh.mapper().set_loading(false);
+            let outs = sh.mapper().end_load();
+            sh.emit(outs, None);
             match r? {
                 Ok(_) => loaded = true,
                 // Devin saves a session only at its first prompt.
@@ -577,6 +578,7 @@ mod tests {
             env_remove: vec![],
             instructions: None,
             config_file: None,
+            import_after: None,
         };
         assert_eq!(devin_acp_args(&spec), vec!["acp"]);
         let file = std::env::temp_dir().join("devin-config.json");

@@ -152,6 +152,49 @@ pub struct DevinMapper {
     context_window: Option<i64>,
     /// `session/load` is replaying the saved conversation, which PDT has logged already.
     loading: bool,
+    /// While loading: replayed turns whose prompt is newer than this (ms) were taken in Devin's terminal and are
+    /// imported.
+    import_after: Option<i64>,
+    /// The replayed turn being imported (its prompt's `clientMessageId`).
+    importing: Option<String>,
+}
+
+/// An RFC 3339 time (`2026-10-19T23:53:11.255937+00:00`, as Devin stamps messages) in ms since the epoch.
+pub fn iso_ms(t: &str) -> Option<i64> {
+    let b = t.as_bytes();
+    let num = |r: std::ops::Range<usize>| -> Option<i64> { t.get(r)?.parse().ok() };
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' {
+        return None;
+    }
+    let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (h, mi, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    let mut i = 19;
+    let mut ms = 0;
+    if b.get(i) == Some(&b'.') {
+        let start = i + 1;
+        i = start;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        let frac = t.get(start..i)?;
+        ms = format!("{:0<3}", &frac[..frac.len().min(3)]).parse().ok()?;
+    }
+    let offset = match b.get(i) {
+        Some(b'Z' | b'z') | None => 0,
+        Some(&sign @ (b'+' | b'-')) => {
+            let o = num(i + 1..i + 3)? * 60 + num(i + 4..i + 6)?;
+            if sign == b'+' { o } else { -o }
+        }
+        _ => return None,
+    };
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((mo + 9) % 12) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(((days * 24 + h) * 60 + mi - offset) * 60_000 + sec * 1000 + ms)
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -206,9 +249,58 @@ impl DevinMapper {
         }
     }
 
-    /// `session/load` starts (true) or has answered (false): the replayed history in between is dropped.
-    pub fn set_loading(&mut self, loading: bool) {
-        self.loading = loading;
+    /// `session/load` starts: the history it replays is dropped (PDT has logged it), except turns whose prompt is
+    /// newer than `import_after` (ms; 0 = every turn), which were taken in Devin's terminal and are imported.
+    pub fn begin_load(&mut self, import_after: Option<i64>) {
+        self.loading = true;
+        self.import_after = import_after;
+    }
+
+    /// `session/load` has answered: the last imported turn ends.
+    pub fn end_load(&mut self) -> Vec<DevinOut> {
+        let mut out = Vec::new();
+        if self.importing.take().is_some() {
+            self.close_turn(TurnStatus::Completed, None, &mut out);
+        }
+        self.loading = false;
+        self.import_after = None;
+        out
+    }
+
+    /// A replayed prompt: it ends the turn being imported, and starts one when it is newer than `import_after`.
+    fn replayed_prompt(&mut self, u: &Value) -> Vec<DevinOut> {
+        let mut out = Vec::new();
+        let client = meta(u, "cognition.ai/clientMessageId").and_then(Value::as_str).map(String::from);
+        if client.is_some() && self.importing == client {
+            return out;
+        }
+        if self.importing.take().is_some() {
+            self.close_turn(TurnStatus::Completed, None, &mut out);
+        }
+        let Some(after) = self.import_after else { return out };
+        let at = meta(u, "cognition.ai/timestamp").and_then(Value::as_str).and_then(iso_ms);
+        if at.is_some_and(|t| t > after) {
+            let text = u.get("content").and_then(block_text).unwrap_or_default().to_string();
+            self.open_turn(&text, MessageSource::Terminal, &mut out);
+            self.importing = Some(client.unwrap_or_default());
+        }
+        out
+    }
+
+    fn open_turn(&mut self, text: &str, source: MessageSource, out: &mut Vec<DevinOut>) {
+        let turn = self.id("turn").trim_start_matches("turn:").to_string();
+        self.turn = Some(turn.clone());
+        self.interrupt_requested = false;
+        out.push(DevinOut::Event {
+            item_id: Some(format!("turn:{turn}")),
+            turn_id: Some(turn.clone()),
+            event: AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None },
+        });
+        out.push(DevinOut::Event {
+            item_id: Some(format!("u:{turn}")),
+            turn_id: Some(turn),
+            event: AgentEvent::UserMessage { text: text.to_string(), images: vec![], source },
+        });
     }
 
     fn id(&mut self, kind: &str) -> String {
@@ -315,19 +407,7 @@ impl DevinMapper {
         let mut out = Vec::new();
         let source = if self.turn.is_some() { MessageSource::Steer } else { MessageSource::Pdt };
         if self.turn.is_none() {
-            let turn = self.id("turn").trim_start_matches("turn:").to_string();
-            self.turn = Some(turn.clone());
-            self.interrupt_requested = false;
-            out.push(DevinOut::Event {
-                item_id: Some(format!("turn:{turn}")),
-                turn_id: Some(turn.clone()),
-                event: AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None },
-            });
-            out.push(DevinOut::Event {
-                item_id: Some(format!("u:{turn}")),
-                turn_id: Some(turn),
-                event: AgentEvent::UserMessage { text: text.to_string(), images: vec![], source },
-            });
+            self.open_turn(text, source, &mut out);
         } else {
             self.close_text(MessagePhase::Commentary, &mut out);
             let item = self.id("u");
@@ -500,7 +580,8 @@ impl DevinMapper {
                 self.context_window = u.get("size").and_then(Value::as_i64);
                 return vec![self.usage_event()];
             }
-            _ if self.loading || self.turn.is_none() => return out,
+            "user_message_chunk" if self.loading => return self.replayed_prompt(u),
+            _ if (self.loading && self.importing.is_none()) || self.turn.is_none() => return out,
             "agent_message_chunk" => {
                 let Some(text) = u.get("content").and_then(block_text).map(String::from) else { return out };
                 if let Some((item, summary)) = self.thought.take()
@@ -1128,7 +1209,7 @@ mod tests {
     #[test]
     fn replayed_history_is_dropped_but_settings_and_commands_are_kept() {
         let mut m = mapper();
-        m.set_loading(true);
+        m.begin_load(None);
         assert!(
             m.on_update(&json!({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "old"}}))
                 .is_empty()
@@ -1148,7 +1229,7 @@ mod tests {
             {"id": "model", "currentValue": "swe-1-6-slow", "options": [{"value": "swe-1-6-slow", "name": "SWE-1.6 Slow"}]}]}));
         assert_eq!(out[0], DevinOut::Settings { mode: Some("plan".into()), model: Some("swe-1-6-slow".into()) });
         assert!(matches!(&out[1], DevinOut::Models(v) if v[0].display_name == "SWE-1.6 Slow"));
-        m.set_loading(false);
+        assert!(m.end_load().is_empty());
         // Unknown agent requests are refused.
         let out = m.on_request(json!(7), "fs/read_text_file", &json!({}));
         assert!(matches!(&out[0], DevinOut::RespondError { id, .. } if *id == json!(7)));
@@ -1158,6 +1239,62 @@ mod tests {
         assert!(
             matches!(&end.last().unwrap().1, AgentEvent::Turn { status: Some(TurnStatus::Interrupted), reason: Some(r), .. } if r == "Devin stopped")
         );
+    }
+
+    #[test]
+    fn turns_taken_in_the_terminal_are_imported_from_the_replay() {
+        let chunk = |kind: &str, text: &str, id: &str, at: &str| {
+            json!({"sessionUpdate": kind, "content": {"type": "text", "text": text},
+                   "_meta": {"cognition.ai/clientMessageId": id, "cognition.ai/timestamp": at}})
+        };
+        let switched = iso_ms("2026-10-19T23:00:00+00:00").unwrap();
+        let mut m = mapper();
+        m.begin_load(Some(switched));
+        let mut out = Vec::new();
+        out.extend(m.on_update(&chunk("user_message_chunk", "old", "a", "2026-10-19T22:10:22.692914+00:00")));
+        out.extend(m.on_update(&chunk("agent_message_chunk", "old answer", "", "2026-10-19T22:10:26+00:00")));
+        out.extend(m.on_update(&chunk("user_message_chunk", "Reply PINEAPPLE", "b", "2026-10-19T23:53:11.25+00:00")));
+        out.extend(m.on_update(
+            &json!({"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "Ran ls", "kind": "execute",
+            "rawInput": {"command": "ls"}, "_meta": {"cognition.ai/inferenceToolName": "exec"}}),
+        ));
+        out.extend(
+            m.on_update(&json!({"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed"})),
+        );
+        out.extend(m.on_update(&chunk("agent_message_chunk", "PINEAPPLE", "", "2026-10-19T23:53:12+00:00")));
+        out.extend(m.on_update(&chunk("user_message_chunk", "again", "c", "2026-10-19T23:54:00Z")));
+        out.extend(m.on_update(&chunk("agent_message_chunk", "ok", "", "2026-10-19T23:54:01Z")));
+        out.extend(m.end_load());
+        let ev = events(&out);
+        let said: Vec<String> = ev
+            .iter()
+            .filter_map(|(_, e)| match e {
+                AgentEvent::UserMessage { text, source: MessageSource::Terminal, .. } => Some(format!("> {text}")),
+                AgentEvent::AgentMessage { markdown, phase: MessagePhase::Final, .. } => Some(markdown.clone()),
+                AgentEvent::ToolCall { title, status: ToolStatus::Done, .. } => Some(format!("$ {title}")),
+                AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. } => {
+                    Some("end".into())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(said, ["> Reply PINEAPPLE", "$ ls", "PINEAPPLE", "end", "> again", "ok", "end"]);
+        assert_eq!(m.turn(), None);
+        // Without an anchor nothing is imported.
+        let mut m = mapper();
+        m.begin_load(None);
+        assert!(m.on_update(&chunk("user_message_chunk", "x", "a", "2030-01-01T00:00:00Z")).is_empty());
+        assert!(m.on_update(&chunk("agent_message_chunk", "y", "", "2030-01-01T00:00:00Z")).is_empty());
+        assert!(m.end_load().is_empty());
+    }
+
+    #[test]
+    fn rfc3339_times_become_ms() {
+        assert_eq!(iso_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_ms("2026-10-19T23:53:11.255937+00:00"), Some(1_792_453_991_255));
+        assert_eq!(iso_ms("2000-02-29T12:00:00-05:00"), Some(951_843_600_000));
+        assert_eq!(iso_ms("2026-10-19T23:53:11.2Z"), Some(1_792_453_991_200));
+        assert_eq!(iso_ms("yesterday"), None);
     }
 
     #[test]

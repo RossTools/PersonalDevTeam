@@ -76,6 +76,9 @@ pub struct OpenSpec {
     pub instructions: Option<SessionInstructions>,
     /// Devin: its `--config` file (the user's config plus PDT's SessionStart hook, which hands it the instructions).
     pub config_file: Option<PathBuf>,
+    /// Devin: the session was used in Devin's own terminal since PDT last logged it; the turns it took there after
+    /// this time (ms; 0 = all of them) are imported from `session/load`'s replay.
+    pub import_after: Option<i64>,
 }
 
 impl OpenSpec {

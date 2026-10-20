@@ -532,3 +532,27 @@ describe('SessionView for Claude', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 });
+
+describe('SessionView for Devin', () => {
+  const caps = { conversation: true, permissionModes: ['accept_edits', 'plan', 'bypass'], models: [], commands: [] };
+  const base = { 'GET /api/agents/devin/capabilities': caps, 'GET /api/projects': [], 'POST /api/sessions/s1/view': undefined };
+  const devin = { ...session, agent: 'devin' as const };
+
+  it('switches between the conversation and Devin’s terminal, naming Devin when it asks', async () => {
+    let tries = 0;
+    const calls = stubApi({
+      ...base,
+      'POST /api/sessions/s1/mode': () => (tries++ === 0 ? new Reply(409, { code: 'turn_running', message: 'working' }) : { ...devin, mode: 'terminal' }),
+    });
+    renderWithQuery(<SessionView session={devin} onRemoved={() => {}} socketFactory={(u) => new FakeSocket(u)} />);
+    expect(screen.getByRole('radio', { name: 'Conversation' })).toBeChecked();
+    await userEvent.click(screen.getByRole('radio', { name: 'Terminal' }));
+    const ask = await screen.findByRole('alertdialog', { name: 'Interrupt and open the terminal?' });
+    expect(ask).toHaveTextContent('Devin is working on a turn.');
+    await userEvent.click(within(ask).getByRole('button', { name: 'Interrupt and open' }));
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/sessions/s1/mode').map((c) => c.body)).toEqual([
+      { mode: 'terminal', cols: 120, rows: 32 },
+      { mode: 'terminal', cols: 120, rows: 32, interrupt: true },
+    ]));
+  });
+});

@@ -24,8 +24,30 @@ fn out(v: Value) {
     let _ = o.flush();
 }
 
+/// A session's saved history: one `{"text", "atMs"}` line per prompt (tests add lines to stand in for turns taken in
+/// Devin's terminal). It exists once the session was prompted.
 fn saved_marker(id: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("fake-acp-saved-{id}"))
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// ms since the epoch → RFC 3339 UTC, as Devin stamps messages (Howard Hinnant's civil-from-days).
+fn rfc3339(ms: i64) -> String {
+    let (days, rem) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let (h, mi, sec, milli) = (rem / 3_600_000, rem / 60_000 % 60, rem / 1000 % 60, rem % 1000);
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{sec:02}.{milli:03}000+00:00")
 }
 
 struct Acp {
@@ -100,9 +122,11 @@ impl Acp {
     }
 
     fn prompt(&mut self, id: Value, p: &Value) {
-        std::fs::write(saved_marker(&self.session), "").ok();
         let blocks = p["prompt"].as_array().cloned().unwrap_or_default();
         let text: String = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(saved_marker(&self.session)) {
+            let _ = writeln!(f, "{}", json!({"text": text, "atMs": now_ms()}));
+        }
         let images: Vec<String> = blocks
             .iter()
             .filter(|b| b["type"] == "image")
@@ -254,10 +278,16 @@ pub fn serve(args: &[String]) {
                 }
                 a.session = sid;
                 a.loaded = true;
-                a.update(
-                    json!({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "old prompt"}}),
-                );
-                a.say("old answer");
+                // The whole conversation again, as Devin replays it (the answers are stand-ins).
+                let saved = std::fs::read_to_string(saved_marker(&a.session)).unwrap_or_default();
+                for (n, line) in saved.lines().enumerate() {
+                    let Ok(e) = serde_json::from_str::<Value>(line) else { continue };
+                    let text = e["text"].as_str().unwrap_or("");
+                    let at = rfc3339(e["atMs"].as_i64().unwrap_or(0));
+                    a.update(json!({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": text},
+                        "_meta": {"cognition.ai/clientMessageId": format!("msg-{n}"), "cognition.ai/timestamp": at}}));
+                    a.say(&format!("old answer to {text}"));
+                }
                 a.announce();
                 ok(json!({"configOptions": a.config()}));
             }

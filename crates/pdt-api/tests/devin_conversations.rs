@@ -149,7 +149,7 @@ async fn a_devin_conversation_gets_pdts_instructions_and_reports_its_session_mod
     let written: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
     assert_eq!(written["devin"]["org_id"], "org-1");
 
-    // A model change applies live; Make ticket and the terminal switch are not offered for Devin.
+    // A model change applies live; Make ticket is not offered for Devin.
     let (st, v) = call(&env.app, "PATCH", &format!("/api/sessions/{id}"), Some(json!({"model": "fake-2"}))).await;
     assert_eq!(st, 200, "{v}");
     send(&env, &id, "who", "next").await;
@@ -157,8 +157,6 @@ async fn a_devin_conversation_gets_pdts_instructions_and_reports_its_session_mod
     assert!(said(&all)[1].contains("model=fake-2"), "{:?}", said(&all));
     let (st, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/ticket-draft"), None).await;
     assert_eq!((st.as_u16(), v["code"].as_str()), (409, Some("draft_unsupported")), "{v}");
-    let (st, _) = call(&env.app, "POST", &format!("/api/sessions/{id}/mode"), Some(json!({"mode": "terminal"}))).await;
-    assert_eq!(st, 409);
     stop(&env, &id).await;
 }
 
@@ -272,4 +270,45 @@ async fn a_devin_that_exits_ends_the_turn_and_says_so() {
         err.iter().find(|e| e["event"]["kind"] == "error").unwrap()["event"]["text"].as_str().unwrap().to_string();
     assert!(text.starts_with("Devin stopped unexpectedly (exit code 3)"), "{text}");
     assert!(text.contains("fake devin: exiting"), "{text}");
+}
+
+#[tokio::test]
+async fn switching_to_the_terminal_and_back_imports_the_turns_taken_there() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_devin(&env, json!({"initialPrompt": "hi"})).await;
+    wait_turns(&env, &id, 1).await;
+    let devin_id = session(&env, &id).await["externalSessionId"].as_str().unwrap().to_string();
+
+    let body = json!({"mode": "terminal", "cols": 80, "rows": 24});
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/mode"), Some(body)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["mode"].as_str(), v["status"].as_str()), (Some("terminal"), Some("running")));
+    assert!(env.state.ptys.is_running(&id), "Devin's own terminal runs the session");
+    // A turn taken in the terminal lands in Devin's saved session (the stand-in's history file).
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let saved = std::env::temp_dir().join(format!("fake-acp-saved-{devin_id}"));
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let mut history = std::fs::read_to_string(&saved).unwrap();
+    history.push_str(&format!("{}\n", json!({"text": "typed in the terminal", "atMs": at})));
+    std::fs::write(&saved, history).unwrap();
+
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{id}/mode"), Some(json!({"mode": "conversation"}))).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["mode"], "conversation");
+    assert!(!env.state.ptys.is_running(&id), "the terminal quit (Devin locks a session to one process)");
+    let all = wait_turns(&env, &id, 2).await;
+    let typed =
+        all.iter().find(|e| e["event"]["kind"] == "user_message" && e["event"]["text"] == "typed in the terminal");
+    assert_eq!(typed.expect("the terminal's turn")["event"]["source"], "terminal");
+    let answers = said(&all);
+    assert_eq!(answers.last().unwrap(), "old answer to typed in the terminal");
+    assert!(!answers.iter().any(|m| m == "old answer to hi"), "turns PDT logged are not imported again: {answers:?}");
+    assert!(all.iter().any(|e| e["event"]["kind"] == "notice"), "the switch is noted");
+
+    send(&env, &id, "who", "next").await;
+    let all = wait_turns(&env, &id, 3).await;
+    assert!(said(&all).last().unwrap().contains(&format!("session={devin_id} loaded=true")), "{:?}", said(&all));
+    stop(&env, &id).await;
 }

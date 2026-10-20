@@ -151,10 +151,17 @@ Checked against `devin 3000.11.92` on macOS on 2026-10-19 by driving `devin acp`
   `{action: "accept", content: {q0: "Blue"}}`, `{action: "decline"}` or `{action: "cancel"}`. Without the client's
   `elicitation` capability Devin cannot ask.
 
+### Switching to the terminal and back
+
+Checked with the real Devin: `devin --resume <id>` opens a session ACP made (the ids are the same), `/exit` then Enter
+quits the TUI in about a second, and the next `session/load` replays the turns taken there. Every replayed prompt
+carries `_meta["cognition.ai/clientMessageId"]` and `_meta["cognition.ai/timestamp"]` (RFC 3339), so PDT stores the
+switch time in `history_from` and imports the replayed turns whose prompt is newer (pdt-core `iso_ms`). A session is
+locked to one process, so the TUI and the ACP server never run at once: switching parks one before starting the other.
+A folder Devin has not seen shows its trust dialog in the terminal first.
+
 ### Not done
 
 - Make ticket: ACP has no fork, so a side request would land in the conversation. The route answers 409
   `draft_unsupported` for Devin and the web hides it.
-- Conversation ↔ terminal switching: a Devin session is locked to one process, so the TUI cannot open beside the ACP
-  server; not tried.
 - Windows is untested.
