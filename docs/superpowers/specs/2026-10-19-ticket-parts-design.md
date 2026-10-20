@@ -10,7 +10,7 @@ is planned as 5a, 5b, 5c and 5d. What went wrong there:
 
 - **Done too early.** The attempt was marked merged and the ticket offered "Move to Done and remove the worktree"
   while three PRs were still to come. (It actually fired 60 s after Start, before any PR: the branch had only caught
-  up with `origin/main`. That is a separate bug, filed as **PDT-45**. With one attempt per ticket, though, the first
+  up with `origin/main`. That was a separate bug, **PDT-45**, now fixed. With one attempt per ticket, though, the first
   real merge would have done the same.)
 - **Extra branches are unknown.** 5b's branch and worktree were made by hand; the ticket, its attempts and the board
   don't know them.
@@ -64,10 +64,11 @@ stepper is kept as the parent's progress display (§7).
 
 ## 4. Model
 
-One migration (`0016_ticket_parent.sql`; the migrations area is exclusive):
+One migration (`0018_ticket_parts.sql`, the next free number; the migrations area is exclusive):
 
 ```sql
 ALTER TABLE tickets ADD COLUMN parent_id TEXT REFERENCES tickets(id) ON DELETE RESTRICT;
+ALTER TABLE tickets ADD COLUMN workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL;  -- a parent's shared workspace
 CREATE INDEX tickets_by_parent ON tickets (parent_id, rank) WHERE parent_id IS NOT NULL;
 ALTER TABLE attempts ADD COLUMN stacked_on TEXT REFERENCES attempts(id) ON DELETE SET NULL;  -- PR 2 (§6)
 ```
@@ -93,9 +94,11 @@ starts.
   description (cut first when the 8 KB cap is reached), and one line per other part (`PDT-46 5a: Done (#44)`,
   `PDT-47 5b: in review (#50)`, `PDT-48 5d: To do`). That gives the new session what the old long-running one carried.
 - **Workspace:** a part's Start with "new workspace" uses the **parent's workspace** (made by the first part's Start,
-  named `<parent key>`, holding the parent ticket tab), adding the part's ticket and session tabs. "Move to Done and
+  named `<parent key>`, holding the parent ticket tab; stored as `tickets.workspace_id` on the parent, while the
+  part's `attempts.workspace_id` stays empty), adding the part's ticket and session tabs. The sidebar shows that
+  workspace as the parent, with its newest active part's PR. "Move to Done and
   remove the worktree" on a part (`finishMerged`) removes that part's worktree, sessions and tabs, and leaves the
-  shared workspace. The parent's "Move to Done" removes the workspace once no parts are open.
+  shared workspace. Closing the parent removes the workspace when it holds only ticket tabs.
 - **Merge detection** is unchanged: it runs on parts' attempts. A part merging can only close that part.
 
 ## 6. Stacked parts (second PR)
@@ -194,7 +197,7 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
   PDT-2.
 - **PR 2, stacking:** `stacked_on`, Start "Stack on", changed files from the blocker's head, the restack notice and
   Restack.
-- PDT-45 (catching up with main counted as merged) is independent and goes first.
+- PDT-45 (catching up with main counted as merged) is fixed (done before this work).
 
 ## 12. Testing
 
