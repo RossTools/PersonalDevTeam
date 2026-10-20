@@ -20,9 +20,10 @@
 //!
 //! `FAKE_AGENT_LOG` (a file path), when set, gets every stdin line and the argv.
 //!
-//! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), and `fake-agent resume …` the Codex
-//! TUI attached to it.
+//! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), `fake-agent resume …` the Codex
+//! TUI attached to it, and `fake-agent [--config <file>] acp` Devin's ACP server (see `acp.rs`).
 
+mod acp;
 mod codex;
 
 use serde_json::{Value, json};
@@ -327,6 +328,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("app-server") => return codex::serve(&args),
         Some("resume") => return codex::tui(&args),
+        _ if args.iter().any(|a| a == "acp") => return acp::serve(&args),
         _ => {}
     }
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();

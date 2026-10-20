@@ -168,8 +168,11 @@ pub(crate) async fn start(
         }
     };
     let conversation = v.session_mode == SessionMode::Conversation;
-    let permission_mode =
-        conversation.then_some(if v.bypass_permissions { PermissionMode::Bypass } else { PermissionMode::Ask });
+    let permission_mode = conversation.then_some(if v.bypass_permissions {
+        PermissionMode::Bypass
+    } else {
+        v.agent.default_permission_mode()
+    });
     let req = CreateSession {
         valid: ValidSession {
             project_id: project.id.clone(),

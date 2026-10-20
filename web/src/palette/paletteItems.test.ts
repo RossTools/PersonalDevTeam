@@ -124,6 +124,23 @@ describe('paletteItems', () => {
     expect(ids(paletteItems(ctx({ place: null }))).some((i) => i.startsWith('new:'))).toBe(false);
   });
 
+  it('starts a Devin conversation or terminal', () => {
+    const c = ctx();
+    const items = paletteItems(c);
+    expect(byId(items, 'new:devin').label).toBe('New Devin here');
+    byId(items, 'new:devin').run!();
+    expect(c.handlers.newSession).toHaveBeenCalledWith('devin', { projectId: 'p1', worktreeId: 'wt1' });
+  });
+
+  it('leaves out agents the host lacks and marks a logged-out one', () => {
+    const items = paletteItems(ctx({ agents: (a) => (a === 'devin' ? 'missing' : a === 'codex' ? 'logged_out' : 'ready') }));
+    expect(ids(items).some((i) => i.startsWith('new:devin'))).toBe(false);
+    expect(byId(items, 'new:codex').detail).toBe('not logged in');
+    expect(byId(items, 'new:codex-terminal').detail).toBe('not logged in');
+    expect(byId(items, 'new:claude').detail).toBeUndefined();
+    expect(ids(items)).toContain('new:shell');
+  });
+
   it('shows the Ctrl+] key for actions that have one', () => {
     const items = paletteItems(ctx());
     expect(byId(items, 'run').shortcut).toBe('Ctrl+] c');

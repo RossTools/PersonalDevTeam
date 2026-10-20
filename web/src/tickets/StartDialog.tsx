@@ -11,6 +11,7 @@ import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Ticket } from '../api/gen/Ticket';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
+import { AGENT_KINDS, useAgentAvailability } from '../common/useAgentAvailability';
 import { INITIAL_SIZE } from '../sessions/status';
 import { isClosed, linkRole } from './model';
 import { setWaiting } from './actions';
@@ -19,6 +20,7 @@ import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
 
 const AGENT_KEY = 'pdt.tickets.startAgent';
+const AGENT_LABEL: Record<AgentKind, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
 const MODE_KEY = 'pdt.tickets.startMode';
 
 function loadAgent(): AgentKind {
@@ -80,7 +82,12 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const areaConfig = useProjectAreas(t?.projectId ?? null);
   const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;
   const project = projects.data?.find((p) => p.id === t?.projectId) ?? null;
-  const [agent, setAgentState] = useState<AgentKind>(loadAgent);
+  const [chosenAgent, setAgentState] = useState<AgentKind>(loadAgent);
+  const availability = useAgentAvailability();
+  // A host with none of them still lists them all (starting one then says what is missing).
+  const offeredAgents = AGENT_KINDS.some(availability.offered) ? AGENT_KINDS.filter(availability.offered) : AGENT_KINDS;
+  // The remembered agent unless this host lacks it (then the first it has); every agent until the checks load.
+  const agent: AgentKind = offeredAgents.includes(chosenAgent) ? chosenAgent : offeredAgents[0] ?? chosenAgent;
   const [sessionMode, setModeState] = useState<SessionMode>(loadMode);
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
@@ -100,9 +107,6 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     setModeState(m);
     saveMode(m);
   };
-  // Devin runs only as a terminal; the remembered choice stays for the other agents.
-  const terminalOnly = agent === 'devin';
-  const effectiveMode: SessionMode = terminalOnly ? 'terminal' : sessionMode;
   const blockers = t ? openBlockers(t) : [];
   const overlaps = t?.overlaps ?? [];
   const conflict = overlaps.some((o) => o.level === 'conflict');
@@ -152,7 +156,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     const mode: StartMode = force ? 'force' : 'check';
     const body: StartTicket = {
       agent,
-      sessionMode: effectiveMode,
+      sessionMode,
       ...(branch.trim() ? { branch: branch.trim() } : {}),
       ...(base.trim() ? { base: base.trim() } : {}),
       ...(bypass ? { bypassPermissions: true } : {}),
@@ -251,19 +255,19 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           )}
           <Field
             label="Agent"
-            hint={effectiveMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."}
+            hint={sessionMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."}
           >
             <div className="flex flex-wrap items-center gap-2">
               <SegmentedControl
                 aria-label="Agent"
-                options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'devin', label: 'Devin' }]}
+                options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${AGENT_LABEL[a]} · ${availability.hint(a)}` : AGENT_LABEL[a] }))}
                 value={agent}
                 onChange={setAgent}
               />
               <SegmentedControl<SessionMode>
                 aria-label="Show as"
-                options={[{ value: 'conversation', label: 'Conversation', disabled: terminalOnly }, { value: 'terminal', label: 'Terminal' }]}
-                value={effectiveMode}
+                options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }]}
+                value={sessionMode}
                 onChange={setMode}
               />
             </div>

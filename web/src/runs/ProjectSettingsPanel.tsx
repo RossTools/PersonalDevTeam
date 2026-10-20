@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Field, MenuButton, Section, Select, Skeleton, Textarea } from '@ui';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
-import { newSession } from '../sessions/newSession';
+import { useAgentAvailability } from '../common/useAgentAvailability';
+import { agentOf, newSession } from '../sessions/newSession';
 import { useOpenSession } from '../tickets/actions';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { Project } from '../api/gen/Project';
@@ -15,6 +16,9 @@ type CredsChoice = CredentialPolicy | typeof HOST;
 
 /** PDT's built-in prompts (served by pdtd, so they work without a copy of PDT's repository). */
 type SetupGuide = 'set-up-project' | 'set-up-workflow';
+/** The conversations a set-up prompt can start. */
+const SETUP_AGENTS = ['Claude', 'Codex', 'Devin'] as const;
+type SetupAgent = (typeof SETUP_AGENTS)[number];
 
 /**
  * Per-project host settings, as the project page's "Runs on this host" `Section`: the repo's .pdt/project.toml, host
@@ -30,6 +34,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
   const [creds, setCreds] = useState<CredsChoice>(HOST);
   const [instructions, setInstructions] = useState('');
   const openSession = useOpenSession();
+  const agents = useAgentAvailability();
   const save = useMutation({
     mutationFn: () =>
       api.saveProjectSettings(project.id, {
@@ -50,15 +55,19 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
     setInstructions(settings.data.agentInstructions ?? '');
   }, [settings.data]);
   // An agent session in the main checkout whose first message is one of PDT's set-up prompts.
-  const setUp = (guide: SetupGuide, agent: 'Claude' | 'Codex') =>
+  const setUp = (guide: SetupGuide, agent: SetupAgent) =>
     void runAction(async () => {
       const initialPrompt = await api.guide(guide);
       const s = await api.createSession({ ...newSession(project.id, null, agent), initialPrompt });
       void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
       openSession(s);
     });
+  // The agents this host has (all until the checks load), a logged-out one saying so.
   const agentEntries = (guide: SetupGuide) => () =>
-    (['Claude', 'Codex'] as const).map((a) => ({ label: a, onSelect: () => setUp(guide, a) }));
+    SETUP_AGENTS.filter((a) => agents.offered(agentOf(a)!)).map((a) => {
+      const hint = agents.hint(agentOf(a)!);
+      return { label: hint ? `${a} · ${hint}` : a, onSelect: () => setUp(guide, a) };
+    });
   // "Saved" describes what is on screen: an edit clears it.
   const edit = <T,>(set: (v: T) => void) => (v: T) => {
     set(v);

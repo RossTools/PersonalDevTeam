@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::claude::ClaudeAdapter;
 use pdt_agents::adapter::codex::{CodexAdapter, CodexServer, CodexServerConfig, TOKEN_ENV};
+use pdt_agents::adapter::devin::DevinAdapter;
 use pdt_agents::adapter::{
     AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, Outgoing, SessionChange,
 };
@@ -175,7 +176,7 @@ async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn 
     match agent {
         Some(AgentKind::Claude) => Ok(Box::new(ClaudeAdapter)),
         Some(AgentKind::Codex) => Ok(Box::new(CodexAdapter { server: codex_server(st).await? })),
-        Some(AgentKind::Devin) => Err(conflict("conversation_unsupported", "Devin runs only as a terminal")),
+        Some(AgentKind::Devin) => Ok(Box::new(DevinAdapter)),
         None => Err(conflict("not_conversation", "only agent sessions are conversations")),
     }
 }
@@ -257,8 +258,10 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
     let has_history = c.state().has_history;
     let row = st.store.get_session(&session.id).await?.unwrap_or_else(|| session.clone());
     let (program, resume) = match session.agent {
-        // Codex resumes its thread whenever it has one.
+        // Codex resumes its thread whenever it has one; Devin its session (it starts a new one when that was never
+        // saved).
         Some(AgentKind::Codex) => (st.platform.codex_program.clone(), row.external_session_id.is_some()),
+        Some(AgentKind::Devin) => (st.platform.devin_program.clone(), row.external_session_id.is_some()),
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {
             let saved =
@@ -267,6 +270,24 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
                 });
             (st.platform.claude_program.clone(), has_history && saved)
         }
+    };
+    // Devin: turns taken in its own terminal since the switch (or, for a session that was always a terminal, all of
+    // them) come in with `session/load`'s replay.
+    let import_after = match session.agent {
+        Some(AgentKind::Devin) if row.external_session_id.is_some() => match import_anchor(st, &session.id).await? {
+            Some(None) => Some(0),
+            Some(Some(at)) => at.parse::<i64>().ok(),
+            None => None,
+        },
+        _ => None,
+    };
+    let instructions = crate::sessions::agent_instructions(st, &row).await?;
+    let config_file = match session.agent {
+        Some(AgentKind::Devin) => {
+            crate::sessions::devin_config(st, &session.id, instructions.as_ref().map(|i| i.file.as_path()))
+                .map_err(|e| ApiError::internal(format!("writing the session's Devin config: {e}")))?
+        }
+        _ => None,
     };
     let spec = OpenSpec {
         session_id: session.id.clone(),
@@ -279,10 +300,15 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         permission_mode: row.permission_mode.unwrap_or_default(),
         env: login_path_env(st),
         env_remove: scrubbed(creds),
-        instructions: crate::sessions::agent_instructions(st, &row).await?,
+        instructions,
+        config_file,
+        import_after,
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
+    if import_after.is_some() {
+        st.store.switch_session_mode(&session.id, SessionMode::Conversation, None).await?;
+    }
     let generation = st.conversations.generation.fetch_add(1, Ordering::SeqCst);
     *slot = Some((live.clone(), generation));
     {
@@ -394,7 +420,7 @@ async fn pump(
                     s.partial.clear();
                     if !expected {
                         let code = code.map_or("no exit code".to_string(), |c| format!("exit code {c}"));
-                        let mut why = format!("Claude stopped unexpectedly ({code}).");
+                        let mut why = format!("{} stopped unexpectedly ({code}).", agent.label());
                         if !stderr_tail.is_empty() {
                             why.push('\n');
                             why.push_str(&stderr_tail);
@@ -853,10 +879,11 @@ pub(crate) async fn switch_mode(
     let Json(body) = payload?;
     let _guard = st.lock_session(&id).await;
     let session = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
-    if session.kind != SessionKind::AgentTui || session.agent != Some(AgentKind::Claude) {
+    if session.kind != SessionKind::AgentTui || !matches!(session.agent, Some(AgentKind::Claude | AgentKind::Devin)) {
         return Err(conflict(
             "switch_unsupported",
-            "only Claude sessions switch between conversation and terminal (Codex conversations open a live terminal)",
+            "only Claude and Devin sessions switch between conversation and terminal (Codex conversations open a live \
+             terminal)",
         ));
     }
     if session.mode != body.mode {
@@ -902,7 +929,8 @@ async fn to_terminal(
         s.turn_running || !s.pending.is_empty() || !s.open_requests.is_empty()
     };
     if busy && !interrupt {
-        return Err(conflict("turn_running", "Claude is working; interrupt it to open the terminal"));
+        let agent = session.agent.unwrap_or(AgentKind::Claude).label();
+        return Err(conflict("turn_running", &format!("{agent} is working; interrupt it to open the terminal")));
     }
     park(st, &c).await;
     let notice =
@@ -911,10 +939,15 @@ async fn to_terminal(
     // "" means "from the start": Claude had not saved this conversation yet. The row is read again: the process
     // may have moved to a new conversation (`/clear`) since `session` was read.
     let row = st.store.get_session(&session.id).await?.unwrap_or_else(|| session.clone());
-    let anchor = read_transcript(st, row.claude_conversation_id())
-        .await
-        .and_then(|t| pdt_core::conversation::claude::last_uuid(&t))
-        .unwrap_or_default();
+    let anchor = if session.agent == Some(AgentKind::Devin) {
+        // Devin stamps each prompt: the terminal's turns are the ones after now.
+        now_ms().to_string()
+    } else {
+        read_transcript(st, row.claude_conversation_id())
+            .await
+            .and_then(|t| pdt_core::conversation::claude::last_uuid(&t))
+            .unwrap_or_default()
+    };
     st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).remove(&session.id);
     st.store.switch_session_mode(&session.id, SessionMode::Terminal, Some(&anchor)).await?;
     if let Err(e) = crate::sessions::restart_locked(st, &session.id, size, None).await {
@@ -944,6 +977,9 @@ async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiErro
     }
     crate::sessions::settle_exit(st, id).await;
     st.remove_pty(id).await;
+    if session.agent == Some(AgentKind::Devin) {
+        return devin_to_conversation(st, id).await;
+    }
     let after = import_anchor(st, id).await?;
     st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
     st.store.set_session_running(id).await?;
@@ -951,6 +987,28 @@ async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiErro
     let c = conv(st, &session).await?;
     for (item_id, turn_id, event) in terminal_turns(st, &session, after).await {
         append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
+    }
+    refresh_activity(st, &c).await;
+    c.push_state();
+    Ok(())
+}
+
+/// Devin, terminal → conversation: its terminal has quit, so the ACP server can take the session (Devin locks a
+/// session to one process). The turns the terminal took arrive with `session/load`'s replay when the conversation
+/// opens, which happens now; `history_from` stays until that import (a failed open retries it on the next message).
+async fn devin_to_conversation(st: &AppState, id: &str) -> Result<(), ApiError> {
+    let anchor = match st.store.history_from(id).await? {
+        Some(a) => Some(a),
+        // Always a terminal: import every turn.
+        None if st.store.last_session_event_seq(id).await? == 0 => Some(String::new()),
+        None => None,
+    };
+    st.store.switch_session_mode(id, SessionMode::Conversation, anchor.as_deref()).await?;
+    st.store.set_session_running(id).await?;
+    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let c = conv(st, &session).await?;
+    if let Err(e) = ensure_live(st, &c, &session).await {
+        tracing::warn!(session = %id, error = %e.message(), "could not reopen the Devin conversation after its terminal");
     }
     refresh_activity(st, &c).await;
     c.push_state();
@@ -1228,6 +1286,10 @@ pub(crate) async fn ticket_draft(
     Path(id): Path<String>,
 ) -> Result<Json<TicketDraft>, ApiError> {
     let session = conversation_session(&st, &id).await?;
+    if session.agent == Some(AgentKind::Devin) {
+        // ACP has no fork: a side request would land in the conversation itself.
+        return Err(conflict("draft_unsupported", "Make ticket is not available for Devin conversations yet"));
+    }
     let adapter = adapter_for(&st, session.agent).await?;
     let creds = crate::sessions::credentials_for(&st, &session.project_id).await?;
     let (program, saved) = match session.agent {
@@ -1255,6 +1317,8 @@ pub(crate) async fn ticket_draft(
         env_remove: scrubbed(creds),
         // The fork carries the conversation as it is; the side request adds nothing to it.
         instructions: None,
+        config_file: None,
+        import_after: None,
     };
     let answer = adapter.draft(spec, DRAFT_PROMPT, &draft_schema()).await.map_err(|e| match e {
         AdapterError::Timeout => {
@@ -1293,12 +1357,14 @@ pub(crate) async fn capabilities(
     let known = st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).get(&agent).cloned();
     let known = known.or_else(|| match agent {
         AgentKind::Codex => st.conversations.codex.get().and_then(|s| s.capabilities()),
-        AgentKind::Claude => None,
-        AgentKind::Devin => Some(AgentCapabilities { conversation: false, ..Default::default() }),
+        AgentKind::Claude | AgentKind::Devin => None,
     });
     Ok(Json(known.unwrap_or_else(|| AgentCapabilities {
         conversation: true,
-        permission_modes: PermissionMode::ALL.to_vec(),
+        permission_modes: match agent {
+            AgentKind::Devin => pdt_core::conversation::devin::DEVIN_MODES.to_vec(),
+            _ => PermissionMode::ALL.to_vec(),
+        },
         ..Default::default()
     })))
 }

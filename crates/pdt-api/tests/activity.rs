@@ -492,7 +492,7 @@ async fn devin_activity_follows_its_program_status() {
     let served = app.clone();
     tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
     let (_, projects) = call(&app, "GET", "/api/projects", None).await;
-    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "devin", "cols": 80, "rows": 24});
+    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "devin", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, created) = call(&app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{created}");
     let id = created["id"].as_str().unwrap();
