@@ -49,10 +49,12 @@ pub struct WorkspaceTicket {
 pub struct Tab {
     pub id: String,
     pub workspace_id: String,
-    /// Exactly one of `session_id`, `run_id` and `ticket_id` is set.
+    /// Exactly one of `session_id`, `run_id`, `ticket_id` and `worktree_id` is set.
     pub session_id: Option<String>,
     pub run_id: Option<String>,
     pub ticket_id: Option<String>,
+    /// A changes tab: the worktree's review (Phase 6).
+    pub worktree_id: Option<String>,
     pub position: u32,
 }
 
@@ -62,6 +64,8 @@ pub enum TabItem {
     Session(String),
     Run(String),
     Ticket(String),
+    /// A worktree's changes (review).
+    Changes(String),
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -98,6 +102,10 @@ pub struct OpenTab {
     #[serde(default)]
     #[ts(optional)]
     pub ticket_id: Option<String>,
+    /// A changes tab for this worktree.
+    #[serde(default)]
+    #[ts(optional)]
+    pub worktree_id: Option<String>,
     /// Index in the workspace's tabs (clamped); the end when absent.
     #[serde(default)]
     #[ts(optional)]
@@ -134,7 +142,7 @@ pub enum WorkspaceValidationError {
     EmptyName,
     #[error("workspace name must be at most {MAX_WORKSPACE_NAME} characters")]
     NameTooLong,
-    #[error("a tab shows exactly one session, run or ticket")]
+    #[error("a tab shows exactly one session, run, ticket or worktree")]
     TabItem,
 }
 
@@ -153,10 +161,16 @@ pub fn valid_workspace_name(name: &str) -> Result<String, WorkspaceValidationErr
 impl OpenTab {
     pub fn item(&self) -> Result<TabItem, WorkspaceValidationError> {
         let nonblank = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
-        match (nonblank(&self.session_id), nonblank(&self.run_id), nonblank(&self.ticket_id)) {
-            (Some(s), None, None) => Ok(TabItem::Session(s)),
-            (None, Some(r), None) => Ok(TabItem::Run(r)),
-            (None, None, Some(t)) => Ok(TabItem::Ticket(t)),
+        match (
+            nonblank(&self.session_id),
+            nonblank(&self.run_id),
+            nonblank(&self.ticket_id),
+            nonblank(&self.worktree_id),
+        ) {
+            (Some(s), None, None, None) => Ok(TabItem::Session(s)),
+            (None, Some(r), None, None) => Ok(TabItem::Run(r)),
+            (None, None, Some(t), None) => Ok(TabItem::Ticket(t)),
+            (None, None, None, Some(w)) => Ok(TabItem::Changes(w)),
             _ => Err(WorkspaceValidationError::TabItem),
         }
     }
@@ -204,6 +218,7 @@ mod tests {
             session_id: s.map(Into::into),
             run_id: r.map(Into::into),
             ticket_id: t.map(Into::into),
+            worktree_id: None,
             position: None,
         };
         assert_eq!(open(Some("s"), None, None).item(), Ok(TabItem::Session("s".into())));
@@ -213,5 +228,9 @@ mod tests {
         assert_eq!(open(None, Some("r"), Some("t")).item(), Err(WorkspaceValidationError::TabItem));
         assert_eq!(open(None, None, None).item(), Err(WorkspaceValidationError::TabItem));
         assert_eq!(open(Some(" "), None, None).item(), Err(WorkspaceValidationError::TabItem));
+        let changes = OpenTab { worktree_id: Some("w".into()), ..Default::default() };
+        assert_eq!(changes.item(), Ok(TabItem::Changes("w".into())));
+        let both = OpenTab { worktree_id: Some("w".into()), ticket_id: Some("t".into()), ..Default::default() };
+        assert_eq!(both.item(), Err(WorkspaceValidationError::TabItem));
     }
 }

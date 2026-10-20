@@ -141,12 +141,16 @@ pub enum EventKind {
     /// A part was added to or removed from a parent (on both tickets): `{parentId, parentKey, partId, partKey,
     /// removed}`.
     Parted,
+    /// Review comments were sent to the coder session (review spec §2.5): `{worktreeId, sessionId, count}`.
+    Feedback,
+    /// The user approved the attempt's changes: `{verdict: "approved", head}`.
+    Review,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
-    Parted => "parted",
+    Parted => "parted", Feedback => "feedback", Review => "review",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

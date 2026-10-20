@@ -1524,6 +1524,15 @@ impl Store {
     }
 
     /// The ticket's active attempt, if any.
+    /// The attempt working in a worktree: its active one, else the newest.
+    pub async fn attempt_for_worktree(&self, worktree_id: &str) -> Result<Option<AttemptInfo>, StoreError> {
+        let sql = format!(
+            "{ATTEMPT_INFO_SELECT} WHERE a.worktree_id = ? ORDER BY a.state = 'active' DESC, a.created_at DESC LIMIT 1"
+        );
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(worktree_id).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_attempt_info).transpose()
+    }
+
     pub async fn active_attempt(&self, ticket_id: &str) -> Result<Option<AttemptInfo>, StoreError> {
         let sql = format!("{ATTEMPT_INFO_SELECT} WHERE a.ticket_id = ? AND a.state = 'active'");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).fetch_optional(&self.pool).await?;
@@ -1644,6 +1653,22 @@ impl Store {
         let mut conn = self.pool.acquire().await?;
         insert_event(&mut conn, ticket_id, kind, actor, body, data, now).await?;
         Ok(())
+    }
+
+    /// The data of the ticket's newest event of `kind` (None without one, or with no data).
+    pub async fn latest_event_data(
+        &self,
+        ticket_id: &str,
+        kind: EventKind,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT data FROM ticket_events WHERE ticket_id = ? AND kind = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+        .bind(ticket_id)
+        .bind(kind.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(d,)| d).and_then(|d| serde_json::from_str(&d).ok()))
     }
 
     /// Every label used in a project, sorted.

@@ -85,7 +85,7 @@ async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(Pat
 
 /// Refuses a path that resolves (through symlinks) outside the checkout. Missing paths pass: git may list a deleted
 /// file. Blocking.
-fn contained(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
+pub(crate) fn contained(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
     let root = std::fs::canonicalize(checkout).map_err(|_| ApiError::not_found("checkout"))?;
     let full = checkout.join(rel);
     match std::fs::canonicalize(&full) {

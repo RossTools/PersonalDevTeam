@@ -5,6 +5,10 @@
  */
 export type OpenTab = { sessionId?: string, runId?: string, ticketId?: string, 
 /**
+ * A changes tab for this worktree.
+ */
+worktreeId?: string, 
+/**
  * Index in the workspace's tabs (clamped); the end when absent.
  */
 position?: number, };

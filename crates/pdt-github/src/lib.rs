@@ -22,6 +22,19 @@ autoMergeRequest{enabledAt} \
 timelineItems(itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{__typename \
 ...on RemovedFromMergeQueueEvent{id reason actor{login}}}}}}}}";
 
+const MERGE_SETTINGS_QUERY: &str = "query($owner:String!,$name:String!,$base:String!){repository(owner:$owner,\
+name:$name){squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed mergeQueue(branch:$base){id}}}";
+
+/// How a repository lets pull requests into a base branch merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeSettings {
+    pub squash: bool,
+    pub merge: bool,
+    pub rebase: bool,
+    /// The base branch has a merge queue.
+    pub queue: bool,
+}
+
 /// A branch's pull request as GitHub reports it (CI is read separately).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequest {
@@ -62,6 +75,55 @@ pub trait GithubApi: Send + Sync {
     fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, GhError>;
     /// The names of the failed jobs of one run attempt.
     fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, GhError>;
+    /// The merge methods `repo` allows and whether `base` has a merge queue.
+    fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, GhError>;
+    /// Turns on auto-merge for PR `number` (`gh pr merge --auto`, with `flag` such as `--squash` unless a merge queue
+    /// picks the method). A PR that can merge right away is merged.
+    fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError>;
+}
+
+pub fn merge_settings_args(repo: &str, base: &str) -> Result<Vec<String>, GhError> {
+    let (owner, name) = repo.split_once('/').ok_or_else(|| GhError::BadOutput(format!("not owner/name: {repo}")))?;
+    Ok(vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={MERGE_SETTINGS_QUERY}"),
+        "-f".into(),
+        format!("owner={owner}"),
+        "-f".into(),
+        format!("name={name}"),
+        "-f".into(),
+        format!("base={base}"),
+    ])
+}
+
+pub fn merge_pr_args(repo: &str, number: u32, flag: Option<&str>, auto: bool) -> Vec<String> {
+    let mut v: Vec<String> = vec!["pr".into(), "merge".into(), number.to_string(), "--repo".into(), repo.into()];
+    if auto {
+        v.push("--auto".into());
+    }
+    v.extend(flag.map(String::from));
+    v
+}
+
+/// The `MERGE_SETTINGS_QUERY` answer.
+pub fn parse_merge_settings(out: &str) -> Result<MergeSettings, GhError> {
+    let v = json(out)?;
+    if let Some(e) = v["errors"].as_array().and_then(|a| a.first()) {
+        return Err(GhError::Command(s(e, "message")));
+    }
+    let r = &v["data"]["repository"];
+    if r.is_null() {
+        return Err(GhError::BadOutput("no repository in the answer".into()));
+    }
+    let b = |k: &str| r[k].as_bool().unwrap_or(false);
+    Ok(MergeSettings {
+        squash: b("squashMergeAllowed"),
+        merge: b("mergeCommitAllowed"),
+        rebase: b("rebaseMergeAllowed"),
+        queue: r["mergeQueue"].is_object(),
+    })
 }
 
 pub fn pr_args(repo: &str, branch: &str) -> Result<Vec<String>, GhError> {
@@ -282,6 +344,18 @@ impl GithubApi for GhCli {
     fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, GhError> {
         parse_failed_jobs(&self.run(&jobs_args(repo, run_id, attempt))?)
     }
+    fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, GhError> {
+        parse_merge_settings(&self.run(&merge_settings_args(repo, base)?)?)
+    }
+    fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError> {
+        match self.run(&merge_pr_args(repo, number, flag, true)) {
+            // GitHub refuses auto-merge for a PR that could merge now ("is in clean status"): merge it.
+            Err(GhError::Command(e)) if e.contains("clean status") => {
+                self.run(&merge_pr_args(repo, number, flag, false)).map(|_| ())
+            }
+            r => r.map(|_| ()),
+        }
+    }
 }
 
 fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
@@ -329,6 +403,12 @@ impl GithubApi for Unavailable {
     fn failed_jobs(&self, _: &str, _: u64, _: u32) -> Result<Vec<String>, GhError> {
         Err(GhError::NotInstalled)
     }
+    fn merge_settings(&self, _: &str, _: &str) -> Result<MergeSettings, GhError> {
+        Err(GhError::NotInstalled)
+    }
+    fn merge_pr(&self, _: &str, _: u32, _: Option<&str>) -> Result<(), GhError> {
+        Err(GhError::NotInstalled)
+    }
 }
 
 pub mod testing {
@@ -343,6 +423,10 @@ pub mod testing {
         pub runs: Mutex<HashMap<String, Vec<CiRun>>>,
         pub queue: Mutex<Vec<CiRun>>,
         pub jobs: Mutex<HashMap<u64, Vec<String>>>,
+        /// What `merge_settings` answers (squash only, no queue, when unset).
+        pub settings: Mutex<Option<MergeSettings>>,
+        /// `merge_pr` fails with this.
+        pub merge_error: Mutex<Option<String>>,
         pub calls: Mutex<Vec<String>>,
     }
 
@@ -381,6 +465,22 @@ pub mod testing {
         fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, GhError> {
             self.call(format!("jobs {repo} {run_id}.{attempt}"));
             Ok(self.jobs.lock().unwrap().get(&run_id).cloned().unwrap_or_default())
+        }
+        fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, GhError> {
+            self.call(format!("merge-settings {repo} {base}"));
+            Ok(self.settings.lock().unwrap().unwrap_or(MergeSettings {
+                squash: true,
+                merge: false,
+                rebase: false,
+                queue: false,
+            }))
+        }
+        fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError> {
+            self.call(format!("merge {repo} {number} {}", flag.unwrap_or("-")));
+            match self.merge_error.lock().unwrap().clone() {
+                Some(e) => Err(GhError::Command(e)),
+                None => Ok(()),
+            }
         }
     }
 }
@@ -467,5 +567,25 @@ mod tests {
         let gh = GhCli::new(std::env::temp_dir().join("pdt-no-such-gh-binary"));
         assert_eq!(gh.branch_runs("o/r", "b"), Err(GhError::NotInstalled));
         assert_eq!(Unavailable.pull_request("o/r", "b"), Err(GhError::NotInstalled));
+    }
+
+    #[test]
+    fn parses_merge_settings_and_builds_merge_args() {
+        let out = r#"{"data":{"repository":{"squashMergeAllowed":true,"mergeCommitAllowed":false,
+          "rebaseMergeAllowed":true,"mergeQueue":{"id":"MQ_1"}}}}"#;
+        assert_eq!(
+            parse_merge_settings(out).unwrap(),
+            MergeSettings { squash: true, merge: false, rebase: true, queue: true }
+        );
+        let none = r#"{"data":{"repository":{"squashMergeAllowed":false,"mergeCommitAllowed":true,
+          "rebaseMergeAllowed":false,"mergeQueue":null}}}"#;
+        assert!(!parse_merge_settings(none).unwrap().queue);
+        assert!(parse_merge_settings(r#"{"errors":[{"message":"nope"}]}"#).is_err());
+        assert_eq!(
+            merge_pr_args("o/r", 7, Some("--squash"), true),
+            ["pr", "merge", "7", "--repo", "o/r", "--auto", "--squash"]
+        );
+        assert_eq!(merge_pr_args("o/r", 7, None, false), ["pr", "merge", "7", "--repo", "o/r"]);
+        assert!(merge_settings_args("o/r", "main").unwrap().contains(&"base=main".to_string()));
     }
 }

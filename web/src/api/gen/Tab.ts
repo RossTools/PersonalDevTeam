@@ -2,6 +2,10 @@
 
 export type Tab = { id: string, workspaceId: string, 
 /**
- * Exactly one of `session_id`, `run_id` and `ticket_id` is set.
+ * Exactly one of `session_id`, `run_id`, `ticket_id` and `worktree_id` is set.
  */
-sessionId: string | null, runId: string | null, ticketId: string | null, position: number, };
+sessionId: string | null, runId: string | null, ticketId: string | null, 
+/**
+ * A changes tab: the worktree's review (Phase 6).
+ */
+worktreeId: string | null, position: number, };
