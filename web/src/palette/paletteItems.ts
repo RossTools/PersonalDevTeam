@@ -3,19 +3,22 @@ import type { Project } from '../api/gen/Project';
 import type { Tab } from '../api/gen/Tab';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
+import type { AgentKind } from '../api/gen/AgentKind';
 import { itemState, type AgentStateValue } from '../common/AgentState';
+import { NOT_LOGGED_IN, type AgentAvailability } from '../common/useAgentAvailability';
 import type { Place } from '../common/PlacePicker';
 import { sessionKindLabel } from '../common/SessionKindIcon';
 import { findTab, itemOf, nextNeedingYou, type Item } from '../workspaces/model';
 import type { ItemInfo } from '../workspaces/useWorkspaces';
+import { byDefault, choiceFor, FALLBACK_DEFAULTS, type AgentDefaults } from '../sessions/newSession';
 
 export const GO_TO = 'Go to';
 export const ACTIONS = 'Actions';
 
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
-  | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'shell' | 'run' | 'rename' | 'close'
-  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files';
+  | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'shell' | 'run' | 'rename' | 'close'
+  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes';
 
 /**
  * A second step: another list (Move tab → workspaces), a text field (New workspace → its name), or a ticket search
@@ -45,8 +48,8 @@ export interface PaletteItem {
   next?: PaletteStep;
 }
 
-/** `claude` and `codex` are conversations, `claude_terminal` and `codex_terminal` the agents' own TUIs. */
-export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'shell';
+/** `claude`, `codex` and `devin` are conversations, the `_terminal` kinds the agents' own TUIs. */
+export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'devin' | 'devin_terminal' | 'shell';
 
 /** What the items do. AppShell implements them with the workspaces API (through runAction). */
 export interface PaletteHandlers {
@@ -74,6 +77,8 @@ export interface PaletteHandlers {
   openTicket: (ticket: { id: string; projectId: string }) => void;
   /** Opens the Start dialog; `here`: the ticket's tab is on screen, so its tabs open after it. */
   startTicket: (ticket: { id: string; projectId: string }, here: boolean) => void;
+  /** Starts a parent's next part (PDT-38): the Start dialog for it, or a toast saying why there is none. */
+  startNextPart: (parent: { id: string; key: string }) => void;
 }
 
 export interface PaletteContext {
@@ -91,6 +96,10 @@ export interface PaletteContext {
   tickets?: TicketSummary[];
   /** Where "Open ticket…" searches: the backlog's project, or every project (null). */
   ticketProjectId?: string | null;
+  /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing one. */
+  agents?: (agent: AgentKind) => AgentAvailability;
+  /** The host's default agent and view: their "New … here" comes first. */
+  defaults?: AgentDefaults;
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;
@@ -175,13 +184,50 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
   const actions: PaletteItem[] = [];
   if (place) {
     const words = [projectOf(place.projectId)?.key].filter((w): w is string => !!w);
+    const allAgentItems: [AgentKind, NewKind, string, string][] = [
+      ['claude', 'claude', 'new:claude', 'New Claude here'],
+      ['claude', 'claude_terminal', 'new:claude-terminal', 'New Claude (terminal) here'],
+      ['codex', 'codex', 'new:codex', 'New Codex here'],
+      ['codex', 'codex_terminal', 'new:codex-terminal', 'New Codex (terminal) here'],
+      ['devin', 'devin', 'new:devin', 'New Devin here'],
+      ['devin', 'devin_terminal', 'new:devin-terminal', 'New Devin (terminal) here'],
+    ];
+    const agentItems = byDefault(allAgentItems, ([agent, kind]) => choiceFor(agent, kind.endsWith('_terminal') ? 'terminal' : 'conversation'), ctx.defaults ?? FALLBACK_DEFAULTS);
+    for (const [agent, kind, id, label] of agentItems) {
+      const availability = ctx.agents?.(agent) ?? 'ready';
+      if (availability === 'missing') continue;
+      actions.push({
+        id,
+        label,
+        group: ACTIONS,
+        icon: agent,
+        ...(availability === 'logged_out' ? { detail: NOT_LOGGED_IN } : {}),
+        keywords: kind.endsWith('_terminal') ? [...words, 'tui'] : words,
+        run: () => h.newSession(kind, place),
+      });
+    }
     actions.push(
-      { id: 'new:claude', label: 'New Claude here', group: ACTIONS, icon: 'claude', keywords: words, run: () => h.newSession('claude', place) },
-      { id: 'new:claude-terminal', label: 'New Claude (terminal) here', group: ACTIONS, icon: 'claude', keywords: [...words, 'tui'], run: () => h.newSession('claude_terminal', place) },
-      { id: 'new:codex', label: 'New Codex here', group: ACTIONS, icon: 'codex', keywords: words, run: () => h.newSession('codex', place) },
-      { id: 'new:codex-terminal', label: 'New Codex (terminal) here', group: ACTIONS, icon: 'codex', keywords: [...words, 'tui'], run: () => h.newSession('codex_terminal', place) },
       { id: 'new:shell', label: 'New shell here', group: ACTIONS, icon: 'shell', keywords: words, run: () => h.newSession('shell', place) },
     );
+  }
+  // Review: the changes of the worktree on screen (a session's or run's, or the open ticket's attempt).
+  const openTicket = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
+  const placeInfo = place?.worktreeId ? ctx.infos.find((i) => i.worktreeId === place.worktreeId && branchOf(i)) : undefined;
+  const review = place?.worktreeId
+    ? { worktreeId: place.worktreeId, projectId: place.projectId, branch: placeInfo ? branchOf(placeInfo) : null }
+    : openTicket?.attempt?.worktreeId
+      ? { worktreeId: openTicket.attempt.worktreeId, projectId: openTicket.projectId, branch: openTicket.attempt.branch }
+      : null;
+  if (review && tab?.worktreeId !== review.worktreeId) {
+    const r = review;
+    actions.push({
+      id: 'review:changes',
+      label: r.branch ? `Review changes of ${r.branch}` : 'Review changes here',
+      group: ACTIONS,
+      icon: 'changes',
+      keywords: ['diff', 'review', 'comments', 'merge'],
+      run: () => h.focusItem({ kind: 'changes', id: r.worktreeId }, r.projectId),
+    });
   }
   if (projects.length > 0) {
     actions.push(
@@ -195,8 +241,12 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
         next: { kind: 'tickets', title: 'Open ticket', projectId: ctx.ticketProjectId ?? null, run: (t) => h.openTicket(t) },
       },
     );
-    const open = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
-    if (open && ['draft', 'ready', 'todo'].includes(open.stage) && open.attempt?.state !== 'active') {
+    const open = openTicket;
+    if (open?.parts && !['done', 'wont_do'].includes(open.stage)) {
+      // A parent is started through its parts.
+      const t = open;
+      actions.push({ id: 'tickets:start-next-part', label: `Start next part of ${t.key}`, group: ACTIONS, icon: 'run', keywords: [t.title, 'agent', 'parts'], run: () => h.startNextPart(t) });
+    } else if (open && ['draft', 'ready', 'todo'].includes(open.stage) && open.attempt?.state !== 'active') {
       const t = open;
       actions.push({ id: 'tickets:start-open', label: `Start ${t.key}`, group: ACTIONS, icon: 'run', keywords: [t.title, 'agent'], run: () => h.startTicket(t, true) });
     }

@@ -92,6 +92,11 @@ with the prompt on stdin answers one `result` object whose `structured_output` h
 holds it as text; `num_turns` is 2: the schema is a tool). Nothing is saved: the project folder keeps only the original
 `<id>.jsonl`. Works while the conversation's own `-p` process is live. Make ticket uses it (5d).
 
+### `/clear` (checked 2026-10-19, 2.1.302)
+- Sent as a user message, `/clear` is not replayed. Claude prints `{"type":"conversation_reset","trigger":"clear","new_conversation_id":A,"uuid":A,"user_message_uuid":…,"session_id":<old>}`, then a `system/init` and a `result` (`local_command: "clear"`, `num_turns: 0`) whose `session_id` is a third id B.
+- Every later frame carries B, and the transcript is `projects/*/B.jsonl` (it starts with the `/clear` command entries); no file is named after A. `--resume B` continues the cleared conversation and keeps B.
+- So PDT follows the `session_id` of each `init`, never `new_conversation_id` (fixture: crates/pdt-core/tests/fixtures/claude/clear.jsonl). In the TUI, the SessionStart hook (`source: "clear"`) reports B as its `session_id`.
+
 ## Codex: `codex app-server`
 
 - Handshake: `initialize {clientInfo:{name,version}, capabilities:{experimentalApi?}}` then the `initialized`
@@ -159,22 +164,7 @@ is refused ("ephemeral paginated thread/fork requires `excludeTurns: true`"). It
 server restarted. `turn/start` on the fork with `outputSchema` ends with an `agentMessage` whose text is the JSON
 object; its notifications name the fork's thread id, so they never reach the conversation. Make ticket uses it (5d).
 
-## Devin CLI: `devin acp` (docs only)
+## Devin CLI
 
-- Local agent working in its cwd; macOS/Linux/Windows; `~/.local/bin/devin`. [D] https://docs.devin.ai/cli/index
-- `devin acp`: an Agent Client Protocol server (JSON-RPC 2.0, stdio), the route Zed/JetBrains use. Flow: `initialize`
-  → `authenticate` (if asked) → `session/new {cwd, mcpServers}` or `session/load` → `session/prompt` (its response ends
-  the turn) with `session/update` notifications (message chunks, thoughts, tool_call / tool_call_update, plan, modes,
-  available commands); `session/request_permission` (allow once / always / reject; editable commands);
-  `elicitation/create` for questions; `session/cancel`; `session/set_mode`; config options for model/effort. [D]
-  https://agentclientprotocol.com/protocol/overview, https://docs.devin.ai/cli/changelog/stable
-- No documented session id at launch; sessions are locked to one process (TUI and ACP can't hold one at once). [D/inferred]
-- Terminal session: `devin [--permission-mode M] [--model X] [-- <prompt>]`, resume `devin -r <id>`; activity from
-  Claude-compatible hooks (`.devin/hooks.v1.json`; `session_id` in payloads) or OSC 9/777 with `notify: always`. Devin
-  **also loads hooks from `~/.claude/settings*.json` and `.claude/settings*.json`** by default. [D]
-- Auth: `devin auth login` (browser; enterprise SSO); token in `~/.local/share/devin/credentials.toml`;
-  `WINDSURF_API_KEY` for ACP. Billing: the org's ACUs. [D]
-- To check hands-on on the work laptop: org policy allows a custom ACP client; `initialize` capabilities (loadSession,
-  images, modes); ACP sessionId = `devin -r` id = hooks' `session_id`; lock behaviour with the TUI open; real
-  `request_permission` option ids; cancel's `stopReason`; whether `--config <path>` merges (to add hooks without
-  touching user files); whether `~/.claude` hooks fire.
+Checked hands-on (PDT-54, PDT-55): docs/superpowers/notes/devin-cli.md.
+

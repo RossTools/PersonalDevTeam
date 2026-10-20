@@ -7,7 +7,7 @@ import type { SessionMode } from '../api/gen/SessionMode';
 import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
-import { SessionKindIcon } from '../common/SessionKindIcon';
+import { KIND_LABEL, SessionKindIcon } from '../common/SessionKindIcon';
 import { actionError, useAction } from '../common/useAction';
 import { ConversationPane } from '../conversation/ConversationView';
 import type { EventsSocketLike } from '../conversation/eventsSocket';
@@ -18,6 +18,8 @@ import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
+import { useOpenChanges } from '../review/open';
+import { ChangesButton } from '../review/ChangesButton';
 
 export interface SessionViewProps {
   session: Session;
@@ -119,6 +121,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
   // A scratch chat (a conversation with no ticket) can become a ticket (spec §10).
   const [makingTicket, setMakingTicket] = useState(false);
+  const openChanges = useOpenChanges();
   const scratch = conversation && isAgent && !session.attemptId;
 
   // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread (spec §8.1).
@@ -155,15 +158,17 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
     else setView('conversation');
   };
 
-  // Claude: the session is either the conversation or Claude's own TUI, one at a time (spec §8.2).
-  const claudeSwitch = isAgent && session.agent === 'claude';
+  // Claude and Devin: the session is either the conversation or the agent's own TUI, one at a time (spec §8.2; Devin
+  // locks a session to one process).
+  const oneAtATime = isAgent && (session.agent === 'claude' || session.agent === 'devin');
+  const agentName = KIND_LABEL[session.agent === 'devin' ? 'devin' : 'claude'];
   const [switching, setSwitching] = useState<SessionMode | null>(null);
   const switchMode = async (mode: SessionMode) => {
     if (mode === session.mode || switching) return;
     if (mode === 'conversation' && running && session.activity === 'working') {
       const { ok } = await confirm({
         title: 'Back to the conversation?',
-        body: 'Claude is working in the terminal. Switching closes the terminal, which stops this turn.',
+        body: `${agentName} is working in the terminal. Switching closes the terminal, which stops this turn.`,
         action: 'Close terminal and switch',
       });
       if (!ok) return;
@@ -177,7 +182,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         if (!(err instanceof ApiError && err.code === 'turn_running')) throw err;
         const { ok } = await confirm({
           title: 'Interrupt and open the terminal?',
-          body: 'Claude is working on a turn. Opening the terminal stops it; you can carry on from there.',
+          body: `${agentName} is working on a turn. Opening the terminal stops it; you can carry on from there.`,
           action: 'Interrupt and open',
         });
         if (!ok) return;
@@ -227,7 +232,8 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
   };
 
   const entries = (): MenuEntry[] => [
-    ...(scratch ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
+    // Devin cannot draft on the side without touching the conversation (the server says draft_unsupported).
+    ...(scratch && session.agent !== 'devin' ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
     ...(conversation
       ? [
           ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),
@@ -272,7 +278,13 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         meta={
           <>
             {theBranch ? (
-              <BranchChip branch={theBranch} repo={theRepo} base={theBase} className="min-w-0" />
+              <BranchChip
+                branch={theBranch}
+                repo={theRepo}
+                base={theBase}
+                {...(session.worktreeId ? { onReview: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }) } : {})}
+                className="min-w-0"
+              />
             ) : (
               !session.worktreeId && theKey && <ProjectKey projectKey={theKey} />
             )}
@@ -281,7 +293,8 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         }
         actions={
           <>
-            {claudeSwitch && (
+            {session.worktreeId && <ChangesButton worktreeId={session.worktreeId} projectId={session.projectId} />}
+            {oneAtATime && (
               <SegmentedControl<SessionMode>
                 aria-label="Show as"
                 size="sm"

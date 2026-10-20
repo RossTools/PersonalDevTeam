@@ -9,18 +9,21 @@ import { AgentDot, itemState } from '../common/AgentState';
 import { PlacePicker } from '../common/PlacePicker';
 import { KIND_ICON } from '../common/SessionKindIcon';
 import { runAction } from '../common/useAction';
+import { useAgentAvailability } from '../common/useAgentAvailability';
+import { useAgentDefaults } from '../common/useAgentDefaults';
 import { useMediaQuery } from '../common/useMediaQuery';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { choiceLabel, parseChoice, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
-import { newSession, type Choice } from '../sessions/newSession';
+import { agentOf, byDefault, newSession, type Choice } from '../sessions/newSession';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
-const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', o: 'Codex (terminal)', s: 'Shell' };
-const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Codex (terminal)', 'Shell'];
+const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', o: 'Codex (terminal)', d: 'Devin', e: 'Devin (terminal)', s: 'Shell' };
+const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Codex (terminal)', 'Devin', 'Devin (terminal)', 'Shell'];
+const iconOf = (c: Choice) => KIND_ICON[agentOf(c) ?? 'shell'];
 const keyOf = (c: Choice) => Object.keys(KEYS).find((k) => KEYS[k] === c)!;
 
 /** Where a new session starts: the user's pick, else the current tab's place, else the project workspace's project. */
@@ -64,13 +67,19 @@ function Frame({ anchor, onClose, children }: { anchor?: RefObject<Element | nul
 }
 
 /**
- * The new-tab chooser: one filterable list to launch a Claude or Codex conversation, either agent's terminal or a
- * shell (c / t / x / o / s while the filter is empty),
+ * The new-tab chooser: one filterable list to launch a Claude, Codex or Devin conversation, an agent's terminal or a
+ * shell (c / t / x / o / d / e / s while the filter is empty), offering only the agents this host has (all of them
+ * until the host checks load; a logged-out one says so), the host's default agent and view first,
  * start a configured run or test, run another branch, or bring an existing session or run here. With `anchor` (the
  * tab strip's "+") it is a popover there, a bottom sheet on phones; without one, a dialog.
  */
 export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onClose: () => void; anchor?: RefObject<Element | null> }) {
   const qc = useQueryClient();
+  const agents = useAgentAvailability();
+  const offered = (c: Choice) => { const a = agentOf(c); return !a || agents.offered(a); };
+  // The host's default agent and view first.
+  const defaults = useAgentDefaults();
+  const choicesHere = byDefault(AGENTS.filter(offered), (c) => c, defaults);
   const { place, setPicked } = usePlace(ws);
   const [bypass, setBypass] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
@@ -103,9 +112,10 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
 
   const items: CommandItem[] = [
     ...(place
-      ? AGENTS.map((c) => {
-          const Icon = KIND_ICON[c === 'Shell' ? 'shell' : c.startsWith('Codex') ? 'codex' : 'claude'];
-          return { id: `new:${c}`, label: c, group: 'Start here', shortcut: keyOf(c), icon: <Icon aria-hidden />, disabled: create.isPending };
+      ? choicesHere.map((c) => {
+          const Icon = iconOf(c);
+          const hint = agentOf(c) ? agents.hint(agentOf(c)!) : undefined;
+          return { id: `new:${c}`, label: c, ...(hint ? { detail: hint } : {}), group: 'Start here', shortcut: keyOf(c), icon: <Icon aria-hidden />, disabled: create.isPending };
         })
       : []),
     ...(place && workspace ? [{ id: 'ticket', label: 'Ticket…', group: 'Start here', icon: <Ticket aria-hidden /> }] : []),
@@ -145,8 +155,8 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     }
   };
 
-  // c / t / x / o / s launch Claude, Claude (terminal), Codex, Codex (terminal) or a shell while focus is in the chooser, outside any text field, and the filter is
-  // empty; any other printable key moves to the filter and types there. Overlays own their element, so listen on
+  // c / t / x / o / d / e / s launch Claude, Claude (terminal), Codex, Codex (terminal), Devin, Devin (terminal) or a
+  // shell (an agent the host lacks does nothing) while focus is in the chooser, outside any text field, and the filter is empty; any other printable key moves to the filter and types there. Overlays own their element, so listen on
   // window and check where the key came from.
   const marker = useRef<HTMLDivElement>(null);
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -162,7 +172,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     const choice = KEYS[e.key];
     if (choice && query === '' && place) {
       e.preventDefault();
-      if (!create.isPending) create.mutate(choice);
+      if (!create.isPending && offered(choice)) create.mutate(choice);
       return;
     }
     // Type-ahead: the key lands in the filter (focusing it during keydown sends the character there).
@@ -204,7 +214,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
         ) : (
           <CommandList
             label="New tab choices"
-            placeholder="Filter, or press c, t, x, o or s…"
+            placeholder={`Filter, or press ${choicesHere.map(keyOf).join(', ').replace(/, (\w)$/, ' or $1')}…`}
             items={items}
             onAction={onAction}
             query={query}

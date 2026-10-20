@@ -34,6 +34,9 @@ pub struct ClaudeInit {
     pub slash_commands: Vec<String>,
     /// Commands that work only in the TUI.
     pub terminal_commands: Vec<String>,
+    /// Claude's id for the conversation this turn belongs to. It changes after `/clear` (the new id is this one,
+    /// not `conversation_reset`'s `new_conversation_id`, which names no transcript).
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -531,7 +534,13 @@ impl ClaudeMapper {
             }
             "rate_limit_event" => self.on_rate_limit(v, &mut out),
             "result" => self.on_result(v, &mut out),
-            "keep_alive" => {}
+            // `/clear` (or another trigger): what follows is a new conversation; the next init names its id.
+            "conversation_reset" => {
+                let trigger = str_field(v, "trigger").unwrap_or_else(|| "clear".into());
+                out.push(self.event(None, AgentEvent::ConversationReset { trigger }));
+            }
+            // A running tool's heartbeat; its row already shows it running.
+            "keep_alive" | "tool_progress" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
         out
@@ -555,6 +564,7 @@ impl ClaudeMapper {
                         .and_then(Value::as_array)
                         .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
                         .unwrap_or_default(),
+                    session_id: str_field(v, "session_id"),
                 };
                 if let (Some(old), Some(new)) = (&self.model, &init.model)
                     && old != new
@@ -594,9 +604,34 @@ impl ClaudeMapper {
                     out.push(MapOut::Init(ClaudeInit { permission_mode: Some(mode), ..ClaudeInit::default() }));
                 }
             }
+            // e.g. `gh pr create` or a push to a pull request's branch.
+            "code_change_published" => {
+                let action = str_field(v, "action").unwrap_or_else(|| "published".into());
+                let id = str_field(v, "identifier").unwrap_or_default();
+                let target = match str_field(v, "repo") {
+                    Some(repo) if !id.is_empty() => format!("{repo}#{id}"),
+                    Some(repo) => repo,
+                    None => str_field(v, "url").unwrap_or_else(|| format!("#{id}")),
+                };
+                let text = match action.as_str() {
+                    "pushed" => format!("Pushed to {target}"),
+                    "created" => format!("Created {target}"),
+                    other => format!("Code change {other}: {target}"),
+                };
+                out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
+            }
             // Progress Claude reports for its own bookkeeping; the tool calls carry what matters.
-            "task_started" | "task_progress" | "task_notification" | "hook_started" | "hook_response"
-            | "hook_progress" | "files_persisted" | "thinking_tokens" => {}
+            "task_started"
+            | "task_progress"
+            | "task_notification"
+            | "task_updated"
+            | "vcs_state_changed"
+            | "hook_started"
+            | "hook_response"
+            | "hook_progress"
+            | "files_persisted"
+            | "thinking_tokens"
+            | "background_tasks_changed" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
     }
@@ -1086,6 +1121,50 @@ mod tests {
     }
 
     #[test]
+    fn clear_shows_a_divider_and_the_next_init_names_the_new_conversation() {
+        let mut m = ClaudeMapper::new();
+        let out = run(&mut m, include_str!("../../tests/fixtures/claude/clear.jsonl"));
+        let ev = events(&out);
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "unknown"), "{ev:?}");
+        assert_eq!(
+            ev.iter().filter(|(_, e)| *e == AgentEvent::ConversationReset { trigger: "clear".into() }).count(),
+            1
+        );
+        let ids: Vec<String> = out
+            .iter()
+            .filter_map(|o| match o {
+                MapOut::Init(i) => i.session_id.clone(),
+                _ => None,
+            })
+            .collect();
+        // Not `new_conversation_id` (170715ef…): the transcript and later frames use the init's id.
+        assert_eq!(
+            ids,
+            [
+                "144cb04b-8d3f-491e-8ea9-cf6ed4f159bf",
+                "90c29dfc-42bf-4be0-816c-6b0ceddf0d62",
+                "90c29dfc-42bf-4be0-816c-6b0ceddf0d62"
+            ]
+        );
+        let mut texts: Vec<&str> = ev
+            .iter()
+            .filter_map(|(_, e)| match e {
+                AgentEvent::AgentMessage { markdown, .. } => Some(markdown.as_str()),
+                _ => None,
+            })
+            .collect();
+        texts.dedup(); // a message row is written again when it is final
+        assert_eq!(texts, ["one", "two"]);
+    }
+
+    #[test]
+    fn a_reset_keeps_its_trigger() {
+        let mut m = ClaudeMapper::new();
+        let ev = events(&m.on_line(r#"{"type":"conversation_reset","trigger":"resume","new_conversation_id":"n"}"#));
+        assert_eq!(ev[0].1, AgentEvent::ConversationReset { trigger: "resume".into() });
+    }
+
+    #[test]
     fn a_recorded_turn_with_an_approval_maps_to_events() {
         let mut m = ClaudeMapper::new();
         let lines: Vec<&str> = APPROVAL.lines().collect();
@@ -1235,6 +1314,28 @@ not json"#,
         assert!(matches!(&ev[3].1, AgentEvent::Unknown { .. }));
         assert_eq!(ev.len(), 4);
         assert!(out.iter().any(|o| matches!(o, MapOut::Send(v) if v["response"]["subtype"] == "error")));
+    }
+
+    #[test]
+    fn progress_frames_are_quiet_and_a_published_change_is_a_notice() {
+        let mut m = ClaudeMapper::new();
+        let out = run(
+            &mut m,
+            r#"{"type":"tool_progress","elapsed_time_seconds":30,"heartbeat":true,"tool_name":"Bash","tool_use_id":"t1"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"Wait for CI","task_id":"b1","task_type":"local_bash"}]}
+{"type":"system","subtype":"task_updated","task_id":"b1","patch":{"end_time":1792463355379,"status":"completed"}}
+{"type":"system","subtype":"vcs_state_changed","kind":"push","cwd":"/w"}
+{"type":"system","subtype":"code_change_published","action":"pushed","identifier":"69","provider":"github","repo":"o/r","url":"https://github.com/o/r/pull/69"}
+{"type":"system","subtype":"code_change_published","action":"merged","url":"https://example.com/x"}"#,
+        );
+        let texts: Vec<_> = events(&out)
+            .into_iter()
+            .map(|(_, e)| match e {
+                AgentEvent::Notice { text, .. } => text,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, ["Pushed to o/r#69", "Code change merged: https://example.com/x"]);
     }
 
     #[test]

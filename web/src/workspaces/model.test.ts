@@ -9,6 +9,7 @@ const tab = (id: string, workspaceId: string, item: Item, position = 0): Tab => 
   sessionId: item.kind === 'session' ? item.id : null,
   runId: item.kind === 'run' ? item.id : null,
   ticketId: item.kind === 'ticket' ? item.id : null,
+  worktreeId: item.kind === 'changes' ? item.id : null,
   position,
 });
 const ws = (id: string, tabs: Tab[], projectId: string | null = null): Workspace => ({
@@ -67,7 +68,7 @@ describe('workspace model', () => {
 
 describe('ticket workspace groups', () => {
   const w = (id: string, ticket = false) => ({ id, name: id, projectId: null, position: 0, createdAt: 0, tabs: [],
-    ...(ticket ? { ticket: { id: `t${id}`, projectId: 'p', key: `K-${id}`, title: id, stage: 'in_progress' as const, attemptId: 'a', attemptState: 'active' as const, pr: null } } : {}) });
+    ...(ticket ? { ticket: { id: `t${id}`, projectId: 'p', key: `K-${id}`, title: id, stage: 'in_progress' as const, attemptId: 'a', attemptState: 'active' as const, pr: null, parts: null } } : {}) });
   const all = [w('p1'), w('t1', true), w('f1'), w('t2', true), w('t3', true)];
 
   it('splits ticket workspaces from the others', () => {

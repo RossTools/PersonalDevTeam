@@ -18,6 +18,7 @@ import {
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
+import type { AgentKind } from '../api/gen/AgentKind';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { MessageSource } from '../api/gen/MessageSource';
 import type { PendingMessage } from '../api/gen/PendingMessage';
@@ -45,7 +46,7 @@ export interface MessageListProps {
   /** Where a message's attached image is served (by attachment id). */
   imageUrl?: (attachmentId: string) => string;
   /** Which agent: Claude's plans can be approved straight into Accept edits. */
-  agent?: 'claude' | 'codex';
+  agent?: AgentKind;
   /** Offered under the last turn when it was interrupted (a restart, a crash, Stop): picks up where it left off. */
   onContinue?: () => Promise<unknown>;
   /** Shown when there is nothing yet. */
@@ -60,7 +61,7 @@ interface ListContext {
   /** The item id of the last ended turn, when it may be continued. */
   continueTurn: string | null;
   onContinue?: () => Promise<unknown>;
-  agent: 'claude' | 'codex';
+  agent: AgentKind;
   imageUrl?: (attachmentId: string) => string;
 }
 const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude' });
@@ -284,9 +285,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'agent_message': {
       const streamed = r.itemId ? streams[r.itemId]?.markdown : undefined;
       const text = streamed && streamed.length > ev.markdown.length ? streamed : ev.markdown;
-      return ev.phase === 'final'
-        ? <Markdown>{text}</Markdown>
-        : <Markdown className="px-1 text-xs text-muted-foreground">{text}</Markdown>;
+      // Commentary (the short replies between tool calls) reads like the final answer: it is often what the agent
+      // most wants seen.
+      return <Markdown>{text}</Markdown>;
     }
     case 'reasoning':
       return ev.summary.trim() ? (
@@ -313,13 +314,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'error':
       return <Alert tone="error">{ev.text}</Alert>;
     case 'compaction':
-      return (
-        <div className="flex items-center gap-2 text-meta text-muted-foreground">
-          <span className="h-px flex-1 bg-border" aria-hidden />
-          Context compacted
-          <span className="h-px flex-1 bg-border" aria-hidden />
-        </div>
-      );
+      return <Divider>Context compacted</Divider>;
+    case 'conversation_reset':
+      return <Divider>{resetLabel(ev.trigger)}</Divider>;
     case 'plan':
       return (
         <section aria-label="Plan" className="rounded-lg border border-border bg-card p-3">
@@ -337,6 +334,28 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'usage':
     case 'turn_diff':
       return null;
+  }
+}
+
+function Divider({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-meta text-muted-foreground">
+      <span className="h-px flex-1 bg-border" aria-hidden />
+      {children}
+      <span className="h-px flex-1 bg-border" aria-hidden />
+    </div>
+  );
+}
+
+/** What a `conversation_reset` divider says: Claude's `/clear`, the TUI's `/resume`, or whatever else started over. */
+function resetLabel(trigger: string): string {
+  switch (trigger) {
+    case 'clear':
+      return 'Conversation cleared';
+    case 'resume':
+      return 'Switched to another conversation';
+    default:
+      return `New conversation (${trigger})`;
   }
 }
 

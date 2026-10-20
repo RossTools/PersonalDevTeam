@@ -18,9 +18,14 @@ use std::sync::Arc;
 /// How long nobody may have typed into a session before pdtd types a notice into it.
 const QUIET_MS: i64 = 20_000;
 
+/// How long after an attempt ends pdtd keeps reading a PR it last saw open (PDT-59: git's merge check can end the
+/// attempt in the same tick GitHub still reports the PR queued).
+const SETTLE_MS: i64 = 60 * 60 * 1000;
+
 #[derive(Default)]
 pub(crate) struct PrWatch {
-    /// The PR of each attempt, as last seen (ended attempts keep their last look).
+    /// The PR of each attempt, as last seen (ended attempts keep their last look; one last seen open is read again for
+    /// an hour after the attempt ended).
     by_attempt: HashMap<String, PullRequestStatus>,
     /// The failed jobs of each run attempt already asked for.
     jobs: HashMap<(u64, u32), Vec<String>>,
@@ -77,8 +82,9 @@ pub(crate) fn apply_workspaces(st: &AppState, list: &mut [pdt_core::workspace::W
     }
 }
 
-/// Reads every active attempt's PR (projects on GitHub only) and queues the news. pdtd runs it every 60 s. Never
-/// fails; problems are logged.
+/// Reads every active attempt's PR (projects on GitHub only) and queues the news, then once more the PR of each
+/// attempt that ended in the last hour while its PR was last seen open, so `attempt.pr` catches up with the merge
+/// (no news for those: the attempt's end told it). pdtd runs it every 60 s. Never fails; problems are logged.
 pub async fn refresh_prs(st: &AppState) {
     let active = match st.store.list_active_attempts().await {
         Ok(v) => v,
@@ -87,9 +93,28 @@ pub async fn refresh_prs(st: &AppState) {
             return;
         }
     };
+    let active_ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
+    let open: Vec<String> = watch(st)
+        .by_attempt
+        .iter()
+        .filter(|(id, p)| p.state == PrState::Open && !active_ids.contains(*id))
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut settling = vec![];
+    for id in open {
+        match st.store.get_attempt(&id).await {
+            Ok(Some(info)) if info.attempt.ended_at.is_some_and(|t| now_ms() - t < SETTLE_MS) => settling.push(info),
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                watch(st).by_attempt.remove(&id);
+            }
+            Err(e) => tracing::warn!(attempt = %id, error = %e, "the PR check could not read an ended attempt"),
+        }
+    }
     let mut repos: HashMap<String, Option<String>> = HashMap::new();
     let mut queue_runs: HashMap<String, Vec<CiRun>> = HashMap::new();
-    for info in active {
+    let ended = settling.into_iter().map(|i| (i, false));
+    for (info, tell) in active.into_iter().map(|i| (i, true)).chain(ended) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -102,19 +127,19 @@ pub async fn refresh_prs(st: &AppState) {
             }
         };
         let Some(repo) = repo else { continue };
-        refresh_one(st, &info, &repo, &mut queue_runs).await;
+        refresh_one(st, &info, &repo, &mut queue_runs, tell).await;
     }
 }
 
 /// Reads one active attempt's PR now (the ticket was opened).
 pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) {
     if let Some(repo) = github_repo(&info.repo_path).await {
-        refresh_one(st, info, &repo, &mut HashMap::new()).await;
+        refresh_one(st, info, &repo, &mut HashMap::new(), true).await;
     }
 }
 
 /// The project's GitHub repository (`owner/name`) from its `origin`, as project responses report it.
-async fn github_repo(repo_path: &str) -> Option<String> {
+pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
     let path = std::path::PathBuf::from(repo_path);
     tokio::task::spawn_blocking(move || {
         pdt_git::remote_url(&path, "origin").and_then(|u| pdt_core::git_url::github_repo(&u))
@@ -124,7 +149,14 @@ async fn github_repo(repo_path: &str) -> Option<String> {
     .flatten()
 }
 
-async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, queue_runs: &mut HashMap<String, Vec<CiRun>>) {
+/// Reads one attempt's PR into the watch; with `tell`, queues its news.
+async fn refresh_one(
+    st: &AppState,
+    info: &AttemptInfo,
+    repo: &str,
+    queue_runs: &mut HashMap<String, Vec<CiRun>>,
+    tell: bool,
+) {
     let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
     let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
     let cached_queue = queue_runs.get(repo).cloned();
@@ -170,7 +202,9 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, queue_runs: 
         w.jobs.extend(jobs);
         w.by_attempt.insert(info.attempt.id.clone(), now);
     }
-    queue_news(st, &info.attempt.id, &info.ticket_id, news).await;
+    if tell {
+        queue_news(st, &info.attempt.id, &info.ticket_id, news).await;
+    }
 }
 
 type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);

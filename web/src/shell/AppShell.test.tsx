@@ -30,7 +30,7 @@ const hostRoutes = {
     current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null,
     error: null, token: { state: 'valid', expiresAt: null }, lastResult: null,
   },
-  'GET /api/host/checks': { claude: hostTool, codex: hostTool, git: hostTool, tailscale: hostTool, checkedAt: 1 },
+  'GET /api/host/checks': { claude: hostTool, codex: hostTool, devin: hostTool, git: hostTool, tailscale: hostTool, checkedAt: 1 },
   'GET /api/host/whoami': { caller: 'local', login: null },
 };
 
@@ -672,7 +672,7 @@ describe('settings page', () => {
     const main = screen.getByRole('main');
     await within(main).findByRole('region', { name: 'Project' });
     expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Danger zone']);
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Danger zone']);
     expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
   });
 });
@@ -768,6 +768,37 @@ describe('tickets', () => {
     expect(tab).toHaveAttribute('aria-selected', 'true');
     expect(await within(screen.getByRole('main')).findByRole('heading', { name: /Fix login/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Overview' })).toBeInTheDocument();
+  });
+
+  it('shows the merged banner above every tab of the ticket\'s workspace, once (PDT-71)', async () => {
+    localStorage.clear();
+    const mergedAttempt = {
+      id: 'at', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: null, state: 'merged', createdAt: 1, endedAt: 2,
+      lastHead: null, workspaceId: 'wt', pr: null,
+    };
+    const merged = { ...fixLogin, stage: 'in_progress', attempt: mergedAttempt, attempts: [mergedAttempt] };
+    const workspaces = [
+      { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0)] },
+      {
+        id: 'wt', name: 'ALP-1', projectId: null, position: 1, createdAt: 2,
+        tabs: [
+          { id: 'tk', workspaceId: 'wt', sessionId: null, runId: null, ticketId: 't1', position: 0 },
+          tabOf('td', 'wt', 'd', 1),
+        ],
+        ticket: { id: 't1', projectId: project.id, key: 'ALP-1', title: 'Fix login', stage: 'in_progress', attemptId: 'at', attemptState: 'merged', pr: null },
+      },
+    ];
+    stubWorkspaces({ ...ticketRoutes, 'GET /api/tickets/t1': merged, 'GET /api/workspaces': workspaces });
+    localStorage.setItem('pdt.workspaces.current', JSON.stringify({ workspaceId: 'wt', tabs: { wt: 'td' } }));
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByRole('tab', { name: /Claude D/ })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('button', { name: 'Move to Done and remove the worktree' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'ALP-1 · Fix login' }));
+    expect(await within(screen.getByRole('main')).findByRole('heading', { name: /Fix login/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Move to Done and remove the worktree' })).toHaveLength(1);
+    // Another workspace: no banner.
+    await userEvent.click(within(screen.getByRole('region', { name: 'Workspaces' })).getByRole('row', { name: /Alpha/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Move to Done and remove the worktree' })).toBeNull());
   });
 
   it('goes to a ticket by key from the palette, opening its tab in the project workspace', async () => {

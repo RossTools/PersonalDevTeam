@@ -5,7 +5,10 @@
 //! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
 //! - `exit` — writes to stderr and exits 3.
 //! - `env: NAME` — says whether NAME is set.
-//! - `who` — says the session id, whether it was resumed, its model and mode, and whether it got PDT's instructions.
+//! - `who` — says the session id, whether it was resumed, its model and mode, whether it got PDT's instructions, and
+//!   the `session_id` the message carried.
+//! - `/clear` — like Claude's: `conversation_reset` (whose `new_conversation_id` names no transcript), then an init
+//!   and result under a new session id, which later turns use.
 //! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
 //! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
@@ -17,9 +20,10 @@
 //!
 //! `FAKE_AGENT_LOG` (a file path), when set, gets every stdin line and the argv.
 //!
-//! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), and `fake-agent resume …` the Codex
-//! TUI attached to it.
+//! `fake-agent app-server …` plays `codex app-server` instead (see `codex.rs`), `fake-agent resume …` the Codex
+//! TUI attached to it, and `fake-agent [--config <file>] acp` Devin's ACP server (see `acp.rs`).
 
+mod acp;
 mod codex;
 
 use serde_json::{Value, json};
@@ -177,6 +181,22 @@ impl Agent {
 
     fn turn(&mut self, v: Value) {
         let started = Instant::now();
+        if v["message"]["content"].as_str().map(str::trim) == Some("/clear") {
+            let uuid = |n: u128| {
+                let h = format!("{n:032x}");
+                format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+            };
+            let nanos =
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let (reset_id, new_session) = (uuid(nanos ^ 0xaaaa), uuid(nanos));
+            out(json!({"type":"conversation_reset","trigger":"clear","new_conversation_id":reset_id,
+                "uuid":reset_id,"session_id":self.session}));
+            self.session = new_session;
+            self.init();
+            out(json!({"type":"result","subtype":"success","is_error":false,"duration_ms":5,"num_turns":0,
+                "session_id":self.session,"result":"","local_command":"clear"}));
+            return;
+        }
         self.init();
         let images: Vec<String> = v["message"]["content"]
             .as_array()
@@ -269,8 +289,13 @@ impl Agent {
             self.say(&format!("{name} is {}", if set { "set" } else { "unset" }));
         } else if text == "who" {
             let s = format!(
-                "session {} resumed={} model={} mode={} instructions={}",
-                self.session, self.resumed, self.model, self.mode, self.instructions
+                "session {} resumed={} model={} mode={} instructions={} msg_session={}",
+                self.session,
+                self.resumed,
+                self.model,
+                self.mode,
+                self.instructions,
+                v["session_id"].as_str().unwrap_or("")
             );
             self.say(&s);
         } else {
@@ -303,6 +328,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("app-server") => return codex::serve(&args),
         Some("resume") => return codex::tui(&args),
+        _ if args.iter().any(|a| a == "acp") => return acp::serve(&args),
         _ => {}
     }
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();

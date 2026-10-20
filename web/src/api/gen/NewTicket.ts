@@ -15,4 +15,12 @@ before?: string,
 /**
  * Place it directly below this ticket.
  */
-after?: string, };
+after?: string, 
+/**
+ * Make it a part of this ticket (id). Without `before`/`after` it goes after the parent's last part.
+ */
+parent?: string, 
+/**
+ * With `parent`: the parent's last part (by rank) blocks the new one.
+ */
+blockedByPrevious?: boolean, };

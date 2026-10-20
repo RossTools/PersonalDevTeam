@@ -3,4 +3,12 @@
 /**
  * What `pdtd hook` posts to `/api/sessions/{id}/activity`.
  */
-export type HookReport = { "source": "claude", event: string, notificationType?: string, } | { "source": "codex", event: string, };
+export type HookReport = { "source": "claude", event: string, notificationType?: string, 
+/**
+ * Claude's id for the conversation (it changes after `/clear` or the TUI's `/resume`).
+ */
+sessionId?: string, 
+/**
+ * SessionStart's `source`: `startup`, `resume`, `clear` or `compact`.
+ */
+startSource?: string, } | { "source": "codex", event: string, } | { "source": "devin", event: string, sessionId?: string, };

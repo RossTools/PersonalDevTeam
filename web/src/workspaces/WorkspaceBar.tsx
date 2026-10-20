@@ -1,6 +1,6 @@
 import { useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, Plus, Ticket, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileDiff, Plus, Ticket, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { ContextMenu, IconButton, Kbd } from '@ui';
 import { api } from '../api/client';
@@ -38,7 +38,7 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
   onDrop: (e: DragEvent, index: number) => void;
 }) {
   const qc = useQueryClient();
-  const title = info?.title ?? (tab.sessionId ? 'Session' : tab.ticketId ? 'Ticket' : 'Run');
+  const title = info?.title ?? (tab.sessionId ? 'Session' : tab.ticketId ? 'Ticket' : tab.worktreeId ? 'Changes' : 'Run');
   const rename = (t: string) =>
     void runAction(async () => {
       try {
@@ -81,6 +81,8 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
           >
             {tab.ticketId ? (
               <Ticket aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : tab.worktreeId ? (
+              <FileDiff aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             ) : (
               info && <AgentDot state={itemState(info)} />
             )}

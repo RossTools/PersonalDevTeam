@@ -18,7 +18,9 @@ import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { canStart, deleteTicket, moveToEntries, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
+import { PartsStepper } from '../common/PartsStepper';
 import { AttemptSection, MergedBanner } from './Attempt';
 import { Board } from './Board';
 import { useClearToStartToasts } from './clearToStart';
@@ -147,7 +149,13 @@ async function rankMove(qc: QueryClient, key: QueryKey, ids: string[], target: s
 // Rows
 
 function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
-  const badges = <TicketBadges ticket={t} />;
+  const badges = (
+    <>
+      {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} static />}
+      {t.parts && <PartsStepper parts={t.parts} showCount className="w-20 shrink-0" />}
+      <TicketBadges ticket={t} />
+    </>
+  );
   if (phone) {
     return (
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
@@ -232,15 +240,20 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
   const open = useOpenTicket();
   const start = useStartTicket();
   const t = q.data;
+  const [making, setMaking] = useState(false);
   useCheckMerge(t);
   return (
+    <>
+    {making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />}
     <Sheet
       side="right"
       title={t ? `${t.key} · ${t.title}` : 'Ticket'}
       hideTitle
       open={ticketId !== null}
-      // On desktop the backlog stays usable beside the peek (UX spec §8.1).
+      // On desktop the backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on
+      // a backlog row or a board card or lane, which shows that ticket instead.
       modal={phone}
+      keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}
       onOpenChange={(o) => !o && onClose()}
       className={phone ? 'w-full max-w-full' : 'w-[32rem] max-w-[90vw]'}
       footer={t && (
@@ -250,12 +263,14 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
             placement="top end"
             entries={() => [
               ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-              { submenu: 'Move to', entries: moveToEntries(qc, t) },
+              { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
+              ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
               { separator: true },
               { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
             ]}
           />
           {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
+          {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
           <Button variant="primary" onClick={() => { onClose(); open(t); }}>Open</Button>
         </>
       )}
@@ -266,21 +281,27 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
         // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
         <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
           <div className="flex flex-col gap-2 pr-8">
-            <TicketKey ticketKey={t.key} className="self-start" />
+            <span className="flex items-center gap-1 self-start">
+              {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} />}
+              <TicketKey ticketKey={t.key} />
+            </span>
             <TicketTitle ticket={t} className="text-base font-semibold" />
             <StageStepper stage={t.stage} compact />
             <TicketBadges ticket={t} className="flex-wrap" />
+            {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
             <MergedBanner ticket={t} className="rounded-md border" />
           </div>
           <TicketDetails ticket={t} />
           {t.attempt && <AttemptSection ticket={t} compact />}
           {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
           <TicketDescription key={t.id} ticket={t} />
+          <PartsSection ticket={t} />
           <TicketLinks ticket={t} />
           <TicketTimeline ticketId={t.id} recent={5} />
         </div>
       )}
     </Sheet>
+    </>
   );
 }
 

@@ -267,9 +267,18 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             "/projects/{id}",
             get(crate::projects::get_one).patch(crate::projects::update).delete(crate::projects::remove),
         )
+        .route("/projects/{id}/pull", axum::routing::post(crate::projects::pull))
         .route("/projects/{id}/files", get(crate::files::list))
         .route("/projects/{id}/files/content", get(crate::files::content))
         .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
+        .route("/worktrees/{id}/changes", get(crate::review::changes))
+        .route("/worktrees/{id}/changes/file", get(crate::review::file))
+        .route("/worktrees/{id}/comments", get(crate::review::list_comments).post(crate::review::create_comment))
+        .route("/worktrees/{id}/feedback", axum::routing::post(crate::review::feedback))
+        .route(
+            "/review-comments/{id}",
+            axum::routing::patch(crate::review::update_comment).delete(crate::review::delete_comment),
+        )
         .route(
             "/projects/{id}/settings",
             get(crate::project_settings::get_settings).put(crate::project_settings::put_settings),
@@ -298,9 +307,13 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/links", axum::routing::post(crate::tickets::add_link).delete(crate::tickets::remove_link))
         .route("/tickets/{id}/events", get(crate::tickets::events))
         .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
+        .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
+        .route("/attempts/{id}/approve", axum::routing::post(crate::review::approve))
+        .route("/attempts/{id}/merge", get(crate::review::merge_preview).post(crate::review::merge))
+        .route("/attempts/{id}/ask-agent", axum::routing::post(crate::review::ask_agent))
         .route("/workspaces", get(crate::workspaces::list).post(crate::workspaces::create))
         .route("/workspaces/{id}", axum::routing::patch(crate::workspaces::update).delete(crate::workspaces::remove))
         .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))

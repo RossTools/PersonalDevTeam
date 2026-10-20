@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { cn } from '@ui/lib/utils';
 import { DialogTrigger } from 'react-aria-components';
 import { XIcon } from 'lucide-react';
@@ -19,6 +19,12 @@ const swipe = { left: 'left', right: 'right', bottom: 'down' } as const;
 // A modal sheet's backdrop: the overlay, or the full-screen viewport above it that holds the sheet.
 const isBackdrop = (t: EventTarget | null) =>
   t instanceof Element && t.matches('[data-slot="drawer-overlay"], [data-slot="drawer-viewport"]');
+// The body-level element holding `el`: the app's root for the page, or a portal (a menu, dialog or toast).
+const topLevel = (el: Element) => {
+  let e = el;
+  while (e.parentElement && e.parentElement !== document.body) e = e.parentElement;
+  return e;
+};
 
 export interface SheetProps {
   side?: SheetSide;
@@ -34,15 +40,17 @@ export interface SheetProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /** Default true: a backdrop, focus kept inside. False leaves the page beside it usable (the ticket peek on desktop:
-   *  the backlog stays live next to it); Escape and the close button still close it. */
+   *  the backlog stays live next to it); a click on the page closes it, as do Escape and the close button. */
   modal?: boolean;
+  /** Not modal: page elements a click on which leaves it open (the rows that switch what a peek shows). */
+  keepOpenOn?: (target: Element) => boolean;
   className?: string;
 }
 
 /**
  * A side or bottom panel (phone sidebar, ticket peek). Opens from a button or `open`, never from an edge swipe (that's
- * the system Back gesture on phones). Closes on a swipe towards its edge, Escape, the close button or (modal only) a
- * tap on the backdrop; focus returns to what opened it.
+ * the system Back gesture on phones). Closes on a swipe towards its edge, Escape, the close button or a tap on the
+ * backdrop (modal) or the page beside it (not modal); focus returns to what opened it.
  */
 export function Sheet({
   modal = true,
@@ -55,25 +63,32 @@ export function Sheet({
   trigger,
   open,
   onOpenChange,
+  keepOpenOn,
   className,
 }: SheetProps) {
   const [inner, setInner] = useState(false);
+  // Marks where the sheet sits in the page (the drawer itself renders in a portal).
+  const anchor = useRef<HTMLSpanElement>(null);
+  // Not modal: a click outside closes it only when it lands on the page, not in a portal (the sheet's own menus and
+  // dialogs, a toast) and not on something that keeps it open.
+  const onPage = (t: EventTarget | null) =>
+    t instanceof Element && anchor.current !== null && t.isConnected && topLevel(t) === topLevel(anchor.current) && !keepOpenOn?.(t);
   const isOpen = open ?? inner;
   const setOpen = (v: boolean) => {
     if (open === undefined) setInner(v);
     onOpenChange?.(v);
   };
   const drawer = (
-    // A non-modal sheet ignores presses and focus outside it: the page beside it is meant to be used, and its own
-    // menus and dialogs render in portals outside it. A modal one closes on a press on its backdrop only: Base UI
-    // also counts a click on any element around the sheet, which is where a click lands when a menu opened on
-    // mouse down covers the button by mouse up (Ticket actions on a narrow window).
+    // A non-modal sheet closes on a click on the page beside it (see onPage) and ignores focus moving out: the page
+    // is meant to be used. A modal one closes on a press on its backdrop only: Base UI also counts a click on any
+    // element around the sheet, which is where a click lands when a menu opened on mouse down covers the button by
+    // mouse up (Ticket actions on a narrow window).
     <Drawer
       modal={modal}
-      disablePointerDismissal={!modal}
       open={isOpen}
       onOpenChange={(v, details) => {
-        if (details.reason === 'outside-press' && !isBackdrop(details.event.target)) {
+        const outside = details.reason === 'outside-press' && !(modal ? isBackdrop : onPage)(details.event.target);
+        if (outside || (!modal && details.reason === 'focus-out')) {
           details.cancel();
           return;
         }
@@ -98,12 +113,18 @@ export function Sheet({
       </DrawerContent>
     </Drawer>
   );
-  if (!trigger) return drawer;
+  const marked = (
+    <>
+      <span ref={anchor} hidden />
+      {drawer}
+    </>
+  );
+  if (!trigger) return marked;
   // DialogTrigger only lends its press handling to the trigger (and aria-expanded); the drawer does the rest.
   return (
     <DialogTrigger isOpen={isOpen} onOpenChange={setOpen}>
       {pressableChild(trigger)}
-      {drawer}
+      {marked}
     </DialogTrigger>
   );
 }

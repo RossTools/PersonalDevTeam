@@ -63,6 +63,7 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         // keychain); a test that needs one passes a fake in `extra_env`, which overrides these.
         .env("PDT_CLAUDE_PROGRAM", data.join("no-such-claude"))
         .env("PDT_CODEX_PROGRAM", data.join("no-such-codex"))
+        .env("PDT_DEVIN_PROGRAM", data.join("no-such-devin"))
         .envs(extra_env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())

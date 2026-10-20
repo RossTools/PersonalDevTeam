@@ -18,6 +18,8 @@ import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
 import type { NewWorktree } from './gen/NewWorktree';
 import type { Project } from './gen/Project';
+import type { PullBranch } from './gen/PullBranch';
+import type { PullResult } from './gen/PullResult';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
@@ -42,6 +44,8 @@ import type { EventPage } from './gen/EventPage';
 import type { EventQuery } from './gen/EventQuery';
 import type { NewComment } from './gen/NewComment';
 import type { NewTicket } from './gen/NewTicket';
+import type { NewParts } from './gen/NewParts';
+import type { PartsCreated } from './gen/PartsCreated';
 import type { RankMove } from './gen/RankMove';
 import type { ProjectAreas } from './gen/ProjectAreas';
 import type { Ticket } from './gen/Ticket';
@@ -60,6 +64,15 @@ import type { ConversationEvent } from './gen/ConversationEvent';
 import type { PendingMessage } from './gen/PendingMessage';
 import type { PermissionMode } from './gen/PermissionMode';
 import type { SendMessage } from './gen/SendMessage';
+import type { Changes } from './gen/Changes';
+import type { FeedbackResult } from './gen/FeedbackResult';
+import type { FileSides } from './gen/FileSides';
+import type { MergePreview } from './gen/MergePreview';
+import type { MergeRequest } from './gen/MergeRequest';
+import type { MergeResult } from './gen/MergeResult';
+import type { NewReviewComment } from './gen/NewReviewComment';
+import type { ReviewComment } from './gen/ReviewComment';
+import type { ReviewCommentPatch } from './gen/ReviewCommentPatch';
 
 /** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
 export interface SessionPatch {
@@ -125,6 +138,8 @@ export const api = {
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
   updateProject: (id: string, p: ProjectPatch) => request<Project>(`/api/projects/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  pullBranch: (id: string, p: PullBranch = {}) =>
+    request<PullResult>(`/api/projects/${enc(id)}/pull`, { method: 'POST', body: JSON.stringify(p) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: 'DELETE' }),
   removeWorktree: (id: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) =>
     request<void>(`/api/worktrees/${enc(id)}?force=${opts.force ? 'true' : 'false'}&deleteBranch=${opts.deleteBranch ? 'true' : 'false'}`, { method: 'DELETE' }),
@@ -212,10 +227,28 @@ export const api = {
     request<EventPage>(`/api/tickets/${enc(id)}/events${queryString(q)}`),
   commentOnTicket: (id: string, body: string) =>
     request<TicketEvent>(`/api/tickets/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ body } satisfies NewComment) }),
+  /** Several parts of a parent, in order after its existing parts (PDT-38). */
+  createParts: (id: string, b: NewParts) =>
+    request<PartsCreated>(`/api/tickets/${enc(id)}/parts`, { method: 'POST', body: JSON.stringify(b) }),
   startTicket: (id: string, b: StartTicket) =>
     request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
+  approveAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/approve`, { method: 'POST' }),
+  mergePreview: (id: string) => request<MergePreview>(`/api/attempts/${enc(id)}/merge`),
+  mergeAttempt: (id: string, body: MergeRequest = {}) =>
+    request<MergeResult>(`/api/attempts/${enc(id)}/merge`, { method: 'POST', body: JSON.stringify(body) }),
+  askAgentToFixMerge: (id: string) => request<FeedbackResult>(`/api/attempts/${enc(id)}/ask-agent`, { method: 'POST' }),
+  getChanges: (worktreeId: string) => request<Changes>(`/api/worktrees/${enc(worktreeId)}/changes`),
+  getFileSides: (worktreeId: string, path: string, oldPath?: string | null) =>
+    request<FileSides>(`/api/worktrees/${enc(worktreeId)}/changes/file${queryString({ path, oldPath })}`),
+  listReviewComments: (worktreeId: string) => request<ReviewComment[]>(`/api/worktrees/${enc(worktreeId)}/comments`),
+  createReviewComment: (worktreeId: string, c: NewReviewComment) =>
+    request<ReviewComment>(`/api/worktrees/${enc(worktreeId)}/comments`, { method: 'POST', body: JSON.stringify(c) }),
+  updateReviewComment: (id: string, p: ReviewCommentPatch) =>
+    request<ReviewComment>(`/api/review-comments/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteReviewComment: (id: string) => request<void>(`/api/review-comments/${enc(id)}`, { method: 'DELETE' }),
+  sendFeedback: (worktreeId: string) => request<FeedbackResult>(`/api/worktrees/${enc(worktreeId)}/feedback`, { method: 'POST' }),
   projectLabels: (projectId: string) => request<string[]>(`/api/projects/${enc(projectId)}/labels`),
   /** The areas `.pdt/project.toml` (and the host overrides) declare, or why there are none. */
   getProjectAreas: (projectId: string) => request<ProjectAreas>(`/api/projects/${enc(projectId)}/areas`),

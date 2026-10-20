@@ -24,4 +24,12 @@ conflicts?: boolean, sort?: TicketSort,
 /**
  * Closed tickets only if they were closed at or after this time (ms); open tickets are unaffected.
  */
-closedAfter?: number, cursor?: string, limit?: number, };
+closedAfter?: number, 
+/**
+ * One ticket's parts (its id), or `none` for tickets that are not parts.
+ */
+parent?: string, 
+/**
+ * true: only tickets with parts; false: only tickets without.
+ */
+hasParts?: boolean, cursor?: string, limit?: number, };

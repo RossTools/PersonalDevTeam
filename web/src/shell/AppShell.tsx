@@ -7,6 +7,8 @@ import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useThem
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
+import { useAgentAvailability } from '../common/useAgentAvailability';
+import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
@@ -18,11 +20,12 @@ import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
-import { OpenSessionContext, OpenTicketContext, StartTicketContext } from '../tickets/actions';
+import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
+import { OpenChangesContext } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
-import { looksLikeKey } from '../tickets/model';
+import { isClosed, looksLikeKey } from '../tickets/model';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
@@ -41,7 +44,7 @@ import { InstanceBadge } from './InstanceBadge';
 import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
-const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', shell: 'Shell' };
+const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
@@ -60,7 +63,9 @@ function useAttentionTitle(count: number) {
 const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
 const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
+const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
 const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
+const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
 
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
@@ -84,6 +89,9 @@ export function AppShell() {
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
   const ws = useWorkspaces();
+  // A ticket workspace whose attempt merged while the ticket is open: its banner shows above every tab (PDT-71).
+  const wsTicket = ws.workspace?.ticket;
+  const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && !isClosed(wsTicket.stage) ? wsTicket.id : null;
   const backlog = useBacklog();
   const openTicket = useCallback((t: { id: string; projectId: string }) => {
     setView('sessions');
@@ -92,6 +100,10 @@ export function AppShell() {
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
+  }, [ws.focusItem]);
+  const openChanges = useCallback((w: { id: string; projectId: string }) => {
+    setView('sessions');
+    void runAction(() => ws.focusItem({ kind: 'changes', id: w.id }, w.projectId));
   }, [ws.focusItem]);
   // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
   // otherwise the server puts them at the end of the project workspace.
@@ -237,12 +249,17 @@ export function AppShell() {
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
+    startNextPart: (t) => void runAction(() => startNextPart(startTicket, t)),
   };
+  const agents = useAgentAvailability();
+  const defaults = useAgentDefaults();
   const items = paletteOpen
     ? paletteItems({
         workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
         tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
         ticketProjectId: view === 'tickets' ? backlog.projectId : null,
+        agents: agents.of,
+        defaults,
       })
     : [];
 
@@ -293,6 +310,7 @@ export function AppShell() {
   return (
     <OpenTicketContext.Provider value={openTicket}>
     <OpenSessionContext.Provider value={openSession}>
+    <OpenChangesContext.Provider value={openChanges}>
     <StartTicketContext.Provider value={startTicket}>
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail
@@ -334,6 +352,9 @@ export function AppShell() {
             <InstanceBadge compact />
           </div>
         ) : null}
+        {view === 'sessions' && mergedTicketId && (
+          <Suspense fallback={null}><WorkspaceMergedBanner key={mergedTicketId} ticketId={mergedTicketId} /></Suspense>
+        )}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} onQueryChange={setPaletteQuery} />
@@ -380,7 +401,9 @@ export function AppShell() {
             ) : view === 'settings' ? (
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} onDeleted={() => void ws.refresh()} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
+            ) : ws.tab?.worktreeId ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></Suspense>
             ) : current?.run ? (
               <RunView
                 key={current.run.id}
@@ -411,6 +434,7 @@ export function AppShell() {
       </main>
     </div>
     </StartTicketContext.Provider>
+    </OpenChangesContext.Provider>
     </OpenSessionContext.Provider>
     </OpenTicketContext.Provider>
   );

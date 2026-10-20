@@ -139,5 +139,71 @@ describe('NewTabChooser', () => {
       await userEvent.keyboard('o');
       await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'codex', mode: 'terminal' }));
     });
+
+    it('d opens a Devin conversation, e its terminal (with the bypass switch)', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      await open();
+      await userEvent.keyboard('d');
+      await waitFor(() => expect(post(calls)).toMatchObject({ kind: 'agent_tui', agent: 'devin', mode: 'conversation' }));
+      expect(post(calls)).not.toHaveProperty('bypassPermissions');
+      cleanup();
+      calls.length = 0;
+      await open();
+      await userEvent.keyboard('e');
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'devin', mode: 'terminal' }));
+      expect(post(calls)).not.toHaveProperty('permissionMode');
+      cleanup();
+      calls.length = 0;
+      const panel = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /Skip permission prompts/ }));
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Devin \(terminal\)/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'devin', mode: 'terminal', bypassPermissions: true }));
+    });
+  });
+
+  describe('agents the host has', () => {
+    const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
+    const checks = (devin: { found: boolean; ok: boolean; detail: string }, codex = tool(true, true)) =>
+      ({ claude: tool(true, true), codex, devin, git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });
+    const open = () => {
+      setNarrow(false);
+      renderWithQuery(<NewTabChooser ws={fakeWs()} onClose={() => {}} />);
+      return screen.getByRole('dialog', { name: 'New tab' });
+    };
+
+    it('offers every agent while the checks load', async () => {
+      stubApi({ ...routes, 'GET /api/host/checks': () => new Promise(() => {}) });
+      const panel = open();
+      expect(within(panel).getByRole('menuitem', { name: /^Devin(?! \(terminal\))/ })).toBeInTheDocument();
+      expect(within(panel).getByRole('menuitem', { name: /^Devin \(terminal\)/ })).toBeInTheDocument();
+    });
+
+    it('hides an agent that is not installed, and its keys do nothing', async () => {
+      const calls = stubApi({ ...routes, 'GET /api/host/checks': checks(tool(false, false)), 'POST /api/sessions': { id: 'n', projectId: project.id } });
+      const panel = open();
+      await waitFor(() => expect(within(panel).queryByRole('menuitem', { name: /^Devin/ })).toBeNull());
+      expect(within(panel).getByRole('menuitem', { name: /^Codex(?! \(terminal\))/ })).toBeInTheDocument();
+      await waitFor(() => expect(panel).toHaveFocus());
+      await userEvent.keyboard('d');
+      await userEvent.keyboard('e');
+      expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    });
+
+    it('keeps a logged-out agent with a hint', async () => {
+      stubApi({ ...routes, 'GET /api/host/checks': checks(tool(true, false)) });
+      const panel = open();
+      await waitFor(() => expect(within(panel).getByRole('menuitem', { name: /^Devin(?! \(terminal\)).*not logged in/ })).toBeInTheDocument());
+      expect(within(panel).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ }).textContent).not.toMatch(/not logged in/);
+    });
+  });
+
+  it("lists the host's default agent and view first", async () => {
+    setNarrow(false);
+    stubApi({ ...routes, 'GET /api/host/settings': { settings: { defaultAgent: 'codex', defaultSessionMode: 'terminal' } } });
+    renderWithQuery(<NewTabChooser ws={fakeWs()} onClose={() => {}} />);
+    const panel = screen.getByRole('dialog', { name: 'New tab' });
+    const names = () => within(panel).getAllByRole('menuitem').map((m) => m.textContent ?? '').filter((t) => /^(Claude|Codex|Devin|Shell)/.test(t)).map((t) => t.replace(/[a-z]$/, ''));
+    await waitFor(() => expect(names()[0]).toMatch(/^Codex \(terminal\)/));
+    expect(names().map((n) => n.replace(/\s*$/, ''))).toEqual(['Codex (terminal)', 'Codex', 'Claude (terminal)', 'Claude', 'Devin (terminal)', 'Devin', 'Shell']);
   });
 });

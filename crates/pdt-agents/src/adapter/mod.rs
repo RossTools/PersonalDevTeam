@@ -3,6 +3,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod devin;
 
 use pdt_core::conversation::{AgentCapabilities, AgentEvent, Answer, Delivery, DeltaField, PermissionMode};
 use pdt_core::session::AgentKind;
@@ -58,9 +59,10 @@ pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenSpec {
     pub session_id: String,
-    /// The agent's own conversation id (Codex: the thread id), when it has one.
+    /// The agent's own conversation id (Codex: the thread id; Claude: the one `/clear` moved to; Devin: its session
+    /// id), when it has one.
     pub external_id: Option<String>,
-    /// Continue the saved conversation (Claude: `--resume <session id>`), else start it (`--session-id`).
+    /// Continue the saved conversation (Claude: `--resume <conversation id>`), else start it (`--session-id`).
     pub resume: bool,
     pub cwd: PathBuf,
     /// The agent program (name or path), resolved on `search_path`.
@@ -72,6 +74,18 @@ pub struct OpenSpec {
     pub env_remove: Vec<String>,
     /// PDT's instructions for the session (`crate::instructions`), when it has any.
     pub instructions: Option<SessionInstructions>,
+    /// Devin: its `--config` file (the user's config plus PDT's SessionStart hook, which hands it the instructions).
+    pub config_file: Option<PathBuf>,
+    /// Devin: the session was used in Devin's own terminal since PDT last logged it; the turns it took there after
+    /// this time (ms; 0 = all of them) are imported from `session/load`'s replay.
+    pub import_after: Option<i64>,
+}
+
+impl OpenSpec {
+    /// Claude's conversation id: the session id until `/clear` gives the conversation a new one.
+    pub fn claude_conversation_id(&self) -> &str {
+        self.external_id.as_deref().unwrap_or(&self.session_id)
+    }
 }
 
 /// The instructions text, and the file it was written to (Claude reads the file; Codex takes the text).

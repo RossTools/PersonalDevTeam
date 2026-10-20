@@ -83,6 +83,12 @@
   --color-diff-del: var(--pdt-diff-del);
   --color-diff-add-strong: var(--pdt-diff-add-strong);
   --color-diff-del-strong: var(--pdt-diff-del-strong);
+  --color-diff-add-gutter: var(--pdt-diff-add-gutter);
+  --color-diff-del-gutter: var(--pdt-diff-del-gutter);
+  --color-diff-add-sign: var(--pdt-diff-add-sign);
+  --color-diff-del-sign: var(--pdt-diff-del-sign);
+  --color-diff-hunk: var(--pdt-diff-hunk);
+  --color-diff-hunk-fg: var(--pdt-diff-hunk-fg);
   --color-backdrop: var(--pdt-backdrop);
   --shadow-popover: var(--pdt-shadow-popover);
   --shadow-dialog: var(--pdt-shadow-dialog);

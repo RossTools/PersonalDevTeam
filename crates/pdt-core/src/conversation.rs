@@ -4,6 +4,7 @@
 pub mod claude;
 pub mod codex;
 pub mod composer;
+pub mod devin;
 pub mod draft;
 
 use crate::activity::Activity;
@@ -337,6 +338,11 @@ pub enum AgentEvent {
         #[ts(optional, type = "number")]
         after: Option<i64>,
     },
+    /// The agent started over on a new conversation (Claude's `/clear`); shown as a divider. `trigger`: the agent's
+    /// reason (`clear`, or `resume` when the TUI switched to another saved conversation).
+    ConversationReset {
+        trigger: String,
+    },
     Notice {
         level: NoticeLevel,
         text: String,
@@ -369,6 +375,7 @@ impl AgentEvent {
             AgentEvent::Usage { .. } => "usage",
             AgentEvent::TurnDiff { .. } => "turn_diff",
             AgentEvent::Compaction { .. } => "compaction",
+            AgentEvent::ConversationReset { .. } => "conversation_reset",
             AgentEvent::Notice { .. } => "notice",
             AgentEvent::Error { .. } => "error",
             AgentEvent::Unknown { .. } => "unknown",

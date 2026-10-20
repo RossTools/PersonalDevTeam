@@ -87,6 +87,7 @@ async fn item_exists(st: &AppState, item: &TabItem) -> Result<bool, ApiError> {
         TabItem::Session(id) => st.store.get_session(id).await?.is_some(),
         TabItem::Run(id) => st.store.get_run(id).await?.is_some(),
         TabItem::Ticket(id) => st.store.get_ticket_summary(id).await?.is_some(),
+        TabItem::Changes(id) => st.store.get_worktree(id).await?.is_some(),
     })
 }
 
@@ -101,7 +102,7 @@ pub(crate) async fn open_tab(
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "that session, run or ticket does not exist",
+            "that session, run, ticket or worktree does not exist",
         ));
     }
     let tab = st
@@ -124,7 +125,7 @@ pub(crate) async fn update_tab(
 }
 
 /// Closes a tab. A session or run tab also stops and removes what it shows, so nothing is left without a tab (PDT-28);
-/// a ticket tab only closes. If the item cannot be stopped the tab stays open.
+/// a ticket or changes tab only closes. If the item cannot be stopped the tab stays open.
 pub(crate) async fn close_tab(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let tab = st.store.get_tab(&id).await?.ok_or_else(|| ApiError::not_found("tab"))?;
     if let Some(sid) = &tab.session_id {
@@ -132,7 +133,7 @@ pub(crate) async fn close_tab(State(st): State<AppState>, Path(id): Path<String>
     } else if let Some(rid) = &tab.run_id {
         crate::runs::stop_and_remove(&st, rid).await?;
     }
-    // Removing the item deleted its tab with it (cascade); a ticket tab is closed here.
+    // Removing the item deleted its tab with it (cascade); a ticket or changes tab is closed here.
     if !st.store.close_tab(&id).await? {
         st.store.renumber_workspace_tabs(&tab.workspace_id).await?;
     }

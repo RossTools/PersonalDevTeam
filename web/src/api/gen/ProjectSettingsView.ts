@@ -13,4 +13,8 @@ runOverrides: string | null,
 /**
  * Given to every agent session in the project, after PDT's own context (kept on this host, not in the repo).
  */
-agentInstructions: string | null, };
+agentInstructions: string | null, 
+/**
+ * Merge… goes through the attempt's pull request only (no local merge into the base branch).
+ */
+mergeViaPr: boolean, };

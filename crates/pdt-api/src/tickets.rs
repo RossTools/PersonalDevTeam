@@ -34,6 +34,7 @@ pub(crate) async fn list(
         idx.apply_summary(t);
         crate::github::apply_summary(&st, t);
     }
+    crate::parts::apply_page(&st, &mut page.items).await?;
     Ok(Json(page))
 }
 
@@ -79,6 +80,10 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
         DeleteTicket::Active => {
             let key = st.store.get_ticket_summary(&id).await?.map(|t| t.key).unwrap_or(id);
             Err(TicketError::Active(key).into())
+        }
+        DeleteTicket::HasParts => {
+            let key = st.store.get_ticket_summary(&id).await?.map(|t| t.key).unwrap_or(id);
+            Err(TicketError::HasParts(key).into())
         }
     }
 }

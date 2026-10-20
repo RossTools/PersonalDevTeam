@@ -24,7 +24,7 @@ const run: Run = {
 };
 
 const tab = (id: string, workspaceId: string, position: number, item: { sessionId?: string; runId?: string }): Tab => ({
-  id, workspaceId, position, sessionId: item.sessionId ?? null, runId: item.runId ?? null, ticketId: null,
+  id, workspaceId, position, sessionId: item.sessionId ?? null, runId: item.runId ?? null, ticketId: null, worktreeId: null,
 });
 
 const workspaces: Workspace[] = [
@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
   };
 }
 
@@ -119,7 +119,33 @@ describe('paletteItems', () => {
     expect(ids(items)).toEqual(expect.arrayContaining(['new:claude', 'new:codex', 'new:shell']));
     byId(items, 'new:codex').run!();
     expect(c.handlers.newSession).toHaveBeenCalledWith('codex', { projectId: 'p1', worktreeId: 'wt1' });
+    byId(items, 'new:devin-terminal').run!();
+    expect(c.handlers.newSession).toHaveBeenCalledWith('devin_terminal', { projectId: 'p1', worktreeId: 'wt1' });
     expect(ids(paletteItems(ctx({ place: null }))).some((i) => i.startsWith('new:'))).toBe(false);
+  });
+
+  it('starts a Devin conversation or terminal', () => {
+    const c = ctx();
+    const items = paletteItems(c);
+    expect(byId(items, 'new:devin').label).toBe('New Devin here');
+    byId(items, 'new:devin').run!();
+    expect(c.handlers.newSession).toHaveBeenCalledWith('devin', { projectId: 'p1', worktreeId: 'wt1' });
+  });
+
+  it('leaves out agents the host lacks and marks a logged-out one', () => {
+    const items = paletteItems(ctx({ agents: (a) => (a === 'devin' ? 'missing' : a === 'codex' ? 'logged_out' : 'ready') }));
+    expect(ids(items).some((i) => i.startsWith('new:devin'))).toBe(false);
+    expect(byId(items, 'new:codex').detail).toBe('not logged in');
+    expect(byId(items, 'new:codex-terminal').detail).toBe('not logged in');
+    expect(byId(items, 'new:claude').detail).toBeUndefined();
+    expect(ids(items)).toContain('new:shell');
+  });
+
+  it("lists the host's default agent and view first", () => {
+    const items = paletteItems(ctx({ defaults: { agent: 'codex', mode: 'terminal' } }));
+    expect(ids(items).filter((i) => i.startsWith('new:'))).toEqual([
+      'new:codex-terminal', 'new:codex', 'new:claude-terminal', 'new:claude', 'new:devin-terminal', 'new:devin', 'new:shell',
+    ]);
   });
 
   it('shows the Ctrl+] key for actions that have one', () => {
@@ -213,15 +239,15 @@ describe('paletteItems', () => {
   });
 
   it('labels a ticket tab with its key and title', () => {
-    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
-    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [] };
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
+    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
     const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t, 0)] }));
     expect(byId(items, 'tab:tk').label).toBe('PDT-42 · Fix login');
   });
 
   it('starts the ticket on screen, and picks a ticket to start', () => {
-    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id }] }];
-    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [] };
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
+    const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
     const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)], ticketProjectId: 'p1' });
     const items = paletteItems(c);
     const here = byId(items, 'tickets:start-open');
@@ -238,9 +264,25 @@ describe('paletteItems', () => {
     expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(busy, 0)] })))).not.toContain('tickets:start-open');
     expect(ids(paletteItems(ctx()))).not.toContain('tickets:start-open');
   });
+
+  it('starts the next part of a parent on screen, never the parent itself', () => {
+    const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
+    const parts = { total: 2, done: 0, merged: 0, review: 0, progress: 0, todo: 2, backlog: 0, segments: ['todo' as const, 'todo' as const] };
+    const t = { ...summary, parts, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
+    const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)] });
+    const items = paletteItems(c);
+    expect(ids(items)).not.toContain('tickets:start-open');
+    const next = byId(items, 'tickets:start-next-part');
+    expect(next.label).toBe('Start next part of PDT-42');
+    next.run!();
+    expect(c.handlers.startNextPart).toHaveBeenCalledWith(t);
+    const closed = { ...t, stage: 'done' as const };
+    expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(closed, 0)] })))).not.toContain('tickets:start-next-part');
+  });
 });
 
 const summary: TicketSummary = {
   id: 'k42', projectId: 'p1', key: 'PDT-42', number: 42, title: 'Fix login', stage: 'ready', priority: 'high', labels: [],
   areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [], createdAt: 0, updatedAt: 0, closedAt: null,
+  parent: null, parts: null,
 };

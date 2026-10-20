@@ -38,15 +38,31 @@ pub enum HookReport {
         #[serde(default)]
         #[ts(optional)]
         notification_type: Option<String>,
+        /// Claude's id for the conversation (it changes after `/clear` or the TUI's `/resume`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        session_id: Option<String>,
+        /// SessionStart's `source`: `startup`, `resume`, `clear` or `compact`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        start_source: Option<String>,
     },
     Codex {
         event: String,
+    },
+    /// A Devin hook (`pdtd hook devin`). Devin reports activity itself (OSC 7501), so hooks only tell PDT which
+    /// conversation the terminal runs: `SessionStart` names it, fresh or resumed.
+    Devin {
+        event: String,
+        #[serde(default)]
+        #[ts(optional)]
+        session_id: Option<String>,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
-    /// Explicit Codex OSC 7501 status, authoritative over inferred activity and delayed notifications.
+    /// Explicit Codex or Devin OSC 7501 status, authoritative over inferred activity and delayed notifications.
     ProgramStatus(Activity),
     Busy,
     NeedsYou,
@@ -65,7 +81,7 @@ const NEEDS_YOU_NOTIFICATIONS: [&str; 4] =
 impl HookReport {
     pub fn signal(&self) -> Option<Signal> {
         match self {
-            HookReport::Claude { event, notification_type } => match event.as_str() {
+            HookReport::Claude { event, notification_type, .. } => match event.as_str() {
                 "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => Some(Signal::Busy),
                 "PermissionRequest" => Some(Signal::NeedsYou),
                 "Stop" => Some(Signal::TurnEnded),
@@ -77,6 +93,7 @@ impl HookReport {
                 _ => None,
             },
             HookReport::Codex { event } => (event == "agent-turn-complete").then_some(Signal::TurnEnded),
+            HookReport::Devin { .. } => None,
         }
     }
 }
@@ -256,15 +273,27 @@ pub fn osc_titles(bytes: &[u8]) -> (Vec<String>, &[u8]) {
     )
 }
 
-/// The latest Codex OSC 7501 status in this chunk, plus an unfinished OSC sequence to carry forward.
-/// Codex reports idle/working/blocked/done/error; done and error both leave the TUI awaiting input.
-pub fn codex_program_status(bytes: &[u8]) -> (Option<Activity>, &[u8]) {
+/// The app name an agent's TUI puts in its OSC 7501 status (`app=codex`, `app=devin`); None for an agent that sends
+/// none (Claude).
+pub fn program_status_app(agent: crate::session::AgentKind) -> Option<&'static str> {
+    use crate::session::AgentKind;
+    match agent {
+        AgentKind::Codex => Some("codex"),
+        AgentKind::Devin => Some("devin"),
+        AgentKind::Claude => None,
+    }
+}
+
+/// The latest OSC 7501 status from `app` in this chunk, plus an unfinished OSC sequence to carry forward.
+/// Codex and Devin report idle/working/blocked/done/error; done and error both leave the TUI awaiting input.
+pub fn program_status<'a>(bytes: &'a [u8], app: &str) -> (Option<Activity>, &'a [u8]) {
+    let app = format!("app={app}");
     let (messages, rest) = osc_messages(bytes);
     let latest = messages
         .iter()
         .filter_map(|body| {
             let fields: Vec<_> = body.strip_prefix("7501;")?.split(':').collect();
-            if !fields.contains(&"app=codex") {
+            if !fields.contains(&app.as_str()) {
                 return None;
             }
             match fields.iter().find_map(|f| f.strip_prefix("state="))? {
@@ -313,7 +342,12 @@ mod tests {
     use Activity::*;
 
     fn claude(event: &str, nt: Option<&str>) -> HookReport {
-        HookReport::Claude { event: event.into(), notification_type: nt.map(Into::into) }
+        HookReport::Claude {
+            event: event.into(),
+            notification_type: nt.map(Into::into),
+            session_id: None,
+            start_source: None,
+        }
     }
 
     #[test]
@@ -325,6 +359,10 @@ mod tests {
         assert_eq!(r, claude("Notification", Some("permission_prompt")));
         let r: HookReport = serde_json::from_str(r#"{"source":"codex","event":"agent-turn-complete"}"#).unwrap();
         assert_eq!(r, HookReport::Codex { event: "agent-turn-complete".into() });
+        let r: HookReport =
+            serde_json::from_str(r#"{"source":"devin","event":"SessionStart","sessionId":"cool-abstract"}"#).unwrap();
+        assert_eq!(r, HookReport::Devin { event: "SessionStart".into(), session_id: Some("cool-abstract".into()) });
+        assert_eq!(r.signal(), None, "Devin's activity comes from its OSC 7501 status");
         assert_eq!(serde_json::to_string(&NeedsYou).unwrap(), r#""needs_you""#);
         for a in [Working, NeedsYou, Idle, Unknown] {
             assert_eq!(Activity::parse(a.as_str()), Some(a));
@@ -446,7 +484,7 @@ mod tests {
         {
             for ending in ["\x07", "\x1b\\"] {
                 let bytes = format!("\x1b]7501;state={name}:app=codex:kind=permission{ending}");
-                assert_eq!(codex_program_status(bytes.as_bytes()), (Some(activity), &b""[..]));
+                assert_eq!(program_status(bytes.as_bytes(), "codex"), (Some(activity), &b""[..]));
             }
         }
         for bytes in [
@@ -455,10 +493,10 @@ mod tests {
             b"\x1b]7501;state=new:app=codex\x07",
             b"\x1b]7501;state=clear\x07",
         ] {
-            assert_eq!(codex_program_status(bytes).0, None);
+            assert_eq!(program_status(bytes, "codex").0, None);
         }
         assert_eq!(
-            codex_program_status(b"\x1b]7501;state=working:app=codex\x07\x1b]7501;state=idle:app=codex\x07").0,
+            program_status(b"\x1b]7501;state=working:app=codex\x07\x1b]7501;state=idle:app=codex\x07", "codex").0,
             Some(Idle)
         );
         let bytes = b"\x1b]7501;state=blocked:app=codex\x1b\\";
@@ -466,12 +504,32 @@ mod tests {
         let mut found = None;
         for byte in bytes {
             carry.push(*byte);
-            let (activity, rest) = codex_program_status(&carry);
+            let (activity, rest) = program_status(&carry, "codex");
             found = activity.or(found);
             carry = rest.to_vec();
         }
         assert_eq!(found, Some(NeedsYou), "every byte can arrive separately");
         assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn devin_program_status_is_read_for_devin_only() {
+        use crate::session::AgentKind;
+        // As Devin 3000.11 sends them (base64 `msg`, `kind` before `app`).
+        let seen = [
+            ("state=idle:app=devin", Idle),
+            ("state=working:app=devin:msg=VGhpbmtpbmc=", Working),
+            ("state=blocked:kind=permission:app=devin:msg=UnVubmluZyBjb21tYW5k", NeedsYou),
+            ("state=done:app=devin:msg=RGV2aW4gZmluaXNoZWQ=", Idle),
+        ];
+        for (body, activity) in seen {
+            let bytes = format!("\x1b]7501;{body}\x07");
+            assert_eq!(program_status(bytes.as_bytes(), "devin").0, Some(activity), "{body}");
+            assert_eq!(program_status(bytes.as_bytes(), "codex").0, None, "not Codex's: {body}");
+        }
+        assert_eq!(program_status_app(AgentKind::Devin), Some("devin"));
+        assert_eq!(program_status_app(AgentKind::Codex), Some("codex"));
+        assert_eq!(program_status_app(AgentKind::Claude), None);
     }
 
     #[test]

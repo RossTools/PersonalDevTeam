@@ -1,6 +1,7 @@
 //! `pdtd hook …` (remote-host spec §5.1, decision 11): reports an agent hook event to the pdtd that owns the session
-//! (`PDT_SESSION_ID`, `PDT_HOOK_PORT`). It never writes to stdout (Claude adds UserPromptSubmit stdout to the
-//! conversation) and always exits 0, quickly, whatever happens.
+//! (`PDT_SESSION_ID`, `PDT_HOOK_PORT`). It writes nothing to stdout (Claude adds UserPromptSubmit stdout to the
+//! conversation) except, for Devin's `SessionStart`, the session's instructions as context, and always exits 0,
+//! quickly, whatever happens.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -12,7 +13,11 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 /// first input message starts with this.
 const CODEX_TITLE_PROMPT: &str = "Generate a concise, single-line task title";
 
-pub fn run(args: &[String], stdin: &mut dyn Read, env: &dyn Fn(&str) -> Option<String>) -> i32 {
+/// The most of a session's instructions handed to Devin (PDT caps the project's own part at 16 KB).
+const INSTRUCTIONS_LIMIT: u64 = 64 * 1024;
+
+pub fn run(args: &[String], stdin: &mut dyn Read, stdout: &mut dyn Write, env: &dyn Fn(&str) -> Option<String>) -> i32 {
+    let mut context = None;
     let report = match args.first().map(String::as_str) {
         Some("claude") => {
             let Some(event) = args.get(1) else { return 0 };
@@ -23,6 +28,8 @@ pub fn run(args: &[String], stdin: &mut dyn Read, env: &dyn Fn(&str) -> Option<S
                 "source": "claude",
                 "event": event,
                 "notificationType": input.get("notification_type").and_then(|v| v.as_str()),
+                "sessionId": input.get("session_id").and_then(|v| v.as_str()),
+                "startSource": (event == "SessionStart").then(|| input.get("source").and_then(|v| v.as_str())).flatten(),
             })
         }
         Some("codex-notify") => {
@@ -39,12 +46,42 @@ pub fn run(args: &[String], stdin: &mut dyn Read, env: &dyn Fn(&str) -> Option<S
             let event = payload.get("type").and_then(|t| t.as_str()).unwrap_or_default();
             serde_json::json!({ "source": "codex", "event": event })
         }
+        // `devin [--instructions <file>]`: Devin names the event and its conversation in the payload.
+        Some("devin") => {
+            let mut buf = Vec::new();
+            let _ = stdin.take(STDIN_LIMIT).read_to_end(&mut buf);
+            let input: serde_json::Value = serde_json::from_slice(&buf).unwrap_or_default();
+            let event = input.get("hook_event_name").and_then(|v| v.as_str()).unwrap_or_default();
+            if event == "SessionStart"
+                && let Some(i) = args.iter().position(|a| a == "--instructions")
+                && let Some(file) = args.get(i + 1)
+            {
+                context = read_limited(file);
+            }
+            serde_json::json!({
+                "source": "devin",
+                "event": event,
+                "sessionId": input.get("session_id").and_then(|v| v.as_str()),
+            })
+        }
         _ => return 0,
     };
     if let (Some(id), Some(port)) = (env("PDT_SESSION_ID"), env("PDT_HOOK_PORT").and_then(|p| p.parse::<u16>().ok())) {
         let _ = post(port, &format!("/api/sessions/{id}/activity"), &report.to_string());
     }
+    if let Some(text) = context.filter(|t| !t.trim().is_empty()) {
+        let out = serde_json::json!({
+            "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": text }
+        });
+        let _ = writeln!(stdout, "{out}");
+    }
     0
+}
+
+fn read_limited(file: &str) -> Option<String> {
+    let mut text = String::new();
+    std::fs::File::open(file).ok()?.take(INSTRUCTIONS_LIMIT).read_to_string(&mut text).ok()?;
+    Some(text)
 }
 
 /// Whether a Codex notify payload is for Codex's own title-generation thread rather than the user's turn.
@@ -118,13 +155,27 @@ mod tests {
     #[test]
     fn unknown_or_incomplete_input_exits_0_without_network() {
         let env = |_: &str| None;
-        assert_eq!(run(&s(&["claude"]), &mut std::io::empty(), &env), 0);
-        assert_eq!(run(&s(&["what"]), &mut std::io::empty(), &env), 0);
-        assert_eq!(run(&s(&["claude", "Stop"]), &mut "not json".as_bytes(), &env), 0);
+        let mut out = Vec::new();
+        assert_eq!(run(&s(&["claude"]), &mut std::io::empty(), &mut out, &env), 0);
+        assert_eq!(run(&s(&["what"]), &mut std::io::empty(), &mut out, &env), 0);
+        assert_eq!(run(&s(&["claude", "Stop"]), &mut "not json".as_bytes(), &mut out, &env), 0);
+        assert_eq!(run(&s(&["devin"]), &mut "not json".as_bytes(), &mut out, &env), 0);
+        assert!(out.is_empty(), "nothing on stdout");
     }
 
     /// Runs `pdtd hook codex-notify <payload>` against a listener standing in for pdtd; returns the request it got.
     fn notify(payload: &str) -> Option<String> {
+        report(&s(&["codex-notify", payload]), "")
+    }
+
+    /// Runs `pdtd hook <args>` with `stdin` against a listener standing in for pdtd; returns the request it got.
+    fn report(args: &[String], stdin: &str) -> Option<String> {
+        hook(args, stdin).0
+    }
+
+    /// Runs `pdtd hook <args>` with `stdin` against a listener standing in for pdtd; returns the request it got and
+    /// what it printed.
+    fn hook(args: &[String], stdin: &str) -> (Option<String>, String) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port().to_string();
         let env = move |k: &str| match k {
@@ -148,8 +199,48 @@ mod tests {
             }
             None
         });
-        assert_eq!(run(&s(&["codex-notify", payload]), &mut std::io::empty(), &env), 0);
-        server.join().unwrap()
+        let mut out = Vec::new();
+        assert_eq!(run(args, &mut stdin.as_bytes(), &mut out, &env), 0);
+        (server.join().unwrap(), String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn devin_reports_its_conversation_and_gets_the_instructions_at_session_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("instructions.md");
+        std::fs::write(&file, "# PDT\nUse the API.").unwrap();
+        let args = s(&["devin", "--instructions", &file.to_string_lossy()]);
+        let start = r#"{"hook_event_name":"SessionStart","source":"startup","session_id":"cool-abstract"}"#;
+        let (req, out) = hook(&args, start);
+        let req = req.expect("reported");
+        assert!(req.starts_with("POST /api/sessions/s1/activity "), "{req}");
+        let body: serde_json::Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body, serde_json::json!({"source": "devin", "event": "SessionStart", "sessionId": "cool-abstract"}));
+        let printed: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(
+            printed,
+            serde_json::json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "# PDT\nUse the API."}})
+        );
+        // Any other event prints nothing.
+        let (_, out) = hook(&args, r#"{"hook_event_name":"Stop","session_id":"cool-abstract"}"#);
+        assert_eq!(out, "");
+        // A missing instructions file: still reported, nothing printed.
+        let (req, out) = hook(&s(&["devin", "--instructions", "/no/such/file.md"]), start);
+        assert!(req.is_some());
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn claude_reports_its_conversation_id_and_why_a_session_started() {
+        let input = r#"{"session_id":"new-conv","source":"clear","hook_event_name":"SessionStart"}"#;
+        let req = report(&s(&["claude", "SessionStart"]), input).expect("reported");
+        let body: serde_json::Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body["sessionId"], "new-conv");
+        assert_eq!(body["startSource"], "clear");
+        let input = r#"{"session_id":"c","source":"elsewhere"}"#;
+        let req = report(&s(&["claude", "Stop"]), input).expect("reported");
+        let body: serde_json::Value = serde_json::from_str(req.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(body["startSource"].is_null(), "only SessionStart has a start source");
     }
 
     #[test]

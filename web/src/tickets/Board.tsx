@@ -1,21 +1,25 @@
 // The Tickets view's Board: committed work in three columns (To do, In progress, Done in the last two weeks). Ready
-// tickets wait in the backlog until they are moved to To do.
-import { useMemo, useState, type DragEvent } from 'react';
+// tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
+// first, then one lane per parent with its parts, under a header that tracks the parent.
+import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { GitBranch } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Button, ContextMenu, dragData, MenuButton, parseDragData, SegmentedControl, Skeleton, useConfirm, type MenuEntry,
+  Button, ContextMenu, dragData, IconButton, MenuButton, parseDragData, SegmentedControl, Skeleton, useConfirm, type MenuEntry,
 } from '@ui';
 import type { Session } from '../api/gen/Session';
 import type { TicketQuery } from '../api/gen/TicketQuery';
 import type { TicketStage } from '../api/gen/TicketStage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import { AgentDot, itemState, rollup, type AgentStateValue } from '../common/AgentState';
+import { PartsStepper, partsCount } from '../common/PartsStepper';
+import { STAGE_LABEL } from '../common/StageStepper';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
-import { canStart, patchTicket, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { canStart, patchTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { buildLanes, laneIds, lanePr, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
 import { useAllSessions, useTicketPages } from './queries';
 import { useClearToStartToasts } from './clearToStart';
 import { PrBadge } from './PullRequest';
@@ -34,15 +38,27 @@ export const BOARD_COLUMNS: { stage: BoardStage; title: string }[] = [
 export const DONE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const BOARD_PAGE = 50;
 
-/** A column's `GET /api/tickets` query. Done: closed since `closedAfter`, most recently updated first. */
+/**
+ * A column's `GET /api/tickets` query: its cards, never parents (they head lanes). Done: closed since `closedAfter`,
+ * most recently updated first.
+ */
 export function columnQuery(projectId: string | null, stage: BoardStage, closedAfter: number): TicketQuery {
-  const q: TicketQuery = { stage, limit: BOARD_PAGE };
+  const q: TicketQuery = { stage, hasParts: false, limit: BOARD_PAGE };
   if (projectId) q.project = projectId;
   if (stage === 'done') {
     q.closedAfter = closedAfter;
     q.sort = 'updated';
   }
   return q;
+}
+
+/** The lane headers' queries: open parents (To do, In progress) and parents closed since `closedAfter`. */
+export function laneQueries(projectId: string | null, closedAfter: number): TicketQuery[] {
+  const scope = projectId ? { project: projectId } : {};
+  return [
+    { ...scope, hasParts: true, stage: 'todo,in_progress', limit: 100 },
+    { ...scope, hasParts: true, stage: 'done,wont_do', closedAfter, limit: 100 },
+  ];
 }
 
 /** The drag payload of a card (web/ui README: text/plain `pdt:<kind>:<id>`). */
@@ -79,6 +95,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
   return (
     <li
       aria-label={`${t.key} ${t.title}`}
+      data-peek
       draggable={draggable}
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={() => setDragging(false)}
@@ -106,7 +123,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
             <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
               {activity ? <AgentDot state={activity} /> : <GitBranch aria-hidden className="size-3 shrink-0" />}
               <span className="min-w-0 truncate font-mono" title={t.attempt.branch}>{t.attempt.branch}</span>
-              {t.attempt.pr && <PrBadge pr={t.attempt.pr} />}
+              {t.attempt.pr && <PrBadge pr={t.attempt.pr} attemptMerged={t.attempt.state === 'merged'} />}
             </span>
           )}
         </button>
@@ -121,27 +138,67 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
   );
 }
 
-function Column({ projectId, stage, title, closedAfter, sessions, onPeek, dropTarget, phone }: {
-  projectId: string | null;
-  stage: BoardStage;
-  title: string;
-  closedAfter: number;
-  sessions: Session[];
-  onPeek: (id: string) => void;
-  dropTarget: boolean;
-  phone: boolean;
-}) {
-  const qc = useQueryClient();
-  const confirm = useConfirm();
-  const open = useOpenTicket();
-  const start = useStartTicket();
+type Columns = Record<BoardStage, TicketSummary[]>;
+
+/** One column's paged query, its loaded cards and its total. */
+function useColumn(projectId: string | null, stage: BoardStage, closedAfter: number) {
   const query = useMemo(() => columnQuery(projectId, stage, closedAfter), [projectId, stage, closedAfter]);
   const pages = useTicketPages(query);
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
-  const total = pages.data?.pages[0]?.total;
-  useClearToStartToasts(items);
-  const [over, setOver] = useState(false);
+  return { pages, items, total: pages.data?.pages[0]?.total };
+}
 
+type ColumnData = ReturnType<typeof useColumn>;
+
+/** The parents heading lanes: the first page of each lane-header query. */
+function useLaneParents(projectId: string | null, closedAfter: number): TicketSummary[] {
+  const [open, closed] = useMemo(() => laneQueries(projectId, closedAfter), [projectId, closedAfter]);
+  const a = useTicketPages(open);
+  const b = useTicketPages(closed);
+  return useMemo(() => [...(a.data?.pages[0]?.items ?? []), ...(b.data?.pages[0]?.items ?? [])], [a.data, b.data]);
+}
+
+/** The lanes collapsed in this browser. */
+function useCollapsed(): [Set<string>, (id: string) => void] {
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      writeCollapsed(next);
+      return next;
+    });
+  return [collapsed, toggle];
+}
+
+/** What every cell needs to show and move cards. */
+interface CellEnv {
+  sessions: Session[];
+  onPeek: (id: string) => void;
+  entries: (t: TicketSummary) => () => MenuEntry[];
+  phone: boolean;
+}
+
+/**
+ * One lane's column: its cards, and a drop target for cards of the same lane (a card dropped from another lane is
+ * ignored: lanes don't change a ticket's parent).
+ */
+function Cell({ label, stage, items, lane, env, fill, children }: {
+  /** The region's name: the column's title for the first lane, `<key> · <column>` for a parent's. */
+  label: string;
+  stage: BoardStage;
+  items: TicketSummary[];
+  /** The ids of every card in this lane. */
+  lane: Set<string>;
+  env: CellEnv;
+  /** Fills the board's height and scrolls on its own (the board without parent lanes). */
+  fill: boolean;
+  /** Shown above the cards (the column's title and count, without lanes). */
+  children?: ReactNode;
+}) {
+  const qc = useQueryClient();
+  const [over, setOver] = useState(false);
+  const dropTarget = !env.phone;
   const onDragOver = (e: DragEvent) => {
     if (!dropTarget || !Array.from(e.dataTransfer?.types ?? []).includes('text/plain')) return;
     e.preventDefault();
@@ -153,75 +210,162 @@ function Column({ projectId, stage, title, closedAfter, sessions, onPeek, dropTa
     const d = parseDragData(e.dataTransfer.getData('text/plain') ?? '');
     if (!d || d.kind !== CARD_DRAG_KIND) return;
     e.preventDefault();
-    if (items.some((t) => t.id === d.id)) return;
+    if (!lane.has(d.id) || items.some((t) => t.id === d.id)) return;
     void runAction(() => patchTicket(qc, d.id, { stage }));
   };
-
-  const entries = (t: TicketSummary) => () =>
-    ticketMenu({
-      qc, confirm, ticket: t,
-      onOpen: () => open(t),
-      ...(canStart(t) ? { onStart: () => start(t) } : {}),
-    });
-
   return (
     <section
-      aria-label={title}
+      aria-label={label}
       onDragOver={onDragOver}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false); }}
       onDrop={onDrop}
       className={cn(
-        'flex min-h-0 min-w-0 flex-1 flex-col rounded-md bg-surface-2',
+        'flex min-w-0 flex-1 flex-col rounded-md bg-surface-2',
+        fill && 'min-h-0',
         over && 'bg-accent ring-1 ring-primary',
       )}
     >
-      {!phone && (
-        <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium">
-          <span className="flex-1">{title}</span>
-          {total !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{total}</span>}
-        </h3>
-      )}
-      <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
-        {pages.isPending ? (
-          <Skeleton lines={3} label={`Loading ${title}`} className="p-1" />
-        ) : pages.isError && !pages.data ? (
-          <p className="p-2 text-xs text-destructive">{pages.error.message}</p>
-        ) : items.length === 0 ? (
-          <p className="p-2 text-xs text-muted-foreground">{stage === 'done' ? 'Nothing done in the last two weeks.' : 'No tickets.'}</p>
-        ) : (
-          <ul aria-label={`${title} tickets`} className="flex flex-col gap-2 pt-1">
+      {children}
+      <div className={cn('px-2 pb-2', fill && 'min-h-0 flex-1 overflow-auto')}>
+        {items.length > 0 && (
+          <ul aria-label={`${label} tickets`} className="flex flex-col gap-2 pt-2">
             {items.map((t) => (
               <BoardCard
                 key={t.id}
                 ticket={t}
-                activity={cardActivity(t, sessions)}
-                onOpen={() => onPeek(t.id)}
-                entries={entries(t)}
-                draggable={!phone && !coarsePointer()}
+                activity={cardActivity(t, env.sessions)}
+                onOpen={() => env.onPeek(t.id)}
+                entries={env.entries(t)}
+                draggable={!env.phone && !coarsePointer()}
               />
             ))}
           </ul>
-        )}
-        {pages.hasNextPage && (
-          <Button variant="ghost" size="sm" className="mt-2 w-full" pending={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>
-            Show more
-          </Button>
         )}
       </div>
     </section>
   );
 }
 
+/** A column's loading, error and empty states, and Show more. */
+function ColumnStatus({ col, title, stage, showEmpty }: { col: ColumnData; title: string; stage: BoardStage; showEmpty: boolean }) {
+  const { pages, items } = col;
+  return (
+    <>
+      {pages.isPending ? (
+        <Skeleton lines={3} label={`Loading ${title}`} className="p-1" />
+      ) : pages.isError && !pages.data ? (
+        <p className="p-2 text-xs text-destructive">{pages.error.message}</p>
+      ) : showEmpty && items.length === 0 ? (
+        <p className="p-2 text-xs text-muted-foreground">{stage === 'done' ? 'Nothing done in the last two weeks.' : 'No tickets.'}</p>
+      ) : null}
+      {pages.hasNextPage && (
+        <Button variant="ghost" size="sm" className="mt-2 w-full" pending={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>
+          Show more
+        </Button>
+      )}
+    </>
+  );
+}
+
 /**
- * To do / In progress / Done side by side, each its own paged, polled query; drag a card to another column to move
- * it (desktop). Phones show one column at a time with a picker.
+ * A parent's lane header: its key (opens the peek), title, stage, the parts' stepper and count, the PR of a part in
+ * review, Start next part, its menu, and the collapse toggle.
+ */
+function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
+  lane: Lane;
+  collapsed: boolean;
+  onToggle: () => void;
+  onPeek: (id: string) => void;
+  /** Phones: a group heading inside the one column. */
+  compact: boolean;
+}) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const open = useOpenTicket();
+  const start = useStartTicket();
+  const parent = lane.parent!;
+  const t = lane.ticket;
+  const pr = lanePr(lane);
+  const openStage = t ? t.stage !== 'done' && t.stage !== 'wont_do' : true;
+  const entries = (): MenuEntry[] =>
+    t ? ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t) }) : [{ label: 'Open', onSelect: () => open({ id: parent.id, projectId: '' }) }];
+  return (
+    <div
+      role="group"
+      aria-label={`${parent.key} ${parent.title}`}
+      data-peek
+      className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1', compact ? 'px-1 pt-3 pb-1' : 'px-1 pt-3 pb-1.5')}
+    >
+      <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>
+        {collapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
+      </IconButton>
+      <TicketKey ticketKey={parent.key} title={parent.title} onClick={() => onPeek(parent.id)} />
+      <h4 className="min-w-0 flex-1 truncate text-xs font-medium sm:flex-none" title={parent.title}>{parent.title}</h4>
+      {t && <span className="shrink-0 text-meta text-muted-foreground">{STAGE_LABEL[t.stage]}</span>}
+      {t?.parts && <PartsStepper parts={t.parts} showCount className={compact ? 'w-24' : 'w-32'} />}
+      {pr && !compact && <PrBadge pr={pr} />}
+      {!compact && <span className="hidden flex-1 sm:block" />}
+      {openStage && !compact && (
+        <Button variant="ghost" size="sm" onClick={() => void runAction(() => startNextPart(start, parent))}>
+          Start next part
+        </Button>
+      )}
+      <MenuButton label={`Actions for ${parent.key}`} size="sm" entries={entries} />
+    </div>
+  );
+}
+
+/** "No parts on the board yet" or the count, for a lane whose cards are all elsewhere. */
+const laneEmpty = (lane: Lane) => (['todo', 'in_progress', 'done'] as BoardStage[]).every((s) => lane.items[s].length === 0);
+
+/**
+ * To do / In progress / Done side by side, each its own paged, polled query; drag a card to another column of its lane
+ * to move it (desktop). With parents on the board the rows are lanes and the board scrolls as a whole. Phones show one
+ * column at a time with a picker, its parts under a heading per parent.
  */
 export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
   // Fixed while the board is on screen: a new value every render would be a new query every render.
   const [closedAfter] = useState(() => Date.now() - DONE_WINDOW_MS);
   const [stage, setStage] = useState<BoardStage>('todo');
   const sessions = useAllSessions();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const open = useOpenTicket();
+  const start = useStartTicket();
+  const cols: Record<BoardStage, ColumnData> = {
+    todo: useColumn(projectId, 'todo', closedAfter),
+    in_progress: useColumn(projectId, 'in_progress', closedAfter),
+    done: useColumn(projectId, 'done', closedAfter),
+  };
+  const parents = useLaneParents(projectId, closedAfter);
+  const [collapsed, toggle] = useCollapsed();
+  const items: Columns = { todo: cols.todo.items, in_progress: cols.in_progress.items, done: cols.done.items };
+  const lanes = useMemo(() => buildLanes(items, parents), [items.todo, items.in_progress, items.done, parents]);
+  useClearToStartToasts(useMemo(() => [...items.todo, ...items.in_progress, ...items.done], [items.todo, items.in_progress, items.done]));
+
+  const env: CellEnv = {
+    sessions,
+    onPeek,
+    phone,
+    entries: (t) => () =>
+      ticketMenu({
+        qc, confirm, ticket: t,
+        onOpen: () => open(t),
+        ...(canStart(t) ? { onStart: () => start(t) } : {}),
+      }),
+  };
   const columns = phone ? BOARD_COLUMNS.filter((c) => c.stage === stage) : BOARD_COLUMNS;
+  const [first, ...parentLanes] = lanes;
+  const withLanes = parentLanes.length > 0;
+  const firstIds = laneIds(first);
+
+  const columnHead = (c: (typeof BOARD_COLUMNS)[number]) => (
+    <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium">
+      <span className="flex-1">{c.title}</span>
+      {cols[c.stage].total !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{cols[c.stage].total}</span>}
+    </h3>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 md:p-3">
       {phone && (
@@ -234,21 +378,71 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
           onChange={setStage}
         />
       )}
-      <div className="flex min-h-0 flex-1 gap-3">
-        {columns.map((c) => (
-          <Column
-            key={c.stage}
-            projectId={projectId}
-            stage={c.stage}
-            title={c.title}
-            closedAfter={closedAfter}
-            sessions={sessions}
-            onPeek={onPeek}
-            dropTarget={!phone}
-            phone={phone}
-          />
-        ))}
-      </div>
+      {!withLanes ? (
+        <div className="flex min-h-0 flex-1 gap-3">
+          {columns.map((c) => (
+            <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} fill>
+              {!phone && columnHead(c)}
+              <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty /></div>
+            </Cell>
+          ))}
+        </div>
+      ) : phone ? (
+        // One column: the first lane's cards, then a heading per parent with its parts in this column.
+        <div className="min-h-0 flex-1 overflow-auto">
+          {columns.map((c) => (
+            <div key={c.stage} className="flex flex-col">
+              <Cell label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} fill={false}>
+                <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={false} /></div>
+              </Cell>
+              {parentLanes.map((lane) => {
+                const shut = collapsed.has(lane.id!);
+                return (
+                  <div key={lane.id}>
+                    <LaneHeader lane={lane} collapsed={shut} onToggle={() => toggle(lane.id!)} onPeek={onPeek} compact />
+                    {!shut && (lane.items[c.stage].length > 0 ? (
+                      <Cell label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={laneIds(lane)} env={env} fill={false} />
+                    ) : (
+                      <p className="px-3 pb-1 text-xs text-muted-foreground">{laneEmpty(lane) ? 'No parts on the board yet.' : `No parts in ${c.title}.`}</p>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <div className="flex gap-3">
+            {columns.map((c) => <div key={c.stage} className="min-w-0 flex-1">{columnHead(c)}</div>)}
+          </div>
+          <div className="flex gap-3">
+            {columns.map((c) => (
+              <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} fill={false}>
+                <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={false} /></div>
+              </Cell>
+            ))}
+          </div>
+          {parentLanes.map((lane) => {
+            const shut = collapsed.has(lane.id!);
+            const ids = laneIds(lane);
+            return (
+              <div key={lane.id} className="flex flex-col">
+                <LaneHeader lane={lane} collapsed={shut} onToggle={() => toggle(lane.id!)} onPeek={onPeek} compact={false} />
+                {!shut && (laneEmpty(lane) ? (
+                  <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-muted-foreground">No parts on the board yet.</p>
+                ) : (
+                  <div className="flex gap-3">
+                    {columns.map((c) => (
+                      <Cell key={c.stage} label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={ids} env={env} fill={false} />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -16,7 +16,7 @@ no authentication, and reports errors as `{code, message}`.
 | `GET /api/sessions/<session id>` | this session: `projectId`, `worktreeId` (null in the main checkout), `cwd`, `ticket` |
 | `GET /api/projects` | projects: `id`, `name`, `key`, `repoPath`, `baseBranch` |
 | `GET /api/projects/<id>/worktrees` | the project's worktrees: `id`, `branch`, `path` |
-| `GET /api/guides` | PDT's guides (this one, the run configuration reference, the set-up prompt) |
+| `GET /api/guides` | PDT's guides (this one, the run configuration reference, and the prompts for setting up a project's runs and its agent instructions) |
 
 ## Tickets
 
@@ -28,10 +28,16 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 |---|---|
 | `GET /api/tickets?project=<id>` | the project's tickets, ranked. Also `q` (search, or a key), `stage`, `priority`, `label` (comma-separated lists), `sort` (`rank`, `priority`, `updated`, `created`), `limit`, `cursor`; returns `{items, nextCursor, total}` |
 | `GET /api/tickets/<id>` | one ticket with its `description`, links and attempt |
-| `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?}`; a new ticket is a Draft at the top of its stage |
-| `PATCH /api/tickets/<id>` | any of `title`, `description`, `stage`, `priority`, `labels`, `areas` |
+| `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?, parent?}`; a new ticket is a Draft at the top of its stage (a part, with `parent`, goes after the parent's last part) |
+| `PATCH /api/tickets/<id>` | any of `title`, `description`, `stage`, `priority`, `labels`, `areas`, `parent` (a ticket id, `""` to detach), `waiting` |
 | `POST /api/tickets/<id>/comments` | `{body}` |
 | `POST /api/tickets/<id>/links` | `{kind: "blocks" \| "relates", to: <other ticket id>}` (this ticket blocks `to`) |
+
+The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts
+"Review feedback on <branch>": each comment names `file:line`, quotes the lines and says what to change. Address each
+one, then say briefly what you changed. A message saying a merge into the base conflicts lists the files: merge the base
+branch into yours, resolve them, run the checks and commit. `GET /api/worktrees/<id>/changes` lists what PDT counts
+as your changes (committed or not, against the merge base with the base branch).
 
 When work you were given as a ticket turns up follow-up work, add it as a new ticket rather than widening the change,
 and comment on the ticket with anything the person should know. Move a ticket to `done` only when the person says the
@@ -39,7 +45,7 @@ work is finished (PDT also does it when it sees the branch merged).
 
 ## Worktrees
 
-PDT keeps each branch's checkout at `<repo>/.worktrees/<branch>` (listed in `.git/info/exclude`, so nothing is
+PDT keeps each branch's checkout at `<repo>/.worktrees/<branch>`, with `/` in the branch name replaced by `-` (listed in `.git/info/exclude`, so nothing is
 committed for it). Making one through PDT means its sessions and runs know about it:
 
 `POST /api/projects/<id>/worktrees` with `{"branch": "fix/login", "base": "main"}` (`base` defaults to the project's
@@ -62,7 +68,7 @@ Poll a run until `state` is `ready` (a web run answers on its port) or `failed`,
 
 ## Project settings on this host
 
-`GET /api/projects/<id>/settings` returns `agentCredentials`, `runOverrides` (TOML) and `agentInstructions` (Markdown).
+`GET /api/projects/<id>/settings` returns `agentCredentials`, `runOverrides` (TOML), `agentInstructions` (Markdown) and `mergeViaPr`.
 `PUT` the same object to change them: `agentCredentials` and `runOverrides` are always replaced, so send back what you
-read; `agentInstructions` is replaced when present (`""` clears it). New agent sessions get the new instructions;
+read; `agentInstructions` and `mergeViaPr` are replaced when present (`""` clears it). New agent sessions get the new instructions;
 running ones keep what they started with. Change these only when the person asks.

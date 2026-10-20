@@ -107,14 +107,20 @@ pub trait Runner {
     fn spawn(&mut self, cmd: Command) -> Result<(), String>;
 }
 
+/// Runs commands for real. Ones it waits for (reg, taskkill) get no console window (PDT-60).
 pub struct System;
 
 impl Runner for System {
     fn status(&mut self, mut cmd: Command) -> Result<bool, String> {
-        cmd.status().map(|s| s.success()).map_err(|e| format!("running {:?}: {e}", cmd.get_program()))
+        crate::process::no_window(&mut cmd)
+            .status()
+            .map(|s| s.success())
+            .map_err(|e| format!("running {:?}: {e}", cmd.get_program()))
     }
     fn stdout(&mut self, mut cmd: Command) -> Result<String, String> {
-        let out = cmd.output().map_err(|e| format!("running {:?}: {e}", cmd.get_program()))?;
+        let out = crate::process::no_window(&mut cmd)
+            .output()
+            .map_err(|e| format!("running {:?}: {e}", cmd.get_program()))?;
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
     fn spawn(&mut self, mut cmd: Command) -> Result<(), String> {
@@ -267,11 +273,7 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
                         cmd.env_remove(k);
                     }
                 }
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    cmd.creation_flags(0x0800_0000 | 0x0000_0200);
-                }
+                crate::process::detached_no_window(&mut cmd);
                 runner.spawn(cmd)?;
             }
         }

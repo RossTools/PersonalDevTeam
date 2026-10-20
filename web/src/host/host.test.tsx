@@ -13,7 +13,8 @@ afterEach(() => {
 const settingsView = (over: object = {}) => ({
   settings: {
     remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 },
-    maxConcurrentRuns: 4, agentCredentials: 'subscription',
+    maxConcurrentRuns: 4, agentCredentials: 'subscription', projectsDir: null, defaultAgent: 'claude',
+    defaultSessionMode: 'conversation', updateCheckMinutes: 60,
   },
   ownerFromEnv: null,
   tokenPresent: false,
@@ -26,7 +27,7 @@ const update = (over: object = {}) => ({
   error: null, token: { state: 'missing' }, lastResult: null, ...over,
 });
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
-const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), git: tool(true), tailscale: tool(true), checkedAt: 1 });
+const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
 const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null };
 
@@ -129,6 +130,40 @@ describe('HostSettingsPage', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Saved');
   });
 
+  it('saves the update check interval, which is off while updates are manual', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: /Update check interval/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Every 6 hours' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ updateCheckMinutes: 360 }));
+    await userEvent.click(screen.getByRole('button', { name: /Update policy/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Manual (no checks)' }));
+    expect(await screen.findByText('Off while updates are manual.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Update check interval/ })).toBeDisabled();
+  });
+
+  it('saves the default agent and view', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: /Default agent/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Codex' }));
+    await userEvent.click(screen.getByRole('button', { name: /Default view/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Terminal' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ defaultAgent: 'codex' }, { defaultSessionMode: 'terminal' }]));
+  });
+
   it('saves ports and max runs with one Save and shows why it failed', async () => {
     const calls = stubApi({
       'GET /api/host/settings': settingsView(),
@@ -161,14 +196,34 @@ describe('HostSettingsPage', () => {
       'DELETE /api/host/token': undefined,
     });
     renderWithQuery(<HostSettingsPage />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Remove token' }));
+    // Only in the Danger zone, never next to Check for updates.
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    expect(within(updates).queryByRole('button', { name: /Remove/ })).toBeNull();
+    const danger = screen.getByRole('region', { name: 'Danger zone' });
+    await userEvent.click(within(danger).getByRole('button', { name: 'Remove token…' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
-    await userEvent.click(screen.getByRole('button', { name: 'Remove token' }));
+    await userEvent.click(within(danger).getByRole('button', { name: 'Remove token…' }));
     const ask = await screen.findByRole('alertdialog', { name: 'Remove the GitHub token?' });
     await userEvent.click(within(ask).getByRole('button', { name: 'Remove token' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/host/token')).toBe(true));
+  });
+
+  it('checks for updates and shows a newer release; no Danger zone without a token', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'POST /api/host/update/check': update({ state: 'available', latest: release, lastCheckedAt: 1 }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
+    expect(await within(updates).findByText('v0.1.7 available')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/update/check')).toBe(true);
+    expect(screen.queryByRole('region', { name: 'Danger zone' })).toBeNull();
   });
 
   it('shows why the settings failed to load instead of loading forever', async () => {
@@ -191,12 +246,15 @@ describe('HostSettingsPage', () => {
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();
-    expect(screen.getByText(/expired or revoked/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument();
+    expect(screen.getByText('Expired or revoked')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check for updates' })).not.toBeInTheDocument();
     const claude = screen.getByText('claude').closest('li')!;
     expect(claude).toHaveTextContent('not found');
     expect(within(claude).getByRole('img', { name: 'not found' })).toHaveAttribute('data-status', 'failed');
     expect(within(screen.getByText('git').closest('li')!).getByRole('img', { name: 'OK' })).toHaveAttribute('data-status', 'running');
+    // Devin is optional: missing is not a failure.
+    const devin = screen.getByText('devin').closest('li')!;
+    expect(within(devin).getByRole('img', { name: 'not installed (optional)' })).toHaveAttribute('data-status', 'idle');
   });
 });
 

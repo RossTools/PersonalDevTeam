@@ -29,31 +29,105 @@ pub fn attempt_branch(project_key: &str, number: u32, title: &str) -> String {
     if s.is_empty() { format!("{SLUG}/{key}") } else { format!("{SLUG}/{key}-{s}") }
 }
 
+/// The parent and the other parts, for a part's first prompt (PDT-38).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PartContext {
+    pub parent_key: String,
+    pub parent_title: String,
+    pub parent_description: String,
+    /// The parent's other parts in rank order: one line each, e.g. `PDT-46 5a: Done (#44)`.
+    pub others: Vec<String>,
+}
+
+impl PartContext {
+    /// The "Part of" block with the parent's description cut to `budget` bytes (None: whole).
+    fn block(&self, budget: Option<usize>) -> String {
+        let mut out = format!("Part of {}: {}", self.parent_key, self.parent_title);
+        let d = self.parent_description.trim();
+        let d = match budget {
+            None => d.to_string(),
+            Some(b) if b >= d.len() => d.to_string(),
+            Some(b) => {
+                let mut end = b;
+                while !d.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let cut = d[..end].trim_end();
+                if cut.is_empty() { description_cut_note() } else { format!("{cut}\n\n{}", description_cut_note()) }
+            }
+        };
+        if !d.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&d);
+        }
+        if !self.others.is_empty() {
+            out.push_str("\n\nThe other parts:\n");
+            out.push_str(&self.others.iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n"));
+        }
+        out
+    }
+}
+
 /// The agent's first prompt for a ticket: `"<KEY>-<n>: <title>\n\n<description>\n\n(Ticket <KEY>-<n> in PDT. Work in
 /// this worktree on branch <branch>.)"`, at most [`MAX_TICKET_PROMPT`] bytes. A description too long for that is cut
 /// at a character boundary and ends with a note to read the ticket in PDT; an empty description leaves no empty
 /// paragraph.
 pub fn ticket_prompt(key: &str, title: &str, description: &str, branch: &str) -> String {
+    part_prompt(key, title, description, branch, None)
+}
+
+/// [`ticket_prompt`] for a part: a "Part of" block (the parent's key, title and description, and one line per other
+/// part) goes before the closing line. To fit [`MAX_TICKET_PROMPT`], the parent's description is cut first, then the
+/// part's own.
+pub fn part_prompt(key: &str, title: &str, description: &str, branch: &str, part: Option<&PartContext>) -> String {
     let head = format!("{key}: {title}");
     let tail = format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}.)");
     let description = description.trim();
-    if description.is_empty() {
-        return format!("{head}\n\n{tail}");
-    }
-    let full = format!("{head}\n\n{description}\n\n{tail}");
+    let join = |desc: &str, block: Option<String>| {
+        let mut parts = vec![head.clone()];
+        if !desc.is_empty() {
+            parts.push(desc.to_string());
+        }
+        parts.extend(block);
+        parts.push(tail.clone());
+        parts.join("\n\n")
+    };
+    let full = join(description, part.map(|p| p.block(None)));
     if full.len() <= MAX_TICKET_PROMPT {
         return full;
     }
+    // Cut the parent's description first.
+    if let Some(p) = part {
+        let without = join(description, Some(p.block(Some(0))));
+        if without.len() <= MAX_TICKET_PROMPT {
+            // A cut of n bytes adds n + 2 ("\n\n") to the bare block (heading, note, the other parts).
+            let budget = (MAX_TICKET_PROMPT - without.len()).saturating_sub(2);
+            let block = p.block(Some(budget));
+            let out = join(description, Some(block));
+            if out.len() <= MAX_TICKET_PROMPT {
+                return out;
+            }
+            return without;
+        }
+    }
+    // Then the ticket's own description (the block keeps no parent description).
+    let block = part.map(|p| p.block(Some(0)));
     let note = description_cut_note();
-    // head + "\n\n" + cut + "\n\n" + note + "\n\n" + tail
-    let fixed = head.len() + tail.len() + note.len() + 6;
+    let fixed = join("", block.clone()).len() + note.len() + 4;
     let budget = MAX_TICKET_PROMPT.saturating_sub(fixed);
     let mut end = budget.min(description.len());
     while !description.is_char_boundary(end) {
         end -= 1;
     }
     let cut = description[..end].trim_end();
-    if cut.is_empty() { format!("{head}\n\n{note}\n\n{tail}") } else { format!("{head}\n\n{cut}\n\n{note}\n\n{tail}") }
+    let desc = if cut.is_empty() { note } else { format!("{cut}\n\n{note}") };
+    let out = join(&desc, block);
+    if out.len() <= MAX_TICKET_PROMPT {
+        out
+    } else {
+        // A huge list of other parts: drop the block rather than overflow.
+        join(&desc, None)
+    }
 }
 
 /// How Start treats findings such as open blockers.
@@ -107,6 +181,11 @@ pub struct StartTicket {
     #[serde(default)]
     #[ts(optional)]
     pub from_session: Option<String>,
+    /// On a parent: start its next part (the first open part, by rank, that is not started or merged and has no
+    /// open blockers) instead of refusing with `ticket_has_parts`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub next: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub cols: Option<u16>,
@@ -128,6 +207,8 @@ pub struct ValidStart {
     pub mode: StartMode,
     pub session_mode: SessionMode,
     pub from_session: Option<String>,
+    /// On a parent: start its next part.
+    pub next: bool,
     pub size: TerminalSize,
 }
 
@@ -158,6 +239,7 @@ impl StartTicket {
                 START_ROWS.end()
             )));
         }
+        let session_mode = self.session_mode.unwrap_or(SessionMode::Conversation);
         Ok(ValidStart {
             agent: self.agent,
             branch,
@@ -166,8 +248,9 @@ impl StartTicket {
             tab: self.tab.clone(),
             new_workspace: self.new_workspace.unwrap_or(false),
             mode: self.mode.unwrap_or_default(),
-            session_mode: self.session_mode.unwrap_or(SessionMode::Conversation),
+            session_mode,
             from_session,
+            next: self.next.unwrap_or(false),
             size: TerminalSize { cols, rows },
         })
     }
@@ -247,6 +330,55 @@ mod tests {
         }
     }
 
+    fn ctx(desc: &str, others: &[&str]) -> PartContext {
+        PartContext {
+            parent_key: "PDT-2".into(),
+            parent_title: "Phase 5".into(),
+            parent_description: desc.into(),
+            others: others.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_part_prompt_names_the_parent_and_the_other_parts() {
+        let c = ctx("Conversations everywhere.", &["PDT-46 5a: Done (#44)", "PDT-48 5d: To do"]);
+        assert_eq!(
+            part_prompt("PDT-47", "5b", "Codex.", "b", Some(&c)),
+            "PDT-47: 5b\n\nCodex.\n\nPart of PDT-2: Phase 5\n\nConversations everywhere.\n\nThe other parts:\n\
+             - PDT-46 5a: Done (#44)\n- PDT-48 5d: To do\n\n(Ticket PDT-47 in PDT. Work in this worktree on branch b.)"
+        );
+        assert_eq!(
+            part_prompt("PDT-47", "5b", "", "b", Some(&ctx("", &[]))),
+            "PDT-47: 5b\n\nPart of PDT-2: Phase 5\n\n(Ticket PDT-47 in PDT. Work in this worktree on branch b.)"
+        );
+        assert_eq!(part_prompt("PDT-4", "T", "d", "b", None), ticket_prompt("PDT-4", "T", "d", "b"));
+    }
+
+    #[test]
+    fn a_long_part_prompt_cuts_the_parent_first_then_the_part() {
+        let parent = "p".repeat(6000);
+        let own = "o".repeat(4000);
+        let p = part_prompt("PDT-47", "5b", &own, "b", Some(&ctx(&parent, &["PDT-46 5a: Done"])));
+        assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
+        assert!(p.contains(&own), "the part's description is whole");
+        assert!(p.contains(&description_cut_note()) && p.contains("ppp"));
+        assert!(p.contains("- PDT-46 5a: Done") && p.ends_with("on branch b.)"));
+        assert!(p.len() > MAX_TICKET_PROMPT - 64, "uses the space it has: {}", p.len());
+
+        let own = "o".repeat(9000);
+        let p = part_prompt("PDT-47", "5b", &own, "b", Some(&ctx(&parent, &["PDT-46 5a: Done"])));
+        assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
+        assert!(!p.contains("ppp"), "the parent's description went first");
+        assert!(p.contains("Part of PDT-2: Phase 5") && p.contains("- PDT-46 5a: Done"));
+        assert!(p.contains("ooo") && p.contains(&description_cut_note()));
+
+        let many: Vec<String> = (0..2000).map(|i| format!("PDT-{i} a part with a longish title")).collect();
+        let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+        let p = part_prompt("PDT-47", "5b", "d", "b", Some(&ctx("x", &refs)));
+        assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
+        assert!(p.starts_with("PDT-47: 5b") && p.ends_with("on branch b.)"));
+    }
+
     fn start(json: serde_json::Value) -> Result<ValidStart, TicketValidationError> {
         serde_json::from_value::<StartTicket>(json).unwrap().validate()
     }
@@ -266,11 +398,15 @@ mod tests {
                 mode: StartMode::Check,
                 session_mode: SessionMode::Conversation,
                 from_session: None,
+                next: false,
                 size: DEFAULT_SIZE,
             }
         );
+        assert!(start(serde_json::json!({"agent": "claude", "next": true})).unwrap().next);
         let t = start(serde_json::json!({"agent": "claude", "sessionMode": "terminal"})).unwrap();
         assert_eq!(t.session_mode, SessionMode::Terminal);
+        let devin = start(serde_json::json!({"agent": "devin"})).unwrap();
+        assert_eq!(devin.session_mode, SessionMode::Conversation);
         let chat = start(serde_json::json!({"agent": "claude", "fromSession": " s1 "})).unwrap();
         assert_eq!(chat.from_session.as_deref(), Some("s1"));
         let v = start(serde_json::json!({

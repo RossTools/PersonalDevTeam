@@ -24,11 +24,12 @@ fn to_tab(r: &SqliteRow) -> Result<Tab, StoreError> {
         session_id: r.try_get("session_id")?,
         run_id: r.try_get("run_id")?,
         ticket_id: r.try_get("ticket_id")?,
+        worktree_id: r.try_get("worktree_id")?,
         position: u32::try_from(r.try_get::<i64, _>("position")?).unwrap_or(u32::MAX),
     })
 }
 
-const TAB_COLUMNS: &str = "id, workspace_id, session_id, run_id, ticket_id, position";
+const TAB_COLUMNS: &str = "id, workspace_id, session_id, run_id, ticket_id, worktree_id, position";
 
 async fn tab_ids(conn: &mut SqliteConnection, workspace_id: &str) -> Result<Vec<String>, StoreError> {
     let rows: Vec<(String,)> =
@@ -204,7 +205,7 @@ impl Store {
     }
 
     pub async fn move_workspace(&self, id: &str, index: u32) -> Result<bool, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let exists: Option<(String,)> =
             sqlx::query_as("SELECT id FROM workspaces WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
         if exists.is_none() {
@@ -218,7 +219,7 @@ impl Store {
     /// Deletes a free-form workspace, moving its tabs to the end of their projects' workspaces, or closing them with
     /// `close_tabs` (their sessions, runs and tickets stay).
     pub async fn delete_workspace(&self, id: &str, close_tabs: bool) -> Result<DeleteWorkspace, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let row: Option<(Option<String>,)> =
             sqlx::query_as("SELECT project_id FROM workspaces WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
         match row {
@@ -234,7 +235,8 @@ impl Store {
              LEFT JOIN sessions s ON s.id = t.session_id \
              LEFT JOIN runs r ON r.id = t.run_id \
              LEFT JOIN tickets k ON k.id = t.ticket_id \
-             JOIN workspaces w ON w.project_id = COALESCE(s.project_id, r.project_id, k.project_id) \
+             LEFT JOIN worktrees g ON g.id = t.worktree_id \
+             JOIN workspaces w ON w.project_id = COALESCE(s.project_id, r.project_id, k.project_id, g.project_id) \
              WHERE t.workspace_id = ? ORDER BY t.position, t.created_at, t.id",
         )
         .bind(id)
@@ -261,6 +263,7 @@ impl Store {
             TabItem::Session(id) => ("session_id", id),
             TabItem::Run(id) => ("run_id", id),
             TabItem::Ticket(id) => ("ticket_id", id),
+            TabItem::Changes(id) => ("worktree_id", id),
         };
         let sql = format!("SELECT {TAB_COLUMNS} FROM workspace_tabs WHERE {col} = ?");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
@@ -278,7 +281,7 @@ impl Store {
         index: Option<u32>,
         now: i64,
     ) -> Result<Option<Tab>, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM workspaces WHERE id = ?")
             .bind(workspace_id)
             .fetch_optional(&mut *tx)
@@ -286,32 +289,37 @@ impl Store {
         if exists.is_none() {
             return Ok(None);
         }
-        let (session_id, run_id, ticket_id) = match item {
-            TabItem::Session(id) => (Some(id.as_str()), None, None),
-            TabItem::Run(id) => (None, Some(id.as_str()), None),
-            TabItem::Ticket(id) => (None, None, Some(id.as_str())),
+        let (session_id, run_id, ticket_id, worktree_id) = match item {
+            TabItem::Session(id) => (Some(id.as_str()), None, None, None),
+            TabItem::Run(id) => (None, Some(id.as_str()), None, None),
+            TabItem::Ticket(id) => (None, None, Some(id.as_str()), None),
+            TabItem::Changes(id) => (None, None, None, Some(id.as_str())),
         };
         let current: Option<(String, String)> = sqlx::query_as(
             "SELECT id, workspace_id FROM workspace_tabs WHERE session_id IS ? AND run_id IS ? AND ticket_id IS ? \
-             AND (session_id IS NOT NULL OR run_id IS NOT NULL OR ticket_id IS NOT NULL)",
+             AND worktree_id IS ? \
+             AND (session_id IS NOT NULL OR run_id IS NOT NULL OR ticket_id IS NOT NULL OR worktree_id IS NOT NULL)",
         )
         .bind(session_id)
         .bind(run_id)
         .bind(ticket_id)
+        .bind(worktree_id)
         .fetch_optional(&mut *tx)
         .await?;
         let (tab_id, from) = match current {
             Some((id, from)) => (id, Some(from)),
             None => {
                 sqlx::query(
-                    "INSERT INTO workspace_tabs (id, workspace_id, session_id, run_id, ticket_id, position, created_at) \
-                     VALUES (?, ?, ?, ?, ?, (SELECT COUNT(*) FROM workspace_tabs WHERE workspace_id = ?), ?)",
+                    "INSERT INTO workspace_tabs \
+                     (id, workspace_id, session_id, run_id, ticket_id, worktree_id, position, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, (SELECT COUNT(*) FROM workspace_tabs WHERE workspace_id = ?), ?)",
                 )
                 .bind(new_id)
                 .bind(workspace_id)
                 .bind(session_id)
                 .bind(run_id)
                 .bind(ticket_id)
+                .bind(worktree_id)
                 .bind(workspace_id)
                 .bind(now)
                 .execute(&mut *tx)
@@ -333,7 +341,7 @@ impl Store {
     ) -> Result<Option<Tab>, StoreError> {
         let Some(tab) = self.get_tab(id).await? else { return Ok(None) };
         let target = workspace_id.unwrap_or(&tab.workspace_id).to_string();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let exists: Option<(String,)> =
             sqlx::query_as("SELECT id FROM workspaces WHERE id = ?").bind(&target).fetch_optional(&mut *tx).await?;
         if exists.is_none() {
@@ -348,7 +356,7 @@ impl Store {
 
     /// Closes the gaps a deleted session or run leaves in a workspace's tab positions.
     pub async fn renumber_workspace_tabs(&self, workspace_id: &str) -> Result<(), StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         renumber_tabs(&mut tx, workspace_id).await?;
         tx.commit().await?;
         Ok(())
@@ -356,7 +364,7 @@ impl Store {
 
     pub async fn close_tab(&self, id: &str) -> Result<bool, StoreError> {
         let Some(tab) = self.get_tab(id).await? else { return Ok(false) };
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         sqlx::query("DELETE FROM workspace_tabs WHERE id = ?").bind(id).execute(&mut *tx).await?;
         renumber_tabs(&mut tx, &tab.workspace_id).await?;
         tx.commit().await?;

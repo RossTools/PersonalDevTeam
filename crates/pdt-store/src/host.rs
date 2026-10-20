@@ -3,6 +3,9 @@ use pdt_core::host::{CredentialPolicy, HostSettings};
 
 const HOST_KEY: &str = "host";
 
+/// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs.
+type ProjectSettingsRow = (Option<String>, Option<String>, Option<String>, bool);
+
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProjectSettings {
@@ -12,6 +15,8 @@ pub struct ProjectSettings {
     pub agent_credentials: Option<CredentialPolicy>,
     /// Instructions given to every agent session in the project (on top of the repo's CLAUDE.md / AGENTS.md).
     pub agent_instructions: Option<String>,
+    /// Merge… only through the attempt's pull request (review spec §2.7): never a local merge.
+    pub merge_via_pr: bool,
 }
 
 impl Store {
@@ -39,32 +44,37 @@ impl Store {
     }
 
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
-        let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT run_overrides, agent_credentials, agent_instructions FROM project_settings WHERE project_id = ?",
+        let row: Option<ProjectSettingsRow> = sqlx::query_as(
+            "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr FROM project_settings \
+             WHERE project_id = ?",
         )
         .bind(project_id)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((run_overrides, creds, agent_instructions)) = row else { return Ok(ProjectSettings::default()) };
+        let Some((run_overrides, creds, agent_instructions, merge_via_pr)) = row else {
+            return Ok(ProjectSettings::default());
+        };
         let agent_credentials = match creds {
             Some(c) => Some(
                 CredentialPolicy::parse(&c).ok_or_else(|| StoreError::Corrupt(format!("credential policy {c:?}")))?,
             ),
             None => None,
         };
-        Ok(ProjectSettings { run_overrides, agent_credentials, agent_instructions })
+        Ok(ProjectSettings { run_overrides, agent_credentials, agent_instructions, merge_via_pr })
     }
 
     pub async fn put_project_settings(&self, project_id: &str, s: &ProjectSettings) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions) \
-             VALUES (?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET run_overrides = excluded.run_overrides, \
-             agent_credentials = excluded.agent_credentials, agent_instructions = excluded.agent_instructions",
+            "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
+             merge_via_pr) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
+             run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
+             agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
         .bind(s.agent_credentials.map(CredentialPolicy::as_str))
         .bind(&s.agent_instructions)
+        .bind(s.merge_via_pr)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -120,6 +130,7 @@ mod tests {
             run_overrides: Some("[[run]]\nname = \"web\"\n".into()),
             agent_credentials: Some(CredentialPolicy::PassThrough),
             agent_instructions: Some("Run `make check` before pushing.".into()),
+            merge_via_pr: true,
         };
         store.put_project_settings("p", &s).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), s);

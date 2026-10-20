@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { File, Folder } from 'lucide-react';
+import { Badge } from '@ui/Badge';
 import { Button } from '@ui/Button';
 import { StatusDot, type Status } from '@ui/StatusDot';
 import { Input } from '@ui/Input';
@@ -188,25 +189,32 @@ function Headers() {
 function SettingsSample() {
   const [remote, setRemote] = useState(true);
   return (
-    <div className="flex h-96 flex-col rounded-md border border-border bg-background">
+    <div className="flex h-[36rem] flex-col rounded-md border border-border bg-background">
       <Page title="This host" description="Settings for the machine running pdtd.">
-        <Section label="Remote access" description="Reach this host from your other devices over Tailscale.">
+        <Section
+          label="Updates"
+          description="New releases, from GitHub."
+          actions={<Button size="sm">Check for updates</Button>}
+        >
+          <SettingsRow label="Version 0.1.6" description="Last checked 10:42.">
+            <Badge tone="accent">v0.1.7 available</Badge>
+          </SettingsRow>
           <SettingsRow label="Serve over Tailscale" description="https://mac-mini.tailnet.ts.net">
             <Switch aria-label="Serve over Tailscale" checked={remote} onChange={setRemote} />
           </SettingsRow>
-          <SettingsRow label="Owner login" description="Only this Tailscale user gets in." htmlFor="gallery-owner">
-            <Input id="gallery-owner" defaultValue="ross@example.com" />
-          </SettingsRow>
         </Section>
-        <Section label="Runs" actions={<Button size="sm">Save</Button>}>
+        <Section label="Runs" footer={<Button size="sm" variant="primary">Save</Button>}>
           <SettingsRow label="Ports" description="Runs get a port from this range.">
             <Input aria-label="First run port" defaultValue="8400" className="w-20" />
             <span className="text-muted-foreground">–</span>
             <Input aria-label="Last run port" defaultValue="8499" className="w-20" />
           </SettingsRow>
+          <SettingsRow stacked label="Host overrides" description="Stacked: label above a full-width control.">
+            <Input aria-label="Host overrides" defaultValue="[[run]]" />
+          </SettingsRow>
         </Section>
-        <Section label="Danger zone" danger description="Removing a project stops its sessions and runs. Files stay on disk.">
-          <SettingsRow label="Remove project">
+        <Section label="Danger zone" danger>
+          <SettingsRow label="Remove this project" description="Stops its sessions and runs. Files stay on disk.">
             <Button variant="danger" size="sm">Remove project…</Button>
           </SettingsRow>
         </Section>

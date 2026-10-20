@@ -1,6 +1,6 @@
 # Personal Dev Team — Workspaces and Git Integration (Phase 3) Design
 
-Status: draft from brainstorming on 2026-10-17, awaiting the user's review. This amends the main spec,
+Status: built (Phase 3), from brainstorming on 2026-10-17. This amends the main spec,
 `2026-10-14-personal-dev-team-design.md`: it is Phase 3.
 
 ## 1. Purpose

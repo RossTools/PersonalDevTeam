@@ -1,10 +1,10 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
 import { useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Clock, GitPullRequest, Link2, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
+import { ArrowRight, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline,
+  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, useConfirm,
   type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
@@ -21,7 +21,8 @@ import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { actionError, useAction } from '../common/useAction';
-import { patchTicket, useOpenTicket } from './actions';
+import { moveTicket, patchTicket, useOpenTicket } from './actions';
+import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
 import { invalidateTickets, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
@@ -171,14 +172,22 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 /** Stage, priority, labels and areas; each change saves at once. Shown in the ticket tab and the peek. */
 export function TicketDetails({ ticket }: { ticket: Ticket }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const labels = useLabels(ticket.projectId);
   const [save, saving] = useAction((patch: Parameters<typeof patchTicket>[2]) => patchTicket(qc, ticket.id, patch));
+  // A parent with open parts can't close: moveTicket offers to close them first.
+  const [move, moving] = useAction((stage: TicketStage) => moveTicket(qc, ticket, stage, confirm));
   return (
     <OverviewSection title="Details">
       <DetailRow label="Stage">
-        <Select aria-label="Stage" size="sm" options={stageOptions} value={ticket.stage} disabled={saving}
-          onChange={(stage: TicketStage) => void save({ stage })} />
+        <Select aria-label="Stage" size="sm" options={stageOptions} value={ticket.stage} disabled={saving || moving}
+          onChange={(stage: TicketStage) => void move(stage)} />
       </DetailRow>
+      {ticket.partList.length === 0 && (
+        <DetailRow label="Parent">
+          <ParentField ticket={ticket} />
+        </DetailRow>
+      )}
       <DetailRow label="Priority">
         <Select aria-label="Priority" size="sm" options={priorityOptions} value={ticket.priority} disabled={saving}
           onChange={(priority: Priority) => void save({ priority })} />
@@ -368,6 +377,7 @@ function iconFor(e: TicketEvent) {
   if (e.kind === 'waiting') return <Clock aria-hidden />;
   if (e.kind === 'overlap') return <TriangleAlert aria-hidden />;
   if (e.kind === 'pr') return <GitPullRequest aria-hidden />;
+  if (e.kind === 'parted') return <ListTree aria-hidden />;
   return undefined;
 }
 
@@ -380,6 +390,17 @@ function toItem(e: TicketEvent): TimelineItem {
     title: eventTitle(e),
     ...(icon ? { icon } : {}),
     ...(e.kind === 'comment' && e.body ? { body: <Markdown>{e.body}</Markdown> } : {}),
+    // The review comments sent (they go with the worktree once it is removed; the timeline keeps them).
+    ...(e.kind === 'feedback' && e.body
+      ? {
+          body: (
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show the comments</summary>
+              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
+            </details>
+          ),
+        }
+      : {}),
   };
 }
 

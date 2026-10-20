@@ -17,6 +17,48 @@ export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progres
 export const BACKLOG_STAGES: TicketStage[] = ['draft', 'ready'];
 export const isClosed = (s: TicketStage) => s === 'done' || s === 'wont_do';
 
+// ---------------------------------------------------------------------------------------------------------------
+// Parts (PDT-38)
+
+/**
+ * The part "Start next part" starts (pdtd's rule, pdt-core `parts::next_part`): the first open part, in rank order,
+ * with no active or merged attempt and no open blockers. A string says why there is none.
+ */
+export function nextPart(parts: TicketSummary[]): TicketSummary | string {
+  if (parts.length === 0) return 'it has no parts';
+  if (parts.every((p) => isClosed(p.stage))) return 'all its parts are closed';
+  const startable = parts.filter((p) => !isClosed(p.stage) && p.attempt?.state !== 'active' && p.attempt?.state !== 'merged');
+  const next = startable.find((p) => p.blockedBy === 0);
+  if (next) return next;
+  return startable.length > 0
+    ? `its next parts are blocked: ${startable.map((p) => p.key).join(', ')}`
+    : 'every open part is started or merged';
+}
+
+/**
+ * The parts a description plans: the top-level list items under the first heading whose text contains "Scope" or
+ * "Parts" (until the next heading of that level or higher). An item that starts with a bold lead
+ * (`**5a — Claude conversations**: …`) is just the bold text; otherwise its first line, without trailing colon.
+ */
+export function scopeParts(markdown: string): string[] {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^#{1,6}\s/.test(l) && /scope|parts/i.test(l));
+  if (start < 0) return [];
+  const level = lines[start].match(/^#+/)![0].length;
+  const out: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const h = line.match(/^(#{1,6})\s/);
+    if (h && h[1].length <= level) break;
+    const item = line.match(/^(?:[-*+]|\d+[.)])\s+(.*)$/);
+    if (!item) continue;
+    const text = item[1].trim();
+    const bold = text.match(/^\*\*(.+?)\*\*/) ?? text.match(/^__(.+?)__/);
+    const title = (bold ? bold[1] : text).replace(/[:：]\s*$/, '').trim();
+    if (title) out.push(title.slice(0, 200));
+  }
+  return out;
+}
+
 export type GroupBy = 'none' | 'stage' | 'priority' | 'label';
 
 export interface BacklogFilters {
@@ -209,6 +251,17 @@ export function eventTitle(e: TicketEvent): string {
     }
     case 'waiting': return data.waiting === false ? 'Stopped waiting' : 'Waiting until clear';
     case 'pr': return prEventTitle(e.data as PrEventData | null);
+    case 'parted': {
+      const d = (e.data ?? {}) as { parentId?: string; parentKey?: string; partKey?: string; removed?: boolean };
+      return e.ticketId === d.parentId
+        ? `${d.removed ? 'Part removed' : 'Part added'}: ${d.partKey ?? 'a ticket'}`
+        : `${d.removed ? 'No longer a part of' : 'Made a part of'} ${d.parentKey ?? 'a ticket'}`;
+    }
+    case 'feedback': {
+      const n = (e.data as { count?: number } | null)?.count ?? 0;
+      return `Sent ${n} review comment${n === 1 ? '' : 's'} to the agent`;
+    }
+    case 'review': return 'Approved the changes';
   }
 }
 

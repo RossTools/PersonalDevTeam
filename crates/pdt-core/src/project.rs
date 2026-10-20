@@ -67,6 +67,46 @@ pub struct CloneProject {
     pub key: Option<String>,
 }
 
+/// Brings a local branch of the main checkout up to date with `origin` (PDT-56): `POST /api/projects/{id}/pull`.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullBranch {
+    /// The project's base branch when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub branch: Option<String>,
+}
+
+/// What a pull did. Only `updated` moved anything; the rest left the branch as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PullOutcome {
+    Updated,
+    UpToDate,
+    /// No `origin` remote.
+    NoRemote,
+    /// No local branch of that name.
+    NoBranch,
+    /// The fetch failed (see `message`).
+    FetchFailed,
+    /// Local commits `origin` lacks and the other way round: never merged.
+    Diverged,
+    /// Checked out with uncommitted changes in the way (or a merge in progress); see `message`.
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullResult {
+    pub branch: String,
+    pub outcome: PullOutcome,
+    /// Git's own words for `fetch_failed` / `blocked`.
+    pub message: Option<String>,
+}
+
 /// A folder the user typed: `~` or `~/...` expands to `home`; anything else must already be absolute. Trimmed.
 pub fn resolve_folder(input: &str, home: Option<&std::path::Path>) -> Result<std::path::PathBuf, FolderError> {
     let s = input.trim();
