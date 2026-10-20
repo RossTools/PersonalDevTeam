@@ -136,9 +136,15 @@ impl Store {
         Ok(row.map(to_project))
     }
 
-    /// Renames a project (and its workspace) and/or changes its key. False if there is no such project;
-    /// `Conflict` if the key is taken.
-    pub async fn update_project(&self, id: &str, name: Option<&str>, key: Option<&str>) -> Result<bool, StoreError> {
+    /// Renames a project (and its workspace) and/or changes its key or base branch. False if there is no such
+    /// project; `Conflict` if the key is taken.
+    pub async fn update_project(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        key: Option<&str>,
+        base_branch: Option<&str>,
+    ) -> Result<bool, StoreError> {
         let mut tx = self.write_tx().await?;
         let found: Option<(String,)> =
             sqlx::query_as("SELECT id FROM projects WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
@@ -155,6 +161,13 @@ impl Store {
         }
         if let Some(key) = key {
             sqlx::query("UPDATE projects SET key = ? WHERE id = ?").bind(key).bind(id).execute(&mut *tx).await?;
+        }
+        if let Some(base) = base_branch {
+            sqlx::query("UPDATE projects SET base_branch = ? WHERE id = ?")
+                .bind(base)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         Ok(true)
@@ -229,13 +242,13 @@ mod tests {
         let keys: Vec<String> = store.list_projects().await.unwrap().into_iter().map(|p| p.key).collect();
         assert_eq!(keys, ["PDT", "PDT2"]);
 
-        assert!(store.update_project("b", Some("Renamed"), Some("RN")).await.unwrap());
+        assert!(store.update_project("b", Some("Renamed"), Some("RN"), Some("trunk")).await.unwrap());
         let b = store.get_project("b").await.unwrap().unwrap();
-        assert_eq!((b.name.as_str(), b.key.as_str()), ("Renamed", "RN"));
+        assert_eq!((b.name.as_str(), b.key.as_str(), b.base_branch.as_str()), ("Renamed", "RN", "trunk"));
         let ws = store.list_workspaces().await.unwrap();
         assert!(ws.iter().any(|w| w.name == "Renamed" && w.project_id.as_deref() == Some("b")));
-        assert!(matches!(store.update_project("b", None, Some("PDT")).await, Err(StoreError::Conflict(_))));
-        assert!(!store.update_project("nope", Some("x"), None).await.unwrap());
+        assert!(matches!(store.update_project("b", None, Some("PDT"), None).await, Err(StoreError::Conflict(_))));
+        assert!(!store.update_project("nope", Some("x"), None, None).await.unwrap());
 
         assert!(store.delete_project("b").await.unwrap());
         assert!(!store.delete_project("b").await.unwrap());

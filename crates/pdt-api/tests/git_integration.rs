@@ -89,6 +89,35 @@ async fn projects_get_keys_that_can_be_changed() {
 }
 
 #[tokio::test]
+async fn base_branch_defaults_to_the_default_branch_and_can_be_changed() {
+    let env = setup().await;
+    // A clone checked out on a feature branch: the base is origin's default branch, not the checked-out one.
+    let clone = env.tmp.path().join("clone");
+    git(env.tmp.path(), &["clone", "-q", &env.repo.to_string_lossy(), &clone.to_string_lossy()]);
+    git(&clone, &["checkout", "-q", "-b", "feature/x"]);
+    let (s, p) =
+        call(&env.app, "POST", "/api/projects", Some(json!({"name": "c", "repoPath": clone.to_string_lossy()}))).await;
+    assert_eq!((s, p["baseBranch"].as_str()), (StatusCode::CREATED, Some("main")), "{p}");
+
+    // Any local branch or one only on origin; nothing else.
+    git(&env.repo, &["branch", "release"]);
+    git(&clone, &["fetch", "-q"]);
+    let uri = format!("/api/projects/{}", p["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "PATCH", &uri, Some(json!({"baseBranch": " feature/x "}))).await;
+    assert_eq!((s, v["baseBranch"].as_str()), (StatusCode::OK, Some("feature/x")), "{v}");
+    let (s, v) = call(&env.app, "PATCH", &uri, Some(json!({"baseBranch": "release"}))).await;
+    assert_eq!((s, v["baseBranch"].as_str()), (StatusCode::OK, Some("release")), "{v}");
+    let (s, v) = call(&env.app, "PATCH", &uri, Some(json!({"baseBranch": "nope"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("unknown_branch")));
+    let (s, _) = call(&env.app, "PATCH", &uri, Some(json!({"baseBranch": " "}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(&env.app, "PATCH", &uri, Some(json!({"baseBranch": "-x"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (_, v) = call(&env.app, "GET", &uri, None).await;
+    assert_eq!(v["baseBranch"], "release");
+}
+
+#[tokio::test]
 async fn github_origins_are_recognised() {
     let env = setup().await;
     git(&env.repo, &["remote", "add", "origin", "git@github.com:ross-game-tools/PersonalDevTeam.git"]);

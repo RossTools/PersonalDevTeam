@@ -35,7 +35,7 @@ pub struct NewProject {
     pub key: Option<String>,
 }
 
-/// Renames a project or changes its key.
+/// Renames a project, changes its key or its base branch.
 #[derive(Debug, Clone, Default, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -46,6 +46,10 @@ pub struct ProjectPatch {
     #[serde(default)]
     #[ts(optional)]
     pub key: Option<String>,
+    /// The branch new worktrees and tickets start from; a local branch or one on `origin`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub base_branch: Option<String>,
 }
 
 /// Clones a repository and adds it as a project.

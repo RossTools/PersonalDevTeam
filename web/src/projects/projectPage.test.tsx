@@ -17,6 +17,7 @@ const base = {
   'GET /api/projects/p/worktrees': [wt('w1', 'feature/x'), wt('w2', 'old', true)],
   'GET /api/projects/p/settings': { runOverrides: null, agentCredentials: null },
   'GET /api/projects/p/run-config': { file: null, filePath: null, error: null, effective: null },
+  'GET /api/projects/p/branches': [{ name: 'main', local: true }, { name: 'release', local: false }],
 };
 
 describe('ProjectPage', () => {
@@ -32,6 +33,18 @@ describe('ProjectPage', () => {
     await userEvent.click(save);
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { key: 'core' } }));
     expect(screen.getByRole('link', { name: /o\/pdt on GitHub/ })).toHaveAttribute('href', 'https://github.com/o/pdt');
+  });
+
+  it('changes the base branch to a local or origin branch', async () => {
+    const calls = stubApi({ ...base, 'PATCH /api/projects/p': { ...project, baseBranch: 'release' } });
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    const form = screen.getByRole('region', { name: 'Project' });
+    const save = within(form).getByRole('button', { name: 'Save' });
+    await userEvent.click(within(form).getByRole('button', { name: /Base branch/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'release (origin)' }));
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { baseBranch: 'release' } }));
   });
 
   it('shows why saving the name and key failed', async () => {

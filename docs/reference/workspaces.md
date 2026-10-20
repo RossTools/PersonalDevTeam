@@ -29,6 +29,10 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   `POST /api/projects/clone` clones into the host's Projects folder (default `~/work`) with `GIT_TERMINAL_PROMPT=0`;
   removing a project stops its sessions and runs and never touches files. Projects carry `githubRepo` from `origin`
   (no GitHub API calls).
+- A project's base branch (what new worktrees and tickets branch from and are reviewed against) defaults to the
+  repository's default branch: `origin/HEAD`'s, else a local `main` or `master`, else the checked-out branch (pdt-git
+  `default_branch`). The project's Settings page changes it (`PATCH /api/projects/{id} {baseBranch}`, which must name
+  a local branch or one on `origin`); existing attempts keep the base they started with.
 - The Files view reads checkouts through `/api/projects/{id}/files` (git's file list, `.gitignore` honoured; paths
   stay inside the checkout, `.git` refused).
 - Folder picker (PDT-5): `GET /api/host/folders` (`path` absolute or `~…`, empty = home; `hidden`; `nearest` walks up
