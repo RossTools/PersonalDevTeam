@@ -65,6 +65,23 @@ describe('ChangesView', () => {
     expect(screen.getByText('untracked')).toBeInTheDocument();
   });
 
+  it('shows a Markdown file rendered, before and after side by side', async () => {
+    stub({
+      'GET /api/worktrees/w1/changes/file': { path: 'README.md', old: '# Old title\n', new: '# New title\n', binary: false, tooLarge: false },
+    });
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    await userEvent.click(await screen.findByRole('radio', { name: 'Rendered' }));
+    expect(within(screen.getByRole('region', { name: 'Before' })).getByRole('heading', { name: 'Old title' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'After' })).getByRole('heading', { name: 'New title' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Whole file' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Diff' }));
+    expect(screen.queryByRole('region', { name: 'After' })).not.toBeInTheDocument();
+    // Not offered for other files.
+    await userEvent.click(within(await findTree()).getByText('login.ts'));
+    expect(await screen.findByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Rendered' })).not.toBeInTheDocument();
+  });
+
   it('marks a file viewed, which survives a reload until the file changes', async () => {
     stub();
     const { unmount } = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);

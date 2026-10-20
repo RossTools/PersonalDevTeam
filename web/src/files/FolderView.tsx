@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Project } from '../api/gen/Project';
 import { copyToClipboard } from '../common/clipboard';
-import { Markdown } from '../common/Markdown';
+import { isMarkdownPath, Markdown } from '../common/Markdown';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { CodeViewer } from './LazyCodeViewer';
 
@@ -98,9 +98,6 @@ export function FolderTree({ state }: { state: FolderViewState }) {
   );
 }
 
-/** Markdown files open rendered, with Source a click away. */
-const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
-
 /** The selected file, read-only; a Markdown file shows rendered or as source. */
 export function FileViewer({ state }: { state: FolderViewState }) {
   const place = state.place;
@@ -114,7 +111,7 @@ export function FileViewer({ state }: { state: FolderViewState }) {
   if (q.isPending) return <Skeleton lines={8} label="Loading the file" className="p-4" />;
   if (q.isError) return <div className="p-4"><Alert tone="error">{q.error.message}</Alert></div>;
   const f = q.data;
-  const markdown = isMarkdown(f.path) && !f.tooLarge && !f.binary && f.text !== null;
+  const markdown = isMarkdownPath(f.path) && !f.tooLarge && !f.binary && f.text !== null;
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <ViewHeader

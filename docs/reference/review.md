@@ -12,6 +12,8 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   `approved` and `dirty`; `GET …/changes/file?path=&oldPath=` serves both texts (≤ 1 MB each, not binary).
 - The browser draws the diff with `@codemirror/merge` (web/src/review `CodeDiff`, lazy; split or unified, unified
   below 900px; unchanged runs collapse unless Whole file, except a run that holds a thread; lines wrap).
+- A Markdown file has Diff | Rendered (PDT-75): rendered shows Before | After side by side in the split layout, else
+  the file as it is now (or was, when deleted); comments are made in the diff.
 
 ## Comments and feedback
 
