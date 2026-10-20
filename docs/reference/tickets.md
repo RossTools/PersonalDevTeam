@@ -86,7 +86,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   fast-forwarded to a newer main is not merged), or GitHub says its PR merged at that head (`attempt.pr`; the merge
   queue squashes onto a newer base, which the patch check can miss).
 - A merged attempt shows the banner "Move to Done and remove the worktree" (web/src/tickets/actions.ts
-  `finishMerged`): after one question it stops every session and run in the worktree, the attempt's sessions and
+  `finishMerged`; in the ticket peek, and above every tab of the ticket's workspace while it is on screen, PDT-71,
+  else in the ticket tab): after one question it stops every session and run in the worktree, the attempt's sessions and
   everything in the workspace Start made for the ticket (`attempts.workspace_id`), removes the worktree, deletes that
   workspace's sessions and then the workspace with its tabs (`DELETE /api/workspaces/{id}?closeTabs=true`), the
   ticket's among them.

@@ -25,7 +25,7 @@ import { invalidateTickets } from '../tickets/queries';
 import { OpenChangesContext } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
-import { looksLikeKey } from '../tickets/model';
+import { isClosed, looksLikeKey } from '../tickets/model';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
@@ -65,6 +65,7 @@ const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m)
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
 const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
 const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
+const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
 
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
@@ -88,6 +89,9 @@ export function AppShell() {
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
   const ws = useWorkspaces();
+  // A ticket workspace whose attempt merged while the ticket is open: its banner shows above every tab (PDT-71).
+  const wsTicket = ws.workspace?.ticket;
+  const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && !isClosed(wsTicket.stage) ? wsTicket.id : null;
   const backlog = useBacklog();
   const openTicket = useCallback((t: { id: string; projectId: string }) => {
     setView('sessions');
@@ -348,6 +352,9 @@ export function AppShell() {
             <InstanceBadge compact />
           </div>
         ) : null}
+        {view === 'sessions' && mergedTicketId && (
+          <Suspense fallback={null}><WorkspaceMergedBanner key={mergedTicketId} ticketId={mergedTicketId} /></Suspense>
+        )}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
         {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} onQueryChange={setPaletteQuery} />
@@ -394,7 +401,7 @@ export function AppShell() {
             ) : view === 'settings' ? (
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} onDeleted={() => void ws.refresh()} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : ws.tab?.worktreeId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></Suspense>
             ) : current?.run ? (
