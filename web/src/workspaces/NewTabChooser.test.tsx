@@ -109,6 +109,19 @@ describe('NewTabChooser', () => {
       expect(post(calls)).not.toHaveProperty('bypassPermissions');
     });
 
+    it("starts from the host's permission mode for new sessions", async () => {
+      const calls = stubApi({
+        ...routes,
+        'POST /api/sessions': created,
+        'GET /api/host/settings': { settings: { defaultAgent: 'claude', defaultSessionMode: 'conversation', sessionPermissionMode: 'bypass' } },
+      });
+      const panel = await open();
+      await waitFor(() => expect(within(panel).getByRole('switch', { name: /Skip permission prompts/ })).toBeChecked());
+      expect(within(panel).getByRole('button', { name: /Permission mode for a new conversation/ })).toHaveTextContent('Bypass (dangerous)');
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ mode: 'conversation', permissionMode: 'bypass' }));
+    });
+
     it('Codex opens a conversation with the picked permission mode', async () => {
       const calls = stubApi({ ...routes, 'POST /api/sessions': created });
       const panel = await open();

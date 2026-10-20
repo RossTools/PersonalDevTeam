@@ -5,4 +5,13 @@ import type { MergeStyle } from "./MergeStyle";
  * `POST /api/attempts/{id}/merge` (an empty body is a merge commit). `style` is for a local merge only; a pull
  * request merges the way GitHub's settings say.
  */
-export type MergeRequest = { style?: MergeStyle, };
+export type MergeRequest = { style?: MergeStyle, 
+/**
+ * A pull request only: once GitHub merges it, move the ticket to Done and remove the worktree and the workspace
+ * Start made (PDT-75). A local merge finishes in the web right away.
+ */
+finishOnMerge?: boolean, 
+/**
+ * With `finish_on_merge`: delete the branch with the worktree.
+ */
+deleteBranch?: boolean, };

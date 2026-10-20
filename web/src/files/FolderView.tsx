@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { File, FileQuestion, Folder, FolderOpen } from 'lucide-react';
-import { Alert, Chip, EmptyState, MenuButton, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
+import { Alert, Chip, EmptyState, MenuButton, SegmentedControl, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Project } from '../api/gen/Project';
 import { copyToClipboard } from '../common/clipboard';
+import { Markdown } from '../common/Markdown';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { CodeViewer } from './LazyCodeViewer';
 
@@ -97,9 +98,13 @@ export function FolderTree({ state }: { state: FolderViewState }) {
   );
 }
 
-/** The selected file, read-only. */
+/** Markdown files open rendered, with Source a click away. */
+const isMarkdown = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
+
+/** The selected file, read-only; a Markdown file shows rendered or as source. */
 export function FileViewer({ state }: { state: FolderViewState }) {
   const place = state.place;
+  const [markdownView, setMarkdownView] = useState<'rendered' | 'source'>('rendered');
   const q = useQuery({
     queryKey: ['file', place?.projectId, place?.worktreeId, state.file],
     queryFn: () => api.fileContent(place!.projectId, place!.worktreeId, state.file!),
@@ -109,6 +114,7 @@ export function FileViewer({ state }: { state: FolderViewState }) {
   if (q.isPending) return <Skeleton lines={8} label="Loading the file" className="p-4" />;
   if (q.isError) return <div className="p-4"><Alert tone="error">{q.error.message}</Alert></div>;
   const f = q.data;
+  const markdown = isMarkdown(f.path) && !f.tooLarge && !f.binary && f.text !== null;
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <ViewHeader
@@ -124,18 +130,33 @@ export function FileViewer({ state }: { state: FolderViewState }) {
           </>
         }
         actions={
-          <MenuButton
-            label="File actions"
-            size="sm"
-            placement="bottom end"
-            entries={() => [{ label: 'Copy path', onSelect: () => void copyToClipboard(f.path, 'Path copied') }]}
-          />
+          <>
+            {markdown && (
+              <SegmentedControl<'rendered' | 'source'>
+                aria-label="Show"
+                size="sm"
+                options={[{ value: 'rendered', label: 'Rendered' }, { value: 'source', label: 'Source' }]}
+                value={markdownView}
+                onChange={setMarkdownView}
+              />
+            )}
+            <MenuButton
+              label="File actions"
+              size="sm"
+              placement="bottom end"
+              entries={() => [{ label: 'Copy path', onSelect: () => void copyToClipboard(f.path, 'Path copied') }]}
+            />
+          </>
         }
       />
       {f.tooLarge ? (
         <EmptyState icon={<FileQuestion />}>This file is over 1 MB, too large to show here.</EmptyState>
       ) : f.binary || f.text === null ? (
         <EmptyState icon={<FileQuestion />}>This is a binary file.</EmptyState>
+      ) : markdown && markdownView === 'rendered' ? (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <Markdown className="mx-auto max-w-3xl p-4">{f.text}</Markdown>
+        </div>
       ) : (
         <div className="flex-1 min-h-0"><CodeViewer name={f.path} text={f.text} /></div>
       )}

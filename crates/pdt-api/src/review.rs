@@ -504,6 +504,8 @@ pub(crate) async fn merge(
         return Err(blocked(problem));
     }
     if let Some(pr) = &p.pr {
+        let finish = input.finish_on_merge.unwrap_or(false);
+        st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
         let repo = crate::github::github_repo(&info.repo_path).await.unwrap_or_default();
         let (gh, base, number) = (st.github.clone(), p.base.clone(), pr.number);
         tokio::task::spawn_blocking(move || {

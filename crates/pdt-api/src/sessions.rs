@@ -530,14 +530,19 @@ pub(crate) async fn update(
 }
 
 pub(crate) async fn kill(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    let _guard = st.lock_session(&id).await;
-    let session = load(&st, &id).await?;
-    if session.mode == SessionMode::Conversation {
-        crate::conversations::stop(&st, &session).await?;
-        return Ok(StatusCode::NO_CONTENT);
-    }
-    st.kill_pty(&id).await?;
+    stop(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Stops a session's agent (the session stays).
+pub(crate) async fn stop(st: &AppState, id: &str) -> Result<(), ApiError> {
+    let _guard = st.lock_session(id).await;
+    let session = load(st, id).await?;
+    if session.mode == SessionMode::Conversation {
+        return crate::conversations::stop(st, &session).await;
+    }
+    st.kill_pty(id).await?;
+    Ok(())
 }
 
 pub(crate) async fn restart(

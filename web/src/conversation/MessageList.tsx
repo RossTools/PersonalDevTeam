@@ -217,7 +217,7 @@ function ChangesButton({ diff }: { diff: string }) {
       <Button variant="ghost" size="sm" onClick={() => setOpen(true)} className="h-auto px-1.5 py-0.5 text-meta">
         Changes <DiffStat added={stats.added} removed={stats.removed} />
       </Button>
-      <Dialog open={open} onOpenChange={setOpen} title="Changes in this turn" size="lg">
+      <Dialog open={open} onOpenChange={setOpen} title="Changes in this turn" size="xl">
         <DiffViewer diff={diff} />
       </Dialog>
     </>

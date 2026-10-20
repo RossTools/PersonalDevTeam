@@ -114,6 +114,8 @@ export function ConversationPane({ session, conv, banner, className }: {
         <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">Reconnecting…</p>
       )}
       <ConversationComposer
+        key={session.id}
+        draftKey={session.id}
         turnRunning={turnRunning}
         onSend={send}
         onInterrupt={interrupt}

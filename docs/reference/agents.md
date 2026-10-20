@@ -81,8 +81,10 @@ until the checks load or when they fail.
 
 ## Host defaults (PDT-69)
 
-Host settings `defaultAgent` (claude), `defaultSessionMode` (conversation) and `updateCheckMinutes` (60; 5 min to a
-week), in Settings → This host (Agents, Updates). The web reads them from the `['host-settings']` query
+Host settings `defaultAgent` (claude), `defaultSessionMode` (conversation), `ticketPermissionMode` (bypass: the
+agent works on its own branch) and `sessionPermissionMode` (ask), PDT-75, and `updateCheckMinutes` (60; 5 min to a
+week), in Settings → This host (Agents, Updates). The permission modes are only what the Start dialog and the new-tab
+chooser pick first (in a terminal only bypass changes anything); requests without one keep the agent's default. The web reads them from the `['host-settings']` query
 (web/src/common/useAgentDefaults.ts): ticket Start preselects them, the new-tab chooser, palette and "… with an agent"
 menus list the default agent's choices first, default view first (`byDefault` in web/src/sessions/newSession.ts), and
 "… with an agent" starts in the default view. pdtd's update loop re-reads the interval every minute, so a change

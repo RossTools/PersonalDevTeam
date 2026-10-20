@@ -1,7 +1,7 @@
 //! Per-host settings (spec §6). Pure: pdt-store stores them, pdt-api edits them.
 
 use crate::brand::Profile;
-use crate::conversation::SessionMode;
+use crate::conversation::{PermissionMode, SessionMode};
 use crate::session::AgentKind;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -72,6 +72,10 @@ pub struct HostSettings {
     pub default_agent: AgentKind,
     /// Whether a new agent session is a conversation or the agent's terminal by default.
     pub default_session_mode: SessionMode,
+    /// The permission mode a ticket's Start offers first (bypass: the agent works on its own branch, PDT-75).
+    pub ticket_permission_mode: PermissionMode,
+    /// The permission mode a new session offers first (the new-tab chooser).
+    pub session_permission_mode: PermissionMode,
     /// Minutes between automatic update checks (unless the update policy is manual).
     pub update_check_minutes: u32,
 }
@@ -88,6 +92,8 @@ impl Default for HostSettings {
             projects_dir: None,
             default_agent: AgentKind::Claude,
             default_session_mode: SessionMode::Conversation,
+            ticket_permission_mode: PermissionMode::Bypass,
+            session_permission_mode: PermissionMode::Ask,
             update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
         }
     }
@@ -126,6 +132,12 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub default_session_mode: Option<SessionMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub ticket_permission_mode: Option<PermissionMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub session_permission_mode: Option<PermissionMode>,
     #[serde(default)]
     #[ts(optional)]
     pub update_check_minutes: Option<u32>,
@@ -199,6 +211,12 @@ impl HostSettings {
         if let Some(m) = p.default_session_mode {
             s.default_session_mode = m;
         }
+        if let Some(m) = p.ticket_permission_mode {
+            s.ticket_permission_mode = m;
+        }
+        if let Some(m) = p.session_permission_mode {
+            s.session_permission_mode = m;
+        }
         if let Some(n) = p.update_check_minutes {
             if !UPDATE_CHECK_MINUTES.contains(&n) {
                 return Err(HostSettingsError::BadUpdateInterval);
@@ -233,6 +251,10 @@ mod tests {
         assert_eq!(s.agent_credentials, CredentialPolicy::Subscription);
         assert_eq!(s.default_agent, AgentKind::Claude);
         assert_eq!(s.default_session_mode, SessionMode::Conversation);
+        assert_eq!(
+            (s.ticket_permission_mode, s.session_permission_mode),
+            (PermissionMode::Bypass, PermissionMode::Ask)
+        );
         assert_eq!(s.update_check_minutes, 60);
     }
 
@@ -242,16 +264,22 @@ mod tests {
         let s: HostSettings = serde_json::from_str(r#"{"remoteAccess":true,"maxConcurrentRuns":2}"#).unwrap();
         assert_eq!(s.default_agent, AgentKind::Claude);
         assert_eq!(s.default_session_mode, SessionMode::Conversation);
+        assert_eq!(s.ticket_permission_mode, PermissionMode::Bypass);
         assert_eq!(s.update_check_minutes, DEFAULT_UPDATE_CHECK_MINUTES);
     }
 
     #[test]
     fn default_agent_view_and_update_interval_are_set_and_checked() {
         let p: HostSettingsPatch = serde_json::from_str(
-            r#"{"defaultAgent":"codex","defaultSessionMode":"terminal","updateCheckMinutes":360}"#,
+            r#"{"defaultAgent":"codex","defaultSessionMode":"terminal","updateCheckMinutes":360,
+                "ticketPermissionMode":"accept_edits","sessionPermissionMode":"plan"}"#,
         )
         .unwrap();
         let s = HostSettings::default().apply(&p).unwrap();
+        assert_eq!(
+            (s.ticket_permission_mode, s.session_permission_mode),
+            (PermissionMode::AcceptEdits, PermissionMode::Plan)
+        );
         assert_eq!(s.default_agent, AgentKind::Codex);
         assert_eq!(s.default_session_mode, SessionMode::Terminal);
         assert_eq!(s.update_check_minutes, 360);

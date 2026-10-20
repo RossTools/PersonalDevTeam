@@ -35,7 +35,12 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   pr_not_mergeable, pr_queued, no_pr); a failing gh or git is 409 `merge_failed`.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` (pdt-github `merge_pr`; the method from
   `merge_settings`, none with a merge queue; when GitHub says the PR is already clean it merges at once) and the merge
-  check ends the attempt later.
+  check ends the attempt later. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
+  branch off) sends `{finishOnMerge, deleteBranch}`, kept on the attempt (`attempts.finish_on_merge`,
+  `finish_delete_branch`, PDT-75): when the merge check ends the attempt as merged, pdt-api `finish.rs` does what
+  `finishMerged` does without its questions (Done; the worktree's and the Start workspace's sessions and runs
+  stopped and removed, the attempt's other sessions stopped; the worktree, the workspace with its tabs; the base
+  pulled). A worktree with uncommitted changes is never discarded: then nothing happens and the merged banner stays.
 - Otherwise a local merge with the user's identity: a `--no-ff` merge commit, or with `{style: "squash"}` one
   single-parent commit (`<KEY>: <title>`; PDT-65), in the checkout that has the base (which must be clean;
   `merge --squash` + `commit` for a squash), else `merge-tree` + `commit-tree` + `update-ref`. The dialog's Merge

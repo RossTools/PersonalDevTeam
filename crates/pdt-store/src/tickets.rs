@@ -92,13 +92,17 @@ pub struct AttemptInfo {
     pub own_commits: bool,
     /// None when the worktree record is gone.
     pub worktree_path: Option<String>,
+    /// Finish the ticket once the branch is merged (Merge… on a pull request, PDT-75); with `finish_delete_branch`
+    /// the branch goes with the worktree.
+    pub finish_on_merge: bool,
+    pub finish_delete_branch: bool,
 }
 
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
                               a.ended_at, a.last_head, a.workspace_id FROM attempts a";
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
                                    a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, a.own_commits, \
-                                   t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
+                                   a.finish_on_merge, a.finish_delete_branch, t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
                                    w.path AS worktree_path \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
@@ -114,6 +118,8 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
         base_commit: r.try_get("base_commit")?,
         own_commits: r.try_get::<i64, _>("own_commits")? != 0,
         worktree_path: r.try_get("worktree_path")?,
+        finish_on_merge: r.try_get::<i64, _>("finish_on_merge")? != 0,
+        finish_delete_branch: r.try_get::<i64, _>("finish_delete_branch")? != 0,
     })
 }
 
@@ -1507,6 +1513,17 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Whether to finish the ticket once the attempt's branch is merged, and whether to delete the branch then.
+    pub async fn set_attempt_finish(&self, id: &str, finish: bool, delete_branch: bool) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET finish_on_merge = ?, finish_delete_branch = ? WHERE id = ?")
+            .bind(finish)
+            .bind(finish && delete_branch)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Remembers the workspace Start made for the attempt.
     pub async fn set_attempt_workspace(&self, id: &str, workspace_id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE attempts SET workspace_id = ? WHERE id = ?")
@@ -2412,6 +2429,16 @@ mod tests {
         assert!(store.set_attempt_head("at1", "def", false).await.unwrap());
         let info = store.get_attempt("at1").await.unwrap().unwrap();
         assert_eq!((info.attempt.last_head.as_deref(), info.own_commits), (Some("def"), true), "own commits stick");
+
+        // Finish on merge (Merge… on a pull request); deleting the branch only comes with finishing.
+        assert_eq!((info.finish_on_merge, info.finish_delete_branch), (false, false));
+        assert!(store.set_attempt_finish("at1", true, true).await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert_eq!((info.finish_on_merge, info.finish_delete_branch), (true, true));
+        assert!(store.set_attempt_finish("at1", false, true).await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert_eq!((info.finish_on_merge, info.finish_delete_branch), (false, false));
+        assert!(!store.set_attempt_finish("nope", true, false).await.unwrap());
 
         // The workspace Start made is remembered, and forgotten when the workspace is deleted.
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);

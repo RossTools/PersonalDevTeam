@@ -504,3 +504,104 @@ async fn a_project_that_merges_through_prs_never_merges_locally() {
         std::process::Command::new("git").current_dir(&env.repo).args(["log", "-1", "--format=%s"]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "init", "main was not touched");
 }
+
+/// Merge… on a pull request with "Move to Done and clean up once it merges" (PDT-75).
+async fn queue_with_finish(env: &Env) -> PullRequest {
+    git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "add c");
+    let head = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&env.wt_path)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let pr = PullRequest {
+        number: 12,
+        url: "https://github.com/o/r/pull/12".into(),
+        title: "Ship it".into(),
+        state: PrState::Open,
+        draft: false,
+        head_sha: head,
+        base_branch: "main".into(),
+        mergeable: Mergeable::Mergeable,
+        behind: false,
+        auto_merge: false,
+        in_merge_queue: false,
+        queue_position: None,
+        queue_removal: None,
+    };
+    env.gh.set_pr(&env.branch, Some(pr.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    let body = json!({"finishOnMerge": true, "deleteBranch": true});
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), Some(body)).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("queued")), "{r}");
+    pr
+}
+
+async fn wait_for(what: &str, mut ok: impl AsyncFnMut() -> bool) {
+    for _ in 0..200 {
+        if ok().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[tokio::test]
+async fn finish_on_merge_moves_to_done_and_cleans_up_once_github_merges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = queue_with_finish(&env).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!((t["stage"].as_str(), t["attempt"]["state"].as_str()), (Some("in_progress"), Some("active")), "{t}");
+
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+    let (s, _) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
+    assert_eq!(s, StatusCode::OK);
+    let (app, ticket) = (env.app.clone(), env.ticket.clone());
+    wait_for("the ticket to be done", async || {
+        call(&app, "GET", &format!("/api/tickets/{ticket}"), None).await.1["stage"] == "done"
+    })
+    .await;
+    let wt_path = env.wt_path.clone();
+    wait_for("the worktree to go", async || !wt_path.exists()).await;
+    let (s, _) = call(&env.app, "GET", &format!("/api/sessions/{}", env.session), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "the worktree's session is stopped and removed");
+    let branches = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["branch", "--list", &env.branch])
+            .current_dir(&env.repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(branches.trim(), "", "the branch went too");
+}
+
+#[tokio::test]
+async fn finish_on_merge_leaves_uncommitted_changes_for_the_user() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = queue_with_finish(&env).await;
+    std::fs::write(env.wt_path.join("scratch.txt"), "not committed\n").unwrap();
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
+    assert_eq!(t["attempt"]["state"], "merged", "{t}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "in_progress", "the merged banner stays for the user");
+    assert!(env.wt_path.join("scratch.txt").exists());
+    let (s, _) = call(&env.app, "GET", &format!("/api/sessions/{}", env.session), None).await;
+    assert_eq!(s, StatusCode::OK);
+}

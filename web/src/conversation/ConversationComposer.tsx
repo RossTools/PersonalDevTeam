@@ -8,6 +8,7 @@ import type { Delivery } from '../api/gen/Delivery';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import { actionError } from '../common/useAction';
 import { isMac } from '../palette/useMetaK';
+import { loadDraft, saveDraft } from './drafts';
 import { applyCompletion, commandSuggestions, completionAt, type LimitWarning } from './completion';
 
 /** Image types the agents take (and PDT stores). */
@@ -93,6 +94,8 @@ export interface ConversationComposerProps {
   /** A small readout in the bottom row (context used). */
   readout?: string | null;
   autoFocus?: boolean;
+  /** Keeps unsent text for this session across unmounts (clicking away and back). */
+  draftKey?: string;
 }
 
 /**
@@ -119,8 +122,12 @@ export function ConversationComposer({
   onSearchFiles,
   onUpload,
   limit,
+  draftKey,
 }: ConversationComposerProps) {
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ''));
+  useEffect(() => {
+    if (draftKey) saveDraft(draftKey, text);
+  }, [draftKey, text]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sending = useRef(false);

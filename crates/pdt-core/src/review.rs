@@ -281,6 +281,15 @@ pub struct MergeRequest {
     #[serde(default)]
     #[ts(optional)]
     pub style: Option<MergeStyle>,
+    /// A pull request only: once GitHub merges it, move the ticket to Done and remove the worktree and the workspace
+    /// Start made (PDT-75). A local merge finishes in the web right away.
+    #[serde(default)]
+    #[ts(optional)]
+    pub finish_on_merge: Option<bool>,
+    /// With `finish_on_merge`: delete the branch with the worktree.
+    #[serde(default)]
+    #[ts(optional)]
+    pub delete_branch: Option<bool>,
 }
 
 /// The local merge commit's message.

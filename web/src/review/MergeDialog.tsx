@@ -77,13 +77,15 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
 
 /**
  * Merge…: into the base branch locally (a merge commit or a squash, remembered per project; then the ticket moves to Done and, by default, the worktree
- * goes), or, when the attempt has an open pull request, auto-merge on GitHub. Problems show instead of the button.
+ * goes), or, when the attempt has an open pull request, auto-merge on GitHub (by default PDT finishes the ticket once
+ * GitHub merges it, PDT-75). Problems show instead of the button.
  */
 export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; attemptId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const preview = useQuery({ queryKey: ['merge-preview', attemptId], queryFn: () => api.mergePreview(attemptId), staleTime: 0, gcTime: 0 });
   const [removeWorktree, setRemoveWorktree] = useState(true);
+  const [finishOnMerge, setFinishOnMerge] = useState(true);
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [style, setStyle] = useState<MergeStyle>(() => loadStyle(ticket.projectId));
   const [busy, setBusy] = useState(false);
@@ -109,11 +111,13 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     try {
       const github = p.method === 'github';
       if (!github) saveStyle(ticket.projectId, style);
-      const r = await api.mergeAttempt(attemptId, github ? {} : { style });
+      const r = await api.mergeAttempt(attemptId, github ? { finishOnMerge, deleteBranch: finishOnMerge && deleteBranch } : { style });
       invalidateTickets(qc, [ticket.id]);
       onClose();
       if (r.outcome === 'queued') {
-        toast.success(`Auto-merge is on for PR #${p.pr?.number}. GitHub merges it once the checks pass.`);
+        toast.success(
+          `Auto-merge is on for PR #${p.pr?.number}. GitHub merges it once the checks pass${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`,
+        );
         return;
       }
       const fresh = await api.getTicket(ticket.id);
@@ -156,7 +160,8 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
           {github && p.pr ? (
             <p>
               <Link href={p.pr!.url} external>Pull request #{p.pr!.number}</Link> merges into <span className="font-mono">{p.base}</span> on
-              GitHub{p.pr!.queue ? ' through the merge queue' : ' once its checks pass'}. PDT notices the merge and offers to move {ticket.key} to Done.
+              GitHub{p.pr!.queue ? ' through the merge queue' : ' once its checks pass'}.
+              {finishOnMerge ? '' : ` PDT notices the merge and offers to move ${ticket.key} to Done.`}
             </p>
           ) : (
             !github && p.problem !== 'inactive' && (
@@ -168,6 +173,16 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
             )
           )}
           <Problem p={p} onAsk={() => void ask()} sending={sending} />
+          {github && !p.problem && (
+            <div className="flex flex-col gap-1.5">
+              <Checkbox checked={finishOnMerge} onChange={(v) => { setFinishOnMerge(v); if (!v) setDeleteBranch(false); }}>
+                Move to Done and clean up once it merges
+              </Checkbox>
+              <Checkbox checked={deleteBranch} disabled={!finishOnMerge} onChange={setDeleteBranch}>
+                Delete the branch
+              </Checkbox>
+            </div>
+          )}
           {!github && !p.problem && (
             <div className="flex flex-col gap-1.5">
               <SegmentedControl<MergeStyle>

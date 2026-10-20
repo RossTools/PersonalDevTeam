@@ -14,7 +14,7 @@ const settingsView = (over: object = {}) => ({
   settings: {
     remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 },
     maxConcurrentRuns: 4, agentCredentials: 'subscription', projectsDir: null, defaultAgent: 'claude',
-    defaultSessionMode: 'conversation', updateCheckMinutes: 60,
+    defaultSessionMode: 'conversation', ticketPermissionMode: 'bypass', sessionPermissionMode: 'ask', updateCheckMinutes: 60,
   },
   ownerFromEnv: null,
   tokenPresent: false,
@@ -162,6 +162,26 @@ describe('HostSettingsPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /Default view/ }));
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Terminal' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ defaultAgent: 'codex' }, { defaultSessionMode: 'terminal' }]));
+  });
+
+  it('saves the permission modes for tickets and new sessions', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByRole('button', { name: /Ticket permissions/ })).toHaveTextContent('Bypass (dangerous)');
+    expect(screen.getByRole('button', { name: /Session permissions/ })).toHaveTextContent('Ask');
+    await userEvent.click(screen.getByRole('button', { name: /Ticket permissions/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Accept edits' }));
+    await userEvent.click(screen.getByRole('button', { name: /Session permissions/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Plan' }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ ticketPermissionMode: 'accept_edits' }, { sessionPermissionMode: 'plan' }]),
+    );
   });
 
   it('saves ports and max runs with one Save and shows why it failed', async () => {

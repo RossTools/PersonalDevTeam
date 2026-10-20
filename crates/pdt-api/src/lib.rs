@@ -4,6 +4,7 @@ mod checks;
 mod conversations;
 mod error;
 mod files;
+mod finish;
 mod folders;
 mod github;
 pub mod guides;

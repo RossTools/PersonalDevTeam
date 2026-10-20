@@ -179,10 +179,29 @@ describe('MergeDialog', () => {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     expect(await screen.findByText(/through the merge queue/)).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    // Finishing once it merges is on by default; deleting the branch is not, and goes with it.
+    const finish = screen.getByRole('checkbox', { name: 'Move to Done and clean up once it merges' });
+    expect(finish).toBeChecked();
+    const del = screen.getByRole('checkbox', { name: 'Delete the branch' });
+    expect(del).not.toBeChecked();
+    await userEvent.click(del);
     await userEvent.click(screen.getByRole('button', { name: 'Add to merge queue' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')).toBe(true);
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: true, deleteBranch: true });
+    expect(await screen.findByText(/then ALP-1 moves to Done/)).toBeInTheDocument();
+  });
+
+  it('turning off finishing once it merges turns off deleting the branch too', async () => {
+    const { calls } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: false } }), {
+      'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
+    });
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Delete the branch' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Move to Done and clean up once it merges' }));
+    expect(screen.getByRole('checkbox', { name: 'Delete the branch' })).toBeDisabled();
+    expect(screen.getByText(/offers to move ALP-1 to Done/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Turn on auto-merge' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: false, deleteBranch: false });
   });
 
   it('merges locally and, keeping the worktree, moves the ticket to Done', async () => {

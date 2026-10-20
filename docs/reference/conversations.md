@@ -70,13 +70,15 @@ Start too).
   `terminalCommands`, shown as "Only in the terminal"). Claude commands go as text (a local one like `/context` is
   never echoed, so the mapper shows it when its turn starts); Codex's `/compact` and `/review [instructions]` run
   `thread/compact/start` / `review/start`.
+- Unsent text is kept per session in sessionStorage (web/src/conversation/drafts.ts), so clicking away from a
+  conversation and back keeps it; sending clears it.
 - `ConversationState.billing` ("Claude plan" / "API key" from `apiKeySource`; Codex from `account/read`'s account
   type only) shows in the composer, with a rate-limit line from 80 % (web `limitWarning`).
 
 ## Tickets (5d)
 
-- Start takes `sessionMode` (`conversation` default, the ticket prompt as its first message; `bypassPermissions` is
-  the `bypass` permission mode) and `fromSession`: a chat with no ticket in a worktree off the base branch becomes the
+- Start takes `sessionMode` (`conversation` default, the ticket prompt as its first message; `permissionMode`, or
+  `bypassPermissions` for the `bypass` permission mode; the dialog sends the host's ticket default, PDT-75) and `fromSession`: a chat with no ticket in a worktree off the base branch becomes the
   attempt (its worktree and branch, `sessions.attempt_id` set, the ticket tab opened just before the chat's; no new
   session and nothing sent); else 409 `chat_not_startable`. Ticket sessions carry `mode`.
 - `POST /api/sessions/{id}/ticket-draft` → `{title, description}` (Make ticket…, the chat's ⋯ menu): a hidden side

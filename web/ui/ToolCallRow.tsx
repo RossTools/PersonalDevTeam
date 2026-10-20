@@ -7,7 +7,7 @@ export type ToolCallStatus = 'running' | 'done' | 'failed' | 'declined';
 
 const STATUS_LABEL: Record<ToolCallStatus, string> = { running: 'Running', done: 'Done', failed: 'Failed', declined: 'Declined' };
 
-/** The status icon of a tool call: a spinner, ✓, ✗ or a "declined" mark, each named for screen readers. */
+/** The status icon of a tool call: a spinner, ✓, ✗ (the only coloured one) or a "declined" mark, each named for screen readers. */
 export function ToolStatusIcon({ status, className }: { status: ToolCallStatus; className?: string }) {
   if (status === 'running') return <Spinner label={STATUS_LABEL.running} className={cn('size-3.5 text-muted-foreground', className)} />;
   const Icon = status === 'done' ? Check : status === 'failed' ? X : Ban;
@@ -15,7 +15,7 @@ export function ToolStatusIcon({ status, className }: { status: ToolCallStatus; 
     <span role="img" aria-label={STATUS_LABEL[status]} className={cn('inline-flex shrink-0', className)}>
       <Icon
         aria-hidden
-        className={cn('size-3.5', status === 'done' ? 'text-running' : status === 'failed' ? 'text-failed' : 'text-muted-foreground')}
+        className={cn('size-3.5', status === 'failed' ? 'text-failed' : 'text-muted-foreground')}
       />
     </span>
   );
@@ -56,7 +56,7 @@ export function ToolCallRow({ verb, subject, status, meta, details, children, de
       <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
         <span className="shrink-0 text-muted-foreground">{verb}</span>{' '}
         {subject && (
-          <code className="min-w-0 truncate rounded-sm bg-muted px-1 py-px font-mono text-meta text-foreground">{subject}</code>
+          <code className="min-w-0 truncate rounded-sm bg-muted/60 px-1 py-px font-mono text-meta text-muted-foreground group-hover:text-foreground">{subject}</code>
         )}
       </span>
       {meta && ' '}
@@ -64,7 +64,8 @@ export function ToolCallRow({ verb, subject, status, meta, details, children, de
       {status && <ToolStatusIcon status={status} />}
     </>
   );
-  const rowClass = 'flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs';
+  // Quiet next to the conversation's text (PDT-75): muted until hovered; only a failure is coloured.
+  const rowClass = 'group flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs';
   return (
     <div className={cn('flex flex-col', className)} data-status={status}>
       {expandable ? (

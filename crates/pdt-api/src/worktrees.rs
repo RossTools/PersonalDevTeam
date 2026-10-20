@@ -107,6 +107,14 @@ pub(crate) async fn remove(
     Path(id): Path<String>,
     Query(q): Query<RemoveQuery>,
 ) -> Result<StatusCode, ApiError> {
+    remove_worktree(&st, &id, q.force, q.delete_branch).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Removes a worktree (see `remove`): 409 `worktree_busy` while a session or run uses it, `worktree_dirty` with
+/// uncommitted changes unless `force`, `branch_not_deleted` when only the branch stayed.
+pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete_branch: bool) -> Result<(), ApiError> {
+    let id = id.to_string();
     let wt = st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
     let project = st.store.get_project(&wt.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let sessions: Vec<_> = st
@@ -124,7 +132,6 @@ pub(crate) async fn remove(
         return Err(conflict("worktree_busy", "stop this branch's runs first"));
     }
     let (repo, path, branch) = (PathBuf::from(&project.repo_path), PathBuf::from(&wt.path), wt.branch.clone());
-    let (force, delete_branch) = (q.force, q.delete_branch);
     let branch_error = tokio::task::spawn_blocking(move || -> Result<Option<String>, ApiError> {
         if path.is_dir() {
             if !force && pdt_git::is_dirty(&path)? {
@@ -143,11 +150,11 @@ pub(crate) async fn remove(
     .await
     .map_err(ApiError::internal)??;
     for s in sessions {
-        crate::sessions::discard(&st, &s.id).await;
+        crate::sessions::discard(st, &s.id).await;
     }
     st.store.delete_worktree(&id).await?;
     match branch_error {
-        None => Ok(StatusCode::NO_CONTENT),
+        None => Ok(()),
         Some(msg) => Err(ApiError::new(
             StatusCode::CONFLICT,
             "branch_not_deleted",

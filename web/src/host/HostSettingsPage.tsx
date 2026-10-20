@@ -11,6 +11,7 @@ import type { TokenState } from '../api/gen/TokenState';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { FolderField } from '../common/FolderField';
 import { useAction } from '../common/useAction';
+import { PermissionModeSelect } from '../conversation/ConversationComposer';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -285,6 +286,8 @@ function Agents({ v }: { v: HostSettingsView }) {
   const save = useSaveSettings();
   const agent = useSaveSettings();
   const view = useSaveSettings();
+  const ticketMode = useSaveSettings();
+  const sessionMode = useSaveSettings();
   return (
     <Section label="Agents">
       <SettingsRow label="Default agent" description="Picked first when you start a ticket, and listed first for a new tab and in the palette.">
@@ -294,6 +297,26 @@ function Agents({ v }: { v: HostSettingsView }) {
       <SettingsRow label="Default view" description="Whether a new agent session is a conversation or the agent's own terminal. You can switch a session later.">
         <SaveNote s={view} />
         <Select aria-label="Default view" className="w-40" options={viewChoices} value={v.settings.defaultSessionMode} onChange={(m) => view.mutate({ defaultSessionMode: m })} />
+      </SettingsRow>
+      <SettingsRow label="Ticket permissions" description="The permission mode a ticket's Start picks first. In an agent's terminal only Bypass changes anything.">
+        <SaveNote s={ticketMode} />
+        <PermissionModeSelect
+          label="Ticket permissions"
+          size="md"
+          className="w-48"
+          value={v.settings.ticketPermissionMode}
+          onChange={(m) => ticketMode.mutate({ ticketPermissionMode: m })}
+        />
+      </SettingsRow>
+      <SettingsRow label="Session permissions" description="The permission mode a new session picks first (the new tab chooser).">
+        <SaveNote s={sessionMode} />
+        <PermissionModeSelect
+          label="Session permissions"
+          size="md"
+          className="w-48"
+          value={v.settings.sessionPermissionMode}
+          onChange={(m) => sessionMode.mutate({ sessionPermissionMode: m })}
+        />
       </SettingsRow>
       <SettingsRow label="Credentials" description="Subscription removes ANTHROPIC_API_KEY and OPENAI_API_KEY from agents' environment; pass through keeps them (API keys, Bedrock/Vertex, proxies). A project can override it.">
         <SaveNote s={save} />

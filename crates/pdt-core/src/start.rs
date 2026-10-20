@@ -2,7 +2,7 @@
 //! Start request.
 
 use crate::brand::{SHORT_NAME, SLUG};
-use crate::conversation::SessionMode;
+use crate::conversation::{PermissionMode, SessionMode};
 use crate::session::{AgentKind, Session, TerminalSize};
 use crate::ticket::{AttemptSummary, MAX_SLUG, Ticket, TicketValidationError, format_key, slug};
 use crate::workspace::TabPlacement;
@@ -159,6 +159,11 @@ pub struct StartTicket {
     #[serde(default)]
     #[ts(optional)]
     pub bypass_permissions: Option<bool>,
+    /// The session's permission mode (a conversation's; in the terminal only `bypass` changes anything). Wins over
+    /// `bypassPermissions`. Absent: `bypass` with `bypassPermissions`, else the agent's default.
+    #[serde(default)]
+    #[ts(optional)]
+    pub permission_mode: Option<PermissionMode>,
     /// Where the ticket's tab opens (the session's tab goes right after it); the end of the project's workspace when
     /// absent. Ignored with `newWorkspace`.
     #[serde(default)]
@@ -207,6 +212,7 @@ pub struct ValidStart {
     pub branch: Option<String>,
     pub base: Option<String>,
     pub bypass_permissions: bool,
+    pub permission_mode: Option<PermissionMode>,
     pub tab: Option<TabPlacement>,
     pub new_workspace: bool,
     pub mode: StartMode,
@@ -255,7 +261,10 @@ impl StartTicket {
             agent: self.agent,
             branch,
             base: nonblank(&self.base),
-            bypass_permissions: self.bypass_permissions.unwrap_or(false),
+            bypass_permissions: self
+                .permission_mode
+                .map_or(self.bypass_permissions.unwrap_or(false), |m| m == PermissionMode::Bypass),
+            permission_mode: self.permission_mode,
             tab: self.tab.clone(),
             new_workspace: self.new_workspace.unwrap_or(false),
             mode: self.mode.unwrap_or_default(),
@@ -406,6 +415,7 @@ mod tests {
                 branch: None,
                 base: None,
                 bypass_permissions: false,
+                permission_mode: None,
                 tab: None,
                 new_workspace: false,
                 mode: StartMode::Check,
@@ -417,6 +427,12 @@ mod tests {
             }
         );
         assert!(start(serde_json::json!({"agent": "claude", "next": true})).unwrap().next);
+        // A permission mode wins over bypassPermissions, which follows it.
+        let m =
+            start(serde_json::json!({"agent": "claude", "permissionMode": "plan", "bypassPermissions": true})).unwrap();
+        assert_eq!((m.permission_mode, m.bypass_permissions), (Some(PermissionMode::Plan), false));
+        let m = start(serde_json::json!({"agent": "claude", "permissionMode": "bypass"})).unwrap();
+        assert_eq!((m.permission_mode, m.bypass_permissions), (Some(PermissionMode::Bypass), true));
         let t = start(serde_json::json!({"agent": "claude", "sessionMode": "terminal"})).unwrap();
         assert_eq!(t.session_mode, SessionMode::Terminal);
         let devin = start(serde_json::json!({"agent": "devin"})).unwrap();

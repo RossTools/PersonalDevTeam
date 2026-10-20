@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Skeleton, Switch } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
+import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { SessionMode } from '../api/gen/SessionMode';
 import type { StartMode } from '../api/gen/StartMode';
 import type { StartResult } from '../api/gen/StartResult';
@@ -11,6 +12,7 @@ import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Ticket } from '../api/gen/Ticket';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
+import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { AGENT_KINDS, useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { INITIAL_SIZE } from '../sessions/status';
@@ -63,7 +65,9 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const sessionMode: SessionMode = view === 'none' ? defaults.mode : view;
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
-  const [bypass, setBypass] = useState(true);
+  // The host's default for tickets (Bypass unless changed) until this dialog picks another.
+  const [pickedPermission, setPermission] = useState<PermissionMode | null>(null);
+  const permissionMode = pickedPermission ?? defaults.ticketPermissionMode;
   const [newWorkspace, setNewWorkspace] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The server answered start_blocked: its message, and Start becomes Start anyway.
@@ -123,7 +127,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
       ...(noSession ? { noSession: true } : { sessionMode }),
       ...(branch.trim() ? { branch: branch.trim() } : {}),
       ...(base.trim() ? { base: base.trim() } : {}),
-      ...(bypass && !noSession ? { bypassPermissions: true } : {}),
+      ...(noSession ? {} : { permissionMode }),
       ...(newWorkspace ? { newWorkspace: true } : placement ? { tab: placement } : {}),
       mode,
       ...INITIAL_SIZE,
@@ -248,7 +252,16 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           <Field label="Base branch">
             <Input mono value={base} placeholder={project?.baseBranch ?? 'main'} maxLength={200} onChange={(e) => setBase(e.target.value)} />
           </Field>
-          {!noSession && <Checkbox checked={bypass} onChange={setBypass}>Skip permission prompts (dangerous)</Checkbox>}
+          {!noSession && sessionMode === 'conversation' && (
+            <Field label="Permissions">
+              <PermissionModeSelect value={permissionMode} onChange={setPermission} size="md" className="w-48" />
+            </Field>
+          )}
+          {!noSession && sessionMode === 'terminal' && (
+            <Checkbox checked={permissionMode === 'bypass'} onChange={(on) => setPermission(on ? 'bypass' : 'ask')}>
+              Skip permission prompts (dangerous)
+            </Checkbox>
+          )}
           <Switch size="sm" checked={newWorkspace} onChange={setNewWorkspace} className="text-xs">
             Open in a new workspace
           </Switch>
