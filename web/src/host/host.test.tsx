@@ -13,7 +13,8 @@ afterEach(() => {
 const settingsView = (over: object = {}) => ({
   settings: {
     remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 },
-    maxConcurrentRuns: 4, agentCredentials: 'subscription',
+    maxConcurrentRuns: 4, agentCredentials: 'subscription', projectsDir: null, defaultAgent: 'claude',
+    defaultSessionMode: 'conversation', updateCheckMinutes: 60,
   },
   ownerFromEnv: null,
   tokenPresent: false,
@@ -127,6 +128,40 @@ describe('HostSettingsPage', () => {
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Manual (no checks)' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ updatePolicy: 'manual' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('saves the update check interval, which is off while updates are manual', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: /Update check interval/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Every 6 hours' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ updateCheckMinutes: 360 }));
+    await userEvent.click(screen.getByRole('button', { name: /Update policy/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Manual (no checks)' }));
+    expect(await screen.findByText('Off while updates are manual.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Update check interval/ })).toBeDisabled();
+  });
+
+  it('saves the default agent and view', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: /Default agent/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Codex' }));
+    await userEvent.click(screen.getByRole('button', { name: /Default view/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Terminal' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ defaultAgent: 'codex' }, { defaultSessionMode: 'terminal' }]));
   });
 
   it('saves ports and max runs with one Save and shows why it failed', async () => {

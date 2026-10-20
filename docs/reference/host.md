@@ -73,7 +73,8 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 
 - The tray's Update item follows pdtd's update API (`GET /api/host/update`; a click checks, or installs via
   `POST /api/host/update/install`, asking again with `force` when the host is busy).
-- pdtd checks GitHub releases with the token stored in the OS keychain (account `update-token` for the stable data
+- pdtd checks GitHub releases every `updateCheckMinutes` (Host settings → Updates, hourly by default; re-read every
+  minute) and when asked, with the token stored in the OS keychain (account `update-token` for the stable data
   dir, `update-token:<hash>` for any other, so a dev pdtd never sees stable's token) and hands the verified download
   to pdt-host, which installs it, health-checks the new version and rolls back on failure. pdt-host copies the
   database to `update/db-before-update` before installing and restores it on rollback (an old version cannot open a

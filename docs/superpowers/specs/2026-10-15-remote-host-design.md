@@ -92,7 +92,7 @@ is specific to PDT developing itself: self-hosting is one use of the generic fea
 
 ### 3.3 Checking and policy
 
-- **Checks:** `pdtd` checks hourly and when asked. Every device's web UI shows "Update to v0.1.N available", with
+- **Checks:** `pdtd` checks every `updateCheckMinutes` (hourly by default; Host settings → Updates) and when asked. Every device's web UI shows "Update to v0.1.N available", with
   the release notes and an **Update** button.
 - **Checksums:** CI also publishes `SHA256SUMS` in each release. A download whose checksum doesn't match is
   rejected.

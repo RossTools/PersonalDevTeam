@@ -97,6 +97,6 @@ Start too).
   Claude), DiffViewer, MessageBubble, ToolCallRow.
 - The session header's Conversation | Terminal switch (Codex: live shared TUI; Claude/Devin: `…/mode`); new-tab
   "Claude" (c) is a conversation, "Claude (terminal)" (t) the TUI.
-- The Start dialog's Conversation | Terminal choice (remembered per browser), the ticket tab's Conversation
+- The Start dialog's Conversation | Terminal choice (the host's default view), the ticket tab's Conversation
   (web/src/tickets/TicketConversation.tsx: the ticket's sessions newest first over the chosen conversation),
   MakeTicketDialog (draft, then the new-ticket form with "Start from this chat").

@@ -196,4 +196,14 @@ describe('NewTabChooser', () => {
       expect(within(panel).getByRole('menuitem', { name: /^Claude(?! \(terminal\))/ }).textContent).not.toMatch(/not logged in/);
     });
   });
+
+  it("lists the host's default agent and view first", async () => {
+    setNarrow(false);
+    stubApi({ ...routes, 'GET /api/host/settings': { settings: { defaultAgent: 'codex', defaultSessionMode: 'terminal' } } });
+    renderWithQuery(<NewTabChooser ws={fakeWs()} onClose={() => {}} />);
+    const panel = screen.getByRole('dialog', { name: 'New tab' });
+    const names = () => within(panel).getAllByRole('menuitem').map((m) => m.textContent ?? '').filter((t) => /^(Claude|Codex|Devin|Shell)/.test(t)).map((t) => t.replace(/[a-z]$/, ''));
+    await waitFor(() => expect(names()[0]).toMatch(/^Codex \(terminal\)/));
+    expect(names().map((n) => n.replace(/\s*$/, ''))).toEqual(['Codex (terminal)', 'Codex', 'Claude (terminal)', 'Claude', 'Devin (terminal)', 'Devin', 'Shell']);
+  });
 });

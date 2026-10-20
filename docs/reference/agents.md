@@ -79,6 +79,15 @@ check found them (web/src/common/useAgentAvailability.ts, the `['host-checks']` 
 again" refreshes); an installed agent that is not logged in stays with a "not logged in" hint; everything is offered
 until the checks load or when they fail.
 
+## Host defaults (PDT-69)
+
+Host settings `defaultAgent` (claude), `defaultSessionMode` (conversation) and `updateCheckMinutes` (60; 5 min to a
+week), in Settings → This host (Agents, Updates). The web reads them from the `['host-settings']` query
+(web/src/common/useAgentDefaults.ts): ticket Start preselects them, the new-tab chooser, palette and "… with an agent"
+menus list the default agent's choices first, default view first (`byDefault` in web/src/sessions/newSession.ts), and
+"… with an agent" starts in the default view. pdtd's update loop re-reads the interval every minute, so a change
+applies without waiting out the old one.
+
 ## Devin (PDT-54, PDT-55)
 
 Facts about the CLI: docs/superpowers/notes/devin-cli.md. `AgentKind::Devin`, program `devin` (`PDT_DEVIN_PROGRAM`);
