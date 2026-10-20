@@ -250,8 +250,10 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
       title={t ? `${t.key} · ${t.title}` : 'Ticket'}
       hideTitle
       open={ticketId !== null}
-      // On desktop the backlog stays usable beside the peek (UX spec §8.1).
+      // On desktop the backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on
+      // a backlog row or a board card or lane, which shows that ticket instead.
       modal={phone}
+      keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}
       onOpenChange={(o) => !o && onClose()}
       className={phone ? 'w-full max-w-full' : 'w-[32rem] max-w-[90vw]'}
       footer={t && (

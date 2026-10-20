@@ -207,11 +207,20 @@ describe('backlog', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'To do' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ stage: 'todo' }));
     expect(screen.getByRole('dialog', { name: 'ALP-1 · Ticket 1' })).toBeInTheDocument();
-    // A press on the backlog beside it leaves it open too; Close closes it.
-    await userEvent.click(screen.getByRole('grid', { name: 'Tickets' }));
-    expect(screen.getByRole('dialog', { name: 'ALP-1 · Ticket 1' })).toBeInTheDocument();
     await userEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'ALP-1 · Ticket 1' })).not.toBeInTheDocument());
+  });
+
+  it('shows another row in the peek when it is clicked, and closes on a click elsewhere on the page', async () => {
+    stub({ 'GET /api/tickets/t2': ticket(2), 'GET /api/tickets/t2/events': { items: [], nextCursor: null } });
+    renderWithQuery(<Harness />);
+    const grid = await screen.findByRole('grid', { name: 'Tickets' });
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-1 / }));
+    await screen.findByRole('dialog', { name: 'ALP-1 · Ticket 1' });
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-2 / }));
+    expect(await screen.findByRole('dialog', { name: 'ALP-2 · Ticket 2' })).toBeInTheDocument();
+    await userEvent.click(grid);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('opens a row menu on right-click with Open, Move to, Priority and Delete', async () => {
