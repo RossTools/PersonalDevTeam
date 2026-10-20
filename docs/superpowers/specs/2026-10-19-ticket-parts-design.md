@@ -1,6 +1,6 @@
 # Personal Dev Team — Tickets that take several PRs (parts) Design
 
-Status: draft, 2026-10-19, awaiting the user's review (PDT-38). Amends the tickets spec
+Status: decisions made with the user, 2026-10-19 (PDT-38); ready for a plan. Amends the tickets spec
 (docs/superpowers/specs/2026-10-18-tickets-design.md §3, §5, §6, §8; it brings forward swimlanes from §12, grouped by parent only) and notes what Phase 7 inherits.
 
 ## 1. Problem
@@ -31,9 +31,10 @@ Options 3 and 4 add per-part state that tickets already have. Each part is a uni
 exactly what a ticket is in PDT's model. So a part is a ticket, and the multi-PR ticket is its **parent**. Option 4's
 stepper is kept as the parent's progress display (§7).
 
-## 3. Proposed decisions (for the user to confirm)
+## 3. Decisions (made with the user, 2026-10-19)
 
-1. **Parts are child tickets.** `tickets.parent_id`. One level only: a part can't have parts. No ticket types.
+1. **Parts are child tickets.** `tickets.parent_id`. One level only: a part can't have parts (a big part is split
+   into more parts of the same parent, e.g. 5c-1 and 5c-2). No ticket types.
 2. **Parents aren't started.** Start on a ticket with parts is refused (`409 ticket_has_parts`); the parent's work
    happens in its parts. A ticket with an active attempt can't get parts (`409 ticket_active`): finish or abandon it
    first. A parent can keep ended attempts from before it had parts (history; PDT-2 has one).
@@ -43,14 +44,17 @@ stepper is kept as the parent's progress display (§7).
 4. **Planned up front or added as you go:** both. Parts can be added at any time; nothing is fixed when the parent
    starts.
 5. **Parent stage follows its parts:** when the first part starts, the parent moves to In progress (a system `moved`
-   event). When every part is closed, the parent shows "All parts done: Move to Done". The parent never moves to Done
-   without the user, as with merges today. Closing a parent with open parts is refused (`409 parts_open`) and the UI
-   offers to close the rest as Won't do.
+   event). Once every part is Done or Won't do, the parent moves to Done like any other ticket (drag on the board,
+   the stage picker, bulk, its lane menu); nothing moves it automatically and there is no special banner. Moving a
+   parent to Done or Won't do while any part is open is refused (`409 parts_open`, naming the open parts); the UI
+   says why and offers to close the rest as Won't do.
 6. **Parts branch off main** after the part before merges (blocks). **Stacking** (start part N+1 on part N's branch
-   while N is in review) comes in the second PR, with PDT's restack after the squash (§6).
+   while N is in review) comes in the second PR, with PDT's restack after the squash (§6); the first PR has no
+   stacking.
 7. **Sessions belong to parts.** Each part's Start opens its own session in its own worktree; it ends with that part.
    Continuity comes from the ticket: the part's first prompt includes the parent and the other parts' state (§5).
-   There is no long-lived "lead" session in the first version (§9, open question 4).
+   There is no long-lived "lead" or planning session on the parent, and no session moves from one part to the next:
+   a fresh session per part keeps context small, and merged worktrees can always be removed.
 8. **Board: one lane per parent.** Parts are cards in their own columns inside their parent's lane; tickets without a
    parent are in a lane at the top. The lane header is how a parent is tracked: key, title, stage, the stepper, and
    Start next part. A parent gets a lane as soon as it is picked (To do), before any of its parts are (§7). Parents
@@ -81,7 +85,7 @@ Rules (pure, pdt-core, TDD):
 - **Parent's areas** are planning hints: a new part copies them; overlap ignores parents (they have no attempt).
 
 Events: `parted` on both tickets (`{parent, child}` added or removed), the parent's system `moved` when the first part
-starts, `all_parts_done` once when the last part closes.
+starts.
 
 ## 5. Start, prompts and workspaces
 
@@ -197,8 +201,8 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
 - pdt-core: valid-parent rules (each refusal), roll-up states and order, next part, prompt with parts and the cap
   (parent description cut first).
 - pdt-store: `parent_id` and the RESTRICT delete, list by parent, bulk part creation all-or-nothing.
-- pdt-api: Start refused on parents and `next`; parent to In progress on the first part's start; `all_parts_done`
-  once; `parts_open`; the shared workspace survives a part's finish.
+- pdt-api: Start refused on parents and `next`; parent to In progress on the first part's start; a parent moves
+  to Done by PATCH, bulk or board drag once every part is closed and `parts_open` before; the shared workspace survives a part's finish.
 - pdt-git (PR 2): `rebase --onto` after a squash merge applies cleanly where `merge main` conflicts (temp repo);
   changed files from the blocker's head.
 - pdt-api: `hasParts` filter.
@@ -208,8 +212,5 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
 
 ## 13. Open questions
 
-1. **Parent to Done:** a banner the user clicks (proposed), or automatic when the last part closes?
-2. **Stacking:** in the second PR (proposed), or not at all (always wait for the merge)?
-3. **A lead session:** is one session per part enough, or should a parent have a planning session that outlives its
-   parts (in the main checkout, read-only, or in a scratch folder)?
-4. **Depth:** is one level enough (proposed), or will a part ever need its own parts?
+None; the user answered them on 2026-10-19 (§3: parent to Done like a normal ticket once every part is closed,
+stacking in the second PR, a fresh session per part, one level).
