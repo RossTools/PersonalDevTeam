@@ -218,40 +218,74 @@ describe('RunView', () => {
 describe('ProjectSettingsPanel', () => {
   it('notes sections of the file that this version skipped', async () => {
     stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, mergeViaPr: false },
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null },
       'GET /api/projects/p/run-config': { ...config, effective: { ...config.effective, areas: [], ignored: ['pipeline', 'gate'] } },
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);
     expect(await screen.findByText('Skipped [pipeline], [gate]: this version does not know those sections.')).toBeInTheDocument();
   });
 
-  it('saves run overrides and the credential policy, and shows validation errors', async () => {
+  it('saves run overrides with their own Save and shows validation errors', async () => {
     let attempt = 0;
     const calls = stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, mergeViaPr: false },
+      'GET /api/projects/p/settings': { agentCredentials: 'pass_through', effectiveCredentials: 'pass_through', runOverrides: null, agentInstructions: 'Use make.' },
       'GET /api/projects/p/run-config': { ...config, file: '[[run]]\nname = "web"\n' },
       'PUT /api/projects/p/settings': (c) =>
         ++attempt === 1
           ? new Reply(400, { code: 'invalid_run_config', message: 'the host overrides is not valid: x' })
-          : { agentCredentials: 'pass_through', effectiveCredentials: 'pass_through', runOverrides: (c.body as { runOverrides: string }).runOverrides },
+          : { agentCredentials: 'pass_through', effectiveCredentials: 'pass_through', runOverrides: (c.body as { runOverrides: string }).runOverrides, agentInstructions: 'Use make.' },
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);
     expect(await screen.findByTestId('code')).toHaveTextContent('name = "web"');
     expect(screen.queryByText(/Skipped/)).not.toBeInTheDocument();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Host overrides (TOML)' }), 'bad');
-    await choose(screen.getByRole('button', { name: /Agent credentials/ }), 'Pass through');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('not valid');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const runs = screen.getByRole('region', { name: 'Runs on this host' });
+    const save = within(runs).getByRole('button', { name: 'Save run overrides' });
+    await waitFor(() => expect(save).toBeDisabled());
+    await userEvent.type(within(runs).getByRole('textbox', { name: 'Host overrides (TOML)' }), 'bad');
+    await userEvent.click(save);
+    expect(await within(runs).findByRole('alert')).toHaveTextContent('not valid');
+    await userEvent.click(save);
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
-    expect(calls.filter((c) => c.method === 'PUT')[1].body).toEqual({ agentCredentials: 'pass_through', runOverrides: 'bad', agentInstructions: '', mergeViaPr: false });
-    const status = await screen.findByRole('status');
-    expect(within(status).getByText('Saved')).toBeInTheDocument();
+    // The other sections' stored values go along unchanged; the instructions are left out (kept).
+    expect(calls.filter((c) => c.method === 'PUT')[1].body).toEqual({ agentCredentials: 'pass_through', runOverrides: 'bad' });
+    expect(await within(runs).findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('saves merging through pull requests as soon as it is switched', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, mergeViaPr: false },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'subscription', agentInstructions: null, mergeViaPr: false, ...(c.body as object) }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const toggle = await screen.findByRole('switch', { name: 'Merge through pull requests' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, mergeViaPr: true });
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it('saves the credential policy as soon as it is chosen, keeping unsaved overrides on screen', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: 'x = 1', agentInstructions: null },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'pass_through', agentInstructions: null, ...(c.body as object) }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const box = screen.getByRole('textbox', { name: 'Host overrides (TOML)' });
+    await waitFor(() => expect(box).toHaveValue('x = 1'));
+    await userEvent.type(box, ' # draft');
+    await choose(screen.getByRole('button', { name: /Agent credentials/ }), 'Pass through');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: 'pass_through', runOverrides: 'x = 1' });
+    expect(await within(screen.getByRole('region', { name: 'Agents' })).findByRole('status')).toHaveTextContent('Saved');
+    expect(box).toHaveValue('x = 1 # draft');
   });
 
   it('saves the agent instructions', async () => {
     const calls = stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: 'Use make.', mergeViaPr: false },
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: 'Use make.' },
       'GET /api/projects/p/run-config': config,
       'PUT /api/projects/p/settings': (c) => ({ agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, ...(c.body as object) }),
     });
@@ -259,28 +293,14 @@ describe('ProjectSettingsPanel', () => {
     const box = screen.getByRole('textbox', { name: 'Agent instructions' });
     await waitFor(() => expect(box).toHaveValue('Use make.'));
     await userEvent.type(box, ' Then test.');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save agent instructions' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
-    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, agentInstructions: 'Use make. Then test.', mergeViaPr: false });
-  });
-
-  it('saves merging through pull requests', async () => {
-    const calls = stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, mergeViaPr: false },
-      'GET /api/projects/p/run-config': config,
-      'PUT /api/projects/p/settings': (c) => ({ agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, ...(c.body as object) }),
-    });
-    renderWithQuery(<ProjectSettingsPanel project={project} />);
-    const toggle = await screen.findByRole('switch', { name: /Merg/ });
-    await userEvent.click(toggle);
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
-    expect(calls.find((c) => c.method === 'PUT')!.body).toMatchObject({ mergeViaPr: true });
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, agentInstructions: 'Use make. Then test.' });
   });
 
   it('starts an agent session in the main checkout with a built-in set-up prompt', async () => {
     const calls = stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, mergeViaPr: false },
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null },
       'GET /api/projects/p/run-config': config,
       'GET /api/guides/set-up-project': () => new Response('Set up this project so PDT can run it.', { status: 200 }),
       'GET /api/guides/set-up-workflow': () => new Response('Help me write the agent instructions.', { status: 200 }),

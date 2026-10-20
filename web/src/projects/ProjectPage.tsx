@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, EmptyState, Field, Input, Link, Page, Section, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Trash2 } from 'lucide-react';
+import { Alert, Badge, Button, EmptyState, Input, Link, Page, Section, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
@@ -30,23 +31,29 @@ function Identity({ project }: { project: Project }) {
     if (save.isError) document.getElementById(errorId)?.focus();
   }, [save.isError, save.error, errorId]);
   const changed = name.trim() !== project.name || key.trim().toUpperCase() !== project.key;
+  const nameId = useId();
+  const keyId = useId();
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (changed) save.mutate(); }}>
       <Section
         label="Project"
-        actions={<Button type="submit" size="sm" variant="primary" disabled={!changed} pending={save.isPending}>Save</Button>}
+        footer={
+          <>
+            {save.isSuccess && !changed && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
+            <Button type="submit" size="sm" variant="primary" disabled={!changed} pending={save.isPending}>Save</Button>
+          </>
+        }
       >
-        <div className="flex flex-wrap items-start gap-3">
-          <Field label="Project name" className="w-64 max-w-full">
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label="Project key" className="w-28">
-            <Input mono className="uppercase" maxLength={10} value={key} onChange={(e) => setKey(e.target.value)} />
-          </Field>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          The key is the project's short code (2–10 letters and digits); tickets will be numbered with it, like {project.key}-42.
-        </p>
+        <SettingsRow label="Name" htmlFor={nameId}>
+          <Input id={nameId} aria-label="Project name" className="w-64 max-w-full" value={name} onChange={(e) => setName(e.target.value)} />
+        </SettingsRow>
+        <SettingsRow
+          label="Key"
+          htmlFor={keyId}
+          description={`The project's short code (2–10 letters and digits); tickets are numbered with it, like ${project.key}-42.`}
+        >
+          <Input id={keyId} aria-label="Project key" mono className="w-28 uppercase" maxLength={10} value={key} onChange={(e) => setKey(e.target.value)} />
+        </SettingsRow>
         {save.isError && <Alert id={errorId} tabIndex={-1} tone="error">{save.error.message}</Alert>}
         <SettingsRow label="Repository folder">
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
@@ -112,7 +119,7 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
     settle();
   });
   return (
-    <li className="flex flex-col gap-1 rounded-md border border-border p-2">
+    <li className="flex flex-col gap-1 px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <BranchChip
           branch={wt.branch}
@@ -124,9 +131,9 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
         <span className="flex-1" />
         {!wt.missing && <Button size="sm" variant="ghost" onClick={() => openChanges({ id: wt.id, projectId: project.id })}>Review changes</Button>}
         {wt.missing ? (
-          <Button size="sm" variant="ghost" pending={forgetting} onClick={() => void forget()}>Forget</Button>
+          <Button size="sm" pending={forgetting} onClick={() => void forget()}>Forget</Button>
         ) : (
-          <Button size="sm" variant="ghost" pending={removing} onClick={() => void remove()}>Remove…</Button>
+          <Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Remove…</Button>
         )}
       </div>
       <span className="truncate font-mono text-meta text-muted-foreground" title={wt.path}>{wt.path}</span>
@@ -137,12 +144,12 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
 function Worktrees({ project }: { project: Project }) {
   const list = useQuery({ queryKey: ['worktrees', project.id], queryFn: () => api.listWorktrees(project.id) });
   return (
-    <Section label="Worktrees">
+    <Section label="Worktrees" description="Checkouts in .worktrees, one per branch. Removing one deletes its folder.">
       {list.isPending && <Skeleton lines={3} label="Loading worktrees" />}
       {list.isError && <Alert tone="error">Worktrees could not be loaded: {list.error.message}</Alert>}
       {list.data?.length === 0 && <EmptyState>No worktrees. Running a branch makes one.</EmptyState>}
       {!!list.data?.length && (
-        <ul className="flex flex-col gap-1">
+        <ul data-flush className="flex flex-col divide-y divide-border">
           {list.data.map((w) => <WorktreeRow key={w.id} project={project} wt={w} />)}
         </ul>
       )}
@@ -168,7 +175,7 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
   });
   return (
     <Section label="Danger zone" danger>
-      <SettingsRow label="Remove project" description="Stops its sessions and runs. Files on disk stay.">
+      <SettingsRow label="Remove this project" description="PDT forgets it and stops its sessions and runs. Files on disk stay.">
         <Button size="sm" variant="danger" pending={removing} onClick={() => void remove()}>Remove project…</Button>
       </SettingsRow>
     </Section>
