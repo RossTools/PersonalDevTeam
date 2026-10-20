@@ -1,6 +1,8 @@
 //! Per-host settings (spec §6). Pure: pdt-store stores them, pdt-api edits them.
 
 use crate::brand::Profile;
+use crate::conversation::SessionMode;
+use crate::session::AgentKind;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -49,6 +51,9 @@ pub const DEV_RUN_PORTS: PortRange = PortRange { start: 8500, end: 8599 };
 pub const DEFAULT_MAX_RUNS: u32 = 4;
 const MAX_RUNS_LIMIT: u32 = 32;
 const MAX_PORTS_IN_RANGE: u32 = 1000;
+pub const DEFAULT_UPDATE_CHECK_MINUTES: u32 = 60;
+/// How often update checks may run: every 5 minutes at most, once a week at least.
+pub const UPDATE_CHECK_MINUTES: std::ops::RangeInclusive<u32> = 5..=7 * 24 * 60;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
@@ -63,6 +68,12 @@ pub struct HostSettings {
     pub agent_credentials: CredentialPolicy,
     /// Where "clone by URL" puts new repositories by default; `~/work` when unset.
     pub projects_dir: Option<String>,
+    /// The agent the app offers first (ticket Start, the new-tab chooser, the palette, "… with an agent").
+    pub default_agent: AgentKind,
+    /// Whether a new agent session is a conversation or the agent's terminal by default.
+    pub default_session_mode: SessionMode,
+    /// Minutes between automatic update checks (unless the update policy is manual).
+    pub update_check_minutes: u32,
 }
 
 impl Default for HostSettings {
@@ -75,6 +86,9 @@ impl Default for HostSettings {
             max_concurrent_runs: DEFAULT_MAX_RUNS,
             agent_credentials: CredentialPolicy::Subscription,
             projects_dir: None,
+            default_agent: AgentKind::Claude,
+            default_session_mode: SessionMode::Conversation,
+            update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
         }
     }
 }
@@ -106,6 +120,15 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub projects_dir: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub default_agent: Option<AgentKind>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub default_session_mode: Option<SessionMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub update_check_minutes: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -118,6 +141,8 @@ pub enum HostSettingsError {
     BadOwner,
     #[error("the projects folder must be a full path (or start with ~ for your home folder)")]
     BadProjectsDir,
+    #[error("update checks must run between every 5 minutes and once a week")]
+    BadUpdateInterval,
 }
 
 impl HostSettings {
@@ -168,6 +193,18 @@ impl HostSettings {
             }
             s.projects_dir = (!d.is_empty()).then(|| d.to_string());
         }
+        if let Some(a) = p.default_agent {
+            s.default_agent = a;
+        }
+        if let Some(m) = p.default_session_mode {
+            s.default_session_mode = m;
+        }
+        if let Some(n) = p.update_check_minutes {
+            if !UPDATE_CHECK_MINUTES.contains(&n) {
+                return Err(HostSettingsError::BadUpdateInterval);
+            }
+            s.update_check_minutes = n;
+        }
         Ok(s)
     }
 }
@@ -194,6 +231,35 @@ mod tests {
         assert_eq!(s.run_ports, PortRange { start: 8400, end: 8499 });
         assert_eq!(s.max_concurrent_runs, 4);
         assert_eq!(s.agent_credentials, CredentialPolicy::Subscription);
+        assert_eq!(s.default_agent, AgentKind::Claude);
+        assert_eq!(s.default_session_mode, SessionMode::Conversation);
+        assert_eq!(s.update_check_minutes, 60);
+    }
+
+    /// Settings stored by an older version (without the newer fields) read back with their defaults.
+    #[test]
+    fn stored_settings_without_the_defaults_read_back() {
+        let s: HostSettings = serde_json::from_str(r#"{"remoteAccess":true,"maxConcurrentRuns":2}"#).unwrap();
+        assert_eq!(s.default_agent, AgentKind::Claude);
+        assert_eq!(s.default_session_mode, SessionMode::Conversation);
+        assert_eq!(s.update_check_minutes, DEFAULT_UPDATE_CHECK_MINUTES);
+    }
+
+    #[test]
+    fn default_agent_view_and_update_interval_are_set_and_checked() {
+        let p: HostSettingsPatch = serde_json::from_str(
+            r#"{"defaultAgent":"codex","defaultSessionMode":"terminal","updateCheckMinutes":360}"#,
+        )
+        .unwrap();
+        let s = HostSettings::default().apply(&p).unwrap();
+        assert_eq!(s.default_agent, AgentKind::Codex);
+        assert_eq!(s.default_session_mode, SessionMode::Terminal);
+        assert_eq!(s.update_check_minutes, 360);
+        let minutes = |n| HostSettingsPatch { update_check_minutes: Some(n), ..patch() };
+        assert_eq!(s.apply(&minutes(4)), Err(HostSettingsError::BadUpdateInterval));
+        assert_eq!(s.apply(&minutes(7 * 24 * 60 + 1)), Err(HostSettingsError::BadUpdateInterval));
+        assert_eq!(s.apply(&minutes(5)).unwrap().update_check_minutes, 5);
+        assert_eq!(s.apply(&patch()).unwrap(), s, "an empty patch keeps them");
     }
 
     /// The dev instance's runs default to their own port range, so they never collide with (or take over the

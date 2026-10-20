@@ -10,6 +10,7 @@ import type { Place } from '../common/PlacePicker';
 import { sessionKindLabel } from '../common/SessionKindIcon';
 import { findTab, itemOf, nextNeedingYou, type Item } from '../workspaces/model';
 import type { ItemInfo } from '../workspaces/useWorkspaces';
+import { byDefault, choiceFor, FALLBACK_DEFAULTS, type AgentDefaults } from '../sessions/newSession';
 
 export const GO_TO = 'Go to';
 export const ACTIONS = 'Actions';
@@ -97,6 +98,8 @@ export interface PaletteContext {
   ticketProjectId?: string | null;
   /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing one. */
   agents?: (agent: AgentKind) => AgentAvailability;
+  /** The host's default agent and view: their "New … here" comes first. */
+  defaults?: AgentDefaults;
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;
@@ -181,7 +184,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
   const actions: PaletteItem[] = [];
   if (place) {
     const words = [projectOf(place.projectId)?.key].filter((w): w is string => !!w);
-    const agentItems: [AgentKind, NewKind, string, string][] = [
+    const allAgentItems: [AgentKind, NewKind, string, string][] = [
       ['claude', 'claude', 'new:claude', 'New Claude here'],
       ['claude', 'claude_terminal', 'new:claude-terminal', 'New Claude (terminal) here'],
       ['codex', 'codex', 'new:codex', 'New Codex here'],
@@ -189,6 +192,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       ['devin', 'devin', 'new:devin', 'New Devin here'],
       ['devin', 'devin_terminal', 'new:devin-terminal', 'New Devin (terminal) here'],
     ];
+    const agentItems = byDefault(allAgentItems, ([agent, kind]) => choiceFor(agent, kind.endsWith('_terminal') ? 'terminal' : 'conversation'), ctx.defaults ?? FALLBACK_DEFAULTS);
     for (const [agent, kind, id, label] of agentItems) {
       const availability = ctx.agents?.(agent) ?? 'ready';
       if (availability === 'missing') continue;

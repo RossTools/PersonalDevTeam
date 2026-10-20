@@ -4,7 +4,8 @@ import { Alert, Button, Field, MenuButton, Section, Select, SettingsRow, Skeleto
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
-import { agentOf, newSession } from '../sessions/newSession';
+import { useAgentDefaults } from '../common/useAgentDefaults';
+import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
 import { useOpenSession } from '../tickets/actions';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { Project } from '../api/gen/Project';
@@ -18,7 +19,7 @@ type CredsChoice = CredentialPolicy | typeof HOST;
 
 /** PDT's built-in prompts (served by pdtd, so they work without a copy of PDT's repository). */
 type SetupGuide = 'set-up-project' | 'set-up-workflow';
-/** The conversations a set-up prompt can start. */
+/** The agents a set-up prompt can start (in the host's default view). */
 const SETUP_AGENTS = ['Claude', 'Codex', 'Devin'] as const;
 type SetupAgent = (typeof SETUP_AGENTS)[number];
 
@@ -49,17 +50,20 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
   const settings = useQuery({ queryKey: ['project-settings', project.id], queryFn: () => api.projectSettings(project.id) });
   const openSession = useOpenSession();
   const agents = useAgentAvailability();
-  // An agent session in the main checkout whose first message is one of PDT's set-up prompts.
+  const defaults = useAgentDefaults();
+  // An agent session in the main checkout, in the host's default view, whose first message is one of PDT's set-up
+  // prompts.
   const setUp = (guide: SetupGuide, agent: SetupAgent) =>
     void runAction(async () => {
       const initialPrompt = await api.guide(guide);
-      const s = await api.createSession({ ...newSession(project.id, null, agent), initialPrompt });
+      const choice = choiceFor(agentOf(agent)!, defaults.mode);
+      const s = await api.createSession({ ...newSession(project.id, null, choice), initialPrompt });
       void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
       openSession(s);
     });
-  // The agents this host has (all until the checks load), a logged-out one saying so.
+  // The agents this host has (all until the checks load), the default first, a logged-out one saying so.
   const agentEntries = (guide: SetupGuide) => () =>
-    SETUP_AGENTS.filter((a) => agents.offered(agentOf(a)!)).map((a) => {
+    byDefault(SETUP_AGENTS.filter((a) => agents.offered(agentOf(a)!)), (a) => a, defaults).map((a) => {
       const hint = agents.hint(agentOf(a)!);
       return { label: hint ? `${a} · ${hint}` : a, onSelect: () => setUp(guide, a) };
     });
