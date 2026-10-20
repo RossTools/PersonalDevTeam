@@ -166,7 +166,8 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
 
 /** A ticket tab: header, the section tabs, then the Overview (description and activity; details and links aside) or
  * the Conversation (its agent sessions) or the Changes (its attempt's diff and review). */
-export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDeleted?: () => void }) {
+/** `mergedBanner` false: the shell already shows it above the ticket's workspace. */
+export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticketId: string; onDeleted?: () => void; mergedBanner?: boolean }) {
   const q = useTicket(ticketId);
   const [tab, setTab] = useSection(ticketId);
   const diff = useDiffSize(q.data?.attempt?.state === 'active' ? q.data.attempt.worktreeId : null);
@@ -184,7 +185,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
-      <MergedBanner ticket={t} />
+      {mergedBanner && <MergedBanner ticket={t} />}
       <HubTabs value={tab} onChange={setTab} diff={diff} />
       {tab === 'conversation' ? (
         <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
