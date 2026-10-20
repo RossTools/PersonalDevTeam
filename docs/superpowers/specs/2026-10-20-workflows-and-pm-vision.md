@@ -167,7 +167,7 @@ that would be rebuilt later. Roughly:
 - **7a — Events and engine core:** event log, sensors emitting events, workflow documents and versions, durable runs,
   the node kinds of §3, the catalog (§4) with the built-in triggers and actions the PR reactions and pipeline need.
   Port the PR reactions and the merged banner.
-- **7b — Agent steps:** pdt-mcp (`get_ticket`, `submit_outcome`, `ask_user`, comments), personas and their versions,
+- **7b — Agent steps:** pdt-mcp (§13; `get_ticket`, `submit_outcome`, `ask_user`, comments), personas and their versions,
   stalled handling, loop limits, the Inbox (gates, questions, stalled, loop limit).
 - **7c — Pipeline template:** the main spec §6 stages as a workflow; the Board splits In progress into its stages;
   scheduling and concurrency caps.
@@ -184,7 +184,7 @@ helping write workflows.
 
 - **Top level.** Its own rail item and conversation, not tied to a project or worktree; it works across every
   project, with a project filter when asked.
-- **Tools** (pdt-mcp): search, read, draft and edit tickets; the board, inbox and attempts; sessions and their state;
+- **Tools** (pdt-mcp, §13; the PM's tool set, and no shell): search, read, draft and edit tickets; the board, inbox and attempts; sessions and their state;
   PRs and CI; send a message to a session (PDT-53); the workflow catalog, documents, dry-run and runs.
 - **Asks before acting.** It drafts tickets and workflow changes and asks before creating or enabling them, by
   default. That is a policy the user can loosen per project.
@@ -256,3 +256,43 @@ What this adds to the plan:
 - **Talking to the PM over Discord** (as the user does with Hermes) is wanted eventually (decided 2026-10-20). Until
   then PDT's UI over Tailscale is the way in from a phone (PDT-7). Discord would be a channel for the PM's
   conversation plus a Discord trigger, so it fits the same catalog.
+
+## 13. How agents act on PDT: MCP over the API, guides for knowledge
+
+Decided 2026-10-20: agents act on PDT through **pdt-mcp**, a thin layer over the HTTP API. The guides served at
+`/api/guides` stay the way agents learn how PDT works. A skill that wraps the API (curl through a shell) is not the
+main path.
+
+Why MCP for actions:
+
+- **Identity.** Each session gets its own endpoint token, so `submit_outcome` and `ask_user` know which session,
+  attempt and ticket they belong to. With curl the agent would pass its own session id, and a mistake reaches the
+  wrong ticket.
+- **No shell needed.** The PM, Reviewer and triage personas can run with PDT tools only and no Bash. "May comment and
+  submit an outcome, nothing else" is enforceable with tools and close to impossible with a shell. This matters most
+  for strict projects (§10).
+- **Per-tool permissions.** The agent's own permission system can allow `get_ticket` and ask before `merge`. With
+  curl everything is one Bash permission.
+- **Typed at the boundary.** Arguments are checked against the tool's schema and errors come back typed, which fits
+  principle 2.
+- **Every agent.** Claude, Codex and Devin all speak MCP, and its config is passed per launch (`--mcp-config` and the
+  Codex/Devin equivalents), so the user's agent config is never edited. Skills are agent-specific and need installing
+  where the agent looks for them.
+- **Readable conversations.** Tool calls show in the conversation view as named calls with arguments, not curl output.
+
+Rules:
+
+- **The HTTP API is the one source of truth.** pdt-mcp tools are generated from the same handlers and schemas as the
+  API (as the TS types are), so the two can't drift. Anything a tool does, the API does too.
+- **Served by pdtd** as an HTTP MCP endpoint (`/api/mcp`, token per session), not a process per session: nothing to
+  spawn or supervise, and fewer Windows process issues. Tokens end with the session.
+- **Few, coarse tools.** Every tool's schema costs context on every turn. The node catalog is searched
+  (`catalog_search`, `catalog_get`), never one tool per node kind; workflows are edited as documents
+  (`workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save`), not node by node.
+- **Tool sets per persona.** A persona version (main spec §6.4) names its tool set: the Coder gets
+  outcome/ask/comment tools, the PM gets ticket, board, session, connection and workflow tools, a triage step gets
+  read tools and `submit_outcome`. The engine only offers a step the tools its persona allows.
+- **Guides stay the knowledge layer.** They explain PDT and point at the tools. Coding agents that already have a
+  shell (a session in a worktree) can keep using the API with curl, as they do today.
+- **Later:** the same endpoint with a user token lets agents outside PDT (Claude Desktop, say) use PDT, with the
+  owner-only remote rules of docs/reference/host.md.
