@@ -283,6 +283,26 @@ async fn tabs_open_in_a_new_workspace_or_where_asked() {
 }
 
 #[tokio::test]
+async fn a_start_without_a_session_makes_the_worktree_attempt_and_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = ticket(&env, json!({"title": "Quiet", "stage": "ready"})).await;
+    let r = started(&env, &id, json!({"agent": "claude", "noSession": true, "newWorkspace": true})).await;
+    assert_eq!(r["session"], Value::Null);
+    assert_eq!(r["ticket"]["stage"], "in_progress");
+    assert_eq!(r["attempt"]["state"], "active");
+    assert_eq!(r["ticket"]["sessions"], json!([]));
+    assert!(env.repo.join(".worktrees").join("pdt-PDT-1-quiet").join("a.txt").is_file(), "the worktree is checked out");
+    let ws = workspaces(&env).await;
+    let mine = ws.iter().find(|w| w["name"] == "PDT-1").expect("a workspace named after the ticket");
+    assert_eq!(tabs(mine), [("ticket", id.clone())]);
+    assert_eq!(r["attempt"]["workspaceId"], mine["id"]);
+    assert_eq!(event_kinds(&env, &id).await, ["created", "moved", "started"]);
+    let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.pid), None).await;
+    assert_eq!(list, json!([]), "no agent was launched");
+}
+
+#[tokio::test]
 async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = setup(tmp.path()).await;

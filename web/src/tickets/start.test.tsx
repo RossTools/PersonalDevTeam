@@ -107,6 +107,18 @@ describe('Start dialog', () => {
     expect(starts(calls)[0]).toMatchObject({ sessionMode: 'terminal' });
   });
 
+  it('can start without a session', async () => {
+    const calls = stub(ready);
+    const { onStarted } = open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'No session' }));
+    expect(within(dialog).queryByRole('radio', { name: 'Claude' })).toBeNull();
+    expect(within(dialog).queryByRole('checkbox', { name: /Skip permission prompts/ })).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalled());
+    expect(starts(calls)[0]).toEqual({ agent: 'claude', noSession: true, newWorkspace: true, mode: 'check', cols: 120, rows: 32 });
+  });
+
   it('lists open blockers and starts anyway with mode force', async () => {
     const blocked = {
       ...ready,

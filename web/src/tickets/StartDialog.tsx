@@ -27,14 +27,14 @@ export const openBlockers = (t: Pick<Ticket, 'links'>) => t.links.filter((l) => 
 
 export interface StartDialogProps {
   ticketId: string;
-  /** Where the ticket and session tabs open; the end of the project workspace when absent. */
+  /** Where the ticket and session (if any) tabs open; the end of the project workspace when absent. */
   placement?: TabPlacement;
   onClose: () => void;
   onStarted: (r: StartResult) => void;
 }
 
 /**
- * Start a ticket: agent, branch, base, permission prompts, and where the tabs open. Open blockers and overlaps with
+ * Start a ticket: agent (or no session), branch, base, permission prompts, and where the tabs open. Open blockers and overlaps with
  * active tickets are listed first; then the primary action is **Wait** (wait until clear) and **Start anyway**
  * (`mode: force`; the danger variant for a conflict) is the other. The server's own check (`start_blocked`) does the
  * same.
@@ -56,8 +56,11 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const offeredAgents = AGENT_KINDS.some(availability.offered) ? AGENT_KINDS.filter(availability.offered) : AGENT_KINDS;
   // The chosen agent unless this host lacks it (then the first it has); every agent until the checks load.
   const agent: AgentKind = offeredAgents.includes(chosenAgent) ? chosenAgent : offeredAgents[0] ?? chosenAgent;
-  const [pickedMode, setMode] = useState<SessionMode | null>(null);
-  const sessionMode = pickedMode ?? defaults.mode;
+  // 'none': no agent session (PDT-72), only the branch, worktree and the ticket's tab.
+  const [pickedMode, setMode] = useState<SessionMode | 'none' | null>(null);
+  const view = pickedMode ?? defaults.mode;
+  const noSession = view === 'none';
+  const sessionMode: SessionMode = view === 'none' ? defaults.mode : view;
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [bypass, setBypass] = useState(true);
@@ -117,10 +120,10 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     const mode: StartMode = force ? 'force' : 'check';
     const body: StartTicket = {
       agent,
-      sessionMode,
+      ...(noSession ? { noSession: true } : { sessionMode }),
       ...(branch.trim() ? { branch: branch.trim() } : {}),
       ...(base.trim() ? { base: base.trim() } : {}),
-      ...(bypass ? { bypassPermissions: true } : {}),
+      ...(bypass && !noSession ? { bypassPermissions: true } : {}),
       ...(newWorkspace ? { newWorkspace: true } : placement ? { tab: placement } : {}),
       mode,
       ...INITIAL_SIZE,
@@ -216,19 +219,25 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           )}
           <Field
             label="Agent"
-            hint={sessionMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."}
+            hint={
+              noSession
+                ? 'No agent yet: just the branch, worktree and the ticket in its workspace.'
+                : sessionMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."
+            }
           >
             <div className="flex flex-wrap items-center gap-2">
-              <SegmentedControl
-                aria-label="Agent"
-                options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${AGENT_LABEL[a]} · ${availability.hint(a)}` : AGENT_LABEL[a] }))}
-                value={agent}
-                onChange={setAgent}
-              />
-              <SegmentedControl<SessionMode>
+              {!noSession && (
+                <SegmentedControl
+                  aria-label="Agent"
+                  options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${AGENT_LABEL[a]} · ${availability.hint(a)}` : AGENT_LABEL[a] }))}
+                  value={agent}
+                  onChange={setAgent}
+                />
+              )}
+              <SegmentedControl<SessionMode | 'none'>
                 aria-label="Show as"
-                options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }]}
-                value={sessionMode}
+                options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }, { value: 'none', label: 'No session' }]}
+                value={view}
                 onChange={setMode}
               />
             </div>
@@ -239,7 +248,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           <Field label="Base branch">
             <Input mono value={base} placeholder={project?.baseBranch ?? 'main'} maxLength={200} onChange={(e) => setBase(e.target.value)} />
           </Field>
-          <Checkbox checked={bypass} onChange={setBypass}>Skip permission prompts (dangerous)</Checkbox>
+          {!noSession && <Checkbox checked={bypass} onChange={setBypass}>Skip permission prompts (dangerous)</Checkbox>}
           <Switch size="sm" checked={newWorkspace} onChange={setNewWorkspace} className="text-xs">
             Open in a new workspace
           </Switch>

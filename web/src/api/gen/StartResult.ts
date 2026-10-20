@@ -6,4 +6,8 @@ import type { Ticket } from "./Ticket";
 /**
  * What Start made.
  */
-export type StartResult = { ticket: Ticket, attempt: AttemptSummary, session: Session, };
+export type StartResult = { ticket: Ticket, attempt: AttemptSummary, 
+/**
+ * The agent session working on it; none for a start with `noSession`.
+ */
+session: Session | null, };

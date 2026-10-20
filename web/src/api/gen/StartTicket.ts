@@ -36,6 +36,11 @@ sessionMode?: SessionMode,
  */
 fromSession?: string, 
 /**
+ * Start without an agent session (PDT-72): the branch, worktree, attempt and the ticket's tab (in a new workspace
+ * with `newWorkspace`) only. `agent`, `sessionMode` and `bypassPermissions` don't apply.
+ */
+noSession?: boolean, 
+/**
  * On a parent: start its next part (the first open part, by rank, that is not started or merged and has no
  * open blockers) instead of refusing with `ticket_has_parts`.
  */
