@@ -1,7 +1,8 @@
 # Workflows, events and the engine (Phase 7a)
 
 Spec: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md (vision: 2026-10-20-workflows-and-pm-vision.md).
-Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, API records),
+Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, API records, what
+reaches an agent),
 pdt-store `event_log.rs` and `workflows.rs` (migration 0021), pdt-api `workflow/` (catalog, engine, nodes, outbox,
 built-ins, repo files, routes) and `finish.rs` (`ticket.finish`).
 
@@ -42,6 +43,9 @@ built-ins, repo files, routes) and `finish.rs` (`ticket.finish`).
     changes) → quiet end.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user with an active attempt → `session.send`.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
+- What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
+  `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
+  are told.
 
 ## Catalog
 

@@ -11,9 +11,18 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   `set-up-project` / `set-up-workflow` = docs/prompts/*.md below their `---` line). Guides link to each other by API
   path, never by repo path (a test checks).
 - Every agent session (Claude, Codex or Devin; terminal or conversation) gets PDT's instructions: a short context
-  block (API address, session, project, checkout, guides; pdt-core `agent_context`) plus the project's **agent
-  instructions** (`project_settings.agent_instructions`, `agentInstructions` in the settings API; kept when a PUT
-  leaves it out, max 16 KB), written to `<data dir>/sessions/<id>/instructions.md`.
+  block (API address, session, project, checkout, guides, worktrees and runs through the API; pdt-core
+  `agent_context`) plus the project's **agent instructions** (`project_settings.agent_instructions`,
+  `agentInstructions` in the settings API; kept when a PUT leaves it out, max 16 KB), written to
+  `<data dir>/sessions/<id>/instructions.md`.
+- A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
+  follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
+  workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how
+  to act on each kind, and, for any `ci.*` / `pr.*` / `attempt.merged` one, that PDT watches the pull request so CI
+  isn't watched in a shell. The events come from pdt-core `workflow::news::agent_news`: enabled project and
+  host-wide workflows whose trigger (and its `projects`) leads by edges, or a `workflow.call`, to a `session.send`
+  with `attempt` (trigger conditions aren't read). The text is fixed when the session starts or restarts; a chat that
+  Start takes over keeps what it started with.
   - Claude gets `--append-system-prompt-file <that file>`.
   - Codex terminals get `-c developer_instructions=<TOML string>` (through a Windows `.cmd` shim, a pointer to the
     file), Codex conversations `developerInstructions` on `thread/start`/`thread/resume`; the user's own
