@@ -74,6 +74,8 @@ export interface PaletteHandlers {
   openTicket: (ticket: { id: string; projectId: string }) => void;
   /** Opens the Start dialog; `here`: the ticket's tab is on screen, so its tabs open after it. */
   startTicket: (ticket: { id: string; projectId: string }, here: boolean) => void;
+  /** Starts a parent's next part (PDT-38): the Start dialog for it, or a toast saying why there is none. */
+  startNextPart: (parent: { id: string; key: string }) => void;
 }
 
 export interface PaletteContext {
@@ -197,7 +199,11 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       },
     );
     const open = tab?.ticketId ? byItem.get(infoKey({ kind: 'ticket', id: tab.ticketId }))?.ticket : undefined;
-    if (open && ['draft', 'ready', 'todo'].includes(open.stage) && open.attempt?.state !== 'active') {
+    if (open?.parts && !['done', 'wont_do'].includes(open.stage)) {
+      // A parent is started through its parts.
+      const t = open;
+      actions.push({ id: 'tickets:start-next-part', label: `Start next part of ${t.key}`, group: ACTIONS, icon: 'run', keywords: [t.title, 'agent', 'parts'], run: () => h.startNextPart(t) });
+    } else if (open && ['draft', 'ready', 'todo'].includes(open.stage) && open.attempt?.state !== 'active') {
       const t = open;
       actions.push({ id: 'tickets:start-open', label: `Start ${t.key}`, group: ACTIONS, icon: 'run', keywords: [t.title, 'agent'], run: () => h.startTicket(t, true) });
     }

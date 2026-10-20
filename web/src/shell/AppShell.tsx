@@ -18,7 +18,7 @@ import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
-import { OpenSessionContext, OpenTicketContext, StartTicketContext } from '../tickets/actions';
+import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
@@ -237,6 +237,7 @@ export function AppShell() {
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
+    startNextPart: (t) => void runAction(() => startNextPart(startTicket, t)),
   };
   const items = paletteOpen
     ? paletteItems({

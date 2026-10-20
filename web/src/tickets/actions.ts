@@ -152,6 +152,8 @@ export function ticketMenu(opts: {
   onStart?: () => void;
   /** Adds Move to top / bottom (the backlog sorted by rank). */
   rank?: boolean;
+  /** Adds Make into parts… (callers offer it only where `canMakeParts` allows). */
+  onMakeParts?: () => void;
   onDeleted?: () => void;
 }): MenuEntry[] {
   const { qc, confirm, ticket: t } = opts;
@@ -164,6 +166,7 @@ export function ticketMenu(opts: {
     ...(opts.onOpen ? [{ label: 'Open', onSelect: opts.onOpen }] : []),
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
+    ...(opts.onMakeParts ? [{ label: 'Make into parts…', onSelect: opts.onMakeParts }] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },
     ...(opts.rank
@@ -314,6 +317,8 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket)
   for (const s of wsSessions) await retryWhile('session_running', () => api.deleteSession(s.id)).catch(ignoreMissing);
   const ticketTab = workspaces.flatMap((w) => w.tabs).find((tab) => tab.ticketId === t.id);
   if (workspace && ticketTab && ticketTab.workspaceId !== workspace.id) await api.closeTab(ticketTab.id).catch(ignoreMissing);
+  // A part's tabs live in its parent's shared workspace (PDT-38), which stays: close just the part's tab.
+  if (!workspace && t.parent && ticketTab) await api.closeTab(ticketTab.id).catch(ignoreMissing);
   let workspaceRemoved = false;
   if (workspace) {
     workspaceRemoved = await api.deleteWorkspace(workspace.id, { closeTabs: true }).then(() => true, (e) => (ignoreMissing(e), false));

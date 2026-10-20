@@ -13,6 +13,7 @@ import { DROP_KINDS, droppedOf } from './dnd';
 import { agentMenu, workspaceMenu } from './menus';
 import { findTab, isTicketWorkspace, itemOf, positionInAll } from './model';
 import { TicketKey } from '../common/TicketKey';
+import { PartsStepper } from '../common/PartsStepper';
 import { PrBadge } from '../tickets/PullRequest';
 import { useOpenTicket } from '../tickets/actions';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
@@ -207,6 +208,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                         <span className="flex" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop} onKeyDown={stop} onClick={stop} onDoubleClick={stop}>
                           <TicketKey ticketKey={t.key} title={`Open ${t.key}`} onClick={() => openTicket({ id: t.id, projectId: t.projectId })} />
                         </span>
+                        {t.parts && <PartsStepper parts={t.parts} showCount className="w-16 shrink-0" />}
                         {t.pr ? <PrBadge pr={t.pr} attemptMerged={t.attemptState === 'merged'} /> : t.attemptState === 'merged' ? <Badge tone="accent" className="shrink-0">Merged</Badge> : null}
                       </span>
                     }

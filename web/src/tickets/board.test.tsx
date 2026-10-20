@@ -5,6 +5,7 @@ import type { Session } from '../api/gen/Session';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext, StartTicketContext } from './actions';
 import { DONE_WINDOW_MS } from './Board';
+import { COLLAPSED_KEY } from './BoardLanes';
 import { event, page, params, project, summary, ticket } from './fixtures';
 import { TicketsView } from './TicketsView';
 import { useBacklog } from './useBacklog';
@@ -80,8 +81,10 @@ describe('board', () => {
     expect(await within(column('Done')).findByText('Ticket 3')).toBeInTheDocument();
     expect(within(column('To do')).getByText('Blocked')).toBeInTheDocument();
     const lists = calls.filter((c) => c.path.startsWith('/api/tickets?')).map((c) => params(c.path));
-    expect(lists).toContainEqual({ stage: 'todo', limit: '50' });
-    expect(lists).toContainEqual({ stage: 'in_progress', limit: '50' });
+    // Cards never include parents: they head lanes.
+    expect(lists).toContainEqual({ stage: 'todo', hasParts: 'false', limit: '50' });
+    expect(lists).toContainEqual({ stage: 'in_progress', hasParts: 'false', limit: '50' });
+    expect(lists).toContainEqual({ stage: 'todo,in_progress', hasParts: 'true', limit: '100' });
     const done = lists.find((q) => q.stage === 'done')!;
     expect(done.sort).toBe('updated');
     expect(Number(done.closedAfter)).toBeGreaterThanOrEqual(before - DONE_WINDOW_MS);
@@ -176,5 +179,125 @@ describe('board', () => {
     expect(screen.queryByText('Ticket 1')).not.toBeInTheDocument();
     // Touch: no native drag.
     expect(await card(/ALP-2/)).toHaveAttribute('draggable', 'false');
+  });
+});
+
+describe('board lanes', () => {
+  const progress = (segments: ('done' | 'progress' | 'todo' | 'backlog')[]) => ({
+    total: segments.length, done: segments.filter((s) => s === 'done').length, merged: 0, review: 0,
+    progress: segments.filter((s) => s === 'progress').length, todo: segments.filter((s) => s === 'todo').length,
+    backlog: segments.filter((s) => s === 'backlog').length, segments,
+  });
+  // PDT-like: parent ALP-10 (rank b) with parts in To do and In progress; parent ALP-20 (rank a, picked, nothing on
+  // the board); ALP-1 is not a part.
+  const p10 = summary(10, { title: 'Phase five', stage: 'in_progress', rank: 'b', parts: progress(['done', 'progress', 'todo']) });
+  const p20 = summary(20, { title: 'Phase seven', stage: 'todo', rank: 'a', parts: progress(['backlog']) });
+  const asPart = (n: number, stage: 'todo' | 'in_progress' | 'done', parent = p10) =>
+    summary(n, { stage, title: `Part ${n}`, parent: { id: parent.id, key: parent.key, title: parent.title } });
+  const lanes = {
+    todo: [summary(1, { stage: 'todo' }), asPart(12, 'todo')],
+    in_progress: [asPart(11, 'in_progress')],
+    done: [],
+  } as Record<string, ReturnType<typeof summary>[]>;
+
+  function laneStub(): Call[] {
+    return stubApi({
+      'GET /api/tickets': (c: Call) => {
+        const q = params(c.path);
+        if (q.hasParts === 'true') return page(q.stage === 'todo,in_progress' ? [p10, p20] : []);
+        return page(lanes[q.stage] ?? []);
+      },
+      'GET /api/projects': [project],
+      [`GET /api/projects/${project.id}/sessions`]: [],
+      'PATCH /api/tickets/t11': (c: Call) => ticket(11, c.body as object),
+      'PATCH /api/tickets/t1': (c: Call) => ticket(1, c.body as object),
+    });
+  }
+
+  const lane = (key: string) => screen.findByRole('group', { name: new RegExp(`^${key} `) });
+
+  it('heads a lane per parent, by rank, after the tickets that are not parts', async () => {
+    laneStub();
+    renderWithQuery(<Harness />);
+    const seven = await lane('ALP-20');
+    const five = await lane('ALP-10');
+    // ALP-20 ranks first; a picked parent with nothing on the board still has its lane.
+    expect(seven.compareDocumentPosition(five) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('No parts on the board yet.')).toBeInTheDocument();
+    expect(within(five).getByRole('img', { name: /1 of 3 parts done/ })).toBeInTheDocument();
+    expect(within(five).getByText('1/3')).toBeInTheDocument();
+    // The parts sit in their parent's lane, in their columns; the others in the first lane.
+    expect(within(column('ALP-10 · To do')).getByText('Part 12')).toBeInTheDocument();
+    expect(within(column('ALP-10 · In progress')).getByText('Part 11')).toBeInTheDocument();
+    expect(within(column('To do')).getByText('Ticket 1')).toBeInTheDocument();
+    expect(within(column('To do')).queryByText('Part 12')).not.toBeInTheDocument();
+    // Parents are lane headers, never cards.
+    expect(screen.queryByRole('listitem', { name: /ALP-10 Phase five/ })).not.toBeInTheDocument();
+  });
+
+  it('starts a lane parent’s next part from its header', async () => {
+    const onStart = vi.fn();
+    stubApi({
+      'GET /api/tickets': (c: Call) => {
+        const q = params(c.path);
+        if (q.hasParts === 'true') return page(q.stage === 'todo,in_progress' ? [p10, p20] : []);
+        return page(lanes[q.stage] ?? []);
+      },
+      'GET /api/projects': [project],
+      [`GET /api/projects/${project.id}/sessions`]: [],
+      'GET /api/tickets/t10': ticket(10, { partList: [asPart(13, 'done'), { ...asPart(12, 'todo') }] }),
+    });
+    renderWithQuery(<Harness onStart={onStart} />);
+    const five = await lane('ALP-10');
+    await userEvent.click(within(five).getByRole('button', { name: 'Start next part' }));
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ id: 't12' })));
+  });
+
+  it('remembers a collapsed lane', async () => {
+    laneStub();
+    const { unmount } = renderWithQuery(<Harness />);
+    const five = await lane('ALP-10');
+    await userEvent.click(within(five).getByRole('button', { name: 'Collapse ALP-10' }));
+    expect(screen.queryByRole('region', { name: 'ALP-10 · To do' })).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(COLLAPSED_KEY)!)).toEqual(['t10']);
+    unmount();
+    renderWithQuery(<Harness />);
+    expect(within(await lane('ALP-10')).getByRole('button', { name: 'Expand ALP-10' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'ALP-10 · To do' })).not.toBeInTheDocument();
+  });
+
+  it('moves a card only within its own lane', async () => {
+    const calls = laneStub();
+    renderWithQuery(<Harness />);
+    const part = await card(/ALP-11 Part 11/);
+    // Dropped on the first lane's Done: ignored.
+    let dt = transfer();
+    fireEvent.dragStart(part, { dataTransfer: dt });
+    fireEvent.drop(column('Done'), { dataTransfer: dt });
+    // A first-lane card dropped in the parent's lane: ignored.
+    const plain = await card(/ALP-1 Ticket 1/);
+    dt = transfer();
+    fireEvent.dragStart(plain, { dataTransfer: dt });
+    fireEvent.drop(column('ALP-10 · Done'), { dataTransfer: dt });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls.some((x) => x.method === 'PATCH')).toBe(false);
+    // Within its lane: moved.
+    dt = transfer();
+    fireEvent.dragStart(part, { dataTransfer: dt });
+    fireEvent.dragOver(column('ALP-10 · Done'), { dataTransfer: dt });
+    fireEvent.drop(column('ALP-10 · Done'), { dataTransfer: dt });
+    await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')).toMatchObject({ path: '/api/tickets/t11', body: { stage: 'done' } }));
+  });
+
+  it('shows parents as group headings in the one column on a phone', async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
+    laneStub();
+    renderWithQuery(<Harness />);
+    const five = await lane('ALP-10');
+    expect(within(five).getByText('1/3')).toBeInTheDocument();
+    expect(within(column('ALP-10 · To do')).getByText('Part 12')).toBeInTheDocument();
+    expect(screen.queryByText('Part 11')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'In progress' }));
+    expect(await within(column('ALP-10 · In progress')).findByText('Part 11')).toBeInTheDocument();
   });
 });

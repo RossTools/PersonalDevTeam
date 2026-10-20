@@ -10,7 +10,10 @@ import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { AttemptSection, MergedBanner } from './Attempt';
-import { abandonAttempt, canStart, deleteTicket, moveToEntries, stopWaitingEntry, useStartTicket } from './actions';
+import { abandonAttempt, canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, useStartTicket } from './actions';
+import { isClosed } from './model';
+import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
+import { PartsStepper } from '../common/PartsStepper';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { TicketConversation } from './TicketConversation';
@@ -61,9 +64,16 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   const confirm = useConfirm();
   const start = useStartTicket();
   const attempt = ticket.attempt;
+  const [making, setMaking] = useState(false);
   return (
+    <>
     <ViewHeader
-      leading={<TicketKey ticketKey={ticket.key} />}
+      leading={
+        <span className="flex items-center gap-1">
+          {ticket.parent && <ParentChip parent={ticket.parent} projectId={ticket.projectId} className="hidden sm:inline-flex" />}
+          <TicketKey ticketKey={ticket.key} />
+        </span>
+      }
       title={<TicketTitle ticket={ticket} />}
       titleTooltip={ticket.title}
       meta={
@@ -71,6 +81,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           <StageStepper stage={ticket.stage} compact />
           <PriorityIcon priority={ticket.priority} />
           <TicketBadges ticket={ticket} />
+          {ticket.parts && <PartsStepper parts={ticket.parts} showCount className="hidden w-28 sm:flex" />}
           <LabelChips labels={ticket.labels} className="hidden sm:flex" />
           {attempt && <BranchChip branch={attempt.branch} base={attempt.baseBranch} className="hidden max-w-60 md:inline-flex" />}
         </>
@@ -86,7 +97,11 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
             label="Ticket actions"
             entries={() => [
               ...(ticket.waiting ? [stopWaitingEntry(qc, ticket)] : []),
-              { submenu: 'Move to', entries: moveToEntries(qc, ticket) },
+              { submenu: 'Move to', entries: moveToEntries(qc, ticket, confirm) },
+              ...(ticket.parts && !isClosed(ticket.stage)
+                ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, ticket)) }]
+                : []),
+              ...(canMakeParts(ticket) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
               ...(attempt?.state === 'active'
                 ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
                 : []),
@@ -101,6 +116,8 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
         </>
       }
     />
+    {making && <MakePartsDialog ticket={ticket} onClose={() => setMaking(false)} />}
+    </>
   );
 }
 
@@ -134,6 +151,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
           <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
             <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
               <TicketDescription key={t.id} ticket={t} />
+              <PartsSection ticket={t} />
               <TicketTimeline ticketId={t.id} composer />
             </div>
             <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">

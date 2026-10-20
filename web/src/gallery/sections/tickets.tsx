@@ -10,6 +10,12 @@ import { BulkActionBar } from '@ui/BulkActionBar';
 import { Timeline, RelativeTime, type TimelineItem } from '@ui/Timeline';
 import { Markdown } from '../../common/Markdown';
 import { StageStepper, STAGE_LABEL, type TicketStage } from '../../common/StageStepper';
+import { PartsStepper, type PartState, type PartsProgress } from '../../common/PartsStepper';
+
+const progressOf = (segments: PartState[]): PartsProgress => {
+  const n = (s: PartState) => segments.filter((x) => x === s).length;
+  return { total: segments.length, done: n('done'), merged: n('merged'), review: n('review'), progress: n('progress'), todo: n('todo'), backlog: n('backlog'), segments };
+};
 import { TicketKey } from '../../common/TicketKey';
 import { PriorityIcon, PRIORITIES, type Priority } from '../../common/PriorityIcon';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -59,6 +65,13 @@ function Pieces() {
             <StageStepper stage="ready" compact />
             <StageStepper stage="wont_do" compact />
           </div>
+        </div>
+      </Demo>
+      <Demo label="PartsStepper · every part state, with and without the count">
+        <div className="flex max-w-80 flex-col gap-3">
+          <PartsStepper parts={progressOf(['done', 'merged', 'review', 'progress', 'todo', 'backlog'])} showCount />
+          <PartsStepper parts={progressOf(['done', 'done', 'review', 'backlog'])} showCount />
+          <PartsStepper parts={progressOf(['done', 'done', 'done'])} />
         </div>
       </Demo>
     </div>

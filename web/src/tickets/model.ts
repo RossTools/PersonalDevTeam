@@ -35,6 +35,30 @@ export function nextPart(parts: TicketSummary[]): TicketSummary | string {
     : 'every open part is started or merged';
 }
 
+/**
+ * The parts a description plans: the top-level list items under the first heading whose text contains "Scope" or
+ * "Parts" (until the next heading of that level or higher). An item that starts with a bold lead
+ * (`**5a — Claude conversations**: …`) is just the bold text; otherwise its first line, without trailing colon.
+ */
+export function scopeParts(markdown: string): string[] {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^#{1,6}\s/.test(l) && /scope|parts/i.test(l));
+  if (start < 0) return [];
+  const level = lines[start].match(/^#+/)![0].length;
+  const out: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const h = line.match(/^(#{1,6})\s/);
+    if (h && h[1].length <= level) break;
+    const item = line.match(/^(?:[-*+]|\d+[.)])\s+(.*)$/);
+    if (!item) continue;
+    const text = item[1].trim();
+    const bold = text.match(/^\*\*(.+?)\*\*/) ?? text.match(/^__(.+?)__/);
+    const title = (bold ? bold[1] : text).replace(/[:：]\s*$/, '').trim();
+    if (title) out.push(title.slice(0, 200));
+  }
+  return out;
+}
+
 export type GroupBy = 'none' | 'stage' | 'priority' | 'label';
 
 export interface BacklogFilters {
