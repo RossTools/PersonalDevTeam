@@ -2,6 +2,7 @@
 //! on macOS. The previous version is kept: a copy of the install folder (Windows) or the old bundle (macOS).
 
 use crate::config::HostConfig;
+use crate::process::no_window;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -88,7 +89,7 @@ fn kill_tree(child: &mut std::process::Child) {
         let _ = c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     };
     if cfg!(windows) {
-        quiet(Command::new("taskkill").args(["/PID", &pid, "/T", "/F"]));
+        quiet(no_window(Command::new("taskkill").args(["/PID", &pid, "/T", "/F"])));
     } else {
         quiet(Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]));
     }
@@ -161,7 +162,7 @@ impl Installer for NsisInstaller {
     }
     fn install(&self, asset: &Path) -> Result<(), String> {
         let _tray = TrayPause::stop(&self.install_dir);
-        let status = run_with_timeout(Command::new(asset).args(nsis_args(&self.install_dir)), self.timeout)
+        let status = run_with_timeout(no_window(Command::new(asset).args(nsis_args(&self.install_dir))), self.timeout)
             .map_err(|e| format!("running the installer: {e}"))?;
         if status.success() { Ok(()) } else { Err(format!("the installer failed ({status})")) }
     }
@@ -276,10 +277,14 @@ impl Installer for BundleInstaller {
 }
 
 /// The installer pdt-host uses: the platform's, or `Unsupported` (with the reason logged) when updates cannot be
-/// installed here (ruling F9) or the host runs the dev profile.
-pub fn host_installer(cfg: &HostConfig) -> Box<dyn Installer + Send> {
+/// installed here (ruling F9) or the host runs the dev profile. A stable host also records the reason in
+/// `cfg.updates_unsupported`, so the pdtd it starts never offers an update it would refuse (PDT-51).
+pub fn host_installer(cfg: &mut HostConfig) -> Box<dyn Installer + Send> {
     installer_for(cfg).unwrap_or_else(|reason| {
         crate::log::log(cfg, &format!("updates cannot be installed here: {reason}"));
+        if !cfg.dev {
+            cfg.updates_unsupported = Some(reason.clone());
+        }
         Box::new(Unsupported { reason })
     })
 }
@@ -297,6 +302,9 @@ pub fn installer_for(cfg: &HostConfig) -> Result<Box<dyn Installer + Send>, Stri
         }))
     } else if cfg!(target_os = "macos") {
         let bundle = bundle_of(&cfg.install_dir).ok_or("pdt-host is not installed from an .app bundle")?;
+        if let Some(reason) = crate::placement::bundle_problem(&cfg.install_dir) {
+            return Err(reason);
+        }
         Ok(Box::new(BundleInstaller { bundle, timeout: INSTALL_TIMEOUT }))
     } else {
         Err("updates are not supported on this platform".into())
@@ -353,11 +361,15 @@ fn tray_pids(ps: &str, bundle: &Path, own_pid: u32) -> Vec<u32> {
 fn stop_tray(place: &Path) -> bool {
     let me = std::process::id();
     if cfg!(windows) {
-        Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &tray_stop_script(place, me)])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("yes"))
-            .unwrap_or(false)
+        no_window(Command::new("powershell.exe").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &tray_stop_script(place, me),
+        ]))
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("yes"))
+        .unwrap_or(false)
     } else {
         let ps = Command::new("ps").args(["-axo", "pid=,args="]).output();
         let pids = ps.map(|o| tray_pids(&String::from_utf8_lossy(&o.stdout), place, me)).unwrap_or_default();
@@ -456,6 +468,28 @@ mod tests {
         assert!(e.contains("not supported") && e.contains(".app bundle"), "{e}");
         assert!(u.install(Path::new("x")).is_err());
         assert_eq!(u.backup_path(), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_translocated_bundle_gets_no_installer_and_pdtd_is_told() {
+        let tmp = tempfile::tempdir().unwrap();
+        let place = |root: &Path| root.join("P.app").join("Contents").join("MacOS");
+        let cfg = |dir: PathBuf| {
+            let data = tmp.path().join("data").to_string_lossy().into_owned();
+            HostConfig::from_lookup(move |k| (k == "PDT_DATA_DIR").then(|| data.clone()), None, dir).unwrap()
+        };
+        let fine = place(tmp.path());
+        std::fs::create_dir_all(&fine).unwrap();
+        assert!(installer_for(&cfg(fine)).is_ok());
+
+        let moved = place(&tmp.path().join("AppTranslocation").join("u").join("d"));
+        std::fs::create_dir_all(&moved).unwrap();
+        let mut c = cfg(moved);
+        let err = installer_for(&c).err().unwrap();
+        assert!(err.contains("temporary read-only folder"), "{err}");
+        assert_eq!(host_installer(&mut c).backup_path(), None);
+        assert_eq!(c.updates_unsupported.as_deref(), Some(err.as_str()));
     }
 
     #[test]

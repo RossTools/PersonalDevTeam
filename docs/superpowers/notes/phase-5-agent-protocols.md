@@ -66,6 +66,13 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   `result`: a turn ends at the next real prompt, at `[Request interrupted by user]`, or (TUI turns) at
   `system/turn_duration {durationMs}`. Local commands appear as `<command-name>/x</command-name>…<command-args>` and
   `<local-command-stdout>…`. [V]
+- **Slash commands in `-p` (checked 2026-10-19)**: a custom command (`.claude/commands/hi.md`) is replayed as
+  `<command-message>hi</command-message>\n<command-name>/hi</command-name>` (plus `<command-args>`); a local one
+  (`/context`) is not replayed at all: an `assistant` message and a `result` follow. [V]
+- **Codex schema (codex-cli 0.163.0, `codex app-server generate-json-schema`)**: `thread/compact/start {threadId}` → `{}`;
+  `review/start {threadId, target: {type: uncommittedChanges} | {type: baseBranch, branch} | {type: commit, sha} |
+  {type: custom, instructions}, delivery?}`; `turn/start` input items include `{type: localImage, path}`;
+  `account/read` → `{account: {type: apiKey} | {type: chatgpt, email, planType} | {type: amazonBedrock}}`. [D]
 - **The TUI leaves on a typed `/exit`** (written, then Enter 150 ms later so it isn't read as a paste): a fresh TUI in
   a trusted folder exited 0 about 1 s after Enter. [V]
 - Windows `claude -p`: not checked by hand (no Windows machine here). The adapter pipes stdio with no PTY, through
@@ -77,6 +84,18 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
 - `--settings` hooks still fire in `-p` (UserPromptSubmit, PreToolUse, Stop); no Notification hook for host-answered
   prompts. [V]
 - Samples: scratch logs from the verification run were not kept in the repo; re-record into the fake-agent fixtures.
+
+### Side requests (checked 2026-10-19, 2.1.302)
+
+`claude -p --resume <id> --fork-session --no-session-persistence --tools "" --output-format json --json-schema '<schema>'`
+with the prompt on stdin answers one `result` object whose `structured_output` holds the schema's object (`result`
+holds it as text; `num_turns` is 2: the schema is a tool). Nothing is saved: the project folder keeps only the original
+`<id>.jsonl`. Works while the conversation's own `-p` process is live. Make ticket uses it (5d).
+
+### `/clear` (checked 2026-10-19, 2.1.302)
+- Sent as a user message, `/clear` is not replayed. Claude prints `{"type":"conversation_reset","trigger":"clear","new_conversation_id":A,"uuid":A,"user_message_uuid":…,"session_id":<old>}`, then a `system/init` and a `result` (`local_command: "clear"`, `num_turns: 0`) whose `session_id` is a third id B.
+- Every later frame carries B, and the transcript is `projects/*/B.jsonl` (it starts with the `/clear` command entries); no file is named after A. `--resume B` continues the cleared conversation and keeps B.
+- So PDT follows the `session_id` of each `init`, never `new_conversation_id` (fixture: crates/pdt-core/tests/fixtures/claude/clear.jsonl). In the TUI, the SessionStart hook (`source: "clear"`) reports B as its `session_id`.
 
 ## Codex: `codex app-server`
 
@@ -136,6 +155,14 @@ Command: `claude -p --input-format stream-json --output-format stream-json --ver
   {rateLimits:{primary,secondary:{usedPercent,windowDurationMins,resetsAt (s)},planType}}` (no threadId). Noise per
   turn: `turn/moderationMetadata`, `thread/readState/changed`, `mcpServer/startupStatus/updated`,
   `remoteControl/status/changed`, `account/updated`. [V]
+
+### Side requests (checked 2026-10-19, 0.163)
+
+`thread/fork {threadId, ephemeral: true, excludeTurns: true, sandbox: "read-only", approvalPolicy: "never"}` returns
+`{thread: {id}}` for a fork that is never written to disk (no rollout file); without `excludeTurns` an ephemeral fork
+is refused ("ephemeral paginated thread/fork requires `excludeTurns: true`"). It works from a thread's rollout after the
+server restarted. `turn/start` on the fork with `outputSchema` ends with an `agentMessage` whose text is the JSON
+object; its notifications name the fork's thread id, so they never reach the conversation. Make ticket uses it (5d).
 
 ## Devin CLI: `devin acp` (docs only)
 

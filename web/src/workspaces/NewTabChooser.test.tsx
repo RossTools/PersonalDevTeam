@@ -139,5 +139,19 @@ describe('NewTabChooser', () => {
       await userEvent.keyboard('o');
       await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'codex', mode: 'terminal' }));
     });
+
+    it('d opens Devin, which is only a terminal, with the bypass switch', async () => {
+      const calls = stubApi({ ...routes, 'POST /api/sessions': created });
+      await open();
+      await userEvent.keyboard('d');
+      await waitFor(() => expect(post(calls)).toMatchObject({ kind: 'agent_tui', agent: 'devin', mode: 'terminal' }));
+      expect(post(calls)).not.toHaveProperty('permissionMode');
+      cleanup();
+      calls.length = 0;
+      const panel = await open();
+      await userEvent.click(within(panel).getByRole('switch', { name: /Skip permission prompts/ }));
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Devin \(terminal\)/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ agent: 'devin', mode: 'terminal', bypassPermissions: true }));
+    });
   });
 });

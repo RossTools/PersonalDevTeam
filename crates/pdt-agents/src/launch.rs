@@ -15,14 +15,16 @@ const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub fn detect_platform() -> Platform {
     let unix_shell = std::env::var("SHELL").ok();
-    // A macOS app started by launchd has a minimal PATH, so ask the user's login shell for theirs.
+    // A macOS app started by launchd has a minimal PATH, so ask the user's login shell for theirs. A terminal app
+    // can add folders no startup file names (e.g. Claude's ~/.local/bin), so the standard install folders go last.
     let login_path = if cfg!(target_os = "macos") {
         let shell = unix_shell.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "/bin/zsh".into());
         let path = login_path_from(&shell, &["-l", "-c", PRINT_PATH], LOGIN_PATH_TIMEOUT);
         if path.is_none() {
             tracing::warn!(shell = %shell, "could not read the login shell's PATH; using pdtd's own");
         }
-        path
+        let path = path.or_else(|| std::env::var("PATH").ok()).unwrap_or_default();
+        Some(with_install_dirs(&path, &install_dirs(std::env::home_dir().as_deref())))
     } else {
         None
     };
@@ -32,10 +34,36 @@ pub fn detect_platform() -> Platform {
         unix_shell,
         claude_program: "claude".into(),
         codex_program: "codex".into(),
+        devin_program: "devin".into(),
         login_path,
         codex_home: codex_home(),
         claude_config_dir: claude_config_dir(),
+        devin_config_file: crate::hooks::devin_user_config_file(
+            cfg!(windows),
+            std::env::var_os("APPDATA").filter(|v| !v.is_empty()).map(PathBuf::from),
+            std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from),
+            std::env::home_dir(),
+        ),
     }
+}
+
+/// Where the agents install on macOS: Claude's and Devin's installers (~/.local/bin; ~/.claude/local for older
+/// Claude installs), Homebrew and npm under Homebrew's Node.
+fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = home.map(|h| vec![h.join(".local/bin"), h.join(".claude/local")]).unwrap_or_default();
+    dirs.extend([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]);
+    dirs
+}
+
+/// `path` with each of `dirs` it lacks appended, so the user's own order still wins.
+fn with_install_dirs(path: &str, dirs: &[PathBuf]) -> String {
+    let mut all: Vec<PathBuf> = std::env::split_paths(path).filter(|p| !p.as_os_str().is_empty()).collect();
+    for dir in dirs {
+        if !all.contains(dir) {
+            all.push(dir.clone());
+        }
+    }
+    std::env::join_paths(all).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
 /// `$CODEX_HOME` if set and non-empty, else `<home>/.codex`.
@@ -294,6 +322,20 @@ mod tests {
         assert_eq!(login_path_from("/pdt/no/such/shell", &["-c", PRINT_PATH], Duration::from_secs(3)), None);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn install_dirs_go_after_the_login_path() {
+        let home = std::env::temp_dir().join("pdt-home");
+        let dirs = install_dirs(Some(&home));
+        assert_eq!(dirs[0], home.join(".local/bin"));
+        let local = home.join(".local/bin").to_string_lossy().into_owned();
+        let path = with_install_dirs(&format!("/opt/homebrew/bin:/usr/bin:{local}"), &dirs);
+        let claude_local = home.join(".claude/local").to_string_lossy().into_owned();
+        assert_eq!(path, format!("/opt/homebrew/bin:/usr/bin:{local}:{claude_local}:/usr/local/bin"));
+        assert_eq!(with_install_dirs("", &[PathBuf::from("/a")]), "/a", "an empty PATH");
+        assert!(install_dirs(None).iter().all(|d| d.is_absolute()));
+    }
+
     #[test]
     fn claude_conversation_is_found_in_any_project_folder() {
         let dir = tempfile::tempdir().unwrap();
@@ -468,6 +510,7 @@ mod tests {
     fn platform_defaults_to_plain_agent_names() {
         let p = detect_platform();
         assert_eq!((p.claude_program.as_str(), p.codex_program.as_str()), ("claude", "codex"));
+        assert_eq!(p.devin_program, "devin");
         assert_eq!(p.windows, cfg!(windows));
     }
 }

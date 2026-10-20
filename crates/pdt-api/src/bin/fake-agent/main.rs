@@ -5,10 +5,18 @@
 //! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
 //! - `exit` — writes to stderr and exits 3.
 //! - `env: NAME` — says whether NAME is set.
-//! - `who` — says the session id and whether it was resumed.
+//! - `who` — says the session id, whether it was resumed, its model and mode, whether it got PDT's instructions, and
+//!   the `session_id` the message carried.
+//! - `/clear` — like Claude's: `conversation_reset` (whose `new_conversation_id` names no transcript), then an init
+//!   and result under a new session id, which later turns use.
+//! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
+//! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
 //!
 //! Started without `-p` (Claude's TUI, in a terminal) it reads lines and leaves on `/exit`.
+//!
+//! With `--fork-session` (Make ticket's side request) it reads the prompt from stdin and prints one `json` result
+//! whose `structured_output` is a draft naming the session and what it was given.
 //!
 //! `FAKE_AGENT_LOG` (a file path), when set, gets every stdin line and the argv.
 //!
@@ -27,6 +35,8 @@ struct Agent {
     resumed: bool,
     model: String,
     mode: String,
+    /// PDT's instructions arrived (`--append-system-prompt-file` names a readable file).
+    instructions: bool,
     msg: u64,
     queue: Vec<Value>,
     rx: mpsc::Receiver<Option<Value>>,
@@ -170,8 +180,41 @@ impl Agent {
 
     fn turn(&mut self, v: Value) {
         let started = Instant::now();
+        if v["message"]["content"].as_str().map(str::trim) == Some("/clear") {
+            let uuid = |n: u128| {
+                let h = format!("{n:032x}");
+                format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+            };
+            let nanos =
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let (reset_id, new_session) = (uuid(nanos ^ 0xaaaa), uuid(nanos));
+            out(json!({"type":"conversation_reset","trigger":"clear","new_conversation_id":reset_id,
+                "uuid":reset_id,"session_id":self.session}));
+            self.session = new_session;
+            self.init();
+            out(json!({"type":"result","subtype":"success","is_error":false,"duration_ms":5,"num_turns":0,
+                "session_id":self.session,"result":"","local_command":"clear"}));
+            return;
+        }
         self.init();
+        let images: Vec<String> = v["message"]["content"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|b| b["type"] == "image" && b["source"]["data"].as_str().is_some_and(|d| !d.is_empty()))
+                    .map(|b| b["source"]["media_type"].as_str().unwrap_or("?").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if v["message"]["content"].as_str().map(str::trim) == Some("/local") {
+            self.say("local command output");
+            return self.result("success", started);
+        }
         self.replay(&v);
+        if !images.is_empty() {
+            self.say(&format!("saw {} images ({})", images.len(), images.join(", ")));
+            return self.result("success", started);
+        }
         let text = v["message"]["content"].as_str().map(String::from).unwrap_or_else(|| {
             v["message"]["content"]
                 .as_array()
@@ -244,14 +287,39 @@ impl Agent {
             let set = std::env::var_os(name).is_some();
             self.say(&format!("{name} is {}", if set { "set" } else { "unset" }));
         } else if text == "who" {
-            let s =
-                format!("session {} resumed={} model={} mode={}", self.session, self.resumed, self.model, self.mode);
+            let s = format!(
+                "session {} resumed={} model={} mode={} instructions={} msg_session={}",
+                self.session,
+                self.resumed,
+                self.model,
+                self.mode,
+                self.instructions,
+                v["session_id"].as_str().unwrap_or("")
+            );
             self.say(&s);
         } else {
             self.say(&format!("echo: {text}"));
         }
         self.result("success", started);
     }
+}
+
+/// A side request: one `--output-format json` result, nothing saved.
+fn draft(args: &[String], session: &str, resumed: bool) {
+    let mut prompt = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut prompt);
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let has = |name: &str| args.iter().any(|a| a == name);
+    let schema = flag("--json-schema").and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let description = format!(
+        "resumed={resumed} tools={:?} saved={} schema={} prompt={}",
+        flag("--tools").unwrap_or_default(),
+        !has("--no-session-persistence"),
+        schema.is_some(),
+        prompt.split_whitespace().take(3).collect::<Vec<_>>().join(" ")
+    );
+    out(json!({"type":"result","subtype":"success","is_error":false,"session_id":"fork","result":"",
+        "structured_output":{"title":format!("Draft of {session}"),"description":description}}));
 }
 
 fn main() {
@@ -272,6 +340,9 @@ fn main() {
         (None, Some(s)) => (false, s),
         _ => (false, "none".into()),
     };
+    if args.iter().any(|a| a == "--fork-session") {
+        return draft(&args, &session, resumed);
+    }
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
@@ -291,6 +362,9 @@ fn main() {
         resumed,
         model: flag("--model").unwrap_or_else(|| "default".into()),
         mode: flag("--permission-mode").unwrap_or_else(|| "default".into()),
+        instructions: flag("--append-system-prompt-file")
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .is_some_and(|t| t.contains("Running in")),
         msg: 0,
         queue: Vec::new(),
         rx,

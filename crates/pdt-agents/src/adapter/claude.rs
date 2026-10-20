@@ -1,9 +1,13 @@
 //! Claude Code through `claude -p` stream-json: one process per live conversation (spec §3.2). The frame mapping is
 //! pdt-core's `ClaudeMapper`; this module owns the process, its pipes and control-request replies.
 
+#[cfg(test)]
+use super::SessionInstructions;
 use super::{
-    AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, SessionChange,
+    AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
+    SessionChange,
 };
+use base64::Engine as _;
 use pdt_core::conversation::claude::{AnswerError, ClaudeMapper, MapOut, user_line};
 use pdt_core::conversation::{AgentCapabilities, AgentCommandInfo, AgentModel, Answer, Delivery, PermissionMode};
 use pdt_core::session::AgentKind;
@@ -44,14 +48,64 @@ pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     .map(String::from)
     .collect();
     a.push(if spec.resume { "--resume" } else { "--session-id" }.into());
-    a.push(spec.session_id.clone());
+    a.push(spec.claude_conversation_id().to_string());
     a.push("--permission-mode".into());
     a.push(spec.permission_mode.claude().into());
     if let Some(m) = &spec.model {
         a.push("--model".into());
         a.push(m.clone());
     }
+    if let Some(i) = &spec.instructions {
+        a.extend(crate::instructions::claude_args(&i.file));
+    }
     a
+}
+
+/// The arguments of a side request (Make ticket): a fork of the saved conversation that is never saved, with no
+/// tools, answering in JSON shaped by `schema`. The prompt goes in on stdin (a Windows `.cmd` shim mangles free text
+/// in arguments; the schema is plain enough to pass). Never `--bare`.
+pub fn claude_draft_args(spec: &OpenSpec, schema: &Value) -> Vec<String> {
+    let mut a: Vec<String> = vec![
+        "-p".into(),
+        "--resume".into(),
+        spec.claude_conversation_id().to_string(),
+        "--fork-session".into(),
+        "--no-session-persistence".into(),
+        "--tools".into(),
+        String::new(),
+        "--output-format".into(),
+        "json".into(),
+        "--json-schema".into(),
+        schema.to_string(),
+    ];
+    if let Some(m) = &spec.model {
+        a.push("--model".into());
+        a.push(m.clone());
+    }
+    a
+}
+
+/// The answer in a side request's `--output-format json` result: its `structured_output`, else its text.
+pub fn draft_answer(stdout: &str) -> Result<Value, AdapterError> {
+    let result = stdout
+        .lines()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+        .find(|v| v.get("type").and_then(Value::as_str) == Some("result"))
+        .ok_or_else(|| AdapterError::Refused("Claude gave no answer".into()))?;
+    if result.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+        let why = result
+            .get("result")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .or(result.get("subtype").and_then(Value::as_str))
+            .unwrap_or("error");
+        return Err(AdapterError::Refused(why.to_string()));
+    }
+    match result.get("structured_output").filter(|v| !v.is_null()) {
+        Some(v) => Ok(v.clone()),
+        None => result.get("result").cloned().ok_or_else(|| AdapterError::Refused("Claude gave no answer".into())),
+    }
 }
 
 /// The capabilities in Claude's `initialize` reply.
@@ -75,13 +129,21 @@ pub fn capabilities_from_initialize(v: &Value, version: Option<String>) -> Agent
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|c| serde_json::from_value::<AgentCommandInfo>(c.clone()).ok()).collect())
         .unwrap_or_default();
-    AgentCapabilities { conversation: true, permission_modes: PermissionMode::ALL.to_vec(), models, commands, version }
+    AgentCapabilities {
+        conversation: true,
+        permission_modes: PermissionMode::ALL.to_vec(),
+        models,
+        commands,
+        terminal_commands: vec![],
+        version,
+    }
 }
 
 pub struct ClaudeAdapter;
 
 struct Shared {
-    session_id: String,
+    /// Claude's current conversation id: the one it was launched on until `/clear` moves it (reported by `init`).
+    conversation_id: Mutex<String>,
     mapper: Mutex<ClaudeMapper>,
     replies: Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>,
     stdin: Mutex<Option<mpsc::UnboundedSender<String>>>,
@@ -90,6 +152,20 @@ struct Shared {
     pid: Option<u32>,
     sink: EventSink,
     version: Mutex<Option<String>>,
+    /// What `initialize` reported, completed by the TUI-only commands that each turn's `init` lists.
+    caps: Mutex<Option<AgentCapabilities>>,
+    terminal_commands: Mutex<Vec<String>>,
+}
+
+impl Shared {
+    /// Sends the capabilities once both halves may have arrived (in either order).
+    fn publish_caps(&self) {
+        let caps = self.caps.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(mut c) = caps {
+            c.terminal_commands = self.terminal_commands.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let _ = self.sink.send(AdapterOutput::Capabilities(c));
+        }
+    }
 }
 
 impl Shared {
@@ -107,6 +183,28 @@ impl Shared {
                 }
                 MapOut::Delta { item_id, field, text } => AdapterOutput::Delta { item_id, field, text },
                 MapOut::Init(i) => {
+                    if let Some(id) = i.session_id.clone() {
+                        let moved = {
+                            let mut c = self.conversation_id.lock().unwrap_or_else(|e| e.into_inner());
+                            let moved = *c != id;
+                            *c = id.clone();
+                            moved
+                        };
+                        if moved {
+                            let _ = self.sink.send(AdapterOutput::ExternalId(id));
+                        }
+                    }
+                    if !i.terminal_commands.is_empty() {
+                        let changed = {
+                            let mut t = self.terminal_commands.lock().unwrap_or_else(|e| e.into_inner());
+                            let changed = *t != i.terminal_commands;
+                            *t = i.terminal_commands.clone();
+                            changed
+                        };
+                        if changed {
+                            self.publish_caps();
+                        }
+                    }
                     if i.version.is_some() {
                         *self.version.lock().unwrap_or_else(|e| e.into_inner()) = i.version.clone();
                     }
@@ -115,6 +213,7 @@ impl Shared {
                         permission_mode: i.permission_mode.as_deref().and_then(PermissionMode::from_claude),
                         version: i.version,
                         api_key_source: i.api_key_source,
+                        billing: None,
                     })
                 }
                 MapOut::Reply { request_id, result } => {
@@ -167,6 +266,48 @@ impl AgentAdapter for ClaudeAdapter {
     async fn open(&self, spec: OpenSpec, sink: EventSink) -> Result<Box<dyn LiveConversation>, AdapterError> {
         Ok(Box::new(ClaudeLive::spawn(spec, sink).await?))
     }
+
+    async fn draft(&self, spec: OpenSpec, prompt: &str, schema: &Value) -> Result<Value, AdapterError> {
+        let args = claude_draft_args(&spec, schema);
+        let resolved = crate::launch::resolve_launch(&spec.program, &args, spec.search_path.as_deref())
+            .map_err(|_| AdapterError::ProgramNotFound(spec.program.clone()))?;
+        let mut cmd = tokio::process::Command::new(&resolved.program);
+        cmd.args(&resolved.args)
+            .current_dir(&spec.cwd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        for k in &spec.env_remove {
+            cmd.env_remove(k);
+        }
+        cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let mut child = cmd.spawn().map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(prompt.as_bytes()).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
+            // Dropped here: stdin closes, so Claude reads the whole prompt.
+        }
+        // Dropping the future on a timeout kills the process (kill_on_drop).
+        let out = tokio::time::timeout(super::DRAFT_TIMEOUT, child.wait_with_output())
+            .await
+            .map_err(|_| AdapterError::Timeout)?
+            .map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        match draft_answer(&stdout) {
+            Err(AdapterError::Refused(why)) if why == "Claude gave no answer" && !out.status.success() => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let tail = err.trim().lines().last().unwrap_or("").to_string();
+                Err(AdapterError::Refused(if tail.is_empty() {
+                    format!("Claude exited ({})", out.status)
+                } else {
+                    tail
+                }))
+            }
+            r => r,
+        }
+    }
 }
 
 impl ClaudeLive {
@@ -196,7 +337,7 @@ impl ClaudeLive {
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let shared = Arc::new(Shared {
-            session_id: spec.session_id.clone(),
+            conversation_id: Mutex::new(spec.claude_conversation_id().to_string()),
             mapper: Mutex::new(ClaudeMapper::with_cwd(spec.cwd.to_string_lossy())),
             replies: Mutex::new(HashMap::new()),
             stdin: Mutex::new(Some(tx)),
@@ -205,6 +346,8 @@ impl ClaudeLive {
             pid: child.id(),
             sink,
             version: Mutex::new(None),
+            caps: Mutex::new(None),
+            terminal_commands: Mutex::new(Vec::new()),
         });
 
         // Writer: one line per message; stdin closes when every sender is gone.
@@ -273,7 +416,9 @@ impl ClaudeLive {
             tokio::spawn(async move {
                 if let Ok(v) = shared.control("initialize", json!({})).await {
                     let version = shared.version.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    let _ = shared.sink.send(AdapterOutput::Capabilities(capabilities_from_initialize(&v, version)));
+                    *shared.caps.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(capabilities_from_initialize(&v, version));
+                    shared.publish_caps();
                 }
             });
         }
@@ -302,15 +447,26 @@ impl ClaudeLive {
 
 #[async_trait::async_trait]
 impl LiveConversation for ClaudeLive {
-    async fn send(&self, text: &str, delivery: Delivery) -> Result<(), AdapterError> {
+    async fn send(&self, msg: &Outgoing, delivery: Delivery) -> Result<(), AdapterError> {
         let now = delivery == Delivery::Now;
-        if now {
+        let mut images = Vec::new();
+        for img in &msg.images {
+            let bytes = tokio::fs::read(&img.path)
+                .await
+                .map_err(|e| AdapterError::Spawn(format!("reading an attached image: {e}")))?;
+            images.push((img.media_type.clone(), base64::engine::general_purpose::STANDARD.encode(bytes)));
+        }
+        {
             let mut m = self.shared.mapper.lock().unwrap_or_else(|e| e.into_inner());
-            if m.turn().is_some() {
+            if now && m.turn().is_some() {
                 m.note_interrupt();
             }
+            if msg.text.trim_start().starts_with('/') && images.is_empty() {
+                m.note_sent_command(&msg.text);
+            }
         }
-        self.shared.write(&user_line(&self.shared.session_id, text, now))
+        let conversation = self.shared.conversation_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        self.shared.write(&user_line(&conversation, &msg.text, &images, now))
     }
 
     async fn answer(&self, request_id: &str, answer: &Answer) -> Result<(), AdapterError> {
@@ -381,6 +537,7 @@ mod tests {
             permission_mode: PermissionMode::AcceptEdits,
             env: vec![],
             env_remove: vec![],
+            instructions: None,
         }
     }
 
@@ -394,6 +551,49 @@ mod tests {
         let a = claude_args(&spec(true, Some("opus")));
         assert!(a.windows(2).any(|w| w == ["--resume", "sid"]));
         assert!(a.windows(2).any(|w| w == ["--model", "opus"]));
+        assert!(!a.iter().any(|x| x.starts_with("--append-system-prompt")));
+        let mut s = spec(false, None);
+        s.instructions = Some(SessionInstructions { text: "t".into(), file: "/d/instructions.md".into() });
+        assert!(claude_args(&s).windows(2).any(|w| w == ["--append-system-prompt-file", "/d/instructions.md"]));
+    }
+
+    #[test]
+    fn after_a_clear_the_new_conversation_is_resumed_and_drafted_from() {
+        let mut s = spec(true, None);
+        s.external_id = Some("conv-2".into());
+        assert!(claude_args(&s).windows(2).any(|w| w == ["--resume", "conv-2"]));
+        let schema = pdt_core::conversation::draft::draft_schema();
+        assert!(claude_draft_args(&s, &schema).windows(2).any(|w| w == ["--resume", "conv-2"]));
+        // Not saved yet: a fresh conversation under the new id (the old id's transcript is taken).
+        s.resume = false;
+        assert!(claude_args(&s).windows(2).any(|w| w == ["--session-id", "conv-2"]));
+    }
+
+    #[test]
+    fn side_requests_fork_without_saving_or_tools() {
+        let schema = pdt_core::conversation::draft::draft_schema();
+        let a = claude_draft_args(&spec(true, Some("opus")), &schema);
+        assert!(a.windows(2).any(|w| w == ["--resume", "sid"]));
+        assert!(a.iter().any(|x| x == "--fork-session") && a.iter().any(|x| x == "--no-session-persistence"));
+        assert!(a.windows(2).any(|w| w[0] == "--tools" && w[1].is_empty()));
+        assert!(a.windows(2).any(|w| w == ["--output-format", "json"]));
+        assert!(a.windows(2).any(|w| w == ["--model", "opus"]));
+        assert!(!a.iter().any(|x| x == "--bare" || x == "--settings" || x == "--dangerously-skip-permissions"));
+        // The schema passes through cmd.exe on Windows: nothing it would interpret.
+        let s = &a[a.iter().position(|x| x == "--json-schema").unwrap() + 1];
+        assert!(!s.chars().any(|c| "&|<>^%!\r\n".contains(c)), "{s}");
+    }
+
+    #[test]
+    fn side_answers_are_the_structured_output() {
+        let ok =
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"{}","structured_output":{"title":"t"}}"#;
+        assert_eq!(draft_answer(ok).unwrap(), json!({"title": "t"}));
+        let text = r#"{"type":"result","is_error":false,"result":"{\"title\":\"t\"}"}"#;
+        assert_eq!(draft_answer(text).unwrap(), json!("{\"title\":\"t\"}"));
+        let limited = r#"{"type":"result","is_error":true,"result":"You've hit your limit"}"#;
+        assert!(matches!(draft_answer(limited), Err(AdapterError::Refused(w)) if w.contains("limit")));
+        assert!(matches!(draft_answer("not json\n"), Err(AdapterError::Refused(_))));
     }
 
     #[test]

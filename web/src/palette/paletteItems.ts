@@ -14,7 +14,7 @@ export const ACTIONS = 'Actions';
 
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
-  | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'shell' | 'run' | 'rename' | 'close'
+  | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'shell' | 'run' | 'rename' | 'close'
   | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files';
 
 /**
@@ -45,8 +45,8 @@ export interface PaletteItem {
   next?: PaletteStep;
 }
 
-/** `claude` and `codex` are conversations, `claude_terminal` and `codex_terminal` the agents' own TUIs. */
-export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'shell';
+/** `claude` and `codex` are conversations, the `_terminal` kinds the agents' own TUIs (Devin has only that). */
+export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'devin_terminal' | 'shell';
 
 /** What the items do. AppShell implements them with the workspaces API (through runAction). */
 export interface PaletteHandlers {
@@ -180,6 +180,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       { id: 'new:claude-terminal', label: 'New Claude (terminal) here', group: ACTIONS, icon: 'claude', keywords: [...words, 'tui'], run: () => h.newSession('claude_terminal', place) },
       { id: 'new:codex', label: 'New Codex here', group: ACTIONS, icon: 'codex', keywords: words, run: () => h.newSession('codex', place) },
       { id: 'new:codex-terminal', label: 'New Codex (terminal) here', group: ACTIONS, icon: 'codex', keywords: [...words, 'tui'], run: () => h.newSession('codex_terminal', place) },
+      { id: 'new:devin-terminal', label: 'New Devin (terminal) here', group: ACTIONS, icon: 'devin', keywords: [...words, 'tui'], run: () => h.newSession('devin_terminal', place) },
       { id: 'new:shell', label: 'New shell here', group: ACTIONS, icon: 'shell', keywords: words, run: () => h.newSession('shell', place) },
     );
   }

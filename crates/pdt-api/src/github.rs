@@ -1,12 +1,13 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR through `gh` every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and tells the
-//! attempt's agent session when CI fails, the branch conflicts with its base, the PR leaves the merge queue without
-//! merging, or the work is merged. A notice waits until the session is idle and nobody is typing in it, is typed in
+//! attempt's agent session when CI fails, the branch conflicts with its base, the merge queue removes the PR without
+//! merging it, or the work is merged. A notice waits until the session is idle and nobody is typing in it, is typed in
 //! as a prompt, and lands on the ticket's timeline (`pr` event), which also makes each one news only once.
 
 use crate::routes::{AppState, now_ms};
+use pdt_core::conversation::SessionMode;
 use pdt_core::pr::{CiRun, CiState, CiStatus, Notice, PrState, PullRequestStatus, notices, queue_branch_prefix};
-use pdt_core::session::{SessionKind, SessionStatus};
+use pdt_core::session::{Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{Actor, AttemptSummary, EventKind, Ticket, TicketSummary};
 use pdt_github::{GhError, GithubApi};
 use pdt_store::AttemptInfo;
@@ -17,9 +18,14 @@ use std::sync::Arc;
 /// How long nobody may have typed into a session before pdtd types a notice into it.
 const QUIET_MS: i64 = 20_000;
 
+/// How long after an attempt ends pdtd keeps reading a PR it last saw open (PDT-59: git's merge check can end the
+/// attempt in the same tick GitHub still reports the PR queued).
+const SETTLE_MS: i64 = 60 * 60 * 1000;
+
 #[derive(Default)]
 pub(crate) struct PrWatch {
-    /// The PR of each attempt, as last seen (ended attempts keep their last look).
+    /// The PR of each attempt, as last seen (ended attempts keep their last look; one last seen open is read again for
+    /// an hour after the attempt ended).
     by_attempt: HashMap<String, PullRequestStatus>,
     /// The failed jobs of each run attempt already asked for.
     jobs: HashMap<(u64, u32), Vec<String>>,
@@ -76,8 +82,9 @@ pub(crate) fn apply_workspaces(st: &AppState, list: &mut [pdt_core::workspace::W
     }
 }
 
-/// Reads every active attempt's PR (projects on GitHub only) and queues the news. pdtd runs it every 60 s. Never
-/// fails; problems are logged.
+/// Reads every active attempt's PR (projects on GitHub only) and queues the news, then once more the PR of each
+/// attempt that ended in the last hour while its PR was last seen open, so `attempt.pr` catches up with the merge
+/// (no news for those: the attempt's end told it). pdtd runs it every 60 s. Never fails; problems are logged.
 pub async fn refresh_prs(st: &AppState) {
     let active = match st.store.list_active_attempts().await {
         Ok(v) => v,
@@ -86,9 +93,28 @@ pub async fn refresh_prs(st: &AppState) {
             return;
         }
     };
+    let active_ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
+    let open: Vec<String> = watch(st)
+        .by_attempt
+        .iter()
+        .filter(|(id, p)| p.state == PrState::Open && !active_ids.contains(*id))
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut settling = vec![];
+    for id in open {
+        match st.store.get_attempt(&id).await {
+            Ok(Some(info)) if info.attempt.ended_at.is_some_and(|t| now_ms() - t < SETTLE_MS) => settling.push(info),
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                watch(st).by_attempt.remove(&id);
+            }
+            Err(e) => tracing::warn!(attempt = %id, error = %e, "the PR check could not read an ended attempt"),
+        }
+    }
     let mut repos: HashMap<String, Option<String>> = HashMap::new();
     let mut queue_runs: HashMap<String, Vec<CiRun>> = HashMap::new();
-    for info in active {
+    let ended = settling.into_iter().map(|i| (i, false));
+    for (info, tell) in active.into_iter().map(|i| (i, true)).chain(ended) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -101,14 +127,14 @@ pub async fn refresh_prs(st: &AppState) {
             }
         };
         let Some(repo) = repo else { continue };
-        refresh_one(st, &info, &repo, &mut queue_runs).await;
+        refresh_one(st, &info, &repo, &mut queue_runs, tell).await;
     }
 }
 
 /// Reads one active attempt's PR now (the ticket was opened).
 pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) {
     if let Some(repo) = github_repo(&info.repo_path).await {
-        refresh_one(st, info, &repo, &mut HashMap::new()).await;
+        refresh_one(st, info, &repo, &mut HashMap::new(), true).await;
     }
 }
 
@@ -123,7 +149,14 @@ async fn github_repo(repo_path: &str) -> Option<String> {
     .flatten()
 }
 
-async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, queue_runs: &mut HashMap<String, Vec<CiRun>>) {
+/// Reads one attempt's PR into the watch; with `tell`, queues its news.
+async fn refresh_one(
+    st: &AppState,
+    info: &AttemptInfo,
+    repo: &str,
+    queue_runs: &mut HashMap<String, Vec<CiRun>>,
+    tell: bool,
+) {
     let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
     let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
     let cached_queue = queue_runs.get(repo).cloned();
@@ -163,19 +196,22 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, queue_runs: 
         return;
     };
     now.checked_at = now_ms();
-    let news = notices(prev.as_ref(), &now, &info.attempt.branch);
+    let news = notices(&now, &info.attempt.branch);
     {
         let mut w = watch(st);
         w.jobs.extend(jobs);
         w.by_attempt.insert(info.attempt.id.clone(), now);
     }
-    queue_news(st, &info.attempt.id, &info.ticket_id, news).await;
+    if tell {
+        queue_news(st, &info.attempt.id, &info.ticket_id, news).await;
+    }
 }
 
 type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
 
 /// The PR of `branch` with its CI and merge-queue CI, failed jobs filled in (from `known` where already asked).
-/// Merge-queue runs are read only while the PR is queued or just left the queue (`was_queued`), once per repo.
+/// Merge-queue runs are read only while the PR is queued, just left the queue (`was_queued`) or was removed from it
+/// for failed checks and not handled yet, once per repo.
 fn read_pr(
     gh: &dyn GithubApi,
     repo: &str,
@@ -204,7 +240,8 @@ fn read_pr(
     }
     let mut fresh_queue = None;
     let mut queue_ci = None;
-    if pr.state == PrState::Open && (pr.in_merge_queue || was_queued) {
+    let removed_for_checks = pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
+    if pr.state == PrState::Open && (pr.in_merge_queue || was_queued || removed_for_checks) {
         let runs = match queue_cache {
             Some(r) => r,
             None => {
@@ -240,6 +277,7 @@ fn read_pr(
         queue_position: pr.queue_position,
         ci,
         queue_ci,
+        queue_removal: pr.queue_removal,
         checked_at: 0,
     };
     Ok((Some(status), fresh_queue, fetched_jobs))
@@ -293,30 +331,44 @@ pub async fn deliver_notices(st: &AppState) {
             return;
         }
     };
-    // The newest running agent session of each attempt (the list is oldest first).
-    let mut target: HashMap<&str, &str> = HashMap::new();
-    for s in running.iter().filter(|s| s.kind == SessionKind::AgentTui && st.ptys.is_running(&s.id)) {
+    // The newest running agent session of each attempt (the list is oldest first): a terminal with its PTY, or a
+    // conversation (a parked one reopens to take the message).
+    let mut target: HashMap<&str, &Session> = HashMap::new();
+    for s in running.iter().filter(|s| {
+        s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id))
+    }) {
         if let Some(a) = s.attempt_id.as_deref() {
-            target.insert(a, s.id.as_str());
+            target.insert(a, s);
         }
     }
-    let mut by_session: HashMap<String, Vec<Pending>> = HashMap::new();
+    let mut by_session: HashMap<String, (&Session, Vec<Pending>)> = HashMap::new();
     let mut untold: Vec<Pending> = vec![];
     for p in pending {
         match target.get(p.attempt_id.as_str()) {
-            Some(sid) => by_session.entry(sid.to_string()).or_default().push(p),
+            Some(s) => by_session.entry(s.id.clone()).or_insert_with(|| (s, vec![])).1.push(p),
             None => untold.push(p),
         }
     }
     for p in untold {
         resolve(st, &p, None).await;
     }
-    for (sid, list) in by_session {
-        if !crate::activity::ready_for_message(st, &sid, QUIET_MS) {
+    for (sid, (session, list)) in by_session {
+        let conversation = session.mode == SessionMode::Conversation;
+        let ready = if conversation {
+            crate::conversations::ready_for_notice(st, &sid)
+        } else {
+            crate::activity::ready_for_message(st, &sid, QUIET_MS)
+        };
+        if !ready {
             continue;
         }
         let text = list.iter().map(|p| p.notice.text.as_str()).collect::<Vec<_>>().join("\n\n");
-        match crate::activity::type_message(st, &sid, &text).await {
+        let sent = if conversation {
+            crate::conversations::send_notice(st, session, &text).await.map_err(|e| e.message().to_string())
+        } else {
+            crate::activity::type_message(st, &sid, &text).await.map_err(|e| e.to_string())
+        };
+        match sent {
             Ok(()) => {
                 tracing::info!(session = %sid, notices = list.len(), "told the agent about its pull request");
                 for p in &list {
@@ -367,6 +419,7 @@ mod tests {
             auto_merge: true,
             in_merge_queue: queued,
             queue_position: queued.then_some(1),
+            queue_removal: None,
         }
     }
 
@@ -433,7 +486,7 @@ mod tests {
         let (status, ..) = read_pr(&gh, "o/r", "b", true, None, &HashMap::new()).unwrap();
         let status = status.unwrap();
         assert!(status.ci.is_none());
-        assert_eq!(notices(None, &status, "b")[0].kind, NoticeKind::Merged);
+        assert_eq!(notices(&status, "b")[0].kind, NoticeKind::Merged);
         assert_eq!(gh.calls.lock().unwrap().len(), 1);
     }
 }

@@ -259,12 +259,15 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
         .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
+        .route("/guides", get(crate::guides::list))
+        .route("/guides/{name}", get(crate::guides::get_one))
         .route("/projects", get(crate::projects::list).post(crate::projects::create))
         .route("/projects/clone", axum::routing::post(crate::projects::clone))
         .route(
             "/projects/{id}",
             get(crate::projects::get_one).patch(crate::projects::update).delete(crate::projects::remove),
         )
+        .route("/projects/{id}/pull", axum::routing::post(crate::projects::pull))
         .route("/projects/{id}/files", get(crate::files::list))
         .route("/projects/{id}/files/content", get(crate::files::content))
         .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
@@ -309,7 +312,16 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/messages", axum::routing::post(crate::conversations::post_message))
         .route("/sessions/{id}/requests/{request_id}", axum::routing::post(crate::conversations::post_answer))
         .route("/sessions/{id}/interrupt", axum::routing::post(crate::conversations::post_interrupt))
+        .route("/sessions/{id}/ticket-draft", axum::routing::post(crate::conversations::ticket_draft))
         .route("/sessions/{id}/mode", axum::routing::post(crate::conversations::switch_mode))
+        .route(
+            "/sessions/{id}/attachments",
+            axum::routing::post(crate::attachments::upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route("/sessions/{id}/attachments/{attachment_id}", get(crate::attachments::get))
+        .route("/sessions/{id}/files", get(crate::attachments::files))
         .route(
             "/sessions/{id}/terminal",
             axum::routing::post(crate::conversations::open_terminal).delete(crate::conversations::close_terminal),
@@ -338,7 +350,9 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     // tiny bodies are left alone. Quality 4 keeps it fast on every response.
     let compression =
         tower_http::compression::CompressionLayer::new().quality(tower_http::compression::CompressionLevel::Precise(4));
-    app.layer(compression).layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+    app.layer(compression)
+        .layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
+        .layer(axum::middleware::from_fn(crate::slow::log_slow))
 }
 
 /// Vite names every file in `/assets/` by its content hash, so browsers may keep them for good; everything else the

@@ -26,7 +26,7 @@ const update = (over: object = {}) => ({
   error: null, token: { state: 'missing' }, lastResult: null, ...over,
 });
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
-const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), git: tool(true), tailscale: tool(true), checkedAt: 1 });
+const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
 const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null };
 
@@ -182,7 +182,7 @@ describe('HostSettingsPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Host settings could not be loaded: internal error');
   });
 
-  it('reports the token state and that updates apply to the installed app', async () => {
+  it('reports the token state and why updates are off', async () => {
     stubApi({
       'GET /api/host/settings': settingsView({ tokenPresent: true }),
       'GET /api/host/update': update({ state: 'disabled', disabledReason: 'not supervised', token: { state: 'expired' } }),
@@ -190,13 +190,16 @@ describe('HostSettingsPage', () => {
       'GET /api/host/whoami': local,
     });
     renderWithQuery(<HostSettingsPage />);
-    expect(await screen.findByText(/Updates apply to the installed app/)).toBeInTheDocument();
+    expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();
     expect(screen.getByText(/expired or revoked/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument();
     const claude = screen.getByText('claude').closest('li')!;
     expect(claude).toHaveTextContent('not found');
     expect(within(claude).getByRole('img', { name: 'not found' })).toHaveAttribute('data-status', 'failed');
     expect(within(screen.getByText('git').closest('li')!).getByRole('img', { name: 'OK' })).toHaveAttribute('data-status', 'running');
+    // Devin is optional: missing is not a failure.
+    const devin = screen.getByText('devin').closest('li')!;
+    expect(within(devin).getByRole('img', { name: 'not installed (optional)' })).toHaveAttribute('data-status', 'idle');
   });
 });
 

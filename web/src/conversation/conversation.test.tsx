@@ -53,6 +53,8 @@ describe('MessageList', () => {
       ev(13, { kind: 'plan', markdown: '1. First' }),
       ev(14, { kind: 'turn_diff', diff: '+x' }),
       ev(15, { kind: 'unknown', raw: { weird: true } }),
+      ev(16, { kind: 'conversation_reset', trigger: 'clear' }),
+      ev(17, { kind: 'conversation_reset', trigger: 'something_new' }),
     ], { empty: <p>Nothing yet</p> });
     expect(screen.getByText('Fix the bug')).toBeInTheDocument();
     expect(screen.getByText('Thinking')).toBeInTheDocument();
@@ -65,6 +67,8 @@ describe('MessageList', () => {
     expect(screen.getByText('Rate limited')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Something broke');
     expect(screen.getByText('Context compacted')).toBeInTheDocument();
+    expect(screen.getByText('Conversation cleared')).toBeInTheDocument();
+    expect(screen.getByText('New conversation (something_new)')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Plan' })).toHaveTextContent('First');
     expect(screen.getByText('Unrecognised event')).toBeInTheDocument();
     expect(screen.queryByText('Nothing yet')).not.toBeInTheDocument();
@@ -101,7 +105,7 @@ describe('MessageList', () => {
     const { unmount } = list([cut(1), ev(2, { kind: 'user_message', text: 'next', images: [], source: 'pdt' })], { onContinue: vi.fn(async () => {}) });
     expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
     unmount();
-    list([cut(1)], { onContinue: vi.fn(async () => {}), pending: [{ id: 'q', text: 'x', delivery: 'next' }] });
+    list([cut(1)], { onContinue: vi.fn(async () => {}), pending: [{ id: 'q', text: 'x', delivery: 'next', images: [], notice: false }] });
     expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
   });
 
@@ -121,6 +125,16 @@ describe('MessageList', () => {
     list([ev(1, { kind: 'request', id: 'p1', requestKind: 'plan', tool: 'plan', title: '', input: { plan: 'x' }, canAlways: false, state: 'open' })], { agent: 'codex' });
     expect(screen.queryByRole('button', { name: 'Approve, accept edits' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Approve plan/ })).toBeInTheDocument();
+  });
+
+  it('shows the images sent with a message', () => {
+    const aid = '01a1546a-24ca-72e6-8206-3ae44a03d42d';
+    list(
+      [ev(1, { kind: 'user_message', text: '', images: [aid, 'image/png'], source: 'pdt' })],
+      { imageUrl: (id) => `/att/${id}` },
+    );
+    expect(screen.getByRole('img', { name: 'Image 1' })).toHaveAttribute('src', `/att/${aid}`);
+    expect(screen.getByRole('img', { name: 'Image 2' }).tagName).toBe('SPAN');
   });
 
   it('collapses a finished turn’s tool calls into a summary', async () => {
@@ -145,7 +159,7 @@ describe('MessageList', () => {
       {
         turnRunning: true,
         provisional: [{ itemId: 'm:1', markdown: 'Streaming…' }],
-        pending: [{ id: 'q', text: 'also do X', delivery: 'next' }],
+        pending: [{ id: 'q', text: 'also do X', delivery: 'next', images: [], notice: false }],
       },
     );
     expect(screen.getByTestId('working')).toHaveTextContent(/Running\s*cargo build/);
@@ -187,6 +201,77 @@ describe('ConversationComposer', () => {
     render(<ConversationComposer {...props} />);
     return props;
   };
+
+  it('/ lists commands; arrows and Enter pick one; TUI-only ones are shown but not picked', async () => {
+    const p = setup({
+      commands: [{ name: 'compact', description: 'Compact the conversation' }, { name: 'context', description: 'Show context' }],
+      terminalCommands: ['config'],
+      turnRunning: true,
+    });
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await userEvent.type(box, '/co');
+    const list = screen.getByRole('listbox', { name: 'Commands' });
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      '/compactCompact the conversation',
+      '/contextShow context',
+      '/configOnly in the terminal',
+    ]);
+    expect(box).toHaveAttribute('aria-activedescendant', within(list).getAllByRole('option')[0].id);
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+    expect(box).toHaveValue('/co');
+    expect(p.onSend).not.toHaveBeenCalled();
+    await userEvent.keyboard('{ArrowUp}{Enter}');
+    expect(box).toHaveValue('/context ');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    // Escape closes the list and does not stop the agent.
+    await userEvent.clear(box);
+    await userEvent.type(box, '/');
+    expect(screen.getByRole('listbox', { name: 'Commands' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(p.onInterrupt).not.toHaveBeenCalled();
+  });
+
+  it('@ suggests files from the session folder and inserts the path', async () => {
+    const onSearchFiles = vi.fn(async (q: string) => (q === 'ma' ? ['src/main.rs', 'docs/manual.md'] : []));
+    setup({ onSearchFiles });
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await userEvent.type(box, 'read @ma');
+    const list = await screen.findByRole('listbox', { name: 'Files' });
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual(['src/main.rs', 'docs/manual.md']);
+    await userEvent.click(within(list).getByRole('option', { name: 'docs/manual.md' }));
+    expect(box).toHaveValue('read @docs/manual.md ');
+    expect(onSearchFiles).toHaveBeenLastCalledWith('ma');
+  });
+
+  it('pasted images upload, show as thumbnails and go with the message (even without text)', async () => {
+    const createObjectURL = vi.fn(() => 'blob:thumb');
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+    let finish!: (v: { id: string }) => void;
+    const onUpload = vi.fn(() => new Promise<{ id: string }>((r) => { finish = r; }));
+    const p = setup({ onUpload });
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    const png = new File(['x'], 'shot.png', { type: 'image/png' });
+    await userEvent.click(box);
+    await userEvent.paste({ files: [png] } as unknown as string);
+    expect(onUpload).toHaveBeenCalledWith(png);
+    expect(screen.getByRole('img', { name: 'shot.png' })).toHaveAttribute('src', 'blob:thumb');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    await act(async () => finish({ id: 'att-1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(p.onSend).toHaveBeenCalledWith('', undefined, ['att-1']);
+    expect(screen.queryByRole('img', { name: 'shot.png' })).not.toBeInTheDocument();
+    // Not an image: refused before uploading.
+    await userEvent.click(box);
+    await userEvent.paste({ files: [new File(['x'], 'a.svg', { type: 'image/svg+xml' })] } as unknown as string);
+    expect(screen.getByText('Only PNG, JPEG, GIF and WebP images can be attached')).toBeInTheDocument();
+    expect(onUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns near a rate limit and says when one is hit', () => {
+    setup({ limit: { text: 'Rate limited until 3:40 PM (5-hour limit)', reached: true } });
+    expect(screen.getByRole('status')).toHaveTextContent('Rate limited until 3:40 PM (5-hour limit). Nothing is sent until you send again.');
+  });
 
   it('Enter sends; Shift+Enter adds a line', async () => {
     const p = setup();
@@ -233,7 +318,7 @@ describe('ConversationView', () => {
   it('replays, then follows live events and sends messages', async () => {
     const calls = stubApi({
       'GET /api/agents/claude/capabilities': caps,
-      'POST /api/sessions/s1/messages': { id: 'q', text: 'hello', delivery: 'next' },
+      'POST /api/sessions/s1/messages': { id: 'q', text: 'hello', delivery: 'next', images: [], notice: false },
     });
     renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
     expect(server().url).toMatch(/\/api\/sessions\/s1\/events\?after=0$/);
@@ -247,7 +332,7 @@ describe('ConversationView', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hello{Enter}');
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/messages')?.body).toEqual({ text: 'hello' }));
     act(() => {
-      server().send({ type: 'state', state: { ...idle, turnRunning: true, pending: [{ id: 'q', text: 'hello', delivery: 'next' }] } });
+      server().send({ type: 'state', state: { ...idle, turnRunning: true, pending: [{ id: 'q', text: 'hello', delivery: 'next', images: [], notice: false }] } });
     });
     expect(screen.getByText('Queued')).toBeInTheDocument();
     act(() => {
@@ -315,6 +400,24 @@ describe('SessionView for a conversation', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Compose' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Restart' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
+  });
+
+  it('offers Make ticket… for a chat with no ticket only', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    stubApi({
+      'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+      'GET /api/projects': [],
+      'POST /api/sessions/s1/view': undefined,
+      'POST /api/sessions/s1/ticket-draft': new Promise(() => {}),
+    });
+    const { unmount } = renderWithQuery(<SessionView session={session} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    await userEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Make ticket…' }));
+    expect(await screen.findByRole('dialog', { name: 'Make ticket' })).toBeInTheDocument();
+    unmount();
+    renderWithQuery(<SessionView session={{ ...session, attemptId: 'a1', ticket: { id: 't1', key: 'ALP-1' } }} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    expect(within(await screen.findByRole('menu')).queryByRole('menuitem', { name: 'Make ticket…' })).toBeNull();
   });
 });
 

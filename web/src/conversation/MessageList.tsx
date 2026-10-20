@@ -6,6 +6,7 @@ import {
   Button,
   Dialog,
   DiffStat,
+  ImageThumb,
   DiffViewer,
   diffStats,
   MessageBubble,
@@ -17,7 +18,9 @@ import {
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
+import type { AgentKind } from '../api/gen/AgentKind';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
+import type { MessageSource } from '../api/gen/MessageSource';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
 import { buildBlocks, currentTool, turnStartedAt, type Block, type RowNode } from './blocks';
@@ -25,6 +28,12 @@ import type { Streams } from './model';
 import { approvalTitle, clock, duration, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
+
+/** Said under a user message that the user didn't send from the composer. */
+const SOURCE_META: Partial<Record<MessageSource, string>> = {
+  terminal: 'From the terminal',
+  notice: 'Sent automatically: news about the pull request',
+};
 
 export interface MessageListProps {
   rows: ConversationEvent[];
@@ -34,8 +43,10 @@ export interface MessageListProps {
   pending: PendingMessage[];
   /** Answers an open request (`request` event `id`). */
   onAnswer: (requestId: string, answer: ApprovalAnswer) => Promise<unknown>;
+  /** Where a message's attached image is served (by attachment id). */
+  imageUrl?: (attachmentId: string) => string;
   /** Which agent: Claude's plans can be approved straight into Accept edits. */
-  agent?: 'claude' | 'codex';
+  agent?: AgentKind;
   /** Offered under the last turn when it was interrupted (a restart, a crash, Stop): picks up where it left off. */
   onContinue?: () => Promise<unknown>;
   /** Shown when there is nothing yet. */
@@ -50,9 +61,26 @@ interface ListContext {
   /** The item id of the last ended turn, when it may be continued. */
   continueTurn: string | null;
   onContinue?: () => Promise<unknown>;
-  agent: 'claude' | 'codex';
+  agent: AgentKind;
+  imageUrl?: (attachmentId: string) => string;
 }
 const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude' });
+
+/** PDT's attachment ids are UUIDs; anything else is the agent's own note ("image/png") with nothing to show. */
+const isAttachment = (s: string) => /^[0-9a-f-]{36}$/i.test(s);
+
+function Images({ images }: { images: string[] }) {
+  const { imageUrl } = useContext(ListCtx);
+  if (!images.length) return null;
+  return (
+    <>
+      {images.map((img, i) => {
+        const src = isAttachment(img) && imageUrl ? imageUrl(img) : undefined;
+        return <ImageThumb key={`${img}-${i}`} src={src} href={src} alt={`Image ${i + 1}`} />;
+      })}
+    </>
+  );
+}
 
 /** Offscreen rows skip layout and paint, so a long history stays cheap without a virtualiser. */
 const ROW = '[content-visibility:auto] [contain-intrinsic-size:auto_3rem]';
@@ -250,7 +278,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
   switch (ev.kind) {
     case 'user_message':
       return (
-        <MessageBubble meta={ev.source === 'terminal' ? 'From the terminal' : undefined}>{ev.text}</MessageBubble>
+        <MessageBubble meta={SOURCE_META[ev.source]} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
+          {ev.text || undefined}
+        </MessageBubble>
       );
     case 'agent_message': {
       const streamed = r.itemId ? streams[r.itemId]?.markdown : undefined;
@@ -284,13 +314,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'error':
       return <Alert tone="error">{ev.text}</Alert>;
     case 'compaction':
-      return (
-        <div className="flex items-center gap-2 text-meta text-muted-foreground">
-          <span className="h-px flex-1 bg-border" aria-hidden />
-          Context compacted
-          <span className="h-px flex-1 bg-border" aria-hidden />
-        </div>
-      );
+      return <Divider>Context compacted</Divider>;
+    case 'conversation_reset':
+      return <Divider>{resetLabel(ev.trigger)}</Divider>;
     case 'plan':
       return (
         <section aria-label="Plan" className="rounded-lg border border-border bg-card p-3">
@@ -308,6 +334,28 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'usage':
     case 'turn_diff':
       return null;
+  }
+}
+
+function Divider({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-meta text-muted-foreground">
+      <span className="h-px flex-1 bg-border" aria-hidden />
+      {children}
+      <span className="h-px flex-1 bg-border" aria-hidden />
+    </div>
+  );
+}
+
+/** What a `conversation_reset` divider says: Claude's `/clear`, the TUI's `/resume`, or whatever else started over. */
+function resetLabel(trigger: string): string {
+  switch (trigger) {
+    case 'clear':
+      return 'Conversation cleared';
+    case 'resume':
+      return 'Switched to another conversation';
+    default:
+      return `New conversation (${trigger})`;
   }
 }
 
@@ -345,6 +393,7 @@ export function MessageList({
   onAnswer,
   agent = 'claude',
   onContinue,
+  imageUrl,
   empty,
   className,
 }: MessageListProps) {
@@ -363,8 +412,8 @@ export function MessageList({
     const last = [...rows].reverse().find((r) => r.event.kind === 'turn' || r.event.kind === 'user_message');
     const cut = last?.event.kind === 'turn' && last.event.phase === 'ended' && last.event.status === 'interrupted';
     const continueTurn = cut && !turnRunning && pending.length === 0 ? last.itemId ?? null : null;
-    return { turnDiffs, continueTurn, onContinue, agent };
-  }, [rows, turnRunning, pending.length, onContinue, agent]);
+    return { turnDiffs, continueTurn, onContinue, agent, imageUrl };
+  }, [rows, turnRunning, pending.length, onContinue, agent, imageUrl]);
 
   const toBottom = useCallback(() => {
     const el = scroller.current;
@@ -415,8 +464,13 @@ export function MessageList({
             </div>
           ))}
           {pending.map((p) => (
-            <MessageBubble key={p.id} tone="pending" label={p.delivery === 'now' ? 'Sending now' : 'Queued'}>
-              {p.text}
+            <MessageBubble
+              key={p.id}
+              tone="pending"
+              label={p.delivery === 'now' ? 'Sending now' : 'Queued'}
+              images={p.images.length ? <Images images={p.images} /> : undefined}
+            >
+              {p.text || undefined}
             </MessageBubble>
           ))}
           {turnRunning && <WorkingRow rows={rows} />}

@@ -60,9 +60,17 @@ fn rev_parse_tree(repo: &Path, commit: &str) -> Option<String> {
     }
 }
 
+/// Whether the branch whose head is `head` (started at `base_commit`) holds commits of its own: it moved from
+/// `base_commit` to a commit that none of `bases` (the ones that exist) contains. A branch that only caught up with
+/// its base (fast-forwarded to a newer main) has none.
+pub fn has_own_commits(repo: &Path, head: &str, base_commit: &str, bases: &[&str]) -> bool {
+    head != base_commit && !bases.iter().filter_map(|b| rev_parse(repo, b)).any(|base| is_ancestor(repo, head, &base))
+}
+
 /// Whether the branch whose head is `head` (started at `base_commit`) is merged into any of `bases` (branch names or
 /// refs such as `main` and `origin/main`; ones that don't exist are skipped). A branch with no commits of its own
-/// (`head` is `base_commit`) is never merged.
+/// (`head` is `base_commit`) is never merged. Ancestry alone cannot tell a merged branch from one that only caught up
+/// with its base, so callers ask this only once [`has_own_commits`] has been true for the branch.
 pub fn is_merged(repo: &Path, head: &str, base_commit: &str, bases: &[&str]) -> bool {
     if head == base_commit {
         return false;
@@ -74,6 +82,18 @@ pub fn is_merged(repo: &Path, head: &str, base_commit: &str, bases: &[&str]) -> 
         }
         is_ancestor(repo, head, &base) || patch_in(repo, head, &base)
     })
+}
+
+/// Where a new branch off `base` should start: `origin/<base>` when it is ahead of the local `base` (or there is no
+/// local one), else `base`. A local base that has commits `origin` lacks is kept.
+pub fn start_point(repo: &Path, base: &str) -> String {
+    let origin = format!("origin/{base}");
+    let Some(remote) = rev_parse(repo, &format!("refs/remotes/{origin}")) else { return base.to_string() };
+    match rev_parse(repo, &format!("refs/heads/{base}")) {
+        Some(local) if local != remote && is_ancestor(repo, &local, &remote) => origin,
+        None => origin,
+        Some(_) => base.to_string(),
+    }
 }
 
 /// `git fetch <remote> <branch>` with no prompts (a credential or host-key question fails it instead), killed after
@@ -258,6 +278,56 @@ mod tests {
         git(&repo, &["branch", "-q", "-D", "feature"]);
         assert_eq!(rev_parse(&repo, "refs/heads/feature"), None);
         assert!(is_merged(&repo, &last_head, &base, &["main"]));
+    }
+
+    #[test]
+    fn a_branch_that_only_caught_up_with_main_has_no_own_commits_until_it_commits() {
+        // PDT-45: started at an old main, fast-forwarded to a newer one, then a commit squash-merged.
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, base) = repo_with_branch(tmp.path());
+        let bases = ["main", "origin/main"];
+        assert!(!has_own_commits(&repo, &base, &base, &bases));
+        git(&repo, &["checkout", "-q", "main"]);
+        let newer = commit(&repo, "c.txt", "c\n");
+        git(&repo, &["checkout", "-q", "feature"]);
+        git(&repo, &["merge", "-q", "--ff-only", "main"]);
+        assert_eq!(head(&repo, "feature"), newer);
+        assert!(!has_own_commits(&repo, &newer, &base, &bases), "caught up, nothing of its own");
+        let f = commit(&repo, "b.txt", "b\n");
+        assert!(has_own_commits(&repo, &f, &base, &bases));
+        assert!(!is_merged(&repo, &f, &base, &bases));
+        git(&repo, &["checkout", "-q", "main"]);
+        git(&repo, &["merge", "-q", "--squash", "feature"]);
+        git(&repo, &["commit", "-q", "-m", "squashed"]);
+        assert!(has_own_commits(&repo, &f, &base, &bases), "a squash leaves the branch's commits out of main");
+        assert!(is_merged(&repo, &f, &base, &bases));
+        // Fast-forwarded into main: no longer its own, so callers rely on having seen it before.
+        git(&repo, &["checkout", "-q", "-b", "other", &base]);
+        let o = commit(&repo, "o.txt", "o\n");
+        assert!(has_own_commits(&repo, &o, &base, &bases));
+        git(&repo, &["checkout", "-q", "main"]);
+        git(&repo, &["merge", "-q", "--no-edit", "other"]);
+        assert!(!has_own_commits(&repo, &o, &base, &bases));
+        assert!(is_merged(&repo, &o, &base, &bases));
+    }
+
+    #[test]
+    fn a_new_branch_starts_from_origin_when_it_is_ahead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (upstream, _) = repo_with_branch(tmp.path());
+        git(&upstream, &["checkout", "-q", "main"]);
+        // No remote: the local base.
+        assert_eq!(start_point(&upstream, "main"), "main");
+        let clone = tmp.path().join("clone");
+        git(tmp.path(), &["clone", "-q", &upstream.to_string_lossy(), &clone.to_string_lossy()]);
+        assert_eq!(start_point(&clone, "main"), "main", "level with origin");
+        commit(&upstream, "n.txt", "n\n");
+        git(&clone, &["fetch", "-q", "origin"]);
+        assert_eq!(start_point(&clone, "main"), "origin/main", "origin is ahead");
+        assert_eq!(start_point(&clone, "feature"), "origin/feature", "no local branch");
+        assert_eq!(start_point(&clone, "nope"), "nope");
+        commit(&clone, "l.txt", "l\n");
+        assert_eq!(start_point(&clone, "main"), "main", "diverged: the local base is kept");
     }
 
     #[test]

@@ -6,6 +6,8 @@ pub mod dbsnap;
 pub mod health;
 pub mod install;
 pub mod log;
+pub mod placement;
+pub mod process;
 pub mod register;
 pub mod selfupdate;
 pub mod supervise;

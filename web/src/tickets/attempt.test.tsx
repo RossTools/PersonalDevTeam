@@ -17,8 +17,8 @@ const attempt = (over: Partial<AttemptSummary> = {}): AttemptSummary => ({
 });
 
 const sessions = [
-  { id: 's1', title: 'Claude · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: 'a1' },
-  { id: 's0', title: 'Codex · ALP-1', status: 'finished' as const, agent: 'codex' as const, attemptId: 'a0' },
+  { id: 's1', title: 'Claude · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: 'a1', mode: 'terminal' as const },
+  { id: 's0', title: 'Codex · ALP-1', status: 'finished' as const, agent: 'codex' as const, attemptId: 'a0', mode: 'terminal' as const },
 ];
 
 const active = ticket(1, { title: 'Fix login', stage: 'in_progress', attempt: attempt(), attempts: [attempt()], sessions });
@@ -32,6 +32,7 @@ function stub(t: Ticket, extra: Parameters<typeof stubApi>[0] = {}): Call[] {
     [`GET /api/projects/${project.id}/labels`]: [],
     'GET /api/projects': [project],
     [`GET /api/projects/${project.id}/sessions`]: [],
+    [`POST /api/projects/${project.id}/pull`]: (c: Call) => ({ branch: (c.body as { branch?: string }).branch ?? 'main', outcome: 'up_to_date', message: null }),
     ...extra,
   });
 }
@@ -153,7 +154,7 @@ describe('merged banner', () => {
     const deletes = calls.filter((c) => c.method === 'DELETE').map((c) => c.path);
     expect(deletes[0]).toContain('force=false');
     expect(deletes[2]).toContain('force=true');
-    expect(await screen.findByText('ALP-1 is done and its worktree is removed.')).toBeInTheDocument();
+    expect(await screen.findByText('ALP-1 is done and its worktree is removed. main is up to date.')).toBeInTheDocument();
   });
 
   it("stops and removes every session in the ticket's workspace, then deletes the workspace with its tabs", async () => {
@@ -184,7 +185,7 @@ describe('merged banner', () => {
     const stop = await screen.findByRole('alertdialog', { name: "Stop ALP-1's sessions?" });
     expect(stop).toHaveTextContent('2 sessions and 1 run are still running. Stop and remove them, the worktree and the workspace?');
     await userEvent.click(within(stop).getByRole('button', { name: 'Stop and remove' }));
-    expect(await screen.findByText('ALP-1 is done and its worktree and workspace are removed.')).toBeInTheDocument();
+    expect(await screen.findByText('ALP-1 is done and its worktree and workspace are removed. main is up to date.')).toBeInTheDocument();
     expect(count(calls, 'POST', '/api/sessions/s9/kill')).toBe(1);
     expect(count(calls, 'POST', '/api/runs/r3/stop')).toBe(1);
     const deletes = calls.filter((c) => c.method === 'DELETE').map((c) => c.path.split('?')[0]);
@@ -207,9 +208,43 @@ describe('merged banner', () => {
     const stop = await screen.findByRole('alertdialog', { name: "Stop ALP-1's sessions?" });
     expect(stop).toHaveTextContent('1 session is still running.');
     await userEvent.click(within(stop).getByRole('button', { name: 'Cancel' }));
-    expect(await screen.findByText('ALP-1 moved to Done; the worktree was kept.')).toBeInTheDocument();
+    expect(await screen.findByText('ALP-1 moved to Done; the worktree was kept. main is up to date.')).toBeInTheDocument();
     expect(count(calls, 'POST', '/api/sessions/s1/kill')).toBe(0);
     expect(calls.filter((c) => c.method === 'DELETE')).toEqual([]);
+  });
+
+  it('pulls the base branch and says so', async () => {
+    const calls = stub(merged, {
+      'GET /api/workspaces': [],
+      'GET /api/runs': [],
+      'POST /api/sessions/s1/kill': undefined,
+      'DELETE /api/worktrees/w1': undefined,
+      [`POST /api/projects/${project.id}/pull`]: { branch: 'main', outcome: 'updated', message: null },
+    });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Move to Done and remove the worktree' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop and remove' }));
+    expect(await screen.findByText('ALP-1 is done and its worktree is removed. main is pulled.')).toBeInTheDocument();
+    expect(calls.find((c) => c.path === `/api/projects/${project.id}/pull`)?.body).toEqual({ branch: 'main' });
+  });
+
+  it('tells when the base branch could not be pulled, and still finishes', async () => {
+    stub(merged, {
+      'GET /api/workspaces': [],
+      'GET /api/runs': [],
+      'POST /api/sessions/s1/kill': undefined,
+      'DELETE /api/worktrees/w1': undefined,
+      [`POST /api/projects/${project.id}/pull`]: {
+        branch: 'main', outcome: 'blocked', message: 'error: Your local changes to the following files would be overwritten by merge:\n\ta.txt',
+      },
+    });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Move to Done and remove the worktree' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop and remove' }));
+    expect(await screen.findByText('ALP-1 is done and its worktree is removed.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('main was not pulled: error: Your local changes to the following files would be overwritten by merge:'),
+    ).toBeInTheDocument();
   });
 
   it('is not shown once the ticket is Done', async () => {

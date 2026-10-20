@@ -1,6 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import { ApprovalCard, type ApprovalAnswer } from '@ui/ApprovalCard';
 import { DiffViewer } from '@ui/DiffViewer';
+import { ImageThumb } from '@ui/ImageThumb';
+import { SuggestionList } from '@ui/SuggestionList';
+import { ConversationComposer } from '../../conversation/ConversationComposer';
 import { MessageBubble } from '@ui/MessageBubble';
 import { PromptBox } from '@ui/PromptBox';
 import { Select } from '@ui/Select';
@@ -64,6 +67,8 @@ const DIFF = [
   '+}',
 ].join('\n');
 
+const PICTURE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="lavender"/><circle cx="28" cy="30" r="10" fill="khaki"/><path d="M0 70 L30 40 L50 58 L62 46 L80 64 L80 80 L0 80Z" fill="slateblue"/></svg>')}`;
+
 const answered = (a: ApprovalAnswer) => void toast.info(`Answer: ${JSON.stringify(a)}`);
 const T0 = Date.now() - 60_000;
 const e = (seq: number, event: ConversationEvent['event'], turnId = 'u1'): ConversationEvent => ({ seq, pos: seq, ts: T0 + seq * 1000, itemId: `i${seq}`, turnId, event });
@@ -101,8 +106,51 @@ export const section = {
           <PromptBoxDemo working />
         </div>
       </Demo>
-      <Demo label="MessageBubble · sent, queued, from the terminal">
+      <Demo label="Composer · / commands (TUI-only shown, not pickable), @ files, images, a rate-limit warning">
+        <div className="flex flex-col gap-3">
+          <div className="pt-36">
+            <SuggestionList
+              id="g-cmd"
+              label="Commands"
+              active={0}
+              onPick={() => {}}
+              items={[
+                { id: 'compact', label: '/compact', detail: 'Compact the conversation' },
+                { id: 'context', label: '/context', detail: 'Show what fills the context' },
+                { id: 'config', label: '/config', disabled: true, hint: 'Only in the terminal' },
+              ]}
+            />
+          </div>
+          <SuggestionList id="g-files" label="Files" active={1} onPick={() => {}} items={[{ id: 'a', label: 'src/main.rs' }, { id: 'b', label: 'web/src/main.tsx' }]} />
+          <div className="flex gap-2">
+            <ImageThumb src={PICTURE} alt="screenshot.png" size="sm" onRemove={() => {}} />
+            <ImageThumb src={PICTURE} alt="uploading.png" size="sm" pending onRemove={() => {}} />
+            <ImageThumb src={PICTURE} alt="broken.png" size="sm" error="Images can be at most 10 MB" onRemove={() => {}} />
+            <ImageThumb src={PICTURE} alt="sent" href={PICTURE} />
+            <ImageThumb alt="from the terminal" />
+          </div>
+          <ConversationComposer
+            turnRunning={false}
+            onSend={async () => {}}
+            onInterrupt={() => {}}
+            models={[]}
+            model={null}
+            onModel={() => {}}
+            permissionModes={['ask', 'accept_edits', 'plan', 'bypass']}
+            permissionMode="ask"
+            onPermissionMode={() => {}}
+            readout="Claude plan · Context 16% · 31k / 200k"
+            limit={{ text: 'Weekly limit 86% · resets Tue 3:40 PM', reached: false }}
+            commands={[{ name: 'compact', description: 'Compact the conversation' }, { name: 'review', description: 'Review a pull request' }]}
+            terminalCommands={['config', 'login']}
+            onSearchFiles={async (q) => ['src/main.rs', 'web/src/main.tsx', 'README.md'].filter((p) => p.includes(q))}
+            onUpload={async () => ({ id: 'gallery' })}
+          />
+        </div>
+      </Demo>
+      <Demo label="MessageBubble · sent, queued, from the terminal, with an image">
         <div className="flex flex-col gap-2">
+          <MessageBubble images={<ImageThumb src={PICTURE} href={PICTURE} alt="Image 1" />}>Why does the header wrap here?</MessageBubble>
           <MessageBubble>Fix the flaky login test, then open a PR.</MessageBubble>
           <MessageBubble tone="pending" label="Queued">Also update the changelog.</MessageBubble>
           <MessageBubble meta="From the terminal">/compact</MessageBubble>
@@ -157,7 +205,7 @@ export const section = {
       </Demo>
       <Demo label="MessageList · a finished turn (collapsed) and a running one">
         <div className="flex h-96 flex-col rounded-lg border border-border">
-          <MessageList rows={sample} provisional={[]} streams={{}} turnRunning pending={[{ id: 'p', text: 'Then push it.', delivery: 'next' }]} onAnswer={async () => {}} />
+          <MessageList rows={sample} provisional={[]} streams={{}} turnRunning pending={[{ id: 'p', text: 'Then push it.', delivery: 'next', images: [], notice: false }]} onAnswer={async () => {}} />
         </div>
       </Demo>
       <Demo label="MessageList · a turn cut off by a restart (Continue)">

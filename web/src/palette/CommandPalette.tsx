@@ -17,6 +17,7 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   host: <Server aria-hidden />,
   claude: <KIND_ICON.claude aria-hidden />,
   codex: <KIND_ICON.codex aria-hidden />,
+  devin: <KIND_ICON.devin aria-hidden />,
   shell: <KIND_ICON.shell aria-hidden />,
   run: <Play aria-hidden />,
   rename: <Pencil aria-hidden />,

@@ -47,7 +47,12 @@ async fn ticket(env: &Env, body: Value) -> String {
     v["id"].as_str().unwrap().to_string()
 }
 
+/// Starts a ticket; a terminal unless the body says (these tests read the agent's argv).
 async fn start(env: &Env, id: &str, body: Value) -> (StatusCode, Value) {
+    let mut body = body;
+    if body.get("sessionMode").is_none() && body.get("fromSession").is_none() {
+        body["sessionMode"] = json!("terminal");
+    }
     call(&env.app, "POST", &format!("/api/tickets/{id}/start"), Some(body)).await
 }
 
@@ -126,7 +131,8 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
     assert!(wt.join("a.txt").is_file(), "the worktree is checked out");
     assert_eq!(attempt["worktreeId"], session["worktreeId"]);
 
-    // The agent got the ticket as its first prompt, after its flags (and after --settings for Claude).
+    // The agent got the ticket as its first prompt, after its flags (and after --settings and PDT's instructions for
+    // Claude).
     let launch = recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0);
     let sid = s(&session["id"]).to_string();
     if cfg!(windows) {
@@ -136,7 +142,8 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
         assert!(launch[0].contains("PDT-1"), "{launch:?}");
     } else {
         assert_eq!(launch[..2], ["--session-id".to_string(), sid.clone()]);
-        assert_eq!(launch[launch.len() - 3], "--settings");
+        assert_eq!(launch[launch.len() - 5], "--settings");
+        assert_eq!(launch[launch.len() - 3], "--append-system-prompt-file");
         assert_eq!(
             last_arg(&launch),
             "PDT-1: Fix the login\n\nSteps & notes:\n1. open\n\n(Ticket PDT-1 in PDT. Work in this worktree on \
@@ -371,6 +378,56 @@ async fn merges_are_detected_on_demand_and_by_the_loop() {
     assert_eq!(get_ticket(&env, &b).await["attempts"][0]["state"], "merged");
     let (_, check) = call(&env.app, "POST", "/api/tickets/nope/check-merge", None).await;
     assert_eq!(check["code"], "not_found");
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-45: Start branches from `origin/main` when it is ahead of the local main, and a branch that only caught up
+/// with main (fast-forwarded, no commits of its own) is not called merged; once it has its own work, a squash is.
+#[tokio::test]
+async fn a_branch_that_only_caught_up_with_main_is_not_merged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let upstream = tmp.path().join("upstream");
+    git(tmp.path(), &["clone", "-q", &env.repo.to_string_lossy(), &upstream.to_string_lossy()]);
+    git(&env.repo, &["remote", "add", "origin", &upstream.to_string_lossy()]);
+    let commit_upstream = |file: &str| {
+        std::fs::write(upstream.join(file), "up\n").unwrap();
+        git(&upstream, &["add", "-A"]);
+        git(&upstream, &["commit", "-q", "-m", file]);
+        pdt_git::rev_parse(&upstream, "HEAD").unwrap()
+    };
+    let ahead = commit_upstream("u1.txt");
+
+    let a = ticket(&env, json!({"title": "Catch up"})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    let wt = env.repo.join(".worktrees/pdt-PDT-1-catch-up");
+    assert_eq!(pdt_git::rev_parse(&wt, "HEAD"), Some(ahead), "the branch starts from origin/main, which was ahead");
+    assert_ne!(pdt_git::rev_parse(&env.repo, "main"), pdt_git::rev_parse(&wt, "HEAD"), "local main untouched");
+    let upstream_branch = std::process::Command::new("git")
+        .current_dir(&wt)
+        .args(["rev-parse", "--abbrev-ref", "@{upstream}"])
+        .output()
+        .unwrap();
+    assert!(!upstream_branch.status.success(), "the branch does not track origin/main");
+
+    // origin/main moves on and the branch fast-forwards to it: nothing of its own, so not merged.
+    commit_upstream("u2.txt");
+    git(&env.repo, &["fetch", "-q", "origin"]);
+    git(&wt, &["merge", "-q", "--ff-only", "origin/main"]);
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "active", "{t}");
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(get_ticket(&env, &a).await["attempts"][0]["state"], "active");
+
+    // Its own work, squash-merged into main: merged.
+    work_in(&env, "pdt-PDT-1-catch-up", "w.txt");
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "active");
+    git(&env.repo, &["merge", "-q", "--ff-only", "origin/main"]);
+    git(&env.repo, &["merge", "-q", "--squash", "pdt/PDT-1-catch-up"]);
+    git(&env.repo, &["commit", "-q", "-m", "squashed"]);
+    let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
+    assert_eq!(t["attempts"][0]["state"], "merged");
     env.state.ptys.shutdown().await;
 }
 

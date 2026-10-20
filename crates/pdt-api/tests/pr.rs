@@ -5,7 +5,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
-use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
+use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval};
 use pdt_github::PullRequest;
 use pdt_github::testing::FakeGithub;
 use pdt_store::Store;
@@ -24,8 +24,14 @@ struct Env {
     session: String,
 }
 
-/// A project on GitHub (its origin says so; nothing is fetched) with one started ticket whose agent waits for input.
+/// A project on GitHub (its origin says so; nothing is fetched) with one started ticket whose agent waits for input,
+/// in a terminal.
 async fn setup(tmp: &std::path::Path) -> Env {
+    setup_as(tmp, "terminal").await
+}
+
+/// [`setup`], with the agent as a `terminal` or a `conversation`.
+async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
@@ -40,7 +46,12 @@ async fn setup(tmp: &std::path::Path) -> Env {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.join("data"));
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
-    state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
+    state.platform.claude_program = if mode == "conversation" {
+        env!("CARGO_BIN_EXE_fake-agent").to_string()
+    } else {
+        argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned()
+    };
+    state.conversations.notice_quiet = Duration::ZERO;
     let gh = Arc::new(FakeGithub::default());
     state.github = gh.clone();
     let app = router(state.clone(), None);
@@ -55,8 +66,13 @@ async fn setup(tmp: &std::path::Path) -> Env {
     let pid = p["id"].as_str().unwrap();
     let (_, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Ship it"}))).await;
     let ticket = t["id"].as_str().unwrap().to_string();
-    let (s, started) =
-        call(&app, "POST", &format!("/api/tickets/{ticket}/start"), Some(json!({"agent": "claude"}))).await;
+    let (s, started) = call(
+        &app,
+        "POST",
+        &format!("/api/tickets/{ticket}/start"),
+        Some(json!({"agent": "claude", "sessionMode": mode})),
+    )
+    .await;
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let session = started["session"]["id"].as_str().unwrap().to_string();
     Env { app, state, gh, repo, ticket, session }
@@ -76,6 +92,7 @@ fn pr() -> PullRequest {
         auto_merge: true,
         in_merge_queue: false,
         queue_position: None,
+        queue_removal: None,
     }
 }
 
@@ -173,6 +190,30 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
 }
 
 #[tokio::test]
+async fn a_removal_from_the_merge_queue_is_told_even_when_never_seen_queued() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    // Queued and dropped between two looks (a conflict is found within seconds): only the timeline knows.
+    let mut removed = pr();
+    removed.auto_merge = false;
+    removed.queue_removal =
+        Some(QueueRemoval { id: "RFMQE_1".into(), reason: "merge_conflict".into(), by_queue: true });
+    env.gh.set_pr(BRANCH, Some(removed.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::deliver_notices(&env.state).await;
+    let events = pr_events(&env).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["data"]["notice"], "queue_left");
+    assert_eq!(events[0]["data"]["key"], "queue_removed:RFMQE_1");
+    assert_eq!(events[0]["data"]["told"], true);
+    assert!(events[0]["data"]["text"].as_str().unwrap().contains("it conflicts with main"));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::deliver_notices(&env.state).await;
+    assert_eq!(pr_events(&env).await.len(), 1, "one removal is news once");
+    env.state.ptys.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_busy_agent_is_told_later_and_a_merge_is_news() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
@@ -220,7 +261,7 @@ async fn a_ticket_workspace_carries_its_ticket_and_pr() {
         &env.app,
         "POST",
         &format!("/api/tickets/{id2}/start"),
-        Some(json!({"agent": "claude", "newWorkspace": true})),
+        Some(json!({"agent": "claude", "newWorkspace": true, "sessionMode": "terminal"})),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
@@ -305,5 +346,94 @@ async fn opening_a_ticket_finds_its_pr_merged_on_github() {
     let (s, t) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
     assert_eq!(s, StatusCode::OK, "{t}");
     assert_eq!(t["attempts"][0]["state"], "merged");
+    env.state.ptys.shutdown().await;
+}
+
+async fn conversation_events(env: &Env) -> Vec<Value> {
+    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{}/events?after=0", env.session), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let mut all = v.as_array().unwrap().clone();
+    all.sort_by_key(|e| e["pos"].as_i64());
+    all
+}
+
+/// Waits until the conversation has taken `n` turns.
+async fn wait_turns(env: &Env, n: usize) -> Vec<Value> {
+    for _ in 0..300 {
+        let all = conversation_events(env).await;
+        if all.iter().filter(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended").count() >= n {
+            return all;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("never saw {n} turns end: {:#?}", conversation_events(env).await);
+}
+
+#[tokio::test]
+async fn a_conversation_is_told_as_pdt_once_it_is_idle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup_as(tmp.path(), "conversation").await;
+    // Start sent the ticket as the first message.
+    let all = wait_turns(&env, 1).await;
+    let first = all.iter().find(|e| e["event"]["kind"] == "user_message").unwrap();
+    assert!(first["event"]["text"].as_str().unwrap().starts_with("PDT-1: Ship it"), "{first}");
+    assert_eq!(first["event"]["source"], "pdt");
+
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
+    env.gh.set_jobs(7, &["test (linux)"]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::deliver_notices(&env.state).await;
+    let events = pr_events(&env).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!((&events[0]["data"]["told"], &events[0]["data"]["sessionId"]), (&json!(true), &json!(env.session)));
+    let all = wait_turns(&env, 2).await;
+    let told: Vec<&Value> = all.iter().filter(|e| e["event"]["kind"] == "user_message").collect();
+    assert_eq!(told.len(), 2, "{all:#?}");
+    assert_eq!(told[1]["event"]["source"], "notice", "shown as PDT's, not the user's");
+    assert!(told[1]["event"]["text"].as_str().unwrap().contains("CI failed on PR #12"), "{}", told[1]);
+    // Told once.
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::deliver_notices(&env.state).await;
+    assert_eq!(pr_events(&env).await.len(), 1);
+}
+
+/// Git's merge check can end the attempt in the tick GitHub still reports the PR queued: the next look reads the
+/// ended attempt's PR again, so the badge says merged rather than "In queue" (PDT-59).
+#[tokio::test]
+async fn an_ended_attempts_pr_is_read_again_until_it_is_not_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-ship-it");
+    std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "ship"]);
+    let mut queued = pr();
+    queued.in_merge_queue = true;
+    env.gh.set_pr(BRANCH, Some(queued));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    assert_eq!(attempt_state(&env).await, "active");
+
+    // Main gets the branch while GitHub still says queued: git ends the attempt, the stale look stays.
+    git(&env.repo, &["merge", "-q", "--ff-only", BRANCH]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    let t = ticket(&env).await;
+    assert_eq!(t["attempts"][0]["state"], "merged");
+    assert_eq!(t["attempts"][0]["pr"]["inMergeQueue"], true);
+
+    // GitHub catches up: the next look reads it, and tells nothing new.
+    pdt_api::deliver_notices(&env.state).await;
+    let told = pr_events(&env).await.len();
+    assert_eq!(told, 1);
+    let mut merged = pr();
+    merged.state = PrState::Merged;
+    env.gh.set_pr(BRANCH, Some(merged));
+    pdt_api::refresh_prs(&env.state).await;
+    let t = ticket(&env).await;
+    assert_eq!(t["attempts"][0]["pr"]["state"], "merged");
+    assert_eq!(t["attempts"][0]["pr"]["inMergeQueue"], false);
+    pdt_api::deliver_notices(&env.state).await;
+    assert_eq!(pr_events(&env).await.len(), told);
     env.state.ptys.shutdown().await;
 }

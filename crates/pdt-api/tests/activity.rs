@@ -209,12 +209,11 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
     output_until(&mut ws, "Trust this folder?").await;
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "ready").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, id).await["activity"], "idle", "trust acceptance is not a turn");
+    // The terminal can show "ready" before the tracker has applied the program's idle status, so wait for it.
+    wait_for_activity(&app, id, json!("idle")).await; // trust acceptance is not a turn
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "empty").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, id).await["activity"], "idle", "empty Enter is not a turn");
+    wait_for_activity(&app, id, json!("idle")).await; // empty Enter is not a turn
     type_in(&mut ws, "a prompt\r").await;
     wait_for_activity(&app, id, json!("working")).await;
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -451,5 +450,75 @@ async fn removing_a_session_deletes_its_hook_settings() {
     }
     assert_eq!(removed, StatusCode::NO_CONTENT);
     assert!(!dir.exists(), "the session's data folder is removed with it");
+    state.ptys.shutdown().await;
+}
+
+/// Devin 3000.11's OSC 7501 states (`app=devin`, `kind` before `app`), one step per line typed.
+fn fake_devin_status(dir: &Path) -> std::path::PathBuf {
+    let (file, body) = if cfg!(windows) {
+        (
+            "devin-status.cmd",
+            "@echo off\r\necho \x1b]7501;state=idle:app=devin\x07ready\r\nset /p x=\r\necho \x1b]7501;state=working:app=devin:msg=VGhpbmtpbmc=\x07\r\nset /p x=\r\necho \x1b]7501;state=blocked:kind=permission:app=devin\x07\r\nset /p x=\r\necho \x1b]7501;state=done:app=devin\x07\r\nset /p x=\r\n",
+        )
+    } else {
+        (
+            "devin-status",
+            "#!/bin/sh\nprintf '\\033]7501;state=idle:app=devin\\007ready\\n'\nread x\nprintf '\\033]7501;state=working:app=devin:msg=VGhpbmtpbmc=\\007'\nread x\nprintf '\\033]7501;state=blocked:kind=permission:app=devin\\007'\nread x\nprintf '\\033]7501;state=done:app=devin\\007'\nread x\n",
+        )
+    };
+    let path = dir.join(file);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn devin_activity_follows_its_program_status() {
+    use futures_util::StreamExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, mut state) = setup(tmp.path()).await;
+    state.platform.devin_program = fake_devin_status(tmp.path()).to_string_lossy().into_owned();
+    state.platform.devin_config_file = Some(tmp.path().join("devin-user").join("config.json"));
+    state.activity_timing.quiet_after_ms = 250;
+    state.activity_tick = Duration::from_millis(50);
+    tokio::spawn(pdt_api::run_activity_ticker(state.clone()));
+    let app = pdt_api::router(state.clone(), None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let served = app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
+    let (_, projects) = call(&app, "GET", "/api/projects", None).await;
+    let body = json!({"projectId": projects[0]["id"], "kind": "agent_tui", "agent": "devin", "cols": 80, "rows": 24});
+    let (s, created) = call(&app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap();
+    let mut ws = terminal(port, id).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut seen = Vec::new();
+        while let Some(Ok(msg)) = ws.next().await {
+            if let Message::Binary(bytes) = msg {
+                seen.extend_from_slice(&bytes);
+                if String::from_utf8_lossy(&seen).contains("ready") {
+                    return;
+                }
+            }
+        }
+        panic!("terminal closed before ready");
+    })
+    .await
+    .unwrap();
+    wait_for_activity(&app, id, json!("idle")).await;
+    type_in(&mut ws, "a prompt\r").await;
+    wait_for_activity(&app, id, json!("working")).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(session(&app, id).await["activity"], "working", "explicit work stays known while output is quiet");
+    type_in(&mut ws, "\r").await;
+    wait_for_activity(&app, id, json!("needs_you")).await;
+    type_in(&mut ws, "1\r").await;
+    wait_for_activity(&app, id, json!("idle")).await;
     state.ptys.shutdown().await;
 }

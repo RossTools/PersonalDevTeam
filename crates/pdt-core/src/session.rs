@@ -21,6 +21,8 @@ pub enum SessionKind {
 pub enum AgentKind {
     Claude,
     Codex,
+    /// Devin for Terminal (`devin`). Terminal only: PDT does not drive it as a conversation.
+    Devin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -49,10 +51,24 @@ impl AgentKind {
         match self {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",
+            AgentKind::Devin => "devin",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [AgentKind::Claude, AgentKind::Codex].into_iter().find(|k| k.as_str() == s)
+        AgentKind::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+    pub const ALL: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Devin];
+    /// Whether PDT can run this agent as a conversation (structured events) rather than only its terminal.
+    pub fn has_conversations(self) -> bool {
+        self != AgentKind::Devin
+    }
+    /// The agent's name in messages: "Claude", "Codex" or "Devin".
+    pub fn label(self) -> &'static str {
+        match self {
+            AgentKind::Claude => "Claude",
+            AgentKind::Codex => "Codex",
+            AgentKind::Devin => "Devin",
+        }
     }
 }
 
@@ -82,7 +98,7 @@ pub struct Session {
     pub kind: SessionKind,
     pub agent: Option<AgentKind>,
     /// Agents only: launched with permission prompts bypassed (`--dangerously-skip-permissions` for Claude,
-    /// `--dangerously-bypass-approvals-and-sandbox` for Codex). Persisted so restart/auto-resume keep it.
+    /// `--dangerously-bypass-approvals-and-sandbox` for Codex, `--permission-mode dangerous` for Devin). Persisted so restart/auto-resume keep it.
     pub bypass_permissions: bool,
     pub title: String,
     /// Working directory, native separators.
@@ -93,10 +109,11 @@ pub struct Session {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub ended_at: Option<i64>,
-    /// The agent's own conversation id. Only Codex needs it (Claude's conversation id is `id`); it is found in
-    /// Codex's rollout files once a turn has been taken, and None until then.
+    /// The agent's own conversation id. Codex: found in its rollout files once a turn has been taken, None until
+    /// then. Claude: the conversation `/clear` (or the TUI's `/resume`) moved to; None while it is still `id`
+    /// (see `claude_conversation_id`). Devin: the conversation its `SessionStart` hook last named.
     pub external_session_id: Option<String>,
-    /// Codex only: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
+    /// Codex and Devin: when the session was last launched fresh (create, or restart/auto-resume with no conversation to
     /// resume), in ms. Matches the session to its conversation's start time. Resuming a bound conversation leaves it
     /// alone. None for rows from before it was recorded.
     #[ts(type = "number | null")]
@@ -121,6 +138,21 @@ pub struct Session {
     pub model: Option<String>,
     /// Conversations: PDT's permission setting.
     pub permission_mode: Option<crate::conversation::PermissionMode>,
+}
+
+impl Session {
+    /// Claude's id for this session's conversation: the session id it was first launched with (`--session-id`),
+    /// until `/clear` starts a new one. Resumes, transcript lookups and stdin messages use it.
+    pub fn claude_conversation_id(&self) -> &str {
+        self.external_session_id.as_deref().unwrap_or(&self.id)
+    }
+}
+
+/// Whether `id` looks like a Claude conversation id (a UUID): it becomes an argument and a transcript file name, so
+/// anything else a hook reports is ignored.
+pub fn is_claude_conversation_id(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -196,7 +228,7 @@ pub struct ValidSession {
 pub enum SessionValidationError {
     #[error("project id must not be empty")]
     EmptyProject,
-    #[error("an agent terminal needs an agent (claude or codex)")]
+    #[error("an agent terminal needs an agent (claude, codex or devin)")]
     MissingAgent,
     #[error("a shell session must not name an agent")]
     UnexpectedAgent,
@@ -210,6 +242,8 @@ pub enum SessionValidationError {
     ConversationForShell,
     #[error("a model name must be 1 to 100 characters with no spaces")]
     BadModel,
+    #[error("this agent runs only as a terminal, not a conversation")]
+    ConversationUnsupported,
 }
 
 impl NewSession {
@@ -241,6 +275,10 @@ impl NewSession {
                 return Err(SessionValidationError::ConversationForShell);
             }
             (SessionKind::Shell, _, _) => SessionMode::Terminal,
+            (_, Some(a), Some(SessionMode::Conversation)) if !a.has_conversations() => {
+                return Err(SessionValidationError::ConversationUnsupported);
+            }
+            (_, Some(a), None) if !a.has_conversations() => SessionMode::Terminal,
             (_, _, m) => m.unwrap_or(SessionMode::Conversation),
         };
         let conversation = mode == SessionMode::Conversation;
@@ -283,8 +321,10 @@ pub struct Platform {
     pub unix_shell: Option<String>,
     pub claude_program: String,
     pub codex_program: String,
+    pub devin_program: String,
     /// The user's login-shell PATH, when pdtd's own PATH is not it (a macOS app started by launchd gets only
-    /// /usr/bin:/bin:/usr/sbin:/sbin). Programs are looked up on it and sessions run with it.
+    /// /usr/bin:/bin:/usr/sbin:/sbin), plus the standard install folders it lacks. Programs are looked up on it and
+    /// sessions run with it.
     pub login_path: Option<String>,
     /// Codex's home directory (`$CODEX_HOME`, else `~/.codex`), where it saves conversations. None when it cannot be
     /// determined.
@@ -292,6 +332,9 @@ pub struct Platform {
     /// Claude's config directory (`$CLAUDE_CONFIG_DIR`, else `~/.claude`), where it saves conversations. None when
     /// it cannot be determined.
     pub claude_config_dir: Option<std::path::PathBuf>,
+    /// The user's own Devin config file (copied into each Devin session's `--config`, which replaces it). None when
+    /// it cannot be determined.
+    pub devin_config_file: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,10 +347,12 @@ pub struct Launch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resume {
     Fresh,
-    /// Claude's conversation id is the session id, so each session resumes its own conversation.
+    /// Claude resumes the session's own conversation (`Session::claude_conversation_id`).
     Claude,
     /// Codex's own id for this session's conversation (found in its rollout files).
     Codex(String),
+    /// Devin's own id for this session's conversation (found in its session list).
+    Devin(String),
 }
 
 /// What to run for a session. Shells ignore `resume` and `bypass_permissions`. A resume that does not match the
@@ -341,6 +386,16 @@ pub fn launch(
             }
             Launch { program: platform.codex_program.clone(), args: a }
         }
+        (SessionKind::AgentTui, Some(AgentKind::Devin)) => {
+            let mut a = match resume {
+                Resume::Devin(id) => args(&["--resume", id]),
+                _ => vec![],
+            };
+            if bypass_permissions {
+                a.extend(args(&["--permission-mode", "dangerous"]));
+            }
+            Launch { program: platform.devin_program.clone(), args: a }
+        }
         (SessionKind::AgentTui, _) => {
             let mut a = args(&[if *resume == Resume::Claude { "--resume" } else { "--session-id" }, session_id]);
             if bypass_permissions {
@@ -361,11 +416,16 @@ pub fn prompt_arg(prompt: &str) -> String {
 /// it), so a file path containing one is never put on such a command line.
 const CMD_METACHARACTERS: &[char] = &['&', '|', '<', '>', '^', '%', '!', '"', '(', ')', '\n', '\r'];
 
+/// Whether `cmd.exe` would leave this argument alone.
+pub fn cmd_safe(arg: &str) -> bool {
+    !arg.contains(CMD_METACHARACTERS)
+}
+
 /// The short prompt given instead of the real one when the agent is a `.cmd` shim: the real prompt is in
 /// `prompt_file`. For a ticket (`ticket_key`, e.g. `PDT-4`) it names the ticket and the file, or only the ticket
 /// when the path is unsafe for cmd. Without a ticket it names the file; None (no prompt) when the path is unsafe.
 pub fn shim_prompt(ticket_key: Option<&str>, prompt_file: &str) -> Option<String> {
-    let safe = !prompt_file.contains(CMD_METACHARACTERS);
+    let safe = cmd_safe(prompt_file);
     match (ticket_key, safe) {
         (Some(key), true) => Some(format!("{key}: read {prompt_file} for the ticket, then start.")),
         (Some(key), false) => Some(format!("Start on ticket {key} (see {}).", crate::brand::SHORT_NAME)),
@@ -380,12 +440,11 @@ pub fn default_title(place: &str) -> String {
     place.to_string()
 }
 
-/// What a session runs, for messages that name it: "Claude", "Codex" or "Shell".
+/// What a session runs, for messages that name it: "Claude", "Codex", "Devin" or "Shell".
 pub fn kind_label(kind: SessionKind, agent: Option<AgentKind>) -> &'static str {
     match (kind, agent) {
         (SessionKind::Shell, _) => "Shell",
-        (SessionKind::AgentTui, Some(AgentKind::Codex)) => "Codex",
-        (SessionKind::AgentTui, _) => "Claude",
+        (SessionKind::AgentTui, a) => a.unwrap_or(AgentKind::Claude).label(),
     }
 }
 
@@ -473,9 +532,11 @@ mod tests {
             unix_shell: unix_shell.map(Into::into),
             claude_program: "claude".into(),
             codex_program: "codex".into(),
+            devin_program: "devin".into(),
             login_path: None,
             codex_home: None,
             claude_config_dir: None,
+            devin_config_file: None,
         }
     }
 
@@ -491,7 +552,7 @@ mod tests {
             assert_eq!(serde_json::to_string(&k).unwrap(), format!("\"{}\"", k.as_str()));
             assert_eq!(SessionKind::parse(k.as_str()), Some(k));
         }
-        for a in [AgentKind::Claude, AgentKind::Codex] {
+        for a in AgentKind::ALL {
             assert_eq!(serde_json::to_string(&a).unwrap(), format!("\"{}\"", a.as_str()));
             assert_eq!(AgentKind::parse(a.as_str()), Some(a));
         }
@@ -550,6 +611,14 @@ mod tests {
     }
 
     #[test]
+    fn claude_conversation_ids() {
+        assert!(is_claude_conversation_id("6dc3d2d6-0b1e-4c1a-9f3e-2a7b8c9d0e1f"));
+        assert!(!is_claude_conversation_id("../../etc/passwd-0000000000000000000"));
+        assert!(!is_claude_conversation_id("6dc3d2d6-0b1e-4c1a-9f3e-2a7b8c9d0e1"));
+        assert!(!is_claude_conversation_id(""));
+    }
+
+    #[test]
     fn agent_launch_and_resume() {
         let p = platform(false, false, None);
         assert_eq!(
@@ -591,6 +660,37 @@ mod tests {
             )),
             ("claude".into(), vec!["--session-id".into(), SID.into()])
         );
+        // Devin: `--resume <its id>`, fresh with no arguments; never another agent's id.
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Devin), &p, &Resume::Fresh, SID, false)),
+            ("devin".into(), vec![])
+        );
+        assert_eq!(
+            launch_of(launch(
+                SessionKind::AgentTui,
+                Some(AgentKind::Devin),
+                &p,
+                &Resume::Devin("brisk-otter".into()),
+                SID,
+                false
+            )),
+            ("devin".into(), vec!["--resume".into(), "brisk-otter".into()])
+        );
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Devin), &p, &Resume::Claude, SID, false)),
+            ("devin".into(), vec![])
+        );
+        assert_eq!(
+            launch_of(launch(
+                SessionKind::AgentTui,
+                Some(AgentKind::Codex),
+                &p,
+                &Resume::Devin("brisk-otter".into()),
+                SID,
+                false
+            )),
+            ("codex".into(), vec![])
+        );
         let mut custom = p.clone();
         custom.codex_program = "/opt/codex".into();
         assert_eq!(
@@ -629,6 +729,22 @@ mod tests {
                 "codex".into(),
                 vec!["resume".into(), "019-abc".into(), "--dangerously-bypass-approvals-and-sandbox".into()]
             )
+        );
+        // Devin: its dangerous permission mode, fresh or resumed.
+        assert_eq!(
+            launch_of(launch(SessionKind::AgentTui, Some(AgentKind::Devin), &p, &Resume::Fresh, SID, true)),
+            ("devin".into(), vec!["--permission-mode".into(), "dangerous".into()])
+        );
+        assert_eq!(
+            launch_of(launch(
+                SessionKind::AgentTui,
+                Some(AgentKind::Devin),
+                &p,
+                &Resume::Devin("b-o".into()),
+                SID,
+                true
+            )),
+            ("devin".into(), vec!["--resume".into(), "b-o".into(), "--permission-mode".into(), "dangerous".into()])
         );
     }
 
@@ -739,6 +855,13 @@ mod tests {
         let mut codex = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24);
         codex.mode = Some(SessionMode::Terminal);
         assert_eq!(codex.validate().unwrap().mode, SessionMode::Terminal);
+        // Devin is terminal only: it defaults to a terminal and refuses a conversation.
+        let mut devin = new(SessionKind::AgentTui, Some(AgentKind::Devin), 80, 24);
+        devin.bypass_permissions = Some(true);
+        let v = devin.clone().validate().unwrap();
+        assert_eq!((v.mode, v.permission_mode, v.bypass_permissions), (SessionMode::Terminal, None, true));
+        devin.mode = Some(SessionMode::Conversation);
+        assert_eq!(devin.validate().unwrap_err(), SessionValidationError::ConversationUnsupported);
         let mut shell = new(SessionKind::Shell, None, 80, 24);
         assert_eq!(shell.clone().validate().unwrap().mode, SessionMode::Terminal);
         shell.mode = Some(SessionMode::Conversation);
@@ -851,6 +974,7 @@ mod tests {
     fn titles() {
         assert_eq!(kind_label(SessionKind::Shell, None), "Shell");
         assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Codex)), "Codex");
+        assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Devin)), "Devin");
         assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Claude)), "Claude");
         assert_eq!(default_title("feature-x"), "feature-x");
     }

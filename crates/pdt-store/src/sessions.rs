@@ -151,6 +151,17 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Makes a session with no ticket work on an attempt (Make ticket's "Start from this chat"). False if the session
+    /// is gone or already has an attempt.
+    pub async fn set_session_attempt(&self, id: &str, attempt_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET attempt_id = ? WHERE id = ? AND attempt_id IS NULL")
+            .bind(attempt_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Records that a Codex session was launched fresh at `at` (ms).
     pub async fn set_fresh_started_at(&self, id: &str, at: i64) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE sessions SET fresh_started_at = ? WHERE id = ?")

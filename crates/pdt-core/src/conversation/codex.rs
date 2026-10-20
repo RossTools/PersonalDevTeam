@@ -817,9 +817,139 @@ pub fn history_events(turns: &[Value], known_turns: &std::collections::HashSet<S
     out
 }
 
+/// The Codex commands PDT runs (Codex has no generic "run a slash command"; spec §7.2).
+pub fn commands() -> Vec<super::AgentCommandInfo> {
+    vec![
+        super::AgentCommandInfo {
+            name: "compact".into(),
+            description: "Summarise the conversation to free up context".into(),
+            argument_hint: None,
+        },
+        super::AgentCommandInfo {
+            name: "review".into(),
+            description: "Review the uncommitted changes (or follow your instructions)".into(),
+            argument_hint: Some("[instructions]".into()),
+        },
+    ]
+}
+
+/// A message that is one of [`commands`]: the RPC and its params (without `threadId`). Anything else is a message.
+pub fn slash_command(text: &str) -> Option<(&'static str, Value)> {
+    let t = text.trim();
+    let (name, args) = t.strip_prefix('/')?.split_once(char::is_whitespace).unwrap_or((t.strip_prefix('/')?, ""));
+    let args = args.trim();
+    match name {
+        "compact" if args.is_empty() => Some(("thread/compact/start", json!({}))),
+        "review" if args.is_empty() => Some(("review/start", json!({"target": {"type": "uncommittedChanges"}}))),
+        "review" => Some(("review/start", json!({"target": {"type": "custom", "instructions": args}}))),
+        _ => None,
+    }
+}
+
+/// Who pays, from `account/read` (only the account's type is read): "ChatGPT plan", "API key", "Amazon Bedrock".
+pub fn billing_label(account_read: &Value) -> Option<String> {
+    let label = match account_read.pointer("/account/type").and_then(Value::as_str)? {
+        "chatgpt" => "ChatGPT plan",
+        "apiKey" => "API key",
+        "amazonBedrock" => "Amazon Bedrock",
+        _ => return None,
+    };
+    Some(label.to_string())
+}
+
+/// A turn's input: the text, then each image by its local path.
+pub fn user_input(text: &str, image_paths: &[String]) -> Value {
+    let mut items = Vec::new();
+    if !text.trim().is_empty() || image_paths.is_empty() {
+        items.push(json!({"type": "text", "text": text}));
+    }
+    items.extend(image_paths.iter().map(|p| json!({"type": "localImage", "path": p})));
+    Value::Array(items)
+}
+
+/// Follows a hidden side turn (Make ticket's draft): keeps the last agent message and says how the turn ended.
+#[derive(Debug, Default)]
+pub struct SideTurn {
+    last: Option<String>,
+}
+
+impl SideTurn {
+    /// Some once the turn is over: the last agent message, or why there is none.
+    pub fn on_notification(&mut self, method: &str, p: &Value) -> Option<Result<String, String>> {
+        match method {
+            "item/completed" if p.pointer("/item/type").and_then(Value::as_str) == Some("agentMessage") => {
+                self.last = p.pointer("/item/text").and_then(Value::as_str).map(String::from);
+                None
+            }
+            "turn/completed" => {
+                let turn = &p["turn"];
+                match turn.get("status").and_then(Value::as_str) {
+                    Some("interrupted") => Some(Err("the side request was interrupted".into())),
+                    Some("failed") => Some(Err(turn
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("the side request failed")
+                        .to_string())),
+                    _ => Some(self.last.take().ok_or_else(|| "Codex gave no answer".to_string())),
+                }
+            }
+            "error" if !p.get("willRetry").and_then(Value::as_bool).unwrap_or(false) => Some(Err(p
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Codex reported an error")
+                .to_string())),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_side_turn_answers_with_its_last_message() {
+        let mut t = SideTurn::default();
+        let msg = |text: &str| json!({"item": {"type": "agentMessage", "id": "i", "text": text}});
+        assert_eq!(t.on_notification("item/completed", &msg("first")), None);
+        assert_eq!(t.on_notification("item/completed", &json!({"item": {"type": "reasoning"}})), None);
+        assert_eq!(t.on_notification("item/completed", &msg("{\"title\":\"x\"}")), None);
+        assert_eq!(
+            t.on_notification("turn/completed", &json!({"turn": {"status": "completed"}})),
+            Some(Ok("{\"title\":\"x\"}".into()))
+        );
+        let mut empty = SideTurn::default();
+        assert!(matches!(empty.on_notification("turn/completed", &json!({"turn": {}})), Some(Err(_))));
+        let failed = json!({"turn": {"status": "failed", "error": {"message": "usage limit reached"}}});
+        assert_eq!(
+            SideTurn::default().on_notification("turn/completed", &failed),
+            Some(Err("usage limit reached".into()))
+        );
+        let retrying = json!({"error": {"message": "reconnecting"}, "willRetry": true});
+        assert_eq!(SideTurn::default().on_notification("error", &retrying), None);
+        assert!(matches!(SideTurn::default().on_notification("error", &json!({"error": {}})), Some(Err(_))));
+    }
+
+    #[test]
+    fn commands_map_to_their_rpcs_and_images_to_local_paths() {
+        assert_eq!(slash_command(" /compact "), Some(("thread/compact/start", json!({}))));
+        assert_eq!(slash_command("/review"), Some(("review/start", json!({"target": {"type": "uncommittedChanges"}}))));
+        assert_eq!(
+            slash_command("/review  the auth code"),
+            Some(("review/start", json!({"target": {"type": "custom", "instructions": "the auth code"}})))
+        );
+        assert_eq!(slash_command("/compact now"), None);
+        assert_eq!(slash_command("/model gpt"), None);
+        assert_eq!(slash_command("compact"), None);
+        assert_eq!(commands().len(), 2);
+        assert_eq!(
+            billing_label(&json!({"account": {"type": "chatgpt", "email": "x", "planType": "pro"}})).as_deref(),
+            Some("ChatGPT plan")
+        );
+        assert_eq!(billing_label(&json!({"account": null})), None);
+        assert_eq!(user_input("hi", &[]), json!([{"type": "text", "text": "hi"}]));
+        assert_eq!(user_input("", &["/d/a.png".into()]), json!([{"type": "localImage", "path": "/d/a.png"}]));
+    }
 
     const APPROVAL: &str = include_str!("../../tests/fixtures/codex/approval.jsonl");
 

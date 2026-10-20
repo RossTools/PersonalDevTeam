@@ -340,7 +340,7 @@ Hands-on checks before building it are listed in the notes file (org policy for 
   `thread/turns/list`, live shared terminal (§8.1).
 - **5c — the rest of the conversation**: QuestionCard, PlanCard, slash commands, images, `@` files, turn diffs, usage
   and rate limits, Claude's terminal handoff (§8.2) and history import, Continue after restart.
-- **5d — tickets**: Start in conversation mode, ticket Conversation tab, scratch chats → Make ticket.
+- **5d — tickets**: Start in conversation mode, ticket Conversation tab, scratch chats → Make ticket. Done (plan 2026-10-19-phase-5d-tickets.md); PR notices reach conversations too.
 
 ## 14. Terms and billing
 
@@ -364,8 +364,11 @@ needs a re-check and probably an API-key path. Guardrails (amending main spec §
 - **Rate limits stop, never retry.** When an agent reports a hit limit (Claude `rate_limit_event` / a rate-limit
   `result` error; Codex `account/rateLimits/updated` at 100 % or a rate-limit turn error), the session shows "Rate
   limited until <reset time>" as a `notice` and in its footer; PDT sends nothing to it automatically, and queued
-  messages stay queued until the user sends again. In Phase 5 nothing else sends messages without the user (Continue
-  is a button, Make ticket is a click).
+  messages stay queued until the user sends again. Otherwise nothing sends messages without the user (Continue is a
+  button, Make ticket is a click), with one deliberate exception (decided 2026-10-19): **PR notices** (PDT-25, PDT-44).
+  News about the user's own pull request (CI failed, a conflict, removed from the merge queue, merged) is sent once
+  per event to the newest running agent session of that ticket's attempt, terminal or conversation, only while it is
+  idle, nobody has typed in it for 20 s and it is not rate limited. In a conversation the message is marked as PDT's.
 - One owner per host: the owner-only Tailscale identity check stays; no sharing sessions with anyone else.
 
 ## 15. Open questions

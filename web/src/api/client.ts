@@ -1,5 +1,7 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
+import type { GuideInfo } from './gen/GuideInfo';
 import type { Health } from './gen/Health';
+import type { TicketDraft } from './gen/TicketDraft';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { HostSettingsView } from './gen/HostSettingsView';
@@ -16,11 +18,14 @@ import type { NewRun } from './gen/NewRun';
 import type { NewSession } from './gen/NewSession';
 import type { NewWorktree } from './gen/NewWorktree';
 import type { Project } from './gen/Project';
+import type { PullBranch } from './gen/PullBranch';
+import type { PullResult } from './gen/PullResult';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
 import type { RunConfigView } from './gen/RunConfigView';
+import type { Attachment } from './gen/Attachment';
 import type { Session } from './gen/Session';
 import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
@@ -73,6 +78,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+/** A plain-text response (PDT's guides are Markdown). */
+async function requestText(path: string): Promise<string> {
+  return (await send(path)).text();
+}
+
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
   if (!res.ok) {
     let body: Partial<ApiErrorBody> = {};
@@ -83,8 +99,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  return res;
 }
 
 const enc = encodeURIComponent;
@@ -112,6 +127,8 @@ export const api = {
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
   updateProject: (id: string, p: ProjectPatch) => request<Project>(`/api/projects/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  pullBranch: (id: string, p: PullBranch = {}) =>
+    request<PullResult>(`/api/projects/${enc(id)}/pull`, { method: 'POST', body: JSON.stringify(p) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: 'DELETE' }),
   removeWorktree: (id: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) =>
     request<void>(`/api/worktrees/${enc(id)}?force=${opts.force ? 'true' : 'false'}&deleteBranch=${opts.deleteBranch ? 'true' : 'false'}`, { method: 'DELETE' }),
@@ -134,6 +151,9 @@ export const api = {
   deleteSession: (id: string) => request<void>(`/api/sessions/${enc(id)}`, { method: 'DELETE' }),
   updateSession: (id: string, p: SessionPatch) =>
     request<Session>(`/api/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  /** Make ticket: the agent drafts a title and description from the conversation (a hidden side request). */
+  draftTicket: (id: string, signal?: AbortSignal) =>
+    request<TicketDraft>(`/api/sessions/${enc(id)}/ticket-draft`, { method: 'POST', signal }),
   /** A conversation's stored events after `after`, oldest first. */
   listSessionEvents: (id: string, q: { after?: number; limit?: number } = {}) =>
     request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString(q)}`),
@@ -155,6 +175,19 @@ export const api = {
   switchSessionMode: (id: string, body: { mode: SessionMode; cols?: number; rows?: number; interrupt?: boolean }) =>
     request<Session>(`/api/sessions/${enc(id)}/mode`, { method: 'POST', body: JSON.stringify(body) }),
   agentCapabilities: (agent: AgentKind) => request<AgentCapabilities>(`/api/agents/${enc(agent)}/capabilities`),
+  /** Stores an image for a message (PNG, JPEG, GIF or WebP, ≤ 10 MB); send its id in `images`. */
+  uploadAttachment: (sessionId: string, file: Blob) =>
+    request<Attachment>(`/api/sessions/${enc(sessionId)}/attachments`, {
+      method: 'POST',
+      body: file,
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+    }),
+  /** Where an attached image is served (thumbnails). */
+  attachmentUrl: (sessionId: string, attachmentId: string) =>
+    `/api/sessions/${enc(sessionId)}/attachments/${enc(attachmentId)}`,
+  /** The session folder's files best matching an `@` query. */
+  sessionFiles: (sessionId: string, q: string) =>
+    request<string[]>(`/api/sessions/${enc(sessionId)}/files${queryString({ q })}`),
   listWorkspaces: () => request<Workspace[]>('/api/workspaces'),
   createWorkspace: (w: NewWorkspace) => request<Workspace>('/api/workspaces', { method: 'POST', body: JSON.stringify(w) }),
   updateWorkspace: (id: string, p: WorkspacePatch) =>
@@ -207,6 +240,9 @@ export const api = {
   projectSettings: (projectId: string) => request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`),
   saveProjectSettings: (projectId: string, s: ProjectSettingsInput) =>
     request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
+  listGuides: () => request<GuideInfo[]>('/api/guides'),
+  /** A built-in guide or prompt, as Markdown. */
+  guide: (name: string) => requestText(`/api/guides/${enc(name)}`),
   hostSettings: () => request<HostSettingsView>('/api/host/settings'),
   saveHostSettings: (p: HostSettingsPatch) =>
     request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),

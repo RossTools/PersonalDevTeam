@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{call, git};
+use common::{PNG, call, call_raw, git, park_once_idle};
 use futures_util::{SinkExt, StreamExt};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -114,9 +114,9 @@ async fn session(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1
 }
 
-/// Activity is recorded just after the event that changes it, so it is waited for.
+/// Activity is recorded just after the event that changes it, so it is waited for (20 s: a loaded Windows runner).
 async fn wait_activity(env: &Env, id: &str, want: &str) {
-    for _ in 0..200 {
+    for _ in 0..800 {
         if session(env, id).await["activity"] == want {
             return;
         }
@@ -162,6 +162,7 @@ async fn a_codex_conversation_streams_and_keeps_its_thread() {
         who.contains("model=gpt-fake approval=on-request sandbox=readOnly") && who.contains("resumed=false"),
         "{who}"
     );
+    assert!(who.contains("instructions=true"), "PDT's instructions reach the thread: {who}");
     stop(&env, &id).await;
 }
 
@@ -273,7 +274,7 @@ async fn turns_taken_elsewhere_are_imported_when_the_conversation_reopens() {
     env.app = router(env.state.clone(), None);
     let id = new_codex(&env, json!({"initialPrompt": "first"})).await;
     wait_turns(&env, &id, 1).await;
-    pdt_api::park_idle_conversations(&env.state).await;
+    park_once_idle(&env.state).await;
     let thread = session(&env, &id).await["externalSessionId"].as_str().unwrap().to_string();
 
     // Another client (as the TUI would) takes a turn while PDT is not listening.
@@ -361,7 +362,7 @@ async fn the_live_terminal_opens_on_the_thread_after_the_first_turn() {
     assert_eq!(s.as_u16(), 204, "opening it again is fine");
     // The fake TUI prints what it was started with.
     let mut seen = String::new();
-    for _ in 0..100 {
+    for _ in 0..400 {
         let bytes = env.state.ptys.attach(&id).map(|a| a.scrollback).unwrap_or_default();
         seen = String::from_utf8_lossy(&bytes).into_owned();
         if seen.contains("fake codex tui") {
@@ -378,7 +379,7 @@ async fn the_live_terminal_opens_on_the_thread_after_the_first_turn() {
     );
     let (s, _) = call(&env.app, "DELETE", &url, None).await;
     assert_eq!(s.as_u16(), 204);
-    for _ in 0..100 {
+    for _ in 0..400 {
         if !env.state.ptys.is_running(&id) {
             break;
         }
@@ -405,4 +406,40 @@ async fn the_live_terminal_opens_on_the_thread_after_the_first_turn() {
     stop(&env, c["id"].as_str().unwrap()).await;
     stop(&env, &id).await;
     pdt_api::shutdown_conversations(&env.state).await;
+}
+
+#[tokio::test]
+async fn codex_commands_run_their_rpcs_and_images_go_as_local_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_codex(&env, json!({})).await;
+    let (_, caps) = call(&env.app, "GET", "/api/agents/codex/capabilities", None).await;
+    let names: Vec<&str> = caps["commands"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["compact", "review"]);
+
+    send(&env, &id, "/compact", "next").await;
+    let all = wait_turns(&env, &id, 1).await;
+    assert!(all.iter().any(|e| e["event"]["kind"] == "compaction"), "{all:#?}");
+    let first_user = all.iter().find(|e| e["event"]["kind"] == "user_message").unwrap();
+    assert_eq!(first_user["event"]["text"], "/compact");
+    wait_activity(&env, &id, "idle").await;
+
+    send(&env, &id, "/review", "next").await;
+    let all = wait_turns(&env, &id, 2).await;
+    assert!(said(&all).contains(&"reviewed: uncommittedChanges".to_string()), "{:?}", said(&all));
+
+    let (s, _, body) = call_raw(&env.app, "POST", &format!("/api/sessions/{id}/attachments"), PNG.to_vec()).await;
+    assert_eq!(s.as_u16(), 201);
+    let aid = serde_json::from_slice::<Value>(&body).unwrap()["id"].as_str().unwrap().to_string();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/sessions/{id}/messages"),
+        Some(json!({"text": "what is this", "images": [aid]})),
+    )
+    .await;
+    assert_eq!(s, 202, "{v}");
+    let all = wait_turns(&env, &id, 3).await;
+    assert!(said(&all).contains(&"saw 1 images".to_string()), "{:?}", said(&all));
+    stop(&env, &id).await;
 }

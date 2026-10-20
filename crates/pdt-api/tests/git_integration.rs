@@ -226,12 +226,13 @@ async fn removing_worktrees() {
     let (s, v) = call(&env.app, "DELETE", &uri, None).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("worktree_busy")));
     call(&env.app, "POST", &format!("/api/sessions/{sid}/kill"), None).await;
-    for _ in 0..100 {
+    for _ in 0..400 {
         if !env.state.ptys.is_running(&sid) {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
+    assert!(!env.state.ptys.is_running(&sid), "the killed shell never exited");
 
     // Dirty: refused without force.
     std::fs::write(path.join("wip.txt"), "x").unwrap();
@@ -305,4 +306,39 @@ async fn the_folder_view_lists_files_and_reads_them() {
         let (s, v) = call(&env.app, "GET", &format!("{base}/content?path=link.txt"), None).await;
         assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("path_outside")));
     }
+}
+
+#[tokio::test]
+async fn pull_fast_forwards_the_base_branch_from_origin() {
+    let env = setup().await;
+    let uri = format!("/api/projects/{}/pull", env.pid);
+    let (s, v) = call(&env.app, "POST", &uri, None).await;
+    assert_eq!(
+        (s, v["outcome"].as_str(), v["branch"].as_str()),
+        (StatusCode::OK, Some("no_remote"), Some("main")),
+        "{v}"
+    );
+
+    // The project's repo gets an origin that moves on (as after a PR merges).
+    let upstream = env.tmp.path().join("upstream");
+    git(env.tmp.path(), &["clone", "-q", "--bare", &env.repo.to_string_lossy(), &upstream.to_string_lossy()]);
+    git(&env.repo, &["remote", "add", "origin", &upstream.to_string_lossy()]);
+    let (s, v) = call(&env.app, "POST", &uri, Some(json!({}))).await;
+    assert_eq!((s, v["outcome"].as_str()), (StatusCode::OK, Some("up_to_date")), "{v}");
+    let other = env.tmp.path().join("other");
+    git(env.tmp.path(), &["clone", "-q", &upstream.to_string_lossy(), &other.to_string_lossy()]);
+    std::fs::write(other.join("merged.txt"), "merged\n").unwrap();
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "-q", "-m", "merged work"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    let (s, v) = call(&env.app, "POST", &uri, Some(json!({"branch": "main"}))).await;
+    assert_eq!((s, v["outcome"].as_str()), (StatusCode::OK, Some("updated")), "{v}");
+    assert!(env.repo.join("merged.txt").exists());
+
+    let (s, v) = call(&env.app, "POST", &uri, Some(json!({"branch": "nope"}))).await;
+    assert_eq!((s, v["outcome"].as_str()), (StatusCode::OK, Some("no_branch")), "{v}");
+    let (s, v) = call(&env.app, "POST", &uri, Some(json!({"branch": "--help"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_branch")), "{v}");
+    let (s, _) = call(&env.app, "POST", "/api/projects/nope/pull", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
 }

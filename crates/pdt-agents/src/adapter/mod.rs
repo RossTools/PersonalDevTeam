@@ -34,6 +34,22 @@ pub struct AgentInfo {
     pub version: Option<String>,
     /// Claude: `none` when it bills the plan login.
     pub api_key_source: Option<String>,
+    /// Who pays, as the composer footer says it ("ChatGPT plan"); Claude's comes from `api_key_source`.
+    pub billing: Option<String>,
+}
+
+/// An image a message carries, stored by PDT (`<data dir>/sessions/<id>/attachments/`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageFile {
+    pub path: PathBuf,
+    pub media_type: String,
+}
+
+/// A message for the agent.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Outgoing {
+    pub text: String,
+    pub images: Vec<ImageFile>,
 }
 
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
@@ -42,9 +58,9 @@ pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenSpec {
     pub session_id: String,
-    /// The agent's own conversation id (Codex: the thread id), when it has one.
+    /// The agent's own conversation id (Codex: the thread id; Claude: the one `/clear` moved to), when it has one.
     pub external_id: Option<String>,
-    /// Continue the saved conversation (Claude: `--resume <session id>`), else start it (`--session-id`).
+    /// Continue the saved conversation (Claude: `--resume <conversation id>`), else start it (`--session-id`).
     pub resume: bool,
     pub cwd: PathBuf,
     /// The agent program (name or path), resolved on `search_path`.
@@ -54,6 +70,22 @@ pub struct OpenSpec {
     pub permission_mode: PermissionMode,
     pub env: Vec<(String, String)>,
     pub env_remove: Vec<String>,
+    /// PDT's instructions for the session (`crate::instructions`), when it has any.
+    pub instructions: Option<SessionInstructions>,
+}
+
+impl OpenSpec {
+    /// Claude's conversation id: the session id until `/clear` gives the conversation a new one.
+    pub fn claude_conversation_id(&self) -> &str {
+        self.external_id.as_deref().unwrap_or(&self.session_id)
+    }
+}
+
+/// The instructions text, and the file it was written to (Claude reads the file; Codex takes the text).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionInstructions {
+    pub text: String,
+    pub file: std::path::PathBuf,
 }
 
 /// A live setting change.
@@ -87,11 +119,23 @@ pub trait AgentAdapter: Send + Sync {
     fn agent(&self) -> AgentKind;
     /// Starts or resumes the agent's conversation for a session; outputs arrive on `sink`.
     async fn open(&self, spec: OpenSpec, sink: EventSink) -> Result<Box<dyn LiveConversation>, AdapterError>;
+    /// A hidden one-turn side request (Make ticket, spec §10): forks the saved conversation, asks `prompt` with no
+    /// tools, saves nothing and returns the answer, shaped by the JSON Schema `schema` (an object, or text holding
+    /// one). The conversation itself is untouched. `spec.resume` and `spec.permission_mode` don't apply.
+    async fn draft(
+        &self,
+        spec: OpenSpec,
+        prompt: &str,
+        schema: &serde_json::Value,
+    ) -> Result<serde_json::Value, AdapterError>;
 }
+
+/// How long a side request may take.
+pub const DRAFT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[async_trait::async_trait]
 pub trait LiveConversation: Send + Sync {
-    async fn send(&self, text: &str, delivery: Delivery) -> Result<(), AdapterError>;
+    async fn send(&self, msg: &Outgoing, delivery: Delivery) -> Result<(), AdapterError>;
     async fn answer(&self, request_id: &str, answer: &Answer) -> Result<(), AdapterError>;
     async fn interrupt(&self) -> Result<(), AdapterError>;
     async fn set(&self, change: &SessionChange) -> Result<(), AdapterError>;

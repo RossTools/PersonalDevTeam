@@ -71,11 +71,11 @@ struct Env {
     _tmp: tempfile::TempDir,
 }
 
-/// A block of 40 run ports in 30000–39999, below the OS ephemeral ranges (Windows and macOS start at 49152) and apart
-/// from pdtd's lifecycle tests (20000–29999), so a port the OS hands to some connection never lands in it. Each call
-/// claims a block no other test holds (`port_blocks`).
+/// A block of 40 run ports in 10000–19999, below every OS's ephemeral range (Linux starts at 32768, Windows and macOS
+/// at 49152) and apart from pdtd's lifecycle tests (20000–29999), so a port the OS hands to some connection never lands
+/// in it. Each call claims a block no other test holds (`port_blocks`).
 fn free_range() -> (u16, u16) {
-    let start = port_blocks::claim(30000, 250, 40);
+    let start = port_blocks::claim(10000, 250, 40);
     (start, start + 39)
 }
 
@@ -799,7 +799,7 @@ async fn a_detached_run_that_exits_reports_its_code() {
     let r = wait_state(&env.app, &id, &["failed"]).await;
     assert_eq!(r["exitCode"], 3, "{r}");
     wait_output(&env.state, &id, "bye\r\n").await;
-    for _ in 0..50 {
+    for _ in 0..200 {
         if env.state.ptys.attach(&format!("run:{id}:command")).unwrap().exited.is_some() {
             break;
         }

@@ -3,6 +3,8 @@
 
 pub mod claude;
 pub mod codex;
+pub mod composer;
+pub mod draft;
 
 use crate::activity::Activity;
 use serde::{Deserialize, Serialize};
@@ -106,6 +108,8 @@ pub enum MessageSource {
     Terminal,
     /// Sent while a turn was running and taken into it.
     Steer,
+    /// Sent by PDT itself, not typed by the user: news about the attempt's pull request (spec §14).
+    Notice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -185,6 +189,12 @@ pub struct RateLimitWindow {
     /// When the window resets (ms).
     #[ts(type = "number | null")]
     pub resets_at: Option<i64>,
+}
+
+/// Until when a hit limit stops the agent (ms; `i64::MAX` when the agent gave no reset time), or None when no window
+/// is at its limit. Nothing is sent automatically before then (spec §14).
+pub fn limited_until(windows: &[RateLimitWindow], now: i64) -> Option<i64> {
+    windows.iter().filter(|w| w.utilization >= 1.0).map(|w| w.resets_at.unwrap_or(i64::MAX)).filter(|&t| t > now).max()
 }
 
 /// The user's answer to a request.
@@ -327,6 +337,11 @@ pub enum AgentEvent {
         #[ts(optional, type = "number")]
         after: Option<i64>,
     },
+    /// The agent started over on a new conversation (Claude's `/clear`); shown as a divider. `trigger`: the agent's
+    /// reason (`clear`, or `resume` when the TUI switched to another saved conversation).
+    ConversationReset {
+        trigger: String,
+    },
     Notice {
         level: NoticeLevel,
         text: String,
@@ -359,6 +374,7 @@ impl AgentEvent {
             AgentEvent::Usage { .. } => "usage",
             AgentEvent::TurnDiff { .. } => "turn_diff",
             AgentEvent::Compaction { .. } => "compaction",
+            AgentEvent::ConversationReset { .. } => "conversation_reset",
             AgentEvent::Notice { .. } => "notice",
             AgentEvent::Error { .. } => "error",
             AgentEvent::Unknown { .. } => "unknown",
@@ -417,6 +433,12 @@ pub struct PendingMessage {
     pub id: String,
     pub text: String,
     pub delivery: Delivery,
+    /// Attachment ids of the images it carries.
+    #[serde(default)]
+    pub images: Vec<String>,
+    /// PDT sent it on its own (a pull-request notice), not the user.
+    #[serde(default)]
+    pub notice: bool,
 }
 
 /// What a conversation is doing, pushed to every viewer on change.
@@ -444,6 +466,10 @@ pub struct ConversationState {
     pub agent_version: Option<String>,
     /// Codex: the agent's own TUI is open on this conversation (live, beside it).
     pub terminal_open: bool,
+    /// Who pays: "Claude plan", "API key", "ChatGPT plan" (spec §14), once the agent has said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub billing: Option<String>,
 }
 
 /// Server → client frames on `WS /api/sessions/{id}/events`.
@@ -474,11 +500,17 @@ pub enum ConversationServerMessage {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SendMessage {
+    #[serde(default)]
     pub text: String,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery: Option<Delivery>,
+    /// Ids from `POST /api/sessions/{id}/attachments`.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub images: Option<Vec<String>>,
 }
 
 /// `POST /api/sessions/{id}/requests/{requestId}`.
@@ -525,6 +557,9 @@ pub struct AgentCapabilities {
     pub permission_modes: Vec<PermissionMode>,
     pub models: Vec<AgentModel>,
     pub commands: Vec<AgentCommandInfo>,
+    /// Commands that work only in the agent's own TUI (Claude's `terminal_slash_commands`).
+    #[serde(default)]
+    pub terminal_commands: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub version: Option<String>,
@@ -572,14 +607,24 @@ pub fn valid_model(m: &str) -> bool {
     !m.is_empty() && m.len() <= 100 && !m.contains(char::is_whitespace)
 }
 
-/// A user message as sent: trimmed of nothing, but never blank or longer than `MAX_MESSAGE`.
-pub fn valid_message(text: &str) -> bool {
-    !text.trim().is_empty() && text.len() <= MAX_MESSAGE
+/// A user message as sent: never longer than `MAX_MESSAGE`, and blank only when it carries images.
+pub fn valid_message(text: &str, images: usize) -> bool {
+    (images > 0 || !text.trim().is_empty()) && text.len() <= MAX_MESSAGE && images <= composer::MAX_IMAGES
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hit_limit_holds_until_it_resets() {
+        let w = |u: f64, r: Option<i64>| RateLimitWindow { name: "five_hour".into(), utilization: u, resets_at: r };
+        assert_eq!(limited_until(&[w(0.9, Some(500))], 100), None);
+        assert_eq!(limited_until(&[w(1.0, Some(500)), w(1.0, Some(900)), w(0.2, Some(2000))], 100), Some(900));
+        assert_eq!(limited_until(&[w(1.0, Some(50))], 100), None, "already reset");
+        assert_eq!(limited_until(&[w(1.0, None)], 100), Some(i64::MAX));
+        assert_eq!(limited_until(&[], 100), None);
+    }
 
     #[test]
     fn permission_modes_map_to_claude() {
@@ -632,6 +677,7 @@ mod tests {
         assert_eq!(cap_text("abc", 5), "abc");
         let s = cap_text("ééé", 3);
         assert!(s.starts_with('é') && s.contains("cut: 4 more bytes"), "{s}");
-        assert!(valid_message("hi") && !valid_message("  \n") && !valid_message(&"x".repeat(MAX_MESSAGE + 1)));
+        assert!(valid_message("hi", 0) && !valid_message("  \n", 0) && !valid_message(&"x".repeat(MAX_MESSAGE + 1), 0));
+        assert!(valid_message("", 1) && !valid_message("x", composer::MAX_IMAGES + 1));
     }
 }

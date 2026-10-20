@@ -34,6 +34,12 @@
   `ProcessorAffinity = 1`), sqlx 0.9's ping of an idle connection before handing it out could stall a checkout for
   longer than 10 s while the pool had only idle connections: one request hung (here `GET /api/sessions/{id}` in
   `hook_events_change_a_sessions_activity`) while `/api/health` kept answering. The store now opens its pool with
-  `test_before_acquire(false)`; a local SQLite connection doesn't go stale. Why the ping stalls inside sqlx was not
-  traced further. If a request ever hangs on the store again, start there (pdtd tests print the daemon's logs on a
-  hooks-test timeout).
+  `test_before_acquire(false)`; a local SQLite connection doesn't go stale.
+- **Windows CI: a request's task can go unpolled for 10–14 s (PDT-42, open).** Under the full nextest load on the
+  4-core Windows runner, now and then one HTTP request stalls (any route: `GET /api/sessions/{id}`, the hook's activity
+  POST, `/view`, lifecycle tests' POSTs) while other connections are served in ~1 ms. Probes (instrumented branch, ~60
+  suite runs) showed: the stall is before the handler's first store call, so not SQLite; the task's own 2 s timer does
+  not fire either, so the task is not polled at all; and no task poll on any worker took over 250 ms (tokio's
+  `on_before/after_task_poll` hooks, checked to catch a 400 ms block), so no worker thread is blocked. Not reproduced on
+  macOS. Next suspects: a lost I/O-readiness or timer wakeup on Windows (tokio/mio). pdtd now logs a request still
+  running after 2 s, and one the client dropped (`pdt_api::slow`); pdtd tests print the daemon's logs on a timeout.

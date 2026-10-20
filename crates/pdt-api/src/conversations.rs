@@ -12,8 +12,11 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::claude::ClaudeAdapter;
 use pdt_agents::adapter::codex::{CodexAdapter, CodexServer, CodexServerConfig, TOKEN_ENV};
-use pdt_agents::adapter::{AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, SessionChange};
+use pdt_agents::adapter::{
+    AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, Outgoing, SessionChange,
+};
 use pdt_core::activity::{Activity, needs_attention};
+use pdt_core::conversation::draft::{DRAFT_PROMPT, TicketDraft, draft_schema};
 use pdt_core::conversation::{
     ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, ConversationServerMessage, ConversationState,
     Delivery, DeltaField, NoticeLevel, PendingMessage, PermissionMode, RequestState, SendMessage, SessionMode,
@@ -42,6 +45,8 @@ pub struct Conversations {
     generation: Arc<AtomicU64>,
     /// Parks a live process idle this long (tests shorten it).
     pub idle_park: Duration,
+    /// How long a conversation must be quiet before PDT sends a notice of its own (tests shorten it).
+    pub notice_quiet: Duration,
     /// PDT's `codex app-server`, made on first use.
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
 }
@@ -53,6 +58,7 @@ impl Default for Conversations {
             caps: Default::default(),
             generation: Arc::new(AtomicU64::new(1)),
             idle_park: IDLE_PARK,
+            notice_quiet: Duration::from_secs(20),
             codex: Default::default(),
         }
     }
@@ -118,6 +124,9 @@ struct ConvState {
     activity: Option<Activity>,
     generation: u64,
     terminal_open: bool,
+    billing: Option<String>,
+    /// A rate limit is hit until then (ms): nothing is sent on PDT's own (spec §14).
+    limited_until: Option<i64>,
 }
 
 impl ConvState {
@@ -132,6 +141,7 @@ impl ConvState {
             stopped: self.stopped.clone(),
             agent_version: self.agent_version.clone(),
             terminal_open: self.terminal_open,
+            billing: self.billing.clone(),
         }
     }
 
@@ -165,6 +175,7 @@ async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn 
     match agent {
         Some(AgentKind::Claude) => Ok(Box::new(ClaudeAdapter)),
         Some(AgentKind::Codex) => Ok(Box::new(CodexAdapter { server: codex_server(st).await? })),
+        Some(AgentKind::Devin) => Err(conflict("conversation_unsupported", "Devin runs only as a terminal")),
         None => Err(conflict("not_conversation", "only agent sessions are conversations")),
     }
 }
@@ -224,6 +235,8 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             activity: session.activity,
             generation: 0,
             terminal_open: false,
+            billing: None,
+            limited_until: None,
         }),
         activity_write: tokio::sync::Mutex::new(()),
         exits: tokio::sync::watch::channel(0).0,
@@ -248,11 +261,10 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         Some(AgentKind::Codex) => (st.platform.codex_program.clone(), row.external_session_id.is_some()),
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {
-            let saved = st
-                .platform
-                .claude_config_dir
-                .as_deref()
-                .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, &session.id));
+            let saved =
+                st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
+                    pdt_agents::launch::claude_conversation_exists(dir, row.claude_conversation_id())
+                });
             (st.platform.claude_program.clone(), has_history && saved)
         }
     };
@@ -267,6 +279,7 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         permission_mode: row.permission_mode.unwrap_or_default(),
         env: login_path_env(st),
         env_remove: scrubbed(creds),
+        instructions: crate::sessions::agent_instructions(st, &row).await?,
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
@@ -329,6 +342,15 @@ async fn pump(
                     }
                     if info.version.is_some() {
                         s.agent_version = info.version.clone();
+                    }
+                    // Claude says how it bills each turn; Codex once, from its account.
+                    let billing = info.billing.clone().or_else(|| {
+                        info.api_key_source
+                            .as_deref()
+                            .map(|k| if k == "none" { "Claude plan" } else { "API key" }.to_string())
+                    });
+                    if billing.is_some() {
+                        s.billing = billing;
                     }
                     match info.permission_mode {
                         Some(m) if m != s.permission_mode => {
@@ -402,6 +424,22 @@ async fn append(
     event: AgentEvent,
     raw: Option<&str>,
 ) {
+    // The agent echoes a message without PDT's attachment ids (the stored row names them, for the thumbnails) and
+    // without saying that PDT sent it on its own.
+    let mut event = event;
+    if let AgentEvent::UserMessage { text, images, source } = &mut event
+        && *source != pdt_core::conversation::MessageSource::Terminal
+    {
+        let s = c.state();
+        if let Some(p) = pending_match(&s.pending, text) {
+            if !p.images.is_empty() {
+                *images = p.images.clone();
+            }
+            if p.notice && p.text.trim() == text.trim() {
+                *source = pdt_core::conversation::MessageSource::Notice;
+            }
+        }
+    }
     let row = match st
         .store
         .upsert_session_event(&c.id, NewEvent { ts: now_ms(), item_id, turn_id, event: &event, raw })
@@ -439,18 +477,16 @@ async fn append(
                 s.errored = true;
                 true
             }
+            AgentEvent::Usage { rate_limits, .. } if !rate_limits.is_empty() => {
+                s.limited_until = pdt_core::conversation::limited_until(rate_limits, now_ms());
+                false
+            }
             AgentEvent::UserMessage { text, source, .. }
                 if *source != pdt_core::conversation::MessageSource::Terminal =>
             {
                 // The agent took a message: it is no longer pending.
-                match s.pending.iter().position(|p| p.text.trim() == text.trim()) {
-                    Some(i) => {
-                        s.pending.remove(i);
-                    }
-                    None if !s.pending.is_empty() => {
-                        s.pending.remove(0);
-                    }
-                    None => {}
+                if let Some(i) = pending_index(&s.pending, text) {
+                    s.pending.remove(i);
                 }
                 true
             }
@@ -462,6 +498,15 @@ async fn append(
         c.push_state();
         refresh_activity(st, c).await;
     }
+}
+
+/// The pending message an echoed one is: the same text, else the oldest.
+fn pending_index(pending: &[PendingMessage], text: &str) -> Option<usize> {
+    pending.iter().position(|p| p.text.trim() == text.trim()).or((!pending.is_empty()).then_some(0))
+}
+
+fn pending_match<'a>(pending: &'a [PendingMessage], text: &str) -> Option<&'a PendingMessage> {
+    pending_index(pending, text).map(|i| &pending[i])
 }
 
 /// Recomputes the session's activity and records it when it changed (with attention when it now needs the user).
@@ -501,7 +546,7 @@ pub(crate) async fn start(st: &AppState, session: &Session, first: Option<String
     let c = conv(st, session).await?;
     ensure_live(st, &c, session).await?;
     if let Some(text) = first {
-        send_message(st, session, &text, Delivery::Next).await?;
+        send_message(st, session, &text, &[], Delivery::Next, false).await?;
     }
     Ok(())
 }
@@ -510,18 +555,27 @@ async fn send_message(
     st: &AppState,
     session: &Session,
     text: &str,
+    image_ids: &[String],
     delivery: Delivery,
+    notice: bool,
 ) -> Result<PendingMessage, ApiError> {
-    if !valid_message(text) {
+    if !valid_message(text, image_ids.len()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_message",
-            "a message must not be blank or over 64 KB",
+            "a message must have text or an image, and not be over 64 KB",
         ));
     }
+    let images = crate::attachments::resolve(st, &session.id, image_ids)?;
     let c = conv(st, session).await?;
     let live = ensure_live(st, &c, session).await?;
-    let pending = PendingMessage { id: uuid::Uuid::now_v7().to_string(), text: text.to_string(), delivery };
+    let pending = PendingMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        text: text.to_string(),
+        delivery,
+        images: image_ids.to_vec(),
+        notice,
+    };
     {
         let mut s = c.state();
         s.pending.push(pending.clone());
@@ -531,13 +585,34 @@ async fn send_message(
     }
     c.push_state();
     refresh_activity(st, &c).await;
-    if let Err(e) = live.send(text, delivery).await {
+    if let Err(e) = live.send(&Outgoing { text: text.to_string(), images }, delivery).await {
         c.state().pending.retain(|p| p.id != pending.id);
         c.push_state();
         refresh_activity(st, &c).await;
         return Err(adapter_error(e));
     }
     Ok(pending)
+}
+
+/// Whether PDT may send a message of its own now (a PR notice, spec §14): no turn running, nothing asked or queued,
+/// no rate limit hit, its terminal not open beside it, and nothing happening for `notice_quiet`. A conversation not
+/// loaded since pdtd started is idle.
+pub(crate) fn ready_for_notice(st: &AppState, id: &str) -> bool {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else {
+        return true;
+    };
+    let s = c.state();
+    !s.turn_running
+        && s.open_requests.is_empty()
+        && s.pending.is_empty()
+        && !s.terminal_open
+        && s.limited_until.is_none_or(|t| t <= now_ms())
+        && s.last_active.elapsed() >= st.conversations.notice_quiet
+}
+
+/// Sends PDT's own message (a PR notice) as the next message; it shows as PDT's, not the user's.
+pub(crate) async fn send_notice(st: &AppState, session: &Session, text: &str) -> Result<(), ApiError> {
+    send_message(st, session, text, &[], Delivery::Next, true).await.map(|_| ())
 }
 
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
@@ -594,8 +669,10 @@ pub(crate) async fn forget(st: &AppState, id: &str) {
     }
 }
 
-/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`.
-pub async fn park_idle_conversations(st: &AppState) {
+/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`. Returns how
+/// many it parked.
+pub async fn park_idle_conversations(st: &AppState) -> usize {
+    let mut parked = 0;
     let convs: Vec<Arc<Conv>> =
         st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
     for c in convs {
@@ -610,8 +687,10 @@ pub async fn park_idle_conversations(st: &AppState) {
         if idle {
             tracing::info!(session = %c.id, "parking an idle conversation");
             park(st, &c).await;
+            parked += 1;
         }
     }
+    parked
 }
 
 /// Parks idle conversations every 30 s, until shutdown.
@@ -795,8 +874,10 @@ pub(crate) async fn switch_mode(
     Ok(Json(session))
 }
 
-/// The session's transcript, read off the async runtime (None: Claude has not saved one, or no config dir known).
-async fn read_transcript(st: &AppState, id: &str) -> Option<String> {
+/// A Claude conversation's transcript, read off the async runtime (None: Claude has not saved one, or no config dir
+/// known).
+async fn read_transcript(st: &AppState, conversation_id: &str) -> Option<String> {
+    let id = conversation_id;
     let dir = st.platform.claude_config_dir.clone()?;
     let id = id.to_string();
     tokio::task::spawn_blocking(move || {
@@ -827,8 +908,10 @@ async fn to_terminal(
     let notice =
         AgentEvent::Notice { level: NoticeLevel::Info, text: "Continued in the terminal.".into(), until: None };
     append(st, &c, None, None, notice, None).await;
-    // "" means "from the start": Claude had not saved this conversation yet.
-    let anchor = read_transcript(st, &session.id)
+    // "" means "from the start": Claude had not saved this conversation yet. The row is read again: the process
+    // may have moved to a new conversation (`/clear`) since `session` was read.
+    let row = st.store.get_session(&session.id).await?.unwrap_or_else(|| session.clone());
+    let anchor = read_transcript(st, row.claude_conversation_id())
         .await
         .and_then(|t| pdt_core::conversation::claude::last_uuid(&t))
         .unwrap_or_default();
@@ -861,39 +944,79 @@ async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiErro
     }
     crate::sessions::settle_exit(st, id).await;
     st.remove_pty(id).await;
+    let after = import_anchor(st, id).await?;
+    st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
+    st.store.set_session_running(id).await?;
+    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let c = conv(st, &session).await?;
+    for (item_id, turn_id, event) in terminal_turns(st, &session, after).await {
+        append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
+    }
+    refresh_activity(st, &c).await;
+    c.push_state();
+    Ok(())
+}
+
+/// Where to import a terminal session's transcript from: `Some(None)` from its start, `Some(Some(uuid))` after
+/// the entry PDT's log ends at, None not at all.
+async fn import_anchor(st: &AppState, id: &str) -> Result<Option<Option<String>>, ApiError> {
     let anchor = st.store.history_from(id).await?;
     let logged = st.store.last_session_event_seq(id).await? > 0;
-    let after = match anchor.as_deref() {
+    Ok(match anchor.as_deref() {
         Some("") => Some(None),
         Some(uuid) => Some(Some(uuid.to_string())),
         // Never handed over by PDT: import everything, unless PDT already has a log it cannot line up.
         None if logged => None,
         None => Some(None),
-    };
-    st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
-    st.store.set_session_running(id).await?;
-    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
-    let c = conv(st, &session).await?;
-    if let Some(after) = after
-        && let Some(transcript) = read_transcript(st, id).await
-    {
-        match pdt_core::conversation::claude::history_events(&transcript, after.as_deref(), Some(&session.cwd)) {
-            Ok(events) => {
-                for out in events {
-                    if let pdt_core::conversation::claude::MapOut::Event { item_id, turn_id, event } = out {
-                        append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
-                    }
+    })
+}
+
+type Imported = (Option<String>, Option<String>, AgentEvent);
+
+/// The turns the TUI took in the session's current Claude conversation (spec §8.3), after `after` (see
+/// `import_anchor`); a warning instead when the transcript no longer has that entry.
+async fn terminal_turns(st: &AppState, session: &Session, after: Option<Option<String>>) -> Vec<Imported> {
+    let Some(after) = after else { return Vec::new() };
+    let Some(transcript) = read_transcript(st, session.claude_conversation_id()).await else { return Vec::new() };
+    match pdt_core::conversation::claude::history_events(&transcript, after.as_deref(), Some(&session.cwd)) {
+        Ok(events) => events
+            .into_iter()
+            .filter_map(|out| match out {
+                pdt_core::conversation::claude::MapOut::Event { item_id, turn_id, event } => {
+                    Some((item_id, turn_id, event))
                 }
-            }
-            Err(e) => {
-                let text = format!("{e}: turns taken in the terminal are not shown here.");
-                let notice = AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None };
-                append(st, &c, None, None, notice, None).await;
-            }
+                _ => None,
+            })
+            .collect(),
+        Err(e) => {
+            let text = format!("{e}: turns taken in the terminal are not shown here.");
+            vec![(None, None, AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None })]
         }
     }
-    refresh_activity(st, &c).await;
-    c.push_state();
+}
+
+/// A terminal Claude session moved to another conversation (`/clear`, or `/resume` in the TUI), as its SessionStart
+/// hook reported. The turns it took in the old one are logged now, while that transcript is still the one PDT's log
+/// lines up with, then the divider; from here on the session resumes `new_id`, and switching to a conversation
+/// imports the new transcript from its start. Written straight to the store: the session's activity is the
+/// terminal's, not derived from these events.
+pub(crate) async fn terminal_conversation_moved(
+    st: &AppState,
+    session: &Session,
+    new_id: &str,
+    trigger: &str,
+) -> Result<(), ApiError> {
+    let id = session.id.as_str();
+    let after = import_anchor(st, id).await?;
+    let mut events = terminal_turns(st, session, after).await;
+    events.push((None, None, AgentEvent::ConversationReset { trigger: trigger.to_string() }));
+    for (item_id, turn_id, event) in &events {
+        let ne = NewEvent { ts: now_ms(), item_id: item_id.as_deref(), turn_id: turn_id.as_deref(), event, raw: None };
+        st.store.upsert_session_event(id, ne).await?;
+    }
+    st.store.set_external_session_id(id, new_id).await?;
+    st.store.switch_session_mode(id, session.mode, Some("")).await?;
+    tracing::info!(session = %id, conversation = %new_id, trigger, "the terminal moved to another Claude conversation");
     Ok(())
 }
 
@@ -1076,7 +1199,8 @@ pub(crate) async fn post_message(
 ) -> Result<(StatusCode, Json<PendingMessage>), ApiError> {
     let Json(body) = payload?;
     let session = conversation_session(&st, &id).await?;
-    let pending = send_message(&st, &session, &body.text, body.delivery.unwrap_or_default()).await?;
+    let images = body.images.unwrap_or_default();
+    let pending = send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), false).await?;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }
 
@@ -1093,6 +1217,54 @@ pub(crate) async fn post_answer(
     live.answer(&request_id, &body.answer).await.map_err(adapter_error)?;
     c.state().last_active = Instant::now();
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/sessions/{id}/ticket-draft`: Make ticket's draft (spec §10). A hidden one-turn side request forks the
+/// saved conversation (Claude: `--fork-session --no-session-persistence`; Codex: an ephemeral `thread/fork`), asks
+/// for a title and description with no tools, and saves nothing; the conversation and its process are untouched.
+/// Only the user's click sends it, and nothing retries.
+pub(crate) async fn ticket_draft(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<TicketDraft>, ApiError> {
+    let session = conversation_session(&st, &id).await?;
+    let adapter = adapter_for(&st, session.agent).await?;
+    let creds = crate::sessions::credentials_for(&st, &session.project_id).await?;
+    let (program, saved) = match session.agent {
+        Some(AgentKind::Codex) => (st.platform.codex_program.clone(), session.external_session_id.is_some()),
+        _ => {
+            let on_disk = st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
+                pdt_agents::launch::claude_conversation_exists(dir, session.claude_conversation_id())
+            });
+            (st.platform.claude_program.clone(), on_disk && st.store.last_session_event_seq(&session.id).await? > 0)
+        }
+    };
+    if !saved {
+        return Err(conflict("nothing_to_draft", "the agent has no conversation to draft a ticket from yet"));
+    }
+    let spec = OpenSpec {
+        session_id: session.id.clone(),
+        external_id: session.external_session_id.clone(),
+        resume: true,
+        cwd: PathBuf::from(&session.cwd),
+        program,
+        search_path: st.platform.login_path.clone(),
+        model: session.model.clone(),
+        permission_mode: PermissionMode::Ask,
+        env: login_path_env(&st),
+        env_remove: scrubbed(creds),
+        // The fork carries the conversation as it is; the side request adds nothing to it.
+        instructions: None,
+    };
+    let answer = adapter.draft(spec, DRAFT_PROMPT, &draft_schema()).await.map_err(|e| match e {
+        AdapterError::Timeout => {
+            ApiError::new(StatusCode::GATEWAY_TIMEOUT, "draft_timeout", "the agent took too long to draft a ticket")
+        }
+        e => adapter_error(e),
+    })?;
+    TicketDraft::from_value(&answer).map(Json).ok_or_else(|| {
+        ApiError::new(StatusCode::BAD_GATEWAY, "agent_error", "the agent's answer was not a ticket draft")
+    })
 }
 
 /// `POST /api/sessions/{id}/interrupt`: stops the running turn (nothing to do when none runs).
@@ -1122,6 +1294,7 @@ pub(crate) async fn capabilities(
     let known = known.or_else(|| match agent {
         AgentKind::Codex => st.conversations.codex.get().and_then(|s| s.capabilities()),
         AgentKind::Claude => None,
+        AgentKind::Devin => Some(AgentCapabilities { conversation: false, ..Default::default() }),
     });
     Ok(Json(known.unwrap_or_else(|| AgentCapabilities {
         conversation: true,

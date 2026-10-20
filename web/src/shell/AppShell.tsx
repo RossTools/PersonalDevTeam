@@ -41,7 +41,7 @@ import { InstanceBadge } from './InstanceBadge';
 import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
-const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', shell: 'Shell' };
+const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {

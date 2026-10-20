@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
 import { EmptyState, toast, type ApprovalAnswer } from '@ui';
@@ -8,8 +8,10 @@ import type { Delivery } from '../api/gen/Delivery';
 import type { Session } from '../api/gen/Session';
 import { actionError, runAction } from '../common/useAction';
 import { latestUsage } from './blocks';
+import { limitWarning } from './completion';
 import { ConversationComposer } from './ConversationComposer';
 import type { EventsSocketLike } from './eventsSocket';
+import { KIND_LABEL } from '../common/SessionKindIcon';
 import { MessageList } from './MessageList';
 import { useConversation, type ConversationData } from './useConversation';
 
@@ -51,7 +53,7 @@ export function ConversationPane({ session, conv, banner, className }: {
   const state = conv.state;
   const turnRunning = state?.turnRunning ?? false;
   const agent = session.agent ?? 'claude';
-  const agentName = agent === 'codex' ? 'Codex' : 'Claude';
+  const agentName = KIND_LABEL[agent];
   const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
 
   const refreshSessions = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
@@ -66,8 +68,8 @@ export function ConversationPane({ session, conv, banner, className }: {
       ? patch.variables.permissionMode
       : state?.permissionMode ?? session.permissionMode ?? 'ask';
 
-  const send = async (text: string, delivery?: Delivery) => {
-    await api.sendMessage(session.id, { text, ...(delivery ? { delivery } : {}) });
+  const send = async (text: string, delivery?: Delivery, images?: string[]) => {
+    await api.sendMessage(session.id, { text, ...(delivery ? { delivery } : {}), ...(images?.length ? { images } : {}) });
     // A parked or ended session comes back to life; the list shows it sooner.
     if (session.status !== 'running') void refreshSessions();
   };
@@ -80,6 +82,10 @@ export function ConversationPane({ session, conv, banner, className }: {
     }
   };
   const interrupt = () => void runAction(() => api.interruptSession(session.id));
+  const usage = latestUsage(conv.rows);
+  const searchFiles = useCallback((q: string) => api.sessionFiles(session.id, q), [session.id]);
+  const upload = useCallback((file: File) => api.uploadAttachment(session.id, file), [session.id]);
+  const imageUrl = useCallback((id: string) => api.attachmentUrl(session.id, id), [session.id]);
   // Never automatic: a turn cut off by a restart or a crash waits for this click (spec §9, §14).
   const continueTurn = () => runAction(() => send(CONTINUE_PROMPT));
 
@@ -92,6 +98,7 @@ export function ConversationPane({ session, conv, banner, className }: {
         turnRunning={turnRunning}
         pending={state?.pending ?? []}
         onAnswer={answer}
+        imageUrl={imageUrl}
         agent={agent}
         onContinue={continueTurn}
         empty={
@@ -118,7 +125,12 @@ export function ConversationPane({ session, conv, banner, className }: {
         permissionModes={caps.data?.permissionModes ?? []}
         permissionMode={shownMode}
         onPermissionMode={(permissionMode) => patch.mutate({ permissionMode })}
-        readout={contextReadout(latestUsage(conv.rows))}
+        readout={[state?.billing, contextReadout(usage)].filter(Boolean).join(' · ') || null}
+        limit={limitWarning(usage?.rateLimits ?? [], Date.now())}
+        commands={caps.data?.commands ?? []}
+        terminalCommands={caps.data?.terminalCommands ?? []}
+        onSearchFiles={searchFiles}
+        onUpload={upload}
       />
     </div>
   );

@@ -2,9 +2,12 @@
 //! capability token (the real TUI can attach to it with `--remote`), one client connection multiplexing every thread,
 //! and a `CodexLive` per conversation. The frame mapping is pdt-core's `CodexMapper`.
 
-use super::{AdapterError, AdapterOutput, AgentAdapter, EventSink, LiveConversation, OpenSpec, SessionChange};
+use super::{
+    AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
+    SessionChange,
+};
 use futures_util::{SinkExt, StreamExt};
-use pdt_core::conversation::codex::{CodexMapper, CodexOut, codex_policy, sandbox_policy};
+use pdt_core::conversation::codex::{CodexMapper, CodexOut, SideTurn, codex_policy, sandbox_policy};
 use pdt_core::conversation::{
     AgentCapabilities, AgentEvent, AgentModel, Answer, Delivery, NoticeLevel, PermissionMode,
 };
@@ -45,6 +48,7 @@ pub struct CodexEndpoint {
 }
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>;
+type SideRoutes = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<(String, Value)>>>>;
 
 struct Route {
     mapper: Mutex<CodexMapper>,
@@ -109,7 +113,10 @@ pub struct CodexServer {
     config: CodexServerConfig,
     conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
     routes: Arc<Mutex<HashMap<String, Arc<Route>>>>,
+    /// Hidden side threads (Make ticket's draft): their notifications go here, never to a conversation.
+    side: SideRoutes,
     caps: Mutex<Option<AgentCapabilities>>,
+    billing: Mutex<Option<String>>,
 }
 
 fn random_token() -> String {
@@ -163,7 +170,8 @@ pub fn capabilities_from_models(v: &Value) -> AgentCapabilities {
         conversation: true,
         permission_modes: PermissionMode::ALL.to_vec(),
         models,
-        commands: vec![],
+        commands: pdt_core::conversation::codex::commands(),
+        terminal_commands: vec![],
         version: None,
     }
 }
@@ -186,7 +194,14 @@ fn emit(route: &Route, outs: Vec<CodexOut>, raw: Option<&str>, conn: &Conn) {
 
 impl CodexServer {
     pub fn new(config: CodexServerConfig) -> Arc<Self> {
-        Arc::new(Self { config, conn: Default::default(), routes: Default::default(), caps: Mutex::new(None) })
+        Arc::new(Self {
+            config,
+            conn: Default::default(),
+            routes: Default::default(),
+            side: Default::default(),
+            caps: Mutex::new(None),
+            billing: Mutex::new(None),
+        })
     }
 
     /// The running server's endpoint, if it runs.
@@ -335,6 +350,7 @@ impl CodexServer {
         {
             let conn = conn.clone();
             let routes = self.routes.clone();
+            let side = self.side.clone();
             tokio::spawn(async move {
                 while let Some(Ok(msg)) = read.next().await {
                     let text = match msg {
@@ -361,6 +377,21 @@ impl CodexServer {
                         (Some(method), id) => {
                             let params = v.get("params").cloned().unwrap_or(Value::Null);
                             let thread = params.get("threadId").and_then(Value::as_str);
+                            let side_tx =
+                                thread.and_then(|t| side.lock().unwrap_or_else(|e| e.into_inner()).get(t).cloned());
+                            if let Some(tx) = side_tx {
+                                match id {
+                                    // A side thread never gets to ask (no tools, approval `never`): refuse.
+                                    Some(id) => {
+                                        let _ = conn.write(&json!({"jsonrpc": "2.0", "id": id,
+                                            "error": {"code": -32601, "message": "not allowed in a side request"}}));
+                                    }
+                                    None => {
+                                        let _ = tx.send((method.to_string(), params));
+                                    }
+                                }
+                                continue;
+                            }
                             let targets: Vec<Arc<Route>> = {
                                 let map = routes.lock().unwrap_or_else(|e| e.into_inner());
                                 match thread {
@@ -413,6 +444,7 @@ impl CodexServer {
                     }
                 };
                 let tail = stderr_tail.lock().unwrap_or_else(|e| e.into_inner()).trim().to_string();
+                side.lock().unwrap_or_else(|e| e.into_inner()).clear();
                 let all: Vec<Arc<Route>> =
                     routes.lock().unwrap_or_else(|e| e.into_inner()).drain().map(|(_, r)| r).collect();
                 for r in all {
@@ -432,6 +464,10 @@ impl CodexServer {
         conn.write(&json!({"jsonrpc": "2.0", "method": "initialized"}))?;
         if let Ok(v) = conn.request("model/list", json!({})).await {
             *self.caps.lock().unwrap_or_else(|e| e.into_inner()) = Some(capabilities_from_models(&v));
+        }
+        // Only the account's type is read (the composer says who pays); never its tokens.
+        if let Ok(v) = conn.request("account/read", json!({})).await {
+            *self.billing.lock().unwrap_or_else(|e| e.into_inner()) = pdt_core::conversation::codex::billing_label(&v);
         }
         Ok(conn)
     }
@@ -456,8 +492,9 @@ pub struct CodexLive {
     open: AtomicBool,
 }
 
-fn text_input(text: &str) -> Value {
-    json!([{"type": "text", "text": text}])
+fn input(msg: &Outgoing) -> Value {
+    let paths: Vec<String> = msg.images.iter().map(|i| i.path.to_string_lossy().into_owned()).collect();
+    pdt_core::conversation::codex::user_input(&msg.text, &paths)
 }
 
 #[async_trait::async_trait]
@@ -471,7 +508,13 @@ impl AgentAdapter for CodexAdapter {
         if let Some(caps) = self.server.capabilities() {
             let _ = sink.send(AdapterOutput::Capabilities(caps));
         }
+        let billing = self.server.billing.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if billing.is_some() {
+            let _ = sink.send(AdapterOutput::Info(AgentInfo { billing, ..AgentInfo::default() }));
+        }
         let (approval, sandbox) = codex_policy(spec.permission_mode);
+        // Null leaves Codex's own (the user's config).
+        let developer_instructions = spec.instructions.as_ref().map(|i| i.text.clone());
         let cwd = spec.cwd.to_string_lossy().into_owned();
         let route = Arc::new(Route { mapper: Mutex::new(CodexMapper::new()), sink: sink.clone() });
         let mut resumed = None;
@@ -479,7 +522,8 @@ impl AgentAdapter for CodexAdapter {
             // Listen before resuming, so nothing the thread does meanwhile is missed.
             self.server.routes.lock().unwrap_or_else(|e| e.into_inner()).insert(thread.clone(), route.clone());
             let params = json!({"threadId": thread, "excludeTurns": true, "cwd": cwd, "model": spec.model,
-                                "approvalPolicy": approval, "sandbox": sandbox});
+                                "approvalPolicy": approval, "sandbox": sandbox,
+                                "developerInstructions": developer_instructions});
             match conn.request("thread/resume", params).await {
                 Ok(_) => resumed = Some(thread),
                 Err(e) => {
@@ -515,7 +559,8 @@ impl AgentAdapter for CodexAdapter {
                 t
             }
             None => {
-                let params = json!({"cwd": cwd, "model": spec.model, "approvalPolicy": approval, "sandbox": sandbox});
+                let params = json!({"cwd": cwd, "model": spec.model, "approvalPolicy": approval, "sandbox": sandbox,
+                                    "developerInstructions": developer_instructions});
                 let r = conn.request("thread/start", params).await?;
                 let id = r
                     .pointer("/thread/id")
@@ -536,6 +581,79 @@ impl AgentAdapter for CodexAdapter {
             open: AtomicBool::new(true),
         }))
     }
+
+    async fn draft(&self, spec: OpenSpec, prompt: &str, schema: &Value) -> Result<Value, AdapterError> {
+        let thread = spec.external_id.clone().ok_or_else(|| AdapterError::Refused("no Codex thread yet".into()))?;
+        let conn = self.server.ensure().await?;
+        let cwd = spec.cwd.to_string_lossy().into_owned();
+        // An ephemeral fork: never written to disk, read-only, never asks.
+        let params = json!({"threadId": thread, "ephemeral": true, "excludeTurns": true, "cwd": cwd, "model": spec.model,
+                            "approvalPolicy": "never", "sandbox": "read-only"});
+        let r = conn.request("thread/fork", params).await?;
+        let fork = r
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AdapterError::Refused("thread/fork returned no thread".into()))?
+            .to_string();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        self.server.side.lock().unwrap_or_else(|e| e.into_inner()).insert(fork.clone(), tx);
+        // Also when the request is dropped midway (the browser gave up): the fork is let go.
+        let _guard = SideGuard { side: self.server.side.clone(), conn: conn.clone(), fork: fork.clone() };
+        let mut params = json!({"threadId": fork, "input": pdt_core::conversation::codex::user_input(prompt, &[]),
+                                "approvalPolicy": "never", "sandboxPolicy": sandbox_policy("read-only"),
+                                "outputSchema": schema});
+        if let Some(m) = &spec.model {
+            params["model"] = json!(m);
+        }
+        self.side_turn(&conn, &fork, &mut rx, params).await
+    }
+}
+
+/// Stops routing a side thread and unsubscribes from it when its request ends, however it ends.
+struct SideGuard {
+    side: SideRoutes,
+    conn: Arc<Conn>,
+    fork: String,
+}
+
+impl Drop for SideGuard {
+    fn drop(&mut self) {
+        self.side.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.fork);
+        let id = self.conn.next_id.fetch_add(1, Ordering::SeqCst);
+        let _ = self.conn.write(&json!({"jsonrpc": "2.0", "id": id, "method": "thread/unsubscribe",
+                                        "params": {"threadId": self.fork}}));
+    }
+}
+
+impl CodexAdapter {
+    async fn side_turn(
+        &self,
+        conn: &Conn,
+        thread: &str,
+        rx: &mut mpsc::UnboundedReceiver<(String, Value)>,
+        params: Value,
+    ) -> Result<Value, AdapterError> {
+        let started = conn.request("turn/start", params).await?;
+        let turn_id = started.pointer("/turn/id").and_then(Value::as_str).map(String::from);
+        let mut turn = SideTurn::default();
+        let wait = async {
+            while let Some((method, p)) = rx.recv().await {
+                if let Some(r) = turn.on_notification(&method, &p) {
+                    return r.map(Value::String).map_err(AdapterError::Refused);
+                }
+            }
+            Err(AdapterError::NotRunning)
+        };
+        match tokio::time::timeout(super::DRAFT_TIMEOUT, wait).await {
+            Ok(r) => r,
+            Err(_) => {
+                if let Some(t) = turn_id {
+                    let _ = conn.request("turn/interrupt", json!({"threadId": thread, "turnId": t})).await;
+                }
+                Err(AdapterError::Timeout)
+            }
+        }
+    }
 }
 
 impl CodexLive {
@@ -543,10 +661,10 @@ impl CodexLive {
         self.route.mapper.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    async fn start_turn(&self, text: &str) -> Result<(), AdapterError> {
+    async fn start_turn(&self, msg: &Outgoing) -> Result<(), AdapterError> {
         let s = self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let (approval, sandbox) = codex_policy(s.mode);
-        let mut params = json!({"threadId": self.thread, "input": text_input(text), "approvalPolicy": approval,
+        let mut params = json!({"threadId": self.thread, "input": input(msg), "approvalPolicy": approval,
                                 "sandboxPolicy": sandbox_policy(sandbox)});
         if let Some(m) = s.model {
             params["model"] = json!(m);
@@ -563,18 +681,37 @@ impl CodexLive {
 
 #[async_trait::async_trait]
 impl LiveConversation for CodexLive {
-    async fn send(&self, text: &str, delivery: Delivery) -> Result<(), AdapterError> {
+    async fn send(&self, msg: &Outgoing, delivery: Delivery) -> Result<(), AdapterError> {
+        // `/compact` and `/review` go to their RPCs; the conversation shows the command as sent.
+        if let Some((method, mut params)) =
+            pdt_core::conversation::codex::slash_command(&msg.text).filter(|_| msg.images.is_empty())
+        {
+            params["threadId"] = json!(self.thread);
+            // Shown first: the command's turn may start before the request returns.
+            let _ = self.route.sink.send(AdapterOutput::Event {
+                item_id: Some(format!("u:cmd-{}", uuid::Uuid::now_v7())),
+                turn_id: None,
+                event: AgentEvent::UserMessage {
+                    text: msg.text.trim().to_string(),
+                    images: vec![],
+                    source: pdt_core::conversation::MessageSource::Pdt,
+                },
+                raw: None,
+            });
+            self.conn.request(method, params).await?;
+            return Ok(());
+        }
         let running = self.mapper().turn().map(String::from);
         match (running, delivery) {
             (Some(turn), Delivery::Next) => {
                 self.mapper().note_sent();
-                let params = json!({"threadId": self.thread, "expectedTurnId": turn, "input": text_input(text)});
+                let params = json!({"threadId": self.thread, "expectedTurnId": turn, "input": input(msg)});
                 match self.conn.request("turn/steer", params).await {
                     Ok(_) => Ok(()),
                     // The turn ended meanwhile: run it as a new turn.
                     Err(AdapterError::Refused(_)) => {
                         self.mapper().note_unsent();
-                        self.start_turn(text).await
+                        self.start_turn(msg).await
                     }
                     Err(e) => Err(e),
                 }
@@ -582,9 +719,9 @@ impl LiveConversation for CodexLive {
             (Some(turn), Delivery::Now) => {
                 self.mapper().note_interrupt();
                 let _ = self.conn.request("turn/interrupt", json!({"threadId": self.thread, "turnId": turn})).await;
-                self.start_turn(text).await
+                self.start_turn(msg).await
             }
-            (None, _) => self.start_turn(text).await,
+            (None, _) => self.start_turn(msg).await,
         }
     }
 
@@ -597,7 +734,7 @@ impl LiveConversation for CodexLive {
         emit(&self.route, a.events, None, &self.conn);
         if let Some(note) = a.follow_up {
             // Codex's decline has no message: the note goes to it as the next message.
-            self.send(&note, Delivery::Next).await?;
+            self.send(&Outgoing { text: note, images: vec![] }, Delivery::Next).await?;
         }
         Ok(())
     }

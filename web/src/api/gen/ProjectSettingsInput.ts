@@ -2,6 +2,7 @@
 import type { CredentialPolicy } from "./CredentialPolicy";
 
 /**
- * Replaces both fields.
+ * Replaces `agentCredentials` and `runOverrides`. `agentInstructions` is replaced when present ("" clears it), so a
+ * client that does not know it keeps it.
  */
-export type ProjectSettingsInput = { agentCredentials: CredentialPolicy | null, runOverrides: string | null, };
+export type ProjectSettingsInput = { agentCredentials: CredentialPolicy | null, runOverrides: string | null, agentInstructions?: string, };

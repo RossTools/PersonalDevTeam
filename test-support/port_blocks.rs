@@ -4,6 +4,13 @@
 //! A block is claimed with an OS file lock held until the test process exits, so no two test processes (cargo-nextest
 //! runs every test in its own) and no two calls in one process ever get the same block. A random block per process
 //! alone was not enough: with a process per test, two tests often drew the same block and one server lost its port.
+//!
+//! Every range stays below 32768, Linux's first ephemeral port (Windows and macOS start at 49152): the OS never hands
+//! those ports to another socket, and each test crate keeps to its own range:
+//! - 10000–19999: pdt-api runs (`tests/runs.rs`, blocks of 40)
+//! - 20000–29999: pdtd lifecycle runs (`tests/lifecycle.rs`, blocks of 40)
+//! - 30000–30249: pdt-host's fake pdtd (`tests/supervise.rs`)
+//! - 30500–30999: pdtd's own test daemons (`tests/common`)
 
 use std::sync::Mutex;
 

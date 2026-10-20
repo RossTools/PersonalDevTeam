@@ -28,6 +28,9 @@ pub struct HostConfig {
     pub stop_timeout: Duration,
     /// The `FORWARDED_ENV` values pdt-host was started with.
     pub forward_env: Vec<(String, String)>,
+    /// Why this host cannot install updates (set by `install::host_installer`); pdtd gets it as
+    /// `PDT_UPDATES_UNSUPPORTED` and then never offers one.
+    pub updates_unsupported: Option<String>,
 }
 
 impl HostConfig {
@@ -61,6 +64,7 @@ impl HostConfig {
             poll: Duration::from_secs(2),
             stop_timeout: Duration::from_secs(30),
             forward_env,
+            updates_unsupported: None,
         })
     }
 
@@ -81,6 +85,9 @@ impl HostConfig {
             ("PDT_SUPERVISED".to_string(), "1".to_string()),
         ];
         env.extend(self.forward_env.iter().filter(|(k, _)| FORWARDED_ENV.contains(&k.as_str())).cloned());
+        if let Some(reason) = &self.updates_unsupported {
+            env.push(("PDT_UPDATES_UNSUPPORTED".to_string(), reason.clone()));
+        }
         env
     }
 }
@@ -132,7 +139,12 @@ mod tests {
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
         assert_eq!(got, want);
-        let stable = HostConfig::from_lookup(lookup(&[]), Some("/d".into()), "/app".into()).unwrap();
+        let mut stable =
+            HostConfig::from_lookup(lookup(&[("PDT_UPDATES_UNSUPPORTED", "x")]), Some("/d".into()), "/app".into())
+                .unwrap();
         assert!(stable.pdtd_env().contains(&("PDT_PROFILE".into(), "stable".into())));
+        assert!(!stable.pdtd_env().iter().any(|(k, _)| k == "PDT_UPDATES_UNSUPPORTED"), "never inherited");
+        stable.updates_unsupported = Some("it is on a disk image".into());
+        assert!(stable.pdtd_env().contains(&("PDT_UPDATES_UNSUPPORTED".into(), "it is on a disk image".into())));
     }
 }

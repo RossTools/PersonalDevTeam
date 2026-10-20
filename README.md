@@ -1,6 +1,6 @@
 # Personal Dev Team (PDT)
 
-A personal command center for building software with AI coding agents. PDT runs Claude Code and Codex sessions in
+A personal command center for building software with AI coding agents. PDT runs Claude Code, Codex and Devin sessions in
 terminals that outlive the browser window, keeps each change in its own git worktree, and starts a dev build of any
 branch with one click so you can try it. It runs as a daemon on your machine, and the same web UI works from a phone
 or another computer over Tailscale.
@@ -12,7 +12,7 @@ instances of it.
 
 ## What it does today
 
-- **Agent sessions and terminals.** Claude Code, Codex and shell sessions run in PTYs owned by the daemon. They survive
+- **Agent sessions and terminals.** Claude Code, Codex, Devin and shell sessions run in PTYs owned by the daemon. They survive
   closed windows and daemon restarts (agents resume their conversation), and show their activity in the sidebar.
 - **Workspaces and tabs.** Each project has a workspace, a strip of tabs showing sessions and runs; you can add your
   own. Keyboard shortcuts start with `Ctrl+]`.
@@ -79,6 +79,7 @@ memory when `PDT_SECRET_STORE=memory`.
 - [AGENTS.md](AGENTS.md): the working guide for coding agents (and the most complete description of how PDT behaves)
 - [docs/SDLC.md](docs/SDLC.md): how a change goes from worktree to release
 - [docs/ROADMAP.md](docs/ROADMAP.md): where the roadmap lives now (PDT's own tickets)
-- [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it
+- [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it (built in: Settings → project → Set up with an agent)
+- [docs/agent-guide.md](docs/agent-guide.md): how agents use PDT (tickets, worktrees, runs). PDT serves it and the other guides at `/api/guides`, and a project's agent instructions live in its Settings, so a repo needs no PDT files
 - [docs/superpowers/specs](docs/superpowers/specs): designs; [plans](docs/superpowers/plans): build plans;
   [notes](docs/superpowers/notes): CI layout, carry-overs, incident notes

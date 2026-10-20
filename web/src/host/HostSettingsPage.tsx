@@ -160,7 +160,7 @@ function Updates({ v }: { v: HostSettingsView }) {
       description={
         <>
           Version {u?.current ?? '…'}
-          {updatesApply && ' · Updates apply to the installed app, not this development daemon.'}
+          {updatesApply && ` · Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`}
           {u?.error && <span className="text-destructive"> · {u.error}</span>}
         </>
       }
@@ -276,15 +276,17 @@ function Checks() {
       {checks.isPending && <Skeleton lines={4} label="Loading checks" />}
       {checks.data && (
         <ul className="flex flex-col gap-1.5">
-          {(['claude', 'codex', 'git', 'tailscale'] as const).map((k) => {
+          {(['claude', 'codex', 'devin', 'git', 'tailscale'] as const).map((k) => {
             const c = checks.data[k];
-            const [status, text]: [Status, string] = c.ok ? ['running', 'OK'] : c.found ? ['waiting', 'needs attention'] : ['failed', 'not found'];
+            // Devin is optional: a host without it is fine.
+            const optional = k === 'devin' && !c.found;
+            const [status, text]: [Status, string] = c.ok ? ['running', 'OK'] : c.found ? ['waiting', 'needs attention'] : optional ? ['idle', 'not installed (optional)'] : ['failed', 'not found'];
             return (
               <li key={k} className="flex min-w-0 items-center gap-2">
                 <StatusDot status={status} label={text} />
                 <span className="font-medium">{k}</span>
-                <span className={c.ok ? 'text-muted-foreground' : status === 'failed' ? 'text-destructive' : 'text-waiting'}>{text}</span>
-                <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.detail}>{c.detail}</span>
+                <span className={c.ok || optional ? 'text-muted-foreground' : status === 'failed' ? 'text-destructive' : 'text-waiting'}>{text}</span>
+                {!optional && <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.detail}>{c.detail}</span>}
               </li>
             );
           })}

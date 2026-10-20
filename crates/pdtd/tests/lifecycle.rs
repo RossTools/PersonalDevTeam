@@ -5,8 +5,6 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 mod common;
-#[path = "../../../test-support/port_blocks.rs"]
-mod port_blocks;
 use common::*;
 
 #[test]
@@ -88,7 +86,7 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 
-/// A block of 40 run ports in 20000–29999, below the OS ephemeral ranges (Windows and macOS start at 49152), so a
+/// A block of 40 run ports in 20000–29999, below every OS's ephemeral range (Linux starts at 32768), so a
 /// port another test's connection was just handed by the OS never lands in it. No two tests share a block.
 fn run_port_base() -> u16 {
     port_blocks::claim(20000, 250, 40)

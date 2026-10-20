@@ -4,4 +4,8 @@ import type { Delivery } from "./Delivery";
 /**
  * `POST /api/sessions/{id}/messages`.
  */
-export type SendMessage = { text: string, delivery?: Delivery, };
+export type SendMessage = { text: string, delivery?: Delivery, 
+/**
+ * Ids from `POST /api/sessions/{id}/attachments`.
+ */
+images?: Array<string>, };

@@ -4,4 +4,12 @@ import type { Delivery } from "./Delivery";
 /**
  * A message the agent has not taken yet.
  */
-export type PendingMessage = { id: string, text: string, delivery: Delivery, };
+export type PendingMessage = { id: string, text: string, delivery: Delivery, 
+/**
+ * Attachment ids of the images it carries.
+ */
+images: Array<string>, 
+/**
+ * PDT sent it on its own (a pull-request notice), not the user.
+ */
+notice: boolean, };
