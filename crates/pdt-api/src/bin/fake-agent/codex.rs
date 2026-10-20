@@ -475,7 +475,9 @@ async fn run_turn(
             say(&format!("saw {images} images"), &mut items);
         }
     }
-    // Messages steered into the turn are taken before it ends.
+    // Messages steered into the turn are taken before it ends. The turn stops taking steers first, so one that comes
+    // later is refused (the client then starts a new turn) rather than accepted and lost.
+    conn.turns.lock().unwrap().remove(&thread);
     if status == "completed" {
         while let Ok(s) = steer.try_recv() {
             let u = json!({"type": "userMessage", "id": format!("user-steer-{}", server.next.fetch_add(1, Ordering::SeqCst)),
@@ -497,7 +499,6 @@ async fn run_turn(
         st.saved.entry(thread.clone()).or_default().push(done);
         st.save();
     }
-    conn.turns.lock().unwrap().remove(&thread);
     note("thread/status/changed", json!({"status": {"type": "idle"}}));
     note("turn/completed", json!({"turn": {"id": turn, "status": status, "durationMs": duration, "items": []}}));
 }

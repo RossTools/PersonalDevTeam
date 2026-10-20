@@ -292,11 +292,18 @@ pub enum MergeOutcome {
     Nothing,
 }
 
-/// Merges `branch` into `base` with a merge commit (`--no-ff`, the user's own git identity, `message`). Where a
-/// checkout has `base` checked out it merges there (`git merge`, which needs it clean, and is aborted on a conflict);
-/// otherwise no checkout is touched: `merge-tree` writes the tree, `commit-tree` the commit and `update-ref` moves
-/// `base` only if nobody moved it meanwhile.
-pub fn merge_local(repo: &Path, branch: &str, base: &str, message: &str) -> Result<MergeOutcome, GitError> {
+/// Merges `branch` into `base` with a merge commit (`--no-ff`), or with `squash` one commit with a single parent
+/// holding the same changes; either way with the user's own git identity and `message`. Where a checkout has `base`
+/// checked out it merges there (`git merge`, which needs it clean, and is aborted on a conflict); otherwise no
+/// checkout is touched: `merge-tree` writes the tree, `commit-tree` the commit and `update-ref` moves `base` only if
+/// nobody moved it meanwhile.
+pub fn merge_local(
+    repo: &Path,
+    branch: &str,
+    base: &str,
+    message: &str,
+    squash: bool,
+) -> Result<MergeOutcome, GitError> {
     let preview = merge_preview(repo, branch, base)?;
     if preview.commits == 0 {
         return Ok(MergeOutcome::Nothing);
@@ -309,7 +316,18 @@ pub fn merge_local(repo: &Path, branch: &str, base: &str, message: &str) -> Resu
             return Ok(MergeOutcome::BaseDirty { checkout: dir });
         }
         let branch_ref = head_ref(branch);
-        if let Err(f) = git_with_env(&dir, &["merge", "--no-ff", "--no-edit", "-m", message, &branch_ref], &[])? {
+        if squash {
+            // `--squash` only stages the changes (no MERGE_HEAD to abort); the checkout was clean, so a failure resets.
+            let done = match git_with_env(&dir, &["merge", "--squash", &branch_ref], &[])? {
+                Ok(_) => git_with_env(&dir, &["commit", "-m", message], &[])?,
+                Err(f) => Err(f),
+            };
+            if let Err(f) = done {
+                let _ = git_with_env(&dir, &["reset", "--merge"], &[]);
+                return Err(GitError::Command(f.stderr));
+            }
+        } else if let Err(f) = git_with_env(&dir, &["merge", "--no-ff", "--no-edit", "-m", message, &branch_ref], &[])?
+        {
             let _ = git_with_env(&dir, &["merge", "--abort"], &[]);
             return Err(GitError::Command(f.stderr));
         }
@@ -323,7 +341,11 @@ pub fn merge_local(repo: &Path, branch: &str, base: &str, message: &str) -> Resu
     if !conflicts.is_empty() {
         return Ok(MergeOutcome::Conflict { files: conflicts });
     }
-    let commit = run(repo, &["commit-tree", &tree, "-p", &old, "-p", &theirs, "-m", message])?;
+    let commit = if squash {
+        run(repo, &["commit-tree", &tree, "-p", &old, "-m", message])?
+    } else {
+        run(repo, &["commit-tree", &tree, "-p", &old, "-p", &theirs, "-m", message])?
+    };
     run(repo, &["update-ref", "-m", message, &base_ref, &commit, &old])?;
     Ok(MergeOutcome::Merged { commit })
 }
@@ -468,12 +490,13 @@ mod tests {
         let (repo, wt, _base) = setup(tmp.path());
         // The main checkout moves off main so no checkout holds it.
         git(&repo, &["switch", "-q", "-c", "elsewhere"]);
-        assert_eq!(merge_local(&repo, "feature", "main", "m").unwrap(), MergeOutcome::Nothing);
+        assert_eq!(merge_local(&repo, "feature", "main", "m", false).unwrap(), MergeOutcome::Nothing);
         write(&wt, "a.txt", b"one\nTWO\nthree\n");
         let head = commit_all(&wt, "two");
         let p = merge_preview(&repo, "feature", "main").unwrap();
         assert_eq!((p.commits, p.conflicts.len(), p.base_checkout, p.base_dirty), (1, 0, None, false));
-        let MergeOutcome::Merged { commit } = merge_local(&repo, "feature", "main", "Merge feature").unwrap() else {
+        let MergeOutcome::Merged { commit } = merge_local(&repo, "feature", "main", "Merge feature", false).unwrap()
+        else {
             panic!("not merged")
         };
         assert_eq!(git(&repo, &["rev-parse", "main"]), commit);
@@ -494,15 +517,48 @@ mod tests {
         write(&repo, "a.txt", b"dirty\n");
         let p = merge_preview(&repo, "feature", "main").unwrap();
         assert!(p.base_dirty);
-        assert!(matches!(merge_local(&repo, "feature", "main", "m").unwrap(), MergeOutcome::BaseDirty { .. }));
+        assert!(matches!(merge_local(&repo, "feature", "main", "m", false).unwrap(), MergeOutcome::BaseDirty { .. }));
         git(&repo, &["checkout", "--", "a.txt"]);
 
-        let MergeOutcome::Merged { commit } = merge_local(&repo, "feature", "main", "Merge it").unwrap() else {
+        let MergeOutcome::Merged { commit } = merge_local(&repo, "feature", "main", "Merge it", false).unwrap() else {
             panic!("not merged")
         };
         assert_eq!(git(&repo, &["rev-parse", "HEAD"]), commit);
         assert_eq!(std::fs::read_to_string(repo.join("src/b.rs")).unwrap(), "fn b() { 2 }\n", "checkout updated");
         assert!(git(&repo, &["status", "--porcelain"]).is_empty());
+    }
+
+    #[test]
+    fn squashes_into_one_commit_with_or_without_a_checkout_of_the_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, wt, base) = setup(tmp.path());
+        write(&wt, "src/b.rs", b"fn b() { 2 }\n");
+        commit_all(&wt, "b");
+        write(&wt, "a.txt", b"one\nTWO\nthree\n");
+        let head = commit_all(&wt, "two");
+
+        let MergeOutcome::Merged { commit } = merge_local(&repo, "feature", "main", "PDT-1: It", true).unwrap() else {
+            panic!("not squashed")
+        };
+        assert_eq!(git(&repo, &["rev-parse", "HEAD"]), commit);
+        assert_eq!(git(&repo, &["rev-parse", "main^"]), base, "one commit on top of the base");
+        assert_eq!(git(&repo, &["rev-list", "--parents", "-n1", "main"]).split(' ').count(), 2, "a single parent");
+        assert_eq!(git(&repo, &["log", "-1", "--format=%s", "main"]), "PDT-1: It");
+        assert!(!is_ancestor(&repo, &head, &commit));
+        assert_eq!(git(&repo, &["rev-parse", "main^{tree}"]), git(&repo, &["rev-parse", "feature^{tree}"]));
+        assert!(git(&repo, &["status", "--porcelain"]).is_empty());
+
+        // No checkout on main: commit-tree with one parent.
+        write(&wt, "c.txt", b"c\n");
+        commit_all(&wt, "c");
+        git(&repo, &["switch", "-q", "-c", "elsewhere"]);
+        let MergeOutcome::Merged { commit: second } = merge_local(&repo, "feature", "main", "again", true).unwrap()
+        else {
+            panic!("not squashed")
+        };
+        assert_eq!(git(&repo, &["rev-parse", "main"]), second);
+        assert_eq!(git(&repo, &["rev-parse", "main^"]), commit);
+        assert_eq!(git(&repo, &["rev-parse", "main^{tree}"]), git(&repo, &["rev-parse", "feature^{tree}"]));
     }
 
     #[test]
@@ -518,14 +574,14 @@ mod tests {
         let p = merge_preview(&repo, "feature", "main").unwrap();
         assert_eq!(p.conflicts, ["a.txt", "src/b.rs"]);
         assert_eq!(
-            merge_local(&repo, "feature", "main", "m").unwrap(),
+            merge_local(&repo, "feature", "main", "m", false).unwrap(),
             MergeOutcome::Conflict { files: vec!["a.txt".into(), "src/b.rs".into()] }
         );
         assert_eq!(git(&repo, &["rev-parse", "main"]), before);
         assert!(git(&repo, &["status", "--porcelain"]).is_empty());
         // Also with no checkout on main.
         git(&repo, &["switch", "-q", "-c", "elsewhere"]);
-        assert!(matches!(merge_local(&repo, "feature", "main", "m").unwrap(), MergeOutcome::Conflict { .. }));
+        assert!(matches!(merge_local(&repo, "feature", "main", "m", false).unwrap(), MergeOutcome::Conflict { .. }));
         assert_eq!(git(&repo, &["rev-parse", "main"]), before);
     }
 }
