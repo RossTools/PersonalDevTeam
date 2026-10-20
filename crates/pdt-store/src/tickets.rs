@@ -1688,6 +1688,17 @@ impl Store {
         Ok(row.and_then(|(d,)| d).and_then(|d| serde_json::from_str(&d).ok()))
     }
 
+    /// The text of the ticket's comments, oldest first (for Start's first prompt).
+    pub async fn comment_bodies(&self, ticket_id: &str) -> Result<Vec<String>, StoreError> {
+        let rows: Vec<(Option<String>,)> =
+            sqlx::query_as("SELECT body FROM ticket_events WHERE ticket_id = ? AND kind = ? ORDER BY created_at, id")
+                .bind(ticket_id)
+                .bind(EventKind::Comment.as_str())
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().filter_map(|(b,)| b).collect())
+    }
+
     /// Every label used in a project, sorted.
     pub async fn project_labels(&self, project_id: &str) -> Result<Vec<String>, StoreError> {
         let rows: Vec<(String,)> = sqlx::query_as(
@@ -2285,6 +2296,8 @@ mod tests {
             }
         }
         assert_eq!(seen, ["c4", "c3", "c2", "c1", "c0", ""]);
+        assert_eq!(store.comment_bodies("a").await.unwrap(), ["c0", "c1", "c2", "c3", "c4"]);
+        assert!(store.comment_bodies("nope").await.unwrap().is_empty());
         assert!(store.list_events("nope", None, 2, false).await.unwrap().is_none());
         assert!(matches!(store.list_events("a", Some("junk"), 2, false).await, Err(TicketError::Invalid(_))));
     }

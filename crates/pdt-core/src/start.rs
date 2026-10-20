@@ -81,18 +81,9 @@ pub fn ticket_prompt(key: &str, title: &str, description: &str, branch: &str) ->
 /// part) goes before the closing line. To fit [`MAX_TICKET_PROMPT`], the parent's description is cut first, then the
 /// part's own.
 pub fn part_prompt(key: &str, title: &str, description: &str, branch: &str, part: Option<&PartContext>) -> String {
-    let head = format!("{key}: {title}");
-    let tail = format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}.)");
+    let (head, tail) = prompt_ends(key, title, branch);
     let description = description.trim();
-    let join = |desc: &str, block: Option<String>| {
-        let mut parts = vec![head.clone()];
-        if !desc.is_empty() {
-            parts.push(desc.to_string());
-        }
-        parts.extend(block);
-        parts.push(tail.clone());
-        parts.join("\n\n")
-    };
+    let join = |desc: &str, block: Option<String>| assemble(&head, desc, None, block, &tail);
     let full = join(description, part.map(|p| p.block(None)));
     if full.len() <= MAX_TICKET_PROMPT {
         return full;
@@ -129,6 +120,92 @@ pub fn part_prompt(key: &str, title: &str, description: &str, branch: &str, part
         // A huge list of other parts: drop the block rather than overflow.
         join(&desc, None)
     }
+}
+
+/// [`part_prompt`] with the ticket's comments (oldest first) after its description, as block quotes under "Comments,
+/// oldest first:". Comments only get the room the rest leaves: when the description or the parent's had to be cut there
+/// are none; otherwise the newest are kept whole, the oldest dropped first (with a note saying how many), and a newest
+/// comment too long for the room left is cut with a note. Blank comments are skipped.
+pub fn start_prompt(
+    key: &str,
+    title: &str,
+    description: &str,
+    branch: &str,
+    part: Option<&PartContext>,
+    comments: &[String],
+) -> String {
+    let base = part_prompt(key, title, description, branch, part);
+    let comments: Vec<&str> = comments.iter().map(|c| c.trim()).filter(|c| !c.is_empty()).collect();
+    if comments.is_empty() {
+        return base;
+    }
+    let (head, tail) = prompt_ends(key, title, branch);
+    let description = description.trim();
+    let block = part.map(|p| p.block(None));
+    if base != assemble(&head, description, None, block.clone(), &tail) {
+        return base;
+    }
+    // "\n\n" joins the comments to the rest.
+    let room = MAX_TICKET_PROMPT.saturating_sub(base.len() + 2);
+    match comments_block(&comments, room) {
+        Some(c) => assemble(&head, description, Some(c), block, &tail),
+        None => base,
+    }
+}
+
+fn prompt_ends(key: &str, title: &str, branch: &str) -> (String, String) {
+    (format!("{key}: {title}"), format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}.)"))
+}
+
+fn assemble(head: &str, desc: &str, comments: Option<String>, block: Option<String>, tail: &str) -> String {
+    let mut parts = vec![head.to_string()];
+    if !desc.is_empty() {
+        parts.push(desc.to_string());
+    }
+    parts.extend(comments);
+    parts.extend(block);
+    parts.push(tail.to_string());
+    parts.join("\n\n")
+}
+
+/// The comments block in at most `room` bytes, newest comments kept first; None when not even a cut comment fits.
+fn comments_block(comments: &[&str], room: usize) -> Option<String> {
+    const HEADING: &str = "Comments, oldest first:";
+    let quote = |c: &str| {
+        c.lines().map(|l| if l.is_empty() { ">".to_string() } else { format!("> {l}") }).collect::<Vec<_>>().join("\n")
+    };
+    let not_shown = |n: usize| match n {
+        0 => None,
+        1 => Some(format!("[1 earlier comment not shown: read them in {SHORT_NAME}.]")),
+        n => Some(format!("[{n} earlier comments not shown: read them in {SHORT_NAME}.]")),
+    };
+    let build = |omitted: usize, kept: &[String]| {
+        let mut parts = vec![HEADING.to_string()];
+        parts.extend(not_shown(omitted));
+        parts.extend(kept.iter().cloned());
+        parts.join("\n\n")
+    };
+    let quoted: Vec<String> = comments.iter().map(|c| quote(c)).collect();
+    let mut kept = 0;
+    while kept < quoted.len() && build(quoted.len() - kept - 1, &quoted[quoted.len() - kept - 1..]).len() <= room {
+        kept += 1;
+    }
+    if kept > 0 {
+        return Some(build(quoted.len() - kept, &quoted[quoted.len() - kept..]));
+    }
+    // Not even the newest fits whole: cut it.
+    let cut_note = format!("[Comment cut: read it in {SHORT_NAME}.]");
+    let newest = &quoted[quoted.len() - 1];
+    let fixed = build(quoted.len() - 1, &[String::new()]).len() + 2 + cut_note.len();
+    let mut end = room.checked_sub(fixed)?.min(newest.len());
+    while !newest.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = newest[..end].trim_end();
+    if cut.is_empty() {
+        return None;
+    }
+    Some(build(quoted.len() - 1, &[format!("{cut}\n\n{cut_note}")]))
 }
 
 /// How Start treats findings such as open blockers.
@@ -401,6 +478,56 @@ mod tests {
         let p = part_prompt("PDT-47", "5b", "d", "b", Some(&ctx("x", &refs)));
         assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
         assert!(p.starts_with("PDT-47: 5b") && p.ends_with("on branch b.)"));
+    }
+
+    fn strings(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn comments_follow_the_description_oldest_first_and_quoted() {
+        let c = ctx("Parent.", &["PDT-46 5a: Done"]);
+        assert_eq!(
+            start_prompt("PDT-47", "5b", "Codex.", "b", Some(&c), &strings(&["First.", " Second\n\nline two\n "])),
+            "PDT-47: 5b\n\nCodex.\n\nComments, oldest first:\n\n> First.\n\n> Second\n>\n> line two\n\n\
+             Part of PDT-2: Phase 5\n\nParent.\n\nThe other parts:\n- PDT-46 5a: Done\n\n\
+             (Ticket PDT-47 in PDT. Work in this worktree on branch b.)"
+        );
+        // No comments (or only blank ones): the same prompt as before.
+        assert_eq!(start_prompt("PDT-4", "T", "d", "b", None, &[]), ticket_prompt("PDT-4", "T", "d", "b"));
+        assert_eq!(
+            start_prompt("PDT-4", "T", "d", "b", None, &strings(&[" \n"])),
+            ticket_prompt("PDT-4", "T", "d", "b")
+        );
+    }
+
+    #[test]
+    fn comments_that_do_not_fit_drop_the_oldest_first() {
+        let comments: Vec<String> = (0..10).map(|i| format!("{i}{}", "c".repeat(1000))).collect();
+        let p = start_prompt("K-1", "T", "d", "b", None, &comments);
+        assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
+        assert!(p.contains(&format!("> 9{}", "c".repeat(1000))), "the newest is whole");
+        assert!(!p.contains("> 0c"), "the oldest went first");
+        let shown = (0..10).filter(|i| p.contains(&format!("> {i}c"))).count();
+        assert!(shown >= 6, "uses the space it has: {shown}");
+        assert!(p.contains(&format!("[{} earlier comments not shown: read them in PDT.]", 10 - shown)), "{p}");
+        assert!(p.ends_with("(Ticket K-1 in PDT. Work in this worktree on branch b.)"));
+    }
+
+    #[test]
+    fn a_newest_comment_too_long_to_fit_is_cut() {
+        let comments = strings(&["old", &"é".repeat(9000)]);
+        let p = start_prompt("K-1", "T", "d", "b", None, &comments);
+        assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
+        assert!(p.contains("> éé") && p.contains("[Comment cut: read it in PDT.]"), "{p}");
+        assert!(p.contains("[1 earlier comment not shown: read them in PDT.]"));
+        assert!(p.len() > MAX_TICKET_PROMPT - 64, "uses the space it has: {}", p.len());
+    }
+
+    #[test]
+    fn a_cut_description_leaves_no_room_for_comments() {
+        let p = start_prompt("K-1", "T", &"x".repeat(9000), "b", None, &strings(&["hello"]));
+        assert_eq!(p, ticket_prompt("K-1", "T", &"x".repeat(9000), "b"));
     }
 
     fn start(json: serde_json::Value) -> Result<ValidStart, TicketValidationError> {
