@@ -236,7 +236,7 @@ export const api = {
   approveAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/approve`, { method: 'POST' }),
   mergePreview: (id: string) => request<MergePreview>(`/api/attempts/${enc(id)}/merge`),
   mergeAttempt: (id: string) => request<MergeResult>(`/api/attempts/${enc(id)}/merge`, { method: 'POST' }),
-  sendConflicts: (id: string) => request<FeedbackResult>(`/api/attempts/${enc(id)}/conflicts`, { method: 'POST' }),
+  askAgentToFixMerge: (id: string) => request<FeedbackResult>(`/api/attempts/${enc(id)}/ask-agent`, { method: 'POST' }),
   getChanges: (worktreeId: string) => request<Changes>(`/api/worktrees/${enc(worktreeId)}/changes`),
   getFileSides: (worktreeId: string, path: string, oldPath?: string | null) =>
     request<FileSides>(`/api/worktrees/${enc(worktreeId)}/changes/file${queryString({ path, oldPath })}`),

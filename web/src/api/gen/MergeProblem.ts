@@ -3,4 +3,4 @@
 /**
  * Why Merge can't go ahead.
  */
-export type MergeProblem = "inactive" | "dirty" | "conflict" | "base_dirty" | "nothing" | "pr_not_mergeable" | "pr_queued";
+export type MergeProblem = "inactive" | "dirty" | "conflict" | "base_dirty" | "nothing" | "pr_not_mergeable" | "pr_queued" | "no_pr";

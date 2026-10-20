@@ -61,6 +61,9 @@ Review/Accept stages (Phase 7), GitHub review state (PDT-12), commenting on a PR
      finish flow (`finishMerged`: stop the attempt's sessions and runs after one question, remove the worktree and the
      ticket's workspace, pull the base) and move the ticket to Done. With Remove the worktree off, the ticket still
      moves to Done and the worktree stays.
+   - **Merge through pull requests** (a per-project host setting, off by default): Merge… never merges locally.
+     Without an open PR it says so (`no_pr`) and offers **Ask the agent to open one**, which sends the coder a
+     message to commit, push and open a PR against the base.
    Merge… is offered for active attempts only, from the review bar and the ticket menu.
 8. **Viewed** is per browser (localStorage), keyed by worktree, path and a version of the file (git's blob id of
    both sides); a file that changes after it was marked becomes unviewed. The checkbox is in the file's header (as on
@@ -121,11 +124,12 @@ All JSON camelCase, types in pdt-core `review.rs` (ts-rs).
 - `POST /api/attempts/{id}/approve` → the `review` event.
 - `GET /api/attempts/{id}/merge` → `MergePreview { method: local|github, branch, base, commits, problem?:
   MergeProblem, conflicts: string[], baseCheckout?, pr?: { number, url, queue } }`; `MergeProblem = inactive | dirty |
-  conflict | base_dirty | nothing | pr_not_mergeable | pr_queued`.
+  conflict | base_dirty | nothing | pr_not_mergeable | pr_queued | no_pr`.
 - `POST /api/attempts/{id}/merge` → `{ outcome: merged|queued, commit? }` (409 `merge_blocked` with the problem,
   `merge_failed` when git or `gh` failed).
-- `POST /api/attempts/{id}/conflicts` → `{ sessionId, sent: 0 }`: Send to agent for a conflicting merge (409
-  `no_conflict` otherwise).
+- `POST /api/attempts/{id}/ask-agent` → `{ sessionId, sent: 0 }`: asks the coder to fix a `conflict` (merge the base
+  in) or `no_pr` (open a PR); 409 `nothing_to_ask` otherwise.
+- Project settings gain `mergeViaPr` (kept when a PUT leaves it out).
 - Tabs: `NewTab`/`Tab` gain `worktreeId`.
 
 ## 5. The feedback message
@@ -163,6 +167,9 @@ The whole message is capped at 32 KB (later comments become "…and N more comme
 - The CodeMirror theme moves from `files/CodeViewer.tsx` into `files/codeTheme.ts`, shared by both.
 - Split | Unified is a `SegmentedControl` (remembered per browser; unified below 900px whatever the choice). Keys in
   the diff: `c` comments on the selected lines, `]`/`[` next/previous file, `v` toggles Viewed.
+- Getting there quickly: the session header has a **Changes** button with the branch's diff size (it opens the
+  changes tab); the ticket tab's Changes section tab shows the diff size too, and the ticket tab reopens on the section
+  last shown for that ticket (per browser).
 - Phones: a Files button in the review bar swaps the diff for the file list; unified only; the bar wraps.
 
 ## 7. Testing

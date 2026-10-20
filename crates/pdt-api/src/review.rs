@@ -14,7 +14,7 @@ use pdt_core::project::Project;
 use pdt_core::review::{
     ChangeStatus, ChangedFile, Changes, FeedbackItem, FeedbackResult, FileSides, MAX_COMMENT_BYTES, MAX_SIDE_BYTES,
     MergeMethod, MergeOutcome, MergePr, MergePreview, MergeProblem, MergeResult, NewReviewComment, ReviewComment,
-    ReviewCommentPatch, conflict_message, feedback_message, merge_message,
+    ReviewCommentPatch, conflict_message, feedback_message, merge_message, open_pr_message,
 };
 use pdt_core::session::{Session, SessionKind};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, Ticket};
@@ -423,6 +423,11 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         };
         return Ok(p);
     }
+    if st.store.get_project_settings(&info.project_id).await?.merge_via_pr {
+        p.method = MergeMethod::Github;
+        p.problem = Some(MergeProblem::NoPr);
+        return Ok(p);
+    }
     let repo = PathBuf::from(&info.repo_path);
     let worktree = info.worktree_path.clone().map(PathBuf::from);
     let (dirty, preview) = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
@@ -469,6 +474,7 @@ fn blocked(problem: MergeProblem) -> ApiError {
         MergeProblem::Nothing => "the branch has no commits the base branch lacks",
         MergeProblem::PrNotMergeable => "GitHub can't merge the pull request (a draft, or it conflicts)",
         MergeProblem::PrQueued => "auto-merge is already on for the pull request",
+        MergeProblem::NoPr => "this project merges through pull requests, and the branch has no open one yet",
     };
     conflict("merge_blocked", why)
 }
@@ -522,19 +528,22 @@ pub(crate) async fn merge(State(st): State<AppState>, Path(id): Path<String>) ->
     Ok(Json(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
 }
 
-/// `POST /api/attempts/{id}/conflicts`: asks the coder session to merge the base in and resolve the conflicts.
-pub(crate) async fn send_conflicts(
+/// `POST /api/attempts/{id}/ask-agent`: asks the coder session to clear what stops the merge: merge the base in and
+/// resolve the conflicts, or open a pull request (a project that merges through them).
+pub(crate) async fn ask_agent(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<FeedbackResult>, ApiError> {
     let info = load_attempt(&st, &id).await?;
     let p = preview(&st, &info).await?;
-    if p.problem != Some(MergeProblem::Conflict) {
-        return Err(conflict("no_conflict", "the merge does not conflict"));
-    }
+    let text = match p.problem {
+        Some(MergeProblem::Conflict) => conflict_message(&p.branch, &p.base, &p.conflicts),
+        Some(MergeProblem::NoPr) => open_pr_message(&p.branch, &p.base),
+        _ => return Err(conflict("nothing_to_ask", "nothing the agent can fix stops this merge")),
+    };
     let wid = info.attempt.worktree_id.clone().ok_or_else(|| conflict("worktree_missing", "the worktree is gone"))?;
     let wt = st.store.get_worktree(&wid).await?.ok_or_else(|| conflict("worktree_missing", "the worktree is gone"))?;
     let session = coder_session(&st, &wt, Some(&info)).await?;
-    deliver(&st, &session, &conflict_message(&p.branch, &p.base, &p.conflicts)).await?;
+    deliver(&st, &session, &text).await?;
     Ok(Json(FeedbackResult { session_id: session.id, sent: 0 }))
 }

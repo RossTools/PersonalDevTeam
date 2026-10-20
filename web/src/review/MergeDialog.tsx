@@ -10,8 +10,8 @@ import { invalidateTickets } from '../tickets/queries';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** Why Merge can't go ahead, as an Alert (with Send to agent for a conflict). */
-function Problem({ p, onSendConflicts, sending }: { p: MergePreview; onSendConflicts: () => void; sending: boolean }) {
+/** Why Merge can't go ahead, as an Alert (with a button that asks the agent when it can fix it). */
+function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; sending: boolean }) {
   switch (p.problem) {
     case 'inactive':
       return <Alert tone="info">This attempt has ended.</Alert>;
@@ -30,7 +30,7 @@ function Problem({ p, onSendConflicts, sending }: { p: MergePreview; onSendConfl
         <Alert
           tone="warning"
           title="The merge conflicts"
-          action={<Button size="sm" pending={sending} onClick={onSendConflicts}>Send to agent</Button>}
+          action={<Button size="sm" pending={sending} onClick={onAsk}>Send to agent</Button>}
         >
           <p>{p.base} has changed the same lines in {plural(p.conflicts.length, 'file')}:</p>
           <ul className="mt-1 font-mono text-meta">{p.conflicts.map((f) => <li key={f}>{f}</li>)}</ul>
@@ -38,6 +38,16 @@ function Problem({ p, onSendConflicts, sending }: { p: MergePreview; onSendConfl
       );
     case 'pr_not_mergeable':
       return <Alert tone="warning">GitHub can’t merge pull request #{p.pr?.number}: it is a draft or it conflicts with {p.base}.</Alert>;
+    case 'no_pr':
+      return (
+        <Alert
+          tone="info"
+          title="No pull request yet"
+          action={<Button size="sm" pending={sending} onClick={onAsk}>Ask the agent to open one</Button>}
+        >
+          This project merges through pull requests, and {p.branch} has no open one. Once it has, Merge… turns on auto-merge for it.
+        </Alert>
+      );
     case 'pr_queued':
       return <Alert tone="info">Auto-merge is already on for pull request #{p.pr?.number}; GitHub merges it once its checks pass.</Alert>;
     default:
@@ -59,11 +69,11 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
   const [sending, setSending] = useState(false);
   const p = preview.data;
 
-  const sendConflicts = async () => {
+  const ask = async () => {
     setSending(true);
     try {
-      await api.sendConflicts(attemptId);
-      toast.success('Asked the agent to resolve the conflicts.');
+      await api.askAgentToFixMerge(attemptId);
+      toast.success(p?.problem === 'no_pr' ? 'Asked the agent to open a pull request.' : 'Asked the agent to resolve the conflicts.');
       onClose();
     } catch (e) {
       toast.error(actionError(e));
@@ -102,7 +112,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     <Dialog
       open
       onOpenChange={(o) => { if (!o) onClose(); }}
-      title={github ? `Merge pull request #${p?.pr?.number}` : `Merge ${ticket.key}`}
+      title={p?.pr ? `Merge pull request #${p.pr.number}` : `Merge ${ticket.key}`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -120,20 +130,20 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
         <Alert tone="error">{preview.error ? actionError(preview.error) : 'Could not check the merge.'}</Alert>
       ) : (
         <div className="flex flex-col gap-3 text-sm">
-          {github ? (
+          {github && p.pr ? (
             <p>
               <Link href={p.pr!.url} external>Pull request #{p.pr!.number}</Link> merges into <span className="font-mono">{p.base}</span> on
               GitHub{p.pr!.queue ? ' through the merge queue' : ' once its checks pass'}. PDT notices the merge and offers to move {ticket.key} to Done.
             </p>
           ) : (
-            p.problem !== 'inactive' && (
+            !github && p.problem !== 'inactive' && (
               <p>
                 Merge <span className="font-mono">{p.branch}</span> into <span className="font-mono">{p.base}</span> with a merge commit
                 {p.commits > 0 ? ` (${plural(p.commits, 'commit')})` : ''}, then move {ticket.key} to Done.
               </p>
             )
           )}
-          <Problem p={p} onSendConflicts={() => void sendConflicts()} sending={sending} />
+          <Problem p={p} onAsk={() => void ask()} sending={sending} />
           {!github && !p.problem && (
             <div className="flex flex-col gap-1.5">
               <Checkbox checked={removeWorktree} onChange={(v) => { setRemoveWorktree(v); if (!v) setDeleteBranch(false); }}>

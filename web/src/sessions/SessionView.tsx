@@ -19,6 +19,7 @@ import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
 import { useOpenChanges } from '../review/open';
+import { ChangesButton } from '../review/ChangesButton';
 
 export interface SessionViewProps {
   session: Session;
@@ -292,6 +293,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         }
         actions={
           <>
+            {session.worktreeId && <ChangesButton worktreeId={session.worktreeId} projectId={session.projectId} />}
             {oneAtATime && (
               <SegmentedControl<SessionMode>
                 aria-label="Show as"

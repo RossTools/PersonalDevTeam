@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, EmptyState, MenuButton, Skeleton, useConfirm, ViewHeader } from '@ui';
+import { Button, DiffStat, EmptyState, MenuButton, Skeleton, useConfirm, ViewHeader } from '@ui';
 import type { Ticket } from '../api/gen/Ticket';
 import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
@@ -20,6 +20,7 @@ import { TicketConversation } from './TicketConversation';
 import { ChangesView } from '../review/ChangesView';
 import { MergeDialog } from '../review/MergeDialog';
 import { useOpenChanges } from '../review/open';
+import { useDiffSize } from '../review/queries';
 import { useCheckMerge, useTicket } from './queries';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
@@ -33,8 +34,35 @@ const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
   { id: 'changes', label: 'Changes' },
 ];
 
-/** Overview · Conversation · Changes. */
-function HubTabs({ value, onChange }: { value: HubTab; onChange: (t: HubTab) => void }) {
+const SECTION_KEY = (ticketId: string) => `pdt.ticket.section.${ticketId}`;
+
+/** The section last shown for a ticket on this browser (Overview the first time). */
+function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
+  const [tab, setTab] = useState<HubTab>(() => {
+    try {
+      const v = localStorage.getItem(SECTION_KEY(ticketId));
+      return HUB_TABS.some((t) => t.id === v) ? (v as HubTab) : 'overview';
+    } catch {
+      return 'overview';
+    }
+  });
+  const set = (t: HubTab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(SECTION_KEY(ticketId), t);
+    } catch {
+      // Storage blocked: remembered for this page only.
+    }
+  };
+  return [tab, set];
+}
+
+/** Overview · Conversation · Changes (with the branch's diff size). */
+function HubTabs({ value, onChange, diff }: {
+  value: HubTab;
+  onChange: (t: HubTab) => void;
+  diff?: { added: number; removed: number; files: number } | null;
+}) {
   return (
     <div role="tablist" aria-label="Ticket sections" className="flex shrink-0 items-center gap-1 border-b border-border px-3">
       {HUB_TABS.map((t) => (
@@ -56,6 +84,7 @@ function HubTabs({ value, onChange }: { value: HubTab; onChange: (t: HubTab) => 
         >
           {t.label}
           {t.arrives && <span className="ml-1 text-2xs">({t.arrives})</span>}
+          {t.id === 'changes' && diff && diff.files > 0 && <DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" />}
         </button>
       ))}
     </div>
@@ -139,7 +168,8 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
  * the Conversation (its agent sessions) or the Changes (its attempt's diff and review). */
 export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDeleted?: () => void }) {
   const q = useTicket(ticketId);
-  const [tab, setTab] = useState<HubTab>('overview');
+  const [tab, setTab] = useSection(ticketId);
+  const diff = useDiffSize(q.data?.attempt?.state === 'active' ? q.data.attempt.worktreeId : null);
   useCheckMerge(q.data);
   useClearToStartToasts(q.data ? [q.data] : []);
   if (q.isPending) return <div className="p-4"><Skeleton lines={3} label="Loading ticket" /></div>;
@@ -155,7 +185,7 @@ export function TicketView({ ticketId, onDeleted }: { ticketId: string; onDelete
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       <MergedBanner ticket={t} />
-      <HubTabs value={tab} onChange={setTab} />
+      <HubTabs value={tab} onChange={setTab} diff={diff} />
       {tab === 'conversation' ? (
         <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
           <TicketConversation ticket={t} />

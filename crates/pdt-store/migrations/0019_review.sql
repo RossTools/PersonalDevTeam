@@ -20,6 +20,9 @@ CREATE TABLE review_comments (
 );
 CREATE INDEX review_comments_by_worktree ON review_comments (worktree_id, path);
 
+-- Merge… goes through the attempt's pull request only: never a local merge into the base branch.
+ALTER TABLE project_settings ADD COLUMN merge_via_pr INTEGER NOT NULL DEFAULT 0;
+
 -- Workspace tabs gain a changes kind (a worktree's review). Rebuilt as in 0010: a CHECK can't change in place.
 CREATE TABLE workspace_tabs_new (
     id           TEXT PRIMARY KEY NOT NULL,

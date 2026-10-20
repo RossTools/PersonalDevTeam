@@ -209,6 +209,8 @@ pub enum MergeProblem {
     PrNotMergeable,
     /// Auto-merge is already on, or the PR is in the merge queue.
     PrQueued,
+    /// The project merges through pull requests and the attempt has no open one yet.
+    NoPr,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -352,6 +354,15 @@ pub fn conflict_message(branch: &str, base: &str, files: &[String]) -> String {
     )
 }
 
+/// The message Ask the agent puts into the coder session when the project merges through pull requests and the
+/// branch has none yet.
+pub fn open_pr_message(branch: &str, base: &str) -> String {
+    format!(
+        "{branch} is ready to merge, and this project merges through pull requests. Commit anything left, push \
+         {branch} and open a pull request against {base}."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +425,15 @@ mod tests {
     fn a_blank_quoted_line_has_no_trailing_space() {
         let msg = feedback_message("b", &[item("a", 1, 3, "x\n\ny", "z")]);
         assert!(msg.contains("   > x\n   >\n   > y\n"));
+    }
+
+    #[test]
+    fn the_open_pr_message_names_the_branches() {
+        assert_eq!(
+            open_pr_message("f", "main"),
+            "f is ready to merge, and this project merges through pull requests. Commit anything left, push f and \
+             open a pull request against main."
+        );
     }
 
     #[test]

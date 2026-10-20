@@ -313,7 +313,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
         .route("/attempts/{id}/approve", axum::routing::post(crate::review::approve))
         .route("/attempts/{id}/merge", get(crate::review::merge_preview).post(crate::review::merge))
-        .route("/attempts/{id}/conflicts", axum::routing::post(crate::review::send_conflicts))
+        .route("/attempts/{id}/ask-agent", axum::routing::post(crate::review::ask_agent))
         .route("/workspaces", get(crate::workspaces::list).post(crate::workspaces::create))
         .route("/workspaces/{id}", axum::routing::patch(crate::workspaces::update).delete(crate::workspaces::remove))
         .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))

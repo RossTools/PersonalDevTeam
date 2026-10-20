@@ -8,6 +8,8 @@ import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { project, ticket } from '../tickets/fixtures';
 import { ChangesView } from './ChangesView';
 import { MergeDialog } from './MergeDialog';
+import { ChangesButton } from './ChangesButton';
+import { OpenChangesContext } from './open';
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
@@ -150,13 +152,26 @@ describe('MergeDialog', () => {
 
   it('lists conflicts and sends them to the agent', async () => {
     const { calls, onClose } = open(preview({ problem: 'conflict', conflicts: ['a.txt', 'b.rs'] }), {
-      'POST /api/attempts/a1/conflicts': { sessionId: 's1', sent: 0 },
+      'POST /api/attempts/a1/ask-agent': { sessionId: 's1', sent: 0 },
     });
     expect(await screen.findByText('a.txt')).toBeInTheDocument();
     expect(screen.getByText('b.rs')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Send to agent' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/conflicts')).toBe(true);
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/ask-agent')).toBe(true);
+  });
+
+  it('asks the agent for a pull request when the project merges through them', async () => {
+    const { calls, onClose } = open(preview({ method: 'github', problem: 'no_pr' }), {
+      'POST /api/attempts/a1/ask-agent': { sessionId: 's1', sent: 0 },
+    });
+    expect(await screen.findByText('No pull request yet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Ask the agent to open one' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/ask-agent')).toBe(true);
+    expect(await screen.findByText('Asked the agent to open a pull request.')).toBeInTheDocument();
   });
 
   it('turns on auto-merge for an open pull request', async () => {
@@ -181,5 +196,21 @@ describe('MergeDialog', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH' && c.path === '/api/tickets/t1')).toBe(true));
     expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ stage: 'done' });
     expect(await screen.findByText(/Merged pdt\/ALP-1-fix-login into main/)).toBeInTheDocument();
+  });
+});
+
+describe('ChangesButton', () => {
+  it('shows the diff size and opens the changes tab', async () => {
+    stub();
+    const open = vi.fn();
+    renderWithQuery(
+      <OpenChangesContext.Provider value={open}>
+        <ChangesButton worktreeId="w1" projectId="p1" />
+      </OpenChangesContext.Provider>,
+    );
+    const button = screen.getByRole('button', { name: /Changes/ });
+    await waitFor(() => expect(button).toHaveTextContent('+5−5'));
+    await userEvent.click(button);
+    expect(open).toHaveBeenCalledWith({ id: 'w1', projectId: 'p1' });
   });
 });

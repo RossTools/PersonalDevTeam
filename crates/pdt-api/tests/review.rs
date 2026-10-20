@@ -340,7 +340,7 @@ async fn a_local_merge_checks_first_then_merges_and_ends_the_attempt() {
     assert_eq!((p["problem"].as_str(), p["conflicts"].clone()), (Some("conflict"), json!(["a.txt"])));
     let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("merge_blocked")));
-    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/conflicts", env.attempt), None).await;
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/ask-agent", env.attempt), None).await;
     assert_eq!(s, StatusCode::OK, "{r}");
     let screen = String::from_utf8_lossy(&env.state.ptys.attach(&env.session).unwrap().scrollback).into_owned();
     assert!(screen.contains("conflicts in these files"), "{screen}");
@@ -430,4 +430,43 @@ async fn a_changes_tab_opens_for_a_worktree_and_only_closes() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (_, c) = call(&env.app, "GET", &format!("/api/worktrees/{}/changes", env.worktree), None).await;
     assert_eq!(c["worktreeId"], json!(env.worktree), "the worktree is still there");
+}
+
+#[tokio::test]
+async fn a_project_that_merges_through_prs_never_merges_locally() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await;
+    let pid = t["projectId"].as_str().unwrap().to_string();
+    let (s, v) = call(
+        &env.app,
+        "PUT",
+        &format!("/api/projects/{pid}/settings"),
+        Some(json!({"agentCredentials": null, "runOverrides": null, "mergeViaPr": true})),
+    )
+    .await;
+    assert_eq!((s, v["mergeViaPr"].as_bool()), (StatusCode::OK, Some(true)), "{v}");
+    // A PUT that leaves it out keeps it.
+    let (_, v) = call(
+        &env.app,
+        "PUT",
+        &format!("/api/projects/{pid}/settings"),
+        Some(json!({"agentCredentials": null, "runOverrides": null})),
+    )
+    .await;
+    assert_eq!(v["mergeViaPr"], json!(true));
+
+    std::fs::write(env.wt_path.join("a.txt"), "changed\n").unwrap();
+    commit_all(&env.wt_path, "change");
+    let p = preview(&env).await;
+    assert_eq!((p["method"].as_str(), p["problem"].as_str()), (Some("github"), Some("no_pr")), "{p}");
+    let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("merge_blocked")));
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/ask-agent", env.attempt), None).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let screen = String::from_utf8_lossy(&env.state.ptys.attach(&env.session).unwrap().scrollback).into_owned();
+    assert!(screen.contains("open a pull request against main"), "{screen}");
+    let out =
+        std::process::Command::new("git").current_dir(&env.repo).args(["log", "-1", "--format=%s"]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "init", "main was not touched");
 }

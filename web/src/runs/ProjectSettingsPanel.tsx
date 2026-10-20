@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Field, MenuButton, Section, Select, Skeleton, Textarea } from '@ui';
+import { Alert, Button, Field, MenuButton, Section, Select, Skeleton, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
@@ -33,6 +33,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
   const [overrides, setOverrides] = useState('');
   const [creds, setCreds] = useState<CredsChoice>(HOST);
   const [instructions, setInstructions] = useState('');
+  const [mergeViaPr, setMergeViaPr] = useState(false);
   const openSession = useOpenSession();
   const agents = useAgentAvailability();
   const save = useMutation({
@@ -41,6 +42,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
         agentCredentials: creds === HOST ? null : creds,
         runOverrides: overrides.trim() ? overrides : null,
         agentInstructions: instructions,
+        mergeViaPr,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['project-settings', project.id] });
@@ -53,6 +55,7 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
     setOverrides(settings.data.runOverrides ?? '');
     setCreds(settings.data.agentCredentials ?? HOST);
     setInstructions(settings.data.agentInstructions ?? '');
+    setMergeViaPr(settings.data.mergeViaPr);
   }, [settings.data]);
   // An agent session in the main checkout whose first message is one of PDT's set-up prompts.
   const setUp = (guide: SetupGuide, agent: SetupAgent) =>
@@ -147,6 +150,12 @@ export function ProjectSettingsPanel({ project, className }: { project: Project;
           value={creds}
           onChange={edit(setCreds)}
         />
+      </Field>
+      <Field
+        label="Merging"
+        hint="On: Merge… only turns on auto-merge for the ticket's pull request (or asks the agent to open one); it never merges into the base branch on this machine."
+      >
+        <Switch checked={mergeViaPr} onChange={edit(setMergeViaPr)}>Merge through pull requests</Switch>
       </Field>
       {save.isError && <Alert tone="error">{save.error.message}</Alert>}
     </Section>
