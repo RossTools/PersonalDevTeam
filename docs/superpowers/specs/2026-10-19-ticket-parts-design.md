@@ -1,7 +1,7 @@
 # Personal Dev Team — Tickets that take several PRs (parts) Design
 
 Status: draft, 2026-10-19, awaiting the user's review (PDT-38). Amends the tickets spec
-(docs/superpowers/specs/2026-10-18-tickets-design.md §3, §5, §6, §8) and notes what Phase 7 inherits.
+(docs/superpowers/specs/2026-10-18-tickets-design.md §3, §5, §6, §8; it brings forward swimlanes from §12, grouped by parent only) and notes what Phase 7 inherits.
 
 ## 1. Problem
 
@@ -51,8 +51,10 @@ stepper is kept as the parent's progress display (§7).
 7. **Sessions belong to parts.** Each part's Start opens its own session in its own worktree; it ends with that part.
    Continuity comes from the ticket: the part's first prompt includes the parent and the other parts' state (§5).
    There is no long-lived "lead" session in the first version (§9, open question 4).
-8. **Board shows parts, not parents** (leaves only): each part card shows a parent chip with progress (`PDT-2 · 2/4`).
-   The parent's own view shows the full stepper. See open question 1.
+8. **Board: one lane per parent.** Parts are cards in their own columns inside their parent's lane; tickets without a
+   parent are in a lane at the top. The lane header is how a parent is tracked: key, title, stage, the stepper, and
+   Start next part. A parent gets a lane as soon as it is picked (To do), before any of its parts are (§7). Parents
+   are never cards themselves, so nothing is shown twice.
 9. **Keys:** parts get ordinary numbers (`PDT-46`), shown with the parent as `PDT-2 › PDT-46`. No `PDT-2.1` keys:
    numbers stay unique and search, links and branches stay as they are.
 
@@ -121,8 +123,33 @@ the squash commit as different changes to the same lines. The fix is to replay o
   (also to make an existing ticket a part, or detach it).
 - **Backlog:** rows show the parent chip on parts and `2/4` progress on parents. Filter `parent:` (a ticket, or
   "no parent"). Grouping by parent is deferred.
-- **Board:** parts appear as their own cards (stage, PR badge, parent chip with progress); parents don't. Filter by
-  parent to see one parent's parts.
+- **Board: lanes by parent.** The columns stay To do / In progress / Done (last 14 days). Rows are lanes:
+
+  ```
+                       To do          In progress          Done
+   ─ (no parent) ───────────────────────────────────────────────────
+                       PDT-6          PDT-30, PDT-42        PDT-39
+   ─ PDT-2 Phase 5 ▮▮▮▯▯ 3/5 · In progress · Start next part ───────
+                       PDT-50 5d      PDT-49 5c-2 (PR #57)  PDT-46 5a, PDT-47 5b
+   ─ PDT-4 Phase 7 ▯▯▯ 0/3 · To do · Start next part ───────────────
+                       (no parts picked yet)
+  ```
+
+  - **Which parents get a lane:** a parent in To do or In progress, or one with any part on the board (a part in To do,
+    In progress, or Done in the window). Moving a parent to To do is how it is picked; its lane shows at once, even
+    when every part is still in the backlog. A parent closed in the Done window keeps its lane until the window ends.
+  - **The lane header** is the parent's card: key, title, its rolled-up stage, the stepper (§4 roll-up), the PR badge
+    of a part in review, **Start next part**, a menu (Open, Move to Done once every part is closed, Add part), and a
+    collapse toggle (collapsed: just the header, remembered per browser). Clicking it opens the parent's peek.
+  - **Order:** the "no parent" lane first, then parent lanes by the parents' rank. Lanes can't be dragged; ranking the
+    parent in the backlog moves its lane.
+  - **Moves:** cards drag between columns within their lane only; changing a part's parent happens in the ticket.
+  - **Phones** (one column at a time): the lanes become group headings inside the column, with the stepper and a
+    `3/5` count.
+  - A board filter by parent shows just that lane.
+  - **API:** the board's three column queries already return each part's `parent`; the lane headers come from one
+    more query, `GET /api/tickets?hasParts=true&stage=todo,in_progress&closedAfter=…` (with `parts` roll-ups), plus
+    the parents of any parts on the board.
 - **Make into parts…** (ticket menu): opens a form with one row per part, prefilled from the description's list items
   under a heading named "Scope" or "Parts" if there is one (PDT-2's "Scope (one PR each)" list), each with "Starts
   after the previous one" ticked. Creates the parts in one bulk call.
@@ -134,7 +161,7 @@ the squash commit as different changes to the same lines. The fix is to replay o
 |---|---|
 | `POST /api/projects/{id}/tickets` | `parent?`; `after?` defaults to the parent's last part; `blockedByPrevious?` adds the `blocks` link |
 | `PATCH /api/tickets/{id}` | `parent: id \| null` (rules in §4; `409 invalid_parent` names the broken rule); closing a parent with open parts → `409 parts_open` |
-| `GET /api/tickets` | `parent=<id>\|none`; summaries carry `parent {id, key, title}` and `parts: PartsProgress` |
+| `GET /api/tickets` | `parent=<id>\|none`, `hasParts=true\|false`; summaries carry `parent {id, key, title}` and `parts: PartsProgress` |
 | `GET /api/tickets/{id}` | `parts: [TicketSummary]` in rank order |
 | `POST /api/tickets/{id}/start` | refused on a parent (`409 ticket_has_parts`); `next: true` on a parent starts its next part; `stack: true` (PR 2) |
 | `POST /api/tickets/{id}/parts` | create several parts in order (`[{title, description?}]`, all-or-nothing) |
@@ -159,7 +186,8 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
 
 - **PR 1, parts:** migration, pdt-core rules and roll-up (TDD), store, API (parent, parts, roll-up, Start refusal and
   `next`, parent stage, close rules), part prompts, the shared workspace and `finishMerged` change; web Parts section,
-  parent chips and progress, Parent picker, board leaves-only, Make into parts…, palette entry. Then convert PDT-2.
+  parent chips and progress, Parent picker, board lanes by parent, Make into parts…, palette entry. Then convert
+  PDT-2.
 - **PR 2, stacking:** `stacked_on`, Start "Stack on", changed files from the blocker's head, the restack notice and
   Restack.
 - PDT-45 (catching up with main counted as merged) is independent and goes first.
@@ -173,14 +201,15 @@ before. PDT-2's ended attempt stays as history. The old 5a worktree and its sess
   once; `parts_open`; the shared workspace survives a part's finish.
 - pdt-git (PR 2): `rebase --onto` after a squash merge applies cleanly where `merge main` conflicts (temp repo);
   changed files from the blocker's head.
-- Web: Parts section (add, reorder, start next), Make into parts… parsing, board leaves-only and filter, chips.
+- pdt-api: `hasParts` filter.
+- Web: Parts section (add, reorder, start next), Make into parts… parsing, chips; board lanes (a picked parent with
+  no parts on the board gets a lane, the no-parent lane first, lane order by rank, collapse remembered, drags stay in
+  their lane, phone group headings).
 
 ## 13. Open questions
 
-1. **Board:** parts only with a parent chip (proposed), or also a parent card with the stepper in its rolled-up
-   column?
-2. **Parent to Done:** a banner the user clicks (proposed), or automatic when the last part closes?
-3. **Stacking:** in the second PR (proposed), or not at all (always wait for the merge)?
-4. **A lead session:** is one session per part enough, or should a parent have a planning session that outlives its
+1. **Parent to Done:** a banner the user clicks (proposed), or automatic when the last part closes?
+2. **Stacking:** in the second PR (proposed), or not at all (always wait for the merge)?
+3. **A lead session:** is one session per part enough, or should a parent have a planning session that outlives its
    parts (in the main checkout, read-only, or in a scratch folder)?
-5. **Depth:** is one level enough (proposed), or will a part ever need its own parts?
+4. **Depth:** is one level enough (proposed), or will a part ever need its own parts?
