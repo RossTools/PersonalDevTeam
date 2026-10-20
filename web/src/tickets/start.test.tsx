@@ -61,17 +61,34 @@ describe('Start dialog', () => {
     expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked();
   });
 
-  it('can start Devin, only as a terminal, and remembers it without changing the mode for the others', async () => {
+  it('can start Devin as a conversation or a terminal', async () => {
     localStorage.setItem('pdt.tickets.startAgent', 'devin');
     const calls = stub(ready);
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     expect(within(dialog).getByRole('radio', { name: 'Devin' })).toBeChecked();
-    expect(within(dialog).getByRole('radio', { name: 'Terminal' })).toBeChecked();
-    expect(within(dialog).getByRole('radio', { name: 'Conversation' })).toBeDisabled();
+    expect(within(dialog).getByRole('radio', { name: 'Conversation' })).toBeChecked();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
-    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'devin', sessionMode: 'terminal' }));
-    expect(localStorage.getItem('pdt.tickets.startMode')).toBeNull();
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'devin', sessionMode: 'conversation' }));
+  });
+
+  it('offers only the agents the host has, a logged-out one with a hint', async () => {
+    localStorage.setItem('pdt.tickets.startAgent', 'devin');
+    const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
+    const calls = stubApi({
+      'GET /api/tickets/t1': ready,
+      'GET /api/projects': [project],
+      'GET /api/host/checks': { claude: tool(true, false), codex: tool(true, true), devin: tool(false, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 },
+      'POST /api/tickets/t1/start': () => started(ready),
+    });
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    await waitFor(() => expect(within(dialog).queryByRole('radio', { name: /Devin/ })).toBeNull());
+    // The remembered Devin is missing: the first agent the host has instead.
+    expect(within(dialog).getByRole('radio', { name: 'Claude · not logged in' })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'claude' }));
   });
 
   it('starts a conversation by default, or the terminal when chosen (remembered)', async () => {

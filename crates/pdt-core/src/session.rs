@@ -21,7 +21,7 @@ pub enum SessionKind {
 pub enum AgentKind {
     Claude,
     Codex,
-    /// Devin for Terminal (`devin`). Terminal only: PDT does not drive it as a conversation.
+    /// Devin for Terminal (`devin`); conversations go through `devin acp`.
     Devin,
 }
 
@@ -58,9 +58,13 @@ impl AgentKind {
         AgentKind::ALL.into_iter().find(|k| k.as_str() == s)
     }
     pub const ALL: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Devin];
-    /// Whether PDT can run this agent as a conversation (structured events) rather than only its terminal.
-    pub fn has_conversations(self) -> bool {
-        self != AgentKind::Devin
+    /// The permission mode a new conversation starts in. Devin has no mode that asks before edits, so it starts in
+    /// Accept edits (its "Code" mode).
+    pub fn default_permission_mode(self) -> crate::conversation::PermissionMode {
+        match self {
+            AgentKind::Devin => crate::conversation::PermissionMode::AcceptEdits,
+            _ => crate::conversation::PermissionMode::Ask,
+        }
     }
     /// The agent's name in messages: "Claude", "Codex" or "Devin".
     pub fn label(self) -> &'static str {
@@ -242,8 +246,6 @@ pub enum SessionValidationError {
     ConversationForShell,
     #[error("a model name must be 1 to 100 characters with no spaces")]
     BadModel,
-    #[error("this agent runs only as a terminal, not a conversation")]
-    ConversationUnsupported,
 }
 
 impl NewSession {
@@ -275,10 +277,6 @@ impl NewSession {
                 return Err(SessionValidationError::ConversationForShell);
             }
             (SessionKind::Shell, _, _) => SessionMode::Terminal,
-            (_, Some(a), Some(SessionMode::Conversation)) if !a.has_conversations() => {
-                return Err(SessionValidationError::ConversationUnsupported);
-            }
-            (_, Some(a), None) if !a.has_conversations() => SessionMode::Terminal,
             (_, _, m) => m.unwrap_or(SessionMode::Conversation),
         };
         let conversation = mode == SessionMode::Conversation;
@@ -290,7 +288,7 @@ impl NewSession {
             self.permission_mode.unwrap_or(if bypass_permissions {
                 PermissionMode::Bypass
             } else {
-                PermissionMode::Ask
+                self.agent.map_or(PermissionMode::Ask, AgentKind::default_permission_mode)
             })
         });
         // The two settings agree: bypass is a permission mode for a conversation.
@@ -855,13 +853,15 @@ mod tests {
         let mut codex = new(SessionKind::AgentTui, Some(AgentKind::Codex), 80, 24);
         codex.mode = Some(SessionMode::Terminal);
         assert_eq!(codex.validate().unwrap().mode, SessionMode::Terminal);
-        // Devin is terminal only: it defaults to a terminal and refuses a conversation.
+        // Devin is a conversation too, starting in Accept edits (it has no mode that asks before edits).
         let mut devin = new(SessionKind::AgentTui, Some(AgentKind::Devin), 80, 24);
-        devin.bypass_permissions = Some(true);
         let v = devin.clone().validate().unwrap();
+        assert_eq!((v.mode, v.permission_mode), (SessionMode::Conversation, Some(PermissionMode::AcceptEdits)));
+        devin.bypass_permissions = Some(true);
+        assert_eq!(devin.clone().validate().unwrap().permission_mode, Some(PermissionMode::Bypass));
+        devin.mode = Some(SessionMode::Terminal);
+        let v = devin.validate().unwrap();
         assert_eq!((v.mode, v.permission_mode, v.bypass_permissions), (SessionMode::Terminal, None, true));
-        devin.mode = Some(SessionMode::Conversation);
-        assert_eq!(devin.validate().unwrap_err(), SessionValidationError::ConversationUnsupported);
         let mut shell = new(SessionKind::Shell, None, 80, 24);
         assert_eq!(shell.clone().validate().unwrap().mode, SessionMode::Terminal);
         shell.mode = Some(SessionMode::Conversation);

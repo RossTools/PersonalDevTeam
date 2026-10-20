@@ -538,6 +538,8 @@ mod tests {
             env: vec![],
             env_remove: vec![],
             instructions: None,
+            config_file: None,
+            import_after: None,
         }
     }
 

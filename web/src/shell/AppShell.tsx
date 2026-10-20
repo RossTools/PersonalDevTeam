@@ -7,6 +7,7 @@ import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useThem
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
+import { useAgentAvailability } from '../common/useAgentAvailability';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
@@ -41,7 +42,7 @@ import { InstanceBadge } from './InstanceBadge';
 import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
-const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
+const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
@@ -238,11 +239,13 @@ export function AppShell() {
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
   };
+  const agents = useAgentAvailability();
   const items = paletteOpen
     ? paletteItems({
         workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
         tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
         ticketProjectId: view === 'tickets' ? backlog.projectId : null,
+        agents: agents.of,
       })
     : [];
 

@@ -1,4 +1,4 @@
-# Devin for Terminal (PDT-54)
+# Devin for Terminal (PDT-54, PDT-55)
 
 Facts PDT relies on, checked against `devin 3000.11.92` on macOS on 2026-10-19 (bundled docs in
 `~/.local/share/devin/cli/_versions/current/share/devin/docs`, and live sessions in a scratch repo). Windows is untested.
@@ -23,8 +23,8 @@ Facts PDT relies on, checked against `devin 3000.11.92` on macOS on 2026-10-19 (
 - Devin saves a session only at its first prompt (`sessions.created_at` is the prompt time). Resuming an id it never
   saved does not fail: it quietly starts a new session with a new id.
 - No flag for instructions. Devin reads AGENTS.md, CLAUDE.md, `.devin/rules` etc. from the repo.
-- `devin acp` is an Agent Client Protocol server (JSON-RPC on stdio); PDT does not use it yet, so Devin sessions are
-  terminal only (`AgentKind::has_conversations`).
+- `devin acp` is an Agent Client Protocol server (JSON-RPC on stdio); PDT drives Devin conversations through it (see
+  "Conversations: `devin acp`" below).
 
 ## Activity: OSC 7501
 
@@ -73,3 +73,95 @@ instructions) rather than on a copy that lost the user's settings.
 
 Known cost: settings Devin saves during a PDT session go to PDT's copy, not the user's file; the next launch copies the
 user's file again. The user chose this over no hooks (no exact resume, no PDT instructions).
+
+## Conversations: `devin acp` (PDT-55)
+
+Checked against `devin 3000.11.92` on macOS on 2026-10-19 by driving `devin acp` from a script in a scratch repo
+(recorded frames: crates/pdt-core/tests/fixtures/devin) and then through PDT with the real Devin. Mapping: pdt-core
+`conversation/devin.rs`; process: pdt-agents `adapter/devin.rs`; stand-in for tests: `fake-agent acp`.
+
+### Transport and start
+
+- `devin [--config <file>] acp`: JSON-RPC 2.0, one message per line on stdout; logs go to stderr (and
+  `~/.local/share/devin/cli/logs/`). Closing stdin ends it. `--config` works as for the TUI (a global option before
+  `acp`), and the `SessionStart` hook runs under ACP too (`source: startup`, `session_id` = the ACP session id); its
+  `additionalContext` reaches the model (verified with a secret word). So PDT hands Devin its instructions the same
+  way as in a terminal. PDT does not set `PDT_SESSION_ID` for a conversation, so the hook only prints them.
+- `initialize {protocolVersion: 1, clientCapabilities}` → `agentCapabilities.loadSession: true`,
+  `promptCapabilities.image: true`, `sessionCapabilities` (list, delete, close; no fork), `authMethods`
+  (`devin-browser`), `agentInfo.version` `0.0.0-dev` (useless). PDT offers no `fs` or `terminal` (Devin uses its own
+  tools) and `elicitation: {form: {}}` (needed for questions).
+- `session/new {cwd, mcpServers: []}` → `{sessionId, modes, configOptions}`; ids are word pairs (`dazed-dragon`), the
+  same ids `devin --resume` takes. Before the answer Devin sends `config_option_update`, `current_mode_update` and
+  `available_commands_update` for the new session.
+- Devin saves a session only at its first prompt: `session/load` (or `session/prompt`) of one never prompted fails
+  with `-32016 Session not found` (`data["cognition.ai/errorKind"] = "session_not_found"`). PDT then starts a new
+  session and says so.
+- `session/load {sessionId, cwd, mcpServers}` replays the whole conversation as `session/update`s (user and agent
+  chunks, tool calls) before it answers `{modes, configOptions}`. PDT has logged those turns already, so it drops
+  everything but settings and commands until the answer.
+
+### Modes and models
+
+- Modes (`session/set_mode {modeId}`, or `session/set_config_option {configId: "mode", value}`): `accept-edits`
+  ("Code", the default: edits in the folder run without asking, commands Devin does not judge safe ask), `smart`,
+  `ask` (read-only Q&A), `plan`, `bypass`. There is no mode that asks before edits; the CLI's `auto` is not offered
+  over ACP (setting it is silently ignored). PDT maps Ask and Accept edits to `accept-edits`, Plan to `plan`, Bypass to
+  `bypass`, and offers only Accept edits / Plan / Bypass for Devin. Devin reports every change
+  (`current_mode_update`, also after a plan is approved).
+- Models: the `model` config option (`currentValue`, `options[{value, name}]`); set with
+  `session/set_config_option {configId: "model", value}`. There is no "default" value to go back to.
+
+### A turn
+
+- `session/prompt {sessionId, prompt: [ContentBlock]}` (text; images as `{type: image, mimeType, data}`). Its answer
+  `{stopReason: end_turn | cancelled | max_tokens | max_turn_requests | refusal, usage}` ends the turn. No user-message
+  echo, no message or turn ids.
+- A `session/prompt` sent while a turn runs is taken into that turn (`cognition.ai/midTurnPrompts`): both calls are
+  answered together when it ends. PDT shows it as a steered message; "Send now" cancels first.
+- `session/update` kinds: `agent_message_chunk` / `agent_thought_chunk` (text deltas), `tool_call`, `tool_call_update`,
+  `usage_update {used, size}` (sent twice: once more with `_meta["cognition.ai/subagent_context"]`, ignored),
+  `session_info_update {title}`, `config_option_update`, `current_mode_update`, `available_commands_update`. Devin also
+  sends its own notifications (`_cognition.ai/thinking_complete`, `turn_stats`, `agent_stopped`,
+  `mcp/serversChanged`), which PDT ignores.
+- Tool calls: `toolCallId`, `title` ("Read file", "Ran touch"), `kind` (read, edit, execute, switch_mode), `rawInput`
+  (`command`, `file_path`, …), `_meta["cognition.ai/inferenceToolName"]` (read, edit, write, exec, write_plan,
+  exit_plan_mode, ask_user_question). Updates carry `status` (pending/in_progress/completed/failed) and `content`:
+  `{type: diff, path (absolute), oldText (absent for a new file), newText}` with the whole file, or
+  `{type: content, content: {type: text}}`, where a command's output is resent in full each time.
+  `_meta.terminal_exit.exit_code` gives a command's exit code. Paths are canonical (`/private/tmp/…` for `/tmp/…`).
+- `session/cancel {sessionId}` (a notification): the running tool call fails (`cognition.ai/canceled`), the prompt
+  answers `stopReason: cancelled`, and a late `completed` update for the cancelled call can follow (PDT keeps it
+  failed).
+
+### Requests from Devin
+
+- `session/request_permission {toolCall: {toolCallId}, options: [{optionId, name, kind}]}`. For a command:
+  `allow_once`, `allow_session` ("this session", kind `allow_always`), `allow_always` (saved for the repo),
+  `allow_always_global` (saved for every project), `switch_bypass`, `reject_once`. Answer
+  `{outcome: {outcome: "selected", optionId}}` (or `{outcome: "cancelled"}` when cancelling). PDT's "Always allow" is
+  `allow_session` only, never a saved rule. A rejection carries no message: PDT sends the user's note as the next
+  prompt (taken into the turn). The rejected call fails with `_meta["cognition.ai/rejected"]`.
+- Plans (plan mode): Devin writes the plan with `write_plan` (a diff to `~/.devin/plans/plan-*.md`; `rawInput.content`
+  is the plan without its front matter), then an `exit_plan_mode` tool call (`_meta["cognition.ai/isExitPlan"]`)
+  and a permission request with `plan_accept_edits`, `plan_bypass`, `reject_once`.
+- Questions (`ask_user_question`): `elicitation/create {mode: "form", message, requestedSchema}` with one string field
+  per question (`q0`, `q1`, …; `title` = header, `description` = question, `oneOf: [{const, title}]` = options;
+  multi-select fields are arrays) and `_meta["cognition.ai/allowOther"]`. Answer
+  `{action: "accept", content: {q0: "Blue"}}`, `{action: "decline"}` or `{action: "cancel"}`. Without the client's
+  `elicitation` capability Devin cannot ask.
+
+### Switching to the terminal and back
+
+Checked with the real Devin: `devin --resume <id>` opens a session ACP made (the ids are the same), `/exit` then Enter
+quits the TUI in about a second, and the next `session/load` replays the turns taken there. Every replayed prompt
+carries `_meta["cognition.ai/clientMessageId"]` and `_meta["cognition.ai/timestamp"]` (RFC 3339), so PDT stores the
+switch time in `history_from` and imports the replayed turns whose prompt is newer (pdt-core `iso_ms`). A session is
+locked to one process, so the TUI and the ACP server never run at once: switching parks one before starting the other.
+A folder Devin has not seen shows its trust dialog in the terminal first.
+
+### Not done
+
+- Make ticket: ACP has no fork, so a side request would land in the conversation. The route answers 409
+  `draft_unsupported` for Devin and the web hides it.
+- Windows is untested.

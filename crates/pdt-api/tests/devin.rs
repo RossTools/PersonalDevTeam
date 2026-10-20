@@ -1,4 +1,4 @@
-//! Devin terminal sessions (PDT-54) with a stand-in `devin`: launch flags, the per-session config with PDT's hook,
+//! Devin terminal sessions (PDT-54; conversations: devin_conversations.rs) with a stand-in `devin`: launch flags, the per-session config with PDT's hook,
 //! the conversation id its SessionStart hook reports, and resuming it.
 
 mod common;
@@ -55,7 +55,7 @@ async fn devin_runs_as_a_terminal_with_pdts_hook_and_resumes_the_conversation_it
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
     let body = json!({
-        "projectId": env.pid, "kind": "agent_tui", "agent": "devin", "bypassPermissions": true,
+        "projectId": env.pid, "kind": "agent_tui", "agent": "devin", "mode": "terminal", "bypassPermissions": true,
         "initialPrompt": "fix the tests", "cols": 80, "rows": 24,
     });
     let (s, sess) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
@@ -120,25 +120,11 @@ async fn devin_runs_as_a_terminal_with_pdts_hook_and_resumes_the_conversation_it
 }
 
 #[tokio::test]
-async fn devin_is_never_a_conversation() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = setup(tmp.path()).await;
-    let body = json!({
-        "projectId": env.pid, "kind": "agent_tui", "agent": "devin", "mode": "conversation", "cols": 80, "rows": 24,
-    });
-    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
-    let (s, caps) = call(&env.app, "GET", "/api/agents/devin/capabilities", None).await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(caps["conversation"], false);
-}
-
-#[tokio::test]
 async fn an_unreadable_user_config_starts_devin_on_its_own_config_without_pdts_hook() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
     std::fs::write(env.state.platform.devin_config_file.as_ref().unwrap(), "{ not json").unwrap();
-    let body = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "devin", "cols": 80, "rows": 24});
+    let body = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "devin", "mode": "terminal", "cols": 80, "rows": 24});
     let (s, sess) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{sess}");
     let launches = recorded_launches(&env.bin, "fakedevin", 1).await;
