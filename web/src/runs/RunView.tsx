@@ -80,7 +80,6 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
   };
 
   const entries = (): MenuEntry[] => [
-    ...(active ? [{ label: 'Restart', onSelect: () => void restart(), disabled: busy }] : []),
     ...(run.url ? [{ label: 'Copy URL', onSelect: () => void copyToClipboard(run.url!, 'URL copied') }] : []),
     ...(!theRepo && branchLink ? [{ label: 'Open on GitHub', onSelect: () => void window.open(branchLink, '_blank', 'noopener,noreferrer') }] : []),
     ...(!active
@@ -111,11 +110,10 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
         }
         actions={
           <>
-            {active ? (
-              <Button variant="primary" size="sm" disabled={busy} pending={stopping} onClick={() => void stop()}>Stop</Button>
-            ) : (
-              <Button variant="primary" size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>Restart</Button>
-            )}
+            {active && <Button variant="primary" size="sm" disabled={busy} pending={stopping} onClick={() => void stop()}>Stop</Button>}
+            <Button variant={active ? 'secondary' : 'primary'} size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>
+              Restart
+            </Button>
             <MenuButton label="Run actions" size="sm" placement="bottom end" entries={entries} />
           </>
         }

@@ -2351,11 +2351,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         let t = add(&store, "a", ValidNewTicket { stage: TicketStage::Ready, ..new("Fix the login") }).await;
-        assert_eq!(t.default_branch, "pdt/PX-1-fix-the-login");
+        assert_eq!(t.default_branch, "pdt-PX-1-fix-the-login");
         let before = store.get_ticket("a").await.unwrap().unwrap();
 
         let started = store
-            .start_attempt("at1", "a", None, "pdt/PX-1-fix-the-login", "main", "abc", json!({"forced": true}), 5)
+            .start_attempt("at1", "a", None, "pdt-PX-1-fix-the-login", "main", "abc", json!({"forced": true}), 5)
             .await
             .unwrap();
         assert_eq!((started.attempt.state, started.attempt.last_head.as_deref()), (AttemptState::Active, None));

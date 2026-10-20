@@ -63,7 +63,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 
 - Checks open blockers and overlaps (`mode: check` → 409 `start_blocked`; `force` starts anyway, recorded on the
   `started` event).
-- Makes branch `pdt/<KEY>-<n>-<slug>` and its worktree (adopting one that exists; a new branch starts from
+- Makes branch `pdt-<KEY>-<n>-<slug>` (no `/`, which some third-party tools break on; tickets started before
+  PDT-74 keep their `pdt/…` branches) and its worktree (adopting one that exists; a new branch starts from
   `origin/<base>`, fetched first, when that is ahead of the local base), an active attempt (one per ticket, 409
   `ticket_active`), moves the ticket to In progress, and starts an agent session (`sessions.attempt_id`; titled with
   the ticket title) whose first prompt is the ticket (`NewSession.initialPrompt`, appended as the last argv element on

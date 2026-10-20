@@ -22,7 +22,7 @@ import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
-import { OpenChangesContext } from '../review/open';
+import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import { isClosed, looksLikeKey } from '../tickets/model';
@@ -101,10 +101,15 @@ export function AppShell() {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
   }, [ws.focusItem]);
-  const openChanges = useCallback((w: { id: string; projectId: string }) => {
+  const openChanges = useCallback((w: { id: string; projectId: string }, opts?: OpenChangesOptions) => {
     setView('sessions');
-    void runAction(() => ws.focusItem({ kind: 'changes', id: w.id }, w.projectId));
-  }, [ws.focusItem]);
+    const item = { kind: 'changes', id: w.id } as const;
+    const here = opts?.here ? ws.workspace : undefined;
+    const existing = here?.tabs.find((t) => t.worktreeId === w.id);
+    if (here && existing) ws.selectTab(existing);
+    else if (here) void runAction(() => ws.openIn(item, here.id, ws.tab ? ws.tab.position + 1 : here.tabs.length));
+    else void runAction(() => ws.focusItem(item, w.projectId));
+  }, [ws.focusItem, ws.openIn, ws.selectTab, ws.workspace, ws.tab]);
   // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
   // otherwise the server puts them at the end of the project workspace.
   const startTicket = useCallback((t: { id: string; projectId: string }, opts?: { here?: boolean }) => {

@@ -58,7 +58,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - **Host** — docs/reference/host.md: profiles and data dirs, `/api/health`, remote access over `tailscale serve` (owner-only, Host guard), the tray app, releases, updates through pdt-host (verified download, health check, rollback), pdt-host at login.
 - **Agent sessions** — docs/reference/agents.md: PDT's instructions to every agent (pdt-core `agent_context` + the project's agent instructions; built-in guides served from docs/ by pdt-api `guides.rs`), activity hooks, PTY terminals, Claude/Codex restart and resume, auto-resume, Devin, host defaults (default agent and view).
 - **Conversations** — docs/reference/conversations.md: the structured view (Claude stream-json, a PDT-owned Codex app-server, Devin ACP), its events API, Conversation | Terminal switching, attachments, Make ticket.
-- **Tickets** — docs/reference/tickets.md: tickets and the board, parts (parent tickets), Start (branch `pdt/<KEY>-<n>-<slug>`, worktree, attempt, agent session), merge detection, PR/CI tracking and notices, areas and overlap.
+- **Tickets** — docs/reference/tickets.md: tickets and the board, parts (parent tickets), Start (branch `pdt-<KEY>-<n>-<slug>`, worktree, attempt, agent session), merge detection, PR/CI tracking and notices, areas and overlap.
 - **Review** — docs/reference/review.md: the Changes view, line comments, Send feedback, Approve, Merge.
 - **Workspaces, projects, worktrees, runs** — docs/reference/workspaces.md; run configuration in docs/run-config.md.
 - Invariants that are easy to break:

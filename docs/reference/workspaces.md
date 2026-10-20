@@ -45,7 +45,7 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 ## Worktrees
 
 - Worktrees live inside the repo at `.worktrees/<branch with / replaced by ->` (listed in .git/info/exclude; pdt-core
-  `worktree.rs`), so `pdt/PDT-7-x` lives in `.worktrees/pdt-PDT-7-x`. Folders there made with plain git are adopted.
+  `worktree.rs`), so `feature/x` lives in `.worktrees/feature-x`. Folders there made with plain git are adopted.
 - `DELETE /api/worktrees/{id}` refuses while busy (`worktree_busy`) or dirty without `force` (`worktree_dirty`); the
   project's Settings page and the merge banner use it.
 - A folder there that is not a git worktree for that branch makes Run on that branch fail with

@@ -282,7 +282,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
                 branch={theBranch}
                 repo={theRepo}
                 base={theBase}
-                {...(session.worktreeId ? { onReview: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }) } : {})}
+                {...(session.worktreeId ? { onReview: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }, { here: true }) } : {})}
                 className="min-w-0"
               />
             ) : (
