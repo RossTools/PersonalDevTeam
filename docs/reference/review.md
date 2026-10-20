@@ -51,5 +51,6 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
 The ticket tab's Changes (its section tab shows the diff size; the section last shown is remembered per ticket in
 localStorage), the session header's Changes button (`ChangesButton`, with the diff size), and changes tabs
 (`workspace_tabs.worktree_id`, `OpenTab.worktreeId`; only close) from a worktree `BranchChip`'s Review changes, the
-project's worktree list and the palette. Viewed per browser (localStorage, by version). A click on a line number picks the line, Shift+click extends the
-pick, and "+" on a picked line comments on all of them; keys `c` (comment on picked or selected lines), `]`/`[` (files), `v` (viewed); `@ui` `SplitPane`, `Comment`/`CommentThread`/`CommentComposer`.
+project's worktree list and the palette. Viewed per browser (localStorage, by version). A click on a line number picks
+the line, Shift+click extends the pick, and "+" on a picked line comments on all of them; keys `c` (comment on picked
+or selected lines), `]`/`[` (files), `v` (viewed); `@ui` `SplitPane`, `Comment`/`CommentThread`/`CommentComposer`.
