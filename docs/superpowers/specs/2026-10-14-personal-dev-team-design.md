@@ -192,6 +192,9 @@ trait AgentAdapter {
 
 ## 6. Workflow engine and personas
 
+> Amended 2026-10-20 by docs/superpowers/specs/2026-10-20-workflows-and-pm-vision.md: the stages below become the
+> first template ("Pipeline") on a general workflow engine, instead of a fixed stage machine in `.pdt/workflow.toml`.
+
 ### 6.1 Default workflow
 
 ```
