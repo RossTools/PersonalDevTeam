@@ -68,7 +68,10 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   `origin/<base>`, fetched first, when that is ahead of the local base), an active attempt (one per ticket, 409
   `ticket_active`), moves the ticket to In progress, and starts an agent session (`sessions.attempt_id`; titled with
   the ticket title) whose first prompt is the ticket (`NewSession.initialPrompt`, appended as the last argv element on
-  the creating launch only; capped at 8 KB). On Windows, when the agent is a `.cmd` shim run through cmd.exe, the
+  the creating launch only; capped at 8 KB). The prompt (pdt-core `start_prompt`) is the key and title, the
+  description, the ticket's comments (oldest first, quoted), the "Part of" block for a part, and the branch line.
+  Comments get only the room left: none when a description had to be cut, else the oldest are dropped first (with a
+  note saying how many) and a newest comment too long for the room is cut. On Windows, when the agent is a `.cmd` shim run through cmd.exe, the
   prompt goes to `<data dir>/sessions/<id>/prompt.md` and the agent gets a short prompt naming that file.
 - Tabs: the ticket tab, then the session tab after it (or both in a new free-form workspace `<KEY>-<n>`). Sessions
   carry `ticket {id, key}` (sidebar and tab chips). Session titles never name the agent (a new session is titled with

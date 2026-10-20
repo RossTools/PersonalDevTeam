@@ -171,6 +171,10 @@ async fn codex_gets_the_prompt_after_its_flags() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
     let id = ticket(&env, json!({"title": "Add -v flag"})).await;
+    // The ticket's comments are in the prompt too.
+    let (st, _) =
+        call(&env.app, "POST", &format!("/api/tickets/{id}/comments"), Some(json!({"body": "Use clap."}))).await;
+    assert_eq!(st, StatusCode::CREATED);
     let r = started(&env, &id, json!({"agent": "codex", "bypassPermissions": true, "branch": "feature/v"})).await;
     assert_eq!(r["attempt"]["branch"], "feature/v");
     assert_eq!(r["session"]["title"], "Add -v flag");
@@ -181,7 +185,8 @@ async fn codex_gets_the_prompt_after_its_flags() {
         assert_eq!(launch[n - 2], "--dangerously-bypass-approvals-and-sandbox");
         assert_eq!(
             launch[n - 1],
-            "PDT-1: Add -v flag\n\n(Ticket PDT-1 in PDT. Work in this worktree on branch feature/v.)"
+            "PDT-1: Add -v flag\n\nComments, oldest first:\n\n> Use clap.\n\n(Ticket PDT-1 in PDT. Work in this \
+             worktree on branch feature/v.)"
         );
     }
     env.state.ptys.shutdown().await;

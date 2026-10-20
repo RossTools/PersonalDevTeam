@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::parts::TicketParent;
 use pdt_core::session::{SessionKind, ValidSession};
-use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, part_prompt, started_session_title};
+use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, start_prompt, started_session_title};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
 use pdt_core::workspace::{TabItem, Workspace, valid_workspace_name};
 use pdt_store::{AttemptInfo, TicketError};
@@ -178,6 +178,13 @@ pub(crate) async fn start(
             None
         }
     };
+    let comments = match st.store.comment_bodies(&id).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(ticket = %id, error = ?e, "could not read the ticket's comments for its prompt");
+            Vec::new()
+        }
+    };
     let conversation = v.session_mode == SessionMode::Conversation;
     let permission_mode = conversation.then_some(if v.bypass_permissions {
         PermissionMode::Bypass
@@ -193,12 +200,13 @@ pub(crate) async fn start(
             bypass_permissions: v.bypass_permissions,
             size: v.size,
             // A conversation gets it as its first message, a terminal as the agent's last argument.
-            initial_prompt: Some(part_prompt(
+            initial_prompt: Some(start_prompt(
                 &key,
                 &ticket.summary.title,
                 &ticket.description,
                 &branch,
                 part_context.as_ref(),
+                &comments,
             )),
             mode: v.session_mode,
             model: None,
