@@ -844,7 +844,7 @@ impl Store {
     /// Adds a ticket with the project's next number, at the top of its stage (or where `before`/`after` say), with a
     /// `created` event. NotFound("project") if there is no such project.
     pub async fn create_ticket(&self, id: &str, project_id: &str, t: &ValidNewTicket, now: i64) -> TResult<Ticket> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         insert_ticket(&mut tx, id, project_id, t, now).await?;
         tx.commit().await?;
         self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))
@@ -853,7 +853,7 @@ impl Store {
     /// Makes several parts of `parent`, in order after its existing parts, in one transaction (PDT-38). With
     /// `blocked_by_previous`, each is blocked by the part before it.
     pub async fn create_parts(&self, parent: &str, v: &ValidParts, now: i64) -> TResult<Vec<TicketSummary>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some((project_id, _, _)) = ticket_head(&mut tx, parent).await? else {
             return Err(TicketError::NotFound("ticket"));
         };
@@ -935,7 +935,7 @@ impl Store {
     /// A part started: its parent moves to In progress if it was Draft, Ready or To do (a system `moved` event).
     /// Returns whether it moved.
     pub async fn part_started(&self, parent: &str, now: i64) -> Result<bool, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some((_, _, stage)) = ticket_head(&mut tx, parent).await? else { return Ok(false) };
         if !matches!(stage, TicketStage::Draft | TicketStage::Ready | TicketStage::Todo) {
             return Ok(false);
@@ -1067,7 +1067,7 @@ impl Store {
     /// Applies an edit, recording `moved` for a stage change and `edited` for the rest. None if there is no such
     /// ticket.
     pub async fn patch_ticket(&self, id: &str, p: &ValidPatch, now: i64) -> TResult<Option<Ticket>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
         let (description,): (String,) =
             sqlx::query_as("SELECT description FROM tickets WHERE id = ?").bind(id).fetch_one(&mut *tx).await?;
@@ -1169,7 +1169,7 @@ impl Store {
 
     /// Deletes a ticket (its tab, links, labels and events go with it). Refused while it has an active attempt.
     pub async fn delete_ticket(&self, id: &str) -> Result<DeleteTicket, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         if ticket_head(&mut tx, id).await?.is_none() {
             return Ok(DeleteTicket::NotFound);
         }
@@ -1204,7 +1204,7 @@ impl Store {
         if before == Some(id) || after == Some(id) {
             return Err(TicketError::Invalid("a ticket can't be placed next to itself".into()));
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some((project_id, _, stage)) = ticket_head(&mut tx, id).await? else { return Ok(None) };
         let place = match place {
             Place::Edge(edge, _) => Place::Edge(edge, stage),
@@ -1221,7 +1221,7 @@ impl Store {
     pub async fn bulk_tickets(&self, ids: &[String], action: &ValidBulk, now: i64) -> TResult<u32> {
         let mut seen = HashSet::new();
         let ids: Vec<String> = ids.iter().filter(|id| seen.insert(id.as_str())).cloned().collect();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let mut heads = Vec::with_capacity(ids.len());
         for id in &ids {
             let Some(h) = ticket_head(&mut tx, id).await? else { return Err(TicketError::NotFound("ticket")) };
@@ -1385,7 +1385,7 @@ impl Store {
         extra: serde_json::Value,
         now: i64,
     ) -> TResult<StartedAttempt> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some((_, key, stage)) = ticket_head(&mut tx, ticket_id).await? else {
             return Err(TicketError::NotFound("ticket"));
         };
@@ -1448,7 +1448,7 @@ impl Store {
     /// Takes back a `start_attempt` whose session could not be made: the attempt, its events and the stage change go;
     /// the ticket is as it was (the worktree is the caller's).
     pub async fn undo_start(&self, started: &StartedAttempt) -> Result<(), StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         sqlx::query("DELETE FROM attempts WHERE id = ?").bind(&started.attempt.id).execute(&mut *tx).await?;
         for e in &started.event_ids {
             sqlx::query("DELETE FROM ticket_events WHERE id = ?").bind(e).execute(&mut *tx).await?;
@@ -1477,7 +1477,7 @@ impl Store {
             AttemptState::Abandoned => EventKind::Abandoned,
             AttemptState::Active => return Ok(None),
         };
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let row: Option<(String, String, String)> = sqlx::query_as(
             "UPDATE attempts SET state = ?, ended_at = ? WHERE id = ? AND state = 'active' \
              RETURNING ticket_id, branch, base_branch",
@@ -1664,7 +1664,7 @@ impl Store {
         if from == to {
             return Err(TicketError::Invalid("a ticket can't link to itself".into()));
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some((project, from_key, _)) = ticket_head(&mut tx, from).await? else { return Ok(None) };
         let Some((to_project, to_key, _)) = ticket_head(&mut tx, to).await? else {
             return Err(TicketError::Invalid("the ticket to link to does not exist".into()));
@@ -1716,7 +1716,7 @@ impl Store {
     /// Removes a link (`relates` in either direction). NotFound("link") if there is none; None if `from` doesn't
     /// exist.
     pub async fn remove_link(&self, from: &str, to: &str, kind: LinkKind, now: i64) -> TResult<Option<Ticket>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let Some((_, from_key, from_stage)) = ticket_head(&mut tx, from).await? else { return Ok(None) };
         let r = sqlx::query(
             "DELETE FROM ticket_links WHERE kind = ?1 AND \
@@ -1782,7 +1782,7 @@ impl Store {
 
     /// Adds a comment to the ticket's timeline. None if there is no such ticket.
     pub async fn add_comment(&self, ticket_id: &str, body: &str, now: i64) -> Result<Option<TicketEvent>, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         if ticket_head(&mut tx, ticket_id).await?.is_none() {
             return Ok(None);
         }

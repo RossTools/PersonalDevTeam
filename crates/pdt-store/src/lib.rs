@@ -35,6 +35,14 @@ fn to_project((id, name, repo_path, base_branch, created_at, key): ProjectRow) -
 const PROJECT_COLUMNS: &str = "id, name, repo_path, base_branch, created_at, key";
 
 impl Store {
+    /// A write transaction: `BEGIN IMMEDIATE`, so it takes the write lock up front. A deferred one that reads first
+    /// and then writes fails at once with "database is locked" (SQLITE_BUSY_SNAPSHOT, which the busy timeout does not
+    /// retry) when another connection wrote in between, e.g. a new conversation's first events while Start opens its
+    /// tabs.
+    pub(crate) async fn write_tx(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
+        self.pool.begin_with("BEGIN IMMEDIATE").await
+    }
+
     /// Opens (creating if needed) the database, backing up to `<db dir>/backups`
     /// before applying any pending migrations.
     pub async fn open(db_path: &Path) -> Result<Store, StoreError> {
@@ -97,7 +105,7 @@ impl Store {
         } else {
             p.key.clone()
         };
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         sqlx::query(
             "INSERT INTO projects (id, name, repo_path, base_branch, created_at, key) VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -130,7 +138,7 @@ impl Store {
     /// Renames a project (and its workspace) and/or changes its key. False if there is no such project;
     /// `Conflict` if the key is taken.
     pub async fn update_project(&self, id: &str, name: Option<&str>, key: Option<&str>) -> Result<bool, StoreError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.write_tx().await?;
         let found: Option<(String,)> =
             sqlx::query_as("SELECT id FROM projects WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
         if found.is_none() {
