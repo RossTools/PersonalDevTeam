@@ -54,8 +54,14 @@ async fn add(
     base_branch: Option<String>,
     key: Option<String>,
 ) -> Result<Project, ApiError> {
-    let info =
-        tokio::task::spawn_blocking(move || pdt_git::resolve_repo(&path)).await.map_err(ApiError::internal)??;
+    // The base defaults to the repository's default branch, not whichever branch happens to be checked out.
+    let (info, default) = tokio::task::spawn_blocking(move || {
+        let info = pdt_git::resolve_repo(&path)?;
+        let default = pdt_git::default_branch(&info.root);
+        Ok::<_, pdt_git::GitError>((info, default))
+    })
+    .await
+    .map_err(ApiError::internal)??;
     if let Some(k) = &key
         && st.store.project_keys().await?.iter().any(|t| t == k)
     {
@@ -65,7 +71,7 @@ async fn add(
         id: uuid::Uuid::now_v7().to_string(),
         name,
         repo_path: info.root.to_string_lossy().into_owned(),
-        base_branch: base_branch.or(info.current_branch).unwrap_or_else(|| "main".into()),
+        base_branch: base_branch.or(default).or(info.current_branch).unwrap_or_else(|| "main".into()),
         created_at: now_ms(),
         key: key.unwrap_or_default(),
         github_repo: None,
@@ -183,14 +189,42 @@ pub(crate) async fn update(
         other => other.map(String::from),
     };
     let key = patch.key.as_deref().map(valid_key).transpose()?;
-    let found = st.store.update_project(&id, name.as_deref(), key.as_deref()).await.map_err(|e| match e {
-        pdt_store::StoreError::Conflict(_) => key_taken(),
-        other => other.into(),
-    })?;
+    let base = match patch.base_branch.as_deref().map(str::trim) {
+        Some("") => return Err(pdt_core::project::ValidationError::EmptyBranch.into()),
+        Some(b) => Some(checked_base(&st, &id, b.to_string()).await?),
+        None => None,
+    };
+    let found =
+        st.store.update_project(&id, name.as_deref(), key.as_deref(), base.as_deref()).await.map_err(|e| match e {
+            pdt_store::StoreError::Conflict(_) => key_taken(),
+            other => other.into(),
+        })?;
     if !found {
         return Err(ApiError::not_found("project"));
     }
     Ok(Json(load(&st, &id).await?))
+}
+
+/// `branch` if it names a branch of the project's repository, local or on `origin` (new worktrees start from it).
+async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String, ApiError> {
+    let project = st.store.get_project(id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let repo = PathBuf::from(&project.repo_path);
+    tokio::task::spawn_blocking(move || {
+        if branch.starts_with('-') {
+            return Err(pdt_git::GitError::InvalidBranch(branch).into());
+        }
+        pdt_git::check_branch_name(&repo, &branch)?;
+        if !pdt_git::list_branches(&repo)?.iter().any(|b| b.name == branch) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "unknown_branch",
+                format!("{branch} is not a branch of this repository (locally or on origin)"),
+            ));
+        }
+        Ok(branch)
+    })
+    .await
+    .map_err(ApiError::internal)?
 }
 
 /// Removes a project from PDT: stops its sessions and runs and forgets everything about it. Files are never touched.

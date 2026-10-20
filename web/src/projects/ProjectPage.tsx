@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Input, Link, Page, Section, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Alert, Badge, Button, EmptyState, Input, Link, Page, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
@@ -11,16 +11,21 @@ import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { repoUrl } from './github';
 import { useOpenChanges } from '../review/open';
 
-/** Name and key: one form, one Save (spec §6.1). Folder and GitHub link below. */
+/** Name, key and base branch: one form, one Save (spec §6.1). Folder and GitHub link below. */
 function Identity({ project }: { project: Project }) {
   const qc = useQueryClient();
   const errorId = useId();
   const [name, setName] = useState(project.name);
   const [key, setKey] = useState(project.key);
+  const [base, setBase] = useState(project.baseBranch);
+  const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id) });
+  const branchOptions = (branches.data ?? []).map((b) => ({ value: b.name, label: b.local ? b.name : `${b.name} (origin)` }));
+  if (!branchOptions.some((o) => o.value === project.baseBranch)) branchOptions.unshift({ value: project.baseBranch, label: project.baseBranch });
   const save = useMutation({
     mutationFn: () => api.updateProject(project.id, {
       ...(name.trim() !== project.name ? { name } : {}),
       ...(key.trim().toUpperCase() !== project.key ? { key } : {}),
+      ...(base !== project.baseBranch ? { baseBranch: base } : {}),
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
@@ -30,9 +35,10 @@ function Identity({ project }: { project: Project }) {
   useEffect(() => {
     if (save.isError) document.getElementById(errorId)?.focus();
   }, [save.isError, save.error, errorId]);
-  const changed = name.trim() !== project.name || key.trim().toUpperCase() !== project.key;
+  const changed = name.trim() !== project.name || key.trim().toUpperCase() !== project.key || base !== project.baseBranch;
   const nameId = useId();
   const keyId = useId();
+  const baseId = useId();
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (changed) save.mutate(); }}>
       <Section
@@ -54,6 +60,14 @@ function Identity({ project }: { project: Project }) {
         >
           <Input id={keyId} aria-label="Project key" mono className="w-28 uppercase" maxLength={10} value={key} onChange={(e) => setKey(e.target.value)} />
         </SettingsRow>
+        <SettingsRow
+          label="Base branch"
+          htmlFor={baseId}
+          description="New worktrees and tickets branch from it, and their changes are reviewed and merged against it."
+        >
+          <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" options={branchOptions} value={base} onChange={setBase} />
+        </SettingsRow>
+        {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}
         {save.isError && <Alert id={errorId} tabIndex={-1} tone="error">{save.error.message}</Alert>}
         <SettingsRow label="Repository folder">
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
@@ -186,7 +200,7 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
 export function ProjectPage({ project, onRemoved }: { project: Project; onRemoved: () => void }) {
   return (
     <Page title={project.name} actions={<ProjectKey projectKey={project.key} />}>
-      <Identity key={`${project.name}:${project.key}`} project={project} />
+      <Identity key={`${project.name}:${project.key}:${project.baseBranch}`} project={project} />
       <Worktrees project={project} />
       <ProjectSettingsPanel project={project} />
       <RemoveProject project={project} onRemoved={onRemoved} />

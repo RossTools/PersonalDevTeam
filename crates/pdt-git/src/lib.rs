@@ -216,6 +216,18 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     matches!(git_with_env(repo, &["rev-parse", "--verify", "--quiet", &r], &[]), Ok(Ok(s)) if !s.is_empty())
 }
 
+/// The repository's default branch: what `origin/HEAD` points at (set by a clone), else a local `main` or `master`.
+/// None when neither tells (no origin and neither branch), so the caller falls back to the checked-out branch.
+pub fn default_branch(repo: &Path) -> Option<String> {
+    if let Ok(Ok(s)) = git_with_env(repo, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], &[])
+        && let Some(b) = s.strip_prefix("origin/")
+        && !b.is_empty()
+    {
+        return Some(b.to_string());
+    }
+    ["main", "master"].into_iter().find(|b| branch_exists(repo, b)).map(String::from)
+}
+
 fn ref_exists(repo: &Path, full_ref: &str) -> Result<bool, GitError> {
     Ok(matches!(git_with_env(repo, &["rev-parse", "--verify", "--quiet", full_ref], &[])?, Ok(s) if !s.is_empty()))
 }
@@ -576,6 +588,25 @@ mod tests {
         assert!(branch_exists(&clone, "feature/remote"), "now a local tracking branch");
         let c = clone.join(".worktrees").join("nope");
         assert!(matches!(add_worktree_for_branch(&clone, &c, "nope"), Err(GitError::UnknownRef(_))));
+    }
+
+    #[test]
+    fn default_branch_is_origin_head_else_main_or_master() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        repo_with_commit(&origin);
+        git_ok(&origin, &["branch", "-m", "main", "trunk"]);
+        let clone = tmp.path().join("clone");
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&origin).arg(&clone).status().unwrap().success());
+        git_ok(&clone, &["checkout", "-q", "-b", "feature/x"]);
+        assert_eq!(default_branch(&clone).as_deref(), Some("trunk"), "origin/HEAD, not the checked-out branch");
+
+        git_ok(&origin, &["checkout", "-q", "-b", "feature/y"]);
+        assert_eq!(default_branch(&origin), None, "no origin and no main or master");
+        git_ok(&origin, &["branch", "master"]);
+        assert_eq!(default_branch(&origin).as_deref(), Some("master"));
+        git_ok(&origin, &["branch", "main"]);
+        assert_eq!(default_branch(&origin).as_deref(), Some("main"));
     }
 
     #[test]
