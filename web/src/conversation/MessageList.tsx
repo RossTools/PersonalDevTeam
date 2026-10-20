@@ -285,9 +285,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'agent_message': {
       const streamed = r.itemId ? streams[r.itemId]?.markdown : undefined;
       const text = streamed && streamed.length > ev.markdown.length ? streamed : ev.markdown;
-      return ev.phase === 'final'
-        ? <Markdown>{text}</Markdown>
-        : <Markdown className="px-1 text-xs text-muted-foreground">{text}</Markdown>;
+      // Commentary (the short replies between tool calls) reads like the final answer: it is often what the agent
+      // most wants seen.
+      return <Markdown>{text}</Markdown>;
     }
     case 'reasoning':
       return ev.summary.trim() ? (
