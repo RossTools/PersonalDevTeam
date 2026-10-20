@@ -4,7 +4,7 @@ import { Compartment, EditorState, RangeSet, StateEffect, StateField, Text, type
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, gutterLineClass, lineNumbers, type DecorationSet } from '@codemirror/view';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
-import { Chunk, MergeView, getChunks, unifiedMergeView } from '@codemirror/merge';
+import { Chunk, MergeView, getChunks, presentableDiff, unifiedMergeView } from '@codemirror/merge';
 import type { CommentSide } from '../api/gen/CommentSide';
 import { codeTheme, languageFor, v } from '../files/codeTheme';
 
@@ -124,6 +124,42 @@ function changedLines(chunks: readonly Chunk[], doc: Text, side: 'a' | 'b'): Set
   return out;
 }
 
+/** How much of a line pair must stay the same for its changed words to be marked (else the line just changed). */
+const SIMILAR = 0.5;
+
+/**
+ * GitHub-style changed words: inside each chunk, the n-th removed line is paired with the n-th added line, and when the
+ * two are mostly the same, the words that differ are marked (document positions on each side). Lines without a partner
+ * (wholly added or removed) and pairs that are mostly different get no marks: the line colour says enough.
+ */
+export function wordChanges(chunks: readonly Chunk[], a: Text, b: Text): { a: [number, number][]; b: [number, number][] } {
+  const out = { a: [] as [number, number][], b: [] as [number, number][] };
+  const lines = (doc: Text, from: number, to: number, end: number) => {
+    if (to <= from) return [];
+    const first = doc.lineAt(Math.min(from, doc.length)).number;
+    const last = doc.lineAt(Math.min(end, doc.length)).number;
+    return Array.from({ length: last - first + 1 }, (_, i) => doc.line(first + i));
+  };
+  for (const c of chunks) {
+    const la = lines(a, c.fromA, c.toA, c.endA);
+    const lb = lines(b, c.fromB, c.toB, c.endB);
+    for (let i = 0; i < Math.min(la.length, lb.length); i++) {
+      const [x, y] = [la[i]!, lb[i]!];
+      const changes = presentableDiff(x.text, y.text);
+      const changed = changes.reduce((n, ch) => n + Math.max(ch.toA - ch.fromA, ch.toB - ch.fromB), 0);
+      if (changes.length === 0 || 1 - changed / Math.max(x.length, y.length, 1) < SIMILAR) continue;
+      for (const ch of changes) {
+        if (ch.toA > ch.fromA) out.a.push([x.from + ch.fromA, x.from + ch.toA]);
+        if (ch.toB > ch.fromB) out.b.push([y.from + ch.fromB, y.from + ch.toB]);
+      }
+    }
+  }
+  return out;
+}
+
+const wordMarks = (ranges: [number, number][], cls: string) =>
+  EditorView.decorations.of(Decoration.set(ranges.map(([f, t]) => Decoration.mark({ class: cls }).range(f, t)), true));
+
 /** GitHub's syntax colours (Primer "prettylights"), from the code tokens. */
 const githubHighlight = syntaxHighlighting(HighlightStyle.define([
   { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: v('code-keyword') },
@@ -156,10 +192,9 @@ const diffTheme = EditorView.theme({
   '.cm-comment-gutter .cm-gutterElement:hover .cm-sign': { visibility: 'hidden' },
   '.cm-changedLine, .cm-insertedLine, &.cm-merge-b .cm-changedLine': { backgroundColor: v('diff-add') },
   '&.cm-merge-a .cm-changedLine, .cm-deletedChunk, .cm-deletedLine': { backgroundColor: v('diff-del') },
-  '.cm-changedText, &.cm-merge-b .cm-changedText, .cm-insertedLine .cm-changedText': { background: v('diff-add-strong') },
-  '&.cm-merge-a .cm-changedText, .cm-deletedChunk .cm-deletedText, .cm-deletedLine .cm-changedText, .cm-deletedChunk del': {
-    background: v('diff-del-strong'), textDecoration: 'none',
-  },
+  '.cm-word-add': { backgroundColor: v('diff-add-strong'), borderRadius: '2px' },
+  '.cm-word-del': { backgroundColor: v('diff-del-strong'), borderRadius: '2px' },
+  '.cm-deletedChunk del': { textDecoration: 'none' },
   '.cm-collapsedLines': {
     background: v('diff-hunk'), color: v('diff-hunk-fg'), fontFamily: v('font-sans'), fontSize: '12px', padding: '4px 12px',
     cursor: 'pointer',
@@ -251,6 +286,7 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     const docA = Text.of(oldText.split('\n'));
     const docB = Text.of(newText.split('\n'));
     const chunks = Chunk.build(docA, docB, { scanLimit: 500 });
+    const words = wordChanges(chunks, docA, docB);
     const delLines = changedLines(chunks, docA, 'a');
     const addLines = changedLines(chunks, docB, 'b');
     const lineMarks = (doc: Text, lines: Set<number>, mark: LineClass) =>
@@ -286,10 +322,10 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     let single: EditorView | null = null;
     if (mode === 'split') {
       merge = new MergeView({
-        a: { doc: oldText, extensions: [side('old', langOld, delLines), lineMarks(docA, delLines, DEL_LINE)] },
-        b: { doc: newText, extensions: [side('new', langNew, addLines), lineMarks(docB, addLines, ADD_LINE)] },
+        a: { doc: oldText, extensions: [side('old', langOld, delLines), lineMarks(docA, delLines, DEL_LINE), wordMarks(words.a, 'cm-word-del')] },
+        b: { doc: newText, extensions: [side('new', langNew, addLines), lineMarks(docB, addLines, ADD_LINE), wordMarks(words.b, 'cm-word-add')] },
         parent,
-        highlightChanges: true,
+        highlightChanges: false,
         gutter: false,
         ...(collapse ? { collapseUnchanged: collapse } : {}),
       });
@@ -302,7 +338,8 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
           extensions: [
             ...side('new', langNew, addLines),
             lineMarks(docB, addLines, ADD_LINE),
-            unifiedMergeView({ original: oldText, mergeControls: false, highlightChanges: true, gutter: false, syntaxHighlightDeletions: true, ...(collapse ? { collapseUnchanged: collapse } : {}) }),
+            wordMarks(words.b, 'cm-word-add'),
+            unifiedMergeView({ original: oldText, mergeControls: false, highlightChanges: false, gutter: false, syntaxHighlightDeletions: true, ...(collapse ? { collapseUnchanged: collapse } : {}) }),
           ],
         }),
       });

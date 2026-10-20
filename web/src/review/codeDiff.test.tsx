@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Chunk } from '@codemirror/merge';
 import { Text } from '@codemirror/state';
-import { CodeDiff, oldToNewLine } from './CodeDiff';
+import { CodeDiff, oldToNewLine, wordChanges } from './CodeDiff';
 
 const text = (s: string) => Text.of(s.split('\n'));
 
@@ -18,6 +18,26 @@ describe('oldToNewLine', () => {
     const kept = text('a\nc');
     expect(oldToNewLine(Chunk.build(gone, kept), gone, kept, 2)).toBe(1); // a pure removal: after the line before it
     expect(oldToNewLine(Chunk.build(gone, kept), gone, kept, 3)).toBe(2);
+  });
+});
+
+describe('wordChanges', () => {
+  const marked = (doc: Text, ranges: [number, number][]) => ranges.map(([f, t]) => doc.sliceString(f, t));
+
+  it('marks only the words that differ in a line pair that is mostly the same', () => {
+    const a = text('x\n  if (n < 8) return;\ny\n');
+    const b = text('x\n  if (n < 12) return;\ny\n');
+    const w = wordChanges(Chunk.build(a, b), a, b);
+    expect(marked(a, w.a)).toEqual(['8']);
+    expect(marked(b, w.b)).toEqual(['12']);
+  });
+
+  it('leaves wholly added lines and mostly different pairs unmarked', () => {
+    const a = text('x\nconst res = await fetch(url);\ny\n');
+    const b = text('x\nstatus.textContent = done;\ntry {\n  more();\n}\ny\n');
+    const w = wordChanges(Chunk.build(a, b), a, b);
+    expect(w.a).toEqual([]);
+    expect(w.b).toEqual([]);
   });
 });
 
