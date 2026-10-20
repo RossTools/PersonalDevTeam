@@ -779,6 +779,14 @@ async fn insert_ticket(
     .await?;
     replace_set(conn, "ticket_labels", "label", id, &t.labels).await?;
     replace_set(conn, "ticket_areas", "area", id, &t.areas).await?;
+    if let (true, Some(parent)) = (t.areas.is_empty(), &t.parent) {
+        // A part starts with its parent's areas (planning hints; overlap ignores parents themselves).
+        sqlx::query("INSERT INTO ticket_areas (ticket_id, area) SELECT ?, area FROM ticket_areas WHERE ticket_id = ?")
+            .bind(id)
+            .bind(parent)
+            .execute(&mut *conn)
+            .await?;
+    }
     if rank::needs_rebalance(&key) {
         rebalance(conn, project_id).await?;
     }
@@ -1556,6 +1564,7 @@ impl Store {
              (SELECT a.worktree_id FROM attempts a WHERE a.ticket_id = t.id AND a.state = 'active') AS worktree_id \
              FROM tickets t JOIN projects p ON p.id = t.project_id \
              WHERE t.stage NOT IN ('done', 'wont_do') \
+             AND NOT EXISTS (SELECT 1 FROM tickets c WHERE c.parent_id = t.id) \
              AND EXISTS (SELECT 1 FROM attempts a JOIN tickets o ON o.id = a.ticket_id \
                          WHERE a.state = 'active' AND o.project_id = t.project_id) \
              AND (EXISTS (SELECT 1 FROM ticket_areas ta WHERE ta.ticket_id = t.id) \
@@ -2733,5 +2742,21 @@ mod tests {
         assert_eq!((t.attempt_id.as_deref(), t.attempt_state), (Some("at"), Some(AttemptState::Active)));
         let rows = store.part_rows(&["par".into()]).await.unwrap();
         assert_eq!(rows[0].attempt, Some(("at".into(), AttemptState::Active)));
+    }
+
+    #[tokio::test]
+    async fn parts_copy_their_parents_areas_and_parents_have_no_overlap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "par", ValidNewTicket { areas: vec!["web".into()], ..new("Parent") }).await;
+        let a = add(&store, "a", part("A", "par")).await;
+        assert_eq!(a.summary.areas, ["web"]);
+        let b = add(&store, "b", ValidNewTicket { areas: vec!["api".into()], ..part("B", "par") }).await;
+        assert_eq!(b.summary.areas, ["api"], "given areas win");
+        store.start_attempt("at", "a", None, "br", "main", "c", json!({}), 2).await.unwrap();
+        let rows = store.overlap_rows(Some("p")).await.unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.ticket_id.as_str()).collect();
+        assert!(!ids.contains(&"par"), "a parent is not compared: {ids:?}");
+        assert!(ids.contains(&"a") && ids.contains(&"b"));
     }
 }

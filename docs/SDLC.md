@@ -26,7 +26,9 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 7. **Release is automatic.** Every push to `main` publishes `v0.1.<run number>`. The stable instance installs it when
    idle, or when the user clicks Update. Agents never update, restart or stop the stable instance.
 8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Move the ticket to Done (or let the
-   merge banner do it) and add tickets for follow-ups the change turned up.
+   merge banner do it) and add tickets for follow-ups the change turned up. Work that takes several PRs is a parent
+   ticket with one part per PR (PDT-38): each part has its own branch, worktree and PR, and its merge closes only that
+   part; start the next one with Start next part on the parent, which moves to Done once every part is closed.
 
 ## Worktrees
 

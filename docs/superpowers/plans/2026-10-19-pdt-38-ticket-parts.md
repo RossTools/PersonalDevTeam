@@ -27,6 +27,15 @@ notice and button). Backlog grouping by parent.
 - **Roll-up is computed in pdt-api** (`parts.rs`), like overlap and PR status, because `review` needs the in-memory PR
   state; the store returns parent ids and each part's stage and attempt state.
 
+**Decided while building** (spec and AGENTS.md match):
+- `parent_id` is `ON DELETE SET NULL`: RESTRICT would make removing a project fail when its cascade deletes a parent
+  before its parts. The store refuses deleting a parent instead (bulk delete too, unless its parts go in the same call).
+- Detach is `PATCH {parent: ""}` (ts-rs warns on a `deserialize_with` absent-vs-null field).
+- A new part with no areas copies its parent's; overlap skips tickets with parts.
+- The demo seed makes "Accounts" a parent of the first three Sample App tickets.
+- The web picks the next part itself (`nextPart` in model.ts mirrors pdt-core) and opens the Start dialog for it, so
+  the dialog shows that part's checks; `next: true` on the API does the same server-side.
+
 ## API contract
 
 Types (pdt-core `ticket.rs`, ts-rs, camelCase):
