@@ -183,7 +183,7 @@ interface CellEnv {
  * One lane's column: its cards, and a drop target for cards of the same lane (a card dropped from another lane is
  * ignored: lanes don't change a ticket's parent).
  */
-function Cell({ label, stage, items, lane, env, fill, children }: {
+function Cell({ label, stage, items, lane, env, height, children }: {
   /** The region's name: the column's title for the first lane, `<key> · <column>` for a parent's. */
   label: string;
   stage: BoardStage;
@@ -191,8 +191,12 @@ function Cell({ label, stage, items, lane, env, fill, children }: {
   /** The ids of every card in this lane. */
   lane: Set<string>;
   env: CellEnv;
-  /** Fills the board's height and scrolls on its own (the board without parent lanes). */
-  fill: boolean;
+  /**
+   * `fill`: fills the board's height and scrolls on its own (the board without parent lanes). `capped`: at most half
+   * the screen, scrolling on its own, so a long column (Done) doesn't push the parent lanes below it off screen.
+   * `auto`: as tall as its cards.
+   */
+  height: 'fill' | 'capped' | 'auto';
   /** Shown above the cards (the column's title and count, without lanes). */
   children?: ReactNode;
 }) {
@@ -221,12 +225,13 @@ function Cell({ label, stage, items, lane, env, fill, children }: {
       onDrop={onDrop}
       className={cn(
         'flex min-w-0 flex-1 flex-col rounded-md bg-surface-2',
-        fill && 'min-h-0',
+        height === 'fill' && 'min-h-0',
+        height === 'capped' && 'max-h-[50dvh] min-h-0',
         over && 'bg-accent ring-1 ring-primary',
       )}
     >
       {children}
-      <div className={cn('px-2 pb-2', fill && 'min-h-0 flex-1 overflow-auto')}>
+      <div className={cn('px-2 pb-2', height !== 'auto' && 'min-h-0 flex-1 overflow-auto')}>
         {items.length > 0 && (
           <ul aria-label={`${label} tickets`} className="flex flex-col gap-2 pt-2">
             {items.map((t) => (
@@ -320,7 +325,8 @@ const laneEmpty = (lane: Lane) => (['todo', 'in_progress', 'done'] as BoardStage
 
 /**
  * To do / In progress / Done side by side, each its own paged, polled query; drag a card to another column of its lane
- * to move it (desktop). With parents on the board the rows are lanes and the board scrolls as a whole. Phones show one
+ * to move it (desktop). With parents on the board the rows are lanes and the board scrolls as a whole; the first lane's
+ * columns stop at half the screen and scroll on their own, so the parents' lanes stay in reach. Phones show one
  * column at a time with a picker, its parts under a heading per parent.
  */
 export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
@@ -381,7 +387,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
       {!withLanes ? (
         <div className="flex min-h-0 flex-1 gap-3">
           {columns.map((c) => (
-            <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} fill>
+            <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} height="fill">
               {!phone && columnHead(c)}
               <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty /></div>
             </Cell>
@@ -392,7 +398,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
         <div className="min-h-0 flex-1 overflow-auto">
           {columns.map((c) => (
             <div key={c.stage} className="flex flex-col">
-              <Cell label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} fill={false}>
+              <Cell label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} height="capped">
                 <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={false} /></div>
               </Cell>
               {parentLanes.map((lane) => {
@@ -401,7 +407,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
                   <div key={lane.id}>
                     <LaneHeader lane={lane} collapsed={shut} onToggle={() => toggle(lane.id!)} onPeek={onPeek} compact />
                     {!shut && (lane.items[c.stage].length > 0 ? (
-                      <Cell label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={laneIds(lane)} env={env} fill={false} />
+                      <Cell label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={laneIds(lane)} env={env} height="auto" />
                     ) : (
                       <p className="px-3 pb-1 text-xs text-muted-foreground">{laneEmpty(lane) ? 'No parts on the board yet.' : `No parts in ${c.title}.`}</p>
                     ))}
@@ -418,7 +424,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
           </div>
           <div className="flex gap-3">
             {columns.map((c) => (
-              <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} fill={false}>
+              <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} height="capped">
                 <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={false} /></div>
               </Cell>
             ))}
@@ -434,7 +440,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
                 ) : (
                   <div className="flex gap-3">
                     {columns.map((c) => (
-                      <Cell key={c.stage} label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={ids} env={env} fill={false} />
+                      <Cell key={c.stage} label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={ids} env={env} height="auto" />
                     ))}
                   </div>
                 ))}
