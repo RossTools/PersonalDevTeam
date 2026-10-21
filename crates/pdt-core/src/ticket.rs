@@ -159,8 +159,10 @@ str_enum!(EventKind {
 pub enum Actor {
     User,
     System,
+    /// An agent, through the API (a comment it posted with curl).
+    Agent,
 }
-str_enum!(Actor { User => "user", System => "system" });
+str_enum!(Actor { User => "user", System => "system", Agent => "agent" });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -454,6 +456,10 @@ pub struct TicketLink {
 #[ts(export)]
 pub struct NewComment {
     pub body: String,
+    /// Who wrote it: `user` from PDT's own UI. Left out (any other API caller: an agent's curl) it is `agent`, so an
+    /// agent's comment never passes for the user's (workflows react to the user's comments).
+    #[serde(default)]
+    pub by: Option<Actor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

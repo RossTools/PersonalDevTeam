@@ -8,8 +8,8 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::ticket::{
-    BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket, RankMove, Ticket, TicketEvent,
-    TicketLink, TicketPage, TicketPatch, TicketQuery, valid_comment,
+    Actor, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket, RankMove, Ticket,
+    TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, valid_comment,
 };
 use pdt_store::{DeleteTicket, TicketError};
 
@@ -156,7 +156,14 @@ pub(crate) async fn comment(
 ) -> Result<(StatusCode, Json<TicketEvent>), ApiError> {
     let Json(c) = payload?;
     let body = valid_comment(&c.body)?;
-    let event = st.store.add_comment(&id, &body, now_ms()).await?.ok_or_else(unknown_ticket)?;
+    let actor = match c.by {
+        Some(Actor::User) => Actor::User,
+        None | Some(Actor::Agent) => Actor::Agent,
+        Some(Actor::System) => {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "only PDT writes system comments"));
+        }
+    };
+    let event = st.store.add_comment_by(&id, &body, actor, None, now_ms()).await?.ok_or_else(unknown_ticket)?;
     Ok((StatusCode::CREATED, Json(event)))
 }
 

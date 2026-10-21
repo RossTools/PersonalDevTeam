@@ -386,15 +386,27 @@ async fn a_comment_on_a_started_ticket_goes_to_its_agent_and_events_are_logged()
     .await;
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let session = started["session"]["id"].as_str().unwrap().to_string();
+    let runs = async || {
+        let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={ticket}"), None).await;
+        runs.as_array().unwrap().iter().filter(|r| r["workflowName"] == "Ticket comments to the agent").count()
+    };
+    // An agent's own comment (no `by`: any API caller but PDT's UI) isn't sent back to it.
+    let (s, c) =
+        call(&env.app, "POST", &format!("/api/tickets/{ticket}/comments"), Some(json!({"body": "Done the API."})))
+            .await;
+    assert_eq!((s, c["actor"].as_str()), (StatusCode::CREATED, Some("agent")), "{c}");
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(runs().await, 0);
     let (s, _) = call(
         &env.app,
         "POST",
         &format!("/api/tickets/{ticket}/comments"),
-        Some(json!({"body": "Also update the docs."})),
+        Some(json!({"body": "Also update the docs.", "by": "user"})),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED);
     pdt_api::run_workflows(&env.state).await;
+    assert_eq!(runs().await, 1);
 
     let (_, events) = call(&env.app, "GET", &format!("/api/events?ticket={ticket}"), None).await;
     let kinds: Vec<&str> = events.as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect();

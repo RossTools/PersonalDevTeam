@@ -41,7 +41,8 @@ built-ins, repo files, routes) and `finish.rs` (`ticket.finish`).
     (Merge…'s "Move to Done and clean up once it merges", PDT-75), else `unanswered` → quiet end (the merged banner
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
     changes) → quiet end.
-  - **Ticket comments to the agent** (on): `ticket.commented` by the user with an active attempt → `session.send`.
+  - **Ticket comments to the agent** (on): `ticket.commented` by the user (`actor` = `user`, not an agent's comment
+    through the API or a workflow's) with an active attempt → `session.send`.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions

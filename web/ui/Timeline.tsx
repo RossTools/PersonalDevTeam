@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Cog, User } from 'lucide-react';
+import { Bot, Cog, User } from 'lucide-react';
 import { cn } from './lib/utils';
 
 export interface TimelineItem {
   id: string;
-  /** Who did it: `user` (you), `system` (PDT itself), or an agent/persona name. */
-  actor: 'user' | 'system' | (string & {});
+  /** Who did it: `user` (you), `system` (PDT itself), `agent` (an agent through the API), or a persona name. */
+  actor: 'user' | 'system' | 'agent' | (string & {});
   /** Overrides the actor's default icon (a lucide icon at 12px). */
   icon?: ReactNode;
   /** When it happened (ms since the epoch). */
@@ -57,11 +57,13 @@ export function RelativeTime({ time, now, className }: { time: number; now?: num
   );
 }
 
-const actorName = (actor: string) => (actor === 'user' ? 'You' : actor === 'system' ? 'PDT' : actor);
+const NAMES: Record<string, string> = { user: 'You', system: 'PDT', agent: 'Agent' };
+const actorName = (actor: string) => NAMES[actor] ?? actor;
 
 function ActorIcon({ actor }: { actor: string }) {
   if (actor === 'user') return <User aria-hidden />;
   if (actor === 'system') return <Cog aria-hidden />;
+  if (actor === 'agent') return <Bot aria-hidden />;
   return (
     <span aria-hidden className="text-2xs leading-none font-semibold uppercase">
       {actor.slice(0, 1)}

@@ -146,7 +146,7 @@ describe('ticket tab', () => {
     view();
     const box = await screen.findByRole('textbox', { name: 'Comment' });
     await userEvent.type(box, 'Ship it{Control>}{Enter}{/Control}');
-    await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/t1/comments')?.body).toEqual({ body: 'Ship it' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/t1/comments')?.body).toEqual({ body: 'Ship it', by: 'user' }));
     await waitFor(() => expect(box).toHaveValue(''));
   });
 

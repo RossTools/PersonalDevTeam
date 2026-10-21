@@ -21,6 +21,10 @@ web/src/tickets. Review and merge are in [review.md](review.md).
     (`{before?, after?, to?: top|bottom}`), `POST /api/tickets/bulk` (all-or-nothing).
   - `POST|DELETE /api/tickets/{id}/links`, `GET /api/tickets/{id}/events`, `POST /api/tickets/{id}/comments`,
     `GET /api/projects/{id}/labels`.
+  - A comment's actor: PDT's UI sends `{body, by: "user"}`; a comment without `by` (any other caller, i.e. an agent's
+    curl) is `agent`, shown as "Agent" in the timeline; `by: "system"` is refused (400). Workflows write `system`
+    comments. So an agent's comment never passes for the user's, and workflows that react to the user's comments
+    (below) don't fire on it.
 - A workspace tab holds a session, a run, a ticket (`workspace_tabs.ticket_id`) or a worktree's changes, exactly one.
 - Web: the Tickets view (rail item, Ctrl+] l) is the backlog (Draft and Ready unless the Stage filter says
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
@@ -70,7 +74,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   `ticket_active`), moves the ticket to In progress, and starts an agent session (`sessions.attempt_id`; titled with
   the ticket title) whose first prompt is the ticket (`NewSession.initialPrompt`, appended as the last argv element on
   the creating launch only; capped at 8 KB). The prompt (pdt-core `start_prompt`) is the key and title, the
-  description, the ticket's comments (oldest first, quoted), the "Part of" block for a part, and the branch line.
+  description, the ticket's comments (oldest first, quoted), the "Part of" block for a part, and the branch line
+  (which also says to keep to this ticket: anything unrelated gets its own ticket, after asking the user).
   Comments get only the room left: none when a description had to be cut, else the oldest are dropped first (with a
   note saying how many) and a newest comment too long for the room is cut. On Windows, when the agent is a `.cmd` shim run through cmd.exe, the
   prompt goes to `<data dir>/sessions/<id>/prompt.md` and the agent gets a short prompt naming that file.
@@ -143,8 +148,9 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   for 20 s, then recorded as a `pr` event (`told`, `sessionId`, `workflowId`, `runId`); with no running agent session
   it is recorded as not told. Each notice key is sent once per attempt, across restarts too. Turning the workflow off
   stops the notices. Conversations: see [conversations.md](conversations.md#tickets-5d).
-- A comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments to
-  the agent"); Start already puts the earlier comments in the first prompt.
+- A user's comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments
+  to the agent"; an agent's own comments, actor `agent`, are not sent); Start already puts the earlier comments in the
+  first prompt.
 
 ## Areas and overlap (Phase 4c)
 

@@ -371,6 +371,8 @@ export function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose:
 const EVENT_PAGE = 50;
 
 function iconFor(e: TicketEvent) {
+  // An agent's comment (posted through the API) keeps the agent's icon, so it doesn't pass for the user's.
+  if (e.kind === 'comment' && e.actor === 'agent') return undefined;
   if (e.kind === 'comment') return <MessageSquare aria-hidden />;
   if (e.kind === 'moved') return <ArrowRight aria-hidden />;
   if (e.kind === 'linked' || e.kind === 'unlinked') return <Link2 aria-hidden />;
