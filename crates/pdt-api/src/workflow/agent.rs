@@ -577,6 +577,11 @@ async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
     if let Err(e) = st.store.put_agent_step(&a).await {
         return tracing::warn!(step = %a.step_id, error = %e, "could not mark an agent step stalled");
     }
+    // A removed session is not offered (PDT-93).
+    let session_id = match &a.session_id {
+        Some(sid) if matches!(st.store.get_session(sid).await, Ok(Some(_))) => Some(sid.clone()),
+        _ => None,
+    };
     let mut choices = vec![InboxChoice::new(inbox::NUDGE, "Nudge", true)];
     choices.extend(
         a.outcomes
@@ -593,7 +598,7 @@ async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
         ticket_key: None,
         ticket_title: None,
         attempt_id: a.attempt_id.clone(),
-        session_id: a.session_id.clone(),
+        session_id,
         run_id: Some(a.run_id.clone()),
         step_id: Some(a.step_id.clone()),
         persona_id: a.persona_id.clone(),
@@ -612,12 +617,13 @@ async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
 }
 
 /// Part of the engine tick: a working step whose session ended (stopped, crashed, or pdtd restarted mid-turn) is
-/// stalled.
+/// stalled, and so is an asking one whose session was removed (its question closed with it: nothing can answer it).
 pub(crate) async fn sweep(st: &AppState) {
     let Ok(active) = st.store.active_agent_steps().await else { return };
     let now = now_ms();
     for a in active {
-        if a.state != AgentStepState::Working || now - a.updated_at < GONE_GRACE_MS {
+        let waited = now - a.updated_at >= GONE_GRACE_MS;
+        if !(a.state == AgentStepState::Working && waited || a.state == AgentStepState::Asking) {
             continue;
         }
         if !matches!(st.store.get_step(&a.step_id).await, Ok(Some(s)) if s.status == StepStatus::Waiting) {
@@ -626,8 +632,16 @@ pub(crate) async fn sweep(st: &AppState) {
             let _ = st.store.put_agent_step(&done).await;
             continue;
         }
-        let Some(sid) = a.session_id.clone() else { continue };
+        // Removing a session clears its steps' `session_id`.
+        let Some(sid) = a.session_id.clone() else {
+            if a.state == AgentStepState::Asking {
+                stall(st, a, "Its session was removed while it waited for your answer.").await;
+            }
+            continue;
+        };
         let gone = match st.store.get_session(&sid).await {
+            // An asking step waits for the user, however its session is.
+            Ok(Some(_)) if a.state == AgentStepState::Asking => false,
             Ok(Some(s)) => match (s.status, s.mode) {
                 (SessionStatus::Running, SessionMode::Conversation) => {
                     !crate::conversations::is_live_or_waiting(st, &s)

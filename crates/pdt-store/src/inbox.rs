@@ -195,6 +195,26 @@ impl Store {
         Ok(r.rows_affected())
     }
 
+    /// Lets go of sessions that no longer exist (PDT-93): their open questions close, as nothing can answer them,
+    /// and no item points at them any more (so "Open session" is never offered for one). Runs when a session is
+    /// deleted and when the store opens (items left by sessions deleted before this).
+    pub async fn release_gone_sessions(&self) -> Result<(), StoreError> {
+        const GONE: &str = "session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)";
+        let mut tx = self.write_tx().await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE inbox_items SET status = 'closed', resolution = '{{\"sessionGone\":true}}', \
+             resolved_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 \
+             WHERE status = 'open' AND kind = 'question' AND {GONE}"
+        )))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE inbox_items SET session_id = NULL WHERE {GONE}")))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     // ---- agent steps ----
 
     /// Records (or replaces) a step's binding.
@@ -330,5 +350,46 @@ mod tests {
         store.open_inbox_item(&item("i3", Some("s1"), 7)).await.unwrap();
         assert_eq!(store.close_inbox_items(None, Some("r1"), 8).await.unwrap(), 2, "the run's items close");
         assert!(store.open_inbox_items(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_deleted_sessions_questions_close_and_items_let_go_of_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        for id in ["s", "other"] {
+            sqlx::query(
+                "INSERT INTO sessions (id, project_id, kind, agent, title, cwd, status, created_at) \
+                 VALUES (?, 'p', 'agent_tui', 'claude', 't', '/', 'running', 1)",
+            )
+            .bind(id)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        }
+        let of = |id: &str, kind: InboxKind, session: &str| InboxItem {
+            kind,
+            session_id: Some(session.into()),
+            run_id: None,
+            ..item(id, None, 1)
+        };
+        store.open_inbox_item(&of("q", InboxKind::Question, "s")).await.unwrap();
+        store.open_inbox_item(&of("stalled", InboxKind::Stalled, "s")).await.unwrap();
+        store.open_inbox_item(&of("q2", InboxKind::Question, "other")).await.unwrap();
+        assert!(store.delete_session("s").await.unwrap());
+
+        let q = store.get_inbox_item("q").await.unwrap().unwrap();
+        assert_eq!(
+            (q.status, q.session_id, q.resolution["sessionGone"].as_bool()),
+            (InboxStatus::Closed, None, Some(true))
+        );
+        assert!(q.resolved_at.is_some());
+        let stalled = store.get_inbox_item("stalled").await.unwrap().unwrap();
+        assert_eq!((stalled.status, stalled.session_id), (InboxStatus::Open, None), "a step's item stays open");
+        let q2 = store.get_inbox_item("q2").await.unwrap().unwrap();
+        assert_eq!(
+            (q2.status, q2.session_id.as_deref()),
+            (InboxStatus::Open, Some("other")),
+            "other sessions' items stay"
+        );
     }
 }
