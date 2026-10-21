@@ -195,8 +195,25 @@ describe('merged banner', () => {
     expect(await screen.findByText('the worktree was removed, but its branch was not deleted: nope')).toBeInTheDocument();
   });
 
-  it('is not shown once the ticket is Done', async () => {
-    stub({ ...merged, stage: 'done' });
+  it('is not shown once the ticket is Done and its worktree is gone', async () => {
+    const gone = attempt({ state: 'merged', worktreeId: null });
+    stub({ ...merged, stage: 'done', attempt: gone, attempts: [gone] });
+    view();
+    await screen.findByRole('region', { name: 'Attempt' });
+    expect(screen.queryByText('Merged into main.')).not.toBeInTheDocument();
+  });
+
+  it('offers to remove the worktree of a Done ticket that still has one (PDT-97)', async () => {
+    const calls = stub({ ...merged, stage: 'done' }, { 'POST /api/tickets/t1/finish': result() });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove the worktree' }));
+    await waitFor(() =>
+      expect(finishes(calls)).toEqual([{ stopRunning: false, discardChanges: false, deleteBranch: false, keepWorktree: false }]),
+    );
+  });
+
+  it("is not shown for a Won't do ticket", async () => {
+    stub({ ...merged, stage: 'wont_do' });
     view();
     await screen.findByRole('region', { name: 'Attempt' });
     expect(screen.queryByText('Merged into main.')).not.toBeInTheDocument();
