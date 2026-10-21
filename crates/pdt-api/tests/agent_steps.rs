@@ -343,6 +343,45 @@ async fn questions_nudges_stalls_and_take_over_go_through_the_inbox() {
     assert!(inbox(&env).await.is_empty());
 }
 
+/// PDT-95: an answer to a conversation that stopped after asking (parked, then interrupted by an update) reopens it
+/// and goes in, rather than being recorded as told to nobody.
+#[tokio::test]
+async fn an_answer_reopens_the_stopped_conversation_that_asked() {
+    let env = setup().await;
+    let t = ticket(&env, "Unclear").await;
+    let wf = create_workflow(
+        &env,
+        review_doc(r#"mcp: ask_user {"questions": [{"question": "Which file?", "choices": ["a.txt"]}]}"#, json!({})),
+    )
+    .await;
+    run_now(&env, &wf, json!({"ticketId": t})).await;
+    let q =
+        tick_until(&env, "the question", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "question") })
+            .await;
+    let session = q["sessionId"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_ne!(v["status"], "running", "{v}");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", q["id"].as_str().unwrap()),
+        Some(json!({"answers": ["a.txt"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tick_until(&env, "the answer in the conversation", || async {
+        let said = agent_says(&env, &session).await;
+        said.iter()
+            .any(|m| m.contains("The user answered your questions") && m.contains("a.txt"))
+            .then_some(json!(null))
+    })
+    .await;
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(v["status"], "running", "{v}");
+}
+
 /// PDT-93: removing the asking session closes its question (nothing can answer it) and stalls the step, whose item
 /// offers no session to open; taking it over still ends the step.
 #[tokio::test]

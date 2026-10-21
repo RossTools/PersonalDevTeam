@@ -109,7 +109,9 @@ naming the workflow, run and choice, so "Ticket comments to the agent" forwards 
 `session_messages`, one per step. `outbox.rs` delivers with the PR notices' old rule: the attempt's newest running
 agent session (a terminal with a live PTY, or a conversation); a terminal idle with no typing for 20 s, a conversation
 `ready_for_notice` (idle, nothing queued, no open request, no rate limit, terminal closed; a parked one reopens); all
-of a session's waiting messages in one message; no running agent session → `untold`. `dedupe` is per attempt (also
+of a session's waiting messages in one message; no running agent session → `untold`. What the user sent to a
+session (an Inbox answer, a Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart),
+reopening it as typing would. `dedupe` is per attempt (also
 against `pr` timeline keys from before the event log). Resolving writes the timeline record and resumes the step.
 
 ## API
