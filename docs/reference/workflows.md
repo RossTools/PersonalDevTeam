@@ -205,7 +205,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   message) for 30 s.
 - **Questions.** `ask_user` makes an Inbox question (a new one replaces the step's open one) and the binding
   `asking`, so its turn's end isn't a stall; the answer goes back through the outbox as "[PDT] The user answered your
-  questions: …" and the binding works again. A session with no step can ask too.
+  questions: …" and the binding works again. A session with no step can ask too. Removing the asking session closes
+  its question (nothing can answer it) and the engine tick stalls its step, so it can be taken over.
 - **Loop limit.** When the node is about to run more than `loopLimit` (3; 0: none) times again in one run, it waits
   with a `loop_limit` Inbox item instead (the earlier passes' outcomes and summaries): **Once more** runs it (that
   pass only), **Take over** completes it with an outcome (`by: user`), **Stop** takes `stopped`.
@@ -264,7 +265,9 @@ accept, oldest first within each, with ticket key and title and persona name. `P
 `{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
 `outcome:<id>` or `stop` at a loop limit) or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
 closes a question or stalled item (the step keeps waiting). A gate answered through
-`/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too.
+`/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too. When a session is removed (and when the store
+opens, for older ones) its open questions close (`resolution` `{sessionGone: true}`) and no item keeps its
+`sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93).
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take

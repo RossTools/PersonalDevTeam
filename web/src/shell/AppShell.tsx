@@ -111,13 +111,17 @@ export function AppShell() {
   const wsTicket = ws.workspace?.ticket;
   const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && !isClosed(wsTicket.stage) ? wsTicket.id : null;
   const backlog = useBacklog();
+  // The view changes once the tab is there: one that can't open (its ticket or session is gone) leaves the user where
+  // they were with the error, not on whatever tab was current (PDT-93).
   const openTicket = useCallback((t: { id: string; projectId: string }) => {
-    setView('sessions');
-    void runAction(() => ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId));
+    void runAction(async () => {
+      if (await ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId)) setView('sessions');
+    });
   }, [ws.focusItem]);
   const openSession = useCallback((s: { id: string; projectId: string }) => {
-    setView('sessions');
-    void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
+    void runAction(async () => {
+      if (await ws.focusItem({ kind: 'session', id: s.id }, s.projectId)) setView('sessions');
+    });
   }, [ws.focusItem]);
   // After a ticket's tab, in the workspace that has it (its Start workspace).
   const placementNear = useCallback((ticketId: string): TabPlacement | undefined => {

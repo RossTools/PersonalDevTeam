@@ -161,9 +161,9 @@ export function useWorkspaces() {
   );
   const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['workspaces'] }), [qc]);
 
-  /** Shows an item: its tab wherever it is, else a new tab in its project's workspace. */
+  /** Shows an item: its tab wherever it is, else a new tab in its project's workspace. False when it has no home. */
   const focusItem = useCallback(
-    async (item: Item, projectId: string) => {
+    async (item: Item, projectId: string): Promise<boolean> => {
       const cached = qc.getQueryData<Workspace[]>(['workspaces']) ?? [];
       let found = findTab(cached, item);
       if (!found) {
@@ -171,14 +171,15 @@ export function useWorkspaces() {
         found = findTab(fresh, item);
         if (!found) {
           const home = fresh.find((w) => w.projectId === projectId);
-          if (!home) return;
+          if (!home) return false;
           const t = await api.openTab(home.id, openTabBody(item));
           await refresh();
           selectTab(t);
-          return;
+          return true;
         }
       }
       selectTab(found.tab);
+      return true;
     },
     [qc, refresh, selectTab],
   );
