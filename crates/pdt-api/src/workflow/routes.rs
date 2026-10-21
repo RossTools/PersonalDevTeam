@@ -1,7 +1,7 @@
 //! The workflow API (Phase 7a spec §9): the catalog, documents and versions, validation and dry runs, runs, the event
 //! log and connections.
 
-use super::catalog::{KindSpec, catalog};
+use super::catalog::{KindSpec, PortSpec, catalog};
 use super::engine::{self, DryEvent, DryRun};
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -10,24 +10,26 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::workflow::api::{
-    Author, Connection, LogEvent, Run, RunDetail, RunStatus, Scope, Source, Workflow, WorkflowDetail, WorkflowVersion,
+    Author, Connection, LogEvent, Run, RunDetail, RunStatus, Scope, Source, VersionStatus, Workflow, WorkflowDetail,
+    WorkflowVersion,
 };
 use pdt_core::workflow::diff::{DocDiff, diff};
 use pdt_core::workflow::doc::WorkflowDoc;
 use pdt_core::workflow::validate::{Issue, Severity, is_valid, validate};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
-fn conflict(code: &'static str, message: impl Into<String>) -> ApiError {
+pub(crate) fn conflict(code: &'static str, message: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, message)
 }
 
-fn invalid(message: impl Into<String>) -> ApiError {
+pub(crate) fn invalid(message: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", message)
 }
 
-fn body<T: Default>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(crate) fn body<T: Default>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     match payload {
         Ok(Json(v)) => Ok(v),
         Err(JsonRejection::MissingJsonContentType(_)) => Ok(T::default()),
@@ -36,7 +38,7 @@ fn body<T: Default>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiErr
 }
 
 /// The document's issues, or 422 `workflow_invalid` naming its errors.
-fn checked(doc: &WorkflowDoc) -> Result<Vec<Issue>, ApiError> {
+pub(crate) fn checked(doc: &WorkflowDoc) -> Result<Vec<Issue>, ApiError> {
     let issues = validate(doc, catalog());
     if !is_valid(&issues) {
         let errors: Vec<&str> =
@@ -91,15 +93,28 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<WorkflowDetail>), ApiError> {
     let n = body(payload)?;
     let doc = n.doc.ok_or_else(|| invalid("doc is required"))?;
-    checked(&doc)?;
-    let scope = n.scope.unwrap_or(if n.project_id.is_some() { Scope::Project } else { Scope::Host });
+    let w = create_workflow(&st, &doc, n.scope, n.project_id, n.enabled, &n.note).await?;
+    Ok((StatusCode::CREATED, Json(w)))
+}
+
+/// Adds a workflow (`POST /api/workflows`, and instantiating a template).
+pub(crate) async fn create_workflow(
+    st: &AppState,
+    doc: &WorkflowDoc,
+    scope: Option<Scope>,
+    project_id: Option<String>,
+    enabled: bool,
+    note: &str,
+) -> Result<WorkflowDetail, ApiError> {
+    checked(doc)?;
+    let scope = scope.unwrap_or(if project_id.is_some() { Scope::Project } else { Scope::Host });
     let project_id = match scope {
         Scope::Project => {
-            let id = n.project_id.ok_or_else(|| invalid("a project workflow needs projectId"))?;
+            let id = project_id.ok_or_else(|| invalid("a project workflow needs projectId"))?;
             st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
             Some(id)
         }
-        _ if n.project_id.is_some() => return Err(invalid("only a project workflow has a projectId")),
+        _ if project_id.is_some() => return Err(invalid("only a project workflow has a projectId")),
         _ => None,
     };
     let now = now_ms();
@@ -109,16 +124,17 @@ pub(crate) async fn create(
         description: doc.description.clone(),
         scope,
         project_id,
-        enabled: n.enabled,
+        enabled,
         builtin: None,
         source: Source::Host,
         repo_file: None,
         version: 1,
+        proposed: None,
         created_at: now,
         updated_at: now,
     };
-    st.store.insert_workflow(&w, &doc, Author::User, &n.note).await?;
-    Ok((StatusCode::CREATED, Json(detail(&st, load(&st, &w.id).await?).await?)))
+    st.store.insert_workflow(&w, doc, Author::User, note).await?;
+    detail(st, load(st, &w.id).await?).await
 }
 
 pub(crate) async fn get_one(
@@ -136,9 +152,12 @@ pub struct SaveWorkflow {
     pub doc: Option<WorkflowDoc>,
     #[serde(default)]
     pub note: String,
+    /// Propose the version instead (an agent's change): it waits for the user to accept it (Phase 7d spec §6.2).
+    #[serde(default)]
+    pub propose: bool,
 }
 
-/// `PUT /api/workflows/{id}`: a new version.
+/// `PUT /api/workflows/{id}`: a new version, or with `propose` a proposal.
 pub(crate) async fn save(
     State(st): State<AppState>,
     Path(id): Path<String>,
@@ -154,7 +173,45 @@ pub(crate) async fn save(
         ));
     }
     checked(&doc)?;
-    st.store.save_workflow_version(&id, &doc, Author::User, &s.note, now_ms()).await?;
+    if s.propose {
+        st.store.propose_workflow_version(&id, &doc, Author::Agent, &s.note, now_ms()).await?;
+    } else {
+        st.store.save_workflow_version(&id, &doc, Author::User, &s.note, now_ms()).await?;
+    }
+    Ok(Json(detail(&st, load(&st, &id).await?).await?))
+}
+
+async fn proposal(st: &AppState, id: &str, v: u32) -> Result<WorkflowDoc, ApiError> {
+    load(st, id).await?;
+    match st.store.workflow_version_status(id, v).await? {
+        None => Err(ApiError::not_found("workflow version")),
+        Some(VersionStatus::Proposed) => {
+            st.store.workflow_doc(id, v).await?.ok_or_else(|| ApiError::not_found("workflow version"))
+        }
+        Some(_) => Err(conflict("not_proposed", format!("version {v} is not a proposal waiting for review"))),
+    }
+}
+
+/// `POST /api/workflows/{id}/versions/{v}/accept`: the proposal becomes the current version.
+pub(crate) async fn accept(
+    State(st): State<AppState>,
+    Path((id, v)): Path<(String, u32)>,
+) -> Result<Json<WorkflowDetail>, ApiError> {
+    let doc = proposal(&st, &id, v).await?;
+    checked(&doc)?;
+    if !st.store.accept_workflow_version(&id, v, now_ms()).await? {
+        return Err(conflict("not_proposed", format!("version {v} is not a proposal waiting for review")));
+    }
+    Ok(Json(detail(&st, load(&st, &id).await?).await?))
+}
+
+/// `POST /api/workflows/{id}/versions/{v}/discard`: sets the proposal aside.
+pub(crate) async fn discard(
+    State(st): State<AppState>,
+    Path((id, v)): Path<(String, u32)>,
+) -> Result<Json<WorkflowDetail>, ApiError> {
+    proposal(&st, &id, v).await?;
+    st.store.discard_workflow_version(&id, v).await?;
     Ok(Json(detail(&st, load(&st, &id).await?).await?))
 }
 
@@ -280,6 +337,25 @@ pub struct ValidateRequest {
     pub doc: Option<WorkflowDoc>,
 }
 
+/// What the builder needs after every change: the issues, and each node's ports as its config gives them.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkflowCheck {
+    pub issues: Vec<Issue>,
+    /// By node id (unknown kinds left out); `error` is not listed.
+    pub ports: BTreeMap<String, Vec<PortSpec>>,
+}
+
+/// `POST /api/workflows/check`.
+pub(crate) async fn check_doc(
+    payload: Result<Json<ValidateRequest>, JsonRejection>,
+) -> Result<Json<WorkflowCheck>, ApiError> {
+    let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
+    let ports = doc.nodes.iter().filter_map(|n| Some((n.id.clone(), catalog().node_ports(n)?))).collect();
+    Ok(Json(WorkflowCheck { issues: validate(&doc, catalog()), ports }))
+}
+
 pub(crate) async fn validate_doc(
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<Vec<Issue>>, ApiError> {
@@ -328,6 +404,7 @@ pub(crate) async fn dry_run(
                     source: Source::Host,
                     repo_file: None,
                     version: 0,
+                    proposed: None,
                     created_at: 0,
                     updated_at: 0,
                 },
@@ -639,10 +716,19 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/workflows", get(list).post(create))
         .route("/workflows/catalog", get(get_catalog))
         .route("/workflows/validate", post(validate_doc))
+        .route("/workflows/check", post(check_doc))
         .route("/workflows/dry-run", post(dry_run))
         .route("/workflows/{id}", get(get_one).put(save).patch(patch).delete(remove))
         .route("/workflows/{id}/versions", get(versions))
         .route("/workflows/{id}/versions/{v}", get(version))
+        .route("/workflows/{id}/versions/{v}/accept", post(accept))
+        .route("/workflows/{id}/versions/{v}/discard", post(discard))
+        .route("/workflow-templates", get(super::templates::list).post(super::templates::create))
+        .route(
+            "/workflow-templates/{id}",
+            get(super::templates::get_one).put(super::templates::save).delete(super::templates::remove),
+        )
+        .route("/workflow-templates/{id}/instantiate", post(super::templates::instantiate))
         .route("/workflows/{id}/diff", get(version_diff))
         .route("/workflows/{id}/state", get(state))
         .route("/workflows/{id}/run", post(run_now))

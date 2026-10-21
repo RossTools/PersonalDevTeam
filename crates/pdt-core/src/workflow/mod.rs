@@ -8,5 +8,6 @@ pub mod diff;
 pub mod doc;
 pub mod events;
 pub mod refs;
+pub mod template;
 pub mod tpl;
 pub mod validate;

@@ -149,6 +149,7 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
                 source: Source::Host,
                 repo_file: None,
                 version: 1,
+                proposed: None,
                 created_at: now,
                 updated_at: now,
             };

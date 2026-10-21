@@ -59,6 +59,20 @@ pub enum Author {
 }
 str_enum!(Author { User => "user", Builtin => "builtin", Repo => "repo", Agent => "agent" });
 
+/// Where a version stands (Phase 7d spec §6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum VersionStatus {
+    /// Saved: the current version or an earlier one.
+    Saved,
+    /// Written by an agent and waiting for the user to accept or discard it.
+    Proposed,
+    /// A proposal the user (or a newer proposal) set aside.
+    Discarded,
+}
+str_enum!(VersionStatus { Saved => "saved", Proposed => "proposed", Discarded => "discarded" });
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -76,6 +90,9 @@ pub struct Workflow {
     pub repo_file: Option<String>,
     /// The current version.
     pub version: u32,
+    /// A version an agent proposed, waiting for review.
+    #[serde(default)]
+    pub proposed: Option<u32>,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]
@@ -101,6 +118,7 @@ pub struct WorkflowVersion {
     pub workflow_id: String,
     pub version: u32,
     pub author: Author,
+    pub status: VersionStatus,
     pub note: String,
     #[ts(type = "number")]
     pub created_at: i64,

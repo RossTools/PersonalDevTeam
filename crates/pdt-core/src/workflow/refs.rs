@@ -41,13 +41,18 @@ pub fn resolve_str(s: &str, ctx: &Value) -> Value {
     resolve_str_keeping(s, ctx, None)
 }
 
-fn root_is(path: &str, keep: Option<&str>) -> bool {
-    keep.is_some_and(|k| path.trim().split('.').next() == Some(k))
+fn root_of(path: &str) -> &str {
+    path.trim().split('.').next().unwrap_or_default()
 }
 
 fn resolve_str_keeping(s: &str, ctx: &Value, keep: Option<&str>) -> Value {
+    resolve_str_if(s, ctx, &|path| keep != Some(root_of(path)))
+}
+
+/// `s` with the references `fill` accepts filled in; the others are left as written.
+fn resolve_str_if(s: &str, ctx: &Value, fill: &dyn Fn(&str) -> bool) -> Value {
     if let Some(path) = whole_ref(s) {
-        if root_is(path, keep) {
+        if !fill(path) {
             return Value::String(s.to_string());
         }
         return lookup(ctx, path).cloned().unwrap_or(Value::Null);
@@ -61,7 +66,7 @@ fn resolve_str_keeping(s: &str, ctx: &Value, keep: Option<&str>) -> Value {
         let Some(len) = rest[start..].find("}}") else { break };
         out.push_str(&rest[..start]);
         let path = &rest[start + 2..start + len];
-        if root_is(path, keep) {
+        if !fill(path) {
             out.push_str(&rest[start..start + len + 2]);
         } else {
             out.push_str(&lookup(ctx, path.trim()).map(text_of).unwrap_or_default());
@@ -83,6 +88,17 @@ pub fn resolve_keeping(v: &Value, ctx: &Value, keep: Option<&str>) -> Value {
         Value::String(s) => resolve_str_keeping(s, ctx, keep),
         Value::Array(a) => Value::Array(a.iter().map(|x| resolve_keeping(x, ctx, keep)).collect()),
         Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (k.clone(), resolve_keeping(x, ctx, keep))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// [`resolve`] for the references under `root` only (`params`: a template's parameters); every other reference is
+/// left as written.
+pub fn resolve_only(v: &Value, ctx: &Value, root: &str) -> Value {
+    match v {
+        Value::String(s) => resolve_str_if(s, ctx, &|path| root_of(path) == root),
+        Value::Array(a) => Value::Array(a.iter().map(|x| resolve_only(x, ctx, root)).collect()),
+        Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (k.clone(), resolve_only(x, ctx, root))).collect()),
         other => other.clone(),
     }
 }
@@ -149,5 +165,12 @@ mod tests {
         let got = resolve_keeping(&cfg, &ctx(), Some("event"));
         assert_eq!(got, json!({"left": "{{event.pr}}", "right": 12, "t": "#{{event.pr}} vs 12"}));
         assert_eq!(resolve(&got, &json!({"event": {"pr": 12}}))["left"], json!(12));
+    }
+
+    #[test]
+    fn resolves_only_one_root() {
+        let cfg = json!({"a": "{{params.on}}", "b": "PR {{trigger.pr}} to {{params.who}}", "c": ["{{ params.n }}"]});
+        let got = resolve_only(&cfg, &json!({"params": {"on": true, "who": "me", "n": 3}}), "params");
+        assert_eq!(got, json!({"a": true, "b": "PR {{trigger.pr}} to me", "c": [3]}));
     }
 }

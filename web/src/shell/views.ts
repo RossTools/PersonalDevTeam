@@ -1,12 +1,13 @@
-import { Files, Search, Settings, TerminalSquare, Ticket, type LucideIcon } from 'lucide-react';
+import { Files, Search, Settings, TerminalSquare, Ticket, Workflow, type LucideIcon } from 'lucide-react';
 
-/** The views in the rail. Inbox and Personas join in Phase 7. */
-export type ViewId = 'sessions' | 'tickets' | 'files' | 'settings';
+/** The views in the rail. Inbox and Personas join later in Phase 7. */
+export type ViewId = 'sessions' | 'tickets' | 'workflows' | 'files' | 'settings';
 
 /** `phone: false` leaves a view out of the phone rail (at most five items there; Files is in the palette's Go to). */
 export const VIEWS: { id: ViewId; label: string; icon: LucideIcon; phone?: false }[] = [
   { id: 'sessions', label: 'Sessions', icon: TerminalSquare },
   { id: 'tickets', label: 'Tickets', icon: Ticket },
+  { id: 'workflows', label: 'Workflows', icon: Workflow },
   { id: 'files', label: 'Files', icon: Files, phone: false },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];

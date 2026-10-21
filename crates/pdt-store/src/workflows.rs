@@ -3,9 +3,10 @@
 
 use crate::{Store, StoreError};
 use pdt_core::workflow::api::{
-    Author, Connection, Run, RunStatus, Scope, Source, Step, StepStatus, Workflow, WorkflowVersion,
+    Author, Connection, Run, RunStatus, Scope, Source, Step, StepStatus, VersionStatus, Workflow, WorkflowVersion,
 };
 use pdt_core::workflow::doc::WorkflowDoc;
+use pdt_core::workflow::template::Template;
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -13,8 +14,9 @@ use sqlx::{QueryBuilder, Row, Sqlite};
 /// How long finished runs are kept.
 pub const RUN_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
-const WF_COLUMNS: &str =
-    "id, name, description, scope, project_id, enabled, builtin, source, repo_file, version, created_at, updated_at";
+const WF_COLUMNS: &str = "id, name, description, scope, project_id, enabled, builtin, source, repo_file, version, \
+                          (SELECT MAX(v.version) FROM workflow_versions v WHERE v.workflow_id = workflows.id \
+                           AND v.status = 'proposed') AS proposed, created_at, updated_at";
 const RUN_COLUMNS: &str = "r.id, r.workflow_id, w.name AS workflow_name, r.version, r.status, r.run_key, \
                            r.trigger_event_id, r.trigger_node, r.trigger, r.project_id, r.ticket_id, r.attempt_id, \
                            r.parent_run_id, r.parent_step_id, r.error, r.output, r.wake_at, r.started_at, r.ended_at";
@@ -50,6 +52,22 @@ fn to_workflow(r: &SqliteRow) -> Result<Workflow, StoreError> {
         source: Source::parse(&source).ok_or_else(|| corrupt("workflow source", &source))?,
         repo_file: r.try_get("repo_file")?,
         version: u32::try_from(r.try_get::<i64, _>("version")?).unwrap_or(0),
+        proposed: r.try_get::<Option<i64>, _>("proposed")?.and_then(|v| u32::try_from(v).ok()),
+        created_at: r.try_get("created_at")?,
+        updated_at: r.try_get("updated_at")?,
+    })
+}
+
+fn to_template(r: &SqliteRow) -> Result<Template, StoreError> {
+    let params: String = r.try_get("params")?;
+    let doc: String = r.try_get("doc")?;
+    Ok(Template {
+        id: r.try_get("id")?,
+        name: r.try_get("name")?,
+        description: r.try_get("description")?,
+        builtin: false,
+        params: serde_json::from_str(&params).map_err(|e| corrupt("template params", e))?,
+        doc: serde_json::from_str(&doc).map_err(|e| corrupt("template doc", e))?,
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
     })
@@ -154,6 +172,21 @@ fn to_connection(r: &SqliteRow) -> Result<Connection, StoreError> {
     })
 }
 
+/// The number the workflow's next version gets: one more than any so far (saved, proposed or discarded). None for an
+/// unknown workflow.
+async fn next_version(tx: &mut sqlx::Transaction<'_, Sqlite>, id: &str) -> Result<Option<i64>, StoreError> {
+    let known: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM workflows WHERE id = ?").bind(id).fetch_optional(&mut **tx).await?;
+    if known.is_none() {
+        return Ok(None);
+    }
+    let (max,): (Option<i64>,) = sqlx::query_as("SELECT MAX(version) FROM workflow_versions WHERE workflow_id = ?")
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(Some(max.unwrap_or(0) + 1))
+}
+
 /// What `GET /api/workflow-runs` filters on.
 #[derive(Debug, Clone, Default)]
 pub struct RunFilter {
@@ -219,12 +252,9 @@ impl Store {
     ) -> Result<Option<u32>, StoreError> {
         let body = serde_json::to_string(doc).map_err(|e| corrupt("workflow doc", e))?;
         let mut tx = self.write_tx().await?;
-        let Some((version,)): Option<(i64,)> =
-            sqlx::query_as("SELECT version FROM workflows WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?
-        else {
+        let Some(next) = next_version(&mut tx, id).await? else {
             return Ok(None);
         };
-        let next = version + 1;
         sqlx::query(
             "INSERT INTO workflow_versions (workflow_id, version, doc, author, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -246,6 +276,97 @@ impl Store {
             .await?;
         tx.commit().await?;
         Ok(Some(u32::try_from(next).unwrap_or(0)))
+    }
+
+    /// Saves a proposal (Phase 7d spec §6.2): a new version that doesn't become current until accepted. An older
+    /// pending proposal is discarded. Returns the version, or None for an unknown workflow.
+    pub async fn propose_workflow_version(
+        &self,
+        id: &str,
+        doc: &WorkflowDoc,
+        author: Author,
+        note: &str,
+        now: i64,
+    ) -> Result<Option<u32>, StoreError> {
+        let body = serde_json::to_string(doc).map_err(|e| corrupt("workflow doc", e))?;
+        let mut tx = self.write_tx().await?;
+        let Some(next) = next_version(&mut tx, id).await? else {
+            return Ok(None);
+        };
+        sqlx::query("UPDATE workflow_versions SET status = 'discarded' WHERE workflow_id = ? AND status = 'proposed'")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO workflow_versions (workflow_id, version, doc, author, note, created_at, status) \
+             VALUES (?, ?, ?, ?, ?, ?, 'proposed')",
+        )
+        .bind(id)
+        .bind(next)
+        .bind(body)
+        .bind(author.as_str())
+        .bind(note)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE workflows SET updated_at = ? WHERE id = ?").bind(now).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(Some(u32::try_from(next).unwrap_or(0)))
+    }
+
+    /// A version's status (None when either is unknown).
+    pub async fn workflow_version_status(&self, id: &str, version: u32) -> Result<Option<VersionStatus>, StoreError> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM workflow_versions WHERE workflow_id = ? AND version = ?")
+                .bind(id)
+                .bind(i64::from(version))
+                .fetch_optional(&self.pool)
+                .await?;
+        row.map(|(s,)| VersionStatus::parse(&s).ok_or_else(|| corrupt("version status", &s))).transpose()
+    }
+
+    /// Makes a proposed version current. False when it isn't a pending proposal.
+    pub async fn accept_workflow_version(&self, id: &str, version: u32, now: i64) -> Result<bool, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT doc FROM workflow_versions WHERE workflow_id = ? AND version = ? AND status = 'proposed'",
+        )
+        .bind(id)
+        .bind(i64::from(version))
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((body,)) = row else {
+            return Ok(false);
+        };
+        let doc: WorkflowDoc = serde_json::from_str(&body).map_err(|e| corrupt("workflow doc", e))?;
+        sqlx::query("UPDATE workflow_versions SET status = 'saved' WHERE workflow_id = ? AND version = ?")
+            .bind(id)
+            .bind(i64::from(version))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE workflows SET version = ?, name = ?, description = ?, updated_at = ? WHERE id = ?")
+            .bind(i64::from(version))
+            .bind(&doc.name)
+            .bind(&doc.description)
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Sets a proposal aside. False when it isn't a pending proposal.
+    pub async fn discard_workflow_version(&self, id: &str, version: u32) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE workflow_versions SET status = 'discarded' WHERE workflow_id = ? AND version = ? \
+             AND status = 'proposed'",
+        )
+        .bind(id)
+        .bind(i64::from(version))
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
     }
 
     pub async fn get_workflow(&self, id: &str) -> Result<Option<Workflow>, StoreError> {
@@ -311,18 +432,20 @@ impl Store {
 
     /// Every version, newest first, without documents.
     pub async fn list_workflow_versions(&self, id: &str) -> Result<Vec<WorkflowVersion>, StoreError> {
-        let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
-            "SELECT version, author, note, created_at FROM workflow_versions WHERE workflow_id = ? ORDER BY version DESC",
+        let rows: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
+            "SELECT version, author, status, note, created_at FROM workflow_versions WHERE workflow_id = ? \
+             ORDER BY version DESC",
         )
         .bind(id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|(v, author, note, created_at)| {
+            .map(|(v, author, status, note, created_at)| {
                 Ok(WorkflowVersion {
                     workflow_id: id.into(),
                     version: u32::try_from(v).unwrap_or(0),
                     author: Author::parse(&author).ok_or_else(|| corrupt("version author", &author))?,
+                    status: VersionStatus::parse(&status).ok_or_else(|| corrupt("version status", &status))?,
                     note,
                     created_at,
                     doc: None,
@@ -606,6 +729,63 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    // ---- templates ----
+
+    pub async fn insert_template(&self, t: &Template) -> Result<(), StoreError> {
+        let params = serde_json::to_string(&t.params).map_err(|e| corrupt("template params", e))?;
+        let doc = serde_json::to_string(&t.doc).map_err(|e| corrupt("template doc", e))?;
+        sqlx::query(
+            "INSERT INTO workflow_templates (id, name, description, params, doc, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&t.id)
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind(params)
+        .bind(doc)
+        .bind(t.created_at)
+        .bind(t.updated_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_template(&self, t: &Template) -> Result<bool, StoreError> {
+        let params = serde_json::to_string(&t.params).map_err(|e| corrupt("template params", e))?;
+        let doc = serde_json::to_string(&t.doc).map_err(|e| corrupt("template doc", e))?;
+        let r = sqlx::query(
+            "UPDATE workflow_templates SET name = ?, description = ?, params = ?, doc = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind(params)
+        .bind(doc)
+        .bind(t.updated_at)
+        .bind(&t.id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    pub async fn get_template(&self, id: &str) -> Result<Option<Template>, StoreError> {
+        let row =
+            sqlx::query("SELECT * FROM workflow_templates WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_template).transpose()
+    }
+
+    /// The user's templates, by name.
+    pub async fn list_templates(&self) -> Result<Vec<Template>, StoreError> {
+        let rows = sqlx::query("SELECT * FROM workflow_templates ORDER BY name COLLATE NOCASE, id")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(to_template).collect()
+    }
+
+    pub async fn delete_template(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("DELETE FROM workflow_templates WHERE id = ?").bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     // ---- connections ----
 
     pub async fn insert_connection(&self, c: &Connection) -> Result<(), StoreError> {
@@ -717,6 +897,7 @@ mod tests {
             source: Source::Host,
             repo_file: None,
             version: 1,
+            proposed: None,
             created_at: 5,
             updated_at: 5,
         }
@@ -788,6 +969,66 @@ mod tests {
         store.set_workflow_enabled("h", false, 11).await.unwrap();
         assert_eq!(store.enabled_workflows().await.unwrap().len(), 1);
         assert!(store.delete_workflow("h").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn proposals_wait_for_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        store.insert_workflow(&wf("w", Scope::Host, None), &doc("one"), Author::User, "").await.unwrap();
+        assert_eq!(store.propose_workflow_version("w", &doc("agent"), Author::Agent, "a", 7).await.unwrap(), Some(2));
+        let w = store.get_workflow("w").await.unwrap().unwrap();
+        assert_eq!((w.name.as_str(), w.version, w.proposed), ("one", 1, Some(2)), "the current version stays");
+        // A save meanwhile takes the next number; a newer proposal sets the older one aside.
+        assert_eq!(store.save_workflow_version("w", &doc("mine"), Author::User, "", 8).await.unwrap(), Some(3));
+        assert_eq!(store.propose_workflow_version("w", &doc("agent 2"), Author::Agent, "", 9).await.unwrap(), Some(4));
+        assert_eq!(store.workflow_version_status("w", 2).await.unwrap(), Some(VersionStatus::Discarded));
+        assert!(!store.accept_workflow_version("w", 2, 10).await.unwrap(), "a discarded one can't be accepted");
+        assert!(store.accept_workflow_version("w", 4, 10).await.unwrap());
+        let w = store.get_workflow("w").await.unwrap().unwrap();
+        assert_eq!((w.name.as_str(), w.version, w.proposed), ("agent 2", 4, None));
+        let statuses: Vec<_> =
+            store.list_workflow_versions("w").await.unwrap().iter().map(|v| (v.version, v.status)).collect();
+        assert_eq!(
+            statuses,
+            [
+                (4, VersionStatus::Saved),
+                (3, VersionStatus::Saved),
+                (2, VersionStatus::Discarded),
+                (1, VersionStatus::Saved)
+            ]
+        );
+        assert_eq!(store.propose_workflow_version("w", &doc("x"), Author::Agent, "", 11).await.unwrap(), Some(5));
+        assert!(store.discard_workflow_version("w", 5).await.unwrap());
+        assert!(!store.discard_workflow_version("w", 5).await.unwrap());
+        assert_eq!(store.get_workflow("w").await.unwrap().unwrap().proposed, None);
+        assert_eq!(store.propose_workflow_version("nope", &doc("x"), Author::Agent, "", 11).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn templates_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        let mut t = Template {
+            id: "t1".into(),
+            name: "Zed".into(),
+            description: "d".into(),
+            builtin: false,
+            params: serde_json::from_value(json!([{"id": "x", "title": "X", "type": "string"}])).unwrap(),
+            doc: doc("{{params.x}}"),
+            created_at: 1,
+            updated_at: 1,
+        };
+        store.insert_template(&t).await.unwrap();
+        store.insert_template(&Template { id: "t2".into(), name: "alpha".into(), ..t.clone() }).await.unwrap();
+        t.name = "Zeta".into();
+        t.updated_at = 2;
+        assert!(store.update_template(&t).await.unwrap());
+        assert_eq!(store.get_template("t1").await.unwrap().unwrap(), t);
+        let names: Vec<_> = store.list_templates().await.unwrap().into_iter().map(|t| t.name).collect();
+        assert_eq!(names, ["alpha", "Zeta"]);
+        assert!(store.delete_template("t2").await.unwrap());
+        assert!(store.get_template("t2").await.unwrap().is_none());
     }
 
     #[tokio::test]

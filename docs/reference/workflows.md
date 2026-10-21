@@ -1,9 +1,11 @@
-# Workflows, events and the engine (Phase 7a)
+# Workflows, events, the engine and the builder (Phases 7a, 7d)
 
-Spec: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md (vision: 2026-10-20-workflows-and-pm-vision.md).
-Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, API records),
-pdt-store `event_log.rs` and `workflows.rs` (migration 0021), pdt-api `workflow/` (catalog, engine, nodes, outbox,
-built-ins, repo files, routes) and `finish.rs` (`ticket.finish`).
+Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md and 2026-10-20-phase-7d-builder-design.md (vision:
+2026-10-20-workflows-and-pm-vision.md).
+Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, templates, API
+records), pdt-store `event_log.rs` and `workflows.rs` (migrations 0021, 0022), pdt-api `workflow/` (catalog, engine,
+nodes, outbox, built-ins, templates, repo files, routes) and `finish.rs` (`ticket.finish`); web `src/workflows/` and
+`web/ui/FlowGraph.tsx`.
 
 ## Event log
 
@@ -28,7 +30,12 @@ built-ins, repo files, routes) and `finish.rs` (`ticket.finish`).
   `maxRuntimeMs`). Config strings take `{{trigger.x}}`, `{{steps.<node>.x}}`, `{{state.x}}`, `{{run.id}}`; a string
   that is one reference keeps the value's type. `{{event.x}}` is left for a wait's event conditions.
 - Rows: `workflows` (scope `project` | `host` | `personal`, `enabled`, `builtin`, `source` `host` | `repo`,
-  `repo_file`, `version`), `workflow_versions` (every save; author `user` / `builtin` / `repo` / `agent`).
+  `repo_file`, `version`), `workflow_versions` (every save; author `user` / `builtin` / `repo` / `agent`; `status`
+  `saved` / `proposed` / `discarded`). A version's number is the highest so far plus one.
+- Proposals (7d): `PUT {doc, note, propose: true}` saves a version authored `agent` that doesn't become current; a
+  newer proposal discards the older one. `Workflow.proposed` is the pending one. `POST /versions/{v}/accept` makes it
+  current (validated again), `/discard` sets it aside (`409 not_proposed` for anything that isn't pending). Repo
+  workflows refuse proposals like saves. Restoring an old version is a save of its document.
 - Repo files: `.pdt/workflows/<name>.json` in the main checkout, read by `maintain_workflows` (every 60 s with the
   merge check): new files become disabled project workflows, a changed file a new version, a removed file removes the
   workflow. They can't be edited or deleted through the API (`409 workflow_in_repo`).
@@ -101,11 +108,50 @@ unified diff), `/state`, `/run {input, runKey}`; `POST /api/workflows/validate {
 `POST /api/workflows/dry-run {doc | workflowId, event {type, payload} | eventId}` (in memory: which triggers match,
 each step's input, port and output; actions report `would`).
 
+`POST /api/workflows/check {doc}` → `{issues, ports}`: validation plus each node's ports as its config gives them (a
+gate's choices, a switch's cases; `error` not listed). The builder calls it after every change.
+
+Templates: `GET/POST /api/workflow-templates`, `GET/PUT/DELETE /api/workflow-templates/{id}`,
+`POST /api/workflow-templates/{id}/instantiate {params, name, scope, projectId}` (a new workflow, always disabled).
+A template is `{name, description, params, doc}`; a param `{id, title, description, type: string | text | number |
+boolean | choice, choices, default, required}`; the document uses `{{params.<id>}}` (a string that is exactly one
+reference takes the value with its type; other references stay). Saving checks the params and validates the document
+with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, read-only, `409 builtin_template`):
+Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, and
+the four built-in workflows. The user's are in `workflow_templates`.
+
 Connections: `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned).
 
 ## Web
 
-Settings → This host → Workflows (web/src/host/WorkflowsSection.tsx): every workflow with its switch, badges (Built
-in, In the repo) and last run. The builder is Phase 7d.
+The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings → This host → Workflows:
+
+- List column (`WorkflowsList`): New workflow (template, params, name, where it applies; it starts off), the
+  workflows grouped This host / Personal / each project (on/off dot, Built in, Repo, Proposed), then the templates.
+- A workflow (`WorkflowPage`): header with the Enabled switch (turning on asks, listing its triggers and actions, and
+  offers Dry run first), Dry run, Run now (with a manual trigger; runs the saved version), ⋯ (Save as template,
+  Duplicate, Delete…); a banner for a pending proposal; and Graph | Outline | Text | Runs | Versions.
+- Graph, Outline and Text edit one draft (`useDraft`: undo/redo, never replaced by polling while dirty; "Unsaved
+  changes" bar with a note, Discard and Save, refused while the draft has errors). Every change is checked
+  (`useCheck`), so issues show on nodes and ports follow the config. Repo workflows are read-only.
+  - Graph (`GraphView` on `web/ui/FlowGraph`, React Flow): Add node (the catalog, wired from the selected node's first
+    open port), drag a port to a node to connect, drag to move (saved as `position`), Delete/Backspace removes,
+    Arrange lays everything out again. Nodes without a position get a layered layout that avoids placed ones.
+  - Outline (`OutlineView`): each trigger, then its steps; a node with several ports nests a branch per port; a node
+    reached again is "Continues at …". Up/Down move between rows, Enter opens the panel; ⋯ adds after, moves up/down in
+    a chain, removes (joining one way in to one way out). Default on phones, with the panel in a sheet.
+  - Text (`TextView`): JSON or TOML (no nulls) in CodeMirror; applied as you type once it parses.
+  - The side panel (`NodePanel` + `SchemaForm`) is generated from the kind's config schema: text, numbers, switches,
+    choices, lists, objects, optional and `Tpl` fields (a value or a `{{reference}}`, with a picker of trigger fields and
+    earlier steps), JSON for anything else; plus id (rename rewrites edges and `{{steps.<id>}}`), title, retries,
+    time limit, loop limit and "On error, go to". With no node selected it edits the workflow's name, description and
+    limits.
+- Runs (`RunsView`): the runs (polled), and a run's graph of the version it ran with the path taken, its steps (input,
+  output, error), Retry from the failed step, Cancel, and a waiting gate's choices.
+- Dry run (`DryRunDialog`): the draft against a recent event of its trigger types, a hand-written one (prefilled from
+  the trigger's schema) or a manual input; the path, why triggers didn't match, and what each action would do.
+- Versions (`VersionsView`): every version with author, status and note, a diff against the current one, Restore,
+  Accept / Discard for a proposal.
+- Templates (`TemplatePage`): built-in ones read-only; the user's edit name, description, params and the document.

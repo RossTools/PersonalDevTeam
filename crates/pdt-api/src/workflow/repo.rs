@@ -63,6 +63,7 @@ pub(crate) async fn sync_project(
                     source: Source::Repo,
                     repo_file: Some(file.clone()),
                     version: 1,
+                    proposed: None,
                     created_at: now,
                     updated_at: now,
                 };
