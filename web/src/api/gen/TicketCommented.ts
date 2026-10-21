@@ -5,7 +5,7 @@
  */
 export type TicketCommented = { projectId: string, ticketId: string, ticketKey: string, body: string, 
 /**
- * `user`, or `system` for a comment a workflow wrote.
+ * `user` (in PDT), `agent` (an agent through the API) or `system` (a workflow).
  */
 actor: string, 
 /**

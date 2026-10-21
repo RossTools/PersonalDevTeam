@@ -19,4 +19,8 @@ repoFile: string | null,
 /**
  * The current version.
  */
-version: number, createdAt: number, updatedAt: number, };
+version: number, 
+/**
+ * A version an agent proposed, waiting for review.
+ */
+proposed: number | null, createdAt: number, updatedAt: number, };

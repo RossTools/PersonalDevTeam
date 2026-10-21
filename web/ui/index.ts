@@ -48,6 +48,7 @@ export * from './FolderPicker';
 export * from './ViewHeader';
 export * from './Page';
 export * from './SplitPane';
+// FlowGraph (React Flow) is imported as '@ui/FlowGraph' so it and its styles load only with the workflow builder.
 
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';
 

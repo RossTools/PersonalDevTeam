@@ -57,7 +57,7 @@ Schema from schemars), and each tool calls the domain function the matching rout
 | `workflow_get` | `id` or `name` | the workflow and its current document (`GET /api/workflows/{id}`) |
 | `workflow_validate` | `doc` | `POST /api/workflows/validate` |
 | `workflow_dry_run` | `doc` or `workflowId`, `event` | `POST /api/workflows/dry-run` |
-| `workflow_save` | `id?`, `doc`, `note?` | a new version authored `agent` (`PUT`), or a new **disabled** workflow (`POST`); enabling stays the user's |
+| `workflow_save` | `id?`, `doc`, `note?` | a proposed version (`PUT … {propose: true}`, 7d's review), or a new **disabled** workflow authored `agent`; accepting and enabling stay the user's |
 
 **Tool sets.** A persona version names its tools (§3). A session without a persona gets the **default set**:
 `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`. `tools/list` returns only the

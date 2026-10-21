@@ -178,7 +178,8 @@ that would be rebuilt later. Roughly:
   stalled handling, loop limits, the Inbox (gates, questions, stalled, loop limit).
 - **7c — Pipeline template:** the main spec §6 stages as a workflow; the Board splits In progress into its stages;
   scheduling and concurrency caps.
-- **7d — Builder:** graph view, non-graph view, text view, runs view, dry-run, templates.
+- **7d — Builder:** graph view, non-graph view, text view, runs view, dry-run, templates (spec:
+  2026-10-20-phase-7d-builder-design.md).
 - **7e — More of the catalog:** command, HTTP and webhook, GitHub issues and PR comments, schedule; then MCP tools as
   actions.
 

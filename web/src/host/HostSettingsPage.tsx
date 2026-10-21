@@ -12,7 +12,6 @@ import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { FolderField } from '../common/FolderField';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
-import { WorkflowsSection } from './WorkflowsSection';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -449,7 +448,6 @@ export function HostSettingsPage() {
       <RemoteAccess v={v} me={me ?? null} />
       <Agents v={v} />
       <Runs v={v} />
-      <WorkflowsSection />
       <ProjectsFolder v={v} />
       <Checks />
       <DangerZone v={v} />

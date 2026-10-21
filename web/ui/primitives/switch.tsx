@@ -5,7 +5,10 @@ import {
   type SwitchProps as SwitchPrimitiveProps,
 } from "react-aria-components"
 
-/** Track + thumb plus its label (children), as one React Aria `<label>`; the whole row is the hit target. */
+/**
+ * Track + thumb plus its label (children), as one React Aria `<label>`; the whole row is the hit target. `relative`
+ * keeps the visually hidden input inside the label (see checkbox.tsx).
+ */
 function Switch({
   className,
   size = "default",
@@ -20,7 +23,7 @@ function Switch({
       data-size={size}
       className={composeRenderProps(className, (className) =>
         cn(
-          "group/switch inline-flex items-center gap-2 text-sm text-foreground outline-none select-none pointer-coarse:min-h-control-touch data-disabled:cursor-not-allowed data-disabled:opacity-50",
+          "group/switch relative inline-flex items-center gap-2 text-sm text-foreground outline-none select-none pointer-coarse:min-h-control-touch data-disabled:cursor-not-allowed data-disabled:opacity-50",
           className
         )
       )}

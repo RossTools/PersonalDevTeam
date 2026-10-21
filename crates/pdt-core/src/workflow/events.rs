@@ -100,7 +100,7 @@ pub const EVENT_TYPES: &[EventType] = &[
     EventType {
         id: TICKET_COMMENTED,
         title: "Ticket commented",
-        description: "The user commented on a ticket.",
+        description: "Someone commented on a ticket: the user, an agent or a workflow (its actor says which).",
         schema: schema_of::<TicketCommented>,
     },
     EventType {
@@ -242,7 +242,7 @@ pub struct TicketCommented {
     pub ticket_id: String,
     pub ticket_key: String,
     pub body: String,
-    /// `user`, or `system` for a comment a workflow wrote.
+    /// `user` (in PDT), `agent` (an agent through the API) or `system` (a workflow).
     pub actor: String,
     /// The ticket's active attempt, when it has one.
     pub attempt_id: Option<String>,

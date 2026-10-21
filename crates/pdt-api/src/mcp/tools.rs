@@ -10,7 +10,7 @@ use pdt_core::inbox::Question;
 use pdt_core::mcp::{ToolInfo, input_schema};
 use pdt_core::review::{CommentSide, NewReviewComment};
 use pdt_core::session::Session;
-use pdt_core::ticket::{Actor, NewComment, valid_comment};
+use pdt_core::ticket::{Actor, valid_comment};
 use pdt_core::workflow::agent::OutcomeComment;
 use pdt_core::workflow::api::{Author, Scope};
 use pdt_core::workflow::doc::WorkflowDoc;
@@ -55,8 +55,8 @@ struct AskUser {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AddTicketComment {
-    #[serde(flatten)]
-    comment: NewComment,
+    /// Markdown. It is recorded as the agent's (`NewComment` without `by`: an agent never writes as the user).
+    body: String,
     /// A ticket key or id; this session's ticket when left out.
     #[serde(default)]
     ticket: Option<String>,
@@ -194,8 +194,8 @@ fn defs() -> Vec<Def> {
         Def {
             name: "workflow_save",
             title: "Save a workflow",
-            description: "Saves a document as a new version of a workflow, or as a new workflow, which starts \
-                          disabled: the user reviews and enables it.",
+            description: "Proposes a document as a new version of a workflow (the user reviews and accepts it), or \
+                          saves it as a new workflow, which starts disabled: the user reviews and enables it.",
             schema: schema::<WorkflowSave>,
         },
     ]
@@ -248,7 +248,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "add_ticket_comment" => {
             let a: AddTicketComment = args(a)?;
             let id = ticket_for(cx, a.ticket.as_deref()).await?;
-            let body = valid_comment(&a.comment.body).map_err(|e| api(e.into()))?;
+            let body = valid_comment(&a.body).map_err(|e| api(e.into()))?;
             let data = json!({"sessionId": cx.session.id, "persona": cx.session.persona.as_ref().map(|p| &p.name)});
             let e = st
                 .store
@@ -316,9 +316,14 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "workflow_save" => {
             let a: WorkflowSave = args(a)?;
             let d = match a.id {
+                // An agent's change to a workflow is a proposal the user reviews (Phase 7d spec §6.2).
                 Some(id) => {
-                    let s = crate::workflow::routes::SaveWorkflow { doc: Some(a.doc), note: a.note };
-                    crate::workflow::routes::save_as(st, &id, s, Author::Agent).await.map_err(api)?
+                    let s = crate::workflow::routes::SaveWorkflow { doc: Some(a.doc), note: a.note, propose: true };
+                    let Json(d) =
+                        crate::workflow::routes::save(State(st.clone()), axum::extract::Path(id), Ok(Json(s)))
+                            .await
+                            .map_err(api)?;
+                    d
                 }
                 None => {
                     let scope = a.scope.unwrap_or(Scope::Project);
@@ -326,18 +331,21 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                         Scope::Project => Some(a.project_id.unwrap_or_else(|| cx.session.project_id.clone())),
                         _ => None,
                     };
-                    let n = crate::workflow::routes::NewWorkflow {
-                        doc: Some(a.doc),
-                        scope: Some(scope),
+                    crate::workflow::routes::create_workflow(
+                        st,
+                        &a.doc,
+                        Some(scope),
                         project_id,
-                        enabled: false,
-                        note: a.note,
-                    };
-                    crate::workflow::routes::create_as(st, n, Author::Agent).await.map_err(api)?
+                        false,
+                        &a.note,
+                        Author::Agent,
+                    )
+                    .await
+                    .map_err(api)?
                 }
             };
-            Ok(json!({"workflowId": d.workflow.id, "version": d.workflow.version, "enabled": d.workflow.enabled,
-                      "issues": d.issues}))
+            Ok(json!({"workflowId": d.workflow.id, "version": d.workflow.version, "proposed": d.workflow.proposed,
+                      "enabled": d.workflow.enabled, "issues": d.issues}))
         }
         other => Err(format!("no tool is called {other}")),
     }

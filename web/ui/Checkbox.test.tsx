@@ -42,4 +42,12 @@ describe('Checkbox', () => {
     expect(screen.getByRole('checkbox', { name: 'Remote' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Select all' })).toBePartiallyChecked();
   });
+
+  // React Aria's input is visually hidden with position: absolute. Unless the label positions it, it sits outside the
+  // page's scroller, and focusing it on a click scrolls the app shell to reach it (PDT-87: the whole UI shifted).
+  it('keeps its hidden input positioned by its own label', () => {
+    render(<Checkbox label="Also delete the branch" />);
+    const label = screen.getByRole('checkbox', { name: 'Also delete the branch' }).closest('label')!;
+    expect(label.className.split(' ')).toContain('relative');
+  });
 });

@@ -20,6 +20,7 @@ import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
+import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
@@ -51,8 +52,8 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
-  sessions: 'Workspaces and agents', inbox: 'Inbox items', tickets: 'Projects and filters', personas: 'Personas',
-  files: 'Files and folders', settings: 'Settings sections',
+  sessions: 'Workspaces and agents', inbox: 'Inbox items', tickets: 'Projects and filters', workflows: 'Workflows and templates',
+  personas: 'Personas', files: 'Files and folders', settings: 'Settings sections',
 };
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
@@ -69,6 +70,7 @@ const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m)
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
 const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
 const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
+const WorkflowsView = lazy(() => import('../workflows/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
 const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
 const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default: m.InboxView })));
 const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
@@ -78,6 +80,9 @@ export function AppShell() {
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
   const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
+  // The Workflows view: the workflow or template shown, and the New workflow dialog.
+  const [workflowTarget, setWorkflowTarget] = useState<WorkflowTarget>(null);
+  const [creatingWorkflow, setCreatingWorkflow] = useState<{ templateId?: string } | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -269,6 +274,9 @@ export function AppShell() {
     setTheme,
     showKeys: () => setHelpOpen(true),
     showFiles: () => setView('files'),
+    showWorkflows: () => setView('workflows'),
+    showInbox: () => setView('inbox'),
+    showPersonas: () => setView('personas'),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
@@ -307,6 +315,10 @@ export function AppShell() {
     <PersonasList selectedId={personaId} onSelect={(id) => { setPersonaId(id); setSheetOpen(false); }} />
   ) : view === 'tickets' ? (
     <TicketsList backlog={backlog} projects={ws.projects} onChoose={() => setSheetOpen(false)} />
+  ) : view === 'workflows' ? (
+    <WorkflowsList projects={ws.projects} current={workflowTarget}
+      onOpen={(t) => { setWorkflowTarget(t); setSheetOpen(false); }}
+      onNew={() => { setSheetOpen(false); setCreatingWorkflow({}); }} />
   ) : view === 'files' ? (
     <>
       <h2 className={listHeading}>{label}</h2>
@@ -428,6 +440,8 @@ export function AppShell() {
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
             ) : view === 'tickets' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketsView backlog={backlog} projects={ws.projects} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></Suspense>
+            ) : view === 'workflows' ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></Suspense>
             ) : view === 'files' ? (
               <FileViewer state={folder} />
             ) : view === 'settings' ? (

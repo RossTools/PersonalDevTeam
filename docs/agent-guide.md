@@ -31,7 +31,7 @@ them for what they cover; the API above stays available for everything else.
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
 | `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
-| `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save` | the workflow catalog and documents, for sessions whose persona has them; a saved new workflow starts disabled |
+| `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save` | the workflow catalog and documents, for sessions whose persona has them; a change to a workflow is a proposal the person accepts, and a new workflow starts disabled |
 
 A session that runs a step of a workflow (a **persona** such as the Reviewer) has a section "Your role" in its
 instructions: it finishes the step with `submit_outcome`, never by what it writes, and asks the person with
@@ -51,7 +51,7 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 | `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?, parent?}`; a new ticket is a Draft at the top of its stage (a part, with `parent`, goes after the parent's last part) |
 | `PATCH /api/tickets/<id>` | any of `title`, `description`, `stage`, `priority`, `labels`, `areas`, `parent` (a ticket id, `""` to detach), `waiting` |
 | `GET /api/tickets/<id>/events` | the ticket's timeline, oldest first (`newestFirst=true` for newest first; `limit`, `cursor`; returns `{items, nextCursor}`). Comments are the items with `kind: "comment"`, their text in `body` |
-| `POST /api/tickets/<id>/comments` | `{body}` |
+| `POST /api/tickets/<id>/comments` | `{body}`; your comment shows as an agent's (actor `agent`), not the person's, and is not sent back to you |
 | `POST /api/tickets/<id>/links` | `{kind: "blocks" \| "relates", to: <other ticket id>}` (this ticket blocks `to`) |
 
 The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts
@@ -71,7 +71,10 @@ event, then conditions, gates, waits and actions. Messages that start with `[PDT
 workflow the person enabled, for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge
 queue, merged); each says what happened and what to do. A session started on a ticket is told in its instructions
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
-shell. Workflows are changed only when the person asks.
+shell. Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
+`{"doc": …, "note": "what and why", "propose": true}`. It is validated like a save but doesn't take effect: the person
+reviews its diff in the Workflows view and accepts or discards it. Never turn a workflow on (`PATCH {"enabled": true}`):
+that is the person's consent. Check a document with `/check` or `/validate` and try it with `/dry-run` before proposing.
 
 | Call | Gives |
 |---|---|
@@ -80,6 +83,8 @@ shell. Workflows are changed only when the person asks.
 | `GET /api/workflows/catalog` | every trigger, condition and action, with its config schema and ports |
 | `GET /api/workflow-runs?ticket=<id>` | the runs about a ticket; `GET /api/workflow-runs/<id>` has each step's input, output and port |
 | `POST /api/workflows/validate` · `/dry-run` | `{doc}` checks a document; `{doc or workflowId, event: {type, payload}}` shows what each step would do, changing nothing |
+| `GET /api/workflows/<id>/versions` · `/diff?from=&to=` | the versions (`status`: `saved`, `proposed`, `discarded`) and what changed between two |
+| `GET /api/workflow-templates` | templates (`params`, a `doc` with `{{params.<id>}}`); `POST …/<id>/instantiate {params, name, scope, projectId}` makes a workflow from one, off |
 | `GET /api/personas` | the personas agent steps run (Refiner, Coder, Reviewer, QA and the person's own): agent, model, instructions, permission mode, tools |
 | `GET /api/inbox` | what waits on the person: questions, approvals, stalled steps, loop limits and gates |
 

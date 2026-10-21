@@ -9,6 +9,7 @@ pub(crate) mod nodes;
 pub(crate) mod outbox;
 pub(crate) mod repo;
 pub(crate) mod routes;
+pub(crate) mod templates;
 
 use crate::routes::{AppState, now_ms};
 

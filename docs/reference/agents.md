@@ -45,8 +45,9 @@ notifications get 202; `GET`/`DELETE` 405).
 - **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`
   (the default set), and `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`,
   `workflow_save` for personas that list them. Inputs are the API's request types (schemars schemas) and each tool
-  runs the route's own function (ticket `get_one`, the store's comment, review `add_comment`, workflow `create_as` /
-  `save_as` with author `agent`, so a new workflow starts disabled). `tools/list` gives only the session's set (its
+  runs the route's own function (ticket `get_one`, the store's comment, review `add_comment`, workflow
+  `create_workflow` with author `agent`, so a new workflow starts disabled, and `save` with `propose`, so a change is a
+  proposal the user accepts or discards). `tools/list` gives only the session's set (its
   persona version's, else the default); read-only tools carry `readOnlyHint`. Errors the agent can act on are tool
   results with `isError`.
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets

@@ -209,6 +209,23 @@ impl Catalog {
         self.spec(id).is_some_and(|s| s.category == Category::Trigger)
     }
 
+    /// The ports a node has with its config (the kind's titles where it names them; `error` left out). None for an
+    /// unknown kind.
+    pub fn node_ports(&self, node: &Node) -> Option<Vec<PortSpec>> {
+        let facts = self.facts(node)?;
+        let spec = self.spec(&node.kind)?;
+        Some(
+            facts
+                .ports
+                .into_iter()
+                .map(|id| {
+                    let title = spec.ports.iter().find(|p| p.id == id).map_or_else(|| id.clone(), |p| p.title.clone());
+                    PortSpec { id, title }
+                })
+                .collect(),
+        )
+    }
+
     /// A node's config at the kind's current version.
     pub fn current_config(&self, node: &Node) -> Result<Value, String> {
         let (kind, spec) = self
@@ -284,5 +301,18 @@ mod tests {
         for t in pdt_core::workflow::events::EVENT_TYPES {
             assert!(catalog().is_trigger(t.id), "{} has a trigger", t.id);
         }
+    }
+
+    #[test]
+    fn node_ports_follow_the_config() {
+        let node: Node = serde_json::from_value(serde_json::json!({"id": "g", "kind": "gate", "version": 1,
+            "config": {"question": "q", "choices": ["yes", "no"]}}))
+        .unwrap();
+        let ports = catalog().node_ports(&node).unwrap();
+        let ids: Vec<_> = ports.iter().map(|p| (p.id.as_str(), p.title.as_str())).collect();
+        assert_eq!(ids, [("yes", "yes"), ("no", "no"), ("unanswered", "Not asked"), ("timeout", "No answer in time")]);
+        let unknown: Node =
+            serde_json::from_value(serde_json::json!({"id": "x", "kind": "nope", "version": 1})).unwrap();
+        assert!(catalog().node_ports(&unknown).is_none());
     }
 }

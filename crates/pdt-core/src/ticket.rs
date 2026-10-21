@@ -162,7 +162,8 @@ str_enum!(EventKind {
 pub enum Actor {
     User,
     System,
-    /// An agent session, through pdt-mcp (the event's data names the session and persona).
+    /// An agent: through pdt-mcp (the event's data names the session and persona), or the API (a comment it posted
+    /// with curl).
     Agent,
 }
 str_enum!(Actor { User => "user", System => "system", Agent => "agent" });
@@ -454,11 +455,15 @@ pub struct TicketLink {
     pub kind: LinkKind,
 }
 
-#[derive(Debug, Clone, Deserialize, TS, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct NewComment {
     pub body: String,
+    /// Who wrote it: `user` from PDT's own UI. Left out (any other API caller: an agent's curl) it is `agent`, so an
+    /// agent's comment never passes for the user's (workflows react to the user's comments).
+    #[serde(default)]
+    pub by: Option<Actor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

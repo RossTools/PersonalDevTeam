@@ -70,9 +70,9 @@ impl PartContext {
 }
 
 /// The agent's first prompt for a ticket: `"<KEY>-<n>: <title>\n\n<description>\n\n(Ticket <KEY>-<n> in PDT. Work in
-/// this worktree on branch <branch>.)"`, at most [`MAX_TICKET_PROMPT`] bytes. A description too long for that is cut
-/// at a character boundary and ends with a note to read the ticket in PDT; an empty description leaves no empty
-/// paragraph.
+/// this worktree on branch <branch>. <ONE_TICKET>)"`, at most [`MAX_TICKET_PROMPT`] bytes. A description too long for
+/// that is cut at a character boundary and ends with a note to read the ticket in PDT; an empty description leaves no
+/// empty paragraph.
 pub fn ticket_prompt(key: &str, title: &str, description: &str, branch: &str) -> String {
     part_prompt(key, title, description, branch, None)
 }
@@ -153,14 +153,18 @@ pub fn start_prompt(
     }
 }
 
+/// The first prompt's last sentence: an attempt's branch is for its ticket alone.
+pub const ONE_TICKET: &str = "Keep to this ticket: ask the user before making a ticket for anything unrelated that turns up, rather than changing \
+     it here.";
+
 /// An empty `branch` is a Personal project's ticket: it works in a folder, with no branch.
 fn prompt_ends(key: &str, title: &str, branch: &str) -> (String, String) {
-    let tail = if branch.is_empty() {
-        format!("(Ticket {key} in {SHORT_NAME}. Work in this folder.)")
+    let place = if branch.is_empty() {
+        "Work in this folder.".to_string()
     } else {
-        format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}.)")
+        format!("Work in this worktree on branch {branch}.")
     };
-    (format!("{key}: {title}"), tail)
+    (format!("{key}: {title}"), format!("(Ticket {key} in {SHORT_NAME}. {place} {ONE_TICKET})"))
 }
 
 fn assemble(head: &str, desc: &str, comments: Option<String>, block: Option<String>, tail: &str) -> String {
@@ -408,13 +412,15 @@ mod tests {
     fn the_prompt_names_the_ticket_and_the_branch() {
         assert_eq!(
             ticket_prompt("PDT-4", "Fix login", "Steps:\n1. open\n", "pdt/PDT-4-fix-login"),
-            "PDT-4: Fix login\n\nSteps:\n1. open\n\n(Ticket PDT-4 in PDT. Work in this worktree on branch \
-             pdt/PDT-4-fix-login.)"
+            format!(
+                "PDT-4: Fix login\n\nSteps:\n1. open\n\n(Ticket PDT-4 in PDT. Work in this worktree on branch \
+             pdt/PDT-4-fix-login. {ONE_TICKET})"
+            )
         );
         // No description, no empty paragraph.
         assert_eq!(
             ticket_prompt("PDT-4", "Fix login", "  \n", "b"),
-            "PDT-4: Fix login\n\n(Ticket PDT-4 in PDT. Work in this worktree on branch b.)"
+            format!("PDT-4: Fix login\n\n(Ticket PDT-4 in PDT. Work in this worktree on branch b. {ONE_TICKET})")
         );
     }
 
@@ -430,8 +436,10 @@ mod tests {
             let p = ticket_prompt("K-1", "T", &desc, "b");
             assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
             assert!(p.starts_with("K-1: T\n\n"));
-            let end = "\n\n[Description cut: read the full ticket in PDT.]\n\n(Ticket K-1 in PDT. Work in this worktree on \
-                       branch b.)";
+            let end = &format!(
+                "\n\n[Description cut: read the full ticket in PDT.]\n\n(Ticket K-1 in PDT. Work in this worktree on \
+                       branch b. {ONE_TICKET})"
+            );
             assert!(p.ends_with(end), "{p}");
             assert!(p.len() > MAX_TICKET_PROMPT - 8, "uses the space it has: {}", p.len());
         }
@@ -451,12 +459,16 @@ mod tests {
         let c = ctx("Conversations everywhere.", &["PDT-46 5a: Done (#44)", "PDT-48 5d: To do"]);
         assert_eq!(
             part_prompt("PDT-47", "5b", "Codex.", "b", Some(&c)),
-            "PDT-47: 5b\n\nCodex.\n\nPart of PDT-2: Phase 5\n\nConversations everywhere.\n\nThe other parts:\n\
-             - PDT-46 5a: Done (#44)\n- PDT-48 5d: To do\n\n(Ticket PDT-47 in PDT. Work in this worktree on branch b.)"
+            format!(
+                "PDT-47: 5b\n\nCodex.\n\nPart of PDT-2: Phase 5\n\nConversations everywhere.\n\nThe other parts:\n\
+             - PDT-46 5a: Done (#44)\n- PDT-48 5d: To do\n\n(Ticket PDT-47 in PDT. Work in this worktree on branch b. {ONE_TICKET})"
+            )
         );
         assert_eq!(
             part_prompt("PDT-47", "5b", "", "b", Some(&ctx("", &[]))),
-            "PDT-47: 5b\n\nPart of PDT-2: Phase 5\n\n(Ticket PDT-47 in PDT. Work in this worktree on branch b.)"
+            format!(
+                "PDT-47: 5b\n\nPart of PDT-2: Phase 5\n\n(Ticket PDT-47 in PDT. Work in this worktree on branch b. {ONE_TICKET})"
+            )
         );
         assert_eq!(part_prompt("PDT-4", "T", "d", "b", None), ticket_prompt("PDT-4", "T", "d", "b"));
     }
@@ -469,7 +481,7 @@ mod tests {
         assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
         assert!(p.contains(&own), "the part's description is whole");
         assert!(p.contains(&description_cut_note()) && p.contains("ppp"));
-        assert!(p.contains("- PDT-46 5a: Done") && p.ends_with("on branch b.)"));
+        assert!(p.contains("- PDT-46 5a: Done") && p.ends_with(&format!("on branch b. {ONE_TICKET})")));
         assert!(p.len() > MAX_TICKET_PROMPT - 64, "uses the space it has: {}", p.len());
 
         let own = "o".repeat(9000);
@@ -483,7 +495,7 @@ mod tests {
         let refs: Vec<&str> = many.iter().map(String::as_str).collect();
         let p = part_prompt("PDT-47", "5b", "d", "b", Some(&ctx("x", &refs)));
         assert!(p.len() <= MAX_TICKET_PROMPT, "{}", p.len());
-        assert!(p.starts_with("PDT-47: 5b") && p.ends_with("on branch b.)"));
+        assert!(p.starts_with("PDT-47: 5b") && p.ends_with(&format!("on branch b. {ONE_TICKET})")));
     }
 
     fn strings(v: &[&str]) -> Vec<String> {
@@ -495,9 +507,11 @@ mod tests {
         let c = ctx("Parent.", &["PDT-46 5a: Done"]);
         assert_eq!(
             start_prompt("PDT-47", "5b", "Codex.", "b", Some(&c), &strings(&["First.", " Second\n\nline two\n "])),
-            "PDT-47: 5b\n\nCodex.\n\nComments, oldest first:\n\n> First.\n\n> Second\n>\n> line two\n\n\
+            format!(
+                "PDT-47: 5b\n\nCodex.\n\nComments, oldest first:\n\n> First.\n\n> Second\n>\n> line two\n\n\
              Part of PDT-2: Phase 5\n\nParent.\n\nThe other parts:\n- PDT-46 5a: Done\n\n\
-             (Ticket PDT-47 in PDT. Work in this worktree on branch b.)"
+             (Ticket PDT-47 in PDT. Work in this worktree on branch b. {ONE_TICKET})"
+            )
         );
         // No comments (or only blank ones): the same prompt as before.
         assert_eq!(start_prompt("PDT-4", "T", "d", "b", None, &[]), ticket_prompt("PDT-4", "T", "d", "b"));
@@ -517,7 +531,7 @@ mod tests {
         let shown = (0..10).filter(|i| p.contains(&format!("> {i}c"))).count();
         assert!(shown >= 6, "uses the space it has: {shown}");
         assert!(p.contains(&format!("[{} earlier comments not shown: read them in PDT.]", 10 - shown)), "{p}");
-        assert!(p.ends_with("(Ticket K-1 in PDT. Work in this worktree on branch b.)"));
+        assert!(p.ends_with(&format!("(Ticket K-1 in PDT. Work in this worktree on branch b. {ONE_TICKET})")));
     }
 
     #[test]
