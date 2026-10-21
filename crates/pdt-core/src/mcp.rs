@@ -76,6 +76,8 @@ pub struct ToolInfo {
     pub title: String,
     pub description: String,
     pub input_schema: Value,
+    /// `readOnlyHint` and the like: an agent may run read-only tools without asking (Claude's plan mode).
+    pub annotations: Value,
 }
 
 /// A tool call's result: text the agent reads, plus the JSON it came from.

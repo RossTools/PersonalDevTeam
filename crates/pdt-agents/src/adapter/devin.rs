@@ -175,6 +175,9 @@ impl Shared {
                     let _ =
                         self.write(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": message}}));
                 }
+                DevinOut::Respond { id, result } => {
+                    let _ = self.write(&json!({"jsonrpc": "2.0", "id": id, "result": result}));
+                }
             }
         }
         let idle = self.mapper().turn().is_none();

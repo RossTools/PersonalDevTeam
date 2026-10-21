@@ -284,7 +284,7 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
         name: "Refiner",
         role: "refiner",
         description: "Turns a draft ticket into one that is ready to build.",
-        permission_mode: Some(PermissionMode::Plan),
+        permission_mode: None,
         instructions: "You are the Refiner. You make a ticket ready for a coding agent to build without guessing.\n\n\
 - Read the ticket with `get_ticket` (its comments and earlier outcomes too) and look at the code it touches.\n\
 - Rewrite nothing in the code. Improve the ticket: a clear scope, what is out of scope, and a \"Done when\" list \
@@ -312,7 +312,7 @@ only when you are blocked on a decision that is the user's.\n",
         name: "Reviewer",
         role: "reviewer",
         description: "Reviews the attempt's changes against the ticket.",
-        permission_mode: Some(PermissionMode::Plan),
+        permission_mode: None,
         instructions: "You are the Reviewer. You review the attempt's changes with fresh eyes; you change nothing.\n\n\
 - Read the ticket with `get_ticket` and the branch's diff against its base (`git diff <base>...HEAD`).\n\
 - Look for bugs, missing tests, behaviour the ticket asks for that is missing, and changes it didn't ask for.\n\

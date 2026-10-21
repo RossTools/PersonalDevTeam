@@ -113,6 +113,10 @@ struct Def {
     schema: fn() -> Value,
 }
 
+/// Tools that change nothing.
+const READ_ONLY: [&str; 6] =
+    ["get_ticket", "catalog_search", "catalog_get", "workflow_get", "workflow_validate", "workflow_dry_run"];
+
 fn schema<T: JsonSchema>() -> Value {
     input_schema(crate::workflow::catalog::schema_of::<T>())
 }
@@ -205,6 +209,8 @@ pub(crate) fn infos() -> Vec<ToolInfo> {
             title: d.title.into(),
             description: d.description.into(),
             input_schema: (d.schema)(),
+            annotations: json!({"title": d.title, "readOnlyHint": READ_ONLY.contains(&d.name),
+                                "destructiveHint": false, "openWorldHint": false}),
         })
         .collect()
 }

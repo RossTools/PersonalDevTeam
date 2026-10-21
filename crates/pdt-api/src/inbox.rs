@@ -61,6 +61,8 @@ async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem
         if project.is_some_and(|p| p != s.project_id) {
             continue;
         }
+        // A persona's session works on its step's ticket.
+        let step = st.store.active_agent_step(&sid).await?;
         for e in st.store.session_events_of_kind(&sid, "request").await? {
             let AgentEvent::Request { id, tool, title, description, input, diff, state, can_always, .. } = &e.event
             else {
@@ -80,12 +82,16 @@ async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem
                 group: InboxGroup::Approval,
                 status: InboxStatus::Open,
                 project_id: Some(s.project_id.clone()),
-                ticket_id: s.ticket.as_ref().map(|t| t.id.clone()),
+                ticket_id: s
+                    .ticket
+                    .as_ref()
+                    .map(|t| t.id.clone())
+                    .or_else(|| step.as_ref().and_then(|a| a.ticket_id.clone())),
                 ticket_key: None,
                 ticket_title: None,
-                attempt_id: s.attempt_id.clone(),
+                attempt_id: s.attempt_id.clone().or_else(|| step.as_ref().and_then(|a| a.attempt_id.clone())),
                 session_id: Some(sid.clone()),
-                run_id: None,
+                run_id: step.as_ref().map(|a| a.run_id.clone()),
                 step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
                 persona_id: s.persona.as_ref().map(|p| p.id.clone()),
                 persona_name: None,

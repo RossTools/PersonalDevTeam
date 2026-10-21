@@ -63,9 +63,11 @@ pub fn claude_args(m: &McpServer) -> Vec<String> {
     a
 }
 
-/// A Codex app-server thread's `config` overrides.
+/// A Codex app-server thread's `config` overrides. PDT's tools run without asking (as Claude's `--allowedTools`):
+/// a session only gets the tools its persona allows.
 pub fn codex_thread_config(m: &McpServer) -> Value {
-    json!({format!("mcp_servers.{SERVER_NAME}"): {"url": m.url, "http_headers": {"Authorization": m.bearer()}}})
+    json!({format!("mcp_servers.{SERVER_NAME}"): {"url": m.url, "http_headers": {"Authorization": m.bearer()},
+                                                  "default_tools_approval_mode": "approve"}})
 }
 
 /// A Codex terminal's `-c` overrides; the token goes in [`TOKEN_ENV`] (see [`codex_tui_env`]), not the command line.
@@ -75,6 +77,8 @@ pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
         format!("mcp_servers.{SERVER_NAME}.url={}", crate::hooks::toml_string(&m.url)),
         "-c".into(),
         format!("mcp_servers.{SERVER_NAME}.bearer_token_env_var={}", crate::hooks::toml_string(TOKEN_ENV)),
+        "-c".into(),
+        format!("mcp_servers.{SERVER_NAME}.default_tools_approval_mode=\"approve\""),
     ]
 }
 
@@ -133,8 +137,9 @@ mod tests {
         assert_eq!(c["mcp_servers.pdt"]["url"], m.url);
         assert_eq!(c["mcp_servers.pdt"]["http_headers"]["Authorization"], "Bearer s1.ab");
         let a = codex_tui_args(&m);
-        assert_eq!(a.len(), 4);
-        for kv in [&a[1], &a[3]] {
+        assert_eq!(a.len(), 6);
+        assert_eq!(c["mcp_servers.pdt"]["default_tools_approval_mode"], "approve");
+        for kv in [&a[1], &a[3], &a[5]] {
             let t: toml::Table = toml::from_str(kv).unwrap();
             assert!(t.contains_key("mcp_servers"), "{kv}");
         }

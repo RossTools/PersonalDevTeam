@@ -143,7 +143,7 @@ async fn personas_are_built_in_versioned_and_diffed() {
     let names: Vec<&str> = list.as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Coder", "QA", "Refiner", "Reviewer"]);
     let reviewer = list.as_array().unwrap().iter().find(|p| p["name"] == "Reviewer").unwrap().clone();
-    assert_eq!((reviewer["permissionMode"].as_str(), reviewer["builtin"].as_str()), (Some("plan"), Some("reviewer")));
+    assert_eq!((reviewer["permissionMode"].as_str(), reviewer["builtin"].as_str()), (None, Some("reviewer")));
 
     let (s, p) = call(
         &env.app,
@@ -256,6 +256,15 @@ async fn pdt_mcp_needs_the_session_token_and_lists_its_tools() {
 async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     let env = setup().await;
     let t = ticket(&env, "Review me").await;
+    // The project's mode is over the persona's and the host's.
+    let (s, v) = call(
+        &env.app,
+        "PUT",
+        &format!("/api/projects/{}/settings", env.project),
+        Some(json!({"agentCredentials": null, "runOverrides": null, "agentPermissionMode": "accept_edits"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
     let wf = create_workflow(
         &env,
         review_doc(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Looks right."}"#, json!({})),
@@ -270,7 +279,7 @@ async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     let session = step["output"]["sessionId"].as_str().unwrap().to_string();
     let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
     assert_eq!((s["persona"]["name"].as_str(), s["mode"].as_str()), (Some("Reviewer"), Some("conversation")));
-    assert_eq!(s["permissionMode"], "plan", "the Reviewer's own mode");
+    assert_eq!(s["permissionMode"], "accept_edits", "the project's override");
     let instructions =
         std::fs::read_to_string(env.state.data_dir.join("sessions").join(&session).join("instructions.md")).unwrap();
     assert!(
