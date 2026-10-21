@@ -18,6 +18,19 @@ pub const ATTEMPT_ABANDONED: &str = "attempt.abandoned";
 pub const TICKET_STAGE_CHANGED: &str = "ticket.stage_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
+pub const PR_COMMENTED: &str = "pr.commented";
+pub const PR_REVIEWED: &str = "pr.reviewed";
+pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
+pub const SCHEDULE_FIRED: &str = "schedule.fired";
+pub const WEBHOOK_RECEIVED: &str = "webhook.received";
+pub const PDT_NOTIFIED: &str = "pdt.notified";
+
+/// Event types whose trigger kind has a config of its own (pdt-api `workflow/nodes/`), not the plain event trigger:
+/// a schedule, a webhook and GitHub issues (`repos`).
+pub const OWN_TRIGGERS: &[&str] = &[SCHEDULE_FIRED, WEBHOOK_RECEIVED, GITHUB_ISSUE_OPENED];
+
+/// Event types no workflow can trigger on: `notify`'s own record (a workflow on it could notify itself forever).
+pub const NOT_TRIGGERS: &[&str] = &[PDT_NOTIFIED];
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 
 /// The CI provider of GitHub Actions runs.
@@ -114,6 +127,43 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Agent outcome",
         description: "An agent step on a ticket ended with an outcome (submitted by the agent, or taken over by the user).",
         schema: schema_of::<AgentOutcome>,
+    },
+    EventType {
+        id: PR_COMMENTED,
+        title: "Pull request commented",
+        description: "Someone commented on an attempt's pull request: on the conversation, or on a line in a review.",
+        schema: schema_of::<PrCommented>,
+    },
+    EventType {
+        id: PR_REVIEWED,
+        title: "Pull request reviewed",
+        description: "Someone submitted a review of an attempt's pull request (approved, changes requested, commented).",
+        schema: schema_of::<PrReviewed>,
+    },
+    EventType {
+        id: GITHUB_ISSUE_OPENED,
+        title: "GitHub issue opened",
+        description: "A new issue in a watched GitHub repository (the first look at a repository only records where it \
+                      is).",
+        schema: schema_of::<GithubIssueOpened>,
+    },
+    EventType {
+        id: SCHEDULE_FIRED,
+        title: "On a schedule",
+        description: "Every interval, or at the times of a cron expression.",
+        schema: schema_of::<ScheduleFired>,
+    },
+    EventType {
+        id: WEBHOOK_RECEIVED,
+        title: "Webhook",
+        description: "Another machine posted to this host's webhook address (POST /api/hooks/<name>), with its secret.",
+        schema: schema_of::<WebhookReceived>,
+    },
+    EventType {
+        id: PDT_NOTIFIED,
+        title: "Notification",
+        description: "A workflow's notify step: shown in PDT as a notification.",
+        schema: schema_of::<Notified>,
     },
 ];
 
@@ -282,6 +332,121 @@ pub struct AgentOutcome {
     pub session_id: Option<String>,
     pub workflow_id: Option<String>,
     pub run_id: Option<String>,
+}
+
+/// `pr.commented`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PrCommented {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub attempt: AttemptRef,
+    pub pr: u32,
+    /// The comment.
+    pub url: String,
+    #[ts(type = "number")]
+    pub comment_id: u64,
+    pub author: String,
+    pub body: String,
+    /// A review comment's file and line.
+    pub path: Option<String>,
+    pub line: Option<u32>,
+    /// On a line, in a review (else on the conversation).
+    pub in_review: bool,
+    /// Written by the user themself (the account `gh` is logged in as).
+    pub by_owner: bool,
+    pub is_bot: bool,
+    pub notice: Notice,
+}
+
+/// `pr.reviewed`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PrReviewed {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub attempt: AttemptRef,
+    pub pr: u32,
+    pub url: String,
+    #[ts(type = "number")]
+    pub review_id: u64,
+    pub author: String,
+    /// `approved`, `changes_requested` or `commented`.
+    pub state: String,
+    pub body: String,
+    pub by_owner: bool,
+    pub is_bot: bool,
+    pub notice: Notice,
+}
+
+/// `github.issue.opened`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GithubIssueOpened {
+    /// The project whose repository it is, if any.
+    pub project_id: Option<String>,
+    /// `owner/name`.
+    pub repo: String,
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub author: String,
+    pub labels: Vec<String>,
+    pub created_at: String,
+}
+
+/// `schedule.fired`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ScheduleFired {
+    pub workflow_id: String,
+    pub node_id: String,
+    /// The slot (ms since the epoch).
+    #[ts(type = "number")]
+    pub slot: i64,
+    /// The slot in the schedule's zone, RFC 3339.
+    pub slot_iso: String,
+    /// The slot's date in the schedule's zone (`YYYY-MM-DD`), for run keys.
+    pub date: String,
+}
+
+/// `webhook.received`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WebhookReceived {
+    /// The webhook connection's name.
+    pub hook: String,
+    pub method: String,
+    #[ts(type = "Record<string, string>")]
+    pub query: std::collections::BTreeMap<String, String>,
+    /// `content-type`, `user-agent` and the `x-*` headers, names in lower case.
+    #[ts(type = "Record<string, string>")]
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// Parsed JSON, else the text.
+    #[ts(type = "unknown")]
+    pub body: serde_json::Value,
+}
+
+/// `pdt.notified`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Notified {
+    pub title: String,
+    pub body: String,
+    /// `info`, `warning` or `error`.
+    pub level: String,
+    /// A ticket key or a URL.
+    pub link: Option<String>,
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub run_id: String,
 }
 
 #[cfg(test)]

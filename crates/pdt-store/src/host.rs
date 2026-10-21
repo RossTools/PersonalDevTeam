@@ -45,6 +45,36 @@ impl Store {
         Ok(())
     }
 
+    /// A value of its own under `key` in `host_settings` (a sensor's baseline: `sensor.<name>.<key>`).
+    pub async fn get_host_value(&self, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM host_settings WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|(v,)| serde_json::from_str(&v).ok()))
+    }
+
+    pub async fn put_host_value(&self, key: &str, value: &serde_json::Value) -> Result<(), StoreError> {
+        assert_ne!(key, HOST_KEY, "the host settings have their own setter");
+        sqlx::query(
+            "INSERT INTO host_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_host_value(&self, key: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM host_settings WHERE key = ? AND key != ?")
+            .bind(key)
+            .bind(HOST_KEY)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode \
@@ -119,6 +149,19 @@ mod tests {
         let dev = HostSettings::for_profile(pdt_core::brand::Profile::Dev);
         let store = store_with_project(tmp.path()).await.with_host_defaults(dev.clone());
         assert_eq!(store.get_host_settings().await.unwrap(), dev);
+    }
+
+    #[tokio::test]
+    async fn host_values_sit_beside_the_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        assert_eq!(store.get_host_value("sensor.x.y").await.unwrap(), None);
+        store.put_host_value("sensor.x.y", &serde_json::json!({"n": 3})).await.unwrap();
+        store.put_host_value("sensor.x.y", &serde_json::json!({"n": 4})).await.unwrap();
+        assert_eq!(store.get_host_value("sensor.x.y").await.unwrap(), Some(serde_json::json!({"n": 4})));
+        assert_eq!(store.get_host_settings().await.unwrap(), HostSettings::default(), "the settings are untouched");
+        store.delete_host_value("sensor.x.y").await.unwrap();
+        assert_eq!(store.get_host_value("sensor.x.y").await.unwrap(), None);
     }
 
     #[tokio::test]

@@ -7,8 +7,9 @@ mod shutdown;
 
 use anyhow::Context;
 use pdt_api::{
-    AppState, apply_remote_access, check_merges, maintain_workflows, plan_resume_interrupted, refresh_overlaps,
-    refresh_prs, resume_runs, router, run_activity_ticker, run_workflows, sweep_gone_runs, with_host_guard,
+    AppState, apply_remote_access, check_merges, maintain_workflows, plan_resume_interrupted, refresh_issues,
+    refresh_overlaps, refresh_prs, resume_runs, router, run_activity_ticker, run_workflows, sweep_gone_runs,
+    with_host_guard,
 };
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
@@ -159,6 +160,8 @@ async fn run() -> anyhow::Result<()> {
                 // spec §6).
                 refresh_prs(&st).await;
                 check_merges(&st).await;
+                // New issues in repos workflows watch (Phase 7e).
+                refresh_issues(&st).await;
                 // Workflows kept in repos, and pruning old events and runs (Phase 7a).
                 maintain_workflows(&st).await;
             }

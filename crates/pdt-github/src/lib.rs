@@ -54,6 +54,43 @@ pub struct PullRequest {
     pub queue_removal: Option<QueueRemoval>,
 }
 
+/// An issue (not a pull request) as the issues API lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issue {
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub author: String,
+    pub labels: Vec<String>,
+    pub created_at: String,
+}
+
+/// A comment on a pull request: on its conversation, or on a line in a review.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrComment {
+    pub id: u64,
+    pub author: String,
+    pub is_bot: bool,
+    pub body: String,
+    pub url: String,
+    pub path: Option<String>,
+    pub line: Option<u32>,
+    pub in_review: bool,
+}
+
+/// A submitted review of a pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrReview {
+    pub id: u64,
+    pub author: String,
+    pub is_bot: bool,
+    /// `approved`, `changes_requested`, `commented` (pending and dismissed ones are left out).
+    pub state: String,
+    pub body: String,
+    pub url: String,
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum GhError {
     #[error("the GitHub CLI (gh) was not found")]
@@ -80,6 +117,134 @@ pub trait GithubApi: Send + Sync {
     /// Turns on auto-merge for PR `number` (`gh pr merge --auto`, with `flag` such as `--squash` unless a merge queue
     /// picks the method). A PR that can merge right away is merged.
     fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError>;
+    /// The login `gh` is authenticated as (the user themself).
+    fn viewer_login(&self) -> Result<String, GhError> {
+        Err(GhError::NotInstalled)
+    }
+    /// The newest issues of `repo` (pull requests left out), newest first.
+    fn recent_issues(&self, _repo: &str) -> Result<Vec<Issue>, GhError> {
+        Err(GhError::NotInstalled)
+    }
+    /// Every comment on PR `number`: the conversation's and the reviews' line comments.
+    fn pr_comments(&self, _repo: &str, _number: u32) -> Result<Vec<PrComment>, GhError> {
+        Err(GhError::NotInstalled)
+    }
+    /// The submitted reviews of PR `number`.
+    fn pr_reviews(&self, _repo: &str, _number: u32) -> Result<Vec<PrReview>, GhError> {
+        Err(GhError::NotInstalled)
+    }
+}
+
+const BOT: &str = "(.user.type == \"Bot\" or (.user.login | endswith(\"[bot]\")))";
+
+/// `gh api` of a list, one compact JSON object per line (`--jq`), every page.
+fn list_args(path: &str, jq: &str, paginate: bool) -> Vec<String> {
+    let mut a = vec!["api".to_string()];
+    if paginate {
+        a.push("--paginate".into());
+    }
+    a.extend([path.to_string(), "--jq".into(), format!(".[] | {jq}")]);
+    a
+}
+
+pub fn recent_issues_args(repo: &str) -> Vec<String> {
+    list_args(
+        &format!("repos/{repo}/issues?state=all&sort=created&direction=desc&per_page=50"),
+        "{number, title, body, url: .html_url, author: .user.login, labels: [.labels[].name], created_at, \
+         pr: (.pull_request != null)}",
+        false,
+    )
+}
+
+pub fn issue_comments_args(repo: &str, number: u32) -> Vec<String> {
+    list_args(
+        &format!("repos/{repo}/issues/{number}/comments?per_page=100"),
+        &format!("{{id, author: .user.login, bot: {BOT}, body, url: .html_url}}"),
+        true,
+    )
+}
+
+pub fn review_comments_args(repo: &str, number: u32) -> Vec<String> {
+    list_args(
+        &format!("repos/{repo}/pulls/{number}/comments?per_page=100"),
+        &format!("{{id, author: .user.login, bot: {BOT}, body, url: .html_url, path, line}}"),
+        true,
+    )
+}
+
+pub fn reviews_args(repo: &str, number: u32) -> Vec<String> {
+    list_args(
+        &format!("repos/{repo}/pulls/{number}/reviews?per_page=100"),
+        &format!("{{id, author: .user.login, bot: {BOT}, state, body, url: .html_url}}"),
+        true,
+    )
+}
+
+/// One JSON object per line.
+fn lines(out: &str) -> Result<Vec<Value>, GhError> {
+    out.lines().filter(|l| !l.trim().is_empty()).map(json).collect()
+}
+
+pub fn parse_issues(out: &str) -> Result<Vec<Issue>, GhError> {
+    Ok(lines(out)?
+        .iter()
+        .filter(|v| v["pr"] != true)
+        .filter_map(|v| {
+            Some(Issue {
+                number: v["number"].as_u64()?,
+                title: s(v, "title"),
+                body: s(v, "body"),
+                url: s(v, "url"),
+                author: s(v, "author"),
+                labels: v["labels"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+                created_at: s(v, "created_at"),
+            })
+        })
+        .collect())
+}
+
+/// Conversation comments (`in_review: false`) or review comments.
+pub fn parse_comments(out: &str, in_review: bool) -> Result<Vec<PrComment>, GhError> {
+    Ok(lines(out)?
+        .iter()
+        .filter_map(|v| {
+            Some(PrComment {
+                id: v["id"].as_u64()?,
+                author: s(v, "author"),
+                is_bot: v["bot"] == true,
+                body: s(v, "body"),
+                url: s(v, "url"),
+                path: v["path"].as_str().map(String::from),
+                line: v["line"].as_u64().and_then(|l| u32::try_from(l).ok()),
+                in_review,
+            })
+        })
+        .collect())
+}
+
+pub fn parse_reviews(out: &str) -> Result<Vec<PrReview>, GhError> {
+    Ok(lines(out)?
+        .iter()
+        .filter_map(|v| {
+            let state = match v["state"].as_str()? {
+                "APPROVED" => "approved",
+                "CHANGES_REQUESTED" => "changes_requested",
+                "COMMENTED" => "commented",
+                _ => return None,
+            };
+            Some(PrReview {
+                id: v["id"].as_u64()?,
+                author: s(v, "author"),
+                is_bot: v["bot"] == true,
+                state: state.into(),
+                body: s(v, "body"),
+                url: s(v, "url"),
+            })
+        })
+        .collect())
 }
 
 pub fn merge_settings_args(repo: &str, base: &str) -> Result<Vec<String>, GhError> {
@@ -356,6 +521,22 @@ impl GithubApi for GhCli {
             r => r.map(|_| ()),
         }
     }
+    fn viewer_login(&self) -> Result<String, GhError> {
+        let out = self.run(&["api".into(), "user".into(), "--jq".into(), ".login".into()])?;
+        Ok(out.trim().to_string())
+            .and_then(|l| if l.is_empty() { Err(GhError::BadOutput("no login".into())) } else { Ok(l) })
+    }
+    fn recent_issues(&self, repo: &str) -> Result<Vec<Issue>, GhError> {
+        parse_issues(&self.run(&recent_issues_args(repo))?)
+    }
+    fn pr_comments(&self, repo: &str, number: u32) -> Result<Vec<PrComment>, GhError> {
+        let mut all = parse_comments(&self.run(&issue_comments_args(repo, number))?, false)?;
+        all.extend(parse_comments(&self.run(&review_comments_args(repo, number))?, true)?);
+        Ok(all)
+    }
+    fn pr_reviews(&self, repo: &str, number: u32) -> Result<Vec<PrReview>, GhError> {
+        parse_reviews(&self.run(&reviews_args(repo, number))?)
+    }
 }
 
 fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
@@ -427,6 +608,13 @@ pub mod testing {
         pub settings: Mutex<Option<MergeSettings>>,
         /// `merge_pr` fails with this.
         pub merge_error: Mutex<Option<String>>,
+        /// `viewer_login`'s answer (`me` when unset).
+        pub login: Mutex<Option<String>>,
+        /// Issues by repo, newest first.
+        pub issues: Mutex<HashMap<String, Vec<Issue>>>,
+        /// Comments and reviews by PR number.
+        pub comments: Mutex<HashMap<u32, Vec<PrComment>>>,
+        pub reviews: Mutex<HashMap<u32, Vec<PrReview>>>,
         pub calls: Mutex<Vec<String>>,
     }
 
@@ -443,6 +631,15 @@ pub mod testing {
         }
         pub fn set_jobs(&self, run_id: u64, jobs: &[&str]) {
             self.jobs.lock().unwrap().insert(run_id, jobs.iter().map(|j| j.to_string()).collect());
+        }
+        pub fn set_issues(&self, repo: &str, issues: Vec<Issue>) {
+            self.issues.lock().unwrap().insert(repo.into(), issues);
+        }
+        pub fn set_comments(&self, pr: u32, comments: Vec<PrComment>) {
+            self.comments.lock().unwrap().insert(pr, comments);
+        }
+        pub fn set_reviews(&self, pr: u32, reviews: Vec<PrReview>) {
+            self.reviews.lock().unwrap().insert(pr, reviews);
         }
         fn call(&self, what: String) {
             self.calls.lock().unwrap().push(what);
@@ -481,6 +678,21 @@ pub mod testing {
                 Some(e) => Err(GhError::Command(e)),
                 None => Ok(()),
             }
+        }
+        fn viewer_login(&self) -> Result<String, GhError> {
+            Ok(self.login.lock().unwrap().clone().unwrap_or_else(|| "me".into()))
+        }
+        fn recent_issues(&self, repo: &str) -> Result<Vec<Issue>, GhError> {
+            self.call(format!("issues {repo}"));
+            Ok(self.issues.lock().unwrap().get(repo).cloned().unwrap_or_default())
+        }
+        fn pr_comments(&self, repo: &str, number: u32) -> Result<Vec<PrComment>, GhError> {
+            self.call(format!("comments {repo} {number}"));
+            Ok(self.comments.lock().unwrap().get(&number).cloned().unwrap_or_default())
+        }
+        fn pr_reviews(&self, repo: &str, number: u32) -> Result<Vec<PrReview>, GhError> {
+            self.call(format!("reviews {repo} {number}"));
+            Ok(self.reviews.lock().unwrap().get(&number).cloned().unwrap_or_default())
         }
     }
 }
@@ -544,6 +756,26 @@ mod tests {
         let jobs = r#"{"jobs":[{"name":"changes","conclusion":"success"},{"name":"test (linux)","conclusion":"failure"},
           {"name":"release","conclusion":"skipped"}]}"#;
         assert_eq!(parse_failed_jobs(jobs).unwrap(), vec!["test (linux)".to_string()]);
+    }
+
+    #[test]
+    fn parses_issues_comments_and_reviews() {
+        let issues = r#"{"number":7,"title":"Bug","body":"b","url":"https://i/7","author":"al","labels":["bug"],"created_at":"t","pr":false}
+{"number":6,"title":"A PR","body":null,"url":"u","author":"bo","labels":[],"created_at":"t","pr":true}
+"#;
+        let i = parse_issues(issues).unwrap();
+        assert_eq!(i.len(), 1, "pull requests are left out");
+        assert_eq!((i[0].number, i[0].labels.clone()), (7, vec!["bug".to_string()]));
+        let c = r#"{"id":11,"author":"al","bot":false,"body":"nit","url":"u","path":"src/a.rs","line":40}"#;
+        let c = parse_comments(c, true).unwrap();
+        assert_eq!((c[0].id, c[0].path.as_deref(), c[0].line, c[0].in_review), (11, Some("src/a.rs"), Some(40), true));
+        let r = r#"{"id":5,"author":"al","bot":false,"state":"CHANGES_REQUESTED","body":"no","url":"u"}
+{"id":6,"author":"al","bot":false,"state":"PENDING","body":"","url":"u"}"#;
+        let r = parse_reviews(r).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].state, "changes_requested");
+        let a = issue_comments_args("o/r", 3);
+        assert_eq!(&a[..3], &["api", "--paginate", "repos/o/r/issues/3/comments?per_page=100"].map(String::from));
     }
 
     #[test]

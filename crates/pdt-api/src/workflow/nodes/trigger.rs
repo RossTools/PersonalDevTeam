@@ -2,7 +2,7 @@
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};
 use pdt_core::workflow::cond::Condition;
-use pdt_core::workflow::events::{EVENT_TYPES, EventType};
+use pdt_core::workflow::events::{EVENT_TYPES, EventType, NOT_TRIGGERS, OWN_TRIGGERS};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,11 +23,25 @@ pub struct TriggerConfig {
     pub run_key: Option<String>,
 }
 
+/// The fields every trigger kind has, read leniently (a kind's own config adds more): what the engine checks.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SharedTrigger {
+    pub projects: Vec<String>,
+    #[serde(rename = "where")]
+    pub conditions: Vec<Condition>,
+    pub run_key: Option<String>,
+}
+
 /// A trigger on one event type.
 pub struct EventTrigger(pub &'static EventType);
 
 pub fn event_triggers() -> Vec<Box<dyn NodeKind>> {
-    EVENT_TYPES.iter().map(|t| Box::new(EventTrigger(t)) as Box<dyn NodeKind>).collect()
+    EVENT_TYPES
+        .iter()
+        .filter(|t| !OWN_TRIGGERS.contains(&t.id) && !NOT_TRIGGERS.contains(&t.id))
+        .map(|t| Box::new(EventTrigger(t)) as Box<dyn NodeKind>)
+        .collect()
 }
 
 impl NodeKind for EventTrigger {

@@ -24,10 +24,10 @@ order (each step test-first, `cargo test` green before the next). PDT-85 (7e-2) 
    with a small script fixture that works on Windows and macOS), `nodes/http.rs` (reqwest; connection auth modes;
    `expect`; fake server), `nodes/discord.rs` (split at 2000, 429 retry; fake server), `nodes/notify.rs`. Dry runs
    report `would`.
-7. **Templates.** `workflow/templates.rs` (params, `{{param.x}}` substitution), routes `GET /api/workflows/templates`,
-   `POST /api/workflows/from-template`; the three templates of spec §5, each validated and dry-run in a test.
-8. **Web.** Settings → Workflows "New from template" (form from params); notifications follower (toasts; system
-   notification when hidden and allowed; the Settings switch). TS types regenerated.
+7. **Templates.** The three templates of spec §5 as built-in templates in 7d's `workflow/templates.rs`, each
+   instantiated, validated and dry-run in a test.
+8. **Web.** Notifications follower (toasts; system notification when hidden and allowed; the Settings switch). TS
+   types regenerated.
 9. **Docs.** docs/reference/workflows.md (kinds, sensors, webhooks, templates, notify), host.md (`/api/hooks`
    exception), agent-guide.md if it lists kinds.
 10. **Checks**: fmt, clippy, cargo test, web typecheck/test/build; PR labelled `windows` (process spawning, paths).

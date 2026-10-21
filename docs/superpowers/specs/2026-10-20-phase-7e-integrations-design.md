@@ -177,16 +177,10 @@ events.
 
 ## 4. Templates
 
-Built-ins (7a) are complete workflows PDT installs. A **template** is a workflow PDT offers but doesn't install: a
-document with **parameters**, turned into an ordinary (disabled) workflow when the user picks it.
-
-- `GET /api/workflows/templates` lists `{id, name, description, scope, params: [{id, title, description, kind
-  (text | connection | project | repo | schedule), connectionKind?, default?, required}]}`.
-- `POST /api/workflows/from-template {template, params, scope, projectId?, name?}` validates the params, substitutes
-  `{{param.<id>}}` in the document (the same reference rules as 7a: a whole-string reference keeps the type), creates
-  the workflow disabled (author `user`, note "from template <id>") and returns it. Dry-run and enable as usual.
-- Templates ship in pdt-api `workflow/templates.rs` beside `builtins.rs`. 7d's builder can list them; 7e adds a "New
-  from template" dialog to Settings → Workflows (a form from the params).
+7d's templates (`GET /api/workflow-templates`, `POST /api/workflow-templates/{id}/instantiate`, params as
+`{{params.<id>}}`, the instantiated workflow disabled; docs/reference/workflows.md "API") are how 7e ships its jobs:
+the templates of §5 are more built-in templates in pdt-api `workflow/templates.rs`, listed in the Workflows view's New
+workflow. Connection names are `string` params (their description says which kind).
 
 ## 5. The agent-free Hermes jobs
 
@@ -303,7 +297,6 @@ Files, not tables: they are readable and greppable outside PDT.
 ## 8. API summary (new)
 
 - `POST /api/hooks/{name}` (webhook; no identity guard, secret required)
-- `GET /api/workflows/templates`, `POST /api/workflows/from-template`
 - 7e-2: `POST /api/projects/{id}/jira/import`; project settings fields for Jira and Buildkite
 - Catalog: the new kinds; 7e-3's virtual MCP entries
 
@@ -314,7 +307,7 @@ Files, not tables: they are readable and greppable outside PDT.
 - pdt-github: `recent_issues`, `pr_comments`, `pr_reviews` (+ `FakeGithub`).
 - pdt-api `workflow/nodes/`: `schedule.rs`, `webhook.rs` (trigger), `command.rs`, `http.rs`, `discord.rs`,
   `notify.rs`; `workflow/scheduler.rs`; `github_issues.rs` (sensor); comments in `github.rs`; `hooks.rs` (the
-  endpoint); `workflow/templates.rs`.
-- web: Settings → Workflows "New from template"; the notifications follower (toasts) and its Settings switch.
+  endpoint); the §5 templates in `workflow/templates.rs`.
+- web: the notifications follower (toasts) and its Settings switch.
 - Docs: docs/reference/workflows.md (new kinds, sensors, webhooks, templates), host.md (the `/api/hooks` exception to
   the identity guard), agent-guide.md if it lists the catalog.
