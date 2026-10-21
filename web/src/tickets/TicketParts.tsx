@@ -135,7 +135,7 @@ export function TicketDescription({ ticket }: { ticket: Pick<Ticket, 'id' | 'des
             />
           ) : (
             <div className="min-h-40 rounded-md border border-border p-2">
-              {draft.trim() ? <Markdown>{draft}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
+              {draft.trim() ? <Markdown breaks>{draft}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
             </div>
           )}
           {error && <Alert tone="error">{error}</Alert>}
@@ -146,7 +146,7 @@ export function TicketDescription({ ticket }: { ticket: Pick<Ticket, 'id' | 'des
           </div>
         </form>
       ) : ticket.description.trim() ? (
-        <Markdown>{ticket.description}</Markdown>
+        <Markdown breaks>{ticket.description}</Markdown>
       ) : (
         <p className="text-xs text-muted-foreground">No description.</p>
       )}

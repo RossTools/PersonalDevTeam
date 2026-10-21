@@ -19,6 +19,14 @@ describe('Markdown', () => {
     expect(boxes[0]).toBeDisabled();
   });
 
+  it('keeps single line breaks only with breaks', () => {
+    const src = '{\n  "type": "system"\n}';
+    const { container, rerender } = render(<Markdown>{src}</Markdown>);
+    expect(container.querySelectorAll('br')).toHaveLength(0);
+    rerender(<Markdown breaks>{src}</Markdown>);
+    expect(container.querySelectorAll('br')).toHaveLength(2);
+  });
+
   it('renders strikethrough and inline code', () => {
     const { container } = render(<Markdown>{'~~old~~ and `pdtd`'}</Markdown>);
     expect(container.querySelector('del')).toHaveTextContent('old');

@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeSanitize from 'rehype-sanitize';
 import { cn } from '@ui/lib/utils';
 
@@ -69,12 +70,18 @@ const components: Components = {
   img: ({ node: _n, alt, ...p }) => <img {...p} alt={alt ?? ''} className="my-2 max-w-full rounded-md" />,
 };
 
+const plugins = [remarkGfm, remarkHtmlAsText];
+const withBreaks = [...plugins, remarkBreaks];
+
 /** A Markdown file by its name (the Files view and the review show these rendered on request). */
 export const isMarkdownPath = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
 
 export interface MarkdownProps {
   /** The Markdown source (GitHub-flavoured: tables, task lists, strikethrough, autolinks). */
   children: string;
+  /** Keep single line breaks as breaks, as GitHub issues do (ticket descriptions: pasted logs or JSON without a code
+   *  fence would otherwise run together). Off for Markdown files, whose lines are wrapped by hand. */
+  breaks?: boolean;
   className?: string;
 }
 
@@ -82,10 +89,10 @@ export interface MarkdownProps {
  * Renders user-written Markdown (ticket descriptions, comments). Raw HTML is never rendered: it shows as the text it
  * was written as, and rehype-sanitize (GitHub's schema) strips anything unsafe that remains (`javascript:` links). Links open in a new tab.
  */
-export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, breaks, className }: MarkdownProps) {
   return (
     <div data-slot="markdown" className={cn('min-w-0 text-sm leading-relaxed break-words text-foreground', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} rehypePlugins={[rehypeSanitize]} components={components}>
+      <ReactMarkdown remarkPlugins={breaks ? withBreaks : plugins} rehypePlugins={[rehypeSanitize]} components={components}>
         {children}
       </ReactMarkdown>
     </div>
