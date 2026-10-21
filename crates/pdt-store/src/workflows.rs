@@ -23,7 +23,7 @@ const RUN_COLUMNS: &str = "r.id, r.workflow_id, w.name AS workflow_name, r.versi
 const STEP_COLUMNS: &str = "id, run_id, seq, node_id, kind, status, input, output, port, attempts, error, wake_at, \
                             wait, started_at, ended_at";
 const MSG_COLUMNS: &str = "id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, step_id, status, \
-                           told_session, created_at, resolved_at";
+                           told_session, created_at, resolved_at, by_user";
 const CONN_COLUMNS: &str = "id, name, kind, url, config, has_secret, created_at, updated_at";
 
 fn corrupt(what: &str, e: impl std::fmt::Display) -> StoreError {
@@ -139,6 +139,8 @@ pub struct SessionMessage {
     pub told_session: Option<String>,
     pub created_at: i64,
     pub resolved_at: Option<i64>,
+    /// The user sent it (an Inbox answer or nudge): the host's cap on agents running a turn never holds it.
+    pub by_user: bool,
 }
 
 fn to_message(r: &SqliteRow) -> Result<SessionMessage, StoreError> {
@@ -156,6 +158,7 @@ fn to_message(r: &SqliteRow) -> Result<SessionMessage, StoreError> {
         told_session: r.try_get("told_session")?,
         created_at: r.try_get("created_at")?,
         resolved_at: r.try_get("resolved_at")?,
+        by_user: r.try_get::<i64, _>("by_user")? != 0,
     })
 }
 
@@ -613,6 +616,19 @@ impl Store {
         rows.iter().map(|r| Ok((r.try_get("wf")?, to_step(r)?))).collect()
     }
 
+    /// Steps waiting for a slot under the host's cap on agents running a turn (Phase 7c §6.2), oldest first, with
+    /// their runs' tickets.
+    pub async fn steps_waiting_for_slot(&self) -> Result<Vec<(Option<String>, Step)>, StoreError> {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT r.ticket_id AS tk, {} FROM workflow_steps s JOIN workflow_runs r ON r.id = s.run_id \
+             WHERE s.status = 'waiting' AND json_extract(s.wait, '$.slot') IS NOT NULL ORDER BY s.started_at, s.id",
+            STEP_COLUMNS.split(", ").map(|c| format!("s.{c}")).collect::<Vec<_>>().join(", ")
+        )))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(|r| Ok((r.try_get("tk")?, to_step(r)?))).collect()
+    }
+
     /// Deletes finished runs that ended before `before`. Returns how many went.
     pub async fn prune_workflow_runs(&self, before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(
@@ -670,7 +686,8 @@ impl Store {
         }
         sqlx::query(
             "INSERT INTO session_messages (id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, \
-             step_id, status, told_session, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             step_id, status, told_session, created_at, resolved_at, by_user) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&m.id)
         .bind(&m.attempt_id)
@@ -685,6 +702,7 @@ impl Store {
         .bind(&m.told_session)
         .bind(m.created_at)
         .bind(m.resolved_at)
+        .bind(m.by_user)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -1095,8 +1113,10 @@ mod tests {
             told_session: None,
             created_at: 1,
             resolved_at: None,
+            by_user: true,
         };
         store.queue_session_message(&m).await.unwrap();
+        assert!(store.waiting_session_messages().await.unwrap()[0].by_user);
         let again = SessionMessage { id: "m2".into(), ..m.clone() };
         assert_eq!(store.queue_session_message(&again).await.unwrap().id, "m", "one per step");
         assert!(store.session_message_sent("a", "conflict:h").await.unwrap());

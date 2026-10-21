@@ -33,6 +33,18 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   (non-modal on desktop, full screen on phones), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
   progress / Done (closed in the last 14 days, `closedAfter`); cards drag between columns on desktop, phones show one
   column at a time.
+- **Pipeline stage** (Phase 7c): `pipelineStage` (`refine | code | review | qa | accept`, `tickets.pipeline_stage`)
+  is where a pipeline workflow has the ticket: `refine` while Draft or Ready, the others while In progress. Agent
+  steps and gates with a `pipelineStage` set it when they start; any change of stage clears it. Every ticket response
+  also carries `agent` (`TicketAgent`, computed in memory by pdt-api `scheduler::ticket_agents`): who owns its
+  workflow step now (`persona`, `sessionId`, `busy` while its session runs a turn) and `state` `working | asking |
+  stalled | yours` (a manual step or a gate) `| queued` (waiting for a slot). The backlog shows a Refining badge; the
+  Board splits In progress into Code | Review | QA | Accept once any In progress card has a stage (none: Code), and
+  each card shows the owner line ("Reviewer · working", "Your turn", "… · waiting for a slot").
+- **Refine**: `POST /api/tickets/{id}/refine` (`{by: "user"}` from the web; ticket menu and the ticket tab's menu) on
+  a Draft or Ready ticket (else 409 `ticket_not_refinable`) sets `pipelineStage: refine` and logs
+  `ticket.refine_requested`; 409 `no_refine_workflow` when no enabled workflow for the project has that trigger, and
+  `refine_running` while one already refines it.
 - scripts/import-roadmap.mjs imported the old docs/ROADMAP.md as tickets PDT-1…17 (done once; kept for reference).
 
 ## Parts (PDT-38)
@@ -83,6 +95,17 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   carry `ticket {id, key}` (sidebar and tab chips). Session titles never name the agent (a new session is titled with
   its branch, or the project for the main checkout); tabs, agent rows, the palette and the attempt list show it with
   `SessionKindIcon` (web/src/common).
+- The project's running-attempt cap (project settings `maxRunningAttempts`, Phase 7c): with that many active
+  attempts, `mode: check` refuses (`start_blocked`, "would go over the project's cap …"); `force` starts anyway
+  (`overCap` on the `started` event).
+- **Auto-start** (project settings `autoStart`: `off`, `todo`, `ready`; pdt-api `scheduler.rs`, every 10 s in pdtd,
+  `schedule_tickets` in tests): while a project is under its cap (one when it has none) it starts its next To do
+  ticket by rank (then Ready with `ready`), skipping parents, tickets that ever had an attempt, blocked ones, `conflict`
+  overlaps and waiting tickets that aren't clear (pdt-core `policy::pick_next`). It starts in a new workspace with the
+  host's default agent, view and ticket permission mode, or with no session when an enabled workflow for the project
+  has an `attempt.started` trigger (the Pipeline's Coder step starts one); the `started` event has `auto: true`. A
+  failed start is logged and skipped until the ticket changes; a start with its own session waits for a slot under the
+  host's cap.
 - `noSession: true` (PDT-72; the Start dialog's "No session") starts no agent session: the branch, worktree, attempt
   and only the ticket's tab (still in its new workspace with `newWorkspace`); the result's `session` is `null`.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as

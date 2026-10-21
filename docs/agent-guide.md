@@ -31,6 +31,7 @@ them for what they cover; the API above stays available for everything else.
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
 | `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
+| `update_ticket` | `{title?, description?}`: rewrites this session's own ticket (the Refiner's tool; a session gets it when its persona lists it) |
 | `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save` | the workflow catalog and documents, for sessions whose persona has them; a change to a workflow is a proposal the person accepts, and a new workflow starts disabled |
 
 A session that runs a step of a workflow (a **persona** such as the Reviewer) has a section "Your role" in its

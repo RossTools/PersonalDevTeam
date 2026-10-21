@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '../api/gen/Session';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext, StartTicketContext } from './actions';
-import { DONE_WINDOW_MS } from './Board';
+import { agentLine, boardSplits, displayColumns, DONE_WINDOW_MS, inColumn } from './Board';
 import { COLLAPSED_KEY } from './BoardLanes';
 import { event, page, params, project, summary, ticket } from './fixtures';
 import { TicketsView } from './TicketsView';
@@ -179,6 +179,54 @@ describe('board', () => {
     expect(screen.queryByText('Ticket 1')).not.toBeInTheDocument();
     // Touch: no native drag.
     expect(await card(/ALP-2/)).toHaveAttribute('draggable', 'false');
+  });
+});
+
+describe('board pipeline stages', () => {
+  it('splits In progress into Code, Review, QA and Accept once a card has a stage, with its owner on the card', async () => {
+    const calls = stub({
+      'GET /api/tickets': (c: Call) => page(({
+        todo: columns.todo,
+        in_progress: [
+          summary(2, { stage: 'in_progress', title: 'Cache', attempt }),
+          summary(5, { stage: 'in_progress', title: 'Reviewing', pipelineStage: 'review',
+            agent: { persona: 'Reviewer', state: 'working', sessionId: 's9', busy: true, runId: 'r1' } }),
+          summary(6, { stage: 'in_progress', title: 'Accepting', pipelineStage: 'accept',
+            agent: { persona: null, state: 'yours', sessionId: null, busy: false, runId: 'r2' } }),
+        ],
+        done: columns.done,
+      } as Record<string, ReturnType<typeof summary>[]>)[params(c.path).stage] ?? []),
+    });
+    renderWithQuery(<Harness />);
+    expect(await within(await screen.findByRole('region', { name: 'Review' })).findByText('Reviewing')).toBeInTheDocument();
+    expect(within(column('Review')).getByText('Reviewer · working')).toBeInTheDocument();
+    expect(within(column('Accept')).getByText('Your turn')).toBeInTheDocument();
+    // No stage yet: under Code.
+    expect(within(column('Code')).getByText('Cache')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
+    // Dropping on a stage moves the card to In progress; the workflow owns the stage.
+    const c = await card(/ALP-1 Ticket 1/);
+    const dt = transfer();
+    fireEvent.dragStart(c, { dataTransfer: dt });
+    fireEvent.dragOver(column('QA'), { dataTransfer: dt });
+    fireEvent.drop(column('QA'), { dataTransfer: dt });
+    await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')?.body).toEqual({ stage: 'in_progress' }));
+  });
+
+  it('places cards and words their owner', () => {
+    expect(boardSplits([{ pipelineStage: null }, { pipelineStage: 'refine' }])).toBe(false);
+    expect(boardSplits([{ pipelineStage: 'qa' }])).toBe(true);
+    expect(displayColumns(true).map((c) => c.title)).toEqual(['To do', 'Code', 'Review', 'QA', 'Accept', 'Done']);
+    const [, code, review] = displayColumns(true);
+    expect(inColumn({ pipelineStage: null }, code)).toBe(true);
+    expect(inColumn({ pipelineStage: 'review' }, code)).toBe(false);
+    expect(inColumn({ pipelineStage: 'review' }, review)).toBe(true);
+    const a = { persona: 'Coder', sessionId: null, busy: false, runId: null };
+    expect(agentLine({ ...a, state: 'asking' }).text).toBe('Coder asks you');
+    expect(agentLine({ ...a, state: 'stalled' }).dot.dot).toBe('failed');
+    expect(agentLine({ ...a, state: 'queued' }).text).toBe('Coder · waiting for a slot');
+    expect(agentLine({ ...a, state: 'yours' }).text).toBe('Your turn · Coder');
+    expect(agentLine({ ...a, state: 'working', busy: true }).dot.pulse).toBe(true);
   });
 });
 

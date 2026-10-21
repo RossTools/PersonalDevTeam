@@ -468,6 +468,7 @@ pub async fn run_workflows(st: &AppState) {
     super::builtins::ensure_installed(st).await;
     crate::personas::ensure_builtins(st).await;
     match_events(st).await;
+    crate::scheduler::admit_waiting(st).await;
     advance_all(st).await;
     super::outbox::deliver(st).await;
     super::agent::sweep(st).await;
@@ -555,6 +556,15 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
         .ok_or("the step is not waiting for an answer")?;
     if !choices.iter().any(|c| c == choice) {
         return Err(format!("{choice} is not one of {}", choices.join(", ")));
+    }
+    // A choice that approves records the user's approval of the run's attempt (Phase 7c §5).
+    if step.wait.pointer("/answer/approve").and_then(Value::as_str) == Some(choice)
+        && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
+        && let Some(attempt) = run.attempt_id.as_deref()
+        && let Some(info) = st.store.get_attempt(attempt).await.map_err(err)?
+    {
+        let extra = json!({"workflowId": run.workflow_id, "workflowName": run.workflow_name, "runId": run.id});
+        crate::review::record_approval(st, &info, extra).await.map_err(|e| e.message().to_string())?;
     }
     // Its Inbox item is answered, wherever the answer came from.
     for item in st.store.open_items_for_step(step_id).await.map_err(err)? {

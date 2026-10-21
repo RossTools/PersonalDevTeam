@@ -34,6 +34,8 @@ pub enum AgentStepState {
     Stalled,
     /// It has its outcome (or the step ended otherwise).
     Done,
+    /// A manual step (Phase 7c): no session; the user does the work and picks the outcome in the Inbox.
+    Manual,
 }
 
 impl AgentStepState {
@@ -43,10 +45,11 @@ impl AgentStepState {
             AgentStepState::Asking => "asking",
             AgentStepState::Stalled => "stalled",
             AgentStepState::Done => "done",
+            AgentStepState::Manual => "manual",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [Self::Working, Self::Asking, Self::Stalled, Self::Done].into_iter().find(|x| x.as_str() == s)
+        [Self::Working, Self::Asking, Self::Stalled, Self::Done, Self::Manual].into_iter().find(|x| x.as_str() == s)
     }
 }
 

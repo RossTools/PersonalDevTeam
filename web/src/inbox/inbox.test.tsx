@@ -106,6 +106,21 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/q/dismiss')).toBe(true));
   });
 
+  it('asks the user to do a manual stage and pick its outcome, with their note as the summary', async () => {
+    const manual = item('m', {
+      kind: 'manual', title: 'Your turn: Review', personaName: 'Reviewer',
+      body: { prompt: 'Review the **diff**.', workflow: 'Pipeline' },
+      choices: [{ id: 'outcome:approved', title: 'approved', primary: true }, { id: 'outcome:changes_requested', title: 'changes_requested', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/m/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[manual]} selectedId="m" onSelect={() => {}} />);
+    expect(screen.getByText(/This stage is yours in workflow Pipeline/)).toBeInTheDocument();
+    expect(screen.getByText('diff')).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'What you did (optional)' }), 'Looks right');
+    await userEvent.click(screen.getByRole('button', { name: 'changes_requested' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'outcome:changes_requested', text: 'Looks right' }));
+  });
+
   it('says when nothing waits', () => {
     renderWithQuery(<InboxView items={[]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByText(/Nothing waits on you/)).toBeInTheDocument();

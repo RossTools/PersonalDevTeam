@@ -1,0 +1,275 @@
+//! The built-in Pipeline template (Phase 7c spec §3): Draft → Refine → Ready → Code → Review → QA → Accept → Done as
+//! agent steps and gates. Its parameters pick the personas, which stages a person does, where a refined ticket goes,
+//! whether a person accepts, and whether the run or a person merges; the project's policies stay the guard.
+
+use pdt_core::workflow::doc::WorkflowDoc;
+use pdt_core::workflow::template::TemplateParam;
+use serde_json::{Value, json};
+
+pub const ID: &str = "pipeline";
+
+const REFINE_PROMPT: &str = "Refine this ticket so a coding agent can build it without guessing: a clear scope, \
+what is out of scope, and a \"Done when\" list someone can check. Rewrite the ticket with `update_ticket`. Ask the \
+user (`ask_user`) about anything only they can decide.";
+
+const CODE_PROMPT: &str = "Build this ticket on its branch. On a later pass, address every point in the earlier \
+review and QA outcomes (`get_ticket` lists them, with their line comments). Run the project's checks, commit, push \
+and open a pull request against the base branch when the project works with them.";
+
+const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: the branch's diff against its base. \
+Put each finding on its line (`comments` in `submit_outcome`).";
+
+const QA_PROMPT: &str = "Check that this attempt's change works: run the project's tests and try each point of the \
+ticket's \"Done when\".";
+
+pub fn params() -> Vec<TemplateParam> {
+    let who = |id: &str, title: &str| {
+        json!({"id": id, "title": title, "type": "choice", "choices": ["agent", "user"], "default": "agent",
+               "description": "user: a manual stage. The Inbox asks you to do it and pick its outcome."})
+    };
+    let persona = |id: &str, title: &str, default: &str| json!({"id": id, "title": title, "type": "string", "default": default, "required": true});
+    serde_json::from_value(json!([
+        persona("refiner", "Refiner persona", "Refiner"),
+        persona("coder", "Coder persona", "Coder"),
+        persona("reviewer", "Reviewer persona", "Reviewer"),
+        persona("qa", "QA persona", "QA"),
+        who("refineBy", "Who refines"),
+        who("codeBy", "Who codes"),
+        who("reviewBy", "Who reviews"),
+        who("qaBy", "Who does QA"),
+        {"id": "afterRefine", "title": "A refined ticket goes to", "type": "choice", "choices": ["todo", "ready"],
+         "default": "todo",
+         "description": "todo: on the board (auto-start takes it when the project's policy says so); ready: the backlog."},
+        {"id": "accept", "title": "Who accepts", "type": "choice", "choices": ["user", "auto"], "default": "user",
+         "description": "user: you accept from the Inbox before the merge; auto: it merges once QA passes (unless the \
+                         project needs a person's approval)."},
+        {"id": "merge", "title": "Who merges", "type": "choice", "choices": ["workflow", "person"],
+         "default": "workflow",
+         "description": "workflow: the run merges after Accept (auto-merge of the pull request, or a local merge); \
+                         person: it waits until someone merges, in PDT or on GitHub."},
+        {"id": "loopLimit", "title": "Passes before asking", "type": "number", "default": 3,
+         "description": "How many times Code may run again before the Inbox asks."},
+    ]))
+    .expect("the pipeline's params")
+}
+
+fn node(id: &str, kind: &str, x: i32, y: i32, title: &str, config: Value) -> Value {
+    let mut n = json!({"id": id, "kind": kind, "version": 1, "position": {"x": x, "y": y}});
+    if !title.is_empty() {
+        n["title"] = json!(title);
+    }
+    if !config.is_null() {
+        n["config"] = config;
+    }
+    n
+}
+
+fn edge(from: &str, port: &str, to: &str) -> Value {
+    if port.is_empty() { json!({"from": from, "to": to}) } else { json!({"from": from, "port": port, "to": to}) }
+}
+
+pub fn doc() -> WorkflowDoc {
+    let nodes = vec![
+        // Refine: Draft → Ready.
+        node("refine_requested", "ticket.refine_requested", 0, 0, "", Value::Null),
+        node(
+            "refine",
+            "agent",
+            300,
+            0,
+            "Refine",
+            json!({
+            "persona": "{{params.refiner}}", "prompt": REFINE_PROMPT, "session": "new",
+            "owner": "{{params.refineBy}}", "pipelineStage": "refine",
+            "outcomes": [
+                {"id": "ready", "description": "the ticket can be built as written"},
+                {"id": "needs_clarification", "description": "it can't be built until the user decides something you could not ask"},
+            ]}),
+        ),
+        node(
+            "queue",
+            "ticket.move",
+            600,
+            0,
+            "Move to the queue",
+            json!({"ticket": "{{trigger.ticketId}}", "stage": "{{params.afterRefine}}"}),
+        ),
+        node(
+            "clarify",
+            "gate",
+            600,
+            140,
+            "Clarify",
+            json!({
+            "question": "The Refiner needs you on {{trigger.ticketKey}}: {{steps.refine.summary}} Answer in the \
+                         ticket (comments or its description), then refine again.",
+            "choices": ["refine_again", "stop"], "pipelineStage": "refine"}),
+        ),
+        node("refined", "end", 900, 0, "Refined", Value::Null),
+        node("left", "end", 900, 140, "Left as it is", json!({"quiet": true})),
+        // Code → Review → QA → Accept → merge.
+        node("started", "attempt.started", 0, 400, "", Value::Null),
+        node(
+            "code",
+            "agent",
+            300,
+            400,
+            "Code",
+            json!({
+            "persona": "{{params.coder}}", "prompt": CODE_PROMPT, "session": "reuse",
+            "owner": "{{params.codeBy}}", "pipelineStage": "code", "loopLimit": "{{params.loopLimit}}",
+            "maxRuntimeMs": 8 * 60 * 60 * 1000,
+            "outcomes": [{"id": "submitted", "description": "the change is built, checked and committed"}]}),
+        ),
+        node(
+            "review",
+            "agent",
+            600,
+            400,
+            "Review",
+            json!({
+            "persona": "{{params.reviewer}}", "prompt": REVIEW_PROMPT, "session": "new",
+            "owner": "{{params.reviewBy}}", "pipelineStage": "review",
+            "outcomes": [
+                {"id": "approved", "description": "it can merge as is"},
+                {"id": "changes_requested", "description": "something must change first"},
+            ]}),
+        ),
+        node(
+            "qa",
+            "agent",
+            900,
+            400,
+            "QA",
+            json!({
+            "persona": "{{params.qa}}", "prompt": QA_PROMPT, "session": "new",
+            "owner": "{{params.qaBy}}", "pipelineStage": "qa",
+            "outcomes": [
+                {"id": "pass", "description": "it works as the ticket asks"},
+                {"id": "fail", "description": "something doesn't work: say what and how to reproduce it"},
+            ]}),
+        ),
+        node(
+            "accept_mode",
+            "switch",
+            1200,
+            400,
+            "Who accepts",
+            json!({
+            "value": "{{params.accept}}", "cases": [{"port": "user", "equals": "user"}, {"port": "auto", "equals": "auto"}]}),
+        ),
+        node(
+            "accept",
+            "gate",
+            1500,
+            400,
+            "Accept",
+            json!({
+            "question": "Accept {{trigger.ticketKey}} and merge it?", "choices": ["merge", "reject"],
+            "inbox": "accept", "pipelineStage": "accept", "approve": "merge"}),
+        ),
+        node(
+            "merge_mode",
+            "switch",
+            1800,
+            400,
+            "Who merges",
+            json!({
+            "value": "{{params.merge}}",
+            "cases": [{"port": "workflow", "equals": "workflow"}, {"port": "person", "equals": "person"}]}),
+        ),
+        node(
+            "merge",
+            "attempt.merge",
+            2100,
+            400,
+            "Merge",
+            json!({"attempt": "{{trigger.attemptId}}", "finishOnMerge": true}),
+        ),
+        node(
+            "finish",
+            "ticket.finish",
+            2400,
+            400,
+            "Finish",
+            json!({"ticket": "{{trigger.ticketId}}", "stopRunning": true}),
+        ),
+        node(
+            "wait_merge",
+            "wait",
+            2100,
+            560,
+            "Wait for the merge",
+            json!({
+            "event": {"type": "attempt.merged",
+                      "where": [{"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}]}}),
+        ),
+        node("done", "end", 2700, 400, "Done", Value::Null),
+        // An agent step out of time or stopped at its loop limit.
+        node(
+            "stopped",
+            "ticket.comment",
+            1200,
+            700,
+            "Note where it stopped",
+            json!({
+            "ticket": "{{trigger.ticketId}}",
+            "body": "The pipeline stopped here: a step ran out of time or was stopped at its loop limit. Its run is \
+                     in Workflows → Pipeline → Runs."}),
+        ),
+        node("stopped_end", "end", 1500, 700, "Stopped", Value::Null),
+    ];
+    let edges = vec![
+        edge("refine_requested", "", "refine"),
+        edge("refine", "ready", "queue"),
+        edge("refine", "needs_clarification", "clarify"),
+        edge("refine", "timeout", "stopped"),
+        edge("refine", "stopped", "stopped"),
+        edge("queue", "", "refined"),
+        edge("clarify", "refine_again", "refine"),
+        edge("clarify", "stop", "left"),
+        edge("clarify", "timeout", "left"),
+        edge("clarify", "unanswered", "left"),
+        edge("started", "", "code"),
+        edge("code", "submitted", "review"),
+        edge("code", "timeout", "stopped"),
+        edge("code", "stopped", "stopped"),
+        edge("review", "approved", "qa"),
+        edge("review", "changes_requested", "code"),
+        edge("review", "timeout", "stopped"),
+        edge("review", "stopped", "stopped"),
+        edge("qa", "pass", "accept_mode"),
+        edge("qa", "fail", "code"),
+        edge("qa", "timeout", "stopped"),
+        edge("qa", "stopped", "stopped"),
+        edge("accept_mode", "user", "accept"),
+        edge("accept_mode", "auto", "merge_mode"),
+        edge("accept_mode", "default", "accept"),
+        edge("accept", "merge", "merge_mode"),
+        edge("accept", "reject", "code"),
+        edge("accept", "timeout", "stopped"),
+        edge("accept", "unanswered", "stopped"),
+        edge("merge_mode", "workflow", "merge"),
+        edge("merge_mode", "person", "wait_merge"),
+        edge("merge_mode", "default", "wait_merge"),
+        edge("merge", "merged", "finish"),
+        edge("merge", "queued", "done"),
+        edge("merge", "refused", "wait_merge"),
+        edge("finish", "finished", "done"),
+        edge("finish", "blocked", "done"),
+        edge("wait_merge", "event", "done"),
+        edge("wait_merge", "timeout", "stopped"),
+        edge("stopped", "", "stopped_end"),
+    ];
+    serde_json::from_value(json!({
+        "name": "Pipeline",
+        "description": "Draft → Refine → Ready → Code → Review → QA → Accept → Done. Refine (on a ticket) runs the \
+                        Refiner; starting a ticket runs the Coder, then a fresh Reviewer and QA, sending it back to the \
+                        Coder on changes or a failure; then you accept and the run merges. Any stage can be yours \
+                        instead of an agent's.",
+        "nodes": nodes,
+        "edges": edges,
+        "settings": {"maxSteps": 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
+    }))
+    .expect("the pipeline is a valid document")
+}

@@ -204,7 +204,7 @@ describe('MergeDialog', () => {
     await userEvent.click(del);
     await userEvent.click(screen.getByRole('button', { name: 'Add to merge queue' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: true, deleteBranch: true });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: true, deleteBranch: true, by: 'user' });
     expect(await screen.findByText(/then ALP-1 moves to Done/)).toBeInTheDocument();
   });
 
@@ -218,7 +218,7 @@ describe('MergeDialog', () => {
     expect(screen.getByText(/offers to move ALP-1 to Done/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Turn on auto-merge' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')).toBe(true));
-    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: false, deleteBranch: false });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ finishOnMerge: false, deleteBranch: false, by: 'user' });
   });
 
   it('merges locally and, keeping the worktree, moves the ticket to Done', async () => {
@@ -231,7 +231,7 @@ describe('MergeDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH' && c.path === '/api/tickets/t1')).toBe(true));
     expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ stage: 'done' });
-    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ style: 'merge' });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ style: 'merge', by: 'user' });
     expect(await screen.findByText(/Merged pdt\/ALP-1-fix-login into main/)).toBeInTheDocument();
   });
 
@@ -247,7 +247,7 @@ describe('MergeDialog', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Remove the worktree' }));
     await userEvent.click(screen.getByRole('button', { name: 'Squash and merge' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH' && c.path === '/api/tickets/t1')).toBe(true));
-    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ style: 'squash' });
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')?.body).toEqual({ style: 'squash', by: 'user' });
     expect(await screen.findByText(/Squashed pdt\/ALP-1-fix-login into main/)).toBeInTheDocument();
     expect(localStorage.getItem(`pdt.review.mergeStyle.${t1.projectId}`)).toBe('squash');
     localStorage.removeItem(`pdt.review.mergeStyle.${t1.projectId}`);

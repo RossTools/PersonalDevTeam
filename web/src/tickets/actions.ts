@@ -9,6 +9,7 @@ import type { FinishRequest } from '../api/gen/FinishRequest';
 import type { PullResult } from '../api/gen/PullResult';
 import type { TicketPatch } from '../api/gen/TicketPatch';
 import type { TicketStage } from '../api/gen/TicketStage';
+import type { PipelineStage } from '../api/gen/PipelineStage';
 import type { PartsProgress } from '../api/gen/PartsProgress';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
@@ -26,6 +27,8 @@ export interface TicketRef {
   priority: Priority;
   /** Start chose "Wait until clear". */
   waiting?: boolean;
+  /** Where a pipeline workflow has it (Phase 7c). */
+  pipelineStage?: PipelineStage | null;
 }
 
 /** Opens (or focuses) a ticket's tab in its project's workspace. AppShell provides it. */
@@ -166,6 +169,7 @@ export function ticketMenu(opts: {
   return [
     ...(opts.onOpen ? [{ label: 'Open', onSelect: opts.onOpen }] : []),
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
+    ...(canRefine(t) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, t)) }] : []),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
     ...(opts.onMakeParts ? [{ label: 'Make into parts…', onSelect: opts.onMakeParts }] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
@@ -182,6 +186,19 @@ export function ticketMenu(opts: {
       }),
     },
   ];
+}
+
+/** Whether Refine applies: a Draft or Ready ticket not being refined already. */
+export function canRefine(t: Pick<TicketRef, 'stage' | 'pipelineStage'>): boolean {
+  return (t.stage === 'draft' || t.stage === 'ready') && t.pipelineStage !== 'refine';
+}
+
+/** Asks the project's pipeline to refine the ticket (its Refiner, or the user when that stage is manual). */
+export async function refineTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>) {
+  const fresh = await api.refineTicket(t.id);
+  qc.setQueryData(['ticket', t.id], fresh);
+  invalidateTickets(qc, [t.id]);
+  toast.success(`${t.key} is being refined.`);
 }
 
 /** Asks, then abandons the ticket's active attempt (its worktree and sessions are kept). */

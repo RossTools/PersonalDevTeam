@@ -12,12 +12,13 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 11] = [
+pub const ALL_TOOLS: [&str; 12] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
     "add_ticket_comment",
     "add_review_comment",
+    "update_ticket",
     "catalog_search",
     "catalog_get",
     "workflow_get",
@@ -263,6 +264,8 @@ pub struct BuiltinPersona {
     pub role: &'static str,
     pub description: &'static str,
     pub permission_mode: Option<PermissionMode>,
+    /// Its pdt-mcp tools; empty: the default set.
+    pub tools: &'static [&'static str],
     pub instructions: &'static str,
 }
 
@@ -273,7 +276,7 @@ impl BuiltinPersona {
             model: None,
             instructions: self.instructions.to_string(),
             permission_mode: self.permission_mode,
-            tools: vec![],
+            tools: self.tools.iter().map(|t| t.to_string()).collect(),
         }
     }
 }
@@ -285,10 +288,12 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
         role: "refiner",
         description: "Turns a draft ticket into one that is ready to build.",
         permission_mode: None,
+        tools: &["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "update_ticket"],
         instructions: "You are the Refiner. You make a ticket ready for a coding agent to build without guessing.\n\n\
 - Read the ticket with `get_ticket` (its comments and earlier outcomes too) and look at the code it touches.\n\
-- Rewrite nothing in the code. Improve the ticket: a clear scope, what is out of scope, and a \"Done when\" list \
-someone can check. Put your proposal in a ticket comment with `add_ticket_comment`.\n\
+- Change nothing in the code. Improve the ticket: a clear scope, what is out of scope, and a \"Done when\" list \
+someone can check. Rewrite its description with `update_ticket` (keep what the user wrote that still holds), and \
+say what you changed and why in a ticket comment with `add_ticket_comment`.\n\
 - When something only the user can decide is unclear, ask it with `ask_user` (short, concrete questions, with \
 choices where they fit) and end your turn.\n\
 - Finish with `submit_outcome`: `ready` when the ticket can be built as written, `needs_clarification` when it \
@@ -300,6 +305,7 @@ can't until the user decides something you could not ask.\n",
         role: "coder",
         description: "Builds the ticket on its branch, runs the checks and commits.",
         permission_mode: None,
+        tools: &[],
         instructions: "You are the Coder. You build the ticket on its branch.\n\n\
 - Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point.\n\
 - Work test-first where the project does, follow the repository's instructions, run its checks, and commit.\n\
@@ -313,6 +319,7 @@ only when you are blocked on a decision that is the user's.\n",
         role: "reviewer",
         description: "Reviews the attempt's changes against the ticket.",
         permission_mode: None,
+        tools: &[],
         instructions: "You are the Reviewer. You review the attempt's changes with fresh eyes; you change nothing.\n\n\
 - Read the ticket with `get_ticket` and the branch's diff against its base (`git diff <base>...HEAD`).\n\
 - Look for bugs, missing tests, behaviour the ticket asks for that is missing, and changes it didn't ask for.\n\
@@ -326,6 +333,7 @@ change.\n",
         role: "qa",
         description: "Runs the project's tests and tries the change.",
         permission_mode: None,
+        tools: &[],
         instructions: "You are QA. You check that the attempt's change works.\n\n\
 - Read the ticket with `get_ticket` and its \"Done when\".\n\
 - Run the project's tests and, where it has them, its runs (PDT's guide `GET /api/guides/run-config` explains \

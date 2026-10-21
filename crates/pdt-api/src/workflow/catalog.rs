@@ -281,6 +281,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(ticket::Move));
         kinds.push(Box::new(ticket::Comment));
         kinds.push(Box::new(agent::Agent));
+        kinds.push(Box::new(merge::Merge));
         Catalog::new(kinds)
     })
 }

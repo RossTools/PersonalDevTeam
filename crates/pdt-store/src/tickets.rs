@@ -10,8 +10,8 @@ use pdt_core::session::{AgentKind, SessionStatus};
 use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
     Actor, AttemptSession, AttemptState, AttemptSummary, EventKind, EventPage, LinkDirection, LinkKind, LinkedTicket,
-    MAX_LABELS, OverlapLevel, ParentFilter, Priority, RankEdge, Ticket, TicketEvent, TicketFilter, TicketPage,
-    TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
+    MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge, Ticket, TicketEvent, TicketFilter,
+    TicketPage, TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
 };
 use serde_json::json;
 use sqlx::sqlite::SqliteRow;
@@ -168,7 +168,7 @@ fn summary_select() -> String {
     format!(
         "SELECT t.id, t.project_id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, t.priority, t.rank, \
          t.waiting, t.created_at, t.updated_at, t.closed_at, {BLOCKED_BY} AS blocked_by, {PRIORITY_WEIGHT} AS pw, \
-         t.parent_id, par.number AS parent_number, par.title AS parent_title{FROM}"
+         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage{FROM}"
     )
 }
 
@@ -213,6 +213,8 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
             None => None,
         },
         parts: None,
+        pipeline_stage: r.try_get::<Option<String>, _>("pipeline_stage")?.as_deref().and_then(PipelineStage::parse),
+        agent: None,
     })
 }
 
@@ -611,9 +613,9 @@ async fn change_stage_by(
     now: i64,
 ) -> Result<(), StoreError> {
     let closed_at = if to.is_closed() { Some(now) } else { None };
-    // A closed ticket no longer waits to start.
+    // A closed ticket no longer waits to start; any move takes it out of its pipeline stage (Phase 7c §2).
     sqlx::query(
-        "UPDATE tickets SET stage = ?, updated_at = ?, \
+        "UPDATE tickets SET stage = ?, updated_at = ?, pipeline_stage = NULL, \
          closed_at = CASE WHEN ? THEN COALESCE(closed_at, ?) ELSE NULL END, \
          waiting = CASE WHEN ? THEN 0 ELSE waiting END WHERE id = ?",
     )
@@ -1092,6 +1094,12 @@ impl Store {
     /// Applies an edit, recording `moved` for a stage change and `edited` for the rest. None if there is no such
     /// ticket.
     pub async fn patch_ticket(&self, id: &str, p: &ValidPatch, now: i64) -> TResult<Option<Ticket>> {
+        self.patch_ticket_by(id, p, Actor::User, now).await
+    }
+
+    /// [`Store::patch_ticket`] on behalf of `actor` (an agent's `update_ticket`, Phase 7c), who the `edited` event
+    /// names.
+    pub async fn patch_ticket_by(&self, id: &str, p: &ValidPatch, actor: Actor, now: i64) -> TResult<Option<Ticket>> {
         let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
         let (description,): (String,) =
@@ -1123,8 +1131,7 @@ impl Store {
         }
         if !fields.is_empty() {
             touch(&mut tx, id, now).await?;
-            insert_event(&mut tx, id, EventKind::Edited, Actor::User, None, Some(json!({"fields": fields})), now)
-                .await?;
+            insert_event(&mut tx, id, EventKind::Edited, actor, None, Some(json!({"fields": fields})), now).await?;
         }
         if let Some(parent) = &p.parent {
             let current = cur.parent.as_ref().map(|x| x.id.as_str());
@@ -1566,6 +1573,28 @@ impl Store {
     }
 
     /// Whether to finish the ticket once the attempt's branch is merged, and whether to delete the branch then.
+    /// Sets (or clears) a ticket's pipeline stage (Phase 7c §2). False for an unknown ticket.
+    pub async fn set_pipeline_stage(&self, ticket_id: &str, stage: Option<PipelineStage>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE tickets SET pipeline_stage = ? WHERE id = ?")
+            .bind(stage.map(PipelineStage::as_str))
+            .bind(ticket_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// How many active attempts a project's tickets have (its running-attempt cap, Phase 7c §4).
+    pub async fn count_active_attempts(&self, project_id: &str) -> Result<u32, StoreError> {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
+             WHERE t.project_id = ? AND a.state = 'active'",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(u32::try_from(n).unwrap_or(0))
+    }
+
     pub async fn set_attempt_finish(&self, id: &str, finish: bool, delete_branch: bool) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE attempts SET finish_on_merge = ?, finish_delete_branch = ? WHERE id = ?")
             .bind(finish)
@@ -2032,6 +2061,25 @@ mod tests {
         // Removing the project removes its tickets.
         assert!(store.delete_project("q").await.unwrap());
         assert!(store.get_ticket("q1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn the_pipeline_stage_is_set_and_any_move_clears_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "a", new("A")).await;
+        assert!(store.set_pipeline_stage("a", Some(PipelineStage::Refine)).await.unwrap());
+        assert!(!store.set_pipeline_stage("nope", Some(PipelineStage::Refine)).await.unwrap());
+        let t = store.get_ticket_summary("a").await.unwrap().unwrap();
+        assert_eq!(t.pipeline_stage, Some(PipelineStage::Refine));
+        store.move_ticket_by("a", TicketStage::Ready, Actor::System, None, 2).await.unwrap();
+        assert_eq!(store.get_ticket_summary("a").await.unwrap().unwrap().pipeline_stage, None);
+        assert_eq!(store.count_active_attempts("p").await.unwrap(), 0);
+        store.start_attempt("at1", "a", None, "b", "main", "abc", json!({}), 3).await.unwrap();
+        assert_eq!(store.count_active_attempts("p").await.unwrap(), 1);
+        store.set_pipeline_stage("a", Some(PipelineStage::Review)).await.unwrap();
+        let page = store.query_tickets(&filter(in_project())).await.unwrap();
+        assert_eq!(page.items[0].pipeline_stage, Some(PipelineStage::Review));
     }
 
     #[tokio::test]

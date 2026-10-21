@@ -84,6 +84,8 @@ export function InboxView({ items, selectedId, onSelect }: {
     }
     if (item.kind === 'stalled') return void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) });
     const p = primary(item);
+    // A manual step: the user's note (the nudge box) is the outcome's summary.
+    if (p && item.kind === 'manual') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
 
@@ -181,6 +183,28 @@ export function InboxView({ items, selectedId, onSelect }: {
               ))}
             </ol>
             <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
+          </section>
+        )}
+        {item.kind === 'manual' && (
+          <section aria-label="Your turn" className="flex flex-col gap-3">
+            <p className="text-sm">
+              This stage is yours{typeof item.body.workflow === 'string' ? ` in workflow ${item.body.workflow}` : ''}: do it,
+              then pick how it ended.
+            </p>
+            {typeof item.body.prompt === 'string' && (
+              <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.prompt}</Markdown></div>
+            )}
+            <Textarea aria-label="What you did (optional)" placeholder="What you did or found (optional): the next step reads it"
+              value={nudge} onChange={(e) => setNudge(e.target.value)} rows={2} />
+            <div role="group" aria-label="Pick the outcome" className="flex flex-wrap items-center gap-2">
+              {item.choices.map((c) => (
+                <Button key={c.id} variant={c.primary ? 'primary' : 'secondary'} pending={busy && c.primary} disabled={busy}
+                  onClick={() => void answer({ choice: c.id, ...(nudge.trim() ? { text: nudge } : {}) })}>
+                  {c.title} {c.primary && <Kbd>↵</Kbd>}
+                </Button>
+              ))}
+            </div>
+            {item.attemptId && <OpenChanges item={item} />}
           </section>
         )}
         {(item.kind === 'gate') && (
