@@ -8,9 +8,10 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::ticket::{
-    Actor, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket, RankMove, Ticket,
-    TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, valid_comment,
+    Actor, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket, PipelineStage, RankMove,
+    Ticket, TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, TicketStage, valid_comment,
 };
+use pdt_core::workflow::api::{NewLogEvent, RunStatus};
 use pdt_store::{DeleteTicket, TicketError};
 
 fn unknown_ticket() -> ApiError {
@@ -35,6 +36,7 @@ pub(crate) async fn list(
         crate::github::apply_summary(&st, t);
     }
     crate::parts::apply_page(&st, &mut page.items).await?;
+    crate::scheduler::apply_agents(&st, &mut page.items).await;
     Ok(Json(page))
 }
 
@@ -165,6 +167,64 @@ pub(crate) async fn comment(
     };
     let event = st.store.add_comment_by(&id, &body, actor, None, now_ms()).await?.ok_or_else(unknown_ticket)?;
     Ok((StatusCode::CREATED, Json(event)))
+}
+
+/// `POST /api/tickets/{id}/refine` (Phase 7c §3.3): asks the project's pipeline to refine a Draft or Ready ticket.
+/// Sets its pipeline stage to `refine` and logs `ticket.refine_requested`; an enabled workflow does the rest.
+pub(crate) async fn refine(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Ticket>, ApiError> {
+    let by = if body.iter().all(u8::is_ascii_whitespace) {
+        None
+    } else {
+        serde_json::from_slice::<NewRefine>(&body)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
+            .by
+    };
+    let actor = if by == Some(Actor::User) { Actor::User } else { Actor::Agent };
+    let t = st.store.get_ticket_summary(&id).await?.ok_or_else(unknown_ticket)?;
+    let conflict = |code: &'static str, m: String| ApiError::new(StatusCode::CONFLICT, code, m);
+    if !matches!(t.stage, TicketStage::Draft | TicketStage::Ready) {
+        return Err(conflict("ticket_not_refinable", format!("{} is not a Draft or Ready ticket", t.key)));
+    }
+    let kind = pdt_core::workflow::events::TICKET_REFINE_REQUESTED;
+    if !crate::scheduler::workflow_listens(&st, &t.project_id, kind).await {
+        return Err(conflict(
+            "no_refine_workflow",
+            "no enabled workflow refines this project's tickets; enable the Pipeline in Workflows".into(),
+        ));
+    }
+    if t.pipeline_stage == Some(PipelineStage::Refine) {
+        for status in [RunStatus::Running, RunStatus::Waiting] {
+            let f =
+                pdt_store::RunFilter { workflow_id: None, ticket_id: Some(id.clone()), status: Some(status), limit: 1 };
+            if !st.store.list_workflow_runs(&f).await?.is_empty() {
+                return Err(conflict("refine_running", format!("{} is being refined already", t.key)));
+            }
+        }
+    }
+    st.store.set_pipeline_stage(&id, Some(PipelineStage::Refine)).await?;
+    let payload = pdt_core::workflow::events::TicketRefineRequested {
+        project_id: t.project_id.clone(),
+        ticket_id: t.id.clone(),
+        ticket_key: t.key.clone(),
+        title: t.title.clone(),
+        stage: t.stage.as_str().into(),
+        actor: actor.as_str().into(),
+    };
+    let key = format!("{}:{}", t.id, uuid::Uuid::now_v7());
+    st.store.emit_event(&NewLogEvent::new(kind, key, "ticket", payload), now_ms()).await?;
+    reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+}
+
+/// `POST /api/tickets/{id}/refine`'s optional body.
+#[derive(Debug, Default, serde::Deserialize)]
+struct NewRefine {
+    /// `user` from PDT's UI; anything else is an agent.
+    #[serde(default)]
+    by: Option<Actor>,
 }
 
 pub(crate) async fn labels(

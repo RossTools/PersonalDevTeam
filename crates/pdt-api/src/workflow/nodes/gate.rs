@@ -64,6 +64,15 @@ pub struct GateConfig {
     /// Where the Inbox lists it while it waits.
     #[serde(default)]
     pub inbox: GateInbox,
+    /// The ticket's pipeline stage while it waits (the Board's column).
+    #[serde(default)]
+    #[ts(optional)]
+    pub pipeline_stage: Option<pdt_core::ticket::PipelineStage>,
+    /// A choice that is the user's approval of the run's attempt: taking it records an approval at the branch head
+    /// (as Approve does), which a project that requires one needs before an automated merge.
+    #[serde(default)]
+    #[ts(optional)]
+    pub approve: Option<String>,
 }
 
 pub struct Gate;
@@ -98,6 +107,9 @@ impl NodeKind for Gate {
         if let Some(a) = c.ahead.iter().find(|a| !c.choices.contains(&a.choice)) {
             return Err(format!("ahead names {}, which is not a choice", a.choice));
         }
+        if let Some(a) = c.approve.as_ref().filter(|a| !c.choices.contains(a)) {
+            return Err(format!("approve names {a}, which is not a choice"));
+        }
         Ok(())
     }
 
@@ -115,6 +127,11 @@ impl NodeKind for Gate {
                     UNANSWERED,
                     json!({"would": format!("ask: {} ({})", c.question, c.choices.join(", "))}),
                 ));
+            }
+            if let (Some(stage), Some(ticket)) = (c.pipeline_stage, &cx.run.ticket_id)
+                && let Err(e) = cx.st.store.set_pipeline_stage(ticket, Some(stage)).await
+            {
+                tracing::warn!(ticket = %ticket, error = %e, "could not set the ticket's pipeline stage");
             }
             let group = match c.inbox {
                 GateInbox::Gate => InboxGroup::Gate,
@@ -144,7 +161,7 @@ impl NodeKind for Gate {
             };
             cx.st.store.open_inbox_item(&item).await.map_err(|e| e.to_string())?;
             Ok(Outcome::Wait {
-                wait: json!({"answer": {"question": c.question, "choices": c.choices}}),
+                wait: json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve}}),
                 until: c.timeout_ms.map(|ms| now_ms() + i64::try_from(ms).unwrap_or(i64::MAX / 2)),
                 timeout_port: Some(TIMEOUT.into()),
                 output: Value::Null,

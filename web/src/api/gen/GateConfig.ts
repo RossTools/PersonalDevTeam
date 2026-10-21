@@ -2,6 +2,7 @@
 import type { Ahead } from "./Ahead";
 import type { Ask } from "./Ask";
 import type { GateInbox } from "./GateInbox";
+import type { PipelineStage } from "./PipelineStage";
 
 export type GateConfig = { question: string, 
 /**
@@ -15,4 +16,13 @@ timeoutMs: number | null,
 /**
  * Where the Inbox lists it while it waits.
  */
-inbox: GateInbox, };
+inbox: GateInbox, 
+/**
+ * The ticket's pipeline stage while it waits (the Board's column).
+ */
+pipelineStage?: PipelineStage, 
+/**
+ * A choice that is the user's approval of the run's attempt: taking it records an approval at the branch head
+ * (as Approve does), which a project that requires one needs before an automated merge.
+ */
+approve?: string, };

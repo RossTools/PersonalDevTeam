@@ -49,6 +49,9 @@ pub const DEFAULT_RUN_PORTS: PortRange = PortRange { start: 8400, end: 8499 };
 /// The dev instance's default, apart from the stable one's so their runs never compete for ports or mappings.
 pub const DEV_RUN_PORTS: PortRange = PortRange { start: 8500, end: 8599 };
 pub const DEFAULT_MAX_RUNS: u32 = 4;
+/// How many agents may run a turn at once for PDT's own work (structured agents spec §16); 0 is no cap.
+pub const DEFAULT_MAX_AGENT_TURNS: u32 = 4;
+const MAX_AGENT_TURNS_LIMIT: u32 = 64;
 const MAX_RUNS_LIMIT: u32 = 32;
 const MAX_PORTS_IN_RANGE: u32 = 1000;
 pub const DEFAULT_UPDATE_CHECK_MINUTES: u32 = 60;
@@ -78,6 +81,9 @@ pub struct HostSettings {
     pub session_permission_mode: PermissionMode,
     /// Minutes between automatic update checks (unless the update policy is manual).
     pub update_check_minutes: u32,
+    /// The most agents running a turn at once before PDT's own work (agent steps, workflow messages) waits for a
+    /// slot; 0: no cap. What the user does is never held (Phase 7c spec §6.2).
+    pub max_agent_turns: u32,
 }
 
 impl Default for HostSettings {
@@ -95,6 +101,7 @@ impl Default for HostSettings {
             ticket_permission_mode: PermissionMode::Bypass,
             session_permission_mode: PermissionMode::Ask,
             update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
+            max_agent_turns: DEFAULT_MAX_AGENT_TURNS,
         }
     }
 }
@@ -141,6 +148,10 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub update_check_minutes: Option<u32>,
+    /// 0 for no cap.
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_agent_turns: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -155,6 +166,8 @@ pub enum HostSettingsError {
     BadProjectsDir,
     #[error("update checks must run between every 5 minutes and once a week")]
     BadUpdateInterval,
+    #[error("the most agents running at once must be between 0 (no cap) and 64")]
+    BadMaxAgentTurns,
 }
 
 impl HostSettings {
@@ -222,6 +235,12 @@ impl HostSettings {
                 return Err(HostSettingsError::BadUpdateInterval);
             }
             s.update_check_minutes = n;
+        }
+        if let Some(n) = p.max_agent_turns {
+            if n > MAX_AGENT_TURNS_LIMIT {
+                return Err(HostSettingsError::BadMaxAgentTurns);
+            }
+            s.max_agent_turns = n;
         }
         Ok(s)
     }
@@ -345,6 +364,10 @@ mod tests {
         assert_eq!(s.apply(&runs(0)), Err(HostSettingsError::BadMaxRuns));
         assert_eq!(s.apply(&runs(33)), Err(HostSettingsError::BadMaxRuns));
         assert!(s.apply(&runs(32)).is_ok());
+        let turns = |n| HostSettingsPatch { max_agent_turns: Some(n), ..patch() };
+        assert_eq!(s.apply(&turns(0)).unwrap().max_agent_turns, 0, "no cap");
+        assert_eq!(s.apply(&turns(65)), Err(HostSettingsError::BadMaxAgentTurns));
+        assert_eq!(s.max_agent_turns, 4);
         let owner = |o: &str| HostSettingsPatch { owner_login: Some(o.into()), ..patch() };
         assert_eq!(s.apply(&owner("two words")), Err(HostSettingsError::BadOwner));
         assert_eq!(s.apply(&owner("a\u{7}b")), Err(HostSettingsError::BadOwner));

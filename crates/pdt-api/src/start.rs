@@ -46,6 +46,19 @@ pub(crate) async fn start(
 ) -> Result<(StatusCode, Json<StartResult>), ApiError> {
     let Json(input) = payload?;
     let v = input.validate()?;
+    let r = start_ticket(&st, id, v, false).await?;
+    Ok((StatusCode::CREATED, Json(r)))
+}
+
+/// The Start command (the route, and the scheduler with `auto`): checks, then the branch, worktree, attempt, session
+/// and tabs.
+pub(crate) async fn start_ticket(
+    st: &AppState,
+    id: String,
+    v: ValidStart,
+    auto: bool,
+) -> Result<StartResult, ApiError> {
+    let st = st.clone();
     let guard = st.ticket_start_lock.lock().await;
     let mut ticket = load_ticket(&st, &id).await?;
     // A parent is never started itself (PDT-38): `next` starts its next part instead.
@@ -82,13 +95,23 @@ pub(crate) async fn start(
         .collect();
     // Overlap with the project's active tickets: what this one would share once started.
     let overlaps = ticket.overlaps.clone();
-    if (!blockers.is_empty() || !overlaps.is_empty()) && v.mode == StartMode::Check {
+    // The project's cap on running attempts (Phase 7c §4).
+    let policy = st.store.get_project_settings(&ticket.summary.project_id).await?.policy;
+    let active = st.store.count_active_attempts(&ticket.summary.project_id).await?;
+    let over_cap = policy.over_cap(active);
+    if (!blockers.is_empty() || !overlaps.is_empty() || over_cap) && v.mode == StartMode::Check {
         let mut why = vec![];
         if !blockers.is_empty() {
             why.push(format!("is blocked by {}, which {} not done yet", blockers.join(", "), plural(blockers.len())));
         }
         if !overlaps.is_empty() {
             why.push(crate::overlap::describe(&overlaps));
+        }
+        if over_cap {
+            why.push(format!(
+                "would go over the project's cap of {} running tickets ({active} in flight)",
+                policy.max_running_attempts.unwrap_or_default()
+            ));
         }
         return Err(conflict("start_blocked", format!("{key} {}", why.join("; it "))));
     }
@@ -131,14 +154,17 @@ pub(crate) async fn start(
         }
     };
     let base = if personal.is_some() { String::new() } else { base };
-    let extra = if blockers.is_empty() && overlaps.is_empty() {
+    let mut extra = if blockers.is_empty() && overlaps.is_empty() && !over_cap {
         json!({})
     } else {
         let overlaps: Vec<_> =
             overlaps.iter().map(|o| json!({"key": o.key, "level": o.level, "areas": o.areas})).collect();
         json!({"forced": true, "blockers": blockers, "overlaps": overlaps,
-               "level": crate::overlap::worst(&ticket.overlaps)})
+               "level": crate::overlap::worst(&ticket.overlaps), "overCap": over_cap})
     };
+    if auto {
+        extra["auto"] = json!(true);
+    }
     let attempt_id = uuid::Uuid::now_v7().to_string();
     let started = st
         .store
@@ -180,7 +206,7 @@ pub(crate) async fn start(
         let ticket = load_ticket(&st, &id).await?;
         let attempt =
             ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
-        return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: Some(session) })));
+        return Ok(StartResult { ticket, attempt, session: Some(session) });
     }
 
     if v.no_session {
@@ -191,7 +217,7 @@ pub(crate) async fn start(
         let ticket = load_ticket(&st, &id).await?;
         let attempt =
             ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
-        return Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: None })));
+        return Ok(StartResult { ticket, attempt, session: None });
     }
 
     let part_context = match crate::parts::context(&st, &ticket).await {
@@ -263,7 +289,7 @@ pub(crate) async fn start(
     let ticket = load_ticket(&st, &id).await?;
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
-    Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: Some(session) })))
+    Ok(StartResult { ticket, attempt, session: Some(session) })
 }
 
 /// A Personal project's folder for a ticket's work, `<project folder>/<ticket key>` (made if missing; kept across

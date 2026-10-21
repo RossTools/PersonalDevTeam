@@ -3,6 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { OpenTicketContext } from '../tickets/actions';
+import { OpenChangesContext } from '../review/open';
+import { ticket } from '../tickets/fixtures';
+import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
@@ -104,6 +107,67 @@ describe('inbox', () => {
     expect(openTicket).toHaveBeenCalledWith({ id: 't', projectId: 'p' });
     fireEvent.keyDown(window, { key: 'e' });
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/q/dismiss')).toBe(true));
+  });
+
+  it('asks the user to do a manual stage and pick its outcome, with their note as the summary', async () => {
+    const manual = item('m', {
+      kind: 'manual', title: 'Your turn: Review', personaName: 'Reviewer',
+      body: { prompt: 'Review the **diff**.', workflow: 'Pipeline' },
+      choices: [{ id: 'outcome:approved', title: 'approved', primary: true }, { id: 'outcome:changes_requested', title: 'changes_requested', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/m/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[manual]} selectedId="m" onSelect={() => {}} />);
+    expect(screen.getByText(/This stage is yours in workflow Pipeline/)).toBeInTheDocument();
+    expect(screen.getByText('diff')).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'What you did (optional)' }), 'Looks right');
+    await userEvent.click(screen.getByRole('button', { name: 'changes_requested' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'outcome:changes_requested', text: 'Looks right' }));
+  });
+
+  it('opens the ticket\'s changes and runs its branch next to its tab in its own workspace', async () => {
+    const accept = item('a', { group: 'accept', ticketId: 't1', attemptId: 'a1', title: 'Accept PDT-7?', choices: [{ id: 'merge', title: 'merge', primary: true }] });
+    const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: 'ws7', pr: null };
+    const calls = stubApi({
+      'GET /api/tickets/t1': ticket(1, { attempts: [attempt], sessions: [
+        { id: 'old', title: 'Coder · PDT-7', status: 'finished', agent: 'claude', attemptId: 'a1', mode: 'conversation' },
+        { id: 's5', title: 'Coder · PDT-7', status: 'running', agent: 'claude', attemptId: 'a1', mode: 'conversation' },
+      ] }),
+      'GET /api/projects/p/run-config': { filePath: null, file: null, overrides: null, error: null,
+        effective: { runs: [{ name: 'web', setup: null, command: 'x', web: true, data: true, env: {} }], tests: [] } },
+      'POST /api/projects/p/runs': { id: 'r9', projectId: 'p' },
+      'GET /api/inbox': { items: [], total: 0 },
+    });
+    const openChanges = vi.fn();
+    const openRun = vi.fn();
+    const placementNear = vi.fn(() => ({ workspaceId: 'ws7', position: 3 }));
+    const openNear = vi.fn();
+    renderWithQuery(
+      <OpenChangesContext.Provider value={openChanges}>
+        <TicketTabsContext.Provider value={{ placementNear, openRun, openNear }}>
+          <InboxView items={[accept]} selectedId="a" onSelect={() => {}} />
+        </TicketTabsContext.Provider>
+      </OpenChangesContext.Provider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Open changes' }));
+    expect(openChanges).toHaveBeenCalledWith({ id: 'w1', projectId: 'p' }, { ticketId: 't1' });
+    // The running coder session, to talk to it.
+    await userEvent.click(screen.getByRole('button', { name: 'Open coder session' }));
+    expect(openNear).toHaveBeenCalledWith({ kind: 'session', id: 's5' }, 'p', 't1');
+    await userEvent.click(await screen.findByRole('button', { name: /Run the ticket's branch/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'web' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/projects/p/runs')?.body)
+      .toEqual({ worktreeId: 'w1', name: 'web', kind: 'run', tab: { workspaceId: 'ws7', position: 3 } }));
+    await waitFor(() => expect(openRun).toHaveBeenCalledWith({ id: 'r9', projectId: 'p' }));
+  });
+
+  it('sends a note with a gate\'s choice', async () => {
+    const reject = item('r', { group: 'accept', title: 'Accept PDT-7?', choices: [{ id: 'merge', title: 'merge', primary: true }, { id: 'reject', title: 'reject', primary: false }] });
+    const calls = stubApi({ 'POST /api/inbox/r/answer': {}, 'GET /api/inbox': { items: [], total: 0 }, 'GET /api/tickets/t': ticket(1) });
+    renderWithQuery(<InboxView items={[reject]} selectedId="r" onSelect={() => {}} />);
+    expect(screen.getByText(/goes on the ticket as your comment/)).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Note (optional)' }), 'The button is the wrong colour');
+    await userEvent.click(screen.getByRole('button', { name: 'reject' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'reject', text: 'The button is the wrong colour' }));
   });
 
   it('says when nothing waits', () => {

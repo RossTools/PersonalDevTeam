@@ -292,5 +292,5 @@ describe('paletteItems', () => {
 const summary: TicketSummary = {
   id: 'k42', projectId: 'p1', key: 'PDT-42', number: 42, title: 'Fix login', stage: 'ready', priority: 'high', labels: [],
   areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [], createdAt: 0, updatedAt: 0, closedAt: null,
-  parent: null, parts: null,
+  parent: null, parts: null, pipelineStage: null, agent: null,
 };

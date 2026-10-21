@@ -10,7 +10,9 @@ import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
 import { AttemptSection, MergedBanner } from './Attempt';
-import { abandonAttempt, canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, useStartTicket } from './actions';
+import {
+  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, refineTicket, startNextPart, stopWaitingEntry, useStartTicket,
+} from './actions';
 import { isClosed } from './model';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
@@ -137,6 +139,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           <MenuButton
             label="Ticket actions"
             entries={() => [
+              ...(canRefine(ticket) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, ticket)) }] : []),
               ...(ticket.waiting ? [stopWaitingEntry(qc, ticket)] : []),
               { submenu: 'Move to', entries: moveToEntries(qc, ticket, confirm) },
               ...(ticket.parts && !isClosed(ticket.stage)

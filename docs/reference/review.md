@@ -28,11 +28,18 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   (`review::feedback_record`; the comments themselves go with the worktree; the timeline folds them under Show the
   comments).
 - `POST /api/attempts/{id}/approve` records a `review` event at the branch head (Approved while the head is
-  unchanged; 409 `attempt_inactive` once the attempt ended).
+  unchanged; 409 `attempt_inactive` once the attempt ended). A workflow gate's `approve` choice (the Pipeline's
+  Accept) records the same event, as the user's, naming the workflow and run.
 
 ## Merge
 
 - `GET /api/attempts/{id}/merge` previews (`problem` names what blocks it, pdt-core `MergeProblem`); `POST` merges.
+  `POST` is the Merge command (pdt-api `review::merge_attempt`, shared with the workflow node `attempt.merge`), and
+  the project's policy comes first (Phase 7c, pdt-core `policy::may_merge`): PDT's Merge… sends `by: "user"`, a
+  person's merge; anything else is automated. `mergeBy: user` refuses automated merges and `external` every merge
+  (409 `merge_not_allowed`); `requireApproval` refuses an automated merge unless a person approved the branch's
+  current head (409 `approval_required`; a person's own merge needs none). A local merge's `merged` event is the
+  user's for a person's merge, else `system`.
   Every refusal is 409 `merge_blocked` with a message (inactive, dirty, conflict, base_dirty, nothing,
   pr_not_mergeable, pr_queued, no_pr); a failing gh or git is 409 `merge_failed`.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` (pdt-github `merge_pr`; the method from

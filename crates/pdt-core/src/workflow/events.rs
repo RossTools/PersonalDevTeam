@@ -19,6 +19,7 @@ pub const TICKET_STAGE_CHANGED: &str = "ticket.stage_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
 pub const AGENT_OUTCOME: &str = "agent.outcome";
+pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
 /// The CI provider of GitHub Actions runs.
 pub const GITHUB_ACTIONS: &str = "github_actions";
@@ -114,6 +115,12 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Agent outcome",
         description: "An agent step on a ticket ended with an outcome (submitted by the agent, or taken over by the user).",
         schema: schema_of::<AgentOutcome>,
+    },
+    EventType {
+        id: TICKET_REFINE_REQUESTED,
+        title: "Refine requested",
+        description: "Someone asked for a Draft or Ready ticket to be refined (Refine on the ticket).",
+        schema: schema_of::<TicketRefineRequested>,
     },
 ];
 
@@ -246,6 +253,9 @@ pub struct TicketCommented {
     pub actor: String,
     /// The ticket's active attempt, when it has one.
     pub attempt_id: Option<String>,
+    /// The workflow whose run wrote it for the user (a note with a gate's choice, which that run passes on itself).
+    #[serde(default)]
+    pub workflow_id: Option<String>,
 }
 
 /// `ticket.overlap_found`.
@@ -284,6 +294,21 @@ pub struct AgentOutcome {
     pub run_id: Option<String>,
 }
 
+/// `ticket.refine_requested`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketRefineRequested {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub title: String,
+    /// `draft` or `ready`.
+    pub stage: String,
+    /// `user` or `agent`.
+    pub actor: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +333,7 @@ mod tests {
             body: "b".into(),
             actor: "user".into(),
             attempt_id: None,
+            workflow_id: None,
         };
         assert_eq!(serde_json::to_value(&e).unwrap()["ticketKey"], "PDT-1");
         let a = AttemptEvent {

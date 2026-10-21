@@ -21,6 +21,8 @@ pub enum InboxKind {
     LoopLimit,
     /// An agent's open permission request (not stored).
     Approval,
+    /// A manual step (Phase 7c): the user does the stage's work and picks its outcome.
+    Manual,
 }
 
 impl InboxKind {
@@ -31,10 +33,11 @@ impl InboxKind {
             InboxKind::Stalled => "stalled",
             InboxKind::LoopLimit => "loop_limit",
             InboxKind::Approval => "approval",
+            InboxKind::Manual => "manual",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [Self::Question, Self::Gate, Self::Stalled, Self::LoopLimit, Self::Approval]
+        [Self::Question, Self::Gate, Self::Stalled, Self::LoopLimit, Self::Approval, Self::Manual]
             .into_iter()
             .find(|k| k.as_str() == s)
     }

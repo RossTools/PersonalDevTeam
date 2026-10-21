@@ -64,6 +64,17 @@ struct AddTicketComment {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateTicket {
+    /// A new title (one line).
+    #[serde(default)]
+    title: Option<String>,
+    /// The new description (Markdown), replacing the old one: keep what still holds.
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CatalogSearch {
     /// Words to look for in the kinds' ids, titles and descriptions; every kind when left out.
     #[serde(default)]
@@ -158,6 +169,13 @@ fn defs() -> Vec<Def> {
             description: "Adds a line comment to the attempt's changes (the Changes view), on the file as it is in \
                           the attempt's worktree.",
             schema: schema::<OutcomeComment>,
+        },
+        Def {
+            name: "update_ticket",
+            title: "Update the ticket",
+            description: "Rewrites this session's ticket: its title and/or description (as `PATCH /api/tickets/{id}`, \
+                          recorded as the agent's edit). Only this session's own ticket.",
+            schema: schema::<UpdateTicket>,
         },
         Def {
             name: "catalog_search",
@@ -257,6 +275,23 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .map_err(store)?
                 .ok_or("that ticket no longer exists")?;
             Ok(json!({"commented": true, "eventId": e.id}))
+        }
+        "update_ticket" => {
+            let a: UpdateTicket = args(a)?;
+            if a.title.is_none() && a.description.is_none() {
+                return Err("give a title, a description or both".into());
+            }
+            let id = ticket_for(cx, None).await?;
+            let patch =
+                pdt_core::ticket::TicketPatch { title: a.title, description: a.description, ..Default::default() };
+            let valid = patch.validate().map_err(|e| api(e.into()))?;
+            let t = st
+                .store
+                .patch_ticket_by(&id, &valid, Actor::Agent, now_ms())
+                .await
+                .map_err(|e| api(e.into()))?
+                .ok_or("that ticket no longer exists")?;
+            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title}))
         }
         "add_review_comment" => {
             let a: OutcomeComment = args(a)?;

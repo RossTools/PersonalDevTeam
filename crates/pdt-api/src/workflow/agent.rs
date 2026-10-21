@@ -3,7 +3,7 @@
 //! taking a step over from the Inbox.
 
 use super::catalog::{Outcome, StepCx};
-use super::nodes::agent::{AgentConfig, SessionChoice};
+use super::nodes::agent::{AgentConfig, Owner, SessionChoice};
 use crate::routes::{AppState, now_ms};
 use pdt_core::conversation::SessionMode;
 use pdt_core::inbox::{self, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus, Question};
@@ -11,7 +11,8 @@ use pdt_core::persona::{Persona, effective_permission_mode};
 use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession};
 use pdt_core::ticket::{Actor, AttemptState, EventKind};
 use pdt_core::workflow::agent::{
-    AgentStep, AgentStepState, OutcomeSpec, STOPPED, StepTicket, TIMEOUT, first_message, nudge_message, step_section,
+    AgentStep, AgentStepState, OutcomeSpec, STOPPED, StepTicket, TIMEOUT, back_because, first_message,
+    next_pass_message, nudge_message, step_section,
 };
 use pdt_core::workflow::api::{Step, StepStatus};
 use pdt_store::SessionMessage;
@@ -81,9 +82,11 @@ async fn target(cx: &StepCx<'_>, c: &AgentConfig) -> R<Target> {
 pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     let st = cx.st;
     let now = now_ms();
+    // A manual step waits for the user as long as it takes; an agent's has its max runtime.
     let wait = |a: &AgentStep| Outcome::Wait {
         wait: json!({"agent": {"session": a.session_id, "persona": a.persona_name}}),
-        until: Some(a.created_at + i64::try_from(c.max_runtime_ms()).unwrap_or(i64::MAX / 4)),
+        until: (a.state != AgentStepState::Manual)
+            .then(|| a.created_at + i64::try_from(c.max_runtime_ms()).unwrap_or(i64::MAX / 4)),
         timeout_port: Some(TIMEOUT.into()),
         output: Value::Null,
     };
@@ -110,6 +113,27 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         return Err(format!("the persona {} is archived", persona.name));
     }
     let t = target(cx, &c).await?;
+    if let (Some(stage), Some((ticket_id, _, _))) = (c.pipeline_stage, &t.ticket)
+        && let Err(e) = st.store.set_pipeline_stage(ticket_id, Some(stage)).await
+    {
+        tracing::warn!(ticket = %ticket_id, error = %e, "could not set the ticket's pipeline stage");
+    }
+    let reused = match (c.owner, c.session) {
+        (Owner::Agent, SessionChoice::Reuse) => reusable_session(st, cx, &t).await,
+        _ => None,
+    };
+    // A new session runs a turn at once: under the host's cap it waits for a slot (Phase 7c §6.2). A reused one gets
+    // its message through the outbox, which keeps to the cap itself.
+    let admitted = cx.step.wait.get("admitted").and_then(Value::as_bool) == Some(true);
+    if c.owner == Owner::Agent && reused.is_none() && !admitted && !crate::scheduler::slot_free(st).await {
+        tracing::info!(run = %cx.run.id, node = %cx.node.id, "an agent step waits for a slot");
+        return Ok(Outcome::Wait {
+            wait: json!({"slot": true, "persona": persona.name, "loopAllowed": allowed}),
+            until: None,
+            timeout_port: None,
+            output: Value::Null,
+        });
+    }
     let mut binding = AgentStep {
         step_id: cx.step.id.clone(),
         run_id: cx.run.id.clone(),
@@ -122,7 +146,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         ticket_id: t.ticket.as_ref().map(|x| x.0.clone()),
         attempt_id: t.attempt.as_ref().map(|a| a.attempt.id.clone()),
         outcomes: c.outcomes.clone(),
-        state: AgentStepState::Working,
+        state: if c.owner == Owner::User { AgentStepState::Manual } else { AgentStepState::Working },
         turns: 0,
         nudges: 0,
         max_turns: c.max_turns(),
@@ -136,18 +160,24 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     };
     // Written first: the new session's instructions read it (its step section).
     st.store.put_agent_step(&binding).await.map_err(err)?;
+    if c.owner == Owner::User {
+        manual_item(cx, &c, &binding).await?;
+        tracing::info!(run = %cx.run.id, node = %cx.node.id, "a manual step waits for the user");
+        return Ok(wait(&binding));
+    }
     let ticket = t.ticket.as_ref().map(|(_, key, title)| StepTicket { key, title });
     let message = first_message(&c.prompt, ticket, &c.outcomes);
-    let reused = match c.session {
-        SessionChoice::New => None,
-        SessionChoice::Reuse => reusable_session(st, cx, &t).await,
-    };
     let session_id = match reused {
         Some(s) => {
-            // Its instructions were fixed when it started: the step's rules go with the message.
-            let text =
-                format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes));
-            queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone()).await?;
+            // A later pass in the same session: it has the step's role and the ticket already, so only why it is back.
+            // Otherwise its instructions were fixed when it started: the step's rules go with the message.
+            let again = passes.iter().any(|a| a.session_id.as_deref() == Some(s.id.as_str()));
+            let text = if again {
+                next_pass_message(why_back(st, cx).await.as_deref(), &c.outcomes)
+            } else {
+                format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes))
+            };
+            queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone(), false).await?;
             s.id
         }
         None => {
@@ -161,6 +191,50 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     tracing::info!(run = %cx.run.id, node = %cx.node.id, persona = %persona.name, session = %session_id,
         "an agent step started");
     Ok(wait(&binding))
+}
+
+/// Why a step runs again: the outcome or gate answer of the latest agent step or gate before it in the run.
+async fn why_back(st: &AppState, cx: &StepCx<'_>) -> Option<String> {
+    let steps = st.store.list_steps(&cx.run.id).await.ok()?;
+    steps.iter().rev().filter(|x| x.seq < cx.step.seq && x.status == StepStatus::Succeeded).find_map(|x| {
+        let port = x.port.as_deref()?;
+        back_because(&x.kind, port, &x.output)
+    })
+}
+
+/// A manual step's Inbox item: the step's task, and one choice per outcome (Phase 7c §3.4).
+async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
+    let choices = c
+        .outcomes
+        .iter()
+        .enumerate()
+        .map(|(i, o)| InboxChoice::new(inbox::outcome_choice(&o.id), &o.id, i == 0))
+        .collect();
+    let item = InboxItem {
+        id: uuid::Uuid::now_v7().to_string(),
+        kind: InboxKind::Manual,
+        group: InboxGroup::Gate,
+        status: InboxStatus::Open,
+        project_id: a.project_id.clone(),
+        ticket_id: a.ticket_id.clone(),
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: a.attempt_id.clone(),
+        session_id: None,
+        run_id: Some(a.run_id.clone()),
+        step_id: Some(a.step_id.clone()),
+        persona_id: a.persona_id.clone(),
+        persona_name: None,
+        title: format!("Your turn: {}", cx.node_title()),
+        body: json!({"prompt": c.prompt, "outcomes": c.outcomes, "node": cx.node.id, "persona": a.persona_name,
+                     "workflow": cx.workflow.name}),
+        choices,
+        resolution: Value::Null,
+        created_at: now_ms(),
+        resolved_at: None,
+    };
+    cx.st.store.open_inbox_item(&item).await.map_err(err)?;
+    Ok(())
 }
 
 /// A session `reuse` can take: this node's earlier session in the run, else the attempt's running agent session.
@@ -249,6 +323,7 @@ async fn queue_message(
     text: &str,
     dedupe: Option<String>,
     ticket_id: Option<String>,
+    by_user: bool,
 ) -> R<()> {
     let m = SessionMessage {
         id: uuid::Uuid::now_v7().to_string(),
@@ -264,6 +339,7 @@ async fn queue_message(
         told_session: None,
         created_at: now_ms(),
         resolved_at: None,
+        by_user,
     };
     st.store.queue_session_message(&m).await.map_err(err)?;
     Ok(())
@@ -485,7 +561,7 @@ pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
         a.nudges += 1;
         let _ = st.store.put_agent_step(&a).await;
         if let Ok(Some(s)) = st.store.get_session(session_id).await
-            && let Err(e) = queue_message(st, &s, &nudge_message(&a.outcomes), None, a.ticket_id.clone()).await
+            && let Err(e) = queue_message(st, &s, &nudge_message(&a.outcomes), None, a.ticket_id.clone(), false).await
         {
             tracing::warn!(session = %session_id, error = %e, "could not nudge an agent step's session");
         }
@@ -595,7 +671,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
                 if s.status != SessionStatus::Running && s.mode != SessionMode::Conversation {
                     return Err("the step's terminal session has stopped: restart it, or take the step over".into());
                 }
-                queue_message(st, &s, &text, None, a.ticket_id.clone()).await?;
+                queue_message(st, &s, &text, None, a.ticket_id.clone(), true).await?;
                 a.nudges += 1;
                 a.state = AgentStepState::Working;
                 a.updated_at = now_ms();
@@ -649,8 +725,24 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Gate => {
             let choice = answer.choice.as_deref().ok_or("choose one of the gate's choices")?;
             let (run, step) = (item.run_id.as_deref().unwrap_or_default(), item.step_id.as_deref().unwrap_or_default());
-            super::engine::answer(st, run, step, choice).await?;
+            super::engine::answer(st, run, step, choice, answer.text.as_deref()).await?;
             Ok(json!({"choice": choice}))
+        }
+        InboxKind::Manual => {
+            let choice = answer.choice.as_deref().ok_or("choose the step's outcome")?;
+            let _engine = st.engine_lock.lock().await;
+            let step_id = item.step_id.as_deref().ok_or("the item has no step")?;
+            let a = st.store.get_agent_step(step_id).await.map_err(err)?.ok_or("the step is gone")?;
+            let step = waiting_step(st, &a).await?;
+            let outcome = inbox::choice_outcome(choice).ok_or_else(|| format!("{choice} is not a choice here"))?;
+            if !a.outcomes.iter().any(|o| o.id == outcome) {
+                return Err(format!("{outcome} is not an outcome of this step"));
+            }
+            let summary =
+                answer.text.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Done by the user.".into());
+            end_item(st, item, json!({"choice": choice})).await?;
+            finish_with(st, a, &step, outcome, summary, true).await?;
+            Ok(json!({"outcome": outcome}))
         }
         InboxKind::Approval => Err("answer an approval in its session".into()),
     }
@@ -675,7 +767,7 @@ async fn answer_question(st: &AppState, item: &InboxItem, answer: &inbox::InboxA
     }
     let _engine = st.engine_lock.lock().await;
     end_item(st, item, json!({"answers": answer.answers, "text": answer.text})).await?;
-    queue_message(st, &s, &text, None, item.ticket_id.clone()).await?;
+    queue_message(st, &s, &text, None, item.ticket_id.clone(), true).await?;
     if let Some(step) = &item.step_id
         && let Ok(Some(mut a)) = st.store.get_agent_step(step).await
         && a.state == AgentStepState::Asking

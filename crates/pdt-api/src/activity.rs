@@ -274,6 +274,12 @@ pub(crate) fn ready_for_message(st: &AppState, id: &str, quiet_ms: i64) -> bool 
     map.get(id).is_some_and(|t| t.activity == Activity::Idle && now_ms() - t.last_input_ms >= quiet_ms)
 }
 
+/// The agent terminals this daemon tracks whose activity is `working` (the host's cap counts them, Phase 7c §6.2).
+pub(crate) fn working_ids(st: &AppState) -> Vec<String> {
+    let map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
+    map.iter().filter(|(_, t)| t.activity == Activity::Working).map(|(id, _)| id.clone()).collect()
+}
+
 /// Types `text` into an agent session as one bracketed paste, then presses Enter (as the browser's Compose does), so
 /// the agent takes it as a prompt. Activity sees it as input.
 pub(crate) async fn type_message(st: &AppState, id: &str, text: &str) -> Result<(), pdt_agents::PtyError> {

@@ -5,6 +5,7 @@ pub mod call;
 pub mod condition;
 pub mod end;
 pub mod gate;
+pub mod merge;
 pub mod session_send;
 pub mod state;
 pub mod switch;

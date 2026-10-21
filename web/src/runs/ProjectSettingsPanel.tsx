@@ -9,6 +9,8 @@ import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSessio
 import { useOpenSession } from '../tickets/actions';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
+import type { AutoStart } from '../api/gen/AutoStart';
+import type { MergeBy } from '../api/gen/MergeBy';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import type { Project } from '../api/gen/Project';
 import type { ProjectSettingsInput } from '../api/gen/ProjectSettingsInput';
@@ -79,6 +81,7 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
       <Instructions project={project} settings={settings.data} writeEntries={agentEntries('set-up-workflow')} />
       <Agents project={project} settings={settings.data} />
       {!personal && <Merging project={project} settings={settings.data} />}
+      <Pipeline project={project} settings={settings.data} personal={personal} />
     </>
   );
 }
@@ -272,6 +275,95 @@ function Merging({ project, settings }: { project: Project; settings: ProjectSet
           checked={settings?.mergeViaPr ?? false}
           disabled={!settings || save.isPending}
           onChange={(on) => save.mutate({ mergeViaPr: on })}
+        />
+      </SettingsRow>
+    </Section>
+  );
+}
+
+const MERGE_BY: { value: MergeBy; label: string }[] = [
+  { value: 'agents', label: 'Agents, workflows and people' },
+  { value: 'user', label: 'Only a person' },
+  { value: 'external', label: 'Nobody in PDT (merged elsewhere)' },
+];
+const AUTO_START: { value: AutoStart; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'todo', label: 'To do tickets' },
+  { value: 'ready', label: 'To do, then Ready tickets' },
+];
+const NO_CAP = 'none';
+const CAPS = [1, 2, 3, 4, 5, 6, 8, 10];
+
+/**
+ * The project's policies (Phase 7c): who may merge, whether an automated merge needs a person's approval, the cap on
+ * running tickets and auto-start. Merge and Start enforce them, whatever a workflow says. Each saves at once.
+ */
+function Pipeline({ project, settings, personal }: { project: Project; settings: ProjectSettingsView | undefined; personal: boolean }) {
+  const save = useSaveProjectSettings(project, settings);
+  const [saved, setSaved] = useSavedNote();
+  const p = settings?.policy;
+  const done = { onSuccess: () => setSaved(true) };
+  const cap = p?.maxRunningAttempts ? String(p.maxRunningAttempts) : NO_CAP;
+  return (
+    <Section
+      label="Pipeline and policies"
+      description="What workflows and agents may do here. Merge and Start keep to these whatever a workflow asks."
+      footer={
+        <>
+          {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
+          {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
+        </>
+      }
+    >
+      {!personal && (
+        <>
+          <SettingsRow label="Who may merge" description="Merge… in PDT is a person's merge; a workflow's or an agent's is automated.">
+            <Select<MergeBy>
+              aria-label="Who may merge"
+              className="w-72 max-w-full"
+              options={MERGE_BY}
+              value={p?.mergeBy ?? 'agents'}
+              disabled={!settings}
+              onChange={(m) => save.mutate({ mergeBy: m }, done)}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label="A person approves before an automated merge"
+            description="Approve in Changes, or Accept in the Inbox, at the branch's current head."
+          >
+            <Switch
+              aria-label="A person approves before an automated merge"
+              checked={p?.requireApproval ?? false}
+              disabled={!settings || save.isPending}
+              onChange={(on) => save.mutate({ requireApproval: on }, done)}
+            />
+          </SettingsRow>
+        </>
+      )}
+      <SettingsRow
+        label="Running tickets at once"
+        description="Counts every ticket with an active attempt, however it started. Start asks before going over it; auto-start never goes over it, and starts one at a time when there is no cap."
+      >
+        <Select<string>
+          aria-label="Running tickets at once"
+          className="w-56 max-w-full"
+          options={[{ value: NO_CAP, label: p?.autoStart && p.autoStart !== 'off' ? 'No cap (auto-start: 1)' : 'No cap' }, ...CAPS.map((n) => ({ value: String(n), label: String(n) }))]}
+          value={cap}
+          disabled={!settings}
+          onChange={(v) => save.mutate({ maxRunningAttempts: v === NO_CAP ? 0 : Number(v) }, done)}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label="Auto-start"
+        description="Starts tickets in rank order, skipping blocked and conflicting ones, while the project is under its cap."
+      >
+        <Select<AutoStart>
+          aria-label="Auto-start"
+          className="w-56 max-w-full"
+          options={AUTO_START}
+          value={p?.autoStart ?? 'off'}
+          disabled={!settings}
+          onChange={(a) => save.mutate({ autoStart: a }, done)}
         />
       </SettingsRow>
     </Section>

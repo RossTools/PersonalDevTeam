@@ -197,6 +197,8 @@ async fn run() -> anyhow::Result<()> {
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
     tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
+    // Auto-start of To do / Ready tickets, per project policy (Phase 7c).
+    tokio::spawn(pdt_api::run_scheduler(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
     {
         let st = state.clone();

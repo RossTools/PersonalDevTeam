@@ -9,6 +9,10 @@ import { actionError } from '../common/useAction';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { useOpenChanges } from '../review/open';
+import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
+import { useStartRun } from '../runs/useStartRun';
+import { useTicket } from '../tickets/queries';
+import { useTicketTabs } from '../workspaces/ticketTabs';
 import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, step } from './model';
 import { useRefreshInbox } from './useInbox';
 
@@ -84,6 +88,10 @@ export function InboxView({ items, selectedId, onSelect }: {
     }
     if (item.kind === 'stalled') return void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) });
     const p = primary(item);
+    // A manual step: the user's note (the nudge box) is the outcome's summary.
+    if (p && item.kind === 'manual') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
+    // A gate's note (the same box) goes with its choice.
+    if (p && item.kind === 'gate') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
 
@@ -142,6 +150,7 @@ export function InboxView({ items, selectedId, onSelect }: {
       />
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
         {item.ticketTitle && <p className="text-sm text-muted-foreground">{item.ticketKey} · {item.ticketTitle}</p>}
+        <TicketWork item={item} />
         {item.kind === 'question' && (
           <Questions
             item={item}
@@ -183,13 +192,45 @@ export function InboxView({ items, selectedId, onSelect }: {
             <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
           </section>
         )}
+        {item.kind === 'manual' && (
+          <section aria-label="Your turn" className="flex flex-col gap-3">
+            <p className="text-sm">
+              This stage is yours{typeof item.body.workflow === 'string' ? ` in workflow ${item.body.workflow}` : ''}: do it,
+              then pick how it ended.
+            </p>
+            {typeof item.body.prompt === 'string' && (
+              <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.prompt}</Markdown></div>
+            )}
+            <Textarea aria-label="What you did (optional)" placeholder="What you did or found (optional): the next step reads it"
+              value={nudge} onChange={(e) => setNudge(e.target.value)} rows={2} />
+            <div role="group" aria-label="Pick the outcome" className="flex flex-wrap items-center gap-2">
+              {item.choices.map((c) => (
+                <Button key={c.id} variant={c.primary ? 'primary' : 'secondary'} pending={busy && c.primary} disabled={busy}
+                  onClick={() => void answer({ choice: c.id, ...(nudge.trim() ? { text: nudge } : {}) })}>
+                  {c.title} {c.primary && <Kbd>↵</Kbd>}
+                </Button>
+              ))}
+            </div>
+          </section>
+        )}
         {(item.kind === 'gate') && (
           <section aria-label="Gate" className="flex flex-col gap-3">
             {typeof item.body.workflow === 'string' && (
               <p className="text-meta text-muted-foreground">From workflow {item.body.workflow}</p>
             )}
-            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
-            {item.group === 'accept' && <OpenChanges item={item} />}
+            <Textarea
+              aria-label="Note (optional)"
+              placeholder={item.ticketId ? 'A note with your choice (optional), e.g. what to change when you reject it' : 'A note with your choice (optional)'}
+              value={nudge}
+              onChange={(e) => setNudge(e.target.value)}
+              rows={3}
+            />
+            {item.ticketId && (
+              <p className="text-meta text-muted-foreground">
+                A note goes on the ticket as your comment, so the agent working on it gets it.
+              </p>
+            )}
+            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice, ...(nudge.trim() ? { text: nudge } : {}) })} />
           </section>
         )}
       </div>
@@ -287,22 +328,45 @@ function Approval({ item, onAnswered }: { item: InboxItem; onAnswered: () => voi
 }
 
 /** Ready to accept: the attempt's changes, from its ticket. */
-function OpenChanges({ item }: { item: InboxItem }) {
+/**
+ * The ticket's work, next to its tab in the workspace that has it (its Start workspace): its coder session (to talk to
+ * it), Open changes, and Run… over the runs and tests its worktree's configuration offers.
+ */
+function TicketWork({ item }: { item: InboxItem }) {
   const openChanges = useOpenChanges();
-  const [loading, setLoading] = useState(false);
-  if (!item.ticketId || !item.projectId) return null;
-  const open = async () => {
-    setLoading(true);
-    try {
-      const t = await api.getTicket(item.ticketId!);
-      const a = t.attempts.find((x) => x.id === item.attemptId) ?? t.attempts.find((x) => x.state === 'active');
-      if (a?.worktreeId) openChanges({ id: a.worktreeId, projectId: item.projectId! });
-      else toast.info('This ticket has no changes to show.');
-    } catch (err) {
-      toast.error(actionError(err));
-    } finally {
-      setLoading(false);
-    }
+  const tabs = useTicketTabs();
+  const ticket = useTicket(item.ticketId);
+  const t = ticket.data;
+  const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active');
+  const worktreeId = attempt?.worktreeId ?? null;
+  const projectId = item.projectId ?? '';
+  const { choices } = useRunChoices(projectId, worktreeId);
+  // The attempt's agent session (the Coder's): the newest one, running ones first.
+  const mine = (t?.sessions ?? []).filter((x) => attempt && x.attemptId === attempt.id);
+  const coder = mine.find((x) => x.status === 'running') ?? mine[0];
+  const start = useStartRun(projectId, (id) => tabs.openRun({ id, projectId }));
+  if (!item.ticketId || !item.projectId || (!worktreeId && !coder)) return null;
+  const run = (choice: string) => {
+    const tab = tabs.placementNear(item.ticketId!);
+    if (!worktreeId) return;
+    start.mutate({ worktreeId, ...parseChoice(choice), ...(tab ? { tab } : {}) }, { onError: (err) => toast.error(actionError(err)) });
   };
-  return <div><Button variant="secondary" pending={loading} onClick={() => void open()}>Open changes</Button></div>;
+  return (
+    <div role="group" aria-label="The ticket's work" className="flex flex-wrap items-center gap-2">
+      {coder && (
+        <Button variant="secondary" size="sm" title={coder.title}
+          onClick={() => tabs.openNear({ kind: 'session', id: coder.id }, projectId, item.ticketId!)}>
+          Open coder session
+        </Button>
+      )}
+      {worktreeId && (
+        <Button variant="secondary" size="sm" onClick={() => openChanges({ id: worktreeId, projectId }, { ticketId: item.ticketId! })}>
+          Open changes
+        </Button>
+      )}
+      {worktreeId && choices.length > 0 && (
+        <RunMenu label="Run the ticket's branch" choices={choices} value="" onChange={run} disabled={start.isPending} className="w-40" />
+      )}
+    </div>
+  );
 }

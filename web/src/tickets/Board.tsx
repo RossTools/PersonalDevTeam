@@ -1,6 +1,7 @@
 // The Tickets view's Board: committed work in three columns (To do, In progress, Done in the last two weeks). Ready
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
-// first, then one lane per parent with its parts, under a header that tracks the parent.
+// first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
+// work (Phase 7c), In progress splits into its stages: Code, Review, QA and Accept.
 import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
@@ -12,6 +13,8 @@ import type { Session } from '../api/gen/Session';
 import type { TicketQuery } from '../api/gen/TicketQuery';
 import type { TicketStage } from '../api/gen/TicketStage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
+import type { PipelineStage } from '../api/gen/PipelineStage';
+import type { TicketAgent } from '../api/gen/TicketAgent';
 import { AgentDot, itemState, rollup, type AgentStateValue } from '../common/AgentState';
 import { PartsStepper, partsCount } from '../common/PartsStepper';
 import { STAGE_LABEL } from '../common/StageStepper';
@@ -33,6 +36,53 @@ export const BOARD_COLUMNS: { stage: BoardStage; title: string }[] = [
   { stage: 'in_progress', title: 'In progress' },
   { stage: 'done', title: 'Done' },
 ];
+
+/** A column on screen: a board stage, or (In progress split by the pipeline) one of its stages. */
+export interface DisplayColumn {
+  id: string;
+  stage: BoardStage;
+  title: string;
+  pipeline?: Exclude<PipelineStage, 'refine'>;
+}
+
+export const PIPELINE_COLUMNS: DisplayColumn[] = [
+  { id: 'code', stage: 'in_progress', title: 'Code', pipeline: 'code' },
+  { id: 'review', stage: 'in_progress', title: 'Review', pipeline: 'review' },
+  { id: 'qa', stage: 'in_progress', title: 'QA', pipeline: 'qa' },
+  { id: 'accept', stage: 'in_progress', title: 'Accept', pipeline: 'accept' },
+];
+
+/** In progress splits into the pipeline's stages once any card in it has one. */
+export function boardSplits(inProgress: Pick<TicketSummary, 'pipelineStage'>[]): boolean {
+  return inProgress.some((t) => !!t.pipelineStage && t.pipelineStage !== 'refine');
+}
+
+/** The columns on screen. */
+export function displayColumns(split: boolean): DisplayColumn[] {
+  const plain = BOARD_COLUMNS.map((c) => ({ id: c.stage, stage: c.stage, title: c.title }));
+  return split ? [plain[0], ...PIPELINE_COLUMNS, plain[2]] : plain;
+}
+
+/** Whether a card of the column's stage shows in it: a card with no pipeline stage shows under Code. */
+export function inColumn(t: Pick<TicketSummary, 'pipelineStage'>, c: DisplayColumn): boolean {
+  if (!c.pipeline) return true;
+  const at = t.pipelineStage && t.pipelineStage !== 'refine' ? t.pipelineStage : 'code';
+  return at === c.pipeline;
+}
+
+/** The card's line about who owns its workflow step now and in what state (Phase 7c). */
+export function agentLine(a: TicketAgent): { text: string; dot: AgentStateValue } {
+  const dot = (kind: AgentStateValue['dot'], pulse = false): AgentStateValue =>
+    ({ dot: kind, pulse, label: null, tone: kind === 'running' ? 'running' : kind === 'waiting' ? 'waiting' : kind === 'failed' ? 'failed' : 'muted', unseen: false });
+  const who = a.persona ?? 'Agent';
+  switch (a.state) {
+    case 'working': return { text: `${who} · working`, dot: dot('running', a.busy) };
+    case 'asking': return { text: `${who} asks you`, dot: dot('waiting') };
+    case 'stalled': return { text: `${who} stalled`, dot: dot('failed') };
+    case 'yours': return { text: a.persona ? `Your turn · ${a.persona}` : 'Your turn', dot: dot('waiting') };
+    case 'queued': return { text: `${who} · waiting for a slot`, dot: dot('idle') };
+  }
+}
 
 /** The Done column shows tickets closed in the last two weeks. */
 export const DONE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
@@ -119,6 +169,15 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
           </span>
           <span className={cn('line-clamp-2 text-sm', activity?.unseen && 'font-semibold')}>{t.title}</span>
           {t.labels.length > 0 && <LabelChips labels={t.labels} className="flex-wrap" />}
+          {t.agent && (() => {
+            const line = agentLine(t.agent);
+            return (
+              <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+                <AgentDot state={line.dot} />
+                <span className="min-w-0 truncate">{line.text}</span>
+              </span>
+            );
+          })()}
           {t.attempt && (
             <span className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
               {activity ? <AgentDot state={activity} /> : <GitBranch aria-hidden className="size-3 shrink-0" />}
@@ -332,7 +391,7 @@ const laneEmpty = (lane: Lane) => (['todo', 'in_progress', 'done'] as BoardStage
 export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
   // Fixed while the board is on screen: a new value every render would be a new query every render.
   const [closedAfter] = useState(() => Date.now() - DONE_WINDOW_MS);
-  const [stage, setStage] = useState<BoardStage>('todo');
+  const [shown, setShown] = useState<string>('todo');
   const sessions = useAllSessions();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -360,17 +419,32 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
         ...(canStart(t) ? { onStart: () => start(t) } : {}),
       }),
   };
-  const columns = phone ? BOARD_COLUMNS.filter((c) => c.stage === stage) : BOARD_COLUMNS;
+  const all = displayColumns(boardSplits([...items.in_progress, ...lanes.flatMap((l) => l.items.in_progress)]));
+  // Phones: one column; In progress's id falls back to Code when it splits (and back).
+  const current = all.find((c) => c.id === shown) ?? all.find((c) => c.stage === shown || c.id === 'in_progress') ?? all[0];
+  const columns = phone ? [current] : all;
   const [first, ...parentLanes] = lanes;
   const withLanes = parentLanes.length > 0;
   const firstIds = laneIds(first);
+  const cards = (list: TicketSummary[], c: DisplayColumn) => (c.pipeline ? list.filter((t) => inColumn(t, c)) : list);
+  // A pipeline column's status (loading, Show more) is In progress's, shown once under Code.
+  const ownsStatus = (c: DisplayColumn) => !c.pipeline || c.pipeline === 'code';
 
-  const columnHead = (c: (typeof BOARD_COLUMNS)[number]) => (
-    <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium">
-      <span className="flex-1">{c.title}</span>
-      {cols[c.stage].total !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{cols[c.stage].total}</span>}
-    </h3>
-  );
+  const columnHead = (c: DisplayColumn) => {
+    const count = c.pipeline ? cards(cols.in_progress.items, c).length : cols[c.stage].total;
+    return (
+      <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium">
+        <span className="flex-1">{c.title}</span>
+        {count !== undefined && <span className="text-meta text-muted-foreground tabular-nums">{count}</span>}
+      </h3>
+    );
+  };
+  const status = (c: DisplayColumn, showEmpty: boolean) =>
+    ownsStatus(c) ? (
+      <ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={showEmpty} />
+    ) : showEmpty && cards(cols.in_progress.items, c).length === 0 ? (
+      <p className="p-2 text-xs text-muted-foreground">No tickets.</p>
+    ) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 md:p-3">
@@ -379,17 +453,17 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
           aria-label="Board column"
           size="sm"
           className="self-start"
-          options={BOARD_COLUMNS.map((c) => ({ value: c.stage, label: c.title }))}
-          value={stage}
-          onChange={setStage}
+          options={all.map((c) => ({ value: c.id, label: c.title }))}
+          value={current.id}
+          onChange={setShown}
         />
       )}
       {!withLanes ? (
         <div className="flex min-h-0 flex-1 gap-3">
           {columns.map((c) => (
-            <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} height="fill">
+            <Cell key={c.id} label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="fill">
               {!phone && columnHead(c)}
-              <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty /></div>
+              <div className="px-2">{status(c, true)}</div>
             </Cell>
           ))}
         </div>
@@ -397,17 +471,17 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
         // One column: the first lane's cards, then a heading per parent with its parts in this column.
         <div className="min-h-0 flex-1 overflow-auto">
           {columns.map((c) => (
-            <div key={c.stage} className="flex flex-col">
-              <Cell label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} height="capped">
-                <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={false} /></div>
+            <div key={c.id} className="flex flex-col">
+              <Cell label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
+                <div className="px-2">{status(c, false)}</div>
               </Cell>
               {parentLanes.map((lane) => {
                 const shut = collapsed.has(lane.id!);
                 return (
                   <div key={lane.id}>
                     <LaneHeader lane={lane} collapsed={shut} onToggle={() => toggle(lane.id!)} onPeek={onPeek} compact />
-                    {!shut && (lane.items[c.stage].length > 0 ? (
-                      <Cell label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={laneIds(lane)} env={env} height="auto" />
+                    {!shut && (cards(lane.items[c.stage], c).length > 0 ? (
+                      <Cell label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={cards(lane.items[c.stage], c)} lane={laneIds(lane)} env={env} height="auto" />
                     ) : (
                       <p className="px-3 pb-1 text-xs text-muted-foreground">{laneEmpty(lane) ? 'No parts on the board yet.' : `No parts in ${c.title}.`}</p>
                     ))}
@@ -420,12 +494,12 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="flex gap-3">
-            {columns.map((c) => <div key={c.stage} className="min-w-0 flex-1">{columnHead(c)}</div>)}
+            {columns.map((c) => <div key={c.id} className="min-w-0 flex-1">{columnHead(c)}</div>)}
           </div>
           <div className="flex gap-3">
             {columns.map((c) => (
-              <Cell key={c.stage} label={c.title} stage={c.stage} items={first.items[c.stage]} lane={firstIds} env={env} height="capped">
-                <div className="px-2"><ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={false} /></div>
+              <Cell key={c.id} label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
+                <div className="px-2">{status(c, false)}</div>
               </Cell>
             ))}
           </div>
@@ -440,7 +514,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
                 ) : (
                   <div className="flex gap-3">
                     {columns.map((c) => (
-                      <Cell key={c.stage} label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={lane.items[c.stage]} lane={ids} env={env} height="auto" />
+                      <Cell key={c.id} label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={cards(lane.items[c.stage], c)} lane={ids} env={env} height="auto" />
                     ))}
                   </div>
                 ))}

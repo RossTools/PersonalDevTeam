@@ -468,6 +468,7 @@ pub async fn run_workflows(st: &AppState) {
     super::builtins::ensure_installed(st).await;
     crate::personas::ensure_builtins(st).await;
     match_events(st).await;
+    crate::scheduler::admit_waiting(st).await;
     advance_all(st).await;
     super::outbox::deliver(st).await;
     super::agent::sweep(st).await;
@@ -544,7 +545,10 @@ pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> R<()> {
 }
 
 /// Answers a waiting gate.
-pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &str) -> R<()> {
+/// Answers a waiting gate with `choice`. The user's `text` with it (why they rejected, what to change) goes on the
+/// run's ticket as their comment, so the timeline keeps it and the agent working on the ticket hears it ("Ticket
+/// comments to the agent"); the gate's output carries it too.
+pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &str, text: Option<&str>) -> R<()> {
     let _engine = st.engine_lock.lock().await;
     let step = st.store.get_step(step_id).await.map_err(err)?.filter(|s| s.run_id == run_id).ok_or("no such step")?;
     let choices: Vec<String> = step
@@ -556,6 +560,15 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
     if !choices.iter().any(|c| c == choice) {
         return Err(format!("{choice} is not one of {}", choices.join(", ")));
     }
+    // A choice that approves records the user's approval of the run's attempt (Phase 7c §5).
+    if step.wait.pointer("/answer/approve").and_then(Value::as_str) == Some(choice)
+        && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
+        && let Some(attempt) = run.attempt_id.as_deref()
+        && let Some(info) = st.store.get_attempt(attempt).await.map_err(err)?
+    {
+        let extra = json!({"workflowId": run.workflow_id, "workflowName": run.workflow_name, "runId": run.id});
+        crate::review::record_approval(st, &info, extra).await.map_err(|e| e.message().to_string())?;
+    }
     // Its Inbox item is answered, wherever the answer came from.
     for item in st.store.open_items_for_step(step_id).await.map_err(err)? {
         let _ = st
@@ -563,7 +576,20 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
             .end_inbox_item(&item.id, pdt_core::inbox::InboxStatus::Resolved, &json!({"choice": choice}), now_ms())
             .await;
     }
-    complete_step(st, &step, choice, json!({"choice": choice, "answeredBy": "user"})).await
+    let text = text.map(str::trim).filter(|t| !t.is_empty());
+    if let Some(note) = text
+        && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
+        && let Some(ticket) = run.ticket_id.as_deref()
+    {
+        let body = pdt_core::ticket::valid_comment(note).map_err(|e| e.to_string())?;
+        let data = json!({"workflowId": run.workflow_id, "workflowName": run.workflow_name, "runId": run.id,
+                          "choice": choice});
+        st.store
+            .add_comment_by(ticket, &body, pdt_core::ticket::Actor::User, Some(data), now_ms())
+            .await
+            .map_err(err)?;
+    }
+    complete_step(st, &step, choice, json!({"choice": choice, "answeredBy": "user", "text": text})).await
 }
 
 // ---- dry run ----

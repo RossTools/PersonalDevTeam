@@ -11,4 +11,8 @@ actor: string,
 /**
  * The ticket's active attempt, when it has one.
  */
-attemptId: string | null, };
+attemptId: string | null, 
+/**
+ * The workflow whose run wrote it for the user (a note with a gate's choice, which that run passes on itself).
+ */
+workflowId: string | null, };

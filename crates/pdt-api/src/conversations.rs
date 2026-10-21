@@ -640,6 +640,17 @@ pub(crate) fn ready_for_notice(st: &AppState, id: &str) -> bool {
         && s.last_active.elapsed() >= st.conversations.notice_quiet
 }
 
+/// The conversations running a turn, or with a message on its way to one (the host's cap counts them, Phase 7c §6.2).
+pub(crate) fn busy_ids(st: &AppState) -> Vec<String> {
+    let map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
+    map.iter()
+        .filter_map(|(id, c)| {
+            let s = c.state();
+            (s.turn_running || !s.pending.is_empty()).then(|| id.clone())
+        })
+        .collect()
+}
+
 /// The open permission requests of live conversations, by session (the Inbox's approvals).
 pub(crate) fn open_requests(st: &AppState) -> Vec<(String, Vec<String>)> {
     let map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());

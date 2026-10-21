@@ -93,7 +93,8 @@ fn comments_to_agent() -> WorkflowDoc {
         "nodes": [
             {"id": "commented", "kind": "ticket.commented", "version": 1, "position": {"x": 0, "y": 0}, "config": {"where": [
                 {"left": "{{trigger.attemptId}}", "op": "exists"},
-                {"left": "{{trigger.actor}}", "op": "eq", "right": "user"}]}},
+                {"left": "{{trigger.actor}}", "op": "eq", "right": "user"},
+                {"left": "{{trigger.workflowId}}", "op": "missing"}]}},
             {"id": "tell", "kind": "session.send", "version": 1, "position": {"x": 320, "y": 0}, "config": {
                 "attempt": "{{trigger.attemptId}}",
                 "text": "[PDT] New comment on {{trigger.ticketKey}} from the user:\n\n{{trigger.body}}"}},
