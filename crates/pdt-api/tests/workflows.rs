@@ -590,3 +590,105 @@ async fn a_wait_resumes_when_its_event_comes() {
     let r = run(&env, &id).await;
     assert_eq!((r["status"].as_str(), &r["output"]), (Some("succeeded"), &json!("this one")), "{r}");
 }
+
+fn gate_doc(name: &str) -> Value {
+    json!({"name": name, "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "g", "kind": "gate", "version": 1, "config": {"question": "q", "choices": ["yes", "no"]}}],
+        "edges": [{"from": "t", "to": "g"}]})
+}
+
+#[tokio::test]
+async fn check_gives_issues_and_each_nodes_ports() {
+    let env = setup().await;
+    let (s, c) = call(&env.app, "POST", "/api/workflows/check", Some(json!({"doc": gate_doc("w")}))).await;
+    assert_eq!(s, StatusCode::OK, "{c}");
+    let ids: Vec<&str> = c["ports"]["g"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["yes", "no", "unanswered", "timeout"]);
+    assert_eq!(c["ports"]["t"][0]["title"], "Then");
+    assert!(c["issues"].as_array().unwrap().iter().all(|i| i["severity"] == "warning"), "{c}");
+}
+
+#[tokio::test]
+async fn an_agents_change_is_proposed_until_the_user_accepts_it() {
+    let env = setup().await;
+    let id = create(&env, gate_doc("mine")).await;
+    let put = |doc: Value, propose: bool| {
+        let path = format!("/api/workflows/{id}");
+        let app = env.app.clone();
+        async move { call(&app, "PUT", &path, Some(json!({"doc": doc, "note": "n", "propose": propose}))).await }
+    };
+    let (s, w) = put(gate_doc("agent's"), true).await;
+    assert_eq!(s, StatusCode::OK, "{w}");
+    assert_eq!((w["version"].as_u64(), w["proposed"].as_u64(), w["name"].as_str()), (Some(1), Some(2), Some("mine")));
+    let (_, versions) = call(&env.app, "GET", &format!("/api/workflows/{id}/versions"), None).await;
+    assert_eq!((versions[0]["status"].as_str(), versions[0]["author"].as_str()), (Some("proposed"), Some("agent")));
+    let (s, _) = call(&env.app, "POST", &format!("/api/workflows/{id}/versions/1/accept"), None).await;
+    assert_eq!(s, StatusCode::CONFLICT, "version 1 is not a proposal");
+    let (s, w) = call(&env.app, "POST", &format!("/api/workflows/{id}/versions/2/accept"), None).await;
+    assert_eq!(s, StatusCode::OK, "{w}");
+    assert_eq!((w["version"].as_u64(), w["proposed"].as_u64(), w["name"].as_str()), (Some(2), None, Some("agent's")));
+    put(gate_doc("again"), true).await;
+    let (s, w) = call(&env.app, "POST", &format!("/api/workflows/{id}/versions/3/discard"), None).await;
+    assert_eq!(s, StatusCode::OK, "{w}");
+    assert_eq!((w["version"].as_u64(), w["proposed"].as_u64()), (Some(2), None));
+    let (s, _) = put(json!({"name": "", "nodes": []}), true).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "a proposal is validated too");
+}
+
+#[tokio::test]
+async fn templates_are_listed_saved_and_instantiated_disabled() {
+    let env = setup().await;
+    let (_, list) = call(&env.app, "GET", "/api/workflow-templates", None).await;
+    let ids: Vec<&str> = list.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"builtin:blank") && ids.contains(&"builtin:ask-finish"), "{ids:?}");
+    let (s, _) = call(&env.app, "DELETE", "/api/workflow-templates/builtin:blank", None).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+
+    // A built-in with a typed param: the boolean stays a boolean.
+    let (s, w) = call(
+        &env.app,
+        "POST",
+        "/api/workflow-templates/builtin:ask-finish/instantiate",
+        Some(
+            json!({"params": {"deleteBranch": true}, "name": "Ask here", "scope": "project", "projectId": env.project}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    assert_eq!(
+        (w["name"].as_str(), w["enabled"].as_bool(), w["scope"].as_str()),
+        (Some("Ask here"), Some(false), Some("project"))
+    );
+    let finish = w["doc"]["nodes"].as_array().unwrap().iter().find(|n| n["id"] == "finish").unwrap().clone();
+    assert_eq!(finish["config"]["deleteBranch"], json!(true));
+    assert_eq!(finish["config"]["ticket"], json!("{{trigger.ticketId}}"), "other references are left alone");
+
+    // The user's own: checked with placeholders, then instantiated with a required param.
+    let doc = json!({"name": "Say {{params.word}}", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "e", "kind": "end", "version": 1, "config": {"quiet": "{{params.quiet}}"}}],
+        "edges": [{"from": "t", "to": "e"}]});
+    let tpl = json!({"name": "Mine", "params": [
+        {"id": "word", "title": "Word", "type": "string", "required": true},
+        {"id": "quiet", "title": "Quiet", "type": "boolean", "default": true}], "doc": doc});
+    let (s, t) = call(&env.app, "POST", "/api/workflow-templates", Some(tpl.clone())).await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let tid = t["id"].as_str().unwrap().to_string();
+    let inst = format!("/api/workflow-templates/{tid}/instantiate");
+    let (s, e) = call(&env.app, "POST", &inst, Some(json!({}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
+    let (s, w) = call(&env.app, "POST", &inst, Some(json!({"params": {"word": "hi"}}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    assert_eq!((w["name"].as_str(), w["doc"]["nodes"][1]["config"]["quiet"].as_bool()), (Some("Say hi"), Some(true)));
+    let mut bad = tpl.clone();
+    bad["doc"]["nodes"][1]["kind"] = json!("nope");
+    let (s, _) = call(&env.app, "PUT", &format!("/api/workflow-templates/{tid}"), Some(bad)).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let mut renamed = tpl;
+    renamed["name"] = json!("Mine 2");
+    let (s, t) = call(&env.app, "PUT", &format!("/api/workflow-templates/{tid}"), Some(renamed)).await;
+    assert_eq!((s, t["name"].as_str()), (StatusCode::OK, Some("Mine 2")));
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/workflow-templates/{tid}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+}

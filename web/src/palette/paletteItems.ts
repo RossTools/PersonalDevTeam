@@ -18,7 +18,7 @@ export const ACTIONS = 'Actions';
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
   | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'shell' | 'run' | 'rename' | 'close'
-  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes';
+  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes' | 'workflows';
 
 /**
  * A second step: another list (Move tab → workspaces), a text field (New workspace → its name), or a ticket search
@@ -71,6 +71,7 @@ export interface PaletteHandlers {
   showKeys: () => void;
   /** The Files view (not in the phone rail). */
   showFiles: () => void;
+  showWorkflows: () => void;
   /** The New ticket form. */
   newTicket: () => void;
   /** Opens (or focuses) a ticket's tab. */
@@ -169,6 +170,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
     });
   }
   goTo.push({ id: 'settings:host', label: 'Settings · This host', group: GO_TO, icon: 'host', run: h.hostSettings });
+  goTo.push({ id: 'view:workflows', label: 'Workflows', group: GO_TO, icon: 'workflows', keywords: ['automation', 'templates', 'runs'], run: h.showWorkflows });
   goTo.push({ id: 'view:files', label: 'Files', group: GO_TO, icon: 'files', keywords: ['folder', 'browse', 'code'], run: h.showFiles });
   for (const t of ctx.tickets ?? []) {
     goTo.push({

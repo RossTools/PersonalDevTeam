@@ -51,7 +51,10 @@ event, then conditions, gates, waits and actions. Messages that start with `[PDT
 workflow the person enabled, for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge
 queue, merged); each says what happened and what to do. A session started on a ticket is told in its instructions
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
-shell. Workflows are changed only when the person asks.
+shell. Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
+`{"doc": …, "note": "what and why", "propose": true}`. It is validated like a save but doesn't take effect: the person
+reviews its diff in the Workflows view and accepts or discards it. Never turn a workflow on (`PATCH {"enabled": true}`):
+that is the person's consent. Check a document with `/check` or `/validate` and try it with `/dry-run` before proposing.
 
 | Call | Gives |
 |---|---|
@@ -60,6 +63,8 @@ shell. Workflows are changed only when the person asks.
 | `GET /api/workflows/catalog` | every trigger, condition and action, with its config schema and ports |
 | `GET /api/workflow-runs?ticket=<id>` | the runs about a ticket; `GET /api/workflow-runs/<id>` has each step's input, output and port |
 | `POST /api/workflows/validate` · `/dry-run` | `{doc}` checks a document; `{doc or workflowId, event: {type, payload}}` shows what each step would do, changing nothing |
+| `GET /api/workflows/<id>/versions` · `/diff?from=&to=` | the versions (`status`: `saved`, `proposed`, `discarded`) and what changed between two |
+| `GET /api/workflow-templates` | templates (`params`, a `doc` with `{{params.<id>}}`); `POST …/<id>/instantiate {params, name, scope, projectId}` makes a workflow from one, off |
 
 ## Worktrees
 

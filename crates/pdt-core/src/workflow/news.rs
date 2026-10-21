@@ -103,6 +103,7 @@ mod tests {
             source: Source::Host,
             repo_file: None,
             version: 1,
+            proposed: None,
             created_at: 0,
             updated_at: 0,
         };

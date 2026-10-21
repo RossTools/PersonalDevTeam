@@ -12,6 +12,12 @@ configure({ asyncUtilTimeout: process.env.CI ? 10_000 : 3_000 });
 if (typeof window !== 'undefined') {
   Element.prototype.setPointerCapture ??= () => {};
   Element.prototype.releasePointerCapture ??= () => {};
+  // React Flow measures nodes with ResizeObserver.
+  window.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
   window.matchMedia ??= ((query: string) => ({
     matches: false,
     media: query,

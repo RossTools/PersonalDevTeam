@@ -146,7 +146,7 @@ function SelectPopover({
       placement={placement}
       offset={offset}
       crossOffset={crossOffset}
-      className={cn("relative isolate z-(--pdt-z-menu) w-(--trigger-width) min-w-36 origin-(--trigger-anchor-point) overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-popover duration-(--pdt-duration) motion-reduce:animate-none data-entering:animate-in data-entering:fade-in-0 data-entering:zoom-in-95 data-exiting:animate-out data-exiting:fade-out-0 data-exiting:zoom-out-95", className )}
+      className={cn("relative isolate z-(--pdt-z-menu) w-max min-w-(--trigger-width) max-w-[min(32rem,calc(100vw-2rem))] origin-(--trigger-anchor-point) overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-popover duration-(--pdt-duration) motion-reduce:animate-none data-entering:animate-in data-entering:fade-in-0 data-entering:zoom-in-95 data-exiting:animate-out data-exiting:fade-out-0 data-exiting:zoom-out-95", className )}
       {...props}
     >
       {children}

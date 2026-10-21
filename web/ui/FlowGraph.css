@@ -1,0 +1,57 @@
+/* React Flow (xyflow) themed with PDT's tokens: FlowGraph.tsx loads it with xyflow's base styles. */
+.pdt-flow.react-flow {
+  --xy-edge-stroke: var(--pdt-idle);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: var(--pdt-accent);
+  --xy-connectionline-stroke: var(--pdt-accent);
+  --xy-connectionline-stroke-width: 1.5;
+  --xy-background-color: var(--pdt-bg);
+  --xy-background-pattern-dots-color: var(--pdt-border);
+  --xy-node-border: none;
+  --xy-node-border-selected: none;
+  --xy-handle-background-color: var(--pdt-surface);
+  --xy-handle-border-color: var(--pdt-idle);
+  --xy-selection-background-color: var(--pdt-accent-soft);
+  --xy-selection-border: 1px dotted var(--pdt-accent);
+  --xy-controls-button-background-color: var(--pdt-surface);
+  --xy-controls-button-background-color-hover: var(--pdt-surface-2);
+  --xy-controls-button-color: var(--pdt-fg);
+  --xy-controls-button-color-hover: var(--pdt-fg);
+  --xy-controls-button-border-color: var(--pdt-border);
+  --xy-controls-box-shadow: var(--pdt-shadow-popover);
+  --xy-attribution-background-color: transparent;
+}
+
+.pdt-flow .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+.pdt-flow .react-flow__handle.connectingto,
+.pdt-flow .react-flow__handle:hover {
+  border-color: var(--pdt-accent);
+}
+
+/* The path a run took. */
+.pdt-flow .react-flow__edge.pdt-taken .react-flow__edge-path {
+  stroke: var(--pdt-running);
+  stroke-width: 2.5;
+}
+
+.pdt-flow .react-flow__edge.pdt-error .react-flow__edge-path {
+  stroke-dasharray: 4 3;
+}
+
+.pdt-flow .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--pdt-accent);
+}
+
+.pdt-flow .react-flow__edge-textbg {
+  fill: var(--pdt-bg);
+}
+
+.pdt-flow .react-flow__edge-text {
+  fill: var(--pdt-fg);
+  font-size: 10px;
+}
