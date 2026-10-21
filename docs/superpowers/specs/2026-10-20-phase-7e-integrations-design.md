@@ -19,7 +19,7 @@ Hermes jobs that used them run their existing scripts as command steps (§5).
 
 - **One module per kind** in pdt-api `workflow/nodes/`, one line in `catalog.rs`, config and output types deriving
   serde, schemars and ts-rs, as 7a. Every kind has a test; external services are always fakes in tests (a local HTTP
-  server on a port from `test-support/port_blocks.rs`, `FakeGithub`), never the real service.
+  server on a port the OS picks, `FakeGithub`), never the real service.
 - **Connections hold every URL and credential** (7a §7). A node names its connection (`connection: "discord-alerts"`);
   a URL or token is never written inline in a document, because documents are versioned, diffed and may live in a repo.
   Each connection kind documents its `url`, `config` and what its secret is.
@@ -66,7 +66,7 @@ Config (besides the shared fields):
 - **No backlog.** The last slot handled is kept in workflow state under the reserved key `_pdt.schedule.<node>`; a newly
   enabled (or newly saved) schedule records the current slot as its baseline and first fires at the next one. After
   downtime only the latest missed slot fires, and only with `catchUp`. Keys starting `_pdt.` are hidden from
-  `{{state}}` and `GET /api/workflows/{id}/state` shows them read-only.
+  `{{state}}`, and `state.set` refuses them.
 - `accepts`: the event's `workflowId` and `nodeId` are this node's. The workflow's scope still applies; a schedule
   belongs in a `personal` or `host` workflow, or a `project` one (its `projectId` is the workflow's project).
 - `every` slots are aligned to the Unix epoch (a `15m` schedule fires at :00, :15, …), so restarts don't drift them.
@@ -134,16 +134,16 @@ Every action also has 7a's `error` port, `retry` and `timeoutMs`.
 ### 3.1 `command`
 
 - Runs `program` with `args` (no shell; a list, each item a template), JSON `input` written to stdin (then closed),
-  `env` added to a minimal inherited environment. `cwd`: `scratch` (default: a fresh folder under
+  `env` added to pdtd's environment. `cwd`: `scratch` (default: a fresh folder under
   `<data dir>/workflow-scratch/<run id>`, removed when the run ends), `project` (the run's project's main checkout),
   `attempt` (the run's attempt's worktree) or an absolute path.
-- The node's `timeoutMs` (default 5 min) kills the process tree on expiry (tokio `kill_on_drop` plus the platform's
-  process-group kill used for runs), so a hung script never hangs the engine.
+- The node's `timeoutMs` (default 5 min) kills the process tree on expiry (its own process group on Unix,
+  `taskkill /T` on Windows), so a hung script never hangs the engine.
 - `parse` (`json` default, or `text`): with `json`, stdout must be one JSON value, which becomes `json` (and its
   `quiet`, if an object has one, becomes the step's). A non-zero exit, or unparseable stdout with `parse: json`, is an
   error (`exit 2: <last stderr lines>`), so retry and the error port apply. `stdout` and `stderr` are kept up to 64 KiB
   each (the end of stderr).
-- Windows: `program` is resolved like run commands (`.exe`, `.cmd` via PATHEXT); no console window.
+- Windows: `program` is found as `Command` finds it (an `.exe` on PATH; a `.cmd` needs `cmd /c`); no console window.
 - Consent: a command runs whatever the document says, as the user. Workflows from repo files start disabled (7a), and
   enabling one is the user's consent (vision principle 5); the runs view shows the command line of every step.
 

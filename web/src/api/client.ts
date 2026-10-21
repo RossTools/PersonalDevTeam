@@ -296,7 +296,7 @@ export const api = {
   cancelWorkflowRun: (id: string) => request<WorkflowRunDetail>(`/api/workflow-runs/${enc(id)}/cancel`, { method: 'POST' }),
   answerWorkflowStep: (run: string, step: string, choice: string) =>
     request<WorkflowRunDetail>(`/api/workflow-runs/${enc(run)}/steps/${enc(step)}/answer`, { method: 'POST', body: JSON.stringify({ choice }) }),
-  listLogEvents: (q: { type?: string; limit?: number } = {}) => request<LogEvent[]>(`/api/events${queryString(q)}`),
+  listLogEvents: (q: { type?: string; limit?: number; after?: number } = {}) => request<LogEvent[]>(`/api/events${queryString(q)}`),
   listWorkflowTemplates: () => request<WorkflowTemplate[]>('/api/workflow-templates'),
   getWorkflowTemplate: (id: string) => request<WorkflowTemplate>(`/api/workflow-templates/${enc(id)}`),
   createWorkflowTemplate: (t: TemplateInput) =>

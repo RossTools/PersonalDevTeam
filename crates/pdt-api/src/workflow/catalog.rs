@@ -220,11 +220,6 @@ impl Catalog {
         self.kinds.iter().map(|(s, _)| s.clone()).collect()
     }
 
-    #[cfg(test)]
-    pub fn is_trigger(&self, id: &str) -> bool {
-        self.spec(id).is_some_and(|s| s.category == Category::Trigger)
-    }
-
     /// The ports a node has with its config (the kind's titles where it names them; `error` left out). None for an
     /// unknown kind.
     pub fn node_ports(&self, node: &Node) -> Option<Vec<PortSpec>> {

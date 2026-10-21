@@ -101,7 +101,7 @@ async fn the_catalog_and_the_builtins_are_served() {
         .iter()
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
-    assert_eq!(builtins.len(), 4, "{list}");
+    assert_eq!(builtins.len(), 5, "{list}");
     assert!(builtins.contains(&("pr-notices", true)) && builtins.contains(&("base-moved", false)));
     let id = list[0]["id"].as_str().unwrap();
     let (s, e) = call(&env.app, "DELETE", &format!("/api/workflows/{id}"), None).await;

@@ -46,6 +46,7 @@ import { InboxList } from '../inbox/InboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
+import { useWorkflowNotifications } from '../common/useWorkflowNotifications';
 import { VIEWS, type ViewId } from './views';
 
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
@@ -114,6 +115,13 @@ export function AppShell() {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId));
   }, [ws.focusItem]);
+  const openTicketByKey = useCallback((key: string) => {
+    void runAction(async () => {
+      const hit = (await api.listTickets({ q: key, limit: 1 })).items[0];
+      if (hit) openTicket(hit);
+    });
+  }, [openTicket]);
+  useWorkflowNotifications(openTicketByKey);
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));

@@ -437,3 +437,79 @@ async fn an_ended_attempts_pr_is_read_again_until_it_is_not_open() {
     assert_eq!(pr_events(&env).await.len(), told);
     env.state.ptys.shutdown().await;
 }
+
+fn comment(id: u64, author: &str, path: Option<&str>) -> pdt_github::PrComment {
+    pdt_github::PrComment {
+        id,
+        author: author.into(),
+        is_bot: author.ends_with("[bot]"),
+        body: format!("comment {id}"),
+        url: format!("https://github.com/o/r/pull/12#c{id}"),
+        path: path.map(String::from),
+        line: path.map(|_| 40),
+        in_review: path.is_some(),
+    }
+}
+
+#[tokio::test]
+async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    pdt_api::run_workflows(&env.state).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_comments(12, vec![comment(1, "alice", None)]);
+    // Off by default: the comments aren't even read.
+    pdt_api::refresh_prs(&env.state).await;
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("comments")));
+
+    let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
+    let id = list.as_array().unwrap().iter().find(|w| w["builtin"] == "pr-feedback").unwrap()["id"].clone();
+    let id = id.as_str().unwrap();
+    call(&env.app, "PATCH", &format!("/api/workflows/{id}"), Some(json!({"enabled": true}))).await;
+    // The first look records what is there.
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    assert!(pr_events(&env).await.is_empty(), "an existing comment is not news");
+
+    env.gh.set_comments(
+        12,
+        vec![
+            comment(1, "alice", None),
+            comment(2, "alice", None),
+            comment(3, "me", None),
+            comment(500, "ci[bot]", Some("src/a.rs")),
+            comment(501, "bob", Some("src/a.rs")),
+        ],
+    );
+    env.gh.set_reviews(
+        12,
+        vec![
+            pdt_github::PrReview {
+                id: 9,
+                author: "bob".into(),
+                is_bot: false,
+                state: "changes_requested".into(),
+                body: "Please split this.".into(),
+                url: "https://github.com/o/r/pull/12#r9".into(),
+            },
+            pdt_github::PrReview {
+                id: 10,
+                author: "carol".into(),
+                is_bot: false,
+                state: "approved".into(),
+                body: "LGTM".into(),
+                url: "u".into(),
+            },
+        ],
+    );
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=pr.commented", None).await;
+    assert_eq!(logged.as_array().unwrap().len(), 4, "each new comment once (mine and the bot's too): {logged}");
+    pdt_api::run_workflows(&env.state).await;
+    let mut keys: Vec<String> =
+        pr_events(&env).await.iter().map(|e| e["data"]["key"].as_str().unwrap().into()).collect();
+    keys.sort();
+    assert_eq!(keys, ["comment:2", "comment:501", "review:9"], "not mine, not a bot's, not an approval");
+    env.state.ptys.shutdown().await;
+}

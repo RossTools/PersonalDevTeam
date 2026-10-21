@@ -33,7 +33,9 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   made. `PDT_TAILSCALE_BIN` sets the tailscale CLI path (tests point it at `fake-tailscale` or a missing file so they
   never touch the real Tailscale); otherwise it is found on PATH or in the standard install location.
 - Remote requests must carry the owner's Tailscale-User-Login (case-insensitive); tagged/Funnel/proxied requests
-  without it get 403 `forbidden_identity`. `PDT_OWNER_LOGIN` sets the owner for dev instances (PDT passes it to every
+  without it get 403 `forbidden_identity`. The exception is `/api/hooks/*` (workflow webhooks, Phase 7e): any request but a
+  Funnel one gets through, and the hook's secret authenticates it ([workflows.md](workflows.md) "Sensors and
+  webhooks"). `PDT_OWNER_LOGIN` sets the owner for dev instances (PDT passes it to every
   run).
 - Speed: pdtd sets TCP_NODELAY on every connection (keystroke echoes are tiny frames), compresses HTTP responses
   (gzip/br, quality 4), serves `/assets/*` (content-hashed) with `Cache-Control: immutable` and index.html with
