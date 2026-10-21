@@ -356,12 +356,14 @@ impl DevinLive {
         let refused = |e: RpcError| AdapterError::Refused(e.message);
         sh.request("initialize", initialize_params(), START_TIMEOUT).await?.map_err(refused)?;
         let cwd = spec.cwd.to_string_lossy().into_owned();
+        let mcp = crate::mcp::acp_servers(spec.mcp.as_ref());
         let mut loaded = false;
         if let Some(id) = spec.external_id.clone().filter(|_| spec.resume) {
             *sh.session.lock().unwrap_or_else(|e| e.into_inner()) = id.clone();
             sh.mapper().begin_load(spec.import_after);
-            let r =
-                sh.request("session/load", json!({"sessionId": id, "cwd": cwd, "mcpServers": []}), START_TIMEOUT).await;
+            let r = sh
+                .request("session/load", json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp}), START_TIMEOUT)
+                .await;
             let outs = sh.mapper().end_load();
             sh.emit(outs, None);
             match r? {
@@ -384,7 +386,7 @@ impl DevinLive {
         }
         if !loaded {
             let v = sh
-                .request("session/new", json!({"cwd": cwd, "mcpServers": []}), START_TIMEOUT)
+                .request("session/new", json!({"cwd": cwd, "mcpServers": mcp}), START_TIMEOUT)
                 .await?
                 .map_err(refused)?;
             let id = v
@@ -579,6 +581,7 @@ mod tests {
             instructions: None,
             config_file: None,
             import_after: None,
+            mcp: None,
         };
         assert_eq!(devin_acp_args(&spec), vec!["acp"]);
         let file = std::env::temp_dir().join("devin-config.json");

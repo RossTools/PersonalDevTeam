@@ -198,6 +198,19 @@ pub(crate) async fn create_comment(
     payload: Result<Json<NewReviewComment>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ReviewComment>), ApiError> {
     let Json(input) = payload?;
+    Ok((StatusCode::CREATED, Json(add_comment(&st, &id, input, "user", false).await?)))
+}
+
+/// A line comment on a worktree's changes by `author` (`user`, or an agent's persona). `sent`: it is not a draft
+/// (an agent's comment goes nowhere else).
+pub(crate) async fn add_comment(
+    st: &AppState,
+    worktree_id: &str,
+    input: NewReviewComment,
+    author: &str,
+    sent: bool,
+) -> Result<ReviewComment, ApiError> {
+    let id = worktree_id.to_string();
     st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
     let body = check_body(&input.body)?;
     let now = now_ms();
@@ -211,8 +224,8 @@ pub(crate) async fn create_comment(
         end_line: input.end_line.unwrap_or(input.line),
         line_text: input.line_text,
         body,
-        author: "user".into(),
-        sent_at: None,
+        author: author.into(),
+        sent_at: sent.then_some(now),
         session_id: None,
         resolved_at: None,
         created_at: now,
@@ -244,7 +257,7 @@ pub(crate) async fn create_comment(
         }
     }
     st.store.insert_review_comment(&c).await?;
-    Ok((StatusCode::CREATED, Json(c)))
+    Ok(c)
 }
 
 async fn get_comment(st: &AppState, id: &str) -> Result<ReviewComment, ApiError> {

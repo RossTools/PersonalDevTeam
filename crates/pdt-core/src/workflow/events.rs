@@ -18,6 +18,7 @@ pub const ATTEMPT_ABANDONED: &str = "attempt.abandoned";
 pub const TICKET_STAGE_CHANGED: &str = "ticket.stage_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
+pub const AGENT_OUTCOME: &str = "agent.outcome";
 
 /// The CI provider of GitHub Actions runs.
 pub const GITHUB_ACTIONS: &str = "github_actions";
@@ -107,6 +108,12 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Overlap found",
         description: "Two tickets in flight change the same files.",
         schema: schema_of::<TicketOverlapFound>,
+    },
+    EventType {
+        id: AGENT_OUTCOME,
+        title: "Agent outcome",
+        description: "An agent step on a ticket ended with an outcome (submitted by the agent, or taken over by the user).",
+        schema: schema_of::<AgentOutcome>,
     },
 ];
 
@@ -254,6 +261,27 @@ pub struct TicketOverlapFound {
     pub files: Vec<String>,
     /// `overlap` or `conflict`.
     pub level: String,
+}
+
+/// `agent.outcome`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentOutcome {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub attempt_id: Option<String>,
+    pub outcome: String,
+    pub summary: String,
+    /// The persona's name, and the version the step ran.
+    pub persona: String,
+    pub persona_version: u32,
+    /// `agent`, or `user` when the user took the step over.
+    pub by: String,
+    pub session_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub run_id: Option<String>,
 }
 
 #[cfg(test)]

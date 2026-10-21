@@ -1,9 +1,10 @@
 //! `gate`: a human gate. It takes the port of the user's choice: one made ahead of time (`ahead`, e.g. Merge…'s
-//! "finish once it merges", PDT-75) passes at once; otherwise it waits for an answer through the API (the Inbox in
-//! 7b) or takes `unanswered` at once.
+//! "finish once it merges", PDT-75) passes at once; otherwise it waits for an answer from the Inbox (Phase 7b) or the
+//! API, or takes `unanswered` at once.
 
 use crate::routes::now_ms;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::workflow::cond::{Condition, all};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,18 @@ pub enum Ask {
     Skip,
 }
 
+/// Where the Inbox lists a waiting gate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum GateInbox {
+    /// Under Gates.
+    #[default]
+    Gate,
+    /// Under Ready to accept, with Open changes beside the choices.
+    Accept,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
@@ -48,6 +61,9 @@ pub struct GateConfig {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub timeout_ms: Option<u64>,
+    /// Where the Inbox lists it while it waits.
+    #[serde(default)]
+    pub inbox: GateInbox,
 }
 
 pub struct Gate;
@@ -100,6 +116,33 @@ impl NodeKind for Gate {
                     json!({"would": format!("ask: {} ({})", c.question, c.choices.join(", "))}),
                 ));
             }
+            let group = match c.inbox {
+                GateInbox::Gate => InboxGroup::Gate,
+                GateInbox::Accept => InboxGroup::Accept,
+            };
+            let item = InboxItem {
+                id: uuid::Uuid::now_v7().to_string(),
+                kind: InboxKind::Gate,
+                group,
+                status: InboxStatus::Open,
+                project_id: cx.run.project_id.clone(),
+                ticket_id: cx.run.ticket_id.clone(),
+                ticket_key: None,
+                ticket_title: None,
+                attempt_id: cx.run.attempt_id.clone(),
+                session_id: None,
+                run_id: Some(cx.run.id.clone()),
+                step_id: Some(cx.step.id.clone()),
+                persona_id: None,
+                persona_name: None,
+                title: c.question.clone(),
+                body: json!({"question": c.question, "workflow": cx.workflow.name, "node": cx.node_title()}),
+                choices: c.choices.iter().enumerate().map(|(i, x)| InboxChoice::new(x, x, i == 0)).collect(),
+                resolution: Value::Null,
+                created_at: now_ms(),
+                resolved_at: None,
+            };
+            cx.st.store.open_inbox_item(&item).await.map_err(|e| e.to_string())?;
             Ok(Outcome::Wait {
                 wait: json!({"answer": {"question": c.question, "choices": c.choices}}),
                 until: c.timeout_ms.map(|ms| now_ms() + i64::try_from(ms).unwrap_or(i64::MAX / 2)),

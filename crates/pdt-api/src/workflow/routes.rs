@@ -46,11 +46,11 @@ fn checked(doc: &WorkflowDoc) -> Result<Vec<Issue>, ApiError> {
     Ok(issues)
 }
 
-async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> {
+pub(crate) async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> {
     st.store.get_workflow(id).await?.ok_or_else(|| ApiError::not_found("workflow"))
 }
 
-async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
+pub(crate) async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
     let doc = st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
     let issues = validate(&doc, catalog());
     Ok(WorkflowDetail { workflow: w, doc, issues })
@@ -72,7 +72,7 @@ pub(crate) async fn list(
     Ok(Json(st.store.list_workflows(q.project.as_deref()).await?))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct NewWorkflow {
@@ -90,6 +90,11 @@ pub(crate) async fn create(
     payload: Result<Json<NewWorkflow>, JsonRejection>,
 ) -> Result<(StatusCode, Json<WorkflowDetail>), ApiError> {
     let n = body(payload)?;
+    Ok((StatusCode::CREATED, Json(create_as(&st, n, Author::User).await?)))
+}
+
+/// Adds a workflow written by `author` (an agent's starts disabled: enabling is the user's).
+pub(crate) async fn create_as(st: &AppState, n: NewWorkflow, author: Author) -> Result<WorkflowDetail, ApiError> {
     let doc = n.doc.ok_or_else(|| invalid("doc is required"))?;
     checked(&doc)?;
     let scope = n.scope.unwrap_or(if n.project_id.is_some() { Scope::Project } else { Scope::Host });
@@ -109,7 +114,7 @@ pub(crate) async fn create(
         description: doc.description.clone(),
         scope,
         project_id,
-        enabled: n.enabled,
+        enabled: n.enabled && author == Author::User,
         builtin: None,
         source: Source::Host,
         repo_file: None,
@@ -117,8 +122,8 @@ pub(crate) async fn create(
         created_at: now,
         updated_at: now,
     };
-    st.store.insert_workflow(&w, &doc, Author::User, &n.note).await?;
-    Ok((StatusCode::CREATED, Json(detail(&st, load(&st, &w.id).await?).await?)))
+    st.store.insert_workflow(&w, &doc, author, &n.note).await?;
+    detail(st, load(st, &w.id).await?).await
 }
 
 pub(crate) async fn get_one(
@@ -129,7 +134,7 @@ pub(crate) async fn get_one(
     Ok(Json(detail(&st, w).await?))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SaveWorkflow {
@@ -145,8 +150,18 @@ pub(crate) async fn save(
     payload: Result<Json<SaveWorkflow>, JsonRejection>,
 ) -> Result<Json<WorkflowDetail>, ApiError> {
     let s = body(payload)?;
+    Ok(Json(save_as(&st, &id, s, Author::User).await?))
+}
+
+/// Saves a new version written by `author`.
+pub(crate) async fn save_as(
+    st: &AppState,
+    id: &str,
+    s: SaveWorkflow,
+    author: Author,
+) -> Result<WorkflowDetail, ApiError> {
     let doc = s.doc.ok_or_else(|| invalid("doc is required"))?;
-    let w = load(&st, &id).await?;
+    let w = load(st, id).await?;
     if w.source == Source::Repo {
         return Err(conflict(
             "workflow_in_repo",
@@ -154,8 +169,8 @@ pub(crate) async fn save(
         ));
     }
     checked(&doc)?;
-    st.store.save_workflow_version(&id, &doc, Author::User, &s.note, now_ms()).await?;
-    Ok(Json(detail(&st, load(&st, &id).await?).await?))
+    st.store.save_workflow_version(id, &doc, author, &s.note, now_ms()).await?;
+    detail(st, load(st, id).await?).await
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
@@ -273,7 +288,7 @@ pub(crate) async fn run_now(
     Ok(Json(Started { run_id }))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ValidateRequest {
@@ -287,7 +302,7 @@ pub(crate) async fn validate_doc(
     Ok(Json(validate(&doc, catalog())))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DryRunRequest {

@@ -10,6 +10,9 @@
 //! - `/clear` — like Claude's: `conversation_reset` (whose `new_conversation_id` names no transcript), then an init
 //!   and result under a new session id, which later turns use.
 //! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
+//! - `mcp: <tool> <json arguments>` (its first line) — calls that pdt-mcp tool (from `--mcp-config`) and says
+//!   `mcp <tool>: <the result's text>`, or `mcp error: …`.
+//! - `mcp-list` — says the pdt-mcp tools it was given.
 //! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
 //!
@@ -42,6 +45,43 @@ struct Agent {
     queue: Vec<Value>,
     rx: mpsc::Receiver<Option<Value>>,
     log: Option<std::fs::File>,
+    /// pdt-mcp's URL and Authorization header, from `--mcp-config`.
+    mcp: Option<(String, String)>,
+}
+
+/// pdt-mcp from Claude's `--mcp-config` file.
+fn mcp_server(file: Option<String>) -> Option<(String, String)> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(file?).ok()?).ok()?;
+    let s = &v["mcpServers"]["pdt"];
+    Some((s["url"].as_str()?.to_string(), s["headers"]["Authorization"].as_str()?.to_string()))
+}
+
+/// One JSON-RPC call over plain HTTP/1.1 (pdt-mcp answers with JSON). Err: what went wrong.
+fn rpc(server: &(String, String), method: &str, params: Value) -> Result<Value, String> {
+    use std::io::Read;
+    let rest = server.0.strip_prefix("http://").ok_or("not an http URL")?;
+    let (host, path) = rest.split_once('/').ok_or("no path")?;
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).to_string();
+    let mut s = std::net::TcpStream::connect(host).map_err(|e| e.to_string())?;
+    let req = format!(
+        "POST /{path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: {}\r\nContent-Type: application/json\r\n\
+         Accept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        server.1,
+        body.len()
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut raw = String::new();
+    s.read_to_string(&mut raw).map_err(|e| e.to_string())?;
+    let (head, body) = raw.split_once("\r\n\r\n").ok_or("no body")?;
+    let status = head.split_whitespace().nth(1).unwrap_or("");
+    if status != "200" {
+        return Err(format!("HTTP {status}"));
+    }
+    let v: Value = serde_json::from_str(body.trim()).map_err(|e| e.to_string())?;
+    if let Some(e) = v.get("error") {
+        return Err(e["message"].as_str().unwrap_or("error").to_string());
+    }
+    Ok(v["result"].clone())
 }
 
 fn out(v: Value) {
@@ -280,6 +320,39 @@ impl Agent {
                 }
             }
             self.say("Finished the slow job.");
+        } else if let Some(call) = text.lines().next().and_then(|l| l.strip_prefix("mcp:")) {
+            let call = call.trim();
+            let (tool, args) = call.split_once(' ').unwrap_or((call, "{}"));
+            let reply = match &self.mcp {
+                None => "mcp error: no pdt-mcp server".to_string(),
+                Some(server) => {
+                    let args: Value = serde_json::from_str(args.trim()).unwrap_or(json!({}));
+                    match rpc(server, "tools/call", json!({"name": tool, "arguments": args})) {
+                        Ok(r) => format!(
+                            "mcp {tool}{}: {}",
+                            if r["isError"] == true { " failed" } else { "" },
+                            r["content"][0]["text"].as_str().unwrap_or("")
+                        ),
+                        Err(e) => format!("mcp error: {e}"),
+                    }
+                }
+            };
+            self.say(&reply);
+        } else if text == "mcp-list" {
+            let reply = match &self.mcp {
+                None => "mcp error: no pdt-mcp server".to_string(),
+                Some(server) => match rpc(server, "tools/list", json!({})) {
+                    Ok(r) => {
+                        let names: Vec<&str> = r["tools"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|t| t["name"].as_str()).collect())
+                            .unwrap_or_default();
+                        format!("mcp tools: {}", names.join(","))
+                    }
+                    Err(e) => format!("mcp error: {e}"),
+                },
+            };
+            self.say(&reply);
         } else if text == "exit" {
             eprintln!("fake-agent: crashing as asked");
             std::process::exit(3);
@@ -371,6 +444,7 @@ fn main() {
         queue: Vec::new(),
         rx,
         log,
+        mcp: mcp_server(flag("--mcp-config")),
     };
     loop {
         let v = if agent.queue.is_empty() {

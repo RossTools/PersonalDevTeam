@@ -38,6 +38,7 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let valid = input.validate()?;
     let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    crate::projects::needs_repo(&project, "worktrees")?;
     let base = valid.base.unwrap_or_else(|| project.base_branch.clone());
     let wt = make_worktree(&st, &project, &valid.branch, &base, false).await?;
     Ok((StatusCode::CREATED, Json(wt)))

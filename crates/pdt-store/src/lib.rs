@@ -2,7 +2,9 @@ mod error;
 mod event_log;
 mod events;
 mod host;
+mod inbox;
 mod migrate;
+mod personas;
 mod review;
 mod runs;
 mod sessions;
@@ -31,13 +33,22 @@ pub struct Store {
     host_defaults: std::sync::Arc<pdt_core::host::HostSettings>,
 }
 
-type ProjectRow = (String, String, String, String, i64, Option<String>);
+type ProjectRow = (String, String, String, String, i64, Option<String>, String);
 
-fn to_project((id, name, repo_path, base_branch, created_at, key): ProjectRow) -> Project {
-    Project { id, name, repo_path, base_branch, created_at, key: key.unwrap_or_default(), github_repo: None }
+fn to_project((id, name, repo_path, base_branch, created_at, key, kind): ProjectRow) -> Project {
+    Project {
+        id,
+        name,
+        repo_path,
+        base_branch,
+        created_at,
+        key: key.unwrap_or_default(),
+        github_repo: None,
+        kind: pdt_core::project::ProjectKind::parse(&kind).unwrap_or_default(),
+    }
 }
 
-const PROJECT_COLUMNS: &str = "id, name, repo_path, base_branch, created_at, key";
+const PROJECT_COLUMNS: &str = "id, name, repo_path, base_branch, created_at, key, kind";
 
 impl Store {
     /// A write transaction: `BEGIN IMMEDIATE`, so it takes the write lock up front. A deferred one that reads first
@@ -112,7 +123,7 @@ impl Store {
         };
         let mut tx = self.write_tx().await?;
         sqlx::query(
-            "INSERT INTO projects (id, name, repo_path, base_branch, created_at, key) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, repo_path, base_branch, created_at, key, kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&p.id)
         .bind(&p.name)
@@ -120,6 +131,7 @@ impl Store {
         .bind(&p.base_branch)
         .bind(p.created_at)
         .bind(key)
+        .bind(p.kind.as_str())
         .execute(&mut *tx)
         .await?;
         workspaces::insert_project_workspace(&mut tx, &p.id, &p.name, p.created_at).await?;
@@ -198,6 +210,7 @@ mod tests {
             created_at: 1,
             key: String::new(),
             github_repo: None,
+            kind: Default::default(),
         }
     }
 

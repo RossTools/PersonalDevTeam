@@ -158,6 +158,11 @@ async fn apply_ordered(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiEr
     };
     if prev != now {
         st.store.update_activity(id, Some(now), needs_attention(prev, now).then(now_ms)).await?;
+        if now == Activity::Idle {
+            // A terminal agent's turn ended: an agent step running in it may have stalled (Phase 7b spec §4.4).
+            let (st2, id) = (st.clone(), id.to_string());
+            tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
+        }
     }
     Ok(())
 }

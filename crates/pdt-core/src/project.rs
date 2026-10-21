@@ -18,6 +18,38 @@ pub struct Project {
     /// `owner/repo` when `origin` is on GitHub. Filled in by the API from git, never stored.
     #[serde(default)]
     pub github_repo: Option<String>,
+    /// `personal`: no repository; `repo_path` is a plain folder and tickets run in scratch folders (Phase 7b §7).
+    #[serde(default)]
+    pub kind: ProjectKind,
+}
+
+impl Project {
+    pub fn is_personal(&self) -> bool {
+        self.kind == ProjectKind::Personal
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ProjectKind {
+    /// A git repository (the usual project).
+    #[default]
+    Repo,
+    /// No repository: agent tasks such as briefs and triage.
+    Personal,
+}
+
+impl ProjectKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectKind::Repo => "repo",
+            ProjectKind::Personal => "personal",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        [ProjectKind::Repo, ProjectKind::Personal].into_iter().find(|k| k.as_str() == s)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -25,6 +57,8 @@ pub struct Project {
 #[ts(export)]
 pub struct NewProject {
     pub name: String,
+    /// Not for a Personal project (PDT makes its folder).
+    #[serde(default)]
     pub repo_path: String,
     #[serde(default)]
     #[ts(optional)]
@@ -33,6 +67,9 @@ pub struct NewProject {
     #[serde(default)]
     #[ts(optional)]
     pub key: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub kind: Option<ProjectKind>,
 }
 
 /// Renames a project, changes its key or its base branch.
@@ -180,9 +217,11 @@ pub fn suggest_key(name: &str, taken: &[String]) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidProject {
     pub name: String,
+    /// Empty for a Personal project.
     pub repo_path: String,
     pub base_branch: Option<String>,
     pub key: Option<String>,
+    pub kind: ProjectKind,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -203,6 +242,11 @@ impl NewProject {
         if name.is_empty() {
             return Err(ValidationError::EmptyName);
         }
+        let kind = self.kind.unwrap_or_default();
+        let key = self.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
+        if kind == ProjectKind::Personal {
+            return Ok(ValidProject { name: name.into(), repo_path: String::new(), base_branch: None, key, kind });
+        }
         let repo_path = self.repo_path.trim();
         if repo_path.is_empty() {
             return Err(ValidationError::EmptyPath);
@@ -212,8 +256,7 @@ impl NewProject {
             Some(b) => Some(b.to_string()),
             None => None,
         };
-        let key = self.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
-        Ok(ValidProject { name: name.into(), repo_path: repo_path.into(), base_branch, key })
+        Ok(ValidProject { name: name.into(), repo_path: repo_path.into(), base_branch, key, kind })
     }
 }
 
@@ -222,7 +265,23 @@ mod tests {
     use super::*;
 
     fn input(name: &str, path: &str, branch: Option<&str>) -> NewProject {
-        NewProject { name: name.into(), repo_path: path.into(), base_branch: branch.map(Into::into), key: None }
+        NewProject {
+            name: name.into(),
+            repo_path: path.into(),
+            base_branch: branch.map(Into::into),
+            key: None,
+            kind: None,
+        }
+    }
+
+    #[test]
+    fn a_personal_project_needs_no_repo() {
+        let mut p = input(" Briefs ", "", None);
+        p.kind = Some(ProjectKind::Personal);
+        let v = p.validate().unwrap();
+        assert_eq!((v.name.as_str(), v.repo_path.as_str(), v.kind), ("Briefs", "", ProjectKind::Personal));
+        assert_eq!(input("x", "", None).validate(), Err(ValidationError::EmptyPath));
+        assert_eq!(ProjectKind::parse("personal"), Some(ProjectKind::Personal));
     }
 
     #[test]
@@ -234,7 +293,8 @@ mod tests {
                 name: "PDT".into(),
                 repo_path: "C:\\repo".into(),
                 base_branch: Some("main".into()),
-                key: None
+                key: None,
+                kind: ProjectKind::Repo,
             }
         );
     }

@@ -340,7 +340,8 @@ async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
     let mut found = Vec::new();
     for _ in 0..100 {
         let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
-        found = text.lines().map(without_hook_args).collect();
+        // Only complete lines: a long launch line can be read while it is still being written.
+        found = text.split_inclusive('\n').filter(|l| l.ends_with('\n')).map(without_hook_args).collect();
         if found.len() >= want {
             break;
         }
@@ -360,6 +361,7 @@ fn without_hook_args(line: &str) -> String {
     {
         rest = &rest[at..];
     }
+    // pdt-mcp's `-c mcp_servers.pdt.…` (tests/agent_steps.rs covers them) come before the notify hook.
     if rest.starts_with("-c ")
         && let Some(at) = rest.find("codex-notify")
         && let Some(end) = rest[at..].find(']')
@@ -428,6 +430,7 @@ async fn seed_with(
         mode: pdt_core::conversation::SessionMode::Terminal,
         model: None,
         permission_mode: None,
+        persona: None,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {

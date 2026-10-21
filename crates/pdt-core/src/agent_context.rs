@@ -28,6 +28,12 @@ pub struct SessionContext<'a> {
     pub base_branch: &'a str,
     /// The ticket, when the session works on one (an active attempt's session).
     pub ticket: Option<TicketWork<'a>>,
+    /// A Personal project (Phase 7b spec §7): no repo, the checkout is a plain folder.
+    pub personal: bool,
+    /// The pdt-mcp tools the session has (empty: none, e.g. a Devin terminal).
+    pub tools: &'a [String],
+    /// The agent step's section (`workflow::agent::step_section`) when the session runs a persona in a step.
+    pub step: Option<&'a str>,
 }
 
 /// The ticket a session works on.
@@ -46,28 +52,46 @@ pub struct TicketWork<'a> {
 /// The instructions text for one session: PDT's context, then the project's own instructions when it has any.
 pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> String {
     let api = format!("http://127.0.0.1:{}/api", ctx.port);
-    let place = match ctx.branch {
-        Some(b) => format!("worktree `{}` on branch `{b}`", ctx.checkout),
-        None => format!("the main checkout `{}` (base branch `{}`)", ctx.checkout, ctx.base_branch),
+    let place = match (ctx.personal, ctx.branch) {
+        (true, _) => format!("the folder `{}` (a Personal project: no repository, no branches)", ctx.checkout),
+        (false, Some(b)) => format!("worktree `{}` on branch `{b}`", ctx.checkout),
+        (false, None) => format!("the main checkout `{}` (base branch `{}`)", ctx.checkout, ctx.base_branch),
     };
+    let home = if ctx.personal { "folder" } else { "main checkout" };
     let mut out = format!(
         "# Running in {PRODUCT_NAME} ({SHORT_NAME})\n\n\
          {SHORT_NAME} started this session. Its API is {api} (local only, no authentication).\n\
          - This session: `{session}` (`GET {api}/sessions/{session}`).\n\
-         - Project: {name} (key `{key}`, id `{project}`), main checkout `{repo}`. This session works in {place}.\n\
+         - Project: {name} (key `{key}`, id `{project}`), {home} `{repo}`. This session works in {place}.\n\
          - {SHORT_NAME}'s guides for agents, as Markdown: `GET {api}/guides` lists them; `GET {api}/guides/agents` \
          covers tickets, worktrees, runs and tests; `GET {api}/guides/run-config` is how runs and tests are \
-         configured. Read them when the work involves {SHORT_NAME}.\n\
-         - Make a worktree for a new branch with `POST {api}/projects/{project}/worktrees`, and start the project's \
-         runs and tests with `POST {api}/projects/{project}/runs`, so {SHORT_NAME} knows about them.\n",
+         configured. Read them when the work involves {SHORT_NAME}.\n",
         session = ctx.session_id,
         name = ctx.project_name,
         key = ctx.project_key,
         project = ctx.project_id,
         repo = ctx.repo_path,
     );
+    if !ctx.personal {
+        out.push_str(&format!(
+            "- Make a worktree for a new branch with `POST {api}/projects/{project}/worktrees`, and start the \
+             project's runs and tests with `POST {api}/projects/{project}/runs`, so {SHORT_NAME} knows about them.\n",
+            project = ctx.project_id,
+        ));
+    }
+    if !ctx.tools.is_empty() {
+        out.push_str(&format!(
+            "- {SHORT_NAME}'s tools are on its MCP server `{server}`: {}. They know this session, so they need no \
+             ids for it. Prefer them to calling the API for what they cover.\n",
+            ctx.tools.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", "),
+            server = crate::mcp::SERVER_NAME,
+        ));
+    }
     if let Some(t) = &ctx.ticket {
         out.push_str(&ticket_section(&api, t));
+    }
+    if let Some(step) = ctx.step {
+        out.push_str(step);
     }
     if let Some(text) = project.map(str::trim).filter(|t| !t.is_empty()) {
         out.push_str(&format!(
@@ -188,6 +212,9 @@ mod tests {
             repo_path: "/r",
             base_branch: "main",
             ticket: None,
+            personal: false,
+            tools: &[],
+            step: None,
         }
     }
 
@@ -252,6 +279,24 @@ mod tests {
         assert!(t.contains("/guides/agents") && t.contains("/guides/run-config"), "{t}");
         assert!(!t.contains("Instructions for this project"), "no project section without instructions");
         assert!(!t.contains("This session's ticket"), "{t}");
+    }
+
+    #[test]
+    fn names_the_tools_the_step_and_a_personal_folder() {
+        let tools = vec!["get_ticket".to_string(), "submit_outcome".to_string()];
+        let mut c = ctx(None);
+        c.tools = &tools;
+        c.step = Some("\n# Your role: Reviewer\n");
+        let t = session_instructions(&c, Some("Project rule."));
+        assert!(t.contains("MCP server `pdt`: `get_ticket`, `submit_outcome`."), "{t}");
+        let (role, project) = (t.find("# Your role: Reviewer").unwrap(), t.find("Project rule.").unwrap());
+        assert!(role < project, "the step comes before the project's instructions: {t}");
+        assert!(!session_instructions(&ctx(None), None).contains("MCP server"));
+        let mut p = ctx(None);
+        p.personal = true;
+        let t = session_instructions(&p, None);
+        assert!(t.contains("the folder `/r` (a Personal project: no repository, no branches)"), "{t}");
+        assert!(!t.contains("/worktrees") && !t.contains("main checkout"), "{t}");
     }
 
     #[test]

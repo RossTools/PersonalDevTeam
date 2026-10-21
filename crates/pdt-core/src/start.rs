@@ -153,8 +153,14 @@ pub fn start_prompt(
     }
 }
 
+/// An empty `branch` is a Personal project's ticket: it works in a folder, with no branch.
 fn prompt_ends(key: &str, title: &str, branch: &str) -> (String, String) {
-    (format!("{key}: {title}"), format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}.)"))
+    let tail = if branch.is_empty() {
+        format!("(Ticket {key} in {SHORT_NAME}. Work in this folder.)")
+    } else {
+        format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}.)")
+    };
+    (format!("{key}: {title}"), tail)
 }
 
 fn assemble(head: &str, desc: &str, comments: Option<String>, block: Option<String>, tail: &str) -> String {

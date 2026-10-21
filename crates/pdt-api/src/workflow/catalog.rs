@@ -16,7 +16,7 @@ use ts_rs::TS;
 
 pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum Category {
@@ -26,6 +26,8 @@ pub enum Category {
     Gate,
     Wait,
     Flow,
+    /// An agent step (Phase 7b).
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -83,7 +85,6 @@ pub struct StepCx<'a> {
     pub run: &'a Run,
     pub step: &'a Step,
     /// The node being run (its title and settings), for kinds that need more than their config.
-    #[allow(dead_code)]
     pub node: &'a Node,
     /// The run's context (`trigger`, `steps`, `state`, `run`), for kinds that resolve more later.
     pub ctx: &'a Value,
@@ -92,6 +93,11 @@ pub struct StepCx<'a> {
 }
 
 impl StepCx<'_> {
+    /// The node's title, else its id.
+    pub fn node_title(&self) -> &str {
+        if self.node.title.is_empty() { &self.node.id } else { &self.node.title }
+    }
+
     /// The workflow and run, for records of what a workflow did (vision principle 5).
     pub fn by(&self) -> crate::finish::By {
         crate::finish::By {
@@ -257,6 +263,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(ticket::Finish));
         kinds.push(Box::new(ticket::Move));
         kinds.push(Box::new(ticket::Comment));
+        kinds.push(Box::new(agent::Agent));
         Catalog::new(kinds)
     })
 }

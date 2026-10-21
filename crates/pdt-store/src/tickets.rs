@@ -1751,6 +1751,28 @@ impl Store {
         Ok(rows.into_iter().filter_map(|(b,)| b).collect())
     }
 
+    /// A ticket's comments, oldest first: `(actor, body, created_at)`.
+    pub async fn comments(&self, ticket_id: &str) -> Result<Vec<(String, String, i64)>, StoreError> {
+        let rows: Vec<(String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT actor, body, created_at FROM ticket_events WHERE ticket_id = ? AND kind = ? ORDER BY created_at, id",
+        )
+        .bind(ticket_id)
+        .bind(EventKind::Comment.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().filter_map(|(a, b, at)| b.map(|b| (a, b, at))).collect())
+    }
+
+    /// The id of a project's ticket by number.
+    pub async fn ticket_id_by_number(&self, project_id: &str, number: u32) -> Result<Option<String>, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT id FROM tickets WHERE project_id = ? AND number = ?")
+            .bind(project_id)
+            .bind(i64::from(number))
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
     /// Every label used in a project, sorted.
     pub async fn project_labels(&self, project_id: &str) -> Result<Vec<String>, StoreError> {
         let rows: Vec<(String,)> = sqlx::query_as(
@@ -2000,6 +2022,7 @@ mod tests {
             created_at: 2,
             key: "OTH".into(),
             github_repo: None,
+            kind: Default::default(),
         };
         store.insert_project(&q).await.unwrap();
         let t = store.create_ticket("q1", "q", &new("Q"), 1).await.unwrap();
@@ -2437,6 +2460,7 @@ mod tests {
             mode: pdt_core::conversation::SessionMode::Terminal,
             model: None,
             permission_mode: None,
+            persona: None,
         }
     }
 

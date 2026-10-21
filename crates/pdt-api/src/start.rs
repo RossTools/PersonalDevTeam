@@ -98,14 +98,26 @@ pub(crate) async fn start(
     let project =
         st.store.get_project(&ticket.summary.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let base = v.base.clone().unwrap_or_else(|| project.base_branch.clone());
+    // A Personal project has no repository: the ticket runs in its folder, with no branch or worktree (Phase 7b §7).
+    let personal = match project.is_personal() {
+        true if v.from_session.is_some() => {
+            return Err(conflict(
+                "personal_project",
+                "a Personal project's tickets start on their own, not from a chat".into(),
+            ));
+        }
+        true => Some(personal_folder(&project, &key).map_err(ApiError::internal)?),
+        false => None,
+    };
     // Start from a chat: its worktree and branch, and the chat itself instead of a new session.
     let chat = match &v.from_session {
         Some(sid) => Some(startable_chat(&st, sid, &project).await?),
         None => None,
     };
-    let (wt, branch) = match &chat {
-        Some((_, wt)) => (wt.clone(), wt.branch.clone()),
-        None => {
+    let (wt, branch) = match (&chat, &personal) {
+        (_, Some(_)) => (None, String::new()),
+        (Some((_, wt)), None) => (Some(wt.clone()), wt.branch.clone()),
+        (None, None) => {
             let branch = v.branch.clone().unwrap_or_else(|| ticket.default_branch.clone());
             let existing = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch);
             let wt = match existing {
@@ -115,9 +127,10 @@ pub(crate) async fn start(
                     crate::worktrees::make_worktree(&st, &project, &branch, &from, true).await?
                 }
             };
-            (wt, branch)
+            (Some(wt), branch)
         }
     };
+    let base = if personal.is_some() { String::new() } else { base };
     let extra = if blockers.is_empty() && overlaps.is_empty() {
         json!({})
     } else {
@@ -129,7 +142,16 @@ pub(crate) async fn start(
     let attempt_id = uuid::Uuid::now_v7().to_string();
     let started = st
         .store
-        .start_attempt(&attempt_id, &id, Some(&wt.id), &branch, &base, &wt.base_commit, extra, now_ms())
+        .start_attempt(
+            &attempt_id,
+            &id,
+            wt.as_ref().map(|w| w.id.as_str()),
+            &branch,
+            &base,
+            wt.as_ref().map(|w| w.base_commit.as_str()).unwrap_or_default(),
+            extra,
+            now_ms(),
+        )
         .await?;
     drop(guard);
 
@@ -195,7 +217,7 @@ pub(crate) async fn start(
     let req = CreateSession {
         valid: ValidSession {
             project_id: project.id.clone(),
-            worktree_id: Some(wt.id.clone()),
+            worktree_id: wt.as_ref().map(|w| w.id.clone()),
             kind: SessionKind::AgentTui,
             agent: Some(v.agent),
             bypass_permissions: v.bypass_permissions,
@@ -217,6 +239,8 @@ pub(crate) async fn start(
         attempt_id: Some(attempt_id.clone()),
         ticket_key: Some(key.clone()),
         tab: None,
+        persona: None,
+        cwd: personal.clone(),
     };
     let session = match create_session(&st, req).await {
         Ok(s) => s,
@@ -240,6 +264,14 @@ pub(crate) async fn start(
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
     Ok((StatusCode::CREATED, Json(StartResult { ticket, attempt, session: Some(session) })))
+}
+
+/// A Personal project's folder for a ticket's work, `<project folder>/<ticket key>` (made if missing; kept across
+/// attempts: it is the work's output).
+pub(crate) fn personal_folder(project: &pdt_core::project::Project, key: &str) -> std::io::Result<String> {
+    let dir = PathBuf::from(&project.repo_path).join(key);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// The chat a Start from a chat adopts, with its worktree: a conversation session of this project with no ticket,
@@ -486,6 +518,10 @@ pub async fn check_merges(st: &AppState) {
     for info in active {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
+        }
+        // A Personal project's ticket has no branch to merge (Phase 7b §7).
+        if info.attempt.branch.is_empty() {
+            continue;
         }
         let fetch = fetched.insert((info.project_id.clone(), info.attempt.base_branch.clone()));
         if is_merged(st, &info, fetch).await {

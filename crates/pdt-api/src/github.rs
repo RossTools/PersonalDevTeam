@@ -72,7 +72,8 @@ pub(crate) fn apply_workspaces(st: &AppState, list: &mut [pdt_core::workspace::W
 /// (no news for those: the attempt's end told it). pdtd runs it every 60 s. Never fails; problems are logged.
 pub async fn refresh_prs(st: &AppState) {
     let active = match st.store.list_active_attempts().await {
-        Ok(v) => v,
+        // A Personal project's tickets have no branch, so no pull request.
+        Ok(v) => v.into_iter().filter(|i| !i.attempt.branch.is_empty()).collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!(error = %e, "the PR check could not list active attempts");
             return;

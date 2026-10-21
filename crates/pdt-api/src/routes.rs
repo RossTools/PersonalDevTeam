@@ -111,6 +111,10 @@ pub struct AppState {
     pub(crate) engine_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// The built-in workflows were installed or updated in this daemon run.
     pub(crate) builtins_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// pdt-mcp's host key (`<data dir>/mcp.key`), once read.
+    pub(crate) mcp_key: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// The built-in personas were installed or updated in this daemon run.
+    pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -165,6 +169,8 @@ impl AppState {
             conversations: Default::default(),
             engine_lock: Default::default(),
             builtins_installed: Default::default(),
+            mcp_key: Default::default(),
+            personas_installed: Default::default(),
         }
     }
 }
@@ -352,6 +358,24 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/activity", axum::routing::post(crate::activity::post_report))
         .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
         .merge(crate::workflow::routes::router())
+        .route(
+            "/mcp",
+            axum::routing::post(crate::mcp::post).get(crate::mcp::not_allowed).delete(crate::mcp::not_allowed),
+        )
+        .route("/personas", get(crate::personas::list).post(crate::personas::create))
+        .route(
+            "/personas/{id}",
+            get(crate::personas::get_one)
+                .put(crate::personas::save)
+                .patch(crate::personas::patch)
+                .delete(crate::personas::remove),
+        )
+        .route("/personas/{id}/versions", get(crate::personas::versions))
+        .route("/personas/{id}/versions/{v}", get(crate::personas::version))
+        .route("/personas/{id}/diff", get(crate::personas::diff))
+        .route("/inbox", get(crate::inbox::list))
+        .route("/inbox/{id}/answer", axum::routing::post(crate::inbox::answer))
+        .route("/inbox/{id}/dismiss", axum::routing::post(crate::inbox::dismiss))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")

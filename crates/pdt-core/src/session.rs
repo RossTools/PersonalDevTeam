@@ -142,6 +142,20 @@ pub struct Session {
     pub model: Option<String>,
     /// Conversations: PDT's permission setting.
     pub permission_mode: Option<crate::conversation::PermissionMode>,
+    /// The persona and version the session runs, when a workflow's agent step started it (Phase 7b).
+    pub persona: Option<SessionPersona>,
+}
+
+/// A session's persona.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionPersona {
+    pub id: String,
+    pub name: String,
+    pub version: u32,
+    /// The agent step that started it.
+    pub step_id: Option<String>,
 }
 
 impl Session {

@@ -47,6 +47,7 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
                 mode: pdt_core::conversation::SessionMode::Terminal,
                 model: None,
                 permission_mode: None,
+                persona: None,
             })
             .await
             .unwrap();

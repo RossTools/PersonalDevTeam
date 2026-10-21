@@ -129,8 +129,8 @@ impl Store {
 }
 
 /// Mirrors a ticket timeline event into the log, in the same transaction (Phase 7a spec §2.1): `moved`, `comment`,
-/// `started`, `merged`, `abandoned` and `overlap` become `ticket.*` and `attempt.*` events. Other kinds aren't
-/// domain events workflows react to.
+/// `started`, `merged`, `abandoned`, `overlap` and `outcome` become `ticket.*`, `attempt.*` and `agent.*` events.
+/// Other kinds aren't domain events workflows react to.
 /// A row just written to `ticket_events`.
 pub(crate) struct TimelineRow<'a> {
     pub id: &'a str,
@@ -149,7 +149,7 @@ pub(crate) async fn mirror_timeline(
     let TimelineRow { id: timeline_id, ticket_id, kind, actor, body, data } = row;
     use pdt_core::ticket::EventKind as K;
     use pdt_core::workflow::events::{self as ev, AttemptEvent, AttemptRef, MergeVia};
-    if !matches!(kind, K::Moved | K::Comment | K::Started | K::Merged | K::Abandoned | K::Overlap) {
+    if !matches!(kind, K::Moved | K::Comment | K::Started | K::Merged | K::Abandoned | K::Overlap | K::Outcome) {
         return Ok(());
     }
     let head: Option<(String, String, i64)> = sqlx::query_as(
@@ -198,6 +198,29 @@ pub(crate) async fn mirror_timeline(
                 },
             )
         }
+        K::Outcome => NewLogEvent::new(
+            ev::AGENT_OUTCOME,
+            timeline_id,
+            "agents",
+            ev::AgentOutcome {
+                project_id,
+                ticket_id: ticket_id.into(),
+                ticket_key,
+                attempt_id: data.get("attemptId").and_then(|v| v.as_str()).map(String::from),
+                outcome: s("outcome"),
+                summary: s("summary"),
+                persona: s("persona"),
+                persona_version: data
+                    .get("personaVersion")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0),
+                by: s("by"),
+                session_id: data.get("sessionId").and_then(|v| v.as_str()).map(String::from),
+                workflow_id: data.get("workflowId").and_then(|v| v.as_str()).map(String::from),
+                run_id: data.get("runId").and_then(|v| v.as_str()).map(String::from),
+            },
+        ),
         K::Overlap => NewLogEvent::new(
             ev::TICKET_OVERLAP_FOUND,
             timeline_id,

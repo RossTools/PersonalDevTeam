@@ -65,6 +65,9 @@ pub(crate) async fn branches(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Branch>>, ApiError> {
     let p = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    if p.is_personal() {
+        return Ok(Json(vec![]));
+    }
     let repo = PathBuf::from(p.repo_path);
     let list =
         tokio::task::spawn_blocking(move || pdt_git::list_branches(&repo)).await.map_err(ApiError::internal)??;
@@ -208,6 +211,7 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Run>), ApiError> {
     let Json(input) = payload?;
     let project = st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    crate::projects::needs_repo(&project, "runs or tests")?;
     // Everything that can refuse the start comes before anything is created.
     crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
     let place = place(&st, &project, &input).await?;

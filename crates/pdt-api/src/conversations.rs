@@ -303,6 +303,7 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         instructions,
         config_file,
         import_after,
+        mcp: crate::mcp::server_for(st, &row).await,
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
@@ -492,6 +493,9 @@ async fn append(
             }
             AgentEvent::Turn { phase: TurnPhase::Ended, .. } => {
                 s.turn_running = false;
+                // An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)?
+                let (st2, id) = (st.clone(), c.id.clone());
+                tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
                 true
             }
             AgentEvent::Request { id, state: RequestState::Open, .. } => {
@@ -634,6 +638,27 @@ pub(crate) fn ready_for_notice(st: &AppState, id: &str) -> bool {
         && !s.terminal_open
         && s.limited_until.is_none_or(|t| t <= now_ms())
         && s.last_active.elapsed() >= st.conversations.notice_quiet
+}
+
+/// The open permission requests of live conversations, by session (the Inbox's approvals).
+pub(crate) fn open_requests(st: &AppState) -> Vec<(String, Vec<String>)> {
+    let map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
+    map.iter()
+        .filter_map(|(id, c)| {
+            let s = c.state();
+            (!s.open_requests.is_empty()).then(|| (id.clone(), s.open_requests.iter().cloned().collect()))
+        })
+        .collect()
+}
+
+/// Whether a conversation can still finish what it was doing: its process is live, a turn runs, or a message waits to
+/// go in. False after its process died or pdtd restarted (an agent step then counts as stalled).
+pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(&s.id).cloned() else {
+        return false;
+    };
+    let state = c.state();
+    state.live || state.turn_running || !state.pending.is_empty()
 }
 
 /// Sends PDT's own message (a PR notice) as the next message; it shows as PDT's, not the user's.
@@ -1325,6 +1350,7 @@ pub(crate) async fn ticket_draft(
         instructions: None,
         config_file: None,
         import_after: None,
+        mcp: None,
     };
     let answer = adapter.draft(spec, DRAFT_PROMPT, &draft_schema()).await.map_err(|e| match e {
         AdapterError::Timeout => {

@@ -10,10 +10,12 @@ use sqlx::sqlite::SqliteRow;
 const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent, s.bypass_permissions, s.title, s.cwd, \
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
                       s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
+                      s.persona_id, s.persona_version, s.step_id, pe.name AS persona_name, \
                       t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
-                      LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN projects p ON p.id = t.project_id";
+                      LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN projects p ON p.id = t.project_id \
+                      LEFT JOIN personas pe ON pe.id = s.persona_id";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
@@ -34,7 +36,18 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         }
         None => None,
     };
+    let persona_id: Option<String> = r.try_get("persona_id")?;
+    let persona = match persona_id {
+        Some(id) => Some(pdt_core::session::SessionPersona {
+            name: r.try_get::<Option<String>, _>("persona_name")?.unwrap_or_default(),
+            version: u32::try_from(r.try_get::<Option<i64>, _>("persona_version")?.unwrap_or(0)).unwrap_or(0),
+            step_id: r.try_get("step_id")?,
+            id,
+        }),
+        None => None,
+    };
     Ok(Session {
+        persona,
         id: r.try_get("id")?,
         project_id: r.try_get("project_id")?,
         worktree_id: r.try_get("worktree_id")?,
@@ -75,7 +88,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
              external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id, mode, model, \
-             permission_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             permission_mode, persona_id, persona_version, step_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -98,6 +112,9 @@ impl Store {
         .bind(s.mode.as_str())
         .bind(&s.model)
         .bind(s.permission_mode.map(PermissionMode::as_str))
+        .bind(s.persona.as_ref().map(|p| p.id.clone()))
+        .bind(s.persona.as_ref().map(|p| i64::from(p.version)))
+        .bind(s.persona.as_ref().and_then(|p| p.step_id.clone()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -355,6 +372,7 @@ mod tests {
             mode: pdt_core::conversation::SessionMode::Terminal,
             model: None,
             permission_mode: None,
+            persona: None,
         }
     }
 

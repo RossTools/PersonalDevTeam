@@ -62,6 +62,7 @@ pub(crate) mod tests {
             created_at: 1,
             key: String::new(),
             github_repo: None,
+            kind: Default::default(),
         };
         store.insert_project(&p).await.unwrap();
         store

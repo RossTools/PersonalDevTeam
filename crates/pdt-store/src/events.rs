@@ -221,6 +221,7 @@ mod tests {
             mode: pdt_core::conversation::SessionMode::Conversation,
             model: Some("opus".into()),
             permission_mode: Some(pdt_core::conversation::PermissionMode::Plan),
+            persona: None,
         };
         store.insert_session(&s).await.unwrap();
         let back = store.get_session("s1").await.unwrap().unwrap();
