@@ -53,7 +53,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   `PartState` per part, done/merged/review/progress/todo/backlog; computed in pdt-api `parts.rs` with the in-memory PR
   state); full tickets carry `partList`.
 - Web: the Board has a lane per parent (the lane header is the parent's card, with `PartsStepper` from web/src/common
-  and Start next part), the ticket tab/peek a Parts section, part rows a parent chip, and the ticket menu "Make into
+  and Start next part; the lane of tickets that are not parts stops at half the screen, each column scrolling on its
+  own, so a long Done doesn't push the lanes off screen), the ticket tab/peek a Parts section, part rows a parent chip, and the ticket menu "Make into
   parts…" (from a Scope/Parts list in the description).
 
 ## Start (Phase 4b)
