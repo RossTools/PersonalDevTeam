@@ -231,7 +231,7 @@ export const api = {
   ticketEvents: (id: string, q: EventQuery = {}) =>
     request<EventPage>(`/api/tickets/${enc(id)}/events${queryString(q)}`),
   commentOnTicket: (id: string, body: string) =>
-    request<TicketEvent>(`/api/tickets/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ body } satisfies NewComment) }),
+    request<TicketEvent>(`/api/tickets/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ body, by: 'user' } satisfies NewComment) }),
   /** Several parts of a parent, in order after its existing parts (PDT-38). */
   createParts: (id: string, b: NewParts) =>
     request<PartsCreated>(`/api/tickets/${enc(id)}/parts`, { method: 'POST', body: JSON.stringify(b) }),

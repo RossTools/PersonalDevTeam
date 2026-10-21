@@ -225,17 +225,23 @@ async fn links_comments_and_the_timeline() {
     let (s, v) = link(&b, &c, "blocks", "DELETE").await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")));
 
-    let (s, v) =
-        call(&app, "POST", &format!("/api/tickets/{}/comments", id(&a)), Some(json!({"body": "Looks good"}))).await;
+    let comment =
+        async |body: Value| call(&app, "POST", &format!("/api/tickets/{}/comments", id(&a)), Some(body)).await;
+    let (s, v) = comment(json!({"body": "Looks good", "by": "user"})).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     assert_eq!(
         (v["kind"].as_str(), v["body"].as_str(), v["actor"].as_str()),
         (Some("comment"), Some("Looks good"), Some("user"))
     );
+    // Without `by` (an agent's curl) it is the agent's; only PDT writes system comments.
+    let (s, v) = comment(json!({"body": "Done"})).await;
+    assert_eq!((s, v["actor"].as_str()), (StatusCode::CREATED, Some("agent")), "{v}");
+    let (s, v) = comment(json!({"body": "x", "by": "system"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")), "{v}");
     let (s, v) = call(&app, "GET", &format!("/api/tickets/{}/events", id(&a)), None).await;
     assert_eq!(s, StatusCode::OK);
     let kinds: Vec<&str> = v["items"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["created", "linked", "comment"]);
+    assert_eq!(kinds, ["created", "linked", "comment", "comment"]);
     let (_, v) = call(&app, "GET", &format!("/api/tickets/{}/events?limit=1&newestFirst=true", id(&a)), None).await;
     assert_eq!(v["items"][0]["kind"], "comment");
     let cursor = urlencode(v["nextCursor"].as_str().unwrap());
@@ -243,7 +249,7 @@ async fn links_comments_and_the_timeline() {
         call(&app, "GET", &format!("/api/tickets/{}/events?limit=5&newestFirst=true&cursor={cursor}", id(&a)), None)
             .await;
     let kinds: Vec<&str> = v["items"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["linked", "created"]);
+    assert_eq!(kinds, ["comment", "linked", "created"]);
     assert_eq!(v["nextCursor"], Value::Null);
 
     // A ticket with an active attempt can't be deleted.

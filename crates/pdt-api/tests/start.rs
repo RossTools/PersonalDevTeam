@@ -146,8 +146,11 @@ async fn start_makes_the_branch_attempt_session_and_tabs() {
         assert_eq!(launch[launch.len() - 3], "--append-system-prompt-file");
         assert_eq!(
             last_arg(&launch),
-            "PDT-1: Fix the login\n\nSteps & notes:\n1. open\n\n(Ticket PDT-1 in PDT. Work in this worktree on \
-             branch pdt-PDT-1-fix-the-login.)"
+            format!(
+                "PDT-1: Fix the login\n\nSteps & notes:\n1. open\n\n(Ticket PDT-1 in PDT. Work in this worktree on \
+                 branch pdt-PDT-1-fix-the-login. {})",
+                pdt_core::start::ONE_TICKET
+            )
         );
     }
 
@@ -185,8 +188,11 @@ async fn codex_gets_the_prompt_after_its_flags() {
         assert_eq!(launch[n - 2], "--dangerously-bypass-approvals-and-sandbox");
         assert_eq!(
             launch[n - 1],
-            "PDT-1: Add -v flag\n\nComments, oldest first:\n\n> Use clap.\n\n(Ticket PDT-1 in PDT. Work in this \
-             worktree on branch feature/v.)"
+            format!(
+                "PDT-1: Add -v flag\n\nComments, oldest first:\n\n> Use clap.\n\n(Ticket PDT-1 in PDT. Work in this \
+                 worktree on branch feature/v. {})",
+                pdt_core::start::ONE_TICKET
+            )
         );
     }
     env.state.ptys.shutdown().await;

@@ -25,18 +25,20 @@ describe('Timeline', () => {
     { id: '1', actor: 'user', time: NOW - 2 * H, title: 'Created ticket' },
     { id: '2', actor: 'system', time: NOW - 5 * 60_000, title: 'Moved to Ready' },
     { id: '3', actor: 'reviewer', time: NOW - 30_000, title: 'Comment', body: <p>Looks good.</p> },
+    { id: '4', actor: 'agent', time: NOW - 10_000, title: 'Comment' },
   ];
 
   it('lists entries with actor, relative time (absolute in the title) and body', () => {
     render(<Timeline items={items} now={NOW} />);
     const list = screen.getByRole('list', { name: 'Activity' });
     const rows = within(list).getAllByRole('listitem');
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     expect(rows[0]).toHaveTextContent('Created ticket');
     expect(rows[0]).toHaveTextContent('You · 2h ago');
     expect(rows[1]).toHaveTextContent('PDT · 5m ago');
     expect(rows[2]).toHaveTextContent('reviewer · just now');
     expect(within(rows[2]).getByText('Looks good.')).toBeInTheDocument();
+    expect(rows[3]).toHaveTextContent('Agent · just now');
     const time = within(rows[0]).getByText('2h ago');
     expect(time.tagName).toBe('TIME');
     expect(time).toHaveAttribute('title', absoluteTime(NOW - 2 * H));
