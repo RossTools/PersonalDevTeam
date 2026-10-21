@@ -117,7 +117,9 @@ notifications get 202; `GET`/`DELETE` 405).
 The new-tab chooser, palette, ticket Start and the project's "… with an agent" menus offer only agents whose host
 check found them (web/src/common/useAgentAvailability.ts, the `['host-checks']` query Host settings' "Run checks
 again" refreshes); an installed agent that is not logged in stays with a "not logged in" hint; everything is offered
-until the checks load or when they fail.
+until the checks load or when they fail. Only a program missing from the search path counts as not found: one whose
+check times out (30 s) or cannot start is found but not ok, and pdtd's startup check runs again (up to 3 times, 30 s
+apart) while an agent's check is unanswered, since a CLI's first launch after a restart can be slow (PDT-92).
 
 ## Host defaults (PDT-69)
 

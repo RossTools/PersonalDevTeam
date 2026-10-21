@@ -6,6 +6,7 @@ import { api, ApiError } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
+import { branchOptions } from '../common/branchOptions';
 import { useAction } from '../common/useAction';
 import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { repoUrl } from './github';
@@ -23,8 +24,7 @@ function Identity({ project }: { project: Project }) {
   const [key, setKey] = useState(project.key);
   const [base, setBase] = useState(project.baseBranch);
   const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id), enabled: !personal });
-  const branchOptions = (branches.data ?? []).map((b) => ({ value: b.name, label: b.local ? b.name : `${b.name} (origin)` }));
-  if (!branchOptions.some((o) => o.value === project.baseBranch)) branchOptions.unshift({ value: project.baseBranch, label: project.baseBranch });
+  const baseOptions = branchOptions(branches.data ?? [], project.baseBranch);
   const save = useMutation({
     mutationFn: () => api.updateProject(project.id, {
       ...(name.trim() !== project.name ? { name } : {}),
@@ -70,7 +70,7 @@ function Identity({ project }: { project: Project }) {
             htmlFor={baseId}
             description="New worktrees and tickets branch from it, and their changes are reviewed and merged against it."
           >
-            <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" options={branchOptions} value={base} onChange={setBase} />
+            <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" searchable options={baseOptions} value={base} onChange={setBase} />
           </SettingsRow>
         )}
         {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}

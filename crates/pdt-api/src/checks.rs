@@ -16,6 +16,46 @@ pub struct ToolCheck {
     pub found: bool,
     pub ok: bool,
     pub detail: String,
+    /// The program is there but its check did not finish (timed out, could not start): worth running again.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub inconclusive: bool,
+}
+
+impl ToolCheck {
+    fn missing(detail: String) -> Self {
+        ToolCheck { found: false, ok: false, detail, inconclusive: false }
+    }
+
+    fn answered(ok: bool, detail: String) -> Self {
+        ToolCheck { found: true, ok, detail, inconclusive: false }
+    }
+
+    /// Found, but its check said nothing: never reported as missing, so the agent stays offered.
+    fn unanswered(program: &str, error: String) -> Self {
+        ToolCheck { found: true, ok: false, detail: format!("could not check {program}: {error}"), inconclusive: true }
+    }
+}
+
+/// Why a check's program said nothing.
+enum RunError {
+    /// Not on the search path.
+    NotFound(String),
+    /// Found, but it timed out or could not be started.
+    Failed(String),
+}
+
+/// The check for a program that ran: `answer` reads its (success, output).
+fn check(
+    program: &str,
+    r: Result<(bool, String), RunError>,
+    answer: impl FnOnce(bool, String) -> ToolCheck,
+) -> ToolCheck {
+    match r {
+        Err(RunError::NotFound(e)) => ToolCheck::missing(e),
+        Err(RunError::Failed(e)) => ToolCheck::unanswered(program, e),
+        Ok((ok, out)) => answer(ok, out),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, TS)]
@@ -32,7 +72,7 @@ pub struct HostChecks {
     pub checked_at: i64,
 }
 
-/// Runs `program args` (resolved like a session's program) with a 15 s limit: Err = not found / not runnable. The
+/// Runs `program args` (resolved like a session's program) with a time limit. The
 /// inherited environment is scrubbed as for a session of `kind` under `creds`, so a check sees what sessions see
 /// (an API key a Subscription session never gets must not make the check report logged in).
 async fn run(
@@ -41,10 +81,10 @@ async fn run(
     args: &[&str],
     kind: SessionKind,
     creds: CredentialPolicy,
-) -> Result<(bool, String), String> {
+) -> Result<(bool, String), RunError> {
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    let (exe, args) =
-        pdt_agents::launch::resolve(program, &args, st.platform.login_path.as_deref()).map_err(|e| e.to_string())?;
+    let (exe, args) = pdt_agents::launch::resolve(program, &args, st.platform.login_path.as_deref())
+        .map_err(|e| RunError::NotFound(e.to_string()))?;
     let mut cmd = tokio::process::Command::new(exe);
     cmd.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
     if let Some(p) = &st.platform.login_path {
@@ -57,13 +97,17 @@ async fn run(
             cmd.env_remove(k);
         }
     }
-    let out = tokio::time::timeout(Duration::from_secs(15), cmd.output())
+    let out = tokio::time::timeout(RUN_TIMEOUT, cmd.output())
         .await
-        .map_err(|_| "timed out".to_string())?
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| RunError::Failed(format!("timed out after {} s", RUN_TIMEOUT.as_secs())))?
+        .map_err(|e| RunError::Failed(e.to_string()))?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     Ok((out.status.success(), text.trim().to_string()))
 }
+
+/// How long one check may take. A CLI's first launch can be slow (it updates itself, or the OS scans a new binary),
+/// and pdtd checks at startup while it restarts every interrupted session.
+const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `claude auth status` prints JSON with `loggedIn` (verified fact 3).
 pub(crate) fn claude_logged_in(stdout: &str) -> Option<bool> {
@@ -89,48 +133,49 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
         let program = program.to_string();
         async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
     };
-    let claude = match agent(&st.platform.claude_program, &["auth", "status"]).await {
-        Err(e) => ToolCheck { found: false, ok: false, detail: e },
-        Ok((_, out)) => match claude_logged_in(&out) {
-            Some(true) => ToolCheck { found: true, ok: true, detail: "logged in".into() },
-            Some(false) => {
-                ToolCheck { found: true, ok: false, detail: "not logged in: run `claude` and log in".into() }
-            }
-            None => ToolCheck { found: true, ok: false, detail: format!("could not read `claude auth status`: {out}") },
-        },
-    };
-    let codex = match agent(&st.platform.codex_program, &["login", "status"]).await {
-        Err(e) => ToolCheck { found: false, ok: false, detail: e },
-        Ok((true, out)) => ToolCheck { found: true, ok: true, detail: out },
-        Ok((false, out)) => {
-            ToolCheck { found: true, ok: false, detail: format!("not logged in: run `codex login` ({out})") }
+    let claude =
+        check(
+            "claude",
+            agent(&st.platform.claude_program, &["auth", "status"]).await,
+            |_, out| match claude_logged_in(&out) {
+                Some(true) => ToolCheck::answered(true, "logged in".into()),
+                Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
+                None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
+            },
+        );
+    let codex = check("codex", agent(&st.platform.codex_program, &["login", "status"]).await, |ok, out| {
+        if ok {
+            ToolCheck::answered(true, out)
+        } else {
+            ToolCheck::answered(false, format!("not logged in: run `codex login` ({out})"))
         }
-    };
-    let devin = match agent(&st.platform.devin_program, &["auth", "status"]).await {
-        Err(e) => ToolCheck { found: false, ok: false, detail: e },
-        // Its status goes on to list the account and team settings; the first line says it all.
-        Ok((ok, out)) if devin_logged_in(ok, &out) => {
-            ToolCheck { found: true, ok: true, detail: out.lines().next().unwrap_or_default().trim().to_string() }
+    });
+    let devin = check("devin", agent(&st.platform.devin_program, &["auth", "status"]).await, |ok, out| {
+        if devin_logged_in(ok, &out) {
+            // Its status goes on to list the account and team settings; the first line says it all.
+            ToolCheck::answered(true, out.lines().next().unwrap_or_default().trim().to_string())
+        } else {
+            ToolCheck::answered(false, format!("not logged in: run `devin auth login` ({out})"))
         }
-        Ok((_, out)) => {
-            ToolCheck { found: true, ok: false, detail: format!("not logged in: run `devin auth login` ({out})") }
-        }
-    };
-    let git = match run(st, "git", &["--version"], SessionKind::Shell, creds).await {
-        Err(e) => ToolCheck { found: false, ok: false, detail: e },
-        Ok((ok, out)) => ToolCheck { found: true, ok, detail: out },
-    };
+    });
+    let git = check("git", run(st, "git", &["--version"], SessionKind::Shell, creds).await, ToolCheck::answered);
     let ts = st.tailscale.clone();
     let tailscale = match tokio::task::spawn_blocking(move || ts.status()).await {
-        Ok(Ok(s)) => ToolCheck { found: true, ok: true, detail: s.dns_name },
-        Ok(Err(e)) => {
-            ToolCheck { found: !matches!(e, pdt_tailscale::TsError::NotInstalled), ok: false, detail: e.to_string() }
-        }
-        Err(e) => ToolCheck { found: false, ok: false, detail: e.to_string() },
+        Ok(Ok(s)) => ToolCheck::answered(true, s.dns_name),
+        Ok(Err(e)) if matches!(e, pdt_tailscale::TsError::NotInstalled) => ToolCheck::missing(e.to_string()),
+        Ok(Err(e)) => ToolCheck::answered(false, e.to_string()),
+        Err(e) => ToolCheck::missing(e.to_string()),
     };
     let c = HostChecks { claude, codex, devin, git, tailscale, checked_at: now_ms() };
     *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = Some(c.clone());
     c
+}
+
+impl HostChecks {
+    /// Whether an agent's check did not finish, so running the checks again may tell more.
+    pub fn agents_inconclusive(&self) -> bool {
+        [&self.claude, &self.codex, &self.devin].iter().any(|c| c.inconclusive)
+    }
 }
 
 pub(crate) async fn get_checks(State(st): State<AppState>) -> Result<Json<HostChecks>, ApiError> {
