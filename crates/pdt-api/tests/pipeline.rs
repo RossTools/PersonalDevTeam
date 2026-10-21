@@ -27,6 +27,9 @@ async fn setup() -> Env {
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
+    // A local merge commits as the user: CI runners have no global identity.
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
     std::fs::write(repo.join("a.txt"), "one\n").unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
