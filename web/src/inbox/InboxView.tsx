@@ -9,6 +9,10 @@ import { actionError } from '../common/useAction';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { useOpenChanges } from '../review/open';
+import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
+import { useStartRun } from '../runs/useStartRun';
+import { useTicket } from '../tickets/queries';
+import { useTicketTabs } from '../workspaces/ticketTabs';
 import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, step } from './model';
 import { useRefreshInbox } from './useInbox';
 
@@ -144,6 +148,7 @@ export function InboxView({ items, selectedId, onSelect }: {
       />
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
         {item.ticketTitle && <p className="text-sm text-muted-foreground">{item.ticketKey} · {item.ticketTitle}</p>}
+        <TicketWork item={item} />
         {item.kind === 'question' && (
           <Questions
             item={item}
@@ -204,7 +209,6 @@ export function InboxView({ items, selectedId, onSelect }: {
                 </Button>
               ))}
             </div>
-            {item.attemptId && <OpenChanges item={item} />}
           </section>
         )}
         {(item.kind === 'gate') && (
@@ -213,7 +217,6 @@ export function InboxView({ items, selectedId, onSelect }: {
               <p className="text-meta text-muted-foreground">From workflow {item.body.workflow}</p>
             )}
             <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
-            {item.group === 'accept' && <OpenChanges item={item} />}
           </section>
         )}
       </div>
@@ -311,22 +314,33 @@ function Approval({ item, onAnswered }: { item: InboxItem; onAnswered: () => voi
 }
 
 /** Ready to accept: the attempt's changes, from its ticket. */
-function OpenChanges({ item }: { item: InboxItem }) {
+/**
+ * The ticket's work, next to its tab in the workspace that has it (its Start workspace): Open changes, and Run… over
+ * the runs and tests its worktree's configuration offers (the run's tab opens there too).
+ */
+function TicketWork({ item }: { item: InboxItem }) {
   const openChanges = useOpenChanges();
-  const [loading, setLoading] = useState(false);
-  if (!item.ticketId || !item.projectId) return null;
-  const open = async () => {
-    setLoading(true);
-    try {
-      const t = await api.getTicket(item.ticketId!);
-      const a = t.attempts.find((x) => x.id === item.attemptId) ?? t.attempts.find((x) => x.state === 'active');
-      if (a?.worktreeId) openChanges({ id: a.worktreeId, projectId: item.projectId! });
-      else toast.info('This ticket has no changes to show.');
-    } catch (err) {
-      toast.error(actionError(err));
-    } finally {
-      setLoading(false);
-    }
+  const tabs = useTicketTabs();
+  const ticket = useTicket(item.ticketId);
+  const t = ticket.data;
+  const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active');
+  const worktreeId = attempt?.worktreeId ?? null;
+  const projectId = item.projectId ?? '';
+  const { choices } = useRunChoices(projectId, worktreeId);
+  const start = useStartRun(projectId, (id) => tabs.openRun({ id, projectId }));
+  if (!item.ticketId || !item.projectId || !worktreeId) return null;
+  const run = (choice: string) => {
+    const tab = tabs.placementNear(item.ticketId!);
+    start.mutate({ worktreeId, ...parseChoice(choice), ...(tab ? { tab } : {}) }, { onError: (err) => toast.error(actionError(err)) });
   };
-  return <div><Button variant="secondary" pending={loading} onClick={() => void open()}>Open changes</Button></div>;
+  return (
+    <div role="group" aria-label="The ticket's work" className="flex flex-wrap items-center gap-2">
+      <Button variant="secondary" size="sm" onClick={() => openChanges({ id: worktreeId, projectId }, { ticketId: item.ticketId! })}>
+        Open changes
+      </Button>
+      {choices.length > 0 && (
+        <RunMenu label="Run the ticket's branch" choices={choices} value="" onChange={run} disabled={start.isPending} className="w-40" />
+      )}
+    </div>
+  );
 }

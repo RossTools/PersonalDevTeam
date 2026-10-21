@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
@@ -34,7 +34,8 @@ import { UpdateBanner } from '../host/UpdateBanner';
 import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
-import { nextNeedingYou } from '../workspaces/model';
+import { findTab, nextNeedingYou } from '../workspaces/model';
+import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { NewTabChooser } from '../workspaces/NewTabChooser';
 import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
@@ -118,15 +119,30 @@ export function AppShell() {
     setView('sessions');
     void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
   }, [ws.focusItem]);
+  // After a ticket's tab, in the workspace that has it (its Start workspace).
+  const placementNear = useCallback((ticketId: string): TabPlacement | undefined => {
+    const hit = findTab(ws.workspaces, { kind: 'ticket', id: ticketId });
+    return hit ? { workspaceId: hit.workspace.id, position: hit.tab.position + 1 } : undefined;
+  }, [ws.workspaces]);
   const openChanges = useCallback((w: { id: string; projectId: string }, opts?: OpenChangesOptions) => {
     setView('sessions');
     const item = { kind: 'changes', id: w.id } as const;
-    const here = opts?.here ? ws.workspace : undefined;
+    const near = opts?.ticketId ? placementNear(opts.ticketId) : undefined;
+    const here = opts?.here ? ws.workspace : near ? ws.workspaces.find((x) => x.id === near.workspaceId) : undefined;
     const existing = here?.tabs.find((t) => t.worktreeId === w.id);
+    const position = near?.position ?? (ws.tab ? ws.tab.position + 1 : here?.tabs.length);
     if (here && existing) ws.selectTab(existing);
-    else if (here) void runAction(() => ws.openIn(item, here.id, ws.tab ? ws.tab.position + 1 : here.tabs.length));
+    else if (here) void runAction(() => ws.openIn(item, here.id, position));
     else void runAction(() => ws.focusItem(item, w.projectId));
-  }, [ws.focusItem, ws.openIn, ws.selectTab, ws.workspace, ws.tab]);
+  }, [ws.focusItem, ws.openIn, ws.selectTab, ws.workspace, ws.workspaces, ws.tab, placementNear]);
+  const openRun = useCallback((r: { id: string; projectId: string }) => {
+    setView('sessions');
+    void runAction(async () => {
+      await ws.refresh();
+      await ws.focusItem({ kind: 'run', id: r.id }, r.projectId);
+    });
+  }, [ws.focusItem, ws.refresh]);
+  const ticketTabs = useMemo(() => ({ placementNear, openRun }), [placementNear, openRun]);
   // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
   // otherwise the server puts them at the end of the project workspace.
   const startTicket = useCallback((t: { id: string; projectId: string }, opts?: { here?: boolean }) => {
@@ -350,6 +366,7 @@ export function AppShell() {
     <OpenTicketContext.Provider value={openTicket}>
     <OpenSessionContext.Provider value={openSession}>
     <OpenChangesContext.Provider value={openChanges}>
+    <TicketTabsContext.Provider value={ticketTabs}>
     <StartTicketContext.Provider value={startTicket}>
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail
@@ -480,6 +497,7 @@ export function AppShell() {
       </main>
     </div>
     </StartTicketContext.Provider>
+    </TicketTabsContext.Provider>
     </OpenChangesContext.Provider>
     </OpenSessionContext.Provider>
     </OpenTicketContext.Provider>

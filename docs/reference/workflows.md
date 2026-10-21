@@ -263,5 +263,8 @@ closes a question or stalled item (the step keeps waiting). A gate answered thro
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
-over / Stop, a gate's choices and Open changes for Ready to accept); `j`/`k` move, Enter takes the primary action,
-`o` opens the ticket, `e` dismisses.
+over / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
+`o` opens the ticket, `e` dismisses. An item whose ticket has a worktree also offers Open changes and Run… (the
+worktree's configured runs and tests); both open their tab right after the ticket's tab in the workspace that has it
+(its Start workspace; AppShell's `TicketTabsContext`, `openChanges` with `ticketId`), moving an existing changes tab
+there, and switch to it.

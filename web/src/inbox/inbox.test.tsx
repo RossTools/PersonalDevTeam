@@ -3,6 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { OpenTicketContext } from '../tickets/actions';
+import { OpenChangesContext } from '../review/open';
+import { ticket } from '../tickets/fixtures';
+import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
@@ -119,6 +122,35 @@ describe('inbox', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'What you did (optional)' }), 'Looks right');
     await userEvent.click(screen.getByRole('button', { name: 'changes_requested' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'outcome:changes_requested', text: 'Looks right' }));
+  });
+
+  it('opens the ticket\'s changes and runs its branch next to its tab in its own workspace', async () => {
+    const accept = item('a', { group: 'accept', ticketId: 't1', attemptId: 'a1', title: 'Accept PDT-7?', choices: [{ id: 'merge', title: 'merge', primary: true }] });
+    const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: 'ws7', pr: null };
+    const calls = stubApi({
+      'GET /api/tickets/t1': ticket(1, { attempts: [attempt] }),
+      'GET /api/projects/p/run-config': { filePath: null, file: null, overrides: null, error: null,
+        effective: { runs: [{ name: 'web', setup: null, command: 'x', web: true, data: true, env: {} }], tests: [] } },
+      'POST /api/projects/p/runs': { id: 'r9', projectId: 'p' },
+      'GET /api/inbox': { items: [], total: 0 },
+    });
+    const openChanges = vi.fn();
+    const openRun = vi.fn();
+    const placementNear = vi.fn(() => ({ workspaceId: 'ws7', position: 3 }));
+    renderWithQuery(
+      <OpenChangesContext.Provider value={openChanges}>
+        <TicketTabsContext.Provider value={{ placementNear, openRun }}>
+          <InboxView items={[accept]} selectedId="a" onSelect={() => {}} />
+        </TicketTabsContext.Provider>
+      </OpenChangesContext.Provider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Open changes' }));
+    expect(openChanges).toHaveBeenCalledWith({ id: 'w1', projectId: 'p' }, { ticketId: 't1' });
+    await userEvent.click(await screen.findByRole('button', { name: /Run the ticket's branch/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'web' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/projects/p/runs')?.body)
+      .toEqual({ worktreeId: 'w1', name: 'web', kind: 'run', tab: { workspaceId: 'ws7', position: 3 } }));
+    await waitFor(() => expect(openRun).toHaveBeenCalledWith({ id: 'r9', projectId: 'p' }));
   });
 
   it('says when nothing waits', () => {
