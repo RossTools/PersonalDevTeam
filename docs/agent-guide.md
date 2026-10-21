@@ -40,16 +40,18 @@ one, then say briefly what you changed. A message saying a merge into the base c
 branch into yours, resolve them, run the checks and commit. `GET /api/worktrees/<id>/changes` lists what PDT counts
 as your changes (committed or not, against the merge base with the base branch).
 
-When work you were given as a ticket turns up follow-up work, add it as a new ticket rather than widening the change,
-and comment on the ticket with anything the person should know. Move a ticket to `done` only when the person says the
-work is finished (PDT also does it when it sees the branch merged).
+A session started on a ticket gets the rules for that work in its instructions: follow-up work goes in a new ticket
+rather than widening the change, and moving the ticket to `done` and removing its worktree are left to PDT (when it
+sees the branch merged) or the person.
 
 ## Workflows and events
 
 PDT reacts to what happens (CI results, pull request news, merges, comments) through workflows: a trigger on an
-event, then conditions, gates, waits and actions. Messages that start with `[PDT]` in your session come from one,
-for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge queue, merged). Workflows are
-changed only when the person asks.
+event, then conditions, gates, waits and actions. Messages that start with `[PDT]` in your session come from a
+workflow the person enabled, for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge
+queue, merged); each says what happened and what to do. A session started on a ticket is told in its instructions
+which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
+shell. Workflows are changed only when the person asks.
 
 | Call | Gives |
 |---|---|

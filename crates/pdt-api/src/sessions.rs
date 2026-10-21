@@ -10,6 +10,7 @@ use pdt_core::session::{
     AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
     default_title, is_scrubbed, launch, prompt_arg, shim_prompt,
 };
+use pdt_core::ticket::AttemptState;
 use pdt_core::workspace::TabPlacement;
 use pdt_store::Store;
 use std::collections::HashSet;
@@ -151,8 +152,9 @@ pub(crate) async fn credentials_for(
     Ok(pdt_core::host::effective_credentials(host, project))
 }
 
-/// PDT's instructions for an agent session (PDT-46): where PDT is, which session, project and checkout this is, and
-/// the project's own instructions from its settings. None for shells. Codex's text keeps the user's own
+/// PDT's instructions for an agent session (PDT-46): where PDT is, which session, project and checkout this is, the
+/// ticket it works on and what the enabled workflows will tell it (PDT-83), and the project's own instructions from its
+/// settings. None for shells. Codex's text keeps the user's own
 /// `developer_instructions` first, since PDT's value replaces them. Written to `<session dir>/instructions.md`.
 pub(crate) async fn agent_instructions(
     st: &AppState,
@@ -167,6 +169,21 @@ pub(crate) async fn agent_instructions(
         None => None,
     };
     let settings = st.store.get_project_settings(&s.project_id).await?;
+    let attempt = match &s.attempt_id {
+        Some(a) => st.store.get_attempt(a).await?.filter(|a| a.attempt.state == AttemptState::Active),
+        None => None,
+    };
+    let news = match &attempt {
+        Some(_) => agent_news(st, &s.project_id).await?,
+        None => Default::default(),
+    };
+    let ticket = attempt.as_ref().map(|a| pdt_core::agent_context::TicketWork {
+        ticket_id: &a.ticket_id,
+        key: &a.ticket_key,
+        branch: &a.attempt.branch,
+        base: &a.attempt.base_branch,
+        news,
+    });
     let ctx = pdt_core::agent_context::SessionContext {
         port: st.listen_port,
         session_id: &s.id,
@@ -177,6 +194,7 @@ pub(crate) async fn agent_instructions(
         branch: branch.as_deref(),
         repo_path: &project.repo_path,
         base_branch: &project.base_branch,
+        ticket,
     };
     let ours = pdt_core::agent_context::session_instructions(&ctx, settings.agent_instructions.as_deref());
     let text = match (s.agent, st.platform.codex_home.as_deref()) {
@@ -189,6 +207,17 @@ pub(crate) async fn agent_instructions(
     let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
         .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
     Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }))
+}
+
+/// The event types the project's enabled workflows tell an attempt's agent about.
+async fn agent_news(st: &AppState, project_id: &str) -> Result<std::collections::BTreeSet<&'static str>, ApiError> {
+    let mut all = vec![];
+    for wf in st.store.list_workflows(Some(project_id)).await? {
+        if let Some(doc) = st.store.workflow_doc(&wf.id, wf.version).await? {
+            all.push((wf, doc));
+        }
+    }
+    Ok(pdt_core::workflow::news::agent_news(&all, project_id))
 }
 
 fn is_codex(s: &Session) -> bool {

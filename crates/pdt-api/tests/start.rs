@@ -192,6 +192,48 @@ async fn codex_gets_the_prompt_after_its_flags() {
     env.state.ptys.shutdown().await;
 }
 
+/// The instructions file of a started ticket's session.
+fn instructions(env: &Env, r: &Value) -> String {
+    let file = env.state.data_dir.join("sessions").join(s(&r["session"]["id"])).join("instructions.md");
+    std::fs::read_to_string(file).unwrap()
+}
+
+#[tokio::test]
+async fn a_started_session_is_told_which_pdt_messages_to_expect() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    pdt_api::run_workflows(&env.state).await;
+    let a = ticket(&env, json!({"title": "A"})).await;
+    let text = instructions(&env, &started(&env, &a, json!({"agent": "claude"})).await);
+    assert!(text.contains("This session works on ticket PDT-1"), "{text}");
+    assert!(text.contains("when CI fails on its pull request, the pull request conflicts with `main`"), "{text}");
+    assert!(text.contains("the user comments on the ticket") && text.contains("- Merged:"), "{text}");
+    assert!(text.contains("don't poll or watch CI in a shell"), "{text}");
+    assert!(!text.contains("moves while it waits"), "Base moved is off: {text}");
+
+    // With the workflows that message the agent turned off, nothing is promised.
+    let (_, list) = call(&env.app, "GET", &format!("/api/workflows?project={}", env.pid), None).await;
+    for w in list.as_array().unwrap() {
+        if matches!(w["builtin"].as_str(), Some("pr-notices" | "comments-to-agent")) {
+            let path = format!("/api/workflows/{}", s(&w["id"]));
+            let (st, v) = call(&env.app, "PATCH", &path, Some(json!({"enabled": false}))).await;
+            assert_eq!(st, StatusCode::OK, "{v}");
+        }
+    }
+    let b = ticket(&env, json!({"title": "B"})).await;
+    let text = instructions(&env, &started(&env, &b, json!({"agent": "claude"})).await);
+    assert!(text.contains("This session works on ticket PDT-2") && text.contains("Don't move the ticket"), "{text}");
+    assert!(!text.contains("Messages from PDT") && !text.contains("gh run watch"), "{text}");
+
+    // A session that is not on a ticket gets neither.
+    let body = json!({"projectId": env.pid, "kind": "agent_tui", "agent": "claude", "mode": "terminal", "cols": 80, "rows": 24});
+    let (st, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let text = instructions(&env, &json!({"session": v}));
+    assert!(!text.contains("This session's ticket"), "{text}");
+    env.state.ptys.shutdown().await;
+}
+
 #[tokio::test]
 async fn blockers_refuse_a_check_start_and_force_records_it() {
     let tmp = tempfile::tempdir().unwrap();
