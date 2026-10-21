@@ -26,4 +26,12 @@ describe('Switch', () => {
     expect(sw).toBeChecked();
     expect(sw).toBeDisabled();
   });
+
+  // React Aria's input is visually hidden with position: absolute. Unless the label positions it, it sits outside the
+  // page's scroller, and focusing it on a click scrolls the app shell to reach it (PDT-87: the whole UI shifted).
+  it('keeps its hidden input positioned by its own label', () => {
+    render(<Switch label="Merge through pull requests" />);
+    const label = screen.getByRole('switch', { name: 'Merge through pull requests' }).closest('label')!;
+    expect(label.className.split(' ')).toContain('relative');
+  });
 });
