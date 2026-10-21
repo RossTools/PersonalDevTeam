@@ -71,6 +71,9 @@ pub struct ProjectPolicy {
     /// The most active attempts the project may have (null: no cap; auto-start then keeps to one).
     pub max_running_attempts: Option<u32>,
     pub auto_start: AutoStart,
+    /// The PM may create and edit the project's tickets and message its sessions without asking (PDT-81).
+    #[serde(default)]
+    pub pm_acts: bool,
 }
 
 impl ProjectPolicy {
@@ -165,7 +168,7 @@ pub fn pick_next<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::ticket::{AttemptState, AttemptSummary, Priority, TicketStage};
 
@@ -216,7 +219,7 @@ mod tests {
         assert_eq!(MergeBy::parse("robots"), None);
     }
 
-    fn ticket(id: &str, stage: TicketStage) -> TicketSummary {
+    pub(crate) fn ticket(id: &str, stage: TicketStage) -> TicketSummary {
         TicketSummary {
             id: id.into(),
             project_id: "p".into(),

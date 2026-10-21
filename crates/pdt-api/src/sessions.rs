@@ -188,6 +188,13 @@ pub(crate) async fn agent_instructions(
         return Ok(None);
     }
     let project = st.store.get_project(&s.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    if project.is_host() {
+        // The PM (PDT-81): its own context and briefing, nothing about a project or checkout.
+        let text = crate::pm::instructions(st, s).await?;
+        let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
+            .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
+        return Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }));
+    }
     let branch = match &s.worktree_id {
         Some(w) => st.store.get_worktree(w).await?.map(|w| w.branch),
         None => None,

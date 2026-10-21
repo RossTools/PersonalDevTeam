@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// Fills in `github_repo` from each project's `origin` (git runs off the async runtime).
 async fn with_github(mut projects: Vec<Project>) -> Vec<Project> {
     let paths: Vec<Option<PathBuf>> =
-        projects.iter().map(|p| (!p.is_personal()).then(|| PathBuf::from(&p.repo_path))).collect();
+        projects.iter().map(|p| p.has_repo().then(|| PathBuf::from(&p.repo_path))).collect();
     let repos = tokio::task::spawn_blocking(move || {
         paths
             .iter()
@@ -139,7 +139,7 @@ async fn add_personal(st: &AppState, name: String, key: Option<String>) -> Resul
 
 /// 409 `personal_project` for what needs a repository.
 pub(crate) fn needs_repo(p: &Project, what: &str) -> Result<(), ApiError> {
-    if p.is_personal() {
+    if !p.has_repo() {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "personal_project",

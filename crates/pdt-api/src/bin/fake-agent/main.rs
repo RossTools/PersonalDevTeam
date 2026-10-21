@@ -14,7 +14,8 @@
 //!   and result under a new session id, which later turns use.
 //! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
 //! - `mcp: <tool> <json arguments>` (its first line) — calls that pdt-mcp tool (from `--mcp-config`) and says
-//!   `mcp <tool>: <the result's text>`, or `mcp error: …`.
+//!   `mcp <tool>: <the result's text>`, or `mcp error: …`. Like Claude, it first asks to use a listed tool that
+//!   `--allowedTools` leaves out (unless bypassing permissions), and says `mcp <tool> denied` when refused.
 //! - `mcp-list` — says the pdt-mcp tools it was given.
 //! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
@@ -52,6 +53,8 @@ struct Agent {
     log: Option<std::fs::File>,
     /// pdt-mcp's URL and Authorization header, from `--mcp-config`.
     mcp: Option<(String, String)>,
+    /// `--allowedTools`.
+    allowed: Vec<String>,
 }
 
 /// pdt-mcp from Claude's `--mcp-config` file.
@@ -345,6 +348,24 @@ impl Agent {
         } else if let Some(call) = text.lines().next().and_then(|l| l.strip_prefix("mcp:")) {
             let call = call.trim();
             let (tool, args) = call.split_once(' ').unwrap_or((call, "{}"));
+            let full = format!("mcp__pdt__{tool}");
+            // Claude asks before a tool the server lists that `--allowedTools` leaves out.
+            let listed = self.mcp.as_ref().is_some_and(|server| {
+                rpc(server, "tools/list", json!({}))
+                    .is_ok_and(|r| r["tools"].as_array().is_some_and(|a| a.iter().any(|t| t["name"] == tool)))
+            });
+            if listed && self.mode != "bypassPermissions" && !self.allowed.contains(&full) {
+                let input: Value = serde_json::from_str(args.trim()).unwrap_or(json!({}));
+                let Ok((tool_id, resp)) = self.tool(&full, input) else {
+                    return self.result("error_during_execution", started);
+                };
+                if resp["behavior"] != "allow" {
+                    self.tool_result(&tool_id, "denied", true);
+                    self.say(&format!("mcp {tool} denied"));
+                    return self.result("success", started);
+                }
+                self.tool_result(&tool_id, "allowed", false);
+            }
             let reply = match &self.mcp {
                 None => "mcp error: no pdt-mcp server".to_string(),
                 Some(server) => {
@@ -473,13 +494,14 @@ fn main() {
         mode: flag("--permission-mode").unwrap_or_else(|| "default".into()),
         instructions: flag("--append-system-prompt-file")
             .and_then(|f| std::fs::read_to_string(f).ok())
-            .is_some_and(|t| t.contains("Running in")),
+            .is_some_and(|t| t.contains("Running in") || t.contains("# Briefing")),
         msg: 0,
         queue: Vec::new(),
         rx,
         tx,
         log,
         mcp: mcp_server(flag("--mcp-config")),
+        allowed: flag("--allowedTools").map(|t| t.split(',').map(String::from).collect()).unwrap_or_default(),
     };
     loop {
         let v = if agent.queue.is_empty() {

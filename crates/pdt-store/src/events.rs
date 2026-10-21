@@ -131,6 +131,20 @@ impl Store {
         rows.iter().map(to_event).collect()
     }
 
+    /// A session's last `limit` events, oldest first.
+    pub async fn recent_session_events(
+        &self,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<ConversationEvent>, StoreError> {
+        let sql = format!(
+            "SELECT * FROM (SELECT {COLUMNS} FROM session_events WHERE session_id = ? ORDER BY pos DESC LIMIT ?) \
+             ORDER BY pos"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).bind(limit).fetch_all(&self.pool).await?;
+        rows.iter().map(to_event).collect()
+    }
+
     /// Every event of one kind, in conversation order.
     pub async fn session_events_of_kind(
         &self,

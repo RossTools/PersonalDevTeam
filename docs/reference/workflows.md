@@ -220,7 +220,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
 versions of agent, model, instructions, permission mode (null: project override, else host default) and tools (pdt-mcp
 tools; empty: the default five). Every save (`PUT /api/personas/{id}`) is a new version; `PATCH` changes name, role,
 description, `archived`; `GET /versions`, `/versions/{v}`, `/diff?from=&to=` (the fields that changed and a unified
-diff). Built-ins Refiner, Coder, Reviewer and QA (pdt-core `persona.rs`) are installed on the engine's first tick (and
+diff). Built-ins Refiner, Coder, Reviewer, QA and PM (the project manager, [agents.md](agents.md#the-pm-pdt-81);
+permission mode `ask`, the PM's tools) (pdt-core `persona.rs`) are installed on the engine's first tick (and
 on `GET /api/personas`), follow newer templates until edited, and can be archived, not deleted (`409
 builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_use`).
 

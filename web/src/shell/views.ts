@@ -1,15 +1,16 @@
-import { Files, Inbox, Search, Settings, TerminalSquare, Ticket, UserCog, Workflow, type LucideIcon } from 'lucide-react';
+import { BriefcaseBusiness, Files, Inbox, Search, Settings, TerminalSquare, Ticket, UserCog, Workflow, type LucideIcon } from 'lucide-react';
 
 /** The views in the rail. */
-export type ViewId = 'sessions' | 'inbox' | 'tickets' | 'workflows' | 'personas' | 'files' | 'settings';
+export type ViewId = 'sessions' | 'inbox' | 'pm' | 'tickets' | 'workflows' | 'personas' | 'files' | 'settings';
 
 /**
- * `phone: false` leaves a view out of the phone rail (at most five items there; Workflows, Personas and Files are in
- * the palette's Go to).
+ * `phone: false` leaves a view out of the phone rail (at most five items there; the PM, Workflows, Personas and Files
+ * are in the palette's Go to).
  */
 export const VIEWS: { id: ViewId; label: string; icon: LucideIcon; phone?: false }[] = [
   { id: 'sessions', label: 'Sessions', icon: TerminalSquare },
   { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'pm', label: 'Project manager', icon: BriefcaseBusiness, phone: false },
   { id: 'tickets', label: 'Tickets', icon: Ticket },
   { id: 'workflows', label: 'Workflows', icon: Workflow, phone: false },
   { id: 'personas', label: 'Personas', icon: UserCog, phone: false },

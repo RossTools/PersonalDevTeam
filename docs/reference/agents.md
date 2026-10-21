@@ -45,14 +45,17 @@ notifications get 202; `GET`/`DELETE` 405).
 - **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`
   (the default set), and `update_ticket` (Phase 7c: title and description of the session's own ticket, the store's
   `patch_ticket_by` as the agent; the built-in Refiner lists it), `catalog_search`, `catalog_get`, `workflow_get`,
-  `workflow_validate`, `workflow_dry_run`, `workflow_save` for personas that list them. Inputs are the API's request types (schemars schemas) and each tool
+  `workflow_validate`, `workflow_dry_run`, `workflow_save` for personas that list them, and the PM's tools ([The
+  PM](#the-pm-pdt-81)). Inputs are the API's request types (schemars schemas) and each tool
   runs the route's own function (ticket `get_one`, the store's comment, review `add_comment`, workflow
   `create_workflow` with author `agent`, so a new workflow starts disabled, and `save` with `propose`, so a change is a
   proposal the user accepts or discards). `tools/list` gives only the session's set (its
   persona version's, else the default); read-only tools carry `readOnlyHint`. Errors the agent can act on are tool
   results with `isError`.
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
-  `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set;
+  `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
+  less the asking tools (`create_ticket`, `edit_ticket`, `send_to_session`: pdt-core `ASKING_TOOLS`), which Claude
+  asks about per call;
   Codex conversations a thread `config` `mcp_servers.pdt` with `http_headers` and `default_tools_approval_mode =
   "approve"`, Codex terminals the same through `-c` with the token in `PDT_MCP_TOKEN` (`bearer_token_env_var`); Devin
   conversations an ACP `mcpServers` entry, and the mapping allows `mcp__pdt__*` permission requests at once (pdt-core
@@ -60,8 +63,49 @@ notifications get 202; `GET`/`DELETE` 405).
 - **Instructions.** `agent_context` names the server and the session's tools; a persona's step session also gets
   "Your role: <persona>" ([workflows.md](workflows.md#agent-steps-phase-7b)); a Personal project's session is told it
   works in a folder with no branches.
-- Tests: `fake-agent` calls a tool when a message's first line is `mcp: <tool> <json>` (`mcp-list` lists them);
-  crates/pdt-api/tests/agent_steps.rs serves the API on a local port for it.
+- Tests: `fake-agent` calls a tool when a message's first line is `mcp: <tool> <json>` (`mcp-list` lists them),
+  asking first, as Claude does, for a listed tool `--allowedTools` leaves out; crates/pdt-api/tests/agent_steps.rs and
+  pm.rs serve the API on a local port for it.
+
+## The PM (PDT-81)
+
+A host-level project manager to talk to (spec docs/superpowers/specs/2026-10-21-pm-persona-design.md; pdt-api `pm.rs`,
+pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
+
+- **Where it lives.** PM sessions are conversations in the **host project** (`kind: host`, key `_HOST`, folder
+  `<data dir>/pm`, no git, no workspace), made on first use and never listed (`list_projects` leaves it out). They
+  have no tab: the PM rail item (`Ctrl+] m`, the palette's Go to) shows them, and opening one from the Inbox goes there.
+- **Sessions.** `GET /api/pm` → `{current, sessions}` (`pm_sessions`: rotation `none` | `journal` | `done`, reason,
+  journal); `POST /api/pm/sessions {text?}` ends the current one (reason `user`, no journal) and starts one of the
+  built-in **PM** persona's current version (its agent and model; permission mode `ask` unless the persona sets one).
+  The web starts one with the first message when there is none; an ended session is read-only.
+- **Tools only.** pdt-mcp with the PM's set (pdt-core `PM_TOOLS`) and, for Claude, `--tools ""` (no built-in tools).
+  `get_overview` (projects with open tickets per stage, tickets in progress with branch/PR/CI/agent in words, the
+  Inbox, running agent sessions), `search_tickets`, `get_ticket`, `get_session` (state, open requests, last messages),
+  `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, the catalog and workflow tools
+  (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
+  `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
+  attempt, as the API) and `send_to_session` (through the outbox, "[PDT] From the project manager: …").
+- **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
+  Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s ticket,
+  `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
+  project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`). Codex and Devin can't ask per
+  tool, so there the asking tools are refused unless the project lets the PM act.
+- **Briefing.** Built by pdtd when the session's instructions are first written and kept in
+  `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
+  may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest
+  lines), the last three journal entries, and pinned notes (id, project, title). Sections are capped at 30 lines. The
+  instructions are pdt-core `pm::instructions`: who the PM is, its tools (the asking ones named), the persona's
+  instructions, the briefing.
+- **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal, host-wide or per project,
+  pinned or not. `GET /api/pm/notes?q=&project=&kind=` (words are quoted prefixes, all required; a project gets its
+  own and host-wide notes), `POST`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`. The PM
+  view's Notes page lists, searches, adds, edits, pins and deletes them.
+- **Rotation.** When a PM session ends a turn with its context at least 60 % full (the last `usage` event) or 24 h
+  old (`AppState.pm_rotate_age_ms`), PDT queues "[PDT] This PM session is ending…" through the outbox (rotation
+  `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). The user's next
+  message starts a new session.
+- **As a workflow step.** The PM persona can be an `agent` node's persona (triage); its asking tools still ask.
 
 ## Activity
 

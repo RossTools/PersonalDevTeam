@@ -16,6 +16,7 @@ mod mcp;
 mod overlap;
 mod parts;
 mod personas;
+mod pm;
 mod project_settings;
 mod projects;
 mod pty_ws;

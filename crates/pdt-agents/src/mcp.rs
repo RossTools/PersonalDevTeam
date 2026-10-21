@@ -17,8 +17,11 @@ pub struct McpServer {
     /// `http://127.0.0.1:<port>/api/mcp`.
     pub url: String,
     pub token: String,
-    /// The tools the session may call (so Claude can be told not to ask about them).
+    /// The tools the session may call without asking (Claude's `--allowedTools`). The session's asking tools
+    /// (PDT-81) are left out, so Claude asks before each call.
     pub tools: Vec<String>,
+    /// Only PDT's tools (the PM): Claude gets `--tools ""`, none of its built-in ones (no shell, no files).
+    pub only_pdt_tools: bool,
     /// Claude's `--mcp-config` file (written by [`write_claude_config`]).
     pub claude_config: Option<PathBuf>,
 }
@@ -56,6 +59,10 @@ pub fn write_claude_config(dir: &Path, m: &McpServer) -> std::io::Result<PathBuf
 pub fn claude_args(m: &McpServer) -> Vec<String> {
     let Some(file) = &m.claude_config else { return vec![] };
     let mut a = vec!["--mcp-config".to_string(), file.to_string_lossy().into_owned()];
+    if m.only_pdt_tools {
+        a.push("--tools".into());
+        a.push(String::new());
+    }
     if !m.tools.is_empty() {
         a.push("--allowedTools".into());
         a.push(m.tools.iter().map(|t| format!("mcp__{SERVER_NAME}__{t}")).collect::<Vec<_>>().join(","));
@@ -107,6 +114,7 @@ mod tests {
             token: "s1.ab".into(),
             tools: vec!["get_ticket".into(), "submit_outcome".into()],
             claude_config: dir.map(|d| d.join(CLAUDE_CONFIG_FILE)),
+            only_pdt_tools: false,
         }
     }
 
@@ -128,6 +136,8 @@ mod tests {
         assert!(a[1].ends_with("mcp.json"));
         assert_eq!(a[2..], ["--allowedTools", "mcp__pdt__get_ticket,mcp__pdt__submit_outcome"]);
         assert!(claude_args(&server(None)).is_empty());
+        let pm = McpServer { only_pdt_tools: true, ..server(Some(dir.path())) };
+        assert_eq!(claude_args(&pm)[2..4], ["--tools", ""], "no built-in tools");
     }
 
     #[test]

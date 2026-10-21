@@ -339,7 +339,7 @@ pub fn merge_flag(squash: bool, merge: bool, rebase: bool, queue: bool) -> Optio
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn run(id: u64, workflow: &str, sha: &str, at: &str, state: CiState) -> CiRun {
@@ -369,7 +369,7 @@ mod tests {
         assert!(!p.merged_at("abc"), "closed without merging");
     }
 
-    fn pr() -> PullRequestStatus {
+    pub(crate) fn pr() -> PullRequestStatus {
         PullRequestStatus {
             number: 12,
             url: "https://gh/pull/12".into(),

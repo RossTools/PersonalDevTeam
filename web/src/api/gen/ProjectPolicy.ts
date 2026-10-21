@@ -13,4 +13,8 @@ requireApproval: boolean,
 /**
  * The most active attempts the project may have (null: no cap; auto-start then keeps to one).
  */
-maxRunningAttempts: number | null, autoStart: AutoStart, };
+maxRunningAttempts: number | null, autoStart: AutoStart, 
+/**
+ * The PM may create and edit the project's tickets and message its sessions without asking (PDT-81).
+ */
+pmActs: boolean, };

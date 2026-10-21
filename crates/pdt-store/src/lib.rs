@@ -5,6 +5,7 @@ mod host;
 mod inbox;
 mod migrate;
 mod personas;
+mod pm;
 mod review;
 mod runs;
 mod sessions;
@@ -17,6 +18,7 @@ pub use error::StoreError;
 pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::NewEvent;
 pub use host::ProjectSettings;
+pub use pm::{NoteFilter, PmSessionRow};
 pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt, TicketError};
 pub use workflows::{RUN_RETENTION_MS, RunFilter, SessionMessage};
 pub use workspaces::DeleteWorkspace;
@@ -33,9 +35,9 @@ pub struct Store {
     host_defaults: std::sync::Arc<pdt_core::host::HostSettings>,
 }
 
-type ProjectRow = (String, String, String, String, i64, Option<String>, String);
+pub(crate) type ProjectRow = (String, String, String, String, i64, Option<String>, String);
 
-fn to_project((id, name, repo_path, base_branch, created_at, key, kind): ProjectRow) -> Project {
+pub(crate) fn to_project((id, name, repo_path, base_branch, created_at, key, kind): ProjectRow) -> Project {
     Project {
         id,
         name,
@@ -48,7 +50,7 @@ fn to_project((id, name, repo_path, base_branch, created_at, key, kind): Project
     }
 }
 
-const PROJECT_COLUMNS: &str = "id, name, repo_path, base_branch, created_at, key, kind";
+pub(crate) const PROJECT_COLUMNS: &str = "id, name, repo_path, base_branch, created_at, key, kind";
 
 impl Store {
     /// A write transaction: `BEGIN IMMEDIATE`, so it takes the write lock up front. A deferred one that reads first
@@ -141,7 +143,8 @@ impl Store {
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, StoreError> {
-        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects ORDER BY created_at, id");
+        // The host project (the PM's, PDT-81) is PDT's own: never listed.
+        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE kind != 'host' ORDER BY created_at, id");
         let rows: Vec<ProjectRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(to_project).collect())
     }

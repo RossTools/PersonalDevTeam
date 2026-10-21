@@ -16,4 +16,8 @@ agentPermissionMode?: string, mergeBy?: MergeBy, requireApproval?: boolean,
 /**
  * 0 clears it (no cap).
  */
-maxRunningAttempts?: number, autoStart?: AutoStart, };
+maxRunningAttempts?: number, autoStart?: AutoStart, 
+/**
+ * The PM may create and edit tickets and message sessions here without asking (PDT-81).
+ */
+pmActs?: boolean, };

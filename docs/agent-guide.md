@@ -21,8 +21,9 @@ no authentication, and reports errors as `{code, message}`.
 ## PDT's tools (pdt-mcp)
 
 Most sessions PDT starts also get PDT's MCP server, named `pdt` (in Claude its tools are `mcp__pdt__<tool>`). Its
-tools know which session is calling, so they need no session, ticket or attempt ids, and they run without asking. Use
-them for what they cover; the API above stays available for everything else.
+tools know which session is calling, so they need no session, ticket or attempt ids, and they run without asking,
+except the PM's `create_ticket`, `edit_ticket` and `send_to_session`, which the person confirms per call unless the
+project lets the PM act. Use them for what they cover; the API above stays available for everything else.
 
 | Tool | Does |
 |---|---|
@@ -33,6 +34,9 @@ them for what they cover; the API above stays available for everything else.
 | `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
 | `update_ticket` | `{title?, description?}`: rewrites this session's own ticket (the Refiner's tool; a session gets it when its persona lists it) |
 | `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save` | the workflow catalog and documents, for sessions whose persona has them; a change to a workflow is a proposal the person accepts, and a new workflow starts disabled |
+| `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs` | the PM's view of every project: open tickets per stage, tickets in progress with PR and CI, the Inbox, running sessions; ticket search; a session's state and last messages; workflow runs and their steps |
+| `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (host-wide or per project; pinned ones go in every PM briefing) and the journal entry a PM session writes as it ends |
+| `create_ticket`, `edit_ticket`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket, a message to a session; each waits for the person's yes unless the project lets the PM act |
 
 A session that runs a step of a workflow (a **persona** such as the Reviewer) has a section "Your role" in its
 instructions: it finishes the step with `submit_outcome`, never by what it writes, and asks the person with
@@ -86,7 +90,7 @@ that is the person's consent. Check a document with `/check` or `/validate` and 
 | `POST /api/workflows/validate` · `/dry-run` | `{doc}` checks a document; `{doc or workflowId, event: {type, payload}}` shows what each step would do, changing nothing |
 | `GET /api/workflows/<id>/versions` · `/diff?from=&to=` | the versions (`status`: `saved`, `proposed`, `discarded`) and what changed between two |
 | `GET /api/workflow-templates` | templates (`params`, a `doc` with `{{params.<id>}}`); `POST …/<id>/instantiate {params, name, scope, projectId}` makes a workflow from one, off |
-| `GET /api/personas` | the personas agent steps run (Refiner, Coder, Reviewer, QA and the person's own): agent, model, instructions, permission mode, tools |
+| `GET /api/personas` | the personas agent steps run (Refiner, Coder, Reviewer, QA, PM and the person's own): agent, model, instructions, permission mode, tools |
 | `GET /api/inbox` | what waits on the person: questions, approvals, stalled steps, loop limits and gates |
 
 ## Worktrees

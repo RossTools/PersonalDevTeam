@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 12] = [
+pub const ALL_TOOLS: [&str; 23] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -25,7 +25,52 @@ pub const ALL_TOOLS: [&str; 12] = [
     "workflow_validate",
     "workflow_dry_run",
     "workflow_save",
+    "get_overview",
+    "search_tickets",
+    "get_session",
+    "list_workflow_runs",
+    "search_notes",
+    "save_note",
+    "delete_note",
+    "write_journal",
+    "create_ticket",
+    "edit_ticket",
+    "send_to_session",
 ];
+
+/// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
+/// card) unless the project's policy lets the PM act, so they are never in Claude's `--allowedTools`.
+pub const ASKING_TOOLS: [&str; 3] = ["create_ticket", "edit_ticket", "send_to_session"];
+
+/// The PM persona's tools (PDT-81 spec §4).
+pub const PM_TOOLS: [&str; 21] = [
+    "get_ticket",
+    "submit_outcome",
+    "ask_user",
+    "add_ticket_comment",
+    "catalog_search",
+    "catalog_get",
+    "workflow_get",
+    "workflow_validate",
+    "workflow_dry_run",
+    "workflow_save",
+    "get_overview",
+    "search_tickets",
+    "get_session",
+    "list_workflow_runs",
+    "search_notes",
+    "save_note",
+    "delete_note",
+    "write_journal",
+    "create_ticket",
+    "edit_ticket",
+    "send_to_session",
+];
+
+/// Whether a call to `tool` needs the user's yes (see [`ASKING_TOOLS`]).
+pub fn asks(tool: &str) -> bool {
+    ASKING_TOOLS.contains(&tool)
+}
 
 const MAX_NAME: usize = 60;
 const MAX_INSTRUCTIONS: usize = 32 * 1024;
@@ -341,7 +386,33 @@ them); try each point of \"Done when\".\n\
 - Don't fix anything yourself.\n\
 - Finish with `submit_outcome`: `pass`, or `fail` with what failed and how to reproduce it.\n",
     },
+    BuiltinPersona {
+        id: "pm",
+        name: "PM",
+        role: "pm",
+        description: "The project manager you talk to; also triage in a workflow.",
+        permission_mode: Some(PermissionMode::Ask),
+        tools: &PM_TOOLS,
+        instructions: PM_INSTRUCTIONS,
+    },
 ];
+
+/// The PM persona's instructions (PDT-81). PDT's own PM context and the briefing come before them.
+pub const PM_INSTRUCTIONS: &str = "You are the PM: the user's project manager across every project in PDT.\n\n\
+- Ground every answer in PDT's data: look it up with your tools (`get_overview`, `search_tickets`, `get_ticket`, \
+`get_session`, `list_workflow_runs`) instead of guessing, and name the tickets (`PDT-12`) and sessions you mean.\n\
+- \"Why is it stuck?\": read the ticket, its attempt, PR and CI, its sessions (activity, open requests, last \
+messages), its workflow runs and the Inbox, then say what it waits on and who can unblock it.\n\
+- Drafting a ticket: write the title and description (scope, out of scope, \"Done when\") in your reply first, then \
+call `create_ticket`; the user confirms it (PDT shows them the call) unless the project lets you act. The same for \
+`edit_ticket` and `send_to_session`. Never claim you made a change the tool did not report.\n\
+- Workflows: find node kinds with `catalog_search`/`catalog_get`, check documents with `workflow_validate` and \
+`workflow_dry_run`; `workflow_save` only proposes a version or saves a disabled workflow for the user to enable.\n\
+- Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
+with `save_note` (pin what every session should see); look things up with `search_notes`. When PDT tells you the \
+session is ending, write your journal with `write_journal`.\n\
+- In a workflow step, finish with `submit_outcome` and one of the step's outcomes.\n\
+- Be brief: short answers, lists over prose.\n";
 
 pub fn builtin_persona(id: &str) -> Option<&'static BuiltinPersona> {
     BUILTIN_PERSONAS.iter().find(|p| p.id == id)
@@ -407,13 +478,25 @@ mod tests {
     }
 
     #[test]
-    fn the_builtins_are_the_four_pipeline_roles() {
+    fn the_builtins_are_the_pipeline_roles_and_the_pm() {
         let names: Vec<_> = BUILTIN_PERSONAS.iter().map(|p| p.name).collect();
-        assert_eq!(names, ["Refiner", "Coder", "Reviewer", "QA"]);
+        assert_eq!(names, ["Refiner", "Coder", "Reviewer", "QA", "PM"]);
         for p in BUILTIN_PERSONAS {
             assert!(p.setup().validate().is_ok(), "{}", p.id);
             assert!(p.instructions.contains("submit_outcome"), "{}", p.id);
         }
-        assert!(builtin_persona("qa").is_some() && builtin_persona("pm").is_none());
+        assert!(builtin_persona("qa").is_some() && builtin_persona("nobody").is_none());
+    }
+
+    #[test]
+    fn the_pm_tools_are_pdt_tools_and_the_asking_ones_are_among_them() {
+        for t in PM_TOOLS.iter().chain(&ASKING_TOOLS) {
+            assert!(ALL_TOOLS.contains(t), "{t}");
+        }
+        let pm = builtin_persona("pm").unwrap().setup();
+        assert_eq!(pm.tool_set().len(), PM_TOOLS.len());
+        assert!(ASKING_TOOLS.iter().all(|t| pm.tool_set().iter().any(|x| x == t)));
+        assert!(asks("create_ticket") && !asks("get_overview") && !asks("add_ticket_comment"));
+        assert_eq!(pm.permission_mode, Some(PermissionMode::Ask));
     }
 }

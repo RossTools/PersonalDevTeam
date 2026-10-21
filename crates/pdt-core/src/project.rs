@@ -27,7 +27,17 @@ impl Project {
     pub fn is_personal(&self) -> bool {
         self.kind == ProjectKind::Personal
     }
+    /// A git repository: not a Personal project nor the host project.
+    pub fn has_repo(&self) -> bool {
+        self.kind == ProjectKind::Repo
+    }
+    pub fn is_host(&self) -> bool {
+        self.kind == ProjectKind::Host
+    }
 }
+
+/// The host project's key: no user key can have `_` (PDT-81).
+pub const HOST_PROJECT_KEY: &str = "_HOST";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +48,9 @@ pub enum ProjectKind {
     Repo,
     /// No repository: agent tasks such as briefs and triage.
     Personal,
+    /// PDT's own project for host-level sessions (the PM's, PDT-81): one per host, made by the store, no repository,
+    /// never listed.
+    Host,
 }
 
 impl ProjectKind {
@@ -45,10 +58,11 @@ impl ProjectKind {
         match self {
             ProjectKind::Repo => "repo",
             ProjectKind::Personal => "personal",
+            ProjectKind::Host => "host",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [ProjectKind::Repo, ProjectKind::Personal].into_iter().find(|k| k.as_str() == s)
+        [ProjectKind::Repo, ProjectKind::Personal, ProjectKind::Host].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -234,6 +248,8 @@ pub enum ValidationError {
     EmptyBranch,
     #[error("a project key is 2–10 letters and digits starting with a letter (got {0:?})")]
     BadKey(String),
+    #[error("PDT makes its own host project; add a repository or a Personal project")]
+    HostKind,
 }
 
 impl NewProject {
@@ -243,6 +259,9 @@ impl NewProject {
             return Err(ValidationError::EmptyName);
         }
         let kind = self.kind.unwrap_or_default();
+        if kind == ProjectKind::Host {
+            return Err(ValidationError::HostKind);
+        }
         let key = self.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
         if kind == ProjectKind::Personal {
             return Ok(ValidProject { name: name.into(), repo_path: String::new(), base_branch: None, key, kind });

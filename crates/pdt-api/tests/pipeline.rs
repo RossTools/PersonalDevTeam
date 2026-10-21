@@ -226,7 +226,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     let (_, s) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
     assert_eq!(
         s["policy"],
-        json!({"mergeBy": "user", "requireApproval": true, "maxRunningAttempts": 1, "autoStart": "off"})
+        json!({"mergeBy": "user", "requireApproval": true, "maxRunningAttempts": 1, "autoStart": "off", "pmActs": false})
     );
 
     let (s, started) =

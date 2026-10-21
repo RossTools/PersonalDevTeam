@@ -232,17 +232,28 @@ pub fn user_line(session_id: &str, text: &str, images: &[(String, String)], now:
 /// The one-line subject of a tool call: the command, the file, the pattern, the URL.
 pub fn tool_title(tool: &str, input: &Value) -> String {
     let field = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    let raw = match tool {
-        "Bash" => field("command"),
-        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => {
+    let pdt = tool.strip_prefix(&format!("mcp__{}__", crate::mcp::SERVER_NAME));
+    let raw = match (tool, pdt) {
+        // PDT's asking tools (PDT-81): what the user says yes to.
+        (_, Some("create_ticket")) => format!("New ticket in {}: {}", field("project"), field("title")),
+        (_, Some("edit_ticket")) => {
+            let changes: Vec<&str> = ["title", "description", "stage", "priority", "labels"]
+                .into_iter()
+                .filter(|k| input.get(*k).is_some_and(|v| !v.is_null()))
+                .collect();
+            format!("Edit {}: {}", field("ticket"), changes.join(", "))
+        }
+        (_, Some("send_to_session")) => format!("To session {}: {}", field("session"), field("text")),
+        ("Bash", _) => field("command"),
+        ("Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit", _) => {
             let f = field("file_path");
             if f.is_empty() { field("notebook_path") } else { f }
         }
-        "Grep" | "Glob" => field("pattern"),
-        "WebFetch" => field("url"),
-        "WebSearch" => field("query"),
-        "Task" | "Agent" => field("description"),
-        "Skill" => field("skill"),
+        ("Grep" | "Glob", _) => field("pattern"),
+        ("WebFetch", _) => field("url"),
+        ("WebSearch", _) => field("query"),
+        ("Task" | "Agent", _) => field("description"),
+        ("Skill", _) => field("skill"),
         _ => String::new(),
     };
     let line = raw.lines().next().unwrap_or("").trim();
@@ -1695,6 +1706,13 @@ not json"#,
     fn titles_and_user_lines() {
         assert_eq!(tool_title("Edit", &json!({"file_path": "src/a.rs"})), "src/a.rs");
         assert_eq!(tool_title("Mystery", &json!({"x": 1})), "");
+        let t = tool_title(
+            "mcp__pdt__create_ticket",
+            &json!({"project": "PDT", "title": "Add a logout", "description": "x"}),
+        );
+        assert_eq!(t, "New ticket in PDT: Add a logout");
+        let t = tool_title("mcp__pdt__edit_ticket", &json!({"ticket": "PDT-4", "stage": "ready", "title": null}));
+        assert_eq!(t, "Edit PDT-4: stage");
         let long = "x".repeat(300);
         assert_eq!(tool_title("Bash", &json!({"command": long})).chars().count(), 201);
         let l = user_line("s", "hi", &[], true);
