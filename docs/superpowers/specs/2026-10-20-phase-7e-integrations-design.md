@@ -12,7 +12,7 @@ docs/superpowers/specs/2026-10-20-workflows-and-pm-vision.md). Agent templates a
 | 7e-2: Jira Cloud and Buildkite (work setup) | PDT-85 | §6 |
 | 7e-3: Radarr, Sonarr, Plex; MCP tools as actions; brief archive | PDT-86 | §7 |
 
-Dropped for now (decided with the user 2026-10-20, to revisit): email search and archive, Google Calendar upsert. The
+Dropped for now (decided with the user 2026-10-20; PDT-91): email search and archive, Google Calendar upsert. The
 Hermes jobs that used them run their existing scripts as command steps (§5).
 
 ## 1. Shared rules
