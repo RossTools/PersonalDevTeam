@@ -27,6 +27,13 @@ function contextReadout(usage: ReturnType<typeof latestUsage>): string | null {
   return `Context ${pct}% · ${thousands(usage.contextUsed)} / ${thousands(usage.contextWindow)}`;
 }
 
+/** "Running in the background: Wait for CI": what the agent left running, which reports back in a turn of its own. */
+export function backgroundLine(tasks: { description: string }[]): string | null {
+  if (tasks.length === 0) return null;
+  const names = tasks.map((t) => t.description || 'a task').join(', ');
+  return tasks.length === 1 ? `Running in the background: ${names}` : `${tasks.length} running in the background: ${names}`;
+}
+
 /**
  * An agent session shown as a conversation (spec §7): the message list over the composer. Sending also reopens a
  * parked, stopped or ended conversation, so there is no separate restart flow.
@@ -83,6 +90,7 @@ export function ConversationPane({ session, conv, banner, className }: {
   };
   const interrupt = () => void runAction(() => api.interruptSession(session.id));
   const usage = latestUsage(conv.rows);
+  const background = backgroundLine(state?.backgroundTasks ?? []);
   const searchFiles = useCallback((q: string) => api.sessionFiles(session.id, q), [session.id]);
   const upload = useCallback((file: File) => api.uploadAttachment(session.id, file), [session.id]);
   const imageUrl = useCallback((id: string) => api.attachmentUrl(session.id, id), [session.id]);
@@ -110,6 +118,11 @@ export function ConversationPane({ session, conv, banner, className }: {
         }
       />
       {banner}
+      {background && (
+        <p className="truncate px-4 pb-1 text-center text-meta text-muted-foreground" role="status" title={background}>
+          {background}
+        </p>
+      )}
       {conv.status === 'reconnecting' && (
         <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">Reconnecting…</p>
       )}

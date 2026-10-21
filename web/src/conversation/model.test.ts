@@ -75,7 +75,7 @@ describe('conversation reducer', () => {
   });
 
   it('keeps the latest state', () => {
-    const state = { live: true, turnRunning: true, permissionMode: 'ask' as const, pending: [], terminalOpen: false };
+    const state = { live: true, turnRunning: true, permissionMode: 'ask' as const, pending: [], terminalOpen: false, backgroundTasks: [] };
     expect(run([{ type: 'state', state }]).state).toEqual(state);
   });
 });

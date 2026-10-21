@@ -442,6 +442,18 @@ pub struct PendingMessage {
     pub notice: bool,
 }
 
+/// Work the agent left running in the background (a shell command, a sub-agent, a monitor). It reports back on its
+/// own, so the conversation keeps its process while any run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BackgroundTask {
+    pub id: String,
+    pub description: String,
+    /// The agent's kind of task, e.g. Claude's `local_bash`, `local_agent`.
+    pub kind: String,
+}
+
 /// What a conversation is doing, pushed to every viewer on change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -471,6 +483,9 @@ pub struct ConversationState {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub billing: Option<String>,
+    /// Background tasks still running.
+    #[serde(default)]
+    pub background_tasks: Vec<BackgroundTask>,
 }
 
 /// Server → client frames on `WS /api/sessions/{id}/events`.

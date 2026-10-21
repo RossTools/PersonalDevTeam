@@ -19,9 +19,9 @@ use pdt_agents::adapter::{
 use pdt_core::activity::{Activity, needs_attention};
 use pdt_core::conversation::draft::{DRAFT_PROMPT, TicketDraft, draft_schema};
 use pdt_core::conversation::{
-    ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, ConversationServerMessage, ConversationState,
-    Delivery, DeltaField, NoticeLevel, PendingMessage, PermissionMode, RequestState, SendMessage, SessionMode,
-    TurnPhase, TurnStatus, conversation_activity, valid_message,
+    ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, BackgroundTask, ConversationServerMessage,
+    ConversationState, Delivery, DeltaField, NoticeLevel, PendingMessage, PermissionMode, RequestState, SendMessage,
+    SessionMode, TurnPhase, TurnStatus, conversation_activity, valid_message,
 };
 use pdt_core::host::CredentialPolicy;
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus, is_scrubbed};
@@ -128,6 +128,8 @@ struct ConvState {
     billing: Option<String>,
     /// A rate limit is hit until then (ms): nothing is sent on PDT's own (spec §14).
     limited_until: Option<i64>,
+    /// The agent's background tasks still running: the process is not parked while there are any.
+    background_tasks: Vec<BackgroundTask>,
 }
 
 impl ConvState {
@@ -143,6 +145,7 @@ impl ConvState {
             agent_version: self.agent_version.clone(),
             terminal_open: self.terminal_open,
             billing: self.billing.clone(),
+            background_tasks: self.background_tasks.clone(),
         }
     }
 
@@ -238,6 +241,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             terminal_open: false,
             billing: None,
             limited_until: None,
+            background_tasks: Vec::new(),
         }),
         activity_write: tokio::sync::Mutex::new(()),
         exits: tokio::sync::watch::channel(0).0,
@@ -401,6 +405,14 @@ async fn pump(
                 }
             }
             AdapterOutput::History(turns) => import_history(&st, &c, &turns).await,
+            AdapterOutput::BackgroundTasks(tasks) => {
+                {
+                    let mut s = c.state();
+                    s.background_tasks = tasks;
+                    s.last_active = Instant::now();
+                }
+                c.push_state();
+            }
             AdapterOutput::Exited { code, stderr_tail, expected } => {
                 let current = c.state().generation == generation;
                 if !current {
@@ -419,6 +431,7 @@ async fn pump(
                     s.turn_running = false;
                     s.open_requests.clear();
                     s.partial.clear();
+                    s.background_tasks.clear();
                     if !expected {
                         let code = code.map_or("no exit code".to_string(), |c| format!("exit code {c}"));
                         let mut why = format!("{} stopped unexpectedly ({code}).", agent.label());
@@ -737,8 +750,8 @@ pub(crate) async fn forget(st: &AppState, id: &str) {
     }
 }
 
-/// Parks every live conversation that has been idle (no turn, request or pending message) for `idle_park`. Returns how
-/// many it parked.
+/// Parks every live conversation that has been idle (no turn, request, pending message or background task) for
+/// `idle_park`: parking would stop its background tasks before they report back. Returns how many it parked.
 pub async fn park_idle_conversations(st: &AppState) -> usize {
     let mut parked = 0;
     let convs: Vec<Arc<Conv>> =
@@ -750,6 +763,7 @@ pub async fn park_idle_conversations(st: &AppState) -> usize {
                 && !s.turn_running
                 && s.open_requests.is_empty()
                 && s.pending.is_empty()
+                && s.background_tasks.is_empty()
                 && s.last_active.elapsed() >= st.conversations.idle_park
         };
         if idle {

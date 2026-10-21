@@ -5,6 +5,9 @@
 //! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
 //! - `exit` — writes to stderr and exits 3.
 //! - `env: NAME` — says whether NAME is set.
+//! - `bg: <ms>` — starts a background task and ends the turn; when the task finishes `<ms>` later it reports it to
+//!   itself like Claude (a replayed `task-notification` message), which starts a turn that says so. Closing stdin
+//!   first ends it with the process.
 //! - `who` — says the session id, whether it was resumed, its model and mode, whether it got PDT's instructions, and
 //!   the `session_id` the message carried.
 //! - `/clear` — like Claude's: `conversation_reset` (whose `new_conversation_id` names no transcript), then an init
@@ -44,6 +47,8 @@ struct Agent {
     msg: u64,
     queue: Vec<Value>,
     rx: mpsc::Receiver<Option<Value>>,
+    /// Feeds `rx`: background tasks report through it.
+    tx: mpsc::Sender<Option<Value>>,
     log: Option<std::fs::File>,
     /// pdt-mcp's URL and Authorization header, from `--mcp-config`.
     mcp: Option<(String, String)>,
@@ -181,6 +186,23 @@ impl Agent {
         }
         out(json!({"type":"assistant","message":{"id":id,"model":self.model,"role":"assistant",
             "content":[{"type":"text","text":text}]},"parent_tool_use_id":null,"session_id":self.session}));
+    }
+
+    /// A background task finished: Claude tells itself, which starts a turn.
+    fn task_done(&mut self, v: &Value) {
+        let started = Instant::now();
+        let task = v["task"].as_str().unwrap_or("");
+        out(json!({"type":"system","subtype":"task_updated","task_id":task,"patch":{"status":"completed"}}));
+        out(json!({"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":self.session}));
+        self.init();
+        let note = format!(
+            "<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n<summary>\
+            Background command &quot;sleep&quot; completed (exit code 0)</summary>\n</task-notification>"
+        );
+        out(json!({"type":"user","message":{"role":"user","content":note},"session_id":self.session,
+            "parent_tool_use_id":null,"uuid":self.next_id("u"),"isReplay":true,"origin":{"kind":"task-notification"}}));
+        self.say("The background task finished.");
+        self.result("success", started);
     }
 
     fn result(&self, subtype: &str, started: Instant) {
@@ -353,6 +375,16 @@ impl Agent {
                 },
             };
             self.say(&reply);
+        } else if let Some(ms) = text.strip_prefix("bg:") {
+            let task = self.next_id("task");
+            out(json!({"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":task,
+                "task_type":"local_bash","description":"Sleep in the background"}],"session_id":self.session}));
+            let (tx, ms) = (self.tx.clone(), ms.trim().parse().unwrap_or(1000));
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(ms));
+                let _ = tx.send(Some(json!({"type":"fake_task_done","task":task})));
+            });
+            self.say("Started it in the background.");
         } else if text == "exit" {
             eprintln!("fake-agent: crashing as asked");
             std::process::exit(3);
@@ -419,7 +451,9 @@ fn main() {
         return draft(&args, &session, resumed);
     }
     let (tx, rx) = mpsc::channel();
+    let stdin_tx = tx.clone();
     std::thread::spawn(move || {
+        let tx = stdin_tx;
         for line in std::io::stdin().lock().lines() {
             let Ok(line) = line else { break };
             // Typed into the TUI stand-in (no `-p`): leave like Claude's TUI does.
@@ -443,6 +477,7 @@ fn main() {
         msg: 0,
         queue: Vec::new(),
         rx,
+        tx,
         log,
         mcp: mcp_server(flag("--mcp-config")),
     };
@@ -460,6 +495,8 @@ fn main() {
         }
         if v["type"] == "user" {
             agent.turn(v);
+        } else if v["type"] == "fake_task_done" {
+            agent.task_done(&v);
         }
     }
 }
