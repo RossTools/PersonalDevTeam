@@ -26,7 +26,7 @@ import { invalidateTickets } from '../tickets/queries';
 import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
-import { isClosed, looksLikeKey } from '../tickets/model';
+import { looksLikeKey } from '../tickets/model';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
@@ -107,9 +107,10 @@ export function AppShell() {
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
   const ws = useWorkspaces();
-  // A ticket workspace whose attempt merged while the ticket is open: its banner shows above every tab (PDT-71).
+  // A ticket workspace whose attempt merged: its banner shows above every tab (PDT-71) while the ticket is open, or
+  // Done with its worktree still there (the banner checks that, PDT-97).
   const wsTicket = ws.workspace?.ticket;
-  const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && !isClosed(wsTicket.stage) ? wsTicket.id : null;
+  const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && wsTicket.stage !== 'wont_do' ? wsTicket.id : null;
   const backlog = useBacklog();
   // The view changes once the tab is there: one that can't open (its ticket or session is gone) leaves the user where
   // they were with the error, not on whatever tab was current (PDT-93).

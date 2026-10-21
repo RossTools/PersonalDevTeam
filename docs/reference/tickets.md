@@ -139,8 +139,10 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   in the worktree, the attempt's sessions and everything in the workspace Start made for the ticket
   (`attempts.workspace_id`), removes the worktree (and the branch with `deleteBranch`; `branchNote` when it stayed),
   closes the ticket's tab elsewhere, deletes that workspace with its tabs, and pulls the base branch (`pull`).
-  `keepWorktree` only moves to Done and pulls (`outcome: kept`).
-- A merged attempt shows the banner "Move to Done and remove the worktree" (web/src/tickets/actions.ts
+  `keepWorktree` only moves to Done and pulls (`outcome: kept`). The route runs it in a task of its own, so it
+  completes when the caller goes away first (PDT-97: an agent finishing its own ticket is stopped by it).
+- A merged attempt shows the banner "Move to Done and remove the worktree" (once Done with the worktree still there,
+  kept or left behind, "Remove the worktree"; web/src/tickets/actions.ts
   `finishMerged`; in the ticket peek, and above every tab of the ticket's workspace while it is on screen, PDT-71,
   else in the ticket tab). It calls the command, asks once to stop what still runs and once to discard uncommitted
   changes when the command says so, and calls it again; declining moves the ticket to Done and keeps the rest.
