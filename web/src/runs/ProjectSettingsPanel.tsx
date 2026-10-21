@@ -340,11 +340,14 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
           </SettingsRow>
         </>
       )}
-      <SettingsRow label="Running tickets at once" description="Start asks before going over it; auto-start never does (one when there is no cap).">
+      <SettingsRow
+        label="Running tickets at once"
+        description="Counts every ticket with an active attempt, however it started. Start asks before going over it; auto-start never goes over it, and starts one at a time when there is no cap."
+      >
         <Select<string>
           aria-label="Running tickets at once"
-          className="w-40 max-w-full"
-          options={[{ value: NO_CAP, label: 'No cap' }, ...CAPS.map((n) => ({ value: String(n), label: String(n) }))]}
+          className="w-56 max-w-full"
+          options={[{ value: NO_CAP, label: p?.autoStart && p.autoStart !== 'off' ? 'No cap (auto-start: 1)' : 'No cap' }, ...CAPS.map((n) => ({ value: String(n), label: String(n) }))]}
           value={cap}
           disabled={!settings}
           onChange={(v) => save.mutate({ maxRunningAttempts: v === NO_CAP ? 0 : Number(v) }, done)}
