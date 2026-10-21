@@ -248,6 +248,10 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
             end_step_extras(st, &s.id).await;
         }
     }
+    let scratch = super::nodes::command::scratch_dir(&st.data_dir, &run.id);
+    if tokio::fs::try_exists(&scratch).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_dir_all(&scratch).await;
+    }
     run.status = status;
     run.output = output;
     run.error = error;

@@ -300,6 +300,10 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(ticket::Move));
         kinds.push(Box::new(ticket::Comment));
         kinds.push(Box::new(agent::Agent));
+        kinds.push(Box::new(command::Command));
+        kinds.push(Box::new(http::Http));
+        kinds.push(Box::new(discord::Discord));
+        kinds.push(Box::new(notify::Notify));
         Catalog::new(kinds)
     })
 }

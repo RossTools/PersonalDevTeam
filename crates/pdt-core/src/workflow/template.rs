@@ -159,9 +159,21 @@ fn placeholder(p: &TemplateParam) -> Value {
     }
 }
 
-/// Every param at its default or a placeholder, so a template's document can be validated.
+/// Every param at its default or a placeholder, so a template's document can be validated. A required text param
+/// with no default stays a reference (`{{params.repo}}`): a value only instantiating gives, which kinds check as one.
 pub fn placeholder_values(params: &[TemplateParam]) -> Map<String, Value> {
-    params.iter().map(|p| (p.id.clone(), placeholder(p))).collect()
+    params
+        .iter()
+        .map(|p| {
+            let v = match p.kind {
+                ParamType::String | ParamType::Text if p.required && p.default.is_none() => {
+                    json!(format!("{{{{params.{}}}}}", p.id))
+                }
+                _ => placeholder(p),
+            };
+            (p.id.clone(), v)
+        })
+        .collect()
 }
 
 /// The template's document with `{{params.x}}` filled in from `values`.
@@ -226,6 +238,9 @@ mod tests {
         assert!(err(json!({"stage": "done", "on": "yes"})).contains("true or false"));
         assert!(err(json!({"stage": "done", "x": 1})).contains("no param x"));
         assert_eq!(Value::Object(placeholder_values(&ps)), json!({"on": true, "stage": "review", "n": 0}));
+        let mut repo = param("repo", ParamType::String);
+        repo.required = true;
+        assert_eq!(Value::Object(placeholder_values(&[repo])), json!({"repo": "{{params.repo}}"}), "left for later");
     }
 
     #[test]

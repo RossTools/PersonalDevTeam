@@ -2,9 +2,13 @@
 
 pub mod agent;
 pub mod call;
+pub mod command;
 pub mod condition;
+pub mod discord;
 pub mod end;
 pub mod gate;
+pub mod http;
+pub mod notify;
 pub mod schedule;
 pub mod session_send;
 pub mod state;

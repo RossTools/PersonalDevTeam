@@ -60,7 +60,8 @@ impl NodeKind for IssueOpened {
 
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: IssueTriggerConfig = parse(config)?;
-        if let Some(bad) = c.repos.iter().find(|r| r.split('/').filter(|p| !p.trim().is_empty()).count() != 2) {
+        let named = |r: &&String| !r.contains("{{") && r.split('/').filter(|p| !p.trim().is_empty()).count() != 2;
+        if let Some(bad) = c.repos.iter().find(named) {
             return Err(format!("{bad:?} is not owner/name"));
         }
         Ok(())

@@ -128,6 +128,7 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
         (has(ev::TICKET_STAGE_CHANGED), "the ticket moves to another stage".into()),
         (has(ev::TICKET_COMMENTED), "the user comments on the ticket".into()),
         (has(ev::TICKET_OVERLAP_FOUND), "another ticket in flight changes the same files".into()),
+        (has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED), "someone comments on or reviews the pull request".into()),
     ]
     .into_iter()
     .filter_map(|(on, what)| on.then_some(what))
@@ -158,6 +159,11 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
                                   auto-merge back on as it says.",
         ),
         (merged, "Merged: the work is in. Push nothing more to the branch and start nothing new on it."),
+        (
+            has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED),
+            "A pull request comment or review: from a reviewer; make the change it asks for (then run the checks and \
+             push), or answer it on the pull request (`gh pr comment`, or a reply to the review comment).",
+        ),
         (
             has(ev::TICKET_COMMENTED),
             "A ticket comment: the user wrote it; answer or act on it as you would their own \

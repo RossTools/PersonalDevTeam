@@ -18,12 +18,14 @@ pub const PR_NOTICES: &str = "pr-notices";
 pub const FINISH_MERGED: &str = "finish-merged";
 pub const COMMENTS_TO_AGENT: &str = "comments-to-agent";
 pub const BASE_MOVED: &str = "base-moved";
+pub const PR_FEEDBACK: &str = "pr-feedback";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, doc: pr_notices },
     Builtin { id: FINISH_MERGED, enabled: true, doc: finish_merged },
     Builtin { id: COMMENTS_TO_AGENT, enabled: true, doc: comments_to_agent },
     Builtin { id: BASE_MOVED, enabled: false, doc: base_moved },
+    Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
 ];
 
 fn doc(v: serde_json::Value) -> WorkflowDoc {
@@ -113,6 +115,34 @@ fn base_moved() -> WorkflowDoc {
                 "attempt": "{{trigger.attemptId}}", "text": "{{trigger.notice.text}}", "dedupe": "{{trigger.notice.key}}"}},
         ],
         "edges": [{"from": "behind", "to": "tell"}],
+    }))
+}
+
+fn pr_feedback() -> WorkflowDoc {
+    let people = json!([
+        {"left": "{{trigger.byOwner}}", "op": "falsy"},
+        {"left": "{{trigger.isBot}}", "op": "falsy"},
+    ]);
+    let mut reviewed = people.clone();
+    reviewed.as_array_mut().unwrap().extend([
+        json!({"left": "{{trigger.state}}", "op": "ne", "right": "approved"}),
+        json!({"left": "{{trigger.body}}", "op": "truthy"}),
+    ]);
+    doc(json!({
+        "name": "PR comments to the agent",
+        "description": "Comments and reviews on a ticket's pull request from other people (not yours, not bots') go \
+                        to the attempt's agent once it is idle. A review's line comments come one by one; approvals \
+                        and empty reviews are left out.",
+        "nodes": [
+            {"id": "commented", "kind": "pr.commented", "version": 1, "position": {"x": 0, "y": 0},
+             "config": {"where": people}},
+            {"id": "reviewed", "kind": "pr.reviewed", "version": 1, "position": {"x": 0, "y": 140},
+             "config": {"where": reviewed}},
+            {"id": "tell", "kind": "session.send", "version": 1, "position": {"x": 320, "y": 70}, "config": {
+                "attempt": "{{trigger.attemptId}}", "text": "{{trigger.notice.text}}",
+                "dedupe": "{{trigger.notice.key}}", "timeline": "pr"}},
+        ],
+        "edges": [{"from": "commented", "to": "tell"}, {"from": "reviewed", "to": "tell"}],
     }))
 }
 
