@@ -8,14 +8,18 @@ import {
 } from "react-aria-components"
 import { CheckIcon, MinusIcon } from "lucide-react"
 
-/** The box plus its label (children), as one React Aria `<label>`; the whole row is the hit target. */
+/**
+ * The box plus its label (children), as one React Aria `<label>`; the whole row is the hit target. `relative` keeps
+ * React Aria's visually hidden (absolute) input inside the label: anchored elsewhere, focusing it on a click scrolls
+ * an overflow-hidden ancestor (the app shell) to reach it, shifting the whole UI.
+ */
 function Checkbox({ className, children, ...props }: CheckboxProps) {
   return (
     <CheckboxPrimitive
       data-slot="checkbox"
       className={composeRenderProps(className, (className) =>
         cn(
-          "group/checkbox inline-flex items-center gap-2 text-sm text-foreground outline-none select-none pointer-coarse:min-h-control-touch data-disabled:cursor-not-allowed data-disabled:opacity-50",
+          "group/checkbox relative inline-flex items-center gap-2 text-sm text-foreground outline-none select-none pointer-coarse:min-h-control-touch data-disabled:cursor-not-allowed data-disabled:opacity-50",
           className
         )
       )}

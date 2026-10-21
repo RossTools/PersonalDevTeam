@@ -7,6 +7,7 @@ pub mod cond;
 pub mod diff;
 pub mod doc;
 pub mod events;
+pub mod news;
 pub mod refs;
 pub mod template;
 pub mod tpl;

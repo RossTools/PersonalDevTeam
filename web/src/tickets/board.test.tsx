@@ -231,6 +231,9 @@ describe('board lanes', () => {
     expect(within(column('ALP-10 · In progress')).getByText('Part 11')).toBeInTheDocument();
     expect(within(column('To do')).getByText('Ticket 1')).toBeInTheDocument();
     expect(within(column('To do')).queryByText('Part 12')).not.toBeInTheDocument();
+    // A long first lane (Done) stops at half the screen and scrolls on its own, so the lanes below stay in reach.
+    expect(column('Done')).toHaveClass('max-h-[50dvh]');
+    expect(column('ALP-10 · Done')).not.toHaveClass('max-h-[50dvh]');
     // Parents are lane headers, never cards.
     expect(screen.queryByRole('listitem', { name: /ALP-10 Phase five/ })).not.toBeInTheDocument();
   });

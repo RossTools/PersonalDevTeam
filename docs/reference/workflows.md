@@ -3,9 +3,9 @@
 Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md and 2026-10-20-phase-7d-builder-design.md (vision:
 2026-10-20-workflows-and-pm-vision.md).
 Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, templates, API
-records), pdt-store `event_log.rs` and `workflows.rs` (migrations 0021, 0022), pdt-api `workflow/` (catalog, engine,
-nodes, outbox, built-ins, templates, repo files, routes) and `finish.rs` (`ticket.finish`); web `src/workflows/` and
-`web/ui/FlowGraph.tsx`.
+records, what reaches an agent), pdt-store `event_log.rs` and `workflows.rs` (migrations 0021, 0022), pdt-api
+`workflow/` (catalog, engine, nodes, outbox, built-ins, templates, repo files, routes) and `finish.rs`
+(`ticket.finish`); web `src/workflows/` and `web/ui/FlowGraph.tsx`.
 
 ## Event log
 
@@ -49,6 +49,9 @@ nodes, outbox, built-ins, templates, repo files, routes) and `finish.rs` (`ticke
     changes) → quiet end.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user with an active attempt → `session.send`.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
+- What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
+  `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
+  are told.
 
 ## Catalog
 
