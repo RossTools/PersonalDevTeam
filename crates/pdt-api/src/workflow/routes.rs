@@ -487,6 +487,10 @@ pub(crate) async fn cancel_run(
 #[ts(export)]
 pub struct GateAnswer {
     pub choice: String,
+    /// The user's note with the choice (e.g. why they rejected): it goes on the run's ticket as their comment.
+    #[serde(default)]
+    #[ts(optional)]
+    pub text: Option<String>,
 }
 
 pub(crate) async fn answer(
@@ -496,7 +500,7 @@ pub(crate) async fn answer(
 ) -> Result<Json<RunDetail>, ApiError> {
     let a = body(payload)?;
     run_detail(&st, &id).await?;
-    engine::answer(&st, &id, &step, &a.choice).await.map_err(|e| conflict("cannot_answer", e))?;
+    engine::answer(&st, &id, &step, &a.choice, a.text.as_deref()).await.map_err(|e| conflict("cannot_answer", e))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 

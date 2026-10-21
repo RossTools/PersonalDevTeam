@@ -331,3 +331,30 @@ async fn agent_steps_wait_for_a_slot_under_the_host_cap() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn rejecting_at_accept_with_a_note_comments_on_the_ticket_and_goes_back_to_code() {
+    let env = setup().await;
+    let t = ticket(&env, "All by hand").await;
+    pipeline(&env, json!({"codeBy": "user", "reviewBy": "user", "qaBy": "user"}), &[]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    for outcome in ["submitted", "approved", "pass"] {
+        let mine = inbox_item(&env, "manual", &t).await;
+        answer(&env, &mine, json!({"choice": format!("outcome:{outcome}")})).await;
+    }
+    let accept = inbox_item(&env, "gate", &t).await;
+    answer(&env, &accept, json!({"choice": "reject", "text": "The button is the wrong colour."})).await;
+    // Back to Code (a manual step here), and the note is the user's comment, which reaches the coder.
+    let again = inbox_item(&env, "manual", &t).await;
+    assert_eq!(again["title"], "Your turn: Code");
+    let events = timeline(&env, &t).await;
+    let note = events["events"].as_array().unwrap().iter().find(|e| e["kind"] == "comment").cloned().unwrap();
+    assert_eq!(
+        (note["actor"].as_str(), note["body"].as_str(), note["data"]["choice"].as_str()),
+        (Some("user"), Some("The button is the wrong colour."), Some("reject"))
+    );
+    assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "code");
+}

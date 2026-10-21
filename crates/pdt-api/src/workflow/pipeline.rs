@@ -13,8 +13,9 @@ what is out of scope, and a \"Done when\" list someone can check. Rewrite the ti
 user (`ask_user`) about anything only they can decide.";
 
 const CODE_PROMPT: &str = "Build this ticket on its branch. On a later pass, address every point in the earlier \
-review and QA outcomes (`get_ticket` lists them, with their line comments). Run the project's checks, commit, push \
-and open a pull request against the base branch when the project works with them.";
+review and QA outcomes and in the user's newest comments, e.g. why they rejected it at Accept (`get_ticket` lists \
+them, with their line comments). Run the project's checks, commit, push and open a pull request against the base \
+branch when the project works with them.";
 
 const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: the branch's diff against its base. \
 Put each finding on its line (`comments` in `submit_outcome`).";

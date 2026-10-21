@@ -98,7 +98,8 @@ Every node also has an `error` port: taken once its retries are spent, if it has
   told), `failed` (`error` names the node) or `cancelled`. Limits: `maxVisits` per node (loop limit, default 25),
   `maxSteps` (200) and `maxRuntimeMs` (7 days) per run, `timeoutMs` per execution (actions default 5 min).
 - `POST /api/workflow-runs/{id}/retry` (a failed run, from its failed step), `/cancel`, and
-  `/steps/{step}/answer {choice}` (a waiting gate). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
+  `/steps/{step}/answer {choice, text?}` (a waiting gate; the user's `text` goes on the run's ticket as their comment,
+naming the workflow, run and choice, so "Ticket comments to the agent" forwards it, and is in the gate's output). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
   `GET /api/workflow-runs/{id}` (with steps).
 - Per-workflow state: `workflow_state`, `GET /api/workflows/{id}/state`.
 
@@ -256,7 +257,7 @@ open item per step and kind. Approvals are
 not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
 session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
 accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
-`{choice}` (a gate's choice; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
+`{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
 `outcome:<id>` or `stop` at a loop limit) or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
 closes a question or stalled item (the step keeps waiting). A gate answered through
 `/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too.
@@ -264,7 +265,9 @@ closes a question or stalled item (the step keeps waiting). A gate answered thro
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
 over / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
-`o` opens the ticket, `e` dismisses. An item whose ticket has a worktree also offers Open changes and Run… (the
-worktree's configured runs and tests); both open their tab right after the ticket's tab in the workspace that has it
-(its Start workspace; AppShell's `TicketTabsContext`, `openChanges` with `ticketId`), moving an existing changes tab
-there, and switch to it.
+`o` opens the ticket, `e` dismisses. A gate has a note box: the note goes with the choice (as the user's ticket
+comment, so a rejection tells the coder what to change). An item on a ticket with an attempt also offers Open coder
+session (the attempt's running agent session), Open changes and Run… (the worktree's configured runs and tests); each
+opens its tab right after the ticket's tab in the workspace that has it (its Start workspace; AppShell's
+`TicketTabsContext`, `openChanges` with `ticketId`), moving an existing changes tab there (a session or run tab that
+exists is shown where it is), and switches to it.

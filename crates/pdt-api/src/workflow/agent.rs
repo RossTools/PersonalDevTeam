@@ -710,7 +710,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Gate => {
             let choice = answer.choice.as_deref().ok_or("choose one of the gate's choices")?;
             let (run, step) = (item.run_id.as_deref().unwrap_or_default(), item.step_id.as_deref().unwrap_or_default());
-            super::engine::answer(st, run, step, choice).await?;
+            super::engine::answer(st, run, step, choice, answer.text.as_deref()).await?;
             Ok(json!({"choice": choice}))
         }
         InboxKind::Manual => {

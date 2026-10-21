@@ -34,7 +34,7 @@ import { UpdateBanner } from '../host/UpdateBanner';
 import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
-import { findTab, nextNeedingYou } from '../workspaces/model';
+import { findTab, nextNeedingYou, type Item } from '../workspaces/model';
 import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { NewTabChooser } from '../workspaces/NewTabChooser';
 import { Sidebar } from '../workspaces/Sidebar';
@@ -142,7 +142,15 @@ export function AppShell() {
       await ws.focusItem({ kind: 'run', id: r.id }, r.projectId);
     });
   }, [ws.focusItem, ws.refresh]);
-  const ticketTabs = useMemo(() => ({ placementNear, openRun }), [placementNear, openRun]);
+  const openNear = useCallback((item: Item, projectId: string, ticketId: string) => {
+    setView('sessions');
+    const existing = findTab(ws.workspaces, item);
+    const near = placementNear(ticketId);
+    if (existing) ws.selectTab(existing.tab);
+    else if (near) void runAction(() => ws.openIn(item, near.workspaceId, near.position));
+    else void runAction(() => ws.focusItem(item, projectId));
+  }, [ws.workspaces, ws.selectTab, ws.openIn, ws.focusItem, placementNear]);
+  const ticketTabs = useMemo(() => ({ placementNear, openRun, openNear }), [placementNear, openRun, openNear]);
   // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
   // otherwise the server puts them at the end of the project workspace.
   const startTicket = useCallback((t: { id: string; projectId: string }, opts?: { here?: boolean }) => {
