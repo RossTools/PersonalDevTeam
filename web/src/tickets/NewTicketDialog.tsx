@@ -158,7 +158,7 @@ export function NewTicketDialog({
             />
           ) : (
             <div className="min-h-28 rounded-md border border-border p-2">
-              {description.trim() ? <Markdown>{description}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
+              {description.trim() ? <Markdown breaks>{description}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
             </div>
           )}
         </div>
