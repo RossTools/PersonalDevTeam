@@ -206,6 +206,13 @@ function render() {
           ]}
         />
         <Select aria-label="Small select" size="sm" value="a" onChange={() => {}} options={[{ value: 'a', label: 'Small' }]} />
+        <Select
+          aria-label="Searchable select"
+          searchable
+          value="main"
+          onChange={() => {}}
+          options={['main', 'phase-3c-1-ui', 'pdt-PDT-92-issues', 'release/1.2'].map((b) => ({ value: b, label: b }))}
+        />
         <Input aria-label="Disabled input" disabled value="disabled" className="w-32" readOnly />
       </Row>
       <Row label="SuggestInput (pick a suggestion with one click, or type and press Enter)">

@@ -74,4 +74,26 @@ describe('Select', () => {
     render(<Select aria-label="X" disabled options={options} value="claude" onChange={() => {}} />);
     expect(screen.getByRole('button', { name: /X/ })).toBeDisabled();
   });
+
+  it('searchable: typing in the filter field narrows the list, Enter picks the first match', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const branches = ['main', 'feature/login', 'feature/logout', 'fix/crash'].map((b) => ({ value: b, label: b }));
+    render(<Select aria-label="Branch" searchable options={branches} value="main" onChange={onChange} />);
+    await user.click(screen.getByRole('button', { name: /Branch/ }));
+    const filter = screen.getByRole('searchbox', { name: 'Filter' });
+    await waitFor(() => expect(filter).toHaveFocus());
+    await user.keyboard('logo');
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['feature/logout']);
+    await user.keyboard('{Enter}');
+    expect(onChange).toHaveBeenCalledWith('feature/logout');
+  });
+
+  it('searchable: says when nothing matches', async () => {
+    const user = userEvent.setup();
+    render(<Select aria-label="Branch" searchable options={options} value="claude" onChange={() => {}} />);
+    await user.click(screen.getByRole('button', { name: /Branch/ }));
+    await user.keyboard('zzz');
+    expect(screen.getByText('No matches')).toBeInTheDocument();
+  });
 });
