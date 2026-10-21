@@ -17,6 +17,7 @@ export type KeyAction =
   | { type: 'palette' }
   | { type: 'backlog' }
   | { type: 'board' }
+  | { type: 'inbox' }
   | { type: 'help' };
 
 /** The action for the key pressed after the prefix, or null for an unbound key. */
@@ -33,6 +34,7 @@ export function actionFor(key: string): KeyAction | null {
     case 'k': return { type: 'palette' };
     case 'l': return { type: 'backlog' };
     case 'b': return { type: 'board' };
+    case 'i': return { type: 'inbox' };
     case '?': return { type: 'help' };
     default: return null;
   }
@@ -49,6 +51,7 @@ export const KEY_HELP: [string, string][] = [
   ['k', 'Command palette (also ⌘K on a Mac)'],
   ['l', 'Tickets (backlog)'],
   ['b', 'Tickets (board)'],
+  ['i', 'Inbox (then j / k, Enter, o, e)'],
   ['?', 'Show these keys'],
   ['Ctrl+] twice', 'Send Ctrl+] to the terminal'],
 ];

@@ -34,8 +34,8 @@ const states: [string, AgentStateInput][] = [
 ];
 
 const projects: Project[] = [
-  { id: 'p1', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/work/pdt', baseBranch: 'main', createdAt: 0, githubRepo: 'ross/pdt' },
-  { id: 'p2', name: 'Demo', key: 'DEMO', repoPath: '/work/demo', baseBranch: 'trunk', createdAt: 0, githubRepo: null },
+  { id: 'p1', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/work/pdt', baseBranch: 'main', createdAt: 0, githubRepo: 'ross/pdt', kind: 'repo' },
+  { id: 'p2', name: 'Demo', key: 'DEMO', repoPath: '/work/demo', baseBranch: 'trunk', createdAt: 0, githubRepo: null, kind: 'repo' },
 ];
 const wt = (id: string, projectId: string, branch: string): Worktree =>
   ({ id, projectId, branch, path: `/work/${branch}`, baseCommit: 'abc', createdAt: 0, missing: false });

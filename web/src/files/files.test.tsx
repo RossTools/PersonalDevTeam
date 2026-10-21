@@ -8,7 +8,7 @@ import { FileViewer, FolderTree, useFolderView } from './FolderView';
 vi.mock('./CodeViewer', () => ({ CodeViewer: ({ name, text }: { name: string; text: string }) => <pre data-testid="code" data-name={name}>{text}</pre> }));
 afterEach(() => vi.unstubAllGlobals());
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null, kind: 'repo' };
 const entry = (path: string, dir = false, status: string | null = null) => ({ name: path.split('/').pop()!, path, dir, status });
 
 function Harness() {

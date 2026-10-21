@@ -36,7 +36,7 @@ export interface StartDialogProps {
 }
 
 /**
- * Start a ticket: agent (or no session), branch, base, permission prompts, and where the tabs open. Open blockers and overlaps with
+ * Start a ticket: agent (or no session), branch, base (neither for a Personal project), permission prompts, and where the tabs open. Open blockers and overlaps with
  * active tickets are listed first; then the primary action is **Wait** (wait until clear) and **Start anyway**
  * (`mode: force`; the danger variant for a conflict) is the other. The server's own check (`start_blocked`) does the
  * same.
@@ -49,6 +49,8 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const areaConfig = useProjectAreas(t?.projectId ?? null);
   const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;
   const project = projects.data?.find((p) => p.id === t?.projectId) ?? null;
+  // A Personal project has no repository: the attempt works in the ticket's folder, with no branch or worktree.
+  const personal = project?.kind === 'personal';
   // The host's default agent and view until this dialog picks others.
   const defaults = useAgentDefaults();
   const [pickedAgent, setAgent] = useState<AgentKind | null>(null);
@@ -125,8 +127,8 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
     const body: StartTicket = {
       agent,
       ...(noSession ? { noSession: true } : { sessionMode }),
-      ...(branch.trim() ? { branch: branch.trim() } : {}),
-      ...(base.trim() ? { base: base.trim() } : {}),
+      ...(!personal && branch.trim() ? { branch: branch.trim() } : {}),
+      ...(!personal && base.trim() ? { base: base.trim() } : {}),
       ...(noSession ? {} : { permissionMode }),
       ...(newWorkspace ? { newWorkspace: true } : placement ? { tab: placement } : {}),
       mode,
@@ -177,7 +179,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
         q.isPending ? <Skeleton lines={3} label="Loading ticket" /> : <Alert tone="error">{q.error?.message ?? 'Ticket not found.'}</Alert>
       ) : (
         <form id="start-ticket" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); primary(); }}>
-          {active && <Alert tone="info">{t.key} already has an active attempt on {t.attempt!.branch}.</Alert>}
+          {active && <Alert tone="info">{t.key} already has an active attempt{t.attempt!.branch ? ` on ${t.attempt!.branch}` : ''}.</Alert>}
           {closed && <Alert tone="info">{t.key} is closed. Move it back to Ready to start it.</Alert>}
           {blockers.length > 0 && (
             <Alert tone="warning" title={`Blocked by ${blockers.length === 1 ? 'an open ticket' : `${blockers.length} open tickets`}`}>
@@ -225,7 +227,9 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
             label="Session"
             hint={
               noSession
-                ? 'No agent yet: just the branch, worktree and the ticket in its workspace.'
+                ? personal
+                  ? "No agent yet: just the ticket's folder and the ticket in its workspace."
+                  : 'No agent yet: just the branch, worktree and the ticket in its workspace.'
                 : sessionMode === 'conversation' ? 'The ticket is its first message.' : "The agent's own terminal, with the ticket as its first prompt."
             }
           >
@@ -246,12 +250,20 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               />
             </Field>
           )}
-          <Field label="Branch" hint="Made from the base with a worktree; an existing .worktrees folder for it is reused.">
-            <Input mono value={branch} placeholder={t.defaultBranch} maxLength={200} onChange={(e) => setBranch(e.target.value)} />
-          </Field>
-          <Field label="Base branch">
-            <Input mono value={base} placeholder={project?.baseBranch ?? 'main'} maxLength={200} onChange={(e) => setBase(e.target.value)} />
-          </Field>
+          {personal ? (
+            <p className="text-xs text-muted-foreground">
+              {project.name} is a Personal project (no repository): the work happens in the ticket's own folder, with no branch or worktree.
+            </p>
+          ) : (
+            <>
+              <Field label="Branch" hint="Made from the base with a worktree; an existing .worktrees folder for it is reused.">
+                <Input mono value={branch} placeholder={t.defaultBranch} maxLength={200} onChange={(e) => setBranch(e.target.value)} />
+              </Field>
+              <Field label="Base branch">
+                <Input mono value={base} placeholder={project?.baseBranch ?? 'main'} maxLength={200} onChange={(e) => setBase(e.target.value)} />
+              </Field>
+            </>
+          )}
           {!noSession && sessionMode === 'conversation' && (
             <Field label="Permissions">
               <PermissionModeSelect value={permissionMode} onChange={setPermission} size="md" className="w-48" />

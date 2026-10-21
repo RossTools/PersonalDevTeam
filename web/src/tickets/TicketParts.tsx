@@ -381,15 +381,43 @@ function iconFor(e: TicketEvent) {
   return undefined;
 }
 
+/** What an agent step's outcome event carries (spec 7b §4). */
+interface OutcomeData {
+  summary?: string;
+  persona?: string;
+  workflowName?: string;
+}
+
+/** Who the timeline names: an agent's events read as by its persona (or "Agent"), never as by you. */
+function actorOf(e: TicketEvent): string {
+  if (e.actor !== 'agent') return e.actor;
+  const persona = (e.data as { persona?: unknown } | null)?.persona;
+  return typeof persona === 'string' && persona ? persona : 'Agent';
+}
+
+/** An outcome's summary and the workflow it came from. */
+function outcomeBody(e: TicketEvent) {
+  const d = (e.data ?? {}) as OutcomeData;
+  if (!d.summary && !d.workflowName) return undefined;
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {d.summary && <Markdown>{d.summary}</Markdown>}
+      {d.workflowName && <span className="text-meta text-muted-foreground">from workflow {d.workflowName}</span>}
+    </div>
+  );
+}
+
 function toItem(e: TicketEvent): TimelineItem {
   const icon = iconFor(e);
+  const outcome = e.kind === 'outcome' ? outcomeBody(e) : undefined;
   return {
     id: e.id,
-    actor: e.actor,
+    actor: actorOf(e),
     time: e.createdAt,
     title: eventTitle(e),
     ...(icon ? { icon } : {}),
     ...(e.kind === 'comment' && e.body ? { body: <Markdown>{e.body}</Markdown> } : {}),
+    ...(outcome ? { body: outcome } : {}),
     // The review comments sent (they go with the worktree once it is removed; the timeline keeps them).
     ...(e.kind === 'feedback' && e.body
       ? {

@@ -11,14 +11,18 @@ import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { repoUrl } from './github';
 import { useOpenChanges } from '../review/open';
 
-/** Name, key and base branch: one form, one Save (spec §6.1). Folder and GitHub link below. */
+/**
+ * Name, key and base branch: one form, one Save (spec §6.1). Folder and GitHub link below. A Personal project has no
+ * repository, so no base branch either.
+ */
 function Identity({ project }: { project: Project }) {
+  const personal = project.kind === 'personal';
   const qc = useQueryClient();
   const errorId = useId();
   const [name, setName] = useState(project.name);
   const [key, setKey] = useState(project.key);
   const [base, setBase] = useState(project.baseBranch);
-  const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id) });
+  const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id), enabled: !personal });
   const branchOptions = (branches.data ?? []).map((b) => ({ value: b.name, label: b.local ? b.name : `${b.name} (origin)` }));
   if (!branchOptions.some((o) => o.value === project.baseBranch)) branchOptions.unshift({ value: project.baseBranch, label: project.baseBranch });
   const save = useMutation({
@@ -60,18 +64,26 @@ function Identity({ project }: { project: Project }) {
         >
           <Input id={keyId} aria-label="Project key" mono className="w-28 uppercase" maxLength={10} value={key} onChange={(e) => setKey(e.target.value)} />
         </SettingsRow>
-        <SettingsRow
-          label="Base branch"
-          htmlFor={baseId}
-          description="New worktrees and tickets branch from it, and their changes are reviewed and merged against it."
-        >
-          <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" options={branchOptions} value={base} onChange={setBase} />
-        </SettingsRow>
+        {!personal && (
+          <SettingsRow
+            label="Base branch"
+            htmlFor={baseId}
+            description="New worktrees and tickets branch from it, and their changes are reviewed and merged against it."
+          >
+            <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" options={branchOptions} value={base} onChange={setBase} />
+          </SettingsRow>
+        )}
         {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}
         {save.isError && <Alert id={errorId} tabIndex={-1} tone="error">{save.error.message}</Alert>}
-        <SettingsRow label="Repository folder">
-          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
-        </SettingsRow>
+        {personal ? (
+          <SettingsRow label="Folder" description="Personal project (no repository): each ticket works in its own folder here.">
+            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
+          </SettingsRow>
+        ) : (
+          <SettingsRow label="Repository folder">
+            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
+          </SettingsRow>
+        )}
         {project.githubRepo && (
           <SettingsRow label="GitHub">
             <Link external href={repoUrl(project.githubRepo)} className="text-xs">{project.githubRepo} on GitHub</Link>
@@ -196,12 +208,15 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
   );
 }
 
-/** A project's page in Settings: identity, worktrees, run settings on this host, removal. */
+/**
+ * A project's page in Settings: identity, worktrees, run settings on this host, removal. A Personal project (no
+ * repository) has no worktrees, runs or merging.
+ */
 export function ProjectPage({ project, onRemoved }: { project: Project; onRemoved: () => void }) {
   return (
     <Page title={project.name} actions={<ProjectKey projectKey={project.key} />}>
       <Identity key={`${project.name}:${project.key}:${project.baseBranch}`} project={project} />
-      <Worktrees project={project} />
+      {project.kind !== 'personal' && <Worktrees project={project} />}
       <ProjectSettingsPanel project={project} />
       <RemoveProject project={project} onRemoved={onRemoved} />
     </Page>

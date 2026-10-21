@@ -262,6 +262,10 @@ export function eventTitle(e: TicketEvent): string {
       return `Sent ${n} review comment${n === 1 ? '' : 's'} to the agent`;
     }
     case 'review': return 'Approved the changes';
+    case 'outcome': {
+      const d = (e.data ?? {}) as { persona?: string; outcome?: string; by?: string };
+      return `${d.persona ?? 'Agent'}: ${d.outcome ?? '?'}${d.by === 'user' ? ' (taken over by you)' : ''}`;
+    }
   }
 }
 

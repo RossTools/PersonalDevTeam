@@ -63,8 +63,8 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Tickets', 'Files', 'Settings']);
-    for (const name of ['Inbox', 'Board', 'Personas', 'Search']) {
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Inbox', 'Tickets', 'Personas', 'Files', 'Settings']);
+    for (const name of ['Board', 'Search']) {
       expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
     }
     await userEvent.click(within(rail).getByRole('button', { name: 'Files' }));
@@ -731,7 +731,7 @@ describe('phone', () => {
     stubWorkspaces({ 'GET /api/health': health(true, 8512) });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Tickets', 'Search', 'Settings']);
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Inbox', 'Tickets', 'Search', 'Settings']);
     const bar = (await screen.findByRole('button', { name: 'Workspaces and agents' })).parentElement!;
     // Compact on phones (the tabs need the room); the port is in the tooltip.
     expect(await within(bar).findByText('DEV')).toHaveAttribute('title', 'Development instance on port 8512');

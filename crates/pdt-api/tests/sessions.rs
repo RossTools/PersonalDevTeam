@@ -311,12 +311,16 @@ set /p x=
     } else {
         (
             name.to_string(),
+            // A launch line (PDT's instructions in it) is longer than one write, so concurrent launches take a lock
+            // to keep their lines whole.
             format!(
                 "#!/bin/sh
-printf '%s\\n' \"$*\" >> \"{}\"
+until mkdir \"{f}.lock\" 2>/dev/null; do sleep 0.01; done
+printf '%s\\n' \"$*\" >> \"{f}\"
+rmdir \"{f}.lock\"
 read x
 ",
-                args_file.display()
+                f = args_file.display()
             ),
         )
     };

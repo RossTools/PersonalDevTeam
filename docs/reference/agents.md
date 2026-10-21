@@ -32,6 +32,35 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
 - The project's Settings page has the instructions box and "Set up with an agent" / "Write instructions with an
   agent", which start a conversation in the main checkout with the matching prompt.
 
+## pdt-mcp (Phase 7b)
+
+PDT's MCP server (pdt-api `mcp/`; spec docs/superpowers/specs/2026-10-20-phase-7b-agent-steps-design.md §2):
+`POST /api/mcp`, Streamable HTTP answered with JSON (`initialize`, `ping`, `tools/list`, `tools/call`; batches;
+notifications get 202; `GET`/`DELETE` 405).
+
+- **Identity.** `Authorization: Bearer <session id>.<HMAC-SHA256 of it>` under the host key `<data dir>/mcp.key` (32
+  random bytes, owner-only, made on first use). Nothing is stored per session; a token works while its session exists,
+  is an agent session and is not `finished` (401 otherwise). A tool call knows its session, and through it the
+  project, ticket (the session's attempt's, else its agent step's) and agent step.
+- **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`
+  (the default set), and `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`,
+  `workflow_save` for personas that list them. Inputs are the API's request types (schemars schemas) and each tool
+  runs the route's own function (ticket `get_one`, the store's comment, review `add_comment`, workflow `create_as` /
+  `save_as` with author `agent`, so a new workflow starts disabled). `tools/list` gives only the session's set (its
+  persona version's, else the default); read-only tools carry `readOnlyHint`. Errors the agent can act on are tool
+  results with `isError`.
+- **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
+  `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set;
+  Codex conversations a thread `config` `mcp_servers.pdt` with `http_headers` and `default_tools_approval_mode =
+  "approve"`, Codex terminals the same through `-c` with the token in `PDT_MCP_TOKEN` (`bearer_token_env_var`); Devin
+  conversations an ACP `mcpServers` entry, and the mapping allows `mcp__pdt__*` permission requests at once (pdt-core
+  `conversation/devin.rs`). Devin terminals get no pdt-mcp (their MCP servers live in a file of Devin's own).
+- **Instructions.** `agent_context` names the server and the session's tools; a persona's step session also gets
+  "Your role: <persona>" ([workflows.md](workflows.md#agent-steps-phase-7b)); a Personal project's session is told it
+  works in a folder with no branches.
+- Tests: `fake-agent` calls a tool when a message's first line is `mcp: <tool> <json>` (`mcp-list` lists them);
+  crates/pdt-api/tests/agent_steps.rs serves the API on a local port for it.
+
 ## Activity
 
 - Claude sessions get `--settings <data dir>/sessions/<id>/claude-settings.json` (hooks run

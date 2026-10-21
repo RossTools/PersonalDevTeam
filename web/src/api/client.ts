@@ -78,6 +78,14 @@ import type { FinishResult } from './gen/FinishResult';
 import type { Workflow } from './gen/Workflow';
 import type { WorkflowPatch } from './gen/WorkflowPatch';
 import type { WorkflowRun } from './gen/WorkflowRun';
+import type { InboxAnswer } from './gen/InboxAnswer';
+import type { InboxList } from './gen/InboxList';
+import type { NewPersona } from './gen/NewPersona';
+import type { Persona } from './gen/Persona';
+import type { PersonaDiff } from './gen/PersonaDiff';
+import type { PersonaPatch } from './gen/PersonaPatch';
+import type { PersonaVersion } from './gen/PersonaVersion';
+import type { SavePersona } from './gen/SavePersona';
 
 /** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
 export interface SessionPatch {
@@ -299,4 +307,20 @@ export const api = {
   deleteToken: () => request<void>('/api/host/token', { method: 'DELETE' }),
   hostChecks: () => request<HostChecks>('/api/host/checks'),
   refreshChecks: () => request<HostChecks>('/api/host/checks/refresh', { method: 'POST' }),
+  /** What waits on the user: questions, approvals, stalled steps, loop limits, gates (Phase 7b). */
+  inbox: (project?: string) => request<InboxList>(`/api/inbox${queryString({ project })}`),
+  answerInbox: (id: string, a: InboxAnswer) =>
+    request<Record<string, unknown>>(`/api/inbox/${enc(id)}/answer`, { method: 'POST', body: JSON.stringify(a) }),
+  dismissInbox: (id: string) => request<void>(`/api/inbox/${enc(id)}/dismiss`, { method: 'POST' }),
+  listPersonas: () => request<Persona[]>('/api/personas'),
+  createPersona: (p: NewPersona) => request<Persona>('/api/personas', { method: 'POST', body: JSON.stringify(p) }),
+  /** A new version. */
+  savePersona: (id: string, p: SavePersona) =>
+    request<Persona>(`/api/personas/${enc(id)}`, { method: 'PUT', body: JSON.stringify(p) }),
+  patchPersona: (id: string, p: PersonaPatch) =>
+    request<Persona>(`/api/personas/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deletePersona: (id: string) => request<void>(`/api/personas/${enc(id)}`, { method: 'DELETE' }),
+  personaVersions: (id: string) => request<PersonaVersion[]>(`/api/personas/${enc(id)}/versions`),
+  personaDiff: (id: string, from: number, to: number) =>
+    request<PersonaDiff>(`/api/personas/${enc(id)}/diff${queryString({ from, to })}`),
 };

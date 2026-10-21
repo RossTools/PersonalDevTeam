@@ -30,6 +30,8 @@ describe('prefix keys', () => {
   it('opens the board with b, and lists it in the help', () => {
     expect(actionFor('b')).toEqual({ type: 'board' });
     expect(KEY_HELP.find(([k]) => k === 'b')?.[1]).toMatch(/board/);
+    expect(actionFor('i')).toEqual({ type: 'inbox' });
+    expect(KEY_HELP.find(([k]) => k === 'i')?.[1]).toMatch(/Inbox/);
   });
 
   it('runs the action for the key after the prefix and hides both from the page', () => {
