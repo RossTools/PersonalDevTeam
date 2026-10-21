@@ -53,7 +53,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
     changes) → quiet end.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user (`actor` = `user`, not an agent's comment
-    through the API or a workflow's) with an active attempt → `session.send`.
+    through the API or a workflow's) with an active attempt → `session.send`. A note given with a gate's choice is the
+    user's comment too, but carries `workflowId` and is skipped: that run passes it on itself.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
@@ -179,6 +180,9 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   to the attempt's own session). `reuse` (Coder): the session this node used earlier in the run, else the attempt's
   running agent session, else a new one that becomes the attempt's; a reused session gets the step through the outbox
   (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
+  On a later pass in the same session (sent back by Review, QA or a rejection) it gets only why it is back (the
+  sending step's outcome and summary, or the user's gate choice and note: pdt-core `next_pass_message`) and the
+  outcomes, not the task and rules again.
 - **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
   A step with neither runs in the run's (or workflow's) project.
 - **Permission mode** of a new session: the project's `agentPermissionMode` (project settings), else the persona

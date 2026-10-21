@@ -253,6 +253,9 @@ pub struct TicketCommented {
     pub actor: String,
     /// The ticket's active attempt, when it has one.
     pub attempt_id: Option<String>,
+    /// The workflow whose run wrote it for the user (a note with a gate's choice, which that run passes on itself).
+    #[serde(default)]
+    pub workflow_id: Option<String>,
 }
 
 /// `ticket.overlap_found`.
@@ -330,6 +333,7 @@ mod tests {
             body: "b".into(),
             actor: "user".into(),
             attempt_id: None,
+            workflow_id: None,
         };
         assert_eq!(serde_json::to_value(&e).unwrap()["ticketKey"], "PDT-1");
         let a = AttemptEvent {

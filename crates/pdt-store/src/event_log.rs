@@ -195,6 +195,7 @@ pub(crate) async fn mirror_timeline(
                     body: body.unwrap_or_default().into(),
                     actor: actor.as_str().into(),
                     attempt_id: attempt.map(|(a,)| a),
+                    workflow_id: data.get("workflowId").and_then(|w| w.as_str()).map(String::from),
                 },
             )
         }

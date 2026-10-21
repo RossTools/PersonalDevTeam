@@ -358,3 +358,51 @@ async fn rejecting_at_accept_with_a_note_comments_on_the_ticket_and_goes_back_to
     );
     assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "code");
 }
+
+/// What a session's agent said (`fake-agent` echoes each message it gets).
+async fn agent_says(env: &Env, session: &str) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+    v.as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["event"]["kind"] == "agent_message")
+        .map(|e| e["event"]["markdown"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_rejected_tickets_coder_hears_why_once_without_the_whole_task_again() {
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    for outcome in ["approved", "pass"] {
+        let mine = inbox_item(&env, "manual", &t).await;
+        answer(&env, &mine, json!({"choice": format!("outcome:{outcome}")})).await;
+    }
+    let accept = inbox_item(&env, "gate", &t).await;
+    answer(&env, &accept, json!({"choice": "reject", "text": "The button is the wrong colour."})).await;
+
+    // The Coder's session (the attempt's) gets the next pass: why it is back, once, and not the task again.
+    let coder = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    let said = tick_until(&env, "the next pass reaching the coder", || async {
+        let said = agent_says(&env, &coder).await;
+        said.iter().any(|m| m.contains("back for another pass")).then_some(json!(said))
+    })
+    .await;
+    let pass =
+        said.as_array().unwrap().iter().map(|m| m.as_str().unwrap()).find(|m| m.contains("another pass")).unwrap();
+    assert!(pass.contains("The user chose `reject`: The button is the wrong colour."), "{pass}");
+    assert_eq!(pass.matches("wrong colour").count(), 1, "the note once, not also as a forwarded comment: {pass}");
+    assert!(!pass.contains("Your role") && !pass.contains("Ticket:"), "{pass}");
+    // Nor later: "Ticket comments to the agent" leaves a gate's note to its run.
+    for _ in 0..20 {
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let all = agent_says(&env, &coder).await.join("\n");
+    assert_eq!(all.matches("wrong colour").count(), 1, "{all}");
+}

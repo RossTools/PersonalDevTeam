@@ -11,7 +11,8 @@ use pdt_core::persona::{Persona, effective_permission_mode};
 use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession};
 use pdt_core::ticket::{Actor, AttemptState, EventKind};
 use pdt_core::workflow::agent::{
-    AgentStep, AgentStepState, OutcomeSpec, STOPPED, StepTicket, TIMEOUT, first_message, nudge_message, step_section,
+    AgentStep, AgentStepState, OutcomeSpec, STOPPED, StepTicket, TIMEOUT, back_because, first_message,
+    next_pass_message, nudge_message, step_section,
 };
 use pdt_core::workflow::api::{Step, StepStatus};
 use pdt_store::SessionMessage;
@@ -168,9 +169,14 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     let message = first_message(&c.prompt, ticket, &c.outcomes);
     let session_id = match reused {
         Some(s) => {
-            // Its instructions were fixed when it started: the step's rules go with the message.
-            let text =
-                format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes));
+            // A later pass in the same session: it has the step's role and the ticket already, so only why it is back.
+            // Otherwise its instructions were fixed when it started: the step's rules go with the message.
+            let again = passes.iter().any(|a| a.session_id.as_deref() == Some(s.id.as_str()));
+            let text = if again {
+                next_pass_message(why_back(st, cx).await.as_deref(), &c.outcomes)
+            } else {
+                format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes))
+            };
             queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone(), false).await?;
             s.id
         }
@@ -185,6 +191,15 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     tracing::info!(run = %cx.run.id, node = %cx.node.id, persona = %persona.name, session = %session_id,
         "an agent step started");
     Ok(wait(&binding))
+}
+
+/// Why a step runs again: the outcome or gate answer of the latest agent step or gate before it in the run.
+async fn why_back(st: &AppState, cx: &StepCx<'_>) -> Option<String> {
+    let steps = st.store.list_steps(&cx.run.id).await.ok()?;
+    steps.iter().rev().filter(|x| x.seq < cx.step.seq && x.status == StepStatus::Succeeded).find_map(|x| {
+        let port = x.port.as_deref()?;
+        back_because(&x.kind, port, &x.output)
+    })
 }
 
 /// A manual step's Inbox item: the step's task, and one choice per outcome (Phase 7c §3.4).
