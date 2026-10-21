@@ -229,6 +229,7 @@ impl Shared {
                     let _ = self.write(&v);
                     continue;
                 }
+                MapOut::BackgroundTasks(tasks) => AdapterOutput::BackgroundTasks(tasks),
             };
             let _ = self.sink.send(out);
         }

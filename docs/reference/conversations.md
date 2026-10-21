@@ -23,7 +23,11 @@ Start too).
     `POST …/interrupt`.
   - `PATCH /api/sessions/{id}` (`title`, `model`, `permissionMode`), `GET /api/agents/{agent}/capabilities`.
 - Lifecycle: the process starts with the session, parks after 15 min idle and reopens on the next message
-  (`--resume` once Claude saved the conversation); Kill stops it (`finished`), sending reopens it. A pdtd restart ends
+  (`--resume` once Claude saved the conversation); Kill stops it (`finished`), sending reopens it.
+- Background tasks (PDT-96): Claude's `background_tasks_changed` becomes `ConversationState.backgroundTasks` (shown
+  over the composer); a conversation with any running is never parked, since parking would end them before they
+  report back. A finished task's report (a replayed user message with `origin.kind: task-notification`) starts a turn
+  as Claude's own and shows as a notice with its summary, not as the user's message (live and in imported history). A pdtd restart ends
   a running turn as interrupted and expires open requests (`recover_conversations`); conversations are never
   auto-resumed as terminals (the web offers Continue on an interrupted last turn; nothing is sent without a click).
 - "Always allow" sends Claude's own suggestions with `destination: "session"` only (never settings files).

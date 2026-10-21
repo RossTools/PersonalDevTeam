@@ -26,6 +26,8 @@ pub enum AdapterOutput {
     ExternalId(String),
     /// The agent's history (Codex: `thread/turns/list`, oldest first), for importing turns PDT did not see.
     History(Vec<serde_json::Value>),
+    /// The background tasks now running (all of them; Claude).
+    BackgroundTasks(Vec<pdt_core::conversation::BackgroundTask>),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
