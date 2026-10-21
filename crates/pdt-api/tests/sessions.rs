@@ -292,35 +292,40 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     std::fs::canonicalize(a).unwrap() == std::fs::canonicalize(b).unwrap()
 }
 
-/// A stand-in agent program that appends its arguments, one line per launch, to `<dir>/<name>.args` and then waits
-/// for input. On Windows, a launch retries while another one holds the file open.
+/// A stand-in agent program that records its arguments in `<dir>/<name>.args/<launch>/args` and then waits for input.
+/// Each launch claims a folder of its own (`mkdir` is atomic) and renames its file into place, so launches at the same
+/// moment never interleave (PDT's Codex instructions run to several KB, more than one write) and a reader never sees
+/// half of one.
 fn fake_agent(dir: &Path, name: &str) -> std::path::PathBuf {
-    let args_file = dir.join(format!("{name}.args"));
+    let args_dir = dir.join(format!("{name}.args"));
+    std::fs::create_dir_all(&args_dir).unwrap();
     let (file, body) = if cfg!(windows) {
+        // cmd has no process id, and two launches in the same second share %RANDOM%'s sequence: mkdir decides.
         (
             format!("{name}.cmd"),
             format!(
                 "@echo off
 :again
-(echo(%* >> \"{}\") 2>nul || goto again
+set n=%RANDOM%%RANDOM%
+mkdir \"{d}\\%n%\" 2>nul || goto again
+echo(%* > \"{d}\\%n%\\tmp\"
+ren \"{d}\\%n%\\tmp\" args
 set /p x=
 ",
-                args_file.display()
+                d = args_dir.display()
             ),
         )
     } else {
         (
             name.to_string(),
-            // A launch line (PDT's instructions in it) is longer than one write, so concurrent launches take a lock
-            // to keep their lines whole.
             format!(
                 "#!/bin/sh
-until mkdir \"{f}.lock\" 2>/dev/null; do sleep 0.01; done
-printf '%s\\n' \"$*\" >> \"{f}\"
-rmdir \"{f}.lock\"
+mkdir \"{d}/$$\"
+printf '%s\\n' \"$*\" > \"{d}/$$/tmp\"
+mv \"{d}/$$/tmp\" \"{d}/$$/args\"
 read x
 ",
-                f = args_file.display()
+                d = args_dir.display()
             ),
         )
     };
@@ -335,7 +340,15 @@ read x
 }
 
 fn forget_launches(dir: &Path, name: &str) {
-    let _ = std::fs::remove_file(dir.join(format!("{name}.args")));
+    let args_dir = dir.join(format!("{name}.args"));
+    let _ = std::fs::remove_dir_all(&args_dir);
+    std::fs::create_dir_all(&args_dir).unwrap();
+}
+
+/// The fake agent's recorded launches as it received them, in no particular order.
+fn raw_launches(dir: &Path, name: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir.join(format!("{name}.args"))) else { return Vec::new() };
+    entries.flatten().filter_map(|e| std::fs::read_to_string(e.path().join("args")).ok()).collect()
 }
 
 /// The fake agent's recorded launches, sorted, one trimmed entry each (empty for a launch without arguments).
@@ -343,9 +356,7 @@ fn forget_launches(dir: &Path, name: &str) {
 async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
     let mut found = Vec::new();
     for _ in 0..100 {
-        let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
-        // Only complete lines: a long launch line can be read while it is still being written.
-        found = text.split_inclusive('\n').filter(|l| l.ends_with('\n')).map(without_hook_args).collect();
+        found = raw_launches(dir, name).iter().map(|l| without_hook_args(l)).collect();
         if found.len() >= want {
             break;
         }
@@ -824,14 +835,14 @@ async fn sessions_get_pdts_instructions() {
     let id = claude["id"].as_str().unwrap();
     let file = state.data_dir.join("sessions").join(id).join("instructions.md");
     let args = launches(&bin, "fakeclaude", 1).await;
-    let raw = std::fs::read_to_string(bin.join("fakeclaude.args")).unwrap();
+    let raw = raw_launches(&bin, "fakeclaude").concat();
     assert!(raw.contains(&format!("--append-system-prompt-file {}", file.display())), "{raw} / {args:?}");
     let text = std::fs::read_to_string(&file).unwrap();
     assert!(text.contains(&format!("This session: `{id}`")) && text.ends_with("Run make check.\n"), "{text}");
 
     let codex = create_codex(&app, &pid).await;
     launches(&bin, "fakecodex", 1).await;
-    let raw = std::fs::read_to_string(bin.join("fakecodex.args")).unwrap();
+    let raw = raw_launches(&bin, "fakecodex").concat();
     if cfg!(windows) {
         // Through cmd.exe the agent is pointed at the file instead.
         assert!(raw.contains("developer_instructions='Read "), "{raw}");
