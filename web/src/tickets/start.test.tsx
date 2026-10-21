@@ -194,4 +194,22 @@ describe('Start dialog', () => {
     expect(within(dialog).getByText(/already has an active attempt/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Start' })).toBeDisabled();
   });
+
+  it('shows no branch or base for a Personal project and sends no branch', async () => {
+    const calls = stubApi({
+      'GET /api/tickets/t1': ready,
+      'GET /api/projects': [{ ...project, kind: 'personal', baseBranch: '' }],
+      'POST /api/tickets/t1/start': () => started(ready),
+    });
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    await within(dialog).findByText(/Personal project \(no repository\)/);
+    expect(within(dialog).queryByRole('textbox', { name: 'Branch' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('textbox', { name: 'Base branch' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: 'Claude' })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(starts(calls)).toHaveLength(1));
+    expect(starts(calls)[0]).not.toHaveProperty('branch');
+    expect(starts(calls)[0]).not.toHaveProperty('base');
+  });
 });

@@ -244,7 +244,8 @@ pub(crate) async fn instantiate(
         doc.name = n.to_string();
     }
     let note = format!("from the template {}", t.name);
-    let w = create_workflow(&st, &doc, i.scope, i.project_id, false, &note).await?;
+    let w =
+        create_workflow(&st, &doc, i.scope, i.project_id, false, &note, pdt_core::workflow::api::Author::User).await?;
     Ok((StatusCode::CREATED, Json(w)))
 }
 

@@ -1,11 +1,13 @@
-# Workflows, events, the engine and the builder (Phases 7a, 7d)
+# Workflows, events, the engine, the builder and agent steps (Phases 7a, 7b, 7d)
 
-Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md and 2026-10-20-phase-7d-builder-design.md (vision:
+Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md, 2026-10-20-phase-7d-builder-design.md and, for
+agent steps, personas, pdt-mcp and the Inbox, 2026-10-20-phase-7b-agent-steps-design.md (vision:
 2026-10-20-workflows-and-pm-vision.md).
 Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, templates, API
-records, what reaches an agent), pdt-store `event_log.rs` and `workflows.rs` (migrations 0021, 0022), pdt-api
-`workflow/` (catalog, engine, nodes, outbox, built-ins, templates, repo files, routes) and `finish.rs`
-(`ticket.finish`); web `src/workflows/` and `web/ui/FlowGraph.tsx`.
+records, what reaches an agent, agent steps), `persona.rs`, `inbox.rs`; pdt-store `event_log.rs`, `workflows.rs`,
+`personas.rs` and `inbox.rs` (migrations 0021, 0022, 0023); pdt-api `workflow/` (catalog, engine, nodes, outbox,
+built-ins, templates, repo files, routes, agent steps), `personas.rs`, `inbox.rs` and `finish.rs` (`ticket.finish`);
+web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 
 ## Event log
 
@@ -16,7 +18,8 @@ records, what reaches an agent), pdt-store `event_log.rs` and `workflows.rs` (mi
   `insert_event` mirrors `moved`, `comment`, `started`, `merged`, `abandoned` and `overlap` into
   `ticket.stage_changed`, `ticket.commented`, `attempt.started`, `attempt.merged` (key `<attempt>:merged`, with `via`
   `detected` / `merged_here` / `closed`, `pr`, `finishOnMerge`, `finishDeleteBranch` and the merged `notice`),
-  `attempt.abandoned` and `ticket.overlap_found`, in the same transaction. Payload types: pdt-core
+  `attempt.abandoned` and `ticket.overlap_found`, in the same transaction; an agent step's `outcome` timeline event
+  becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Payload types: pdt-core
   `workflow/events.rs` (`EVENT_TYPES`). CI events carry `provider` (`github_actions`).
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
@@ -65,7 +68,8 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | one trigger per event type; `manual` (Run now, sub-workflows) — config `projects`, `where`, `runKey` | `out` |
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
-| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`) | each choice, `unanswered`, `timeout` |
+| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`) | each choice, `unanswered`, `timeout` |
+| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `loopLimit`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
 | `wait` (`ms`, `until`, or `event {type, where}` with `timeoutMs`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
@@ -159,3 +163,69 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
 - Versions (`VersionsView`): every version with author, status and note, a diff against the current one, Restore,
   Accept / Discard for a proposal.
 - Templates (`TemplatePage`): built-in ones read-only; the user's edit name, description, params and the document.
+
+## Agent steps (Phase 7b)
+
+The `agent` node (pdt-api `workflow/nodes/agent.rs`, the work in `workflow/agent.rs`) runs a persona in a session and
+waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) "pdt-mcp").
+
+- **Session.** `new` (default; Reviewer, QA, Refiner): a fresh conversation of the persona's agent and model in the
+  attempt's worktree (else the project's main checkout, or a Personal project's ticket folder), recording the persona
+  and version (`sessions.persona_id`, `persona_version`, `step_id`), with no tab and no attempt (so PR notices still go
+  to the attempt's own session). `reuse` (Coder): the session this node used earlier in the run, else the attempt's
+  running agent session, else a new one that becomes the attempt's; a reused session gets the step through the outbox
+  (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
+- **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
+  A step with neither runs in the run's (or workflow's) project.
+- **Permission mode** of a new session: the project's `agentPermissionMode` (project settings), else the persona
+  version's, else the host default (`ticketPermissionMode` on a ticket, `sessionPermissionMode` otherwise).
+- **Instructions and first message.** The session's instructions get a "Your role: <persona>" section (the persona's
+  instructions, the outcomes, and the rule: finish with `submit_outcome`, ask with `ask_user`, a turn with neither
+  counts as stalled). The first message is the node's `prompt`, the ticket's key and title, and the outcome list.
+- **Binding.** `agent_steps` (one per step: session, persona and version, project, ticket, attempt, outcomes,
+  `state` `working | asking | stalled | done`, turns, nudges) is what pdt-mcp and the Inbox read. The step waits
+  (`wait: {agent: …}`) until `maxRuntimeMs` (4 h), then `timeout`; a step re-run after a restart waits again.
+- **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), adds its line
+  comments as review comments on the attempt's worktree (author: the persona), records an `outcome` timeline event
+  and completes the step by that port with `{outcome, summary, comments, sessionId, persona, personaVersion, turns,
+  by}`. The session stays as it is.
+- **Turns.** A conversation's turn end (pdt-api `conversations.rs`) or a terminal going idle (`activity.rs`) is
+  reported for a working binding (a reused session's turn before the step's message was delivered doesn't count):
+  `turns + 1`; at `maxTurns` (10) the step takes `timeout`; while `nudges` (1) remain PDT sends "[PDT] You ended your
+  turn without `submit_outcome`…"; after that the binding is **stalled** and the Inbox has it. The engine tick also
+  stalls a working step whose session stopped (not running, or a conversation with no live process, turn or queued
+  message) for 30 s.
+- **Questions.** `ask_user` makes an Inbox question (a new one replaces the step's open one) and the binding
+  `asking`, so its turn's end isn't a stall; the answer goes back through the outbox as "[PDT] The user answered your
+  questions: …" and the binding works again. A session with no step can ask too.
+- **Loop limit.** When the node is about to run more than `loopLimit` (3; 0: none) times again in one run, it waits
+  with a `loop_limit` Inbox item instead (the earlier passes' outcomes and summaries): **Once more** runs it (that
+  pass only), **Take over** completes it with an outcome (`by: user`), **Stop** takes `stopped`.
+- When a step completes or its run ends, its open Inbox items close and its binding is done.
+
+## Personas
+
+`personas` / `persona_versions` (pdt-store `personas.rs`, pdt-api `personas.rs`): a name, role and description, and
+versions of agent, model, instructions, permission mode (null: project override, else host default) and tools (pdt-mcp
+tools; empty: the default five). Every save (`PUT /api/personas/{id}`) is a new version; `PATCH` changes name, role,
+description, `archived`; `GET /versions`, `/versions/{v}`, `/diff?from=&to=` (the fields that changed and a unified
+diff). Built-ins Refiner, Coder, Reviewer and QA (pdt-core `persona.rs`) are installed on the engine's first tick (and
+on `GET /api/personas`), follow newer templates until edited, and can be archived, not deleted (`409
+builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_use`).
+
+## Inbox
+
+`inbox_items` (pdt-store `inbox.rs`, pdt-api `inbox.rs`): `question` (`ask_user`), `gate` (a waiting `gate` node;
+group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`; one open item per step and kind. Approvals are
+not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
+session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
+accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
+`{choice}` (a gate's choice; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
+`outcome:<id>` or `stop` at a loop limit) or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
+closes a question or stalled item (the step keeps waiting). A gate answered through
+`/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too.
+
+Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
+area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
+over / Stop, a gate's choices and Open changes for Ready to accept); `j`/`k` move, Enter takes the primary action,
+`o` opens the ticket, `e` dismisses.

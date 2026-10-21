@@ -376,6 +376,7 @@ fn without_hook_args(line: &str) -> String {
     {
         rest = &rest[at..];
     }
+    // pdt-mcp's `-c mcp_servers.pdt.…` (tests/agent_steps.rs covers them) come before the notify hook.
     if rest.starts_with("-c ")
         && let Some(at) = rest.find("codex-notify")
         && let Some(end) = rest[at..].find(']')
@@ -444,6 +445,7 @@ async fn seed_with(
         mode: pdt_core::conversation::SessionMode::Terminal,
         model: None,
         permission_mode: None,
+        persona: None,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {

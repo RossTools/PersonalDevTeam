@@ -2,7 +2,11 @@
 import type { CredentialPolicy } from "./CredentialPolicy";
 
 /**
- * Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it) and `mergeViaPr` are replaced
- * when present, so a client that does not know them keeps them.
+ * Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it), `mergeViaPr` and
+ * `agentPermissionMode` ("" clears it) are replaced when present, so a client that does not know them keeps them.
  */
-export type ProjectSettingsInput = { agentCredentials: CredentialPolicy | null, runOverrides: string | null, agentInstructions?: string, mergeViaPr?: boolean, };
+export type ProjectSettingsInput = { agentCredentials: CredentialPolicy | null, runOverrides: string | null, agentInstructions?: string, mergeViaPr?: boolean, 
+/**
+ * `ask`, `accept_edits`, `plan`, `bypass`, or "" for none.
+ */
+agentPermissionMode?: string, };

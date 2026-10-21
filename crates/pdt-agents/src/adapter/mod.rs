@@ -79,6 +79,8 @@ pub struct OpenSpec {
     /// Devin: the session was used in Devin's own terminal since PDT last logged it; the turns it took there after
     /// this time (ms; 0 = all of them) are imported from `session/load`'s replay.
     pub import_after: Option<i64>,
+    /// pdt-mcp for this session (Phase 7b), when it gets PDT's tools.
+    pub mcp: Option<crate::mcp::McpServer>,
 }
 
 impl OpenSpec {

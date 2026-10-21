@@ -157,11 +157,14 @@ pub fn start_prompt(
 pub const ONE_TICKET: &str = "Keep to this ticket: ask the user before making a ticket for anything unrelated that turns up, rather than changing \
      it here.";
 
+/// An empty `branch` is a Personal project's ticket: it works in a folder, with no branch.
 fn prompt_ends(key: &str, title: &str, branch: &str) -> (String, String) {
-    (
-        format!("{key}: {title}"),
-        format!("(Ticket {key} in {SHORT_NAME}. Work in this worktree on branch {branch}. {ONE_TICKET})"),
-    )
+    let place = if branch.is_empty() {
+        "Work in this folder.".to_string()
+    } else {
+        format!("Work in this worktree on branch {branch}.")
+    };
+    (format!("{key}: {title}"), format!("(Ticket {key} in {SHORT_NAME}. {place} {ONE_TICKET})"))
 }
 
 fn assemble(head: &str, desc: &str, comments: Option<String>, block: Option<String>, tail: &str) -> String {

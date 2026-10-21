@@ -1,6 +1,6 @@
 // Choosing a node kind from the catalog (searchable, grouped by category), and each category's icon.
 import type { ReactElement } from 'react';
-import { CircleStop, Hourglass, Play, ShieldQuestion, Split, Zap, type LucideIcon } from 'lucide-react';
+import { Bot, CircleStop, Hourglass, Play, ShieldQuestion, Split, Zap, type LucideIcon } from 'lucide-react';
 import { CommandList, Popover } from '@ui';
 import type { Category } from '../api/gen/Category';
 import type { KindSpec } from '../api/gen/KindSpec';
@@ -12,9 +12,10 @@ export const CATEGORY: Record<Category, { label: string; icon: LucideIcon }> = {
   gate: { label: 'Ask the user', icon: ShieldQuestion },
   wait: { label: 'Waits', icon: Hourglass },
   flow: { label: 'Flow', icon: CircleStop },
+  agent: { label: 'Agent steps', icon: Bot },
 };
 
-const ORDER: Category[] = ['trigger', 'action', 'condition', 'gate', 'wait', 'flow'];
+const ORDER: Category[] = ['trigger', 'action', 'agent', 'condition', 'gate', 'wait', 'flow'];
 
 export function KindIcon({ category }: { category: Category | undefined }) {
   const Icon = CATEGORY[category ?? 'action'].icon;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   ArrowRightLeft, BellRing, Bot, Check, Keyboard, Layers, PanelTop, Pencil, Play, Plus, Server, Settings, SunMoon, Ticket,
-  FileDiff, Files, Workflow, X,
+  FileDiff, Files, Inbox, UserCog, Workflow, X,
 } from 'lucide-react';
 import { Button, CommandList, Dialog, Field, Input, type CommandItem } from '@ui';
 import { AgentDot } from '../common/AgentState';
@@ -31,6 +31,8 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   ticket: <Ticket aria-hidden />,
   files: <Files aria-hidden />,
   workflows: <Workflow aria-hidden />,
+  inbox: <Inbox aria-hidden />,
+  personas: <UserCog aria-hidden />,
   changes: <FileDiff aria-hidden />,
 };
 

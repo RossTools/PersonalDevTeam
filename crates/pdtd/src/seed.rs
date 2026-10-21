@@ -70,6 +70,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         created_at: now - 3 * DAY,
         key: String::new(),
         github_repo: None,
+        kind: Default::default(),
     };
     let lib = Project {
         id: id(),
@@ -79,6 +80,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         created_at: now - 2 * DAY,
         key: String::new(),
         github_repo: None,
+        kind: Default::default(),
     };
     let wt = Worktree {
         id: id(),
@@ -118,6 +120,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         mode: pdt_core::conversation::SessionMode::Terminal,
         model: None,
         permission_mode: None,
+        persona: None,
     };
     let sessions = [
         session(&app, None, None, "main", 3 * DAY - HOUR),
@@ -134,6 +137,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
     let conversation = Session {
         mode: pdt_core::conversation::SessionMode::Conversation,
         permission_mode: Some(pdt_core::conversation::PermissionMode::Ask),
+        persona: None,
         exit_code: None,
         ..session(&app, Some(&wt), Some(AgentKind::Claude), "Validate the login form", 90 * MINUTE)
     };

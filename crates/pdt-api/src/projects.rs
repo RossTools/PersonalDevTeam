@@ -14,11 +14,15 @@ use std::path::PathBuf;
 
 /// Fills in `github_repo` from each project's `origin` (git runs off the async runtime).
 async fn with_github(mut projects: Vec<Project>) -> Vec<Project> {
-    let paths: Vec<PathBuf> = projects.iter().map(|p| PathBuf::from(&p.repo_path)).collect();
+    let paths: Vec<Option<PathBuf>> =
+        projects.iter().map(|p| (!p.is_personal()).then(|| PathBuf::from(&p.repo_path))).collect();
     let repos = tokio::task::spawn_blocking(move || {
         paths
             .iter()
-            .map(|p| pdt_git::remote_url(p, "origin").and_then(|u| pdt_core::git_url::github_repo(&u)))
+            .map(|p| {
+                let p = p.as_ref()?;
+                pdt_git::remote_url(p, "origin").and_then(|u| pdt_core::git_url::github_repo(&u))
+            })
             .collect::<Vec<_>>()
     })
     .await
@@ -75,6 +79,7 @@ async fn add(
         created_at: now_ms(),
         key: key.unwrap_or_default(),
         github_repo: None,
+        kind: Default::default(),
     };
     st.store.insert_project(&project).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(m) if m.contains("key") => key_taken(),
@@ -92,6 +97,9 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Project>), ApiError> {
     let Json(input) = payload?;
     let v = input.validate()?;
+    if v.kind == pdt_core::project::ProjectKind::Personal {
+        return Ok((StatusCode::CREATED, Json(add_personal(&st, v.name, v.key).await?)));
+    }
     // `~/…` (what the folder picker writes) is the home folder; anything else goes to git as typed.
     let path = match v.repo_path.starts_with('~') {
         true => pdt_core::project::resolve_folder(&v.repo_path, st.home_dir.as_deref())
@@ -100,6 +108,45 @@ pub(crate) async fn create(
     };
     let p = add(&st, path, v.name, v.base_branch, v.key).await?;
     Ok((StatusCode::CREATED, Json(p)))
+}
+
+/// A Personal project (Phase 7b spec §7): no repository, its folder `<data dir>/personal/<id>`.
+async fn add_personal(st: &AppState, name: String, key: Option<String>) -> Result<Project, ApiError> {
+    if let Some(k) = &key
+        && st.store.project_keys().await?.iter().any(|t| t == k)
+    {
+        return Err(key_taken());
+    }
+    let id = uuid::Uuid::now_v7().to_string();
+    let dir = st.data_dir.join("personal").join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("making the project's folder: {e}")))?;
+    let project = Project {
+        id,
+        name,
+        repo_path: dir.to_string_lossy().into_owned(),
+        base_branch: String::new(),
+        created_at: now_ms(),
+        key: key.unwrap_or_default(),
+        github_repo: None,
+        kind: pdt_core::project::ProjectKind::Personal,
+    };
+    st.store.insert_project(&project).await.map_err(|e| match e {
+        pdt_store::StoreError::Conflict(m) if m.contains("key") => key_taken(),
+        other => other.into(),
+    })?;
+    load(st, &project.id).await
+}
+
+/// 409 `personal_project` for what needs a repository.
+pub(crate) fn needs_repo(p: &Project, what: &str) -> Result<(), ApiError> {
+    if p.is_personal() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "personal_project",
+            format!("{} is a Personal project (no repository): it has no {what}", p.name),
+        ));
+    }
+    Ok(())
 }
 
 /// The folder new clones go in: the host setting (with `~` expanded), else `~/work`.
@@ -208,6 +255,7 @@ pub(crate) async fn update(
 /// `branch` if it names a branch of the project's repository, local or on `origin` (new worktrees start from it).
 async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String, ApiError> {
     let project = st.store.get_project(id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    needs_repo(&project, "base branch")?;
     let repo = PathBuf::from(&project.repo_path);
     tokio::task::spawn_blocking(move || {
         if branch.starts_with('-') {
@@ -263,6 +311,7 @@ pub(crate) async fn pull(
         Err(e) => return Err(e.into()),
     };
     let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    needs_repo(&project, "branches to pull")?;
     let branch = input.branch.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| project.base_branch.clone());
     Ok(Json(pull_branch(&project, branch).await?))
 }

@@ -18,6 +18,26 @@ no authentication, and reports errors as `{code, message}`.
 | `GET /api/projects/<id>/worktrees` | the project's worktrees: `id`, `branch`, `path` |
 | `GET /api/guides` | PDT's guides (this one, the run configuration reference, and the prompts for setting up a project's runs and its agent instructions) |
 
+## PDT's tools (pdt-mcp)
+
+Most sessions PDT starts also get PDT's MCP server, named `pdt` (in Claude its tools are `mcp__pdt__<tool>`). Its
+tools know which session is calling, so they need no session, ticket or attempt ids, and they run without asking. Use
+them for what they cover; the API above stays available for everything else.
+
+| Tool | Does |
+|---|---|
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments, the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
+| `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes |
+| `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
+| `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
+| `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
+| `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save` | the workflow catalog and documents, for sessions whose persona has them; a change to a workflow is a proposal the person accepts, and a new workflow starts disabled |
+
+A session that runs a step of a workflow (a **persona** such as the Reviewer) has a section "Your role" in its
+instructions: it finishes the step with `submit_outcome`, never by what it writes, and asks the person with
+`ask_user` when only they can unblock it. A turn that ends with neither is nudged once, then shown to the person as
+stalled.
+
 ## Tickets
 
 A project's tickets have keys `<project key>-<n>` (`APP-12`). Stages: `draft`, `ready` (refined, waiting in the
@@ -65,8 +85,13 @@ that is the person's consent. Check a document with `/check` or `/validate` and 
 | `POST /api/workflows/validate` · `/dry-run` | `{doc}` checks a document; `{doc or workflowId, event: {type, payload}}` shows what each step would do, changing nothing |
 | `GET /api/workflows/<id>/versions` · `/diff?from=&to=` | the versions (`status`: `saved`, `proposed`, `discarded`) and what changed between two |
 | `GET /api/workflow-templates` | templates (`params`, a `doc` with `{{params.<id>}}`); `POST …/<id>/instantiate {params, name, scope, projectId}` makes a workflow from one, off |
+| `GET /api/personas` | the personas agent steps run (Refiner, Coder, Reviewer, QA and the person's own): agent, model, instructions, permission mode, tools |
+| `GET /api/inbox` | what waits on the person: questions, approvals, stalled steps, loop limits and gates |
 
 ## Worktrees
+
+A project with `kind: "personal"` has no repository: its tickets run in a folder of their own, with no branch,
+worktree, runs or pull request.
 
 PDT keeps each branch's checkout at `<repo>/.worktrees/<branch>`, with `/` in the branch name replaced by `-` (listed in `.git/info/exclude`, so nothing is
 committed for it). Making one through PDT means its sessions and runs know about it:
@@ -91,7 +116,8 @@ Poll a run until `state` is `ready` (a web run answers on its port) or `failed`,
 
 ## Project settings on this host
 
-`GET /api/projects/<id>/settings` returns `agentCredentials`, `runOverrides` (TOML), `agentInstructions` (Markdown) and `mergeViaPr`.
+`GET /api/projects/<id>/settings` returns `agentCredentials`, `runOverrides` (TOML), `agentInstructions` (Markdown),
+`mergeViaPr` and `agentPermissionMode` (the mode of workflow steps' sessions here, over their persona's).
 `PUT` the same object to change them: `agentCredentials` and `runOverrides` are always replaced, so send back what you
-read; `agentInstructions` and `mergeViaPr` are replaced when present (`""` clears it). New agent sessions get the new instructions;
+read; `agentInstructions`, `mergeViaPr` and `agentPermissionMode` are replaced when present (`""` clears it). New agent sessions get the new instructions;
 running ones keep what they started with. Change these only when the person asks.

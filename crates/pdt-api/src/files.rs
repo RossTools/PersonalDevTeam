@@ -70,17 +70,35 @@ pub(crate) fn clean_path(raw: &str) -> Result<String, ApiError> {
     Ok(parts.join("/"))
 }
 
-/// The checkout (project root or one of its worktrees) and the cleaned path inside it.
-async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(PathBuf, String), ApiError> {
+/// The entries directly in a plain folder (a Personal project's), as `entries` takes them: a folder as `<dir>/.`.
+/// Blocking.
+fn plain_files(full: &FsPath, rel: &str) -> Vec<String> {
+    let prefix = if rel.is_empty() { String::new() } else { format!("{rel}/") };
+    let Ok(read) = std::fs::read_dir(full) else { return vec![] };
+    let mut out: Vec<String> = read
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let dir = e.file_type().ok()?.is_dir();
+            Some(if dir { format!("{prefix}{name}/.") } else { format!("{prefix}{name}") })
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The checkout (project root or one of its worktrees), the cleaned path inside it, and whether it is a Personal
+/// project's plain folder (no git).
+async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(PathBuf, String, bool), ApiError> {
     let project = st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let checkout = match q.worktree_id.as_deref().filter(|w| !w.is_empty()) {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id);
             PathBuf::from(wt.ok_or_else(|| ApiError::not_found("worktree"))?.path)
         }
-        None => PathBuf::from(project.repo_path),
+        None => PathBuf::from(&project.repo_path),
     };
-    Ok((checkout, clean_path(&q.path)?))
+    Ok((checkout, clean_path(&q.path)?, project.is_personal()))
 }
 
 /// Refuses a path that resolves (through symlinks) outside the checkout. Missing paths pass: git may list a deleted
@@ -128,9 +146,12 @@ pub(crate) async fn list(
     Path(id): Path<String>,
     Query(q): Query<FilesQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    let (checkout, rel) = resolve(&st, &id, &q).await?;
+    let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     let list = tokio::task::spawn_blocking(move || -> Result<Vec<FileEntry>, ApiError> {
-        contained(&checkout, &rel)?;
+        let full = contained(&checkout, &rel)?;
+        if personal {
+            return Ok(entries(&rel, &plain_files(&full, &rel), &[]));
+        }
         let files = pdt_git::list_files(&checkout, &rel)?;
         let status = pdt_git::status(&checkout, &rel)?;
         Ok(entries(&rel, &files, &status))
@@ -145,14 +166,18 @@ pub(crate) async fn content(
     Path(id): Path<String>,
     Query(q): Query<FilesQuery>,
 ) -> Result<Json<FileContent>, ApiError> {
-    let (checkout, rel) = resolve(&st, &id, &q).await?;
+    let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     if rel.is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
     }
     let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
         let full = contained(&checkout, &rel)?;
         let meta = std::fs::metadata(&full).ok().filter(|m| m.is_file()).ok_or_else(|| ApiError::not_found("file"))?;
-        let status = pdt_git::status(&checkout, &rel)?.into_iter().find(|(p, _)| *p == rel).map(|(_, c)| c);
+        let status = if personal {
+            None
+        } else {
+            pdt_git::status(&checkout, &rel)?.into_iter().find(|(p, _)| *p == rel).map(|(_, c)| c)
+        };
         let size = meta.len();
         if size > MAX_FILE_BYTES {
             return Ok(FileContent { path: rel, size, status, text: None, binary: false, too_large: true });

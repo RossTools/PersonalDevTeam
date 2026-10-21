@@ -2,6 +2,7 @@
 //! conditions, validation, diffs, the event log's types and the API's records. Pure: pdt-store keeps them and pdt-api
 //! runs them.
 
+pub mod agent;
 pub mod api;
 pub mod cond;
 pub mod diff;

@@ -87,6 +87,16 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   and only the ticket's tab (still in its new workspace with `newWorkspace`); the result's `session` is `null`.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as
   merged, to Won't do as merged if detected, else abandoned.
+- **Personal projects** (Phase 7b, [workspaces.md](workspaces.md#projects-and-git-workspaces-spec-6)): Start makes no
+  branch or worktree. The attempt has an empty branch and no worktree, and the session runs in the ticket's folder
+  `<project folder>/<KEY>-<n>` (made on Start, kept across attempts: it is the work's output); the prompt says to work
+  in this folder. Start from a chat is refused there (409 `personal_project`). Merge detection and the PR poller skip
+  these attempts; moving the ticket to Done ends the attempt.
+- Agent steps record their outcome on the timeline (`outcome`: `{outcome, summary, persona, personaVersion, by,
+  sessionId, attemptId, comments, workflowId, workflowName, runId}`, actor `agent`, or `user` when taken over from the
+  Inbox) and a step's new session as a `session` event with its persona. Comments an agent adds through pdt-mcp have
+  actor `agent` (`data.sessionId`, `data.persona`); the built-in "Ticket comments to the agent" only forwards the
+  user's.
 
 ## Merge detection and finishing
 

@@ -1,0 +1,156 @@
+//! The Inbox API (Phase 7b spec §6): what waits on the user. Stored items (questions, gates, stalled steps, loop
+//! limits) plus the open permission requests of live conversations (approvals), most urgent first.
+
+use crate::error::ApiError;
+use crate::routes::{AppState, now_ms};
+use axum::Json;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use pdt_core::conversation::{AgentEvent, RequestState};
+use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::HashMap;
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ListQuery {
+    project: Option<String>,
+}
+
+/// `GET /api/inbox?project=`.
+pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Result<Json<InboxList>, ApiError> {
+    let mut items = st.store.open_inbox_items(q.project.as_deref()).await?;
+    items.extend(approvals(&st, q.project.as_deref()).await?);
+    decorate(&st, &mut items).await?;
+    inbox::sort(&mut items);
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(InboxList { items, total }))
+}
+
+/// Ticket keys and titles, persona names.
+async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(), ApiError> {
+    let mut tickets: HashMap<String, Option<(String, String)>> = HashMap::new();
+    let mut personas: HashMap<String, Option<String>> = HashMap::new();
+    for i in items.iter_mut() {
+        if let Some(t) = &i.ticket_id {
+            if !tickets.contains_key(t) {
+                let found = st.store.get_ticket(t).await?.map(|x| (x.summary.key.clone(), x.summary.title.clone()));
+                tickets.insert(t.clone(), found);
+            }
+            if let Some(Some((key, title))) = tickets.get(t) {
+                i.ticket_key = Some(key.clone());
+                i.ticket_title = Some(title.clone());
+            }
+        }
+        if let Some(p) = &i.persona_id {
+            if !personas.contains_key(p) {
+                personas.insert(p.clone(), st.store.get_persona(p).await?.map(|x| x.name));
+            }
+            i.persona_name = personas.get(p).cloned().flatten();
+        }
+    }
+    Ok(())
+}
+
+/// The open permission requests of live conversations, as items.
+async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
+    let mut out = vec![];
+    for (sid, ids) in crate::conversations::open_requests(st) {
+        let Some(s) = st.store.get_session(&sid).await? else { continue };
+        if project.is_some_and(|p| p != s.project_id) {
+            continue;
+        }
+        // A persona's session works on its step's ticket.
+        let step = st.store.active_agent_step(&sid).await?;
+        for e in st.store.session_events_of_kind(&sid, "request").await? {
+            let AgentEvent::Request { id, tool, title, description, input, diff, state, can_always, .. } = &e.event
+            else {
+                continue;
+            };
+            if *state != RequestState::Open || !ids.contains(id) {
+                continue;
+            }
+            let mut choices = vec![InboxChoice::new("allow", "Allow", true)];
+            if *can_always {
+                choices.push(InboxChoice::new("allow_always", "Always allow in this session", false));
+            }
+            choices.push(InboxChoice::new("deny", "Deny", false));
+            out.push(InboxItem {
+                id: format!("approval:{sid}:{id}"),
+                kind: InboxKind::Approval,
+                group: InboxGroup::Approval,
+                status: InboxStatus::Open,
+                project_id: Some(s.project_id.clone()),
+                ticket_id: s
+                    .ticket
+                    .as_ref()
+                    .map(|t| t.id.clone())
+                    .or_else(|| step.as_ref().and_then(|a| a.ticket_id.clone())),
+                ticket_key: None,
+                ticket_title: None,
+                attempt_id: s.attempt_id.clone().or_else(|| step.as_ref().and_then(|a| a.attempt_id.clone())),
+                session_id: Some(sid.clone()),
+                run_id: step.as_ref().map(|a| a.run_id.clone()),
+                step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
+                persona_id: s.persona.as_ref().map(|p| p.id.clone()),
+                persona_name: None,
+                title: if title.is_empty() { tool.clone() } else { title.clone() },
+                body: json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
+                             "description": description, "input": input, "diff": diff}),
+                choices,
+                resolution: Value::Null,
+                created_at: e.ts,
+                resolved_at: None,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn bad(m: impl Into<String>) -> ApiError {
+    ApiError::new(StatusCode::CONFLICT, "cannot_answer", m)
+}
+
+async fn load(st: &AppState, id: &str) -> Result<InboxItem, ApiError> {
+    let item = st.store.get_inbox_item(id).await?.ok_or_else(|| ApiError::not_found("inbox item"))?;
+    if item.status != InboxStatus::Open {
+        return Err(bad("this item was already answered"));
+    }
+    Ok(item)
+}
+
+/// `POST /api/inbox/{id}/answer`.
+pub(crate) async fn answer(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<InboxAnswer>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(a) = payload?;
+    if id.starts_with("approval:") {
+        return Err(bad("answer a permission request in its session"));
+    }
+    let item = load(&st, &id).await?;
+    if let Some(c) = &a.choice
+        && item.kind != InboxKind::Question
+        && !item.choices.iter().any(|x| &x.id == c)
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            format!("{c} is not a choice of this item"),
+        ));
+    }
+    let r = crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?;
+    Ok(Json(r))
+}
+
+/// `POST /api/inbox/{id}/dismiss`: closes a question or stalled item without acting (its step keeps waiting).
+pub(crate) async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let item = load(&st, &id).await?;
+    if !matches!(item.kind, InboxKind::Question | InboxKind::Stalled) {
+        return Err(bad("only questions and stalled steps can be dismissed; answer this one"));
+    }
+    st.store.end_inbox_item(&id, InboxStatus::Closed, &json!({"dismissed": true}), now_ms()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}

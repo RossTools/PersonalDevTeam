@@ -36,7 +36,15 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let valid = input.validate()?;
     crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
-    let req = CreateSession { valid, title: None, attempt_id: None, ticket_key: None, tab: Some(input.tab) };
+    let req = CreateSession {
+        valid,
+        title: None,
+        attempt_id: None,
+        ticket_key: None,
+        tab: Some(input.tab),
+        persona: None,
+        cwd: None,
+    };
     Ok((StatusCode::CREATED, Json(create_session(&st, req).await?)))
 }
 
@@ -50,6 +58,10 @@ pub(crate) struct CreateSession {
     pub ticket_key: Option<String>,
     /// Some: open the session's tab there (None inside: the end of its project's workspace). None: the caller opens it.
     pub tab: Option<Option<TabPlacement>>,
+    /// The persona (and agent step) the session runs (Phase 7b).
+    pub persona: Option<pdt_core::session::SessionPersona>,
+    /// Where it runs instead of the worktree or main checkout (a Personal project's ticket folder).
+    pub cwd: Option<String>,
 }
 
 /// Makes a session and starts its process (`POST /api/sessions` and ticket Start): the row, the terminal (with the
@@ -57,7 +69,7 @@ pub(crate) struct CreateSession {
 pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<Session, ApiError> {
     let valid = req.valid;
     let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let (worktree_id, cwd, place) = match &valid.worktree_id {
+    let (worktree_id, mut cwd, place) = match &valid.worktree_id {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
                 ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "worktree does not belong to this project")
@@ -66,6 +78,9 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         }
         None => (None, project.repo_path.clone(), project.name.clone()),
     };
+    if let Some(dir) = &req.cwd {
+        cwd = dir.clone();
+    }
     // A fresh Codex terminal is matched to its conversation by start time, so launches in a folder are spaced out.
     // (A Codex conversation knows its thread id from the start.)
     let codex = valid.kind == SessionKind::AgentTui
@@ -96,6 +111,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         mode: valid.mode,
         model: valid.model.clone(),
         permission_mode: valid.permission_mode,
+        persona: req.persona,
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(st, &session.project_id).await?;
@@ -115,11 +131,19 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         return load(st, &session.id).await;
     }
     let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket_key });
+    let mcp = crate::mcp::server_for(st, &session).await;
     let started = match agent_instructions(st, &session).await {
-        Ok(instructions) => {
-            start_pty(st, &session, valid.size, &Resume::Fresh, creds, prompt.as_ref(), instructions.as_ref())
-                .map_err(ApiError::from)
-        }
+        Ok(instructions) => start_pty(
+            st,
+            &session,
+            valid.size,
+            &Resume::Fresh,
+            creds,
+            prompt.as_ref(),
+            instructions.as_ref(),
+            mcp.as_ref(),
+        )
+        .map_err(ApiError::from),
         Err(e) => Err(e),
     };
     if let Err(e) = started {
@@ -184,7 +208,12 @@ pub(crate) async fn agent_instructions(
         base: &a.attempt.base_branch,
         news,
     });
+    let tools = if crate::mcp::offered(s) { crate::mcp::session_tools(st, s).await } else { vec![] };
+    let step = crate::workflow::agent::step_section_for(st, s).await;
     let ctx = pdt_core::agent_context::SessionContext {
+        personal: project.is_personal(),
+        tools: &tools,
+        step: step.as_deref(),
         port: st.listen_port,
         session_id: &s.id,
         project_id: &project.id,
@@ -341,6 +370,7 @@ async fn bind_codex_with(
 /// Spawns the session's process and records its exit when it ends. An agent's first prompt (fresh launches at
 /// creation only) is its last argument; an agent run through `cmd.exe` (a Windows `.cmd` shim, which would interpret
 /// the prompt's text) gets the prompt in `<session dir>/prompt.md` and a short prompt naming that file instead.
+#[allow(clippy::too_many_arguments)]
 fn start_pty(
     st: &AppState,
     s: &Session,
@@ -349,6 +379,7 @@ fn start_pty(
     creds: pdt_core::host::CredentialPolicy,
     prompt: Option<&InitialPrompt>,
     instructions: Option<&pdt_agents::adapter::SessionInstructions>,
+    mcp: Option<&pdt_agents::mcp::McpServer>,
 ) -> Result<(), PtyError> {
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
     let l = launch(s.kind, s.agent, &st.platform, resume, s.claude_conversation_id(), s.bypass_permissions);
@@ -366,6 +397,16 @@ fn start_pty(
             }
             Some(AgentKind::Claude) => args.extend(pdt_agents::instructions::claude_args(&i.file)),
             // Devin has no instructions flag: its SessionStart hook hands them over (see `with_hook_args`).
+            Some(AgentKind::Devin) | None => {}
+        }
+    }
+    if let Some(m) = mcp.filter(|_| s.kind == SessionKind::AgentTui) {
+        match s.agent {
+            Some(AgentKind::Codex) => {
+                let at = args.len() - launch_args.len();
+                args.splice(at..at, pdt_agents::mcp::codex_tui_args(m));
+            }
+            Some(AgentKind::Claude) => args.extend(pdt_agents::mcp::claude_args(m)),
             Some(AgentKind::Devin) | None => {}
         }
     }
@@ -398,6 +439,9 @@ fn start_pty(
         // For `pdtd hook`. Set after the inherited PDT_* variables are scrubbed, so only these values reach it.
         env.push(("PDT_SESSION_ID".into(), s.id.clone()));
         env.push(("PDT_HOOK_PORT".into(), st.listen_port.to_string()));
+        if let Some(m) = mcp.filter(|_| s.agent == Some(AgentKind::Codex)) {
+            env.push(pdt_agents::mcp::codex_tui_env(m));
+        }
     }
     let spec = SpawnSpec {
         id: s.id.clone(),
@@ -618,9 +662,10 @@ pub(crate) async fn restart_locked(
         session.fresh_started_at = Some(at);
     }
     let instructions = agent_instructions(st, &session).await?;
+    let mcp = crate::mcp::server_for(st, &session).await;
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
-    if let Err(e) = start_pty(st, &session, size, &resume, creds, None, instructions.as_ref()) {
+    if let Err(e) = start_pty(st, &session, size, &resume, creds, None, instructions.as_ref(), mcp.as_ref()) {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
             st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;

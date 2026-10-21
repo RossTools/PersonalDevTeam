@@ -58,6 +58,9 @@ pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     if let Some(i) = &spec.instructions {
         a.extend(crate::instructions::claude_args(&i.file));
     }
+    if let Some(m) = &spec.mcp {
+        a.extend(crate::mcp::claude_args(m));
+    }
     a
 }
 
@@ -540,6 +543,7 @@ mod tests {
             instructions: None,
             config_file: None,
             import_after: None,
+            mcp: None,
         }
     }
 

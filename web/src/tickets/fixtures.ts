@@ -6,7 +6,7 @@ import type { TicketPage } from '../api/gen/TicketPage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 
 export const project: Project = {
-  id: 'p1', name: 'Alpha', key: 'ALP', repoPath: '/r', baseBranch: 'main', createdAt: 1, githubRepo: null,
+  id: 'p1', name: 'Alpha', key: 'ALP', repoPath: '/r', baseBranch: 'main', createdAt: 1, githubRepo: null, kind: 'repo',
 };
 
 export function summary(n: number, over: Partial<TicketSummary> = {}): TicketSummary {

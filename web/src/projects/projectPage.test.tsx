@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { AddProjectForm } from './AddProjectForm';
 import { ProjectPage } from './ProjectPage';
 
@@ -11,7 +11,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: 'o/pdt' };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: 'o/pdt', kind: 'repo' };
 const wt = (id: string, branch: string, missing = false) => ({ id, projectId: 'p', branch, path: `/r/.worktrees/${branch}`, baseCommit: 'x', createdAt: 1, missing });
 const base = {
   'GET /api/projects/p/worktrees': [wt('w1', 'feature/x'), wt('w2', 'old', true)],
@@ -123,9 +123,57 @@ describe('ProjectPage', () => {
     await waitFor(() => expect(onRemoved).toHaveBeenCalled());
     expect(calls).toContainEqual({ method: 'DELETE', path: '/api/projects/p', body: undefined });
   });
+
+  it('sets and clears the permission mode for workflow steps, sending the other settings back', async () => {
+    const calls = stubApi({
+      ...base,
+      'GET /api/projects/p/settings': { runOverrides: 'x = 1', agentCredentials: 'subscription', agentPermissionMode: null },
+      'PUT /api/projects/p/settings': (c: Call) => ({ runOverrides: 'x = 1', agentCredentials: 'subscription', ...(c.body as object) }),
+    });
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    const trigger = await screen.findByRole('button', { name: /Agent permission mode for workflow steps/ });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    await userEvent.click(trigger);
+    await userEvent.click(await screen.findByRole('option', { name: 'Plan' }));
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'PUT', path: '/api/projects/p/settings', body: { agentCredentials: 'subscription', runOverrides: 'x = 1', agentPermissionMode: 'plan' },
+    }));
+    await userEvent.click(screen.getByRole('button', { name: /Agent permission mode for workflow steps/ }));
+    await userEvent.click(await screen.findByRole('option', { name: /^None/ }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').at(-1)?.body).toMatchObject({ agentPermissionMode: '' }));
+  });
+
+  it('shows a Personal project as a folder, with no base branch, worktrees, runs or merging', async () => {
+    const personal: Project = { ...project, kind: 'personal', baseBranch: '', githubRepo: null, repoPath: '/data/personal/p' };
+    const calls = stubApi(base);
+    renderWithQuery(<ProjectPage project={personal} onRemoved={() => {}} />);
+    const form = screen.getByRole('region', { name: 'Project' });
+    expect(within(form).getByText(/Personal project \(no repository\)/)).toBeInTheDocument();
+    expect(within(form).getByText('/data/personal/p')).toBeInTheDocument();
+    expect(within(form).queryByRole('button', { name: /Base branch/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Worktrees' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Runs on this host' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Review' })).toBeNull();
+    expect(await screen.findByRole('button', { name: /Agent permission mode for workflow steps/ })).toBeInTheDocument();
+    expect(calls.some((c) => c.path.includes('/branches') || c.path.includes('/worktrees') || c.path.includes('/run-config'))).toBe(false);
+  });
 });
 
 describe('AddProjectForm', () => {
+  it('adds a Personal project with a name and key only', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': { settings: {}, projectsDir: '/home/me/work', ownerFromEnv: null, tokenPresent: false, tokenError: null, remote: {} },
+      'POST /api/projects': { ...project, id: 'n', kind: 'personal' },
+    });
+    renderWithQuery(<AddProjectForm />);
+    await userEvent.click(screen.getByRole('radio', { name: 'Personal (no repo)' }));
+    expect(screen.queryByText('Repository path')).toBeNull();
+    await userEvent.type(screen.getByLabelText('Name'), 'Errands');
+    await userEvent.type(screen.getByLabelText('Key'), 'err');
+    await userEvent.click(screen.getByRole('button', { name: 'Add project' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/projects', body: { name: 'Errands', repoPath: '', kind: 'personal', key: 'err' } }));
+  });
+
   it('clones a URL into the Projects folder by default', async () => {
     const onAdded = vi.fn();
     const calls = stubApi({

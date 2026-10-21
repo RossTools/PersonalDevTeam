@@ -218,10 +218,25 @@ pub(crate) async fn complete_step(st: &AppState, step: &Step, port: &str, output
     s.wake_at = None;
     s.ended_at = Some(now_ms());
     st.store.put_step(&s).await.map_err(err)?;
+    end_step_extras(st, &s.id).await;
     for n in successors(&doc, &run.id, &s.node_id, port, next_seq) {
         st.store.put_step(&n).await.map_err(err)?;
     }
     st.store.wake_workflow_run(&run.id, now_ms()).await.map_err(err)
+}
+
+/// What waits on a step outside the engine ends with it: its open Inbox items close, its agent binding is done.
+async fn end_step_extras(st: &AppState, step_id: &str) {
+    if let Err(e) = st.store.close_inbox_items(Some(step_id), None, now_ms()).await {
+        tracing::warn!(step = %step_id, error = %e, "could not close a step's Inbox items");
+    }
+    if let Ok(Some(mut a)) = st.store.get_agent_step(step_id).await
+        && a.state != pdt_core::workflow::agent::AgentStepState::Done
+    {
+        a.state = pdt_core::workflow::agent::AgentStepState::Done;
+        a.updated_at = now_ms();
+        let _ = st.store.put_agent_step(&a).await;
+    }
 }
 
 /// Ends a run: leftover steps are skipped, a parent waiting on it resumes.
@@ -232,6 +247,7 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
             s.status = StepStatus::Skipped;
             s.ended_at = Some(now);
             st.store.put_step(&s).await.map_err(err)?;
+            end_step_extras(st, &s.id).await;
         }
     }
     run.status = status;
@@ -255,7 +271,7 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
 fn is_quiet(steps: &[Step]) -> bool {
     !steps.iter().any(|s| {
         s.status == StepStatus::Succeeded
-            && catalog().spec(&s.kind).is_some_and(|k| k.category == Category::Action)
+            && catalog().spec(&s.kind).is_some_and(|k| matches!(k.category, Category::Action | Category::Agent))
             && s.output.get("quiet").and_then(|q| q.as_bool()) != Some(true)
     })
 }
@@ -450,9 +466,11 @@ async fn advance_all(st: &AppState) {
 pub async fn run_workflows(st: &AppState) {
     let _engine = st.engine_lock.lock().await;
     super::builtins::ensure_installed(st).await;
+    crate::personas::ensure_builtins(st).await;
     match_events(st).await;
     advance_all(st).await;
     super::outbox::deliver(st).await;
+    super::agent::sweep(st).await;
     advance_all(st).await;
 }
 
@@ -538,13 +556,20 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
     if !choices.iter().any(|c| c == choice) {
         return Err(format!("{choice} is not one of {}", choices.join(", ")));
     }
+    // Its Inbox item is answered, wherever the answer came from.
+    for item in st.store.open_items_for_step(step_id).await.map_err(err)? {
+        let _ = st
+            .store
+            .end_inbox_item(&item.id, pdt_core::inbox::InboxStatus::Resolved, &json!({"choice": choice}), now_ms())
+            .await;
+    }
     complete_step(st, &step, choice, json!({"choice": choice, "answeredBy": "user"})).await
 }
 
 // ---- dry run ----
 
 /// The event a dry run starts from.
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DryEvent {

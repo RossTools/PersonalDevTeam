@@ -8,6 +8,8 @@ import { useAgentDefaults } from '../common/useAgentDefaults';
 import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
 import { useOpenSession } from '../tickets/actions';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
+import type { PermissionMode } from '../api/gen/PermissionMode';
+import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import type { Project } from '../api/gen/Project';
 import type { ProjectSettingsInput } from '../api/gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
@@ -43,7 +45,8 @@ function useSaveProjectSettings(project: Project, current: ProjectSettingsView |
 /**
  * Per-project host settings, as sections of the project's page: the repo's .pdt/project.toml and host overrides of
  * it, the agent instructions PDT gives every agent session here, and the agent credential policy. Each section saves
- * only its own fields. Nothing here is written to the repository.
+ * only its own fields. Nothing here is written to the repository. A Personal project has no run configuration or
+ * merging.
  */
 export function ProjectSettingsPanel({ project }: { project: Project }) {
   const qc = useQueryClient();
@@ -51,6 +54,8 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
   const openSession = useOpenSession();
   const agents = useAgentAvailability();
   const defaults = useAgentDefaults();
+  // A Personal project has no repository: no runs, tests or merging (spec 7b §7).
+  const personal = project.kind === 'personal';
   // An agent session in the main checkout, in the host's default view, whose first message is one of PDT's set-up
   // prompts.
   const setUp = (guide: SetupGuide, agent: SetupAgent) =>
@@ -70,10 +75,10 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
   return (
     <>
       {settings.isError && <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert>}
-      <RunConfiguration project={project} settings={settings.data} setUpEntries={agentEntries('set-up-project')} />
+      {!personal && <RunConfiguration project={project} settings={settings.data} setUpEntries={agentEntries('set-up-project')} />}
       <Instructions project={project} settings={settings.data} writeEntries={agentEntries('set-up-workflow')} />
-      <Credentials project={project} settings={settings.data} />
-      <Merging project={project} settings={settings.data} />
+      <Agents project={project} settings={settings.data} />
+      {!personal && <Merging project={project} settings={settings.data} />}
     </>
   );
 }
@@ -179,35 +184,76 @@ function Instructions({ project, settings, writeEntries }: { project: Project; s
   );
 }
 
-/** The credential policy: a select, so it saves at once (spec §6.1). */
-function Credentials({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
-  const save = useSaveProjectSettings(project, settings);
+/** The agent settings: selects, so each saves at once (spec §6.1). */
+function Agents({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
+  return (
+    <Section label="Agents">
+      <Credentials project={project} settings={settings} />
+      <StepPermissionMode project={project} settings={settings} />
+    </Section>
+  );
+}
+
+/** "Saved" for a couple of seconds after `setSaved(true)`. */
+function useSavedNote(): [saved: boolean, setSaved: (on: boolean) => void] {
   const [saved, setSaved] = useState(false);
   useEffect(() => {
     if (!saved) return;
     const t = setTimeout(() => setSaved(false), 2000);
     return () => clearTimeout(t);
   }, [saved]);
+  return [saved, setSaved];
+}
+
+function Credentials({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
+  const save = useSaveProjectSettings(project, settings);
+  const [saved, setSaved] = useSavedNote();
   const value: CredsChoice = settings?.agentCredentials ?? HOST;
   return (
-    <Section label="Agents">
-      <SettingsRow label="Agent credentials" description="What agents in this project may use to sign in.">
-        {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-        {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-        <Select<CredsChoice>
-          aria-label="Agent credentials"
-          className="w-72 max-w-full"
-          options={[
-            { value: HOST, label: `Use the host setting (${settings?.effectiveCredentials ?? '…'})` },
-            { value: 'subscription', label: 'Subscription (remove API keys)' },
-            { value: 'pass_through', label: 'Pass through' },
-          ]}
-          value={value}
-          disabled={!settings}
-          onChange={(c) => save.mutate({ agentCredentials: c === HOST ? null : c }, { onSuccess: () => setSaved(true) })}
-        />
-      </SettingsRow>
-    </Section>
+    <SettingsRow label="Agent credentials" description="What agents in this project may use to sign in.">
+      {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
+      {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
+      <Select<CredsChoice>
+        aria-label="Agent credentials"
+        className="w-72 max-w-full"
+        options={[
+          { value: HOST, label: `Use the host setting (${settings?.effectiveCredentials ?? '…'})` },
+          { value: 'subscription', label: 'Subscription (remove API keys)' },
+          { value: 'pass_through', label: 'Pass through' },
+        ]}
+        value={value}
+        disabled={!settings}
+        onChange={(c) => save.mutate({ agentCredentials: c === HOST ? null : c }, { onSuccess: () => setSaved(true) })}
+      />
+    </SettingsRow>
+  );
+}
+
+/** The Select's value for "no override" (sent as "", which clears it). */
+const NO_MODE = 'none';
+type StepModeChoice = PermissionMode | typeof NO_MODE;
+
+/** The permission mode of every persona's session (workflow agent steps) here, over the persona's own (spec 7b §3). */
+function StepPermissionMode({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
+  const save = useSaveProjectSettings(project, settings);
+  const [saved, setSaved] = useSavedNote();
+  const value: StepModeChoice = settings?.agentPermissionMode ?? NO_MODE;
+  return (
+    <SettingsRow
+      label="Agent permission mode for workflow steps"
+      description="Used by every persona's session in this project, over the persona's own mode. None: the persona's, else the host default."
+    >
+      {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
+      {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
+      <Select<StepModeChoice>
+        aria-label="Agent permission mode for workflow steps"
+        className="w-56 max-w-full"
+        options={[{ value: NO_MODE, label: "None (the persona's)" }, ...PERMISSION_MODES.map((m) => ({ value: m, label: PERMISSION_LABEL[m] }))]}
+        value={value}
+        disabled={!settings}
+        onChange={(m) => save.mutate({ agentPermissionMode: m === NO_MODE ? '' : m }, { onSuccess: () => setSaved(true) })}
+      />
+    </SettingsRow>
   );
 }
 

@@ -1,0 +1,113 @@
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { InboxItem } from '../api/gen/InboxItem';
+import { OpenTicketContext } from '../tickets/actions';
+import { renderWithQuery, stubApi, type Call } from '../test-utils';
+import { InboxList } from './InboxList';
+import { InboxView } from './InboxView';
+import { after, grouped, step } from './model';
+
+afterEach(() => vi.unstubAllGlobals());
+
+const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
+  id, kind: 'gate', group: 'gate', status: 'open', projectId: 'p', ticketId: 't', ticketKey: 'PDT-7', ticketTitle: 'Pipeline',
+  attemptId: null, sessionId: null, runId: 'r', stepId: 's', personaId: null, personaName: null, title: `Item ${id}`,
+  body: {}, choices: [], resolution: null, createdAt: Date.now(), resolvedAt: null, ...over,
+});
+
+const gate = item('g', { title: 'Ship it?', choices: [{ id: 'ship', title: 'ship', primary: true }, { id: 'hold', title: 'hold', primary: false }] });
+const question = item('q', {
+  kind: 'question', group: 'question', sessionId: 'sess', personaName: 'Refiner', title: 'Which file?',
+  body: { questions: [{ question: 'Which file?', choices: ['a.txt', 'b.txt'] }, { question: 'Keep it?', choices: [] }] },
+});
+const stalled = item('st', {
+  kind: 'stalled', group: 'stalled', sessionId: 'sess', personaName: 'Reviewer', title: 'Reviewer stalled',
+  body: { why: 'Its turn ended without an outcome.' },
+  choices: [
+    { id: 'nudge', title: 'Nudge', primary: true },
+    { id: 'outcome:approved', title: 'Take over: approved', primary: false },
+    { id: 'outcome:changes_requested', title: 'Take over: changes_requested', primary: false },
+  ],
+});
+
+describe('inbox model', () => {
+  it('groups most urgent first and steps through the items in that order', () => {
+    const items = [gate, stalled, question];
+    expect(grouped(items).map((g) => g.title)).toEqual(['Questions', 'Stalled', 'Gates']);
+    expect(step(items, null, 1)).toBe('q');
+    expect(step(items, 'q', 1)).toBe('st');
+    expect(step(items, 'g', 1)).toBe('g');
+    expect(step(items, 'st', -1)).toBe('q');
+    expect(after(items, 'st')).toBe('g');
+    expect(after(items, 'g')).toBe('st');
+    expect(after([gate], 'g')).toBeNull();
+  });
+});
+
+describe('inbox', () => {
+  it('lists items under their kind with the ticket key', () => {
+    renderWithQuery(<InboxList items={[gate, question]} selectedId="g" onSelect={() => {}} />);
+    expect(screen.getByRole('region', { name: 'Questions' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Gates' })).toBeInTheDocument();
+    expect(screen.getAllByText('PDT-7')).toHaveLength(2);
+    expect(screen.getByText(/Question · Refiner/)).toBeInTheDocument();
+  });
+
+  it('answers a gate with Enter and moves on', async () => {
+    const calls = stubApi({ 'POST /api/inbox/g/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    const onSelect = vi.fn();
+    renderWithQuery(<InboxView items={[gate, stalled]} selectedId="g" onSelect={onSelect} />);
+    expect(screen.getByRole('button', { name: /ship/ })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'ship' }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('st'));
+  });
+
+  it('sends the answers to an agent\'s questions', async () => {
+    const calls = stubApi({ 'POST /api/inbox/q/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[question]} selectedId="q" onSelect={() => {}} />);
+    const send = screen.getByRole('button', { name: 'Send answers' });
+    expect(send).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'a.txt' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Answer 2' }), 'Yes');
+    await userEvent.click(send);
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ answers: ['a.txt', 'Yes'] }));
+  });
+
+  it('nudges a stalled step, or takes it over with an outcome', async () => {
+    const calls = stubApi({ 'POST /api/inbox/st/answer': (c: Call) => c.body, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[stalled]} selectedId="st" onSelect={() => {}} />);
+    expect(screen.getByText(/Its turn ended without an outcome/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+    await userEvent.click(screen.getByRole('button', { name: 'changes_requested' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'outcome:changes_requested' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Nudge message (optional)' }), 'Finish up.');
+    await userEvent.click(screen.getByRole('button', { name: /Nudge/ }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')[1]?.body).toEqual({ choice: 'nudge', text: 'Finish up.' }));
+  });
+
+  it('moves with j and k, opens the ticket with o and dismisses with e', async () => {
+    const calls = stubApi({ 'POST /api/inbox/q/dismiss': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    const onSelect = vi.fn();
+    const openTicket = vi.fn();
+    renderWithQuery(
+      <OpenTicketContext.Provider value={openTicket}>
+        <InboxView items={[question, gate]} selectedId="q" onSelect={onSelect} />
+      </OpenTicketContext.Provider>,
+    );
+    fireEvent.keyDown(window, { key: 'j' });
+    expect(onSelect).toHaveBeenLastCalledWith('g');
+    fireEvent.keyDown(window, { key: 'k' });
+    expect(onSelect).toHaveBeenLastCalledWith('q');
+    fireEvent.keyDown(window, { key: 'o' });
+    expect(openTicket).toHaveBeenCalledWith({ id: 't', projectId: 'p' });
+    fireEvent.keyDown(window, { key: 'e' });
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/q/dismiss')).toBe(true));
+  });
+
+  it('says when nothing waits', () => {
+    renderWithQuery(<InboxView items={[]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByText(/Nothing waits on you/)).toBeInTheDocument();
+  });
+});

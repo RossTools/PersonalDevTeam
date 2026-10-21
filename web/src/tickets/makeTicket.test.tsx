@@ -12,7 +12,7 @@ const chat: Session = {
   id: 's1', projectId: project.id, worktreeId: 'w1', kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'Chat',
   cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation',
-  model: null, permissionMode: 'ask',
+  model: null, permissionMode: 'ask', persona: null,
 };
 
 const draft = { title: 'Fix CSV export', description: '## Goal\nKeep the last row.' };

@@ -404,6 +404,7 @@ mod tests {
             mode: pdt_core::conversation::SessionMode::Terminal,
             model: None,
             permission_mode: None,
+            persona: None,
         }
     }
 
@@ -448,6 +449,7 @@ mod tests {
             created_at: 2,
             key: String::new(),
             github_repo: None,
+            kind: Default::default(),
         };
         store.insert_project(&q).await.unwrap();
         let list = store.list_workspaces().await.unwrap();

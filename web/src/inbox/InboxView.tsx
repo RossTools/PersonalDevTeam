@@ -1,0 +1,308 @@
+import { useEffect, useRef, useState } from 'react';
+import { ApprovalCard, Button, DiffViewer, EmptyState, Kbd, Textarea, ViewHeader, relativeTime, toast, type ApprovalAnswer } from '@ui';
+import { api, ApiError } from '../api/client';
+import type { InboxAnswer } from '../api/gen/InboxAnswer';
+import type { InboxItem } from '../api/gen/InboxItem';
+import { Markdown } from '../common/Markdown';
+import { TicketKey } from '../common/TicketKey';
+import { actionError } from '../common/useAction';
+import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
+import { useOpenSession, useOpenTicket } from '../tickets/actions';
+import { useOpenChanges } from '../review/open';
+import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, step } from './model';
+import { useRefreshInbox } from './useInbox';
+
+/** Keys typed into a field, or with a dialog or menu open, are not the Inbox's. */
+function foreign(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null;
+  if (e.ctrlKey || e.metaKey || e.altKey) return true;
+  if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return true;
+  return !!document.querySelector('[role=dialog], [role=menu], [role=listbox]');
+}
+
+/**
+ * The Inbox's work area (UX spec §8.4): the selected item and its decision, with the ticket's key and title and a
+ * way to its ticket and session. Triage keys: `j`/`k` move, Enter takes the primary action, `o` opens the ticket,
+ * `e` dismisses where that makes sense; answering moves to the next item.
+ */
+export function InboxView({ items, selectedId, onSelect }: {
+  items: InboxItem[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const item = items.find((i) => i.id === selectedId) ?? null;
+  const refresh = useRefreshInbox();
+  const openTicket = useOpenTicket();
+  const openSession = useOpenSession();
+  const [busy, setBusy] = useState(false);
+  // Questions: one answer per question, kept per item while it is on screen.
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [nudge, setNudge] = useState('');
+  const [takingOver, setTakingOver] = useState(false);
+
+  // An item that went away (answered elsewhere): show the first one left.
+  useEffect(() => {
+    if (!item && items.length > 0) onSelect(step(items, null, 1));
+  }, [item, items, onSelect]);
+  useEffect(() => {
+    setTakingOver(false);
+    setNudge('');
+  }, [selectedId]);
+
+  const answer = async (a: InboxAnswer) => {
+    if (!item) return;
+    setBusy(true);
+    try {
+      await api.answerInbox(item.id, a);
+      onSelect(after(items, item.id));
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) toast.info(err.message);
+      else toast.error(actionError(err));
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const dismiss = async () => {
+    if (!item || !dismissable(item)) return;
+    try {
+      await api.dismissInbox(item.id);
+      onSelect(after(items, item.id));
+      await refresh();
+    } catch (err) {
+      toast.error(actionError(err));
+    }
+  };
+  const questionAnswers = item ? answers[item.id] ?? [] : [];
+  const sendAnswers = () => void answer({ answers: questionAnswers });
+  const doPrimary = () => {
+    if (!item || busy) return;
+    if (item.kind === 'question') {
+      if (questionAnswers.some((a) => a.trim())) sendAnswers();
+      return;
+    }
+    if (item.kind === 'stalled') return void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) });
+    const p = primary(item);
+    if (p && item.kind !== 'approval') void answer({ choice: p });
+  };
+
+  // The handlers change every render; the listener reads the latest through a ref.
+  const keys = useRef({ doPrimary, dismiss, item, items, onSelect, openTicket });
+  keys.current = { doPrimary, dismiss, item, items, onSelect, openTicket };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (foreign(e)) return;
+      const k = keys.current;
+      switch (e.key) {
+        case 'j': k.onSelect(step(k.items, k.item?.id ?? null, 1)); break;
+        case 'k': k.onSelect(step(k.items, k.item?.id ?? null, -1)); break;
+        case 'Enter': k.doPrimary(); break;
+        case 'o':
+          if (k.item?.ticketId && k.item.projectId) k.openTicket({ id: k.item.ticketId, projectId: k.item.projectId });
+          break;
+        case 'e': void k.dismiss(); break;
+        default: return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  if (!item) {
+    return <EmptyState>{items.length === 0 ? 'Nothing waits on you. Questions, approvals and gates from agents and workflows show up here.' : 'Choose an item.'}</EmptyState>;
+  }
+
+  const meta = [KIND_LABEL[item.kind], item.personaName, relativeTime(item.createdAt)].filter(Boolean).join(' · ');
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ViewHeader
+        title={item.title}
+        titleTooltip={item.title}
+        leading={item.ticketKey ? <TicketKey ticketKey={item.ticketKey} /> : undefined}
+        meta={<span className="text-meta text-muted-foreground">{meta}</span>}
+        actions={
+          <>
+            {item.ticketId && item.projectId && (
+              <Button variant="ghost" size="sm" onClick={() => openTicket({ id: item.ticketId!, projectId: item.projectId! })}>
+                Open ticket <Kbd>o</Kbd>
+              </Button>
+            )}
+            {item.sessionId && item.projectId && (
+              <Button variant="ghost" size="sm" onClick={() => openSession({ id: item.sessionId!, projectId: item.projectId! })}>
+                Open session
+              </Button>
+            )}
+            {dismissable(item) && (
+              <Button variant="ghost" size="sm" onClick={() => void dismiss()}>Dismiss <Kbd>e</Kbd></Button>
+            )}
+          </>
+        }
+      />
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+        {item.ticketTitle && <p className="text-sm text-muted-foreground">{item.ticketKey} · {item.ticketTitle}</p>}
+        {item.kind === 'question' && (
+          <Questions
+            item={item}
+            answers={questionAnswers}
+            onChange={(a) => setAnswers((all) => ({ ...all, [item.id]: a }))}
+            onSend={sendAnswers}
+            busy={busy}
+          />
+        )}
+        {item.kind === 'approval' && <Approval item={item} onAnswered={() => { onSelect(after(items, item.id)); void refresh(); }} />}
+        {item.kind === 'stalled' && (
+          <section aria-label="Stalled step" className="flex flex-col gap-3">
+            <p className="text-sm">
+              {typeof item.body.why === 'string' ? item.body.why : 'The step stopped without an outcome.'} Nudge it to
+              carry on, or take it over and pick the outcome yourself.
+            </p>
+            <Textarea aria-label="Nudge message (optional)" placeholder="Your own words for the nudge (optional)" value={nudge}
+              onChange={(e) => setNudge(e.target.value)} rows={2} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="primary" pending={busy} onClick={() => void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) })}>
+                Nudge <Kbd>↵</Kbd>
+              </Button>
+              <Button variant="secondary" aria-expanded={takingOver} onClick={() => setTakingOver((t) => !t)}>Take over</Button>
+            </div>
+            {takingOver && <Outcomes item={item} busy={busy} onPick={(choice) => void answer({ choice })} />}
+          </section>
+        )}
+        {item.kind === 'loop_limit' && (
+          <section aria-label="Loop limit" className="flex flex-col gap-3">
+            <p className="text-sm">This step has run as many times as its loop limit allows. Its passes so far:</p>
+            <ol className="flex flex-col gap-2">
+              {passesOf(item).map((p, n) => (
+                <li key={n} className="rounded-md border border-border p-2 text-sm">
+                  <span className="font-medium">{p.persona}</span>: {p.outcome ?? 'no outcome'}
+                  {p.summary && <p className="mt-1 text-muted-foreground">{p.summary}</p>}
+                </li>
+              ))}
+            </ol>
+            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
+          </section>
+        )}
+        {(item.kind === 'gate') && (
+          <section aria-label="Gate" className="flex flex-col gap-3">
+            {typeof item.body.workflow === 'string' && (
+              <p className="text-meta text-muted-foreground">From workflow {item.body.workflow}</p>
+            )}
+            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
+            {item.group === 'accept' && <OpenChanges item={item} />}
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A gate's or loop limit's choices, the primary one first and marked. */
+function Choices({ item, busy, onPick }: { item: InboxItem; busy: boolean; onPick: (choice: string) => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {item.choices.map((c) => (
+        <Button key={c.id} variant={c.primary ? 'primary' : 'secondary'} pending={busy && c.primary} disabled={busy} onClick={() => onPick(c.id)}>
+          {c.title} {c.primary && <Kbd>↵</Kbd>}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** Take over: the step's outcomes. */
+function Outcomes({ item, busy, onPick }: { item: InboxItem; busy: boolean; onPick: (choice: string) => void }) {
+  const outcomes = item.choices.filter((c) => c.id.startsWith('outcome:'));
+  return (
+    <div role="group" aria-label="Pick the outcome" className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted-foreground">The step ends with:</span>
+      {outcomes.map((c) => (
+        <Button key={c.id} variant="secondary" disabled={busy} onClick={() => onPick(c.id)}>{c.id.slice('outcome:'.length)}</Button>
+      ))}
+    </div>
+  );
+}
+
+function Questions({ item, answers, onChange, onSend, busy }: {
+  item: InboxItem;
+  answers: string[];
+  onChange: (a: string[]) => void;
+  onSend: () => void;
+  busy: boolean;
+}) {
+  const qs = questionsOf(item);
+  const set = (n: number, v: string) => onChange(qs.map((_, i) => (i === n ? v : answers[i] ?? '')));
+  return (
+    <section aria-label="Questions" className="flex flex-col gap-4">
+      {qs.map((q, n) => (
+        <div key={n} className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium"><Markdown>{q.question}</Markdown></p>
+          {q.choices.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {q.choices.map((c) => (
+                <Button key={c} size="sm" variant="secondary" aria-pressed={answers[n] === c}
+                  className={answers[n] === c ? 'bg-accent' : undefined} onClick={() => set(n, c)}>{c}</Button>
+              ))}
+            </div>
+          )}
+          <Textarea aria-label={`Answer ${n + 1}`} value={answers[n] ?? ''} onChange={(e) => set(n, e.target.value)} rows={2} />
+        </div>
+      ))}
+      <div>
+        <Button variant="primary" pending={busy} disabled={!answers.some((a) => a?.trim())} onClick={onSend}>Send answers</Button>
+      </div>
+    </section>
+  );
+}
+
+/** An agent's open permission request, answered in its session. */
+function Approval({ item, onAnswered }: { item: InboxItem; onAnswered: () => void }) {
+  const tool = typeof item.body.tool === 'string' ? item.body.tool : 'tool';
+  const requestId = typeof item.body.requestId === 'string' ? item.body.requestId : '';
+  const diff = typeof item.body.diff === 'string' ? item.body.diff : null;
+  const description = typeof item.body.description === 'string' ? item.body.description : undefined;
+  const questions = requestQuestions(item.body.input);
+  const onAnswer = async (a: ApprovalAnswer) => {
+    try {
+      await api.answerRequest(item.sessionId!, requestId, a);
+      onAnswered();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'request_closed') toast.info('That request was already answered or has expired.');
+      else toast.error(actionError(err));
+    }
+  };
+  return (
+    <ApprovalCard
+      kind={questions.length > 0 ? 'question' : 'approval'}
+      title={approvalTitle(tool)}
+      subject={!diff ? item.title : undefined}
+      preview={diff ? <DiffViewer diff={diff} /> : undefined}
+      description={description}
+      canAlways={item.choices.some((c) => c.id === 'allow_always')}
+      questions={questions.length > 0 ? questions : undefined}
+      keyboard
+      onAnswer={onAnswer}
+    />
+  );
+}
+
+/** Ready to accept: the attempt's changes, from its ticket. */
+function OpenChanges({ item }: { item: InboxItem }) {
+  const openChanges = useOpenChanges();
+  const [loading, setLoading] = useState(false);
+  if (!item.ticketId || !item.projectId) return null;
+  const open = async () => {
+    setLoading(true);
+    try {
+      const t = await api.getTicket(item.ticketId!);
+      const a = t.attempts.find((x) => x.id === item.attemptId) ?? t.attempts.find((x) => x.state === 'active');
+      if (a?.worktreeId) openChanges({ id: a.worktreeId, projectId: item.projectId! });
+      else toast.info('This ticket has no changes to show.');
+    } catch (err) {
+      toast.error(actionError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+  return <div><Button variant="secondary" pending={loading} onClick={() => void open()}>Open changes</Button></div>;
+}

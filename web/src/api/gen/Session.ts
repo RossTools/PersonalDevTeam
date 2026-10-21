@@ -4,6 +4,7 @@ import type { AgentKind } from "./AgentKind";
 import type { PermissionMode } from "./PermissionMode";
 import type { SessionKind } from "./SessionKind";
 import type { SessionMode } from "./SessionMode";
+import type { SessionPersona } from "./SessionPersona";
 import type { SessionStatus } from "./SessionStatus";
 import type { SessionTicket } from "./SessionTicket";
 
@@ -68,4 +69,8 @@ model: string | null,
 /**
  * Conversations: PDT's permission setting.
  */
-permissionMode: PermissionMode | null, };
+permissionMode: PermissionMode | null, 
+/**
+ * The persona and version the session runs, when a workflow's agent step started it (Phase 7b).
+ */
+persona: SessionPersona | null, };

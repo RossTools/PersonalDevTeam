@@ -48,11 +48,11 @@ pub(crate) fn checked(doc: &WorkflowDoc) -> Result<Vec<Issue>, ApiError> {
     Ok(issues)
 }
 
-async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> {
+pub(crate) async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> {
     st.store.get_workflow(id).await?.ok_or_else(|| ApiError::not_found("workflow"))
 }
 
-async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
+pub(crate) async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
     let doc = st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
     let issues = validate(&doc, catalog());
     Ok(WorkflowDetail { workflow: w, doc, issues })
@@ -74,7 +74,7 @@ pub(crate) async fn list(
     Ok(Json(st.store.list_workflows(q.project.as_deref()).await?))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct NewWorkflow {
@@ -93,11 +93,13 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<WorkflowDetail>), ApiError> {
     let n = body(payload)?;
     let doc = n.doc.ok_or_else(|| invalid("doc is required"))?;
-    let w = create_workflow(&st, &doc, n.scope, n.project_id, n.enabled, &n.note).await?;
+    let w = create_workflow(&st, &doc, n.scope, n.project_id, n.enabled, &n.note, Author::User).await?;
     Ok((StatusCode::CREATED, Json(w)))
 }
 
-/// Adds a workflow (`POST /api/workflows`, and instantiating a template).
+/// Adds a workflow (`POST /api/workflows`, instantiating a template, and pdt-mcp's `workflow_save`). One an agent
+/// writes starts disabled: enabling is the user's.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_workflow(
     st: &AppState,
     doc: &WorkflowDoc,
@@ -105,6 +107,7 @@ pub(crate) async fn create_workflow(
     project_id: Option<String>,
     enabled: bool,
     note: &str,
+    author: Author,
 ) -> Result<WorkflowDetail, ApiError> {
     checked(doc)?;
     let scope = scope.unwrap_or(if project_id.is_some() { Scope::Project } else { Scope::Host });
@@ -124,7 +127,7 @@ pub(crate) async fn create_workflow(
         description: doc.description.clone(),
         scope,
         project_id,
-        enabled,
+        enabled: enabled && author != Author::Agent,
         builtin: None,
         source: Source::Host,
         repo_file: None,
@@ -133,7 +136,7 @@ pub(crate) async fn create_workflow(
         created_at: now,
         updated_at: now,
     };
-    st.store.insert_workflow(&w, doc, Author::User, note).await?;
+    st.store.insert_workflow(&w, doc, author, note).await?;
     detail(st, load(st, &w.id).await?).await
 }
 
@@ -145,7 +148,7 @@ pub(crate) async fn get_one(
     Ok(Json(detail(&st, w).await?))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SaveWorkflow {
@@ -330,7 +333,7 @@ pub(crate) async fn run_now(
     Ok(Json(Started { run_id }))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ValidateRequest {
@@ -363,7 +366,7 @@ pub(crate) async fn validate_doc(
     Ok(Json(validate(&doc, catalog())))
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct DryRunRequest {

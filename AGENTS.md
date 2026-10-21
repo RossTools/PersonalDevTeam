@@ -19,7 +19,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - crates/pdt-git — git CLI wrapper
 - crates/pdt-store — SQLite (sqlx) + migrations in crates/pdt-store/migrations
 - crates/pdt-agents — PTY terminals, detached runs, the agent adapters (`adapter/{claude,codex,devin}.rs`), hooks and instructions
-- crates/pdt-api — axum routes; errors are JSON {code, message}; test fakes in src/bin (`fake-agent`)
+- crates/pdt-api — axum routes; errors are JSON {code, message}; pdt-mcp in `mcp/`; test fakes in src/bin (`fake-agent`)
 - crates/pdt-tailscale — tailscale CLI wrapper (serve, status)
 - crates/pdt-github — GitHub CLI (`gh`) wrapper (an attempt's PR, Actions runs)
 - crates/pdt-update — GitHub release client (token, verified downloads)
@@ -59,7 +59,8 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - **Agent sessions** — docs/reference/agents.md: PDT's instructions to every agent (pdt-core `agent_context` + the project's agent instructions; built-in guides served from docs/ by pdt-api `guides.rs`), activity hooks, PTY terminals, Claude/Codex restart and resume, auto-resume, Devin, host defaults (default agent and view).
 - **Conversations** — docs/reference/conversations.md: the structured view (Claude stream-json, a PDT-owned Codex app-server, Devin ACP), its events API, Conversation | Terminal switching, attachments, Make ticket.
 - **Tickets** — docs/reference/tickets.md: tickets and the board, parts (parent tickets), Start (branch `pdt-<KEY>-<n>-<slug>`, worktree, attempt, agent session), merge detection, PR/CI tracking and notices, areas and overlap.
-- **Workflows** — docs/reference/workflows.md: the event log, workflow documents and versions, the engine (runs, steps, waits, retries), the node catalog, built-in workflows (PR notices, finishing merged tickets), `session.send`'s outbox, `ticket.finish`, connections.
+- **Workflows** — docs/reference/workflows.md: the event log, workflow documents and versions, the engine (runs, steps, waits, retries), the node catalog, built-in workflows (PR notices, finishing merged tickets), `session.send`'s outbox, `ticket.finish`, connections; agent steps (personas, outcomes, nudges, stalls, loop limits) and the Inbox (Phase 7b).
+- **pdt-mcp** — docs/reference/agents.md "pdt-mcp": PDT's MCP server at `/api/mcp` (per-session tokens), its tools, and how each agent gets it per launch.
 - **Review** — docs/reference/review.md: the Changes view, line comments, Send feedback, Approve, Merge.
 - **Workspaces, projects, worktrees, runs** — docs/reference/workspaces.md; run configuration in docs/run-config.md.
 - Invariants that are easy to break:

@@ -5,13 +5,17 @@ import { api } from '../api/client';
 import { FolderField } from '../common/FolderField';
 import type { Project } from '../api/gen/Project';
 
-type Mode = 'path' | 'clone';
+type Mode = 'path' | 'clone' | 'personal';
 const modes = [
   { value: 'path' as const, label: 'Folder' },
   { value: 'clone' as const, label: 'Clone URL' },
+  { value: 'personal' as const, label: 'Personal (no repo)' },
 ];
 
-/** Adds a project from a folder on this host, or by cloning a repository URL into the Projects folder. */
+/**
+ * Adds a project from a folder on this host, by cloning a repository URL into the Projects folder, or as a Personal
+ * project with no repository (PDT makes its folder; spec 7b §7).
+ */
 export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: Project) => void; autoFocus?: boolean }) {
   const qc = useQueryClient();
   const errorId = useId();
@@ -33,7 +37,7 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
   };
   const add = useMutation({ mutationFn: api.createProject, onSuccess: done });
   const clone = useMutation({ mutationFn: api.cloneProject, onSuccess: done });
-  const m = mode === 'path' ? add : clone;
+  const m = mode === 'clone' ? clone : add;
   // A submit error moves focus to its Alert (spec §6.3).
   useEffect(() => {
     if (m.isError) document.getElementById(errorId)?.focus();
@@ -42,6 +46,7 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (mode === 'path') add.mutate({ name, repoPath, ...(opt(key) ? { key: opt(key) } : {}) });
+    else if (mode === 'personal') add.mutate({ name, repoPath: '', kind: 'personal', ...(opt(key) ? { key: opt(key) } : {}) });
     else clone.mutate({ url, ...(opt(name) ? { name: opt(name) } : {}), ...(opt(key) ? { key: opt(key) } : {}), ...(opt(parentDir) ? { parentDir: opt(parentDir) } : {}) });
   };
   return (
@@ -61,6 +66,12 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
               onChange={setRepoPath}
               onPick={(f) => { if (!name.trim()) setName(f.name); }}
             />
+          </Field>
+        </>
+      ) : mode === 'personal' ? (
+        <>
+          <Field label="Name" hint="No repository: PDT makes a folder for it, and each ticket works in its own folder there.">
+            <Input required autoFocus={autoFocus} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
         </>
       ) : (
@@ -87,7 +98,7 @@ export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: P
       </Field>
       {m.isError && <Alert id={errorId} tabIndex={-1} tone="error">{m.error.message}</Alert>}
       <Button variant="primary" type="submit" pending={m.isPending}>
-        {mode === 'path' ? 'Add project' : clone.isPending ? 'Cloning…' : 'Clone and add'}
+        {mode !== 'clone' ? 'Add project' : clone.isPending ? 'Cloning…' : 'Clone and add'}
       </Button>
     </form>
   );

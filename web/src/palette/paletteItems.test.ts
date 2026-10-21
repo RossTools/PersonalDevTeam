@@ -9,13 +9,13 @@ import { runInfo, sessionInfo, ticketInfo } from '../workspaces/useWorkspaces';
 import { ACTIONS, GO_TO, paletteItems, type PaletteContext, type PaletteHandlers, type PaletteItem } from './paletteItems';
 
 const project = (id: string, name: string, key: string): Project => ({
-  id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, githubRepo: null,
+  id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, githubRepo: null, kind: 'repo',
 });
 
 const session = (over: Partial<Session> & { id: string }): Session => ({
   projectId: 'p1', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: over.id,
   cwd: '/r/p1', status: 'running', exitCode: null, createdAt: 0, endedAt: null, externalSessionId: null,
-  freshStartedAt: null, activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, ...over,
+  freshStartedAt: null, activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, persona: null, ...over,
 });
 
 const run: Run = {
@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
   };
 }
 
@@ -213,6 +213,14 @@ describe('paletteItems', () => {
     const c = ctx();
     byId(paletteItems(c), 'view:files').run!();
     expect(c.handlers.showFiles).toHaveBeenCalled();
+  });
+
+  it('goes to the Inbox and Personas', () => {
+    const c = ctx();
+    byId(paletteItems(c), 'view:inbox').run!();
+    expect(c.handlers.showInbox).toHaveBeenCalled();
+    byId(paletteItems(c), 'view:personas').run!();
+    expect(c.handlers.showPersonas).toHaveBeenCalled();
   });
 
   it('offers New ticket and Open ticket… (a ticket search step) when there are projects', () => {

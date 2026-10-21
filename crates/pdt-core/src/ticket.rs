@@ -145,12 +145,15 @@ pub enum EventKind {
     Feedback,
     /// The user approved the attempt's changes: `{verdict: "approved", head}`.
     Review,
+    /// An agent step's outcome (Phase 7b): `{outcome, summary, persona, personaVersion, by, sessionId, attemptId,
+    /// workflowId, workflowName, runId}`.
+    Outcome,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
-    Parted => "parted", Feedback => "feedback", Review => "review",
+    Parted => "parted", Feedback => "feedback", Review => "review", Outcome => "outcome",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -159,7 +162,8 @@ str_enum!(EventKind {
 pub enum Actor {
     User,
     System,
-    /// An agent, through the API (a comment it posted with curl).
+    /// An agent: through pdt-mcp (the event's data names the session and persona), or the API (a comment it posted
+    /// with curl).
     Agent,
 }
 str_enum!(Actor { User => "user", System => "system", Agent => "agent" });

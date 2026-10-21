@@ -22,10 +22,13 @@ pub struct ProjectSettingsView {
     pub agent_instructions: Option<String>,
     /// Merge… goes through the attempt's pull request only (no local merge into the base branch).
     pub merge_via_pr: bool,
+    /// The permission mode of every persona's session here, over the persona's own (null: the persona's, else the
+    /// host default).
+    pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
 }
 
-/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it) and `mergeViaPr` are replaced
-/// when present, so a client that does not know them keeps them.
+/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it), `mergeViaPr` and
+/// `agentPermissionMode` ("" clears it) are replaced when present, so a client that does not know them keeps them.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -38,6 +41,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub merge_via_pr: Option<bool>,
+    /// `ask`, `accept_edits`, `plan`, `bypass`, or "" for none.
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent_permission_mode: Option<String>,
 }
 
 pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSettingsView, ApiError> {
@@ -50,6 +57,7 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
         run_overrides: p.run_overrides,
         agent_instructions: p.agent_instructions,
         merge_via_pr: p.merge_via_pr,
+        agent_permission_mode: p.agent_permission_mode,
     })
 }
 
@@ -77,11 +85,19 @@ pub(crate) async fn put_settings(
             .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?,
         None => current.agent_instructions,
     };
+    let agent_permission_mode = match input.agent_permission_mode.as_deref().map(str::trim) {
+        None => current.agent_permission_mode,
+        Some("") => None,
+        Some(m) => Some(pdt_core::conversation::PermissionMode::parse(m).ok_or_else(|| {
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", format!("{m} is not a permission mode"))
+        })?),
+    };
     let settings = ProjectSettings {
         run_overrides,
         agent_credentials: input.agent_credentials,
         agent_instructions,
         merge_via_pr: input.merge_via_pr.unwrap_or(current.merge_via_pr),
+        agent_permission_mode,
     };
     st.store.put_project_settings(&id, &settings).await?;
     Ok(Json(view(&st, &id).await?))

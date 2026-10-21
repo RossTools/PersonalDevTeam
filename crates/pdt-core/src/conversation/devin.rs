@@ -44,7 +44,15 @@ pub enum DevinOut {
         id: Value,
         message: String,
     },
+    /// Answer an agent request now with a result (PDT's own tools need no approval, Phase 7b).
+    Respond {
+        id: Value,
+        result: Value,
+    },
 }
+
+/// The name prefix Devin gives pdt-mcp's tools (`mcp__pdt__get_ticket`).
+const PDT_TOOL_PREFIX: &str = "mcp__pdt__";
 
 /// An answer to send for an open request.
 #[derive(Debug, Clone, PartialEq)]
@@ -799,6 +807,16 @@ impl DevinMapper {
                         Some(t) => (t.tool.clone(), t.title.clone(), t.input.clone(), t.diff.clone()),
                         None => ("tool".into(), String::new(), Value::Null, None),
                     };
+                    // PDT's own tools (pdt-mcp): the session only has those its persona allows, so they run
+                    // without asking, as Claude's `--allowedTools` and Codex's approval mode do.
+                    if name.starts_with(PDT_TOOL_PREFIX)
+                        && let Some((once, _)) = options.iter().find(|(_, kind)| kind == "allow_once")
+                    {
+                        return vec![DevinOut::Respond {
+                            id: rpc_id,
+                            result: json!({"outcome": {"outcome": "selected", "optionId": once}}),
+                        }];
+                    }
                     OpenRequest {
                         rpc_id,
                         kind: RequestKind::Approval,
@@ -1332,5 +1350,28 @@ mod tests {
         let out = m.on_request(json!("e2"), "elicitation/create", &p);
         assert!(!out.is_empty());
         assert_eq!(m.answer("e2", &Answer::Deny { message: None }).unwrap().result, json!({"action": "decline"}));
+    }
+
+    #[test]
+    fn pdts_own_tools_are_allowed_without_asking() {
+        let mut m = mapper();
+        m.begin_prompt("go");
+        m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "Calling get_ticket from pdt",
+            "kind": "other", "status": "pending", "rawInput": {},
+            "_meta": {"cognition.ai/inferenceToolName": "mcp__pdt__get_ticket"}}));
+        let options = json!([{"optionId": "o1", "name": "Allow", "kind": "allow_once"},
+                             {"optionId": "o2", "name": "Reject", "kind": "reject_once"}]);
+        let out = m.on_request(
+            json!(9),
+            "session/request_permission",
+            &json!({"sessionId": "s", "toolCall": {"toolCallId": "c1"}, "options": options}),
+        );
+        match &out[..] {
+            [DevinOut::Respond { id, result }] => {
+                assert_eq!(*id, json!(9));
+                assert_eq!(result["outcome"]["optionId"], "o1");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

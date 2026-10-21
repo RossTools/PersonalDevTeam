@@ -4,7 +4,7 @@ use pdt_core::host::{CredentialPolicy, HostSettings};
 const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs.
-type ProjectSettingsRow = (Option<String>, Option<String>, Option<String>, bool);
+type ProjectSettingsRow = (Option<String>, Option<String>, Option<String>, bool, Option<String>);
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -17,6 +17,8 @@ pub struct ProjectSettings {
     pub agent_instructions: Option<String>,
     /// Merge… only through the attempt's pull request (review spec §2.7): never a local merge.
     pub merge_via_pr: bool,
+    /// The permission mode every persona's session in the project runs with, over the persona's own (Phase 7b §3).
+    pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
 }
 
 impl Store {
@@ -45,13 +47,13 @@ impl Store {
 
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
-            "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr FROM project_settings \
-             WHERE project_id = ?",
+            "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode \
+             FROM project_settings WHERE project_id = ?",
         )
         .bind(project_id)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((run_overrides, creds, agent_instructions, merge_via_pr)) = row else {
+        let Some((run_overrides, creds, agent_instructions, merge_via_pr, mode)) = row else {
             return Ok(ProjectSettings::default());
         };
         let agent_credentials = match creds {
@@ -60,21 +62,30 @@ impl Store {
             ),
             None => None,
         };
-        Ok(ProjectSettings { run_overrides, agent_credentials, agent_instructions, merge_via_pr })
+        let agent_permission_mode = mode.as_deref().and_then(pdt_core::conversation::PermissionMode::parse);
+        Ok(ProjectSettings {
+            run_overrides,
+            agent_credentials,
+            agent_instructions,
+            merge_via_pr,
+            agent_permission_mode,
+        })
     }
 
     pub async fn put_project_settings(&self, project_id: &str, s: &ProjectSettings) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
-             merge_via_pr) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
+             merge_via_pr, agent_permission_mode) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
-             agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr",
+             agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
+             agent_permission_mode = excluded.agent_permission_mode",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
         .bind(s.agent_credentials.map(CredentialPolicy::as_str))
         .bind(&s.agent_instructions)
         .bind(s.merge_via_pr)
+        .bind(s.agent_permission_mode.map(pdt_core::conversation::PermissionMode::as_str))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -131,6 +142,7 @@ mod tests {
             agent_credentials: Some(CredentialPolicy::PassThrough),
             agent_instructions: Some("Run `make check` before pushing.".into()),
             merge_via_pr: true,
+            agent_permission_mode: Some(pdt_core::conversation::PermissionMode::AcceptEdits),
         };
         store.put_project_settings("p", &s).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), s);

@@ -19,12 +19,12 @@ afterEach(() => {
   act(() => { toast.dismiss(); });
 });
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null, kind: 'repo' };
 const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,
   externalSessionId: null, freshStartedAt: 1,
-  activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, ...over,
+  activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, persona: null, ...over,
 });
 const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1, missing: false };
 
@@ -55,7 +55,7 @@ describe('SessionView header', () => {
 
   it('shows the worktree branch as a chip with GitHub links', async () => {
     stubApi({
-      'GET /api/projects': [{ ...project, githubRepo: 'o/r' }],
+      'GET /api/projects': [{ ...project, githubRepo: 'o/r', kind: 'repo' }],
       'GET /api/projects/p/worktrees': [worktree],
       'POST /api/sessions/s1/view': undefined,
     });

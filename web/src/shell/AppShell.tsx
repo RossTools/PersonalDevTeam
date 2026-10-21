@@ -42,6 +42,9 @@ import { WorkspaceBar } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
 import { InstanceBadge } from './InstanceBadge';
+import { InboxList } from '../inbox/InboxList';
+import { PersonasList } from '../personas/PersonasList';
+import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
 import { VIEWS, type ViewId } from './views';
 
@@ -49,8 +52,8 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
-  sessions: 'Workspaces and agents', tickets: 'Projects and filters', workflows: 'Workflows and templates', files: 'Files and folders',
-  settings: 'Settings sections',
+  sessions: 'Workspaces and agents', inbox: 'Inbox items', tickets: 'Projects and filters', workflows: 'Workflows and templates',
+  personas: 'Personas', files: 'Files and folders', settings: 'Settings sections',
 };
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
@@ -69,6 +72,8 @@ const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ de
 const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
 const WorkflowsView = lazy(() => import('../workflows/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
 const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
+const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default: m.InboxView })));
+const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
 
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
@@ -90,6 +95,12 @@ export function AppShell() {
   const [starting, setStarting] = useState<{ ticketId: string; placement?: TabPlacement } | null>(null);
   // Phones: the list column is a sheet from the left, opened from the header.
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The Inbox's selected item.
+  const [inboxId, setInboxId] = useState<string | null>(null);
+  // The Personas view's persona (`new`: the create form).
+  const [personaId, setPersonaId] = useState<string | null>(null);
+  const inbox = useInbox();
+  const inboxItems = inbox.data?.items ?? [];
   const phone = useMediaQuery(PHONE_QUERY);
   const plusRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useThemePref();
@@ -166,6 +177,10 @@ export function AppShell() {
     if (a.type === 'backlog' || a.type === 'board') {
       setView('tickets');
       backlog.setMode(a.type);
+      return;
+    }
+    if (a.type === 'inbox') {
+      setView('inbox');
       return;
     }
     setView('sessions');
@@ -260,6 +275,8 @@ export function AppShell() {
     showKeys: () => setHelpOpen(true),
     showFiles: () => setView('files'),
     showWorkflows: () => setView('workflows'),
+    showInbox: () => setView('inbox'),
+    showPersonas: () => setView('personas'),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
@@ -292,6 +309,10 @@ export function AppShell() {
         onChoose={() => setSheetOpen(false)}
       />
     </>
+  ) : view === 'inbox' ? (
+    <InboxList items={inboxItems} selectedId={inboxId} loading={inbox.isLoading} onSelect={(id) => { setInboxId(id); setSheetOpen(false); }} />
+  ) : view === 'personas' ? (
+    <PersonasList selectedId={personaId} onSelect={(id) => { setPersonaId(id); setSheetOpen(false); }} />
   ) : view === 'tickets' ? (
     <TicketsList backlog={backlog} projects={ws.projects} onChoose={() => setSheetOpen(false)} />
   ) : view === 'workflows' ? (
@@ -336,6 +357,7 @@ export function AppShell() {
         onSelect={(v) => { setView(v); setSheetOpen(false); }}
         onSearch={phone ? () => setPaletteOpen(true) : undefined}
         top={phone ? undefined : <InstanceBadge stacked />}
+        counts={{ inbox: inbox.data?.total ?? 0 }}
       />
       {phone ? (
         <Sheet side="left" title={LIST_NAME[view]} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
@@ -412,7 +434,11 @@ export function AppShell() {
         )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {view === 'tickets' ? (
+            {view === 'inbox' ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} selectedId={inboxId} onSelect={setInboxId} /></Suspense>
+            ) : view === 'personas' ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
+            ) : view === 'tickets' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketsView backlog={backlog} projects={ws.projects} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></Suspense>
             ) : view === 'workflows' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></Suspense>
