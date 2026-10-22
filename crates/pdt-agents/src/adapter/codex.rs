@@ -490,6 +490,8 @@ pub struct CodexLive {
     route: Arc<Route>,
     settings: Mutex<Settings>,
     open: AtomicBool,
+    /// The sandbox lets commands reach the network (the PM).
+    network: bool,
 }
 
 fn input(msg: &Outgoing) -> Value {
@@ -581,6 +583,7 @@ impl AgentAdapter for CodexAdapter {
             route,
             settings: Mutex::new(Settings { model: spec.model, mode: spec.permission_mode }),
             open: AtomicBool::new(true),
+            network: spec.mcp.as_ref().is_some_and(|m| m.pm),
         }))
     }
 
@@ -602,7 +605,7 @@ impl AgentAdapter for CodexAdapter {
         // Also when the request is dropped midway (the browser gave up): the fork is let go.
         let _guard = SideGuard { side: self.server.side.clone(), conn: conn.clone(), fork: fork.clone() };
         let mut params = json!({"threadId": fork, "input": pdt_core::conversation::codex::user_input(prompt, &[]),
-                                "approvalPolicy": "never", "sandboxPolicy": sandbox_policy("read-only"),
+                                "approvalPolicy": "never", "sandboxPolicy": sandbox_policy("read-only", false),
                                 "outputSchema": schema});
         if let Some(m) = &spec.model {
             params["model"] = json!(m);
@@ -667,7 +670,7 @@ impl CodexLive {
         let s = self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let (approval, sandbox) = codex_policy(s.mode);
         let mut params = json!({"threadId": self.thread, "input": input(msg), "approvalPolicy": approval,
-                                "sandboxPolicy": sandbox_policy(sandbox)});
+                                "sandboxPolicy": sandbox_policy(sandbox, self.network)});
         if let Some(m) = s.model {
             params["model"] = json!(m);
         }

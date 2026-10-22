@@ -31,8 +31,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   plain folder, and its tickets start in folders ([tickets.md](tickets.md#start-phase-4b)). Web: Add project's
   "Personal (no repo)", and the project page and Start dialog leave out what needs git.
 - The **host project** (PDT-81; `kind: host`, key `_HOST`, folder `<data dir>/pm`) holds the PM's sessions
-  ([agents.md](agents.md#the-pm-pdt-81)). PDT makes it on first use; it is never listed, has no workspace, and
-  `POST /api/projects` refuses `kind: host`.
+  ([agents.md](agents.md#the-pm-pdt-81)), which run in the work folder that holds the projects' checkouts. PDT makes
+  it on first use; it is never listed, has no workspace, and `POST /api/projects` refuses `kind: host`.
 - Projects have a unique key (`PDT`; suggested from the name, backfilled when the store opens).
   `POST /api/projects/clone` clones into the host's Projects folder (default `~/work`) with `GIT_TERMINAL_PROMPT=0`;
   removing a project stops its sessions and runs and never touches files. Projects carry `githubRepo` from `origin`

@@ -20,8 +20,9 @@ pub struct McpServer {
     /// The tools the session may call without asking (Claude's `--allowedTools`). The session's asking tools
     /// (PDT-81) are left out, so Claude asks before each call.
     pub tools: Vec<String>,
-    /// Only PDT's tools (the PM): Claude gets `--tools ""`, none of its built-in ones (no shell, no files).
-    pub only_pdt_tools: bool,
+    /// The PM (PDT-100): it researches, so Codex also gets live web search and network access in its sandbox (Claude
+    /// and Devin have both already).
+    pub pm: bool,
     /// Claude's `--mcp-config` file (written by [`write_claude_config`]).
     pub claude_config: Option<PathBuf>,
 }
@@ -59,10 +60,6 @@ pub fn write_claude_config(dir: &Path, m: &McpServer) -> std::io::Result<PathBuf
 pub fn claude_args(m: &McpServer) -> Vec<String> {
     let Some(file) = &m.claude_config else { return vec![] };
     let mut a = vec!["--mcp-config".to_string(), file.to_string_lossy().into_owned()];
-    if m.only_pdt_tools {
-        a.push("--tools".into());
-        a.push(String::new());
-    }
     if !m.tools.is_empty() {
         a.push("--allowedTools".into());
         a.push(m.tools.iter().map(|t| format!("mcp__{SERVER_NAME}__{t}")).collect::<Vec<_>>().join(","));
@@ -71,15 +68,27 @@ pub fn claude_args(m: &McpServer) -> Vec<String> {
 }
 
 /// A Codex app-server thread's `config` overrides. PDT's tools run without asking (as Claude's `--allowedTools`):
-/// a session only gets the tools its persona allows.
+/// a session only gets the tools its persona allows. The PM also gets [`CODEX_PM_CONFIG`].
 pub fn codex_thread_config(m: &McpServer) -> Value {
-    json!({format!("mcp_servers.{SERVER_NAME}"): {"url": m.url, "http_headers": {"Authorization": m.bearer()},
-                                                  "default_tools_approval_mode": "approve"}})
+    let server = json!({"url": m.url, "http_headers": {"Authorization": m.bearer()},
+                        "default_tools_approval_mode": "approve"});
+    let mut c = json!({format!("mcp_servers.{SERVER_NAME}"): server});
+    if m.pm {
+        for (k, v) in CODEX_PM_CONFIG {
+            c[k] = serde_json::from_str(v).unwrap_or(Value::Null);
+        }
+    }
+    c
 }
+
+/// The PM's Codex settings (key, TOML/JSON value): live web search, and the network inside the workspace-write sandbox
+/// (installs, fetching docs). Each turn's `sandboxPolicy` must say `networkAccess` too.
+pub const CODEX_PM_CONFIG: [(&str, &str); 2] =
+    [("web_search", "\"live\""), ("sandbox_workspace_write.network_access", "true")];
 
 /// A Codex terminal's `-c` overrides; the token goes in [`TOKEN_ENV`] (see [`codex_tui_env`]), not the command line.
 pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
-    vec![
+    [
         "-c".into(),
         format!("mcp_servers.{SERVER_NAME}.url={}", crate::hooks::toml_string(&m.url)),
         "-c".into(),
@@ -87,6 +96,9 @@ pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
         "-c".into(),
         format!("mcp_servers.{SERVER_NAME}.default_tools_approval_mode=\"approve\""),
     ]
+    .into_iter()
+    .chain(CODEX_PM_CONFIG.iter().filter(|_| m.pm).flat_map(|(k, v)| ["-c".into(), format!("{k}={v}")]))
+    .collect()
 }
 
 pub fn codex_tui_env(m: &McpServer) -> (String, String) {
@@ -114,7 +126,7 @@ mod tests {
             token: "s1.ab".into(),
             tools: vec!["get_ticket".into(), "submit_outcome".into()],
             claude_config: dir.map(|d| d.join(CLAUDE_CONFIG_FILE)),
-            only_pdt_tools: false,
+            pm: false,
         }
     }
 
@@ -136,8 +148,8 @@ mod tests {
         assert!(a[1].ends_with("mcp.json"));
         assert_eq!(a[2..], ["--allowedTools", "mcp__pdt__get_ticket,mcp__pdt__submit_outcome"]);
         assert!(claude_args(&server(None)).is_empty());
-        let pm = McpServer { only_pdt_tools: true, ..server(Some(dir.path())) };
-        assert_eq!(claude_args(&pm)[2..4], ["--tools", ""], "no built-in tools");
+        let pm = McpServer { pm: true, ..server(Some(dir.path())) };
+        assert_eq!(claude_args(&pm), a, "the PM keeps Claude's own tools");
     }
 
     #[test]
@@ -155,6 +167,18 @@ mod tests {
         }
         assert!(!a.iter().any(|x| x.contains("s1.ab")));
         assert_eq!(codex_tui_env(&m), (TOKEN_ENV.to_string(), "s1.ab".to_string()));
+        assert!(c.get("web_search").is_none());
+
+        // The PM researches: live web search and the network in its sandbox.
+        let pm = McpServer { pm: true, ..m };
+        let c = codex_thread_config(&pm);
+        assert_eq!(c["web_search"], "live");
+        assert_eq!(c["sandbox_workspace_write.network_access"], true);
+        let a = codex_tui_args(&pm);
+        assert_eq!(a[6..], ["-c", "web_search=\"live\"", "-c", "sandbox_workspace_write.network_access=true"]);
+        for kv in [&a[7], &a[9]] {
+            toml::from_str::<toml::Table>(kv).unwrap();
+        }
     }
 
     #[test]

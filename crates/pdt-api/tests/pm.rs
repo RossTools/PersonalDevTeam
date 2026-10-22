@@ -33,6 +33,12 @@ async fn setup(rotate_age_ms: Option<i64>) -> Env {
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_program = FAKE.to_string();
+    state.platform.codex_program = FAKE.to_string();
+    state.platform.devin_program = FAKE.to_string();
+    let devin_config = tmp.path().join("devin-user").join("config.json");
+    std::fs::create_dir_all(devin_config.parent().unwrap()).unwrap();
+    std::fs::write(&devin_config, "{}").unwrap();
+    state.platform.devin_config_file = Some(devin_config);
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
@@ -156,7 +162,8 @@ async fn the_pm_answers_from_pdt_and_creates_tickets_after_a_yes() {
     assert_ne!(pm["current"]["projectId"], env.project.as_str());
 
     let text = instructions(&env, &id);
-    for want in ["project manager", "# Briefing", "- P (`PX`): To do 1", "`create_ticket`", "## Your role"] {
+    let in_repo = format!("- P (`PX`) in `{}`: To do 1", projects[0]["repoPath"].as_str().unwrap());
+    for want in ["project manager", "# Briefing", &in_repo, "`create_ticket`", "## Your role"] {
         assert!(text.contains(want), "missing {want:?} in\n{text}");
     }
 
@@ -207,6 +214,41 @@ async fn the_pm_answers_from_pdt_and_creates_tickets_after_a_yes() {
     let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
     assert!(said.contains("that is this session"), "{said}");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-100: every agent's PM runs in the work folder (the folder holding the projects' checkouts) with its agent's own
+/// tools; Codex's also with live web search and the network in its sandbox.
+#[tokio::test]
+async fn the_pm_works_from_the_work_folder_with_its_agents_own_tools() {
+    let env = setup(None).await;
+    let work = env._tmp.path().canonicalize().unwrap();
+    let said_cwd = |said: &str| {
+        let dir = said.strip_prefix("cwd=").unwrap().split(' ').next().unwrap().to_string();
+        std::path::PathBuf::from(dir).canonicalize().unwrap()
+    };
+    let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
+    let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
+
+    let id = start_pm(&env, "where").await;
+    let said = wait_said(&env, &id, 1).await.pop().unwrap();
+    assert_eq!(said_cwd(&said), work, "{said}");
+    assert!(said.ends_with("tools=\"all\""), "Claude keeps its built-in tools: {said}");
+    let text = instructions(&env, &id);
+    let (_, projects) = call(&env.app, "GET", "/api/projects", None).await;
+    let repo = std::path::PathBuf::from(projects[0]["repoPath"].as_str().unwrap());
+    assert!(text.contains(&format!("from the work folder `{}`", repo.parent().unwrap().display())), "{text}");
+
+    for (agent, want) in [("codex", " web_search=live network=true"), ("devin", "")] {
+        let mut setup = pm["setup"].clone();
+        setup["agent"] = json!(agent);
+        let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", pm["id"].as_str().unwrap()), Some(setup)).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let id = start_pm(&env, "where").await;
+        let said = wait_said(&env, &id, 1).await.pop().unwrap();
+        assert_eq!(said_cwd(&said), work, "{agent}: {said}");
+        assert!(said.ends_with(want), "{agent}: {said}");
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
 }
 
 #[tokio::test]

@@ -37,6 +37,21 @@ pub(crate) async fn host_project(st: &AppState) -> Result<Project, ApiError> {
     Ok(st.store.ensure_host_project(&id, &dir.to_string_lossy(), now_ms()).await?)
 }
 
+/// Where a new PM session runs (PDT-100): the folder holding the projects' checkouts and the Projects folder (the host
+/// setting; its default `~/work` only while there are no projects), else the home folder, else the PM's own folder.
+async fn work_folder(st: &AppState, own: &str) -> Result<String, ApiError> {
+    let projects = st.store.list_projects().await?;
+    let setting = st.store.get_host_settings().await?.projects_dir;
+    let projects_dir = match &setting {
+        Some(_) => crate::projects::projects_dir(setting.as_deref()),
+        None if projects.is_empty() => crate::projects::projects_dir(None).filter(|d| d.is_dir()),
+        None => None,
+    };
+    let checkouts = projects.iter().map(|p| std::path::Path::new(&p.repo_path));
+    let dir = pm::work_folder(checkouts, projects_dir.as_deref()).or_else(|| st.home_dir.clone());
+    Ok(dir.map_or_else(|| own.to_string(), |d| d.to_string_lossy().into_owned()))
+}
+
 /// Whether a session is a PM session (one of the host project's).
 pub(crate) async fn is_pm_session(st: &AppState, s: &Session) -> bool {
     matches!(st.store.get_project(&s.project_id).await, Ok(Some(p)) if p.is_host())
@@ -104,7 +119,7 @@ async fn new_session(st: &AppState, first: Option<String>) -> Result<Session, Ap
         ticket_key: None,
         tab: None,
         persona: Some(SessionPersona { id: p.id.clone(), name: p.name.clone(), version: p.version, step_id: None }),
-        cwd: None,
+        cwd: Some(work_folder(st, &project.repo_path).await?),
     };
     let s = crate::sessions::create_session(st, req).await?;
     st.store.insert_pm_session(&s.id, s.created_at).await?;
@@ -281,6 +296,8 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
     let tools = crate::mcp::session_tools(st, s).await;
     Ok(pm::instructions(&pm::PmContext {
         session_id: &s.id,
+        port: st.listen_port,
+        work_folder: &s.cwd,
         tools: &tools,
         persona: &persona_text,
         briefing: &briefing,
@@ -346,6 +363,7 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
             name: p.name.clone(),
             key: p.key.clone(),
             personal: p.is_personal(),
+            folder: p.repo_path.clone(),
             stages: stage_counts(st, &p.id).await?,
             pm_acts,
         });

@@ -255,6 +255,17 @@ pub struct PersonaDiff {
     pub unified: String,
 }
 
+/// `GET /api/personas/{id}/template` (PDT-100): a built-in persona's current template and how the persona's current
+/// version differs from it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PersonaTemplate {
+    pub setup: PersonaSetup,
+    /// The current version → the template.
+    pub diff: PersonaDiff,
+}
+
 fn as_text(s: &PersonaSetup) -> String {
     let mut t = format!(
         "agent: {}\nmodel: {}\npermission mode: {}\ntools: {}\n\n",
@@ -290,6 +301,60 @@ pub fn diff(a: &PersonaSetup, b: &PersonaSetup, a_label: &str, b_label: &str) ->
     let (ta, tb) = (as_text(a), as_text(b));
     let unified = similar::TextDiff::from_lines(&ta, &tb).unified_diff().header(a_label, b_label).to_string();
     PersonaDiff { changed, unified }
+}
+
+/// A built-in persona brought up to a newer template (PDT-100). `base` is the template PDT applied last: each field
+/// the user left as it was follows `template`; a field they changed stays theirs. Returns the setup and the fields
+/// kept (named as in [`PersonaDiff::changed`]) whose template moved on.
+pub fn follow_template(
+    base: &PersonaSetup,
+    current: &PersonaSetup,
+    template: &PersonaSetup,
+) -> (PersonaSetup, Vec<&'static str>) {
+    let mut kept = vec![];
+    fn pick<T: Clone + PartialEq>(
+        name: &'static str,
+        base: &T,
+        current: &T,
+        template: &T,
+        kept: &mut Vec<&'static str>,
+    ) -> T {
+        if current == base {
+            return template.clone();
+        }
+        if template != base {
+            kept.push(name);
+        }
+        current.clone()
+    }
+    let tools = if current.tool_set() == base.tool_set() {
+        template.tools.clone()
+    } else {
+        if template.tool_set() != base.tool_set() {
+            kept.push("tools");
+        }
+        current.tools.clone()
+    };
+    let setup = PersonaSetup {
+        agent: pick("agent", &base.agent, &current.agent, &template.agent, &mut kept),
+        model: pick("model", &base.model, &current.model, &template.model, &mut kept),
+        permission_mode: pick(
+            "permissionMode",
+            &base.permission_mode,
+            &current.permission_mode,
+            &template.permission_mode,
+            &mut kept,
+        ),
+        tools,
+        instructions: pick(
+            "instructions",
+            &base.instructions,
+            &current.instructions,
+            &template.instructions,
+            &mut kept,
+        ),
+    };
+    (setup, kept)
 }
 
 /// The permission mode a persona's session runs with (spec §3): the project's override, else the persona's, else
@@ -406,6 +471,15 @@ messages), its workflow runs and the Inbox, then say what it waits on and who ca
 - Drafting a ticket: write the title and description (scope, out of scope, \"Done when\") in your reply first, then \
 call `create_ticket`; the user confirms it (PDT shows them the call) unless the project lets you act. The same for \
 `edit_ticket` and `send_to_session`. Never claim you made a change the tool did not report.\n\
+- \"How does X work\", estimates and splitting a ticket: read the project's code first (its folder is in the \
+briefing) and name the files you mean. What an attempt changed: `git diff <base>...<branch>` in its project's \
+checkout (`get_ticket` gives the branch and base). Hand broad digging to a subagent when your agent has them.\n\
+- Research: search and read the web to compare libraries and approaches or to read external docs; link your sources.\n\
+- Design: write short design notes and specs in your reply, then put them on the ticket (its description with \
+`edit_ticket`, or `add_ticket_comment`); a longer one goes in a file only where the user says.\n\
+- Setup: install tools (brew, cargo, pnpm, …), edit config files and set up a project's `.pdt/project.toml` (PDT's \
+`run-config` guide) when the user asks. Changing a project's code is a coding agent's work: draft a ticket for it \
+instead of editing or committing in a checkout.\n\
 - Workflows: find node kinds with `catalog_search`/`catalog_get`, check documents with `workflow_validate` and \
 `workflow_dry_run`; `workflow_save` only proposes a version or saves a disabled workflow for the user to enable.\n\
 - Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
@@ -498,5 +572,26 @@ mod tests {
         assert!(ASKING_TOOLS.iter().all(|t| pm.tool_set().iter().any(|x| x == t)));
         assert!(asks("create_ticket") && !asks("get_overview") && !asks("add_ticket_comment"));
         assert_eq!(pm.permission_mode, Some(PermissionMode::Ask));
+    }
+
+    #[test]
+    fn an_edited_built_in_follows_its_template_where_the_user_left_it() {
+        let old = builtin_persona("pm").unwrap().setup();
+        let new = PersonaSetup { instructions: "New PM text.".into(), ..old.clone() };
+        // Untouched: the new template.
+        assert_eq!(follow_template(&old, &old, &new), (new.clone(), vec![]));
+        // Only the model changed: it stays, the instructions follow.
+        let mine = PersonaSetup { model: Some("opus".into()), ..old.clone() };
+        let (s, kept) = follow_template(&old, &mine, &new);
+        assert_eq!(s, PersonaSetup { model: Some("opus".into()), ..new.clone() });
+        assert!(kept.is_empty(), "the template's model did not move: {kept:?}");
+        // Edited instructions stay the user's, and are named.
+        let mine = PersonaSetup { instructions: "Mine.".into(), ..old.clone() };
+        assert_eq!(follow_template(&old, &mine, &new), (mine.clone(), vec!["instructions"]));
+        // Tools compare as sets the persona gets (empty is the default set).
+        let base = PersonaSetup { tools: vec![], ..old.clone() };
+        let same = PersonaSetup { tools: DEFAULT_TOOLS.map(String::from).to_vec(), ..old.clone() };
+        let more = PersonaSetup { tools: ALL_TOOLS.map(String::from).to_vec(), ..old.clone() };
+        assert_eq!(follow_template(&base, &same, &more).0.tools, more.tools);
     }
 }

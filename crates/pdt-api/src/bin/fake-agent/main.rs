@@ -10,6 +10,7 @@
 //!   first ends it with the process.
 //! - `who` — says the session id, whether it was resumed, its model and mode, whether it got PDT's instructions, and
 //!   the `session_id` the message carried.
+//! - `where` — says its working folder and its built-in tools (`--tools`; `all` without it).
 //! - `/clear` — like Claude's: `conversation_reset` (whose `new_conversation_id` names no transcript), then an init
 //!   and result under a new session id, which later turns use.
 //! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
@@ -55,6 +56,8 @@ struct Agent {
     mcp: Option<(String, String)>,
     /// `--allowedTools`.
     allowed: Vec<String>,
+    /// `--tools` (None: all of Claude's built-in tools).
+    tools: Option<String>,
 }
 
 /// pdt-mcp from Claude's `--mcp-config` file.
@@ -413,6 +416,9 @@ impl Agent {
             let name = name.trim();
             let set = std::env::var_os(name).is_some();
             self.say(&format!("{name} is {}", if set { "set" } else { "unset" }));
+        } else if text == "where" {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            self.say(&format!("cwd={} tools={:?}", cwd.display(), self.tools.as_deref().unwrap_or("all")));
         } else if text == "who" {
             let s = format!(
                 "session {} resumed={} model={} mode={} instructions={} msg_session={}",
@@ -502,6 +508,7 @@ fn main() {
         log,
         mcp: mcp_server(flag("--mcp-config")),
         allowed: flag("--allowedTools").map(|t| t.split(',').map(String::from).collect()).unwrap_or_default(),
+        tools: flag("--tools"),
     };
     loop {
         let v = if agent.queue.is_empty() {

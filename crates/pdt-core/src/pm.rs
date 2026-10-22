@@ -6,6 +6,7 @@ use crate::brand::{PRODUCT_NAME, SHORT_NAME};
 use crate::session::Session;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::{Component, Path, PathBuf};
 use ts_rs::TS;
 
 /// A PM session rotates once its context is this full (used / window)…
@@ -290,6 +291,8 @@ pub struct BriefProject {
     pub name: String,
     pub key: String,
     pub personal: bool,
+    /// Its checkout (a Personal project's folder).
+    pub folder: String,
     /// (stage label, open tickets in it), stages with none left out.
     pub stages: Vec<(String, u32)>,
     pub pm_acts: bool,
@@ -440,7 +443,7 @@ pub fn briefing(d: &BriefingData) -> String {
         };
         let kind = if p.personal { " (personal, no repo)" } else { "" };
         let acts = if p.pm_acts { "; you may act here without asking" } else { "" };
-        format!("- {} (`{}`){kind}: {stages}{acts}", p.name, p.key)
+        format!("- {} (`{}`) in `{}`{kind}: {stages}{acts}", p.name, p.key, p.folder)
     });
     out.push_str("\n## In flight\n\n");
     if d.in_flight.is_empty() {
@@ -496,10 +499,31 @@ pub fn briefing(d: &BriefingData) -> String {
     out
 }
 
+/// The PM's working folder (PDT-100): the deepest folder holding the projects' folders (each checkout's parent) and
+/// the Projects folder new clones go in. None when they share nothing below the file system's root (or there are
+/// none): the caller picks a fallback.
+pub fn work_folder<'a>(
+    checkouts: impl IntoIterator<Item = &'a Path>,
+    projects_dir: Option<&'a Path>,
+) -> Option<PathBuf> {
+    let mut common: Option<PathBuf> = None;
+    for dir in checkouts.into_iter().filter_map(Path::parent).chain(projects_dir) {
+        common = Some(match common {
+            None => dir.to_path_buf(),
+            Some(c) => c.components().zip(dir.components()).take_while(|(a, b)| a == b).map(|(a, _)| a).collect(),
+        });
+    }
+    common.filter(|c| c.components().any(|x| matches!(x, Component::Normal(_))))
+}
+
 /// Where a PM session runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PmContext<'a> {
     pub session_id: &'a str,
+    /// pdtd's port, for its API and guides.
+    pub port: u16,
+    /// Where the session runs ([`work_folder`]).
+    pub work_folder: &'a str,
     /// pdt-mcp tools the session has.
     pub tools: &'a [String],
     /// The persona's instructions.
@@ -522,10 +546,17 @@ pub fn instructions(ctx: &PmContext) -> String {
     let mut out = format!(
         "# {PRODUCT_NAME}'s project manager\n\n\
          {SHORT_NAME} started this session (`{session}`) as the user's project manager (the PM). It is not in any \
-         project or checkout: it works across every project {SHORT_NAME} has.\n\
-         - You have no shell and no file tools. {SHORT_NAME}'s tools, on its MCP server `{server}`, are how you see \
-         and change {SHORT_NAME}: {read}.\n",
+         one project: it works across every project {SHORT_NAME} has, from the work folder `{work}`, which holds \
+         their checkouts (the briefing gives each project's folder).\n\
+         - {SHORT_NAME}'s tools, on its MCP server `{server}`, are how you see and change {SHORT_NAME}: {read}.\n\
+         - Your agent's own tools are yours too, with its usual permission prompts: read and search any project's \
+         checkout and worktrees (`git log`, `git show`, `git diff <base>...<branch>` for what an attempt changed), \
+         search and read the web, run commands, install tools, and edit files.\n\
+         - {SHORT_NAME}'s API is http://127.0.0.1:{port}/api; its guides for agents (tickets, runs, a project's \
+         `.pdt/project.toml`) are listed at `GET http://127.0.0.1:{port}/api/guides`.\n",
         session = ctx.session_id,
+        work = ctx.work_folder,
+        port = ctx.port,
         server = crate::mcp::SERVER_NAME,
         read = tools(false),
     );
@@ -630,6 +661,7 @@ mod tests {
                 name: "Personal Dev Team".into(),
                 key: "PDT".into(),
                 personal: false,
+                folder: "/w/pdt".into(),
                 stages: vec![("In progress".into(), 2), ("To do".into(), 5)],
                 pm_acts: true,
             }],
@@ -655,7 +687,7 @@ mod tests {
     fn the_briefing_has_every_section() {
         let b = briefing(&data());
         for want in [
-            "- Personal Dev Team (`PDT`): In progress 2, To do 5; you may act here without asking",
+            "- Personal Dev Team (`PDT`) in `/w/pdt`: In progress 2, To do 5; you may act here without asking",
             "- PDT-81 PM persona (In progress): PR #105 open, CI failed",
             "- question · PDT-81: Which?",
             "## Since the last PM session (2 h ago)",
@@ -685,6 +717,8 @@ mod tests {
         let tools: Vec<String> = ["get_overview", "create_ticket"].map(String::from).to_vec();
         let text = instructions(&PmContext {
             session_id: "s1",
+            port: 7421,
+            work_folder: "/w",
             tools: &tools,
             persona: "You are the PM.",
             briefing: "# Briefing\n",
@@ -692,5 +726,25 @@ mod tests {
         assert!(text.contains("are how you see and change PDT: `get_overview`."), "{text}");
         assert!(text.contains("unless the project lets you act without asking: `create_ticket`."), "{text}");
         assert!(text.contains("## Your role\n\nYou are the PM.\n\n# Briefing\n"), "{text}");
+        for want in
+            ["from the work folder `/w`", "search and read the web", "install tools", "127.0.0.1:7421/api/guides"]
+        {
+            assert!(text.contains(want), "missing {want:?} in\n{text}");
+        }
+    }
+
+    #[test]
+    fn the_work_folder_holds_every_project() {
+        let root = std::env::temp_dir();
+        let (w, a, b) = (root.join("work"), root.join("work").join("a"), root.join("work").join("team").join("b"));
+        assert_eq!(work_folder([a.as_path()], None), Some(w.clone()), "a checkout's parent");
+        assert_eq!(work_folder([a.as_path(), b.as_path()], None), Some(w.clone()));
+        assert_eq!(work_folder([b.as_path()], Some(&w)), Some(w.clone()), "and the Projects folder");
+        assert_eq!(work_folder([], Some(&w)), Some(w.clone()));
+        let other = root.join("elsewhere").join("c");
+        assert_eq!(work_folder([a.as_path(), other.as_path()], None), Some(root.clone()));
+        assert_eq!(work_folder([], None), None);
+        let top = root.ancestors().last().unwrap().to_path_buf();
+        assert_eq!(work_folder([a.as_path()], Some(&top)), None, "nothing shared below the root");
     }
 }

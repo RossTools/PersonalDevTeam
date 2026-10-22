@@ -101,6 +101,7 @@ import type { InboxList } from './gen/InboxList';
 import type { NewPersona } from './gen/NewPersona';
 import type { Persona } from './gen/Persona';
 import type { PersonaDiff } from './gen/PersonaDiff';
+import type { PersonaTemplate } from './gen/PersonaTemplate';
 import type { PersonaPatch } from './gen/PersonaPatch';
 import type { PersonaVersion } from './gen/PersonaVersion';
 import type { SavePersona } from './gen/SavePersona';
@@ -393,6 +394,7 @@ export const api = {
   personaVersions: (id: string) => request<PersonaVersion[]>(`/api/personas/${enc(id)}/versions`),
   personaDiff: (id: string, from: number, to: number) =>
     request<PersonaDiff>(`/api/personas/${enc(id)}/diff${queryString({ from, to })}`),
+  personaTemplate: (id: string) => request<PersonaTemplate>(`/api/personas/${enc(id)}/template`),
   /** The project manager (PDT-81): its current session and the earlier ones. */
   pm: () => request<PmState>('/api/pm'),
   /** A new PM session (ending the current one), `text` its first message. */
