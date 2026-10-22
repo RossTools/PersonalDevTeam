@@ -24,7 +24,7 @@ const session: Session = {
   status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null, activity: 'idle',
   attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation', model: null, permissionMode: 'ask', persona: null,
 };
-const idle: ConversationState = { live: true, turnRunning: false, permissionMode: 'ask', pending: [], terminalOpen: false };
+const idle: ConversationState = { live: true, turnRunning: false, permissionMode: 'ask', pending: [], terminalOpen: false, backgroundTasks: [] };
 
 afterEach(() => {
   FakeSocket.all = [];
@@ -366,6 +366,22 @@ describe('ConversationView', () => {
     act(() => server().close());
     await waitFor(() => expect(FakeSocket.all).toHaveLength(2), { timeout: 2000 });
     expect(server().url).toMatch(/after=1$/);
+  });
+
+  it('says what runs in the background until it finishes', () => {
+    stubApi({ 'GET /api/agents/claude/capabilities': caps });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    const ci = { id: 'b1', description: 'Wait for CI', kind: 'local_bash' };
+    act(() => {
+      server().open();
+      server().send({ type: 'state', state: { ...idle, backgroundTasks: [ci] } });
+      server().send({ type: 'ready' });
+    });
+    expect(screen.getByText('Running in the background: Wait for CI')).toBeInTheDocument();
+    act(() => server().send({ type: 'state', state: { ...idle, backgroundTasks: [ci, { ...ci, id: 'b2', description: 'Review' }] } }));
+    expect(screen.getByText('2 running in the background: Wait for CI, Review')).toBeInTheDocument();
+    act(() => server().send({ type: 'state', state: idle }));
+    expect(screen.queryByText(/in the background/)).not.toBeInTheDocument();
   });
 
   it('answers requests, and says so when another device got there first', async () => {

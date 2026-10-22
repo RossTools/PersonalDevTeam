@@ -27,6 +27,18 @@ pub enum SessionChoice {
     Reuse,
 }
 
+/// Who does an agent step's work.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Owner {
+    /// The persona, in a session.
+    #[default]
+    Agent,
+    /// The user (a manual stage, Phase 7c §3.4): no session; the Inbox asks them for the outcome.
+    User,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
@@ -58,6 +70,13 @@ pub struct AgentConfig {
     /// How many times the node may run again in one run before the Inbox asks (default 3; 0: no limit).
     #[serde(default)]
     pub loop_limit: Option<u32>,
+    /// `user`: a manual stage, done by the user, who picks the outcome in the Inbox.
+    #[serde(default)]
+    pub owner: Owner,
+    /// The ticket's pipeline stage while this step runs (the Board's column).
+    #[serde(default)]
+    #[ts(optional)]
+    pub pipeline_stage: Option<pdt_core::ticket::PipelineStage>,
 }
 
 impl AgentConfig {
@@ -145,6 +164,13 @@ impl NodeKind for Agent {
             let c: AgentConfig = parse(&input)?;
             if cx.dry_run {
                 let first = c.outcomes.first().map(|o| o.id.clone()).ok_or("no outcomes")?;
+                if c.owner == Owner::User {
+                    let would = format!(
+                        "ask the user to do it and pick one of: {}",
+                        c.outcomes.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
+                    );
+                    return Ok(Outcome::next(&first, json!({"would": would})));
+                }
                 let would = format!(
                     "run {} ({} session) and wait for one of: {}",
                     c.persona,
@@ -175,5 +201,10 @@ mod tests {
         assert!(Agent.check(&json!({"persona": "R", "prompt": "p", "outcomes": []})).is_err());
         let c: AgentConfig = parse(&cfg).unwrap();
         assert_eq!((c.max_turns(), c.nudges(), c.loop_limit(), c.session), (10, 1, 3, SessionChoice::New));
+        assert_eq!((c.owner, c.pipeline_stage), (Owner::Agent, None));
+        let manual = json!({"persona": "Reviewer", "prompt": "Review it.", "outcomes": [{"id": "approved"}],
+                            "owner": "user", "pipelineStage": "review"});
+        let m: AgentConfig = parse(&manual).unwrap();
+        assert_eq!((m.owner, m.pipeline_stage), (Owner::User, Some(pdt_core::ticket::PipelineStage::Review)));
     }
 }

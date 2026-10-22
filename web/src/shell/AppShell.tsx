@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
@@ -26,7 +26,7 @@ import { invalidateTickets } from '../tickets/queries';
 import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
-import { isClosed, looksLikeKey } from '../tickets/model';
+import { looksLikeKey } from '../tickets/model';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
@@ -34,7 +34,8 @@ import { UpdateBanner } from '../host/UpdateBanner';
 import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
-import { nextNeedingYou } from '../workspaces/model';
+import { findTab, nextNeedingYou, type Item } from '../workspaces/model';
+import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { NewTabChooser } from '../workspaces/NewTabChooser';
 import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
@@ -107,13 +108,17 @@ export function AppShell() {
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
   const ws = useWorkspaces();
-  // A ticket workspace whose attempt merged while the ticket is open: its banner shows above every tab (PDT-71).
+  // A ticket workspace whose attempt merged: its banner shows above every tab (PDT-71) while the ticket is open, or
+  // Done with its worktree still there (the banner checks that, PDT-97).
   const wsTicket = ws.workspace?.ticket;
-  const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && !isClosed(wsTicket.stage) ? wsTicket.id : null;
+  const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && wsTicket.stage !== 'wont_do' ? wsTicket.id : null;
   const backlog = useBacklog();
+  // The view changes once the tab is there: one that can't open (its ticket or session is gone) leaves the user where
+  // they were with the error, not on whatever tab was current (PDT-93).
   const openTicket = useCallback((t: { id: string; projectId: string }) => {
-    setView('sessions');
-    void runAction(() => ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId));
+    void runAction(async () => {
+      if (await ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId)) setView('sessions');
+    });
   }, [ws.focusItem]);
   const openTicketByKey = useCallback((key: string) => {
     void runAction(async () => {
@@ -123,18 +128,42 @@ export function AppShell() {
   }, [openTicket]);
   useWorkflowNotifications(openTicketByKey);
   const openSession = useCallback((s: { id: string; projectId: string }) => {
-    setView('sessions');
-    void runAction(() => ws.focusItem({ kind: 'session', id: s.id }, s.projectId));
+    void runAction(async () => {
+      if (await ws.focusItem({ kind: 'session', id: s.id }, s.projectId)) setView('sessions');
+    });
   }, [ws.focusItem]);
+  // After a ticket's tab, in the workspace that has it (its Start workspace).
+  const placementNear = useCallback((ticketId: string): TabPlacement | undefined => {
+    const hit = findTab(ws.workspaces, { kind: 'ticket', id: ticketId });
+    return hit ? { workspaceId: hit.workspace.id, position: hit.tab.position + 1 } : undefined;
+  }, [ws.workspaces]);
   const openChanges = useCallback((w: { id: string; projectId: string }, opts?: OpenChangesOptions) => {
     setView('sessions');
     const item = { kind: 'changes', id: w.id } as const;
-    const here = opts?.here ? ws.workspace : undefined;
+    const near = opts?.ticketId ? placementNear(opts.ticketId) : undefined;
+    const here = opts?.here ? ws.workspace : near ? ws.workspaces.find((x) => x.id === near.workspaceId) : undefined;
     const existing = here?.tabs.find((t) => t.worktreeId === w.id);
+    const position = near?.position ?? (ws.tab ? ws.tab.position + 1 : here?.tabs.length);
     if (here && existing) ws.selectTab(existing);
-    else if (here) void runAction(() => ws.openIn(item, here.id, ws.tab ? ws.tab.position + 1 : here.tabs.length));
+    else if (here) void runAction(() => ws.openIn(item, here.id, position));
     else void runAction(() => ws.focusItem(item, w.projectId));
-  }, [ws.focusItem, ws.openIn, ws.selectTab, ws.workspace, ws.tab]);
+  }, [ws.focusItem, ws.openIn, ws.selectTab, ws.workspace, ws.workspaces, ws.tab, placementNear]);
+  const openRun = useCallback((r: { id: string; projectId: string }) => {
+    setView('sessions');
+    void runAction(async () => {
+      await ws.refresh();
+      await ws.focusItem({ kind: 'run', id: r.id }, r.projectId);
+    });
+  }, [ws.focusItem, ws.refresh]);
+  const openNear = useCallback((item: Item, projectId: string, ticketId: string) => {
+    setView('sessions');
+    const existing = findTab(ws.workspaces, item);
+    const near = placementNear(ticketId);
+    if (existing) ws.selectTab(existing.tab);
+    else if (near) void runAction(() => ws.openIn(item, near.workspaceId, near.position));
+    else void runAction(() => ws.focusItem(item, projectId));
+  }, [ws.workspaces, ws.selectTab, ws.openIn, ws.focusItem, placementNear]);
+  const ticketTabs = useMemo(() => ({ placementNear, openRun, openNear }), [placementNear, openRun, openNear]);
   // Started from the ticket's own tab: the tabs open where it is (it keeps its place, the session goes after it);
   // otherwise the server puts them at the end of the project workspace.
   const startTicket = useCallback((t: { id: string; projectId: string }, opts?: { here?: boolean }) => {
@@ -358,6 +387,7 @@ export function AppShell() {
     <OpenTicketContext.Provider value={openTicket}>
     <OpenSessionContext.Provider value={openSession}>
     <OpenChangesContext.Provider value={openChanges}>
+    <TicketTabsContext.Provider value={ticketTabs}>
     <StartTicketContext.Provider value={startTicket}>
     <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
       <IconRail
@@ -488,6 +518,7 @@ export function AppShell() {
       </main>
     </div>
     </StartTicketContext.Provider>
+    </TicketTabsContext.Provider>
     </OpenChangesContext.Provider>
     </OpenSessionContext.Provider>
     </OpenTicketContext.Provider>

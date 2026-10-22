@@ -34,6 +34,8 @@ pub enum AgentStepState {
     Stalled,
     /// It has its outcome (or the step ended otherwise).
     Done,
+    /// A manual step (Phase 7c): no session; the user does the work and picks the outcome in the Inbox.
+    Manual,
 }
 
 impl AgentStepState {
@@ -43,10 +45,11 @@ impl AgentStepState {
             AgentStepState::Asking => "asking",
             AgentStepState::Stalled => "stalled",
             AgentStepState::Done => "done",
+            AgentStepState::Manual => "manual",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [Self::Working, Self::Asking, Self::Stalled, Self::Done].into_iter().find(|x| x.as_str() == s)
+        [Self::Working, Self::Asking, Self::Stalled, Self::Done, Self::Manual].into_iter().find(|x| x.as_str() == s)
     }
 }
 
@@ -152,6 +155,42 @@ pub fn first_message(prompt: &str, ticket: Option<StepTicket>, outcomes: &[Outco
     out
 }
 
+/// What a reused session gets on a later pass of its step in the same run (it already has the step's role and the
+/// ticket): why it is back (`reason`, e.g. the Reviewer's summary or the user's note) and how to finish.
+pub fn next_pass_message(reason: Option<&str>, outcomes: &[OutcomeSpec]) -> String {
+    let mut out = format!("[{SHORT_NAME}] Your step is back for another pass.");
+    if let Some(r) = reason.map(str::trim).filter(|r| !r.is_empty()) {
+        out.push_str(&format!("\n\n{r}"));
+    }
+    out.push_str(&format!(
+        "\n\nAddress it (`get_ticket` has the earlier outcomes, their line comments and the user's comments), then \
+         call `submit_outcome` with one of: {}.",
+        outcome_list(outcomes)
+    ));
+    out
+}
+
+/// Why a step is back, from the step that sent it back: an agent's outcome and summary, or the user's choice at a gate
+/// and their note.
+pub fn back_because(kind: &str, port: &str, output: &serde_json::Value) -> Option<String> {
+    let text = |k: &str| output.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty());
+    match kind {
+        "agent" => {
+            let who =
+                if text("by") == Some("user") { "The user" } else { text("persona").unwrap_or("The previous step") };
+            Some(match text("summary") {
+                Some(s) => format!("{who} answered `{port}`: {s}"),
+                None => format!("{who} answered `{port}`."),
+            })
+        }
+        "gate" => Some(match text("text") {
+            Some(t) => format!("The user chose `{port}`: {t}"),
+            None => format!("The user chose `{port}`."),
+        }),
+        _ => None,
+    }
+}
+
 /// The reminder a step's session gets when a turn ends without an outcome.
 pub fn nudge_message(outcomes: &[OutcomeSpec]) -> String {
     format!(
@@ -206,6 +245,31 @@ mod tests {
         assert!(m.starts_with("Review it.\n\nTicket: PDT-4 — Pipeline"), "{m}");
         assert!(m.contains("`submit_outcome` with one of: `approved` (it can merge), `changes_requested`."), "{m}");
         assert!(!first_message("x", None, &outs()).contains("Ticket:"));
+    }
+
+    #[test]
+    fn a_later_pass_says_why_it_is_back_and_not_the_whole_task_again() {
+        let reason = back_because("gate", "reject", &serde_json::json!({"choice": "reject", "text": "Wrong colour."}));
+        assert_eq!(reason.as_deref(), Some("The user chose `reject`: Wrong colour."));
+        let m = next_pass_message(reason.as_deref(), &outs());
+        assert!(
+            m.starts_with("[PDT] Your step is back for another pass.\n\nThe user chose `reject`: Wrong colour."),
+            "{m}"
+        );
+        assert!(m.ends_with("one of: `approved` (it can merge), `changes_requested`."), "{m}");
+        assert!(!m.contains("Ticket:") && !m.contains("Your role"));
+        let review = serde_json::json!({"persona": "Reviewer", "summary": "Add a test.", "by": "agent"});
+        assert_eq!(
+            back_because("agent", "changes_requested", &review).unwrap(),
+            "Reviewer answered `changes_requested`: Add a test."
+        );
+        let mine = serde_json::json!({"persona": "Reviewer", "summary": "Add a test.", "by": "user"});
+        assert_eq!(
+            back_because("agent", "changes_requested", &mine).unwrap(),
+            "The user answered `changes_requested`: Add a test."
+        );
+        assert_eq!(back_because("switch", "x", &serde_json::Value::Null), None);
+        assert!(!next_pass_message(None, &outs()).contains("\n\n\n"));
     }
 
     #[test]

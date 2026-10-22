@@ -324,8 +324,10 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Deletes a session; the Inbox lets go of it (`release_gone_sessions`).
     pub async fn delete_session(&self, id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM sessions WHERE id = ?").bind(id).execute(&self.pool).await?;
+        self.release_gone_sessions().await?;
         Ok(r.rows_affected() > 0)
     }
 

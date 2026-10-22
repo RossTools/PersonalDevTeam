@@ -122,6 +122,7 @@ pub fn builtin_templates() -> Vec<Template> {
         ),
     ];
     out.extend(integration_templates());
+    out.push(builtin(super::pipeline::ID, super::pipeline::params(), super::pipeline::doc()));
     out.extend(BUILTINS.iter().map(|b| builtin(b.id, vec![], (b.doc)())));
     out
 }

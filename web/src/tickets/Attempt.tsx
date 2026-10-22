@@ -84,15 +84,20 @@ export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket;
   );
 }
 
-/** True when the latest attempt is merged and the ticket is still open: offer to finish it. */
-export const showMerged = (t: Pick<Ticket, 'stage' | 'attempt'>) => t.attempt?.state === 'merged' && !isClosed(t.stage);
+/**
+ * True when the latest attempt is merged and the ticket is still open, or Done with the worktree still there (kept,
+ * or a finish cut short, PDT-97): offer to finish it.
+ */
+export const showMerged = (t: Pick<Ticket, 'stage' | 'attempt'>) =>
+  t.attempt?.state === 'merged' && (!isClosed(t.stage) || (t.stage === 'done' && t.attempt.worktreeId !== null));
 
-/** "Merged into main." with the one-click finish: Done, then the worktree removed. */
+/** "Merged into main." with the one-click finish: Done, then the worktree removed (only the latter once Done). */
 export function MergedBanner({ ticket: t, className }: { ticket: Ticket; className?: string }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [finish, pending] = useAction(() => finishMerged(confirm, qc, t));
   if (!showMerged(t)) return null;
+  const label = t.stage === 'done' ? 'Remove the worktree' : 'Move to Done and remove the worktree';
   return (
     <Banner
       tone="accent"
@@ -105,11 +110,11 @@ export function MergedBanner({ ticket: t, className }: { ticket: Ticket; classNa
           compact
           variant="primary"
           pending={pending}
-          aria-label="Move to Done and remove the worktree"
+          aria-label={label}
           onClick={() => void finish()}
         >
-          <span className="hidden @sm:inline">Move to Done and remove the worktree</span>
-          <span className="@sm:hidden">Move to Done</span>
+          <span className="hidden @sm:inline">{label}</span>
+          <span className="@sm:hidden">{t.stage === 'done' ? 'Remove' : 'Move to Done'}</span>
         </Button>
       }
     >

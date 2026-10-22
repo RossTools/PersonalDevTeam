@@ -2,8 +2,8 @@
 //! frames → normalized events, and the lines PDT writes to stdin. Pure; the adapter in pdt-agents owns the process.
 
 use super::{
-    AgentEvent, Answer, DeltaField, MAX_TOOL_OUTPUT, MessagePhase, MessageSource, NoticeLevel, PermissionMode,
-    RateLimitWindow, RequestKind, RequestState, ToolStatus, TurnPhase, TurnStatus, cap_text,
+    AgentEvent, Answer, BackgroundTask, DeltaField, MAX_TOOL_OUTPUT, MessagePhase, MessageSource, NoticeLevel,
+    PermissionMode, RateLimitWindow, RequestKind, RequestState, ToolStatus, TurnPhase, TurnStatus, cap_text,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -21,6 +21,8 @@ pub enum MapOut {
     Reply { request_id: String, result: Result<Value, String> },
     /// A line PDT must write to stdin now (refusing a control request it does not handle).
     Send(Value),
+    /// The background tasks now running (`background_tasks_changed`): all of them, none when empty.
+    BackgroundTasks(Vec<BackgroundTask>),
 }
 
 /// What `system/init` reports.
@@ -269,6 +271,26 @@ fn str_field(v: &Value, k: &str) -> Option<String> {
 }
 
 /// `<tag>body</tag>` → body (Claude wraps local command output this way).
+/// A finished background task's report, which Claude sends itself as a user message (`origin.kind`
+/// `task-notification`, `<task-notification>…<summary>…</summary>…`): its summary, to show as a notice rather than as
+/// something the user said.
+fn task_notification(entry: &Value, text: &str) -> Option<String> {
+    let tagged = text.trim_start().starts_with("<task-notification>");
+    if !tagged && entry.pointer("/origin/kind").and_then(Value::as_str) != Some("task-notification") {
+        return None;
+    }
+    let summary = text
+        .split_once("<summary>")
+        .and_then(|(_, rest)| rest.split_once("</summary>"))
+        .map(|(summary, _)| unescape_xml(summary.trim()))
+        .filter(|s| !s.is_empty());
+    Some(summary.unwrap_or_else(|| "A background task finished".into()))
+}
+
+fn unescape_xml(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
 fn strip_tag<'a>(s: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -621,17 +643,23 @@ impl ClaudeMapper {
                 out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
             }
             // Progress Claude reports for its own bookkeeping; the tool calls carry what matters.
-            "task_started"
-            | "task_progress"
-            | "task_notification"
-            | "task_updated"
-            | "vcs_state_changed"
-            | "hook_started"
-            | "hook_response"
-            | "hook_progress"
-            | "files_persisted"
-            | "thinking_tokens"
-            | "background_tasks_changed" => {}
+            "background_tasks_changed" => {
+                let tasks = v.get("tasks").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+                let tasks = tasks
+                    .iter()
+                    .filter_map(|t| {
+                        Some(BackgroundTask {
+                            id: str_field(t, "task_id")?,
+                            description: str_field(t, "description").unwrap_or_default(),
+                            kind: str_field(t, "task_type").unwrap_or_default(),
+                        })
+                    })
+                    .collect();
+                out.push(MapOut::BackgroundTasks(tasks));
+            }
+            // Each task's own progress; `background_tasks_changed` says which still run.
+            "task_started" | "task_progress" | "task_notification" | "task_updated" | "vcs_state_changed"
+            | "hook_started" | "hook_response" | "hook_progress" | "files_persisted" | "thinking_tokens" => {}
             _ => out.push(self.event(None, AgentEvent::Unknown { raw: v.clone() })),
         }
     }
@@ -641,6 +669,15 @@ impl ClaudeMapper {
         let replay = v.get("isReplay").and_then(Value::as_bool).unwrap_or(false);
         if replay {
             let uuid = str_field(v, "uuid").unwrap_or_default();
+            let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
+            // A background task finished: Claude takes its report as the next message, starting a turn when idle.
+            if let Some(text) = task_notification(v, &text_of(content)) {
+                if self.turn.is_none() {
+                    self.start_turn(uuid, out);
+                }
+                out.push(self.event(item, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
+                return;
+            }
             let source = if self.turn.is_some() { MessageSource::Steer } else { MessageSource::Pdt };
             if self.turn.is_none() {
                 self.start_turn(uuid.clone(), out);
@@ -653,7 +690,6 @@ impl ClaudeMapper {
                     .collect(),
                 _ => Vec::new(),
             };
-            let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
             // A custom command comes back expanded (`<command-name>/x</command-name>…`): show what was typed.
             let raw = text_of(content);
             let text = command_text(raw.trim()).unwrap_or(raw);
@@ -1065,6 +1101,16 @@ impl ClaudeMapper {
             out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
             return;
         }
+        let uuid = str_field(e, "uuid").unwrap_or_default();
+        if let Some(text) = task_notification(e, trimmed) {
+            if self.turn.is_some() {
+                self.close_turn(TurnStatus::Completed, None, None, out);
+            }
+            self.start_turn(uuid.clone(), out);
+            let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
+            out.push(self.event(item, AgentEvent::Notice { level: NoticeLevel::Info, text, until: None }));
+            return;
+        }
         let prompt = command_text(trimmed).unwrap_or_else(|| trimmed.to_string());
         if prompt.is_empty() {
             return;
@@ -1072,7 +1118,6 @@ impl ClaudeMapper {
         if self.turn.is_some() {
             self.close_turn(TurnStatus::Completed, None, None, out);
         }
-        let uuid = str_field(e, "uuid").unwrap_or_default();
         self.start_turn(uuid.clone(), out);
         let images = match content {
             Value::Array(b) => b
@@ -1336,6 +1381,58 @@ not json"#,
             })
             .collect();
         assert_eq!(texts, ["Pushed to o/r#69", "Code change merged: https://example.com/x"]);
+    }
+
+    #[test]
+    fn background_tasks_are_reported_and_their_reports_are_notices() {
+        let mut m = ClaudeMapper::new();
+        let tasks = |out: &[MapOut]| -> Vec<Vec<BackgroundTask>> {
+            out.iter()
+                .filter_map(|o| match o {
+                    MapOut::BackgroundTasks(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let out = m.on_line(
+            r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"Wait for CI"}]}"#,
+        );
+        let ci = BackgroundTask { id: "b1".into(), description: "Wait for CI".into(), kind: "local_bash".into() };
+        assert_eq!(tasks(&out), [vec![ci]]);
+        run(&mut m, r#"{"type":"result","subtype":"success","is_error":false}"#);
+
+        // The task finishes after the turn ended: Claude reports it to itself, which starts a turn.
+        let out = run(
+            &mut m,
+            r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}
+{"type":"system","subtype":"init","model":"opus"}
+{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"gh run watch 1 &gt; /dev/null\" completed (exit code 0)</summary>\n</task-notification>"},"uuid":"n1","isReplay":true,"origin":{"kind":"task-notification"}}
+{"type":"assistant","message":{"id":"a1","content":[{"type":"text","text":"CI passed."}]},"parent_tool_use_id":null}"#,
+        );
+        assert_eq!(tasks(&out), [vec![]]);
+        let ev = events(&out);
+        assert_eq!(ev[0].1.kind(), "turn");
+        assert_eq!(
+            ev[1],
+            (
+                Some("u:n1".into()),
+                AgentEvent::Notice {
+                    level: NoticeLevel::Info,
+                    text: r#"Background command "gh run watch 1 > /dev/null" completed (exit code 0)"#.into(),
+                    until: None,
+                }
+            )
+        );
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "user_message"), "{ev:?}");
+
+        // In a transcript (the TUI's history) it is a notice too.
+        let transcript = r#"{"type":"user","uuid":"n2","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification><task-id>b2</task-id><status>killed</status></task-notification>"}}"#;
+        let ev = events(&history_events(transcript, None, None).unwrap());
+        assert!(
+            ev.iter()
+                .any(|(_, e)| matches!(e, AgentEvent::Notice { text, .. } if text == "A background task finished"))
+        );
+        assert!(!ev.iter().any(|(_, e)| e.kind() == "user_message"), "{ev:?}");
     }
 
     #[test]

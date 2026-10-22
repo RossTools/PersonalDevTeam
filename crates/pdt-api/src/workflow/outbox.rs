@@ -1,7 +1,9 @@
 //! Delivers `session.send` messages (Phase 7a spec §5.2) with the rule PR notices always had: a terminal must be idle
 //! with nobody typing for 20 s; a conversation idle with no open request, no queued message, no rate limit and its
 //! terminal closed (a parked one reopens to take it). All of a session's waiting messages go in one message. A
-//! message whose attempt has no running agent session is recorded as not told. Delivering resumes the step.
+//! message whose attempt has no running agent session is recorded as not told; what the user sent to a conversation
+//! (an Inbox answer, a nudge) reopens it even when it is stopped or interrupted. Delivering resumes the step. PDT's own
+//! messages wait while the host's cap on agents running a turn is reached (Phase 7c §6.2); the user's never do.
 
 use crate::routes::{AppState, now_ms};
 use pdt_core::conversation::SessionMode;
@@ -36,7 +38,22 @@ pub(crate) async fn deliver(st: &AppState) {
             by_attempt.insert(a, s);
         }
     }
-    let by_id: HashMap<&str, &Session> = running.iter().filter(live).map(|s| (s.id.as_str(), s)).collect();
+    // What the user sent to a conversation that is not running (parked, stopped, or interrupted by a pdtd restart)
+    // reopens it, as typing into it would (PDT-95). PDT's own messages still go only to running sessions.
+    let mut stopped: Vec<Session> = vec![];
+    for m in &waiting {
+        if let Some(sid) = m.session_id.as_deref().filter(|_| m.by_user)
+            && !running.iter().any(|s| s.id == sid)
+            && !stopped.iter().any(|s| s.id == sid)
+            && let Ok(Some(s)) = st.store.get_session(sid).await
+            && s.kind == SessionKind::AgentTui
+            && s.mode == SessionMode::Conversation
+        {
+            stopped.push(s);
+        }
+    }
+    let by_id: HashMap<&str, &Session> =
+        running.iter().filter(live).chain(&stopped).map(|s| (s.id.as_str(), s)).collect();
     let mut batches: HashMap<String, (&Session, Vec<SessionMessage>)> = HashMap::new();
     for m in waiting {
         // A message whose step no longer waits (its run was cancelled) is dropped.
@@ -56,6 +73,8 @@ pub(crate) async fn deliver(st: &AppState) {
             None => resolve(st, &m, None).await,
         }
     }
+    // The host's cap on agents running a turn holds PDT's own messages, never what the user sent (Phase 7c §6.2).
+    let mut free: Option<usize> = None;
     for (sid, (session, list)) in batches {
         let conversation = session.mode == SessionMode::Conversation;
         let ready = if conversation {
@@ -65,6 +84,17 @@ pub(crate) async fn deliver(st: &AppState) {
         };
         if !ready {
             continue;
+        }
+        if !list.iter().any(|m| m.by_user) {
+            let slots = match free {
+                Some(n) => n,
+                None => crate::scheduler::free_slots(st).await,
+            };
+            if slots == 0 {
+                free = Some(0);
+                continue;
+            }
+            free = Some(slots.saturating_sub(1));
         }
         let text = list.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
         let sent = if conversation {

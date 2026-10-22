@@ -7,6 +7,7 @@ pub(crate) mod catalog;
 pub(crate) mod engine;
 pub(crate) mod nodes;
 pub(crate) mod outbox;
+pub(crate) mod pipeline;
 pub(crate) mod repo;
 pub(crate) mod routes;
 pub(crate) mod templates;

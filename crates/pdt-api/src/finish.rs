@@ -83,7 +83,9 @@ impl By {
     }
 }
 
-/// `POST /api/tickets/{id}/finish`.
+/// `POST /api/tickets/{id}/finish`. The work runs in a task of its own, so it completes when the caller goes away
+/// first: an agent finishing its own ticket is stopped by it (PDT-97), which used to leave the ticket in Done with its
+/// worktree and workspace still there.
 pub(crate) async fn finish_route(
     State(st): State<AppState>,
     Path(id): Path<String>,
@@ -94,7 +96,8 @@ pub(crate) async fn finish_route(
         Err(JsonRejection::MissingJsonContentType(_)) => FinishRequest::default(),
         Err(e) => return Err(e.into()),
     };
-    Ok(Json(finish_ticket(&st, &id, &req, None).await?))
+    let task = tokio::spawn(async move { finish_ticket(&st, &id, &req, None).await });
+    Ok(Json(task.await.map_err(ApiError::internal)??))
 }
 
 /// What finishing would stop and remove.

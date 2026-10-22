@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Select } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
+import { branchOptions } from '../common/branchOptions';
 import { parseChoice, RunMenu, useRunChoices } from './RunMenu';
 import { useStartRun } from './useStartRun';
 
@@ -27,7 +28,8 @@ export function RunBranchForm({ project, onSelectRun }: { project: Project; onSe
         aria-label="Branch"
         size="sm"
         placeholder="Branch…"
-        options={(branches.data ?? []).map((b) => ({ value: b.name, label: b.local ? b.name : `${b.name} (origin)` }))}
+        searchable
+        options={branchOptions(branches.data ?? [])}
         value={branch}
         onChange={setBranch}
       />

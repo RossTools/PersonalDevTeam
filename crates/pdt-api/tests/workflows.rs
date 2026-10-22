@@ -554,6 +554,32 @@ async fn finish_checks_first_then_cleans_up_or_only_moves_to_done() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{b}"), None).await;
     assert_eq!(t["stage"], "done");
+
+    // PDT-97: a finish whose caller goes away once the ticket is Done (an agent finishing its own ticket is stopped
+    // by it) still removes the worktree.
+    let (c, _, c_path) = start("Self").await;
+    let (app, path) = (env.app.clone(), format!("/api/tickets/{c}/finish"));
+    let req = tokio::spawn(async move { call(&app, "POST", &path, Some(json!({"stopRunning": true}))).await });
+    for _ in 0..200 {
+        let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{c}"), None).await;
+        if t["stage"] == "done" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    req.abort();
+    for _ in 0..200 {
+        if !c_path.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!c_path.exists(), "the worktree is removed after the request is dropped");
+
+    // A Done ticket whose worktree is still there (kept, or left by an older daemon) can still be finished.
+    let r = finish(&a, json!({"stopRunning": true})).await;
+    assert_eq!((r["outcome"].as_str(), r["worktreeRemoved"].as_bool()), (Some("finished"), Some(true)), "{r}");
+    assert!(!a_path.exists());
     env.state.ptys.shutdown().await;
 }
 

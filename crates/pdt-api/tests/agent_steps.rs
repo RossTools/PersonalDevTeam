@@ -343,6 +343,81 @@ async fn questions_nudges_stalls_and_take_over_go_through_the_inbox() {
     assert!(inbox(&env).await.is_empty());
 }
 
+/// PDT-95: an answer to a conversation that stopped after asking (parked, then interrupted by an update) reopens it
+/// and goes in, rather than being recorded as told to nobody.
+#[tokio::test]
+async fn an_answer_reopens_the_stopped_conversation_that_asked() {
+    let env = setup().await;
+    let t = ticket(&env, "Unclear").await;
+    let wf = create_workflow(
+        &env,
+        review_doc(r#"mcp: ask_user {"questions": [{"question": "Which file?", "choices": ["a.txt"]}]}"#, json!({})),
+    )
+    .await;
+    run_now(&env, &wf, json!({"ticketId": t})).await;
+    let q =
+        tick_until(&env, "the question", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "question") })
+            .await;
+    let session = q["sessionId"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_ne!(v["status"], "running", "{v}");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", q["id"].as_str().unwrap()),
+        Some(json!({"answers": ["a.txt"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tick_until(&env, "the answer in the conversation", || async {
+        let said = agent_says(&env, &session).await;
+        said.iter()
+            .any(|m| m.contains("The user answered your questions") && m.contains("a.txt"))
+            .then_some(json!(null))
+    })
+    .await;
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(v["status"], "running", "{v}");
+}
+
+/// PDT-93: removing the asking session closes its question (nothing can answer it) and stalls the step, whose item
+/// offers no session to open; taking it over still ends the step.
+#[tokio::test]
+async fn a_removed_sessions_question_closes_and_its_step_stalls() {
+    let env = setup().await;
+    let t = ticket(&env, "Unclear").await;
+    let wf = create_workflow(
+        &env,
+        review_doc(r#"mcp: ask_user {"questions": [{"question": "Which file?", "choices": ["a.txt"]}]}"#, json!({})),
+    )
+    .await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let q =
+        tick_until(&env, "the question", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "question") })
+            .await;
+    let session = q["sessionId"].as_str().unwrap();
+    let (s, v) = call(&env.app, "DELETE", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "question"), "the question closed");
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    assert!(stalled["sessionId"].is_null(), "{stalled}");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", stalled["id"].as_str().unwrap()),
+        Some(json!({"choice": "outcome:approved"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let r = run_ended(&env, &id).await;
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    assert_eq!(step["port"].as_str(), Some("approved"));
+}
+
 #[tokio::test]
 async fn gates_are_answered_from_the_inbox_and_loop_limits_ask() {
     let env = setup().await;

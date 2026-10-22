@@ -200,11 +200,23 @@ async fn run() -> anyhow::Result<()> {
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
     tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
+    // Auto-start of To do / Ready tickets, per project policy (Phase 7c).
+    tokio::spawn(pdt_api::run_scheduler(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
     {
         let st = state.clone();
+        const STARTUP_CHECK_RETRIES: usize = 3;
         tokio::spawn(async move {
-            let c = pdt_api::run_host_checks(&st).await;
+            let mut c = pdt_api::run_host_checks(&st).await;
+            // An agent's check that did not finish (a slow first launch while sessions restart) runs again, so the
+            // web does not go on with a stale answer until someone presses "Run checks again".
+            for _ in 0..STARTUP_CHECK_RETRIES {
+                if !c.agents_inconclusive() || st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                c = pdt_api::run_host_checks(&st).await;
+            }
             for (name, check) in [("claude", &c.claude), ("codex", &c.codex), ("devin", &c.devin)] {
                 // Devin is optional: only an installed one that is not logged in is worth a warning.
                 if !check.ok && (check.found || name != "devin") {

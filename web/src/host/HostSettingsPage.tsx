@@ -290,6 +290,7 @@ function Agents({ v }: { v: HostSettingsView }) {
   const view = useSaveSettings();
   const ticketMode = useSaveSettings();
   const sessionMode = useSaveSettings();
+  const turns = useSaveSettings();
   return (
     <Section label="Agents">
       <SettingsRow label="Default agent" description="Picked first when you start a ticket, and listed first for a new tab and in the palette.">
@@ -318,6 +319,19 @@ function Agents({ v }: { v: HostSettingsView }) {
           className="w-48"
           value={v.settings.sessionPermissionMode}
           onChange={(m) => sessionMode.mutate({ sessionPermissionMode: m })}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label="Agents running at once"
+        description="The most agents running a turn before PDT's own work (workflow steps, workflow messages, auto-start) waits for a slot. What you send is never held."
+      >
+        <SaveNote s={turns} />
+        <Select<string>
+          aria-label="Agents running at once"
+          className="w-40"
+          options={[{ value: '0', label: 'No cap' }, ...[1, 2, 3, 4, 6, 8, 12, 16].map((n) => ({ value: String(n), label: String(n) }))]}
+          value={String(v.settings.maxAgentTurns)}
+          onChange={(n) => turns.mutate({ maxAgentTurns: Number(n) })}
         />
       </SettingsRow>
       <SettingsRow label="Credentials" description="Subscription removes ANTHROPIC_API_KEY and OPENAI_API_KEY from agents' environment; pass through keeps them (API keys, Bedrock/Vertex, proxies). A project can override it.">

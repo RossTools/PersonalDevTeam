@@ -1,14 +1,16 @@
-# Workflows, events, the engine, the builder, agent steps and integrations (Phases 7a, 7b, 7d, 7e)
+# Workflows, events, the engine, the builder, agent steps, the pipeline and integrations (Phases 7a–7e)
 
-Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md, 2026-10-20-phase-7d-builder-design.md and, for
-agent steps, personas, pdt-mcp and the Inbox, 2026-10-20-phase-7b-agent-steps-design.md; for schedules, webhooks,
-GitHub issues and PR comments, command, HTTP, Discord and notify, 2026-10-20-phase-7e-integrations-design.md (vision:
-2026-10-20-workflows-and-pm-vision.md).
+Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md, 2026-10-20-phase-7d-builder-design.md, for
+agent steps, personas, pdt-mcp and the Inbox, 2026-10-20-phase-7b-agent-steps-design.md, for the Pipeline
+template, policies, Board stages and scheduling, 2026-10-20-phase-7c-pipeline-design.md, and for schedules,
+webhooks, GitHub issues and PR comments, command, HTTP, Discord and notify, 2026-10-20-phase-7e-integrations-design.md
+(vision: 2026-10-20-workflows-and-pm-vision.md).
 Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, templates, API
 records, what reaches an agent, agent steps), `persona.rs`, `inbox.rs`; pdt-store `event_log.rs`, `workflows.rs`,
-`personas.rs` and `inbox.rs` (migrations 0021, 0022, 0023); pdt-api `workflow/` (catalog, engine, nodes, outbox,
-built-ins, templates, repo files, routes, agent steps), `personas.rs`, `inbox.rs`, `finish.rs` (`ticket.finish`),
-`github_issues.rs` (the issues sensor and its trigger) and `hooks.rs` (incoming webhooks);
+`personas.rs` and `inbox.rs` (migrations 0021–0024); pdt-api `workflow/` (catalog, engine, nodes, outbox,
+built-ins, templates and the Pipeline, repo files, routes, agent steps), `personas.rs`, `inbox.rs`, `scheduler.rs`,
+`finish.rs` (`ticket.finish`), `github_issues.rs` (the issues sensor and its trigger) and `hooks.rs` (incoming
+webhooks); pdt-core `policy.rs`;
 web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 
 ## Event log
@@ -55,7 +57,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
     changes) → quiet end.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user (`actor` = `user`, not an agent's comment
-    through the API or a workflow's) with an active attempt → `session.send`.
+    through the API or a workflow's) with an active attempt → `session.send`. A note given with a gate's choice is the
+    user's comment too, but carries `workflowId` and is skipped: that run passes it on itself.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
   - **PR comments to the agent** (off, 7e): `pr.commented` and `pr.reviewed` (not `byOwner`, not `isBot`; reviews
     not `approved` and with a body) → `session.send` (`{{trigger.notice.text}}`, dedupe on the notice key, `timeline:
@@ -75,8 +78,8 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | one trigger per event type; `manual` (Run now, sub-workflows) — config `projects`, `where`, `runKey` | `out` |
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
-| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`) | each choice, `unanswered`, `timeout` |
-| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `loopLimit`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
+| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`) | each choice, `unanswered`, `timeout` |
+| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
 | `wait` (`ms`, `until`, or `event {type, where}` with `timeoutMs`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
@@ -84,6 +87,7 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`) | `sent`, `untold`, `skipped` |
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
+| `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`; Phase 7c) | `merged`, `queued`, `refused` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
 | `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |
@@ -128,7 +132,8 @@ notify itself forever).
   told), `failed` (`error` names the node) or `cancelled`. Limits: `maxVisits` per node (loop limit, default 25),
   `maxSteps` (200) and `maxRuntimeMs` (7 days) per run, `timeoutMs` per execution (actions default 5 min).
 - `POST /api/workflow-runs/{id}/retry` (a failed run, from its failed step), `/cancel`, and
-  `/steps/{step}/answer {choice}` (a waiting gate). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
+  `/steps/{step}/answer {choice, text?}` (a waiting gate; the user's `text` goes on the run's ticket as their comment,
+naming the workflow, run and choice, so "Ticket comments to the agent" forwards it, and is in the gate's output). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
   `GET /api/workflow-runs/{id}` (with steps).
 - Per-workflow state: `workflow_state`, `GET /api/workflows/{id}/state`. Keys starting `_pdt.` are PDT's own (a
   schedule's last slot): `{{state}}` leaves them out and `state.set` refuses them.
@@ -138,7 +143,9 @@ notify itself forever).
 `session_messages`, one per step. `outbox.rs` delivers with the PR notices' old rule: the attempt's newest running
 agent session (a terminal with a live PTY, or a conversation); a terminal idle with no typing for 20 s, a conversation
 `ready_for_notice` (idle, nothing queued, no open request, no rate limit, terminal closed; a parked one reopens); all
-of a session's waiting messages in one message; no running agent session → `untold`. `dedupe` is per attempt (also
+of a session's waiting messages in one message; no running agent session → `untold`. What the user sent to a
+session (an Inbox answer, a Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart),
+reopening it as typing would. `dedupe` is per attempt (also
 against `pr` timeline keys from before the event log). Resolving writes the timeline record and resumes the step.
 
 ## API
@@ -161,9 +168,10 @@ boolean | choice | connection, choices, default, required, connectionKind}` (`co
 reference takes the value with its type; other references stay). Saving checks the params and validates the document
 with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, read-only, `409 builtin_template`):
 Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, the
-Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a schedule, Discord only on a change, the
-first check silent; Brief follow-ups and Email processing: a script on a schedule whose `{"message": …}` goes to
-Discord), and the built-in workflows. A required text param with no default is checked as the reference itself. The user's are in `workflow_templates`.
+Pipeline (below), the Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a schedule, Discord
+only on a change, the first check silent; Brief follow-ups and Email processing: a script on a schedule whose
+`{"message": …}` goes to Discord), and the built-in workflows. A required text param with no default is checked as
+the reference itself. The user's are in `workflow_templates`.
 
 Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared
 secret) and `http` (`url`, `config.auth` and its field; secret: the token or password). A config field holding a
@@ -259,6 +267,9 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   to the attempt's own session). `reuse` (Coder): the session this node used earlier in the run, else the attempt's
   running agent session, else a new one that becomes the attempt's; a reused session gets the step through the outbox
   (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
+  On a later pass in the same session (sent back by Review, QA or a rejection) it gets only why it is back (the
+  sending step's outcome and summary, or the user's gate choice and note: pdt-core `next_pass_message`) and the
+  outcomes, not the task and rules again.
 - **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
   A step with neither runs in the run's (or workflow's) project.
 - **Permission mode** of a new session: the project's `agentPermissionMode` (project settings), else the persona
@@ -281,7 +292,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   message) for 30 s.
 - **Questions.** `ask_user` makes an Inbox question (a new one replaces the step's open one) and the binding
   `asking`, so its turn's end isn't a stall; the answer goes back through the outbox as "[PDT] The user answered your
-  questions: …" and the binding works again. A session with no step can ask too.
+  questions: …" and the binding works again. A session with no step can ask too. Removing the asking session closes
+  its question (nothing can answer it) and the engine tick stalls its step, so it can be taken over.
 - **Loop limit.** When the node is about to run more than `loopLimit` (3; 0: none) times again in one run, it waits
   with a `loop_limit` Inbox item instead (the earlier passes' outcomes and summaries): **Once more** runs it (that
   pass only), **Take over** completes it with an outcome (`by: user`), **Stop** takes `stopped`.
@@ -297,19 +309,59 @@ diff). Built-ins Refiner, Coder, Reviewer and QA (pdt-core `persona.rs`) are ins
 on `GET /api/personas`), follow newer templates until edited, and can be archived, not deleted (`409
 builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_use`).
 
+## Pipeline, policies and scheduling (Phase 7c)
+
+- **The Pipeline template** (`builtin:pipeline`, pdt-api `workflow/pipeline.rs`): instantiated per project (off until
+  enabled). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
+  `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
+  | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (new) → QA
+  (new); `changes_requested` and `fail` go back to Code; `pass` → a switch on `{{params.accept}}`: `user` → Accept (a
+  gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`; `reject` → Code), `auto` → straight on; then
+  a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`merged` → `ticket.finish`; `queued` → end, Finish
+  merged tickets finishes it; `refused` → wait), `person` → a wait for `attempt.merged` of this attempt. `timeout` and
+  `stopped` add a ticket comment and end. Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
+  or `user`: manual), `afterRefine`, `accept`, `merge`, `loopLimit`. Runs may last 30 days.
+- **Manual stages**: an `agent` node with `owner: user` starts no session. Its binding's state is `manual` and the Inbox
+  gets a `manual` item ("Your turn: <node>", group Gates) with the prompt and one `outcome:<id>` choice per outcome;
+  answering (with an optional `text`, the summary) completes the step `by: user`.
+- **`pipelineStage`** on `agent` and `gate` sets the ticket's stage when the step starts ([tickets.md](tickets.md)).
+- **`approve`** on a gate: taking that choice records the user's approval of the run's attempt at its branch head (a
+  `review` event naming the workflow), which `requireApproval` needs before an automated merge.
+- **`attempt.merge`** runs the Merge command as an automated merger ([review.md](review.md#merge)): a policy refusal
+  or anything that stops the merge leaves by `refused` (`code`, `reason`); `merge_failed` is an error.
+- **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`,
+  `maxRunningAttempts`, `autoStart` `off | todo | ready`; `PUT` takes them as top-level fields, `maxRunningAttempts`
+  0 clears it): Merge and Start enforce them ([review.md](review.md#merge), [tickets.md](tickets.md)). Web: the
+  project page's "Pipeline and policies".
+- **Host cap on agents running a turn** (`maxAgentTurns`, default 4, 0 none): busy sessions are conversations with a
+  turn running or a message queued, and agent terminals whose activity is `working`. An agent step that would start
+  a new session over the cap waits (`wait: {slot: true, persona}`; its ticket's `agent.state` is `queued`); each
+  engine tick admits waiting steps oldest first into the free slots (`scheduler::admit_waiting`). The outbox holds a
+  message that would start a turn in an idle session while no slot is free, unless the user sent it
+  (`session_messages.by_user`: Inbox answers and nudges). Auto-start's own sessions wait for a slot too.
+- **Refine** and **auto-start**: [tickets.md](tickets.md).
+
 ## Inbox
 
 `inbox_items` (pdt-store `inbox.rs`, pdt-api `inbox.rs`): `question` (`ask_user`), `gate` (a waiting `gate` node;
-group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`; one open item per step and kind. Approvals are
+group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c); one
+open item per step and kind. Approvals are
 not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
 session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
 accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
-`{choice}` (a gate's choice; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
+`{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
 `outcome:<id>` or `stop` at a loop limit) or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
 closes a question or stalled item (the step keeps waiting). A gate answered through
-`/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too.
+`/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too. When a session is removed (and when the store
+opens, for older ones) its open questions close (`resolution` `{sessionGone: true}`) and no item keeps its
+`sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93).
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
-over / Stop, a gate's choices and Open changes for Ready to accept); `j`/`k` move, Enter takes the primary action,
-`o` opens the ticket, `e` dismisses.
+over / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
+`o` opens the ticket, `e` dismisses. A gate has a note box: the note goes with the choice (as the user's ticket
+comment, so a rejection tells the coder what to change). An item on a ticket with an attempt also offers Open coder
+session (the attempt's running agent session), Open changes and Run… (the worktree's configured runs and tests); each
+opens its tab right after the ticket's tab in the workspace that has it (its Start workspace; AppShell's
+`TicketTabsContext`, `openChanges` with `ticketId`), moving an existing changes tab there (a session or run tab that
+exists is shown where it is), and switches to it.

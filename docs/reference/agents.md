@@ -43,8 +43,9 @@ notifications get 202; `GET`/`DELETE` 405).
   is an agent session and is not `finished` (401 otherwise). A tool call knows its session, and through it the
   project, ticket (the session's attempt's, else its agent step's) and agent step.
 - **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`
-  (the default set), and `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`,
-  `workflow_save` for personas that list them. Inputs are the API's request types (schemars schemas) and each tool
+  (the default set), and `update_ticket` (Phase 7c: title and description of the session's own ticket, the store's
+  `patch_ticket_by` as the agent; the built-in Refiner lists it), `catalog_search`, `catalog_get`, `workflow_get`,
+  `workflow_validate`, `workflow_dry_run`, `workflow_save` for personas that list them. Inputs are the API's request types (schemars schemas) and each tool
   runs the route's own function (ticket `get_one`, the store's comment, review `add_comment`, workflow
   `create_workflow` with author `agent`, so a new workflow starts disabled, and `save` with `propose`, so a change is a
   proposal the user accepts or discards). `tools/list` gives only the session's set (its
@@ -116,7 +117,9 @@ notifications get 202; `GET`/`DELETE` 405).
 The new-tab chooser, palette, ticket Start and the project's "… with an agent" menus offer only agents whose host
 check found them (web/src/common/useAgentAvailability.ts, the `['host-checks']` query Host settings' "Run checks
 again" refreshes); an installed agent that is not logged in stays with a "not logged in" hint; everything is offered
-until the checks load or when they fail.
+until the checks load or when they fail. Only a program missing from the search path counts as not found: one whose
+check times out (30 s) or cannot start is found but not ok, and pdtd's startup check runs again (up to 3 times, 30 s
+apart) while an agent's check is unanswered, since a CLI's first launch after a restart can be slow (PDT-92).
 
 ## Host defaults (PDT-69)
 
@@ -128,6 +131,9 @@ chooser pick first (in a terminal only bypass changes anything); requests withou
 menus list the default agent's choices first, default view first (`byDefault` in web/src/sessions/newSession.ts), and
 "… with an agent" starts in the default view. pdtd's update loop re-reads the interval every minute, so a change
 applies without waiting out the old one.
+
+`maxAgentTurns` (4; 0: no cap; Phase 7c), Settings → This host → Agents "Agents running at once": the most agent
+sessions running a turn before PDT's own work waits for a slot ([workflows.md](workflows.md#pipeline-policies-and-scheduling-phase-7c)).
 
 ## Devin (PDT-54, PDT-55)
 

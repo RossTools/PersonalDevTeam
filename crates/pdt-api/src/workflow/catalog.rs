@@ -299,6 +299,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(http::Http));
         kinds.push(Box::new(discord::Discord));
         kinds.push(Box::new(notify::Notify));
+        kinds.push(Box::new(merge::Merge));
         Catalog::new(kinds)
     })
 }

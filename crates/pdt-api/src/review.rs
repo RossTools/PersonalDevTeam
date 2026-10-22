@@ -10,6 +10,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::conversation::SessionMode;
+use pdt_core::policy::{Merger, may_merge};
 use pdt_core::pr::{Mergeable, PrState};
 use pdt_core::project::Project;
 use pdt_core::review::{
@@ -394,13 +395,41 @@ pub(crate) async fn approve(State(st): State<AppState>, Path(id): Path<String>) 
     if info.attempt.state != AttemptState::Active {
         return Err(conflict("attempt_inactive", "this attempt has ended"));
     }
+    record_approval(&st, &info, json!({})).await?;
+    Ok(Json(load_ticket(&st, &info.ticket_id).await?))
+}
+
+/// The branch's head commit, if it has one.
+async fn branch_head(info: &AttemptInfo) -> Result<Option<String>, ApiError> {
     let repo = PathBuf::from(&info.repo_path);
     let branch = format!("refs/heads/{}", info.attempt.branch);
-    let head =
-        tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &branch)).await.map_err(ApiError::internal)?;
-    let data = json!({"attemptId": id, "verdict": "approved", "head": head});
+    tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &branch)).await.map_err(ApiError::internal)
+}
+
+/// Records the user's approval of the attempt at its branch head (Approve, or a gate's `approve` choice; `extra`
+/// names the workflow and run).
+pub(crate) async fn record_approval(
+    st: &AppState,
+    info: &AttemptInfo,
+    extra: serde_json::Value,
+) -> Result<(), ApiError> {
+    let head = branch_head(info).await?;
+    let mut data = json!({"attemptId": info.attempt.id, "verdict": "approved", "head": head});
+    if let (Some(d), serde_json::Value::Object(x)) = (data.as_object_mut(), extra) {
+        d.extend(x);
+    }
     st.store.add_ticket_event(&info.ticket_id, EventKind::Review, Actor::User, None, Some(data), now_ms()).await?;
-    Ok(Json(load_ticket(&st, &info.ticket_id).await?))
+    Ok(())
+}
+
+/// Whether a person approved the attempt at its branch's current head.
+async fn approved_at_head(st: &AppState, info: &AttemptInfo) -> Result<bool, ApiError> {
+    let Some(head) = branch_head(info).await? else { return Ok(false) };
+    Ok(st
+        .store
+        .latest_event_data(&info.ticket_id, EventKind::Review)
+        .await?
+        .is_some_and(|d| d["attemptId"] == json!(info.attempt.id) && d["head"] == json!(head)))
 }
 
 /// What Merge would do for the attempt now.
@@ -511,7 +540,29 @@ pub(crate) async fn merge(
         serde_json::from_slice(&body)
             .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
     };
-    let info = load_attempt(&st, &id).await?;
+    let merger = match input.by.as_deref() {
+        Some("user") => Merger::User,
+        None | Some("agent") => Merger::Automated,
+        Some(other) => return Err(invalid(format!("by is user or agent, not {other}"))),
+    };
+    Ok(Json(merge_attempt(&st, &id, &input, merger).await?))
+}
+
+/// The Merge command (the route, and the `attempt.merge` node as an automated merger): the project's policy, then
+/// what would stop the merge, then the merge.
+pub(crate) async fn merge_attempt(
+    st: &AppState,
+    id: &str,
+    input: &MergeRequest,
+    merger: Merger,
+) -> Result<MergeResult, ApiError> {
+    let st = st.clone();
+    let info = load_attempt(&st, id).await?;
+    let policy = st.store.get_project_settings(&info.project_id).await?.policy;
+    let approved = merger == Merger::Automated && policy.require_approval && approved_at_head(&st, &info).await?;
+    if let Err(refusal) = may_merge(&policy, merger, approved) {
+        return Err(conflict(refusal.code(), refusal.message(&policy)));
+    }
     let p = preview(&st, &info).await?;
     if let Some(problem) = p.problem {
         return Err(blocked(problem));
@@ -533,7 +584,7 @@ pub(crate) async fn merge(
         .map_err(ApiError::internal)?
         .map_err(|e| conflict("merge_failed", e.to_string()))?;
         crate::github::refresh_attempt(&st, &info).await;
-        return Ok(Json(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
+        return Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None });
     }
     let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
     let (key, title) = ticket.map(|t| (t.key, t.title)).unwrap_or_default();
@@ -558,8 +609,9 @@ pub(crate) async fn merge(
     }
     let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
     let via = Some(pdt_core::workflow::events::MergeVia::MergedHere);
-    st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::User, via, pr, now_ms()).await?;
-    Ok(Json(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
+    let actor = if merger == Merger::User { Actor::User } else { Actor::System };
+    st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, via, pr, now_ms()).await?;
+    Ok(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) })
 }
 
 /// `POST /api/attempts/{id}/ask-agent`: asks the coder session to clear what stops the merge: merge the base in and

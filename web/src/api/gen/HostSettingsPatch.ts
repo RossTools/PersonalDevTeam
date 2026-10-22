@@ -13,4 +13,8 @@ export type HostSettingsPatch = { remoteAccess?: boolean, ownerLogin?: string, u
 /**
  * Blank clears it (back to `~/work`).
  */
-projectsDir?: string, defaultAgent?: AgentKind, defaultSessionMode?: SessionMode, ticketPermissionMode?: PermissionMode, sessionPermissionMode?: PermissionMode, updateCheckMinutes?: number, };
+projectsDir?: string, defaultAgent?: AgentKind, defaultSessionMode?: SessionMode, ticketPermissionMode?: PermissionMode, sessionPermissionMode?: PermissionMode, updateCheckMinutes?: number, 
+/**
+ * 0 for no cap.
+ */
+maxAgentTurns?: number, };

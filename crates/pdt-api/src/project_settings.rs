@@ -5,6 +5,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::host::{CredentialPolicy, effective_credentials};
+use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
 use pdt_store::ProjectSettings;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -25,10 +26,13 @@ pub struct ProjectSettingsView {
     /// The permission mode of every persona's session here, over the persona's own (null: the persona's, else the
     /// host default).
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
+    /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c).
+    pub policy: ProjectPolicy,
 }
 
-/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it), `mergeViaPr` and
-/// `agentPermissionMode` ("" clears it) are replaced when present, so a client that does not know them keeps them.
+/// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it), `mergeViaPr`,
+/// `agentPermissionMode` ("" clears it) and the policies (`maxRunningAttempts` 0 clears it) are replaced when present,
+/// so a client that does not know them keeps them.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -45,7 +49,23 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub agent_permission_mode: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub merge_by: Option<MergeBy>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub require_approval: Option<bool>,
+    /// 0 clears it (no cap).
+    #[serde(default)]
+    #[ts(optional)]
+    pub max_running_attempts: Option<u32>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub auto_start: Option<AutoStart>,
 }
+
+/// The highest running-attempt cap a project can set.
+const MAX_RUNNING_ATTEMPTS: u32 = 100;
 
 pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSettingsView, ApiError> {
     st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
@@ -58,6 +78,7 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
         agent_instructions: p.agent_instructions,
         merge_via_pr: p.merge_via_pr,
         agent_permission_mode: p.agent_permission_mode,
+        policy: p.policy,
     })
 }
 
@@ -92,12 +113,31 @@ pub(crate) async fn put_settings(
             ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", format!("{m} is not a permission mode"))
         })?),
     };
+    let max_running_attempts = match input.max_running_attempts {
+        None => current.policy.max_running_attempts,
+        Some(0) => None,
+        Some(n) if n > MAX_RUNNING_ATTEMPTS => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                format!("the running-attempt cap is at most {MAX_RUNNING_ATTEMPTS} (0: no cap)"),
+            ));
+        }
+        Some(n) => Some(n),
+    };
+    let policy = ProjectPolicy {
+        merge_by: input.merge_by.unwrap_or(current.policy.merge_by),
+        require_approval: input.require_approval.unwrap_or(current.policy.require_approval),
+        max_running_attempts,
+        auto_start: input.auto_start.unwrap_or(current.policy.auto_start),
+    };
     let settings = ProjectSettings {
         run_overrides,
         agent_credentials: input.agent_credentials,
         agent_instructions,
         merge_via_pr: input.merge_via_pr.unwrap_or(current.merge_via_pr),
         agent_permission_mode,
+        policy,
     };
     st.store.put_project_settings(&id, &settings).await?;
     Ok(Json(view(&st, &id).await?))

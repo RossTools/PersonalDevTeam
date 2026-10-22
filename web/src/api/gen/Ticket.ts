@@ -4,7 +4,9 @@ import type { AttemptSummary } from "./AttemptSummary";
 import type { LinkedTicket } from "./LinkedTicket";
 import type { OverlapLevel } from "./OverlapLevel";
 import type { PartsProgress } from "./PartsProgress";
+import type { PipelineStage } from "./PipelineStage";
 import type { Priority } from "./Priority";
+import type { TicketAgent } from "./TicketAgent";
 import type { TicketOverlap } from "./TicketOverlap";
 import type { TicketParent } from "./TicketParent";
 import type { TicketStage } from "./TicketStage";
@@ -89,4 +91,13 @@ parent: TicketParent | null,
 /**
  * The roll-up of its parts, when it has any (filled in by the API).
  */
-parts: PartsProgress | null, };
+parts: PartsProgress | null, 
+/**
+ * Where a pipeline workflow has it (Phase 7c): `refine` while Draft or Ready, the others while In progress. Any
+ * change of stage clears it.
+ */
+pipelineStage: PipelineStage | null, 
+/**
+ * Who works on it now in a workflow and in what state (filled in by the API, in memory).
+ */
+agent: TicketAgent | null, };

@@ -1,10 +1,13 @@
 use crate::{Store, StoreError};
 use pdt_core::host::{CredentialPolicy, HostSettings};
+use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
 
 const HOST_KEY: &str = "host";
 
-/// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs.
-type ProjectSettingsRow = (Option<String>, Option<String>, Option<String>, bool, Option<String>);
+/// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
+/// mode, and the policies (merge by, require approval, running-attempt cap, auto-start).
+type ProjectSettingsRow =
+    (Option<String>, Option<String>, Option<String>, bool, Option<String>, String, bool, Option<i64>, String);
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -19,6 +22,8 @@ pub struct ProjectSettings {
     pub merge_via_pr: bool,
     /// The permission mode every persona's session in the project runs with, over the persona's own (Phase 7b §3).
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
+    /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c §4).
+    pub policy: ProjectPolicy,
 }
 
 impl Store {
@@ -77,13 +82,15 @@ impl Store {
 
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
-            "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode \
-             FROM project_settings WHERE project_id = ?",
+            "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
+             merge_by, require_approval, max_running_attempts, auto_start FROM project_settings WHERE project_id = ?",
         )
         .bind(project_id)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((run_overrides, creds, agent_instructions, merge_via_pr, mode)) = row else {
+        let Some((run_overrides, creds, agent_instructions, merge_via_pr, mode, merge_by, require_approval, cap, auto)) =
+            row
+        else {
             return Ok(ProjectSettings::default());
         };
         let agent_credentials = match creds {
@@ -99,16 +106,27 @@ impl Store {
             agent_instructions,
             merge_via_pr,
             agent_permission_mode,
+            policy: ProjectPolicy {
+                merge_by: MergeBy::parse(&merge_by)
+                    .ok_or_else(|| StoreError::Corrupt(format!("merge by {merge_by:?}")))?,
+                require_approval,
+                max_running_attempts: cap.and_then(|n| u32::try_from(n).ok()),
+                auto_start: AutoStart::parse(&auto)
+                    .ok_or_else(|| StoreError::Corrupt(format!("auto-start {auto:?}")))?,
+            },
         })
     }
 
     pub async fn put_project_settings(&self, project_id: &str, s: &ProjectSettings) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
-             merge_via_pr, agent_permission_mode) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
+             merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
-             agent_permission_mode = excluded.agent_permission_mode",
+             agent_permission_mode = excluded.agent_permission_mode, merge_by = excluded.merge_by, \
+             require_approval = excluded.require_approval, max_running_attempts = excluded.max_running_attempts, \
+             auto_start = excluded.auto_start",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -116,6 +134,10 @@ impl Store {
         .bind(&s.agent_instructions)
         .bind(s.merge_via_pr)
         .bind(s.agent_permission_mode.map(pdt_core::conversation::PermissionMode::as_str))
+        .bind(s.policy.merge_by.as_str())
+        .bind(s.policy.require_approval)
+        .bind(s.policy.max_running_attempts.map(i64::from))
+        .bind(s.policy.auto_start.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -186,6 +208,12 @@ mod tests {
             agent_instructions: Some("Run `make check` before pushing.".into()),
             merge_via_pr: true,
             agent_permission_mode: Some(pdt_core::conversation::PermissionMode::AcceptEdits),
+            policy: pdt_core::policy::ProjectPolicy {
+                merge_by: pdt_core::policy::MergeBy::User,
+                require_approval: true,
+                max_running_attempts: Some(2),
+                auto_start: pdt_core::policy::AutoStart::Ready,
+            },
         };
         store.put_project_settings("p", &s).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), s);

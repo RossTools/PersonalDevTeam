@@ -261,7 +261,7 @@ pub struct MergeResult {
 }
 
 /// How a local merge lands on the base branch.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum MergeStyle {
@@ -290,6 +290,11 @@ pub struct MergeRequest {
     #[serde(default)]
     #[ts(optional)]
     pub delete_branch: Option<bool>,
+    /// `user`: a person merges (PDT's Merge… sends it). Absent or `agent`: an automated merge, which the project's
+    /// policy may refuse (Phase 7c §4).
+    #[serde(default)]
+    #[ts(optional)]
+    pub by: Option<String>,
 }
 
 /// The local merge commit's message.

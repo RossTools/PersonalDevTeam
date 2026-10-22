@@ -689,7 +689,7 @@ describe('settings page', () => {
     const main = screen.getByRole('main');
     await within(main).findByRole('region', { name: 'Project' });
     expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Danger zone']);
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Danger zone']);
     expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
   });
 });
@@ -816,6 +816,25 @@ describe('tickets', () => {
     // Another workspace: no banner.
     await userEvent.click(within(screen.getByRole('region', { name: 'Workspaces' })).getByRole('row', { name: /Alpha/ }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Move to Done and remove the worktree' })).toBeNull());
+  });
+
+  it('stays in the Inbox when an item\'s session can\'t open, rather than showing the current tab (PDT-93)', async () => {
+    const q = {
+      id: 'q', kind: 'question', group: 'question', status: 'open', projectId: project.id, ticketId: null, ticketKey: null,
+      ticketTitle: null, attemptId: null, sessionId: 'gone', runId: null, stepId: null, personaId: null, personaName: null,
+      title: 'Which file?', body: { questions: [{ question: 'Which file?', choices: [] }] }, choices: [], resolution: null,
+      createdAt: 1, resolvedAt: null,
+    };
+    stubWorkspaces({
+      'GET /api/inbox': { items: [q], total: 1 },
+      'POST /api/workspaces/wa/tabs': new Reply(400, { code: 'invalid_input', message: 'that session, run, ticket or worktree does not exist' }),
+    });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.click(screen.getByRole('button', { name: /^Inbox/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open session' }));
+    expect(await screen.findByText('that session, run, ticket or worktree does not exist')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Inbox/ })).toHaveAttribute('aria-current', 'page');
   });
 
   it('goes to a ticket by key from the palette, opening its tab in the project workspace', async () => {

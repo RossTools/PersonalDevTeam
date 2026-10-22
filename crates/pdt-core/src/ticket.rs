@@ -273,6 +273,57 @@ pub struct TicketSummary {
     pub parent: Option<crate::parts::TicketParent>,
     /// The roll-up of its parts, when it has any (filled in by the API).
     pub parts: Option<crate::parts::PartsProgress>,
+    /// Where a pipeline workflow has it (Phase 7c): `refine` while Draft or Ready, the others while In progress. Any
+    /// change of stage clears it.
+    #[serde(default)]
+    pub pipeline_stage: Option<PipelineStage>,
+    /// Who works on it now in a workflow and in what state (filled in by the API, in memory).
+    #[serde(default)]
+    pub agent: Option<TicketAgent>,
+}
+
+/// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PipelineStage {
+    Refine,
+    Code,
+    Review,
+    Qa,
+    Accept,
+}
+str_enum!(PipelineStage { Refine => "refine", Code => "code", Review => "review", Qa => "qa", Accept => "accept" });
+
+/// The state of whoever works on a ticket in a workflow now (Phase 7c spec §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TicketAgentState {
+    /// A persona's session works on a step.
+    Working,
+    /// It asked the user something and waits for the answers.
+    Asking,
+    /// Its turns ended without an outcome; the Inbox has it.
+    Stalled,
+    /// The user's turn: a manual step or a gate waits on them.
+    Yours,
+    /// Waiting for a slot under the host's cap on agents running a turn.
+    Queued,
+}
+
+/// Who owns a ticket's current workflow step, for the Board's cards.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketAgent {
+    /// The persona's name; null for a gate.
+    pub persona: Option<String>,
+    pub state: TicketAgentState,
+    pub session_id: Option<String>,
+    /// Its session is running a turn now.
+    pub busy: bool,
+    pub run_id: Option<String>,
 }
 
 /// How a ticket overlaps another one that has an active attempt.
@@ -1106,6 +1157,8 @@ mod tests {
             closed_at: None,
             parent: None,
             parts: None,
+            pipeline_stage: None,
+            agent: None,
         };
         let t = Ticket {
             summary: s,

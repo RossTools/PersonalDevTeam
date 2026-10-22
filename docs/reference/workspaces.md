@@ -37,7 +37,9 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 - A project's base branch (what new worktrees and tickets branch from and are reviewed against) defaults to the
   repository's default branch: `origin/HEAD`'s, else a local `main` or `master`, else the checked-out branch (pdt-git
   `default_branch`). The project's Settings page changes it (`PATCH /api/projects/{id} {baseBranch}`, which must name
-  a local branch or one on `origin`); existing attempts keep the base they started with.
+  a local branch or one on `origin`); existing attempts keep the base they started with. Its branch picker, like
+  the run-a-branch picker, lists `main` (then `master`, then the current base) first and filters as you type
+  (`Select searchable`; web/src/common/branchOptions.ts).
 - The Files view reads checkouts through `/api/projects/{id}/files` (git's file list, `.gitignore` honoured; paths
   stay inside the checkout, `.git` refused). A Markdown file shows rendered (`Markdown`, as ticket text) with a
   Rendered | Source switch.

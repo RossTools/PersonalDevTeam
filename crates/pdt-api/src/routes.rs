@@ -115,6 +115,8 @@ pub struct AppState {
     pub(crate) mcp_key: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     /// The built-in personas were installed or updated in this daemon run.
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
+    pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
 }
 
 impl AppState {
@@ -168,6 +170,7 @@ impl AppState {
             home_dir: std::env::home_dir(),
             conversations: Default::default(),
             engine_lock: Default::default(),
+            auto_start_failed: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             personas_installed: Default::default(),
@@ -321,6 +324,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
+        .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))
         .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
         .route("/tickets/{id}/finish", axum::routing::post(crate::finish::finish_route))
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))

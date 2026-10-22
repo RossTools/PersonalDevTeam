@@ -350,6 +350,29 @@ async fn after_clear_the_new_conversation_is_resumed() {
 }
 
 #[tokio::test]
+async fn background_tasks_keep_the_process_and_report_back_in_a_turn_of_their_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut env = setup(tmp.path()).await;
+    env.state.conversations.idle_park = Duration::ZERO;
+    env.app = router(env.state.clone(), None);
+    let id = new_conversation(&env, json!({"initialPrompt": "bg: 1500"})).await["id"].as_str().unwrap().to_string();
+    wait_turns(&env, &id, 1).await;
+    // Idle but for its background task: parking would end the task before it reports back.
+    for _ in 0..10 {
+        assert_eq!(pdt_api::park_idle_conversations(&env.state).await, 0);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let all = wait_turns(&env, &id, 2).await;
+    assert_eq!(agent_text(&all).last().unwrap(), "The background task finished.");
+    let note = all.iter().find(|e| e["event"]["kind"] == "notice").expect("the task's report is a notice");
+    assert_eq!(note["event"]["text"], r#"Background command "sleep" completed (exit code 0)"#);
+    let users = all.iter().filter(|e| e["event"]["kind"] == "user_message").count();
+    assert_eq!(users, 1, "only the prompt is the user's: {all:#?}");
+    park_once_idle(&env.state).await;
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
 async fn idle_conversations_park_and_settings_apply_on_resume() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = setup(tmp.path()).await;

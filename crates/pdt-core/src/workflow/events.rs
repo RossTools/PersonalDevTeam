@@ -32,6 +32,7 @@ pub const OWN_TRIGGERS: &[&str] = &[SCHEDULE_FIRED, WEBHOOK_RECEIVED, GITHUB_ISS
 /// Event types no workflow can trigger on: `notify`'s own record (a workflow on it could notify itself forever).
 pub const NOT_TRIGGERS: &[&str] = &[PDT_NOTIFIED];
 pub const AGENT_OUTCOME: &str = "agent.outcome";
+pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
 /// The CI provider of GitHub Actions runs.
 pub const GITHUB_ACTIONS: &str = "github_actions";
@@ -165,6 +166,12 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "A workflow's notify step: shown in PDT as a notification.",
         schema: schema_of::<Notified>,
     },
+    EventType {
+        id: TICKET_REFINE_REQUESTED,
+        title: "Refine requested",
+        description: "Someone asked for a Draft or Ready ticket to be refined (Refine on the ticket).",
+        schema: schema_of::<TicketRefineRequested>,
+    },
 ];
 
 pub fn event_type(id: &str) -> Option<&'static EventType> {
@@ -296,6 +303,9 @@ pub struct TicketCommented {
     pub actor: String,
     /// The ticket's active attempt, when it has one.
     pub attempt_id: Option<String>,
+    /// The workflow whose run wrote it for the user (a note with a gate's choice, which that run passes on itself).
+    #[serde(default)]
+    pub workflow_id: Option<String>,
 }
 
 /// `ticket.overlap_found`.
@@ -449,6 +459,21 @@ pub struct Notified {
     pub run_id: String,
 }
 
+/// `ticket.refine_requested`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketRefineRequested {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub title: String,
+    /// `draft` or `ready`.
+    pub stage: String,
+    /// `user` or `agent`.
+    pub actor: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,6 +498,7 @@ mod tests {
             body: "b".into(),
             actor: "user".into(),
             attempt_id: None,
+            workflow_id: None,
         };
         assert_eq!(serde_json::to_value(&e).unwrap()["ticketKey"], "PDT-1");
         let a = AttemptEvent {

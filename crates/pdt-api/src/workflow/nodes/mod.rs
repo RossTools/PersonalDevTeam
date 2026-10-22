@@ -8,6 +8,7 @@ pub mod discord;
 pub mod end;
 pub mod gate;
 pub mod http;
+pub mod merge;
 pub mod notify;
 pub mod schedule;
 pub mod session_send;
