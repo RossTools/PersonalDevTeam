@@ -506,7 +506,24 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
     pdt_api::refresh_prs(&env.state).await;
     let (_, logged) = call(&env.app, "GET", "/api/events?type=pr.commented", None).await;
     assert_eq!(logged.as_array().unwrap().len(), 4, "each new comment once (mine and the bot's too): {logged}");
-    pdt_api::run_workflows(&env.state).await;
+    // The agent's turn ended (its terminal is idle), so the messages can go to it.
+    let (st, _) = call(
+        &env.app,
+        "POST",
+        &format!("/api/sessions/{}/activity", env.session),
+        Some(json!({"source": "claude", "event": "Stop"})),
+    )
+    .await;
+    assert!(st.is_success(), "{st}");
+    // Delivered once the agent's terminal is idle: keep the engine going until all three are recorded.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        pdt_api::run_workflows(&env.state).await;
+        if pr_events(&env).await.len() >= 3 || std::time::Instant::now() > deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     let mut keys: Vec<String> =
         pr_events(&env).await.iter().map(|e| e["data"]["key"].as_str().unwrap().into()).collect();
     keys.sort();
