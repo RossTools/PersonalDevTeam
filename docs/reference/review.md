@@ -38,7 +38,8 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   the project's policy comes first (Phase 7c, pdt-core `policy::may_merge`): PDT's Merge… sends `by: "user"`, a
   person's merge; anything else is automated. `mergeBy: user` refuses automated merges and `external` every merge
   (409 `merge_not_allowed`); `requireApproval` refuses an automated merge unless a person approved the branch's
-  current head (409 `approval_required`; a person's own merge needs none). A local merge's `merged` event is the
+  current head (409 `approval_required`; a person's own merge needs none), except for a ticket with one of the
+  policy's `approvalExemptLabels` (project settings: "Labels that merge without approval"). A local merge's `merged` event is the
   user's for a person's merge, else `system`.
   Every refusal is 409 `merge_blocked` with a message (inactive, dirty, conflict, base_dirty, nothing,
   pr_not_mergeable, pr_queued, no_pr); a failing gh or git is 409 `merge_failed`.

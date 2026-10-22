@@ -22,6 +22,8 @@ pub enum ParamType {
     Choice,
     /// A connection's name (of `connectionKind`, when given): the form offers the connections there are.
     Connection,
+    /// A list of text (labels): a JSON list, or one string with the items comma-separated.
+    List,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -98,6 +100,15 @@ fn typed(p: &TemplateParam, v: &Value) -> Result<Value, String> {
             Some(s) if p.choices.iter().any(|c| c == s) => Ok(json!(s)),
             _ => Err(bad()),
         },
+        ParamType::List => {
+            let items: Vec<&str> = match v {
+                Value::String(s) => s.split(',').collect(),
+                Value::Array(a) => a.iter().map(|x| x.as_str().ok_or_else(bad)).collect::<Result<_, _>>()?,
+                _ => return Err(bad()),
+            };
+            let items: Vec<&str> = items.into_iter().map(str::trim).filter(|s| !s.is_empty()).collect();
+            Ok(json!(items))
+        }
     }
 }
 
@@ -108,6 +119,7 @@ fn describe(p: &TemplateParam) -> String {
         ParamType::Number => "a number".into(),
         ParamType::Boolean => "true or false".into(),
         ParamType::Choice => format!("one of {}", p.choices.join(", ")),
+        ParamType::List => "a list of text".into(),
     }
 }
 
@@ -163,6 +175,7 @@ fn placeholder(p: &TemplateParam) -> Value {
         ParamType::Number => json!(0),
         ParamType::Boolean => json!(false),
         ParamType::Choice => json!(p.choices.first().cloned().unwrap_or_default()),
+        ParamType::List => json!([]),
     }
 }
 
@@ -246,6 +259,12 @@ mod tests {
         assert!(err(json!({"stage": "done", "on": "yes"})).contains("true or false"));
         assert!(err(json!({"stage": "done", "x": 1})).contains("no param x"));
         assert_eq!(Value::Object(placeholder_values(&ps)), json!({"on": true, "stage": "review", "n": 0}));
+        let labels = [param("labels", ParamType::List)];
+        let list = |g: Value| param_values(&labels, g.as_object().unwrap());
+        assert_eq!(list(json!({"labels": "automerge, docs ,"})).unwrap()["labels"], json!(["automerge", "docs"]));
+        assert_eq!(list(json!({"labels": ["a", " b "]})).unwrap()["labels"], json!(["a", "b"]));
+        assert_eq!(list(json!({})).unwrap()["labels"], json!([]));
+        assert!(list(json!({"labels": [1]})).unwrap_err().contains("a list of text"));
         let mut repo = param("repo", ParamType::String);
         repo.required = true;
         assert_eq!(Value::Object(placeholder_values(&[repo])), json!({"repo": "{{params.repo}}"}), "left for later");

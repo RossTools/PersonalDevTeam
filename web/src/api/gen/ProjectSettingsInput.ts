@@ -16,4 +16,8 @@ agentPermissionMode?: string, mergeBy?: MergeBy, requireApproval?: boolean,
 /**
  * 0 clears it (no cap).
  */
-maxRunningAttempts?: number, autoStart?: AutoStart, };
+maxRunningAttempts?: number, autoStart?: AutoStart, 
+/**
+ * Tickets with any of these labels skip `requireApproval` ([] clears them).
+ */
+approvalExemptLabels?: Array<string>, };

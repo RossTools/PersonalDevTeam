@@ -254,6 +254,11 @@ pub(crate) async fn mirror_timeline(
             };
             let notice = (kind == ev::ATTEMPT_MERGED).then(|| pdt_core::pr::merged_notice(pr, &branch, &base_branch));
             let session_id = data.get("sessionId").and_then(|v| v.as_str()).map(String::from);
+            let labels: Vec<(String,)> =
+                sqlx::query_as("SELECT label FROM ticket_labels WHERE ticket_id = ? ORDER BY label")
+                    .bind(ticket_id)
+                    .fetch_all(&mut *conn)
+                    .await?;
             let payload = AttemptEvent {
                 attempt: AttemptRef {
                     project_id,
@@ -270,6 +275,7 @@ pub(crate) async fn mirror_timeline(
                 finish_delete_branch: delete_branch != 0,
                 session_id,
                 notice,
+                labels: labels.into_iter().map(|(l,)| l).collect(),
             };
             NewLogEvent::new(kind, key, "tickets", payload)
         }

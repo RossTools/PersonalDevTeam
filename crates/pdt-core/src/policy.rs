@@ -68,6 +68,10 @@ pub struct ProjectPolicy {
     pub merge_by: MergeBy,
     /// An automated merge needs a person's approval at the branch's current head.
     pub require_approval: bool,
+    /// Tickets with any of these labels merge automatically without that approval (`require_approval` stays on for
+    /// the rest).
+    #[serde(default)]
+    pub approval_exempt_labels: Vec<String>,
     /// The most active attempts the project may have (null: no cap; auto-start then keeps to one).
     pub max_running_attempts: Option<u32>,
     pub auto_start: AutoStart,
@@ -77,6 +81,11 @@ impl ProjectPolicy {
     /// How many attempts auto-start fills up to.
     pub fn auto_start_cap(&self) -> u32 {
         self.max_running_attempts.unwrap_or(1)
+    }
+
+    /// Whether an automated merge of a ticket with `labels` needs a person's approval.
+    pub fn needs_approval(&self, labels: &[String]) -> bool {
+        self.require_approval && !labels.iter().any(|l| self.approval_exempt_labels.contains(l))
     }
 
     /// Whether Start would go over the cap with `active` attempts already running.
@@ -121,12 +130,18 @@ impl MergeRefusal {
     }
 }
 
-/// Whether `merger` may merge under `policy`; `approved`: a person approved the branch's current head.
-pub fn may_merge(policy: &ProjectPolicy, merger: Merger, approved: bool) -> Result<(), MergeRefusal> {
+/// Whether `merger` may merge a ticket with `labels` under `policy`; `approved`: a person approved the branch's
+/// current head.
+pub fn may_merge(
+    policy: &ProjectPolicy,
+    merger: Merger,
+    approved: bool,
+    labels: &[String],
+) -> Result<(), MergeRefusal> {
     match (policy.merge_by, merger) {
         (MergeBy::External, _) | (MergeBy::User, Merger::Automated) => Err(MergeRefusal::NotAllowed),
         (_, Merger::User) => Ok(()),
-        (MergeBy::Agents, Merger::Automated) if policy.require_approval && !approved => {
+        (MergeBy::Agents, Merger::Automated) if policy.needs_approval(labels) && !approved => {
             Err(MergeRefusal::ApprovalRequired)
         }
         (MergeBy::Agents, Merger::Automated) => Ok(()),
@@ -178,18 +193,25 @@ mod tests {
         use MergeRefusal::*;
         use Merger::*;
         let agents = policy(MergeBy::Agents, false);
-        assert_eq!(may_merge(&agents, Automated, false), Ok(()));
-        assert_eq!(may_merge(&agents, User, false), Ok(()));
+        assert_eq!(may_merge(&agents, Automated, false, &[]), Ok(()));
+        assert_eq!(may_merge(&agents, User, false, &[]), Ok(()));
         let strict = policy(MergeBy::Agents, true);
-        assert_eq!(may_merge(&strict, Automated, false), Err(ApprovalRequired));
-        assert_eq!(may_merge(&strict, Automated, true), Ok(()));
+        assert_eq!(may_merge(&strict, Automated, false, &[]), Err(ApprovalRequired));
+        assert_eq!(may_merge(&strict, Automated, true, &[]), Ok(()));
+        // An exempt label skips the approval; other labels don't.
+        let exempt = ProjectPolicy { approval_exempt_labels: vec!["automerge".into()], ..strict.clone() };
+        assert_eq!(may_merge(&exempt, Automated, false, &["docs".into(), "automerge".into()]), Ok(()));
+        assert_eq!(may_merge(&exempt, Automated, false, &["docs".into()]), Err(ApprovalRequired));
+        assert_eq!(may_merge(&exempt, Automated, false, &[]), Err(ApprovalRequired));
+        let people_exempt = ProjectPolicy { merge_by: MergeBy::User, ..exempt.clone() };
+        assert_eq!(may_merge(&people_exempt, Automated, true, &["automerge".into()]), Err(NotAllowed));
         // A person's merge is its own approval.
-        assert_eq!(may_merge(&strict, User, false), Ok(()));
+        assert_eq!(may_merge(&strict, User, false, &[]), Ok(()));
         let people = policy(MergeBy::User, false);
-        assert_eq!(may_merge(&people, Automated, true), Err(NotAllowed));
-        assert_eq!(may_merge(&people, User, false), Ok(()));
+        assert_eq!(may_merge(&people, Automated, true, &[]), Err(NotAllowed));
+        assert_eq!(may_merge(&people, User, false, &[]), Ok(()));
         let external = policy(MergeBy::External, false);
-        assert_eq!(may_merge(&external, User, true), Err(NotAllowed));
+        assert_eq!(may_merge(&external, User, true, &[]), Err(NotAllowed));
         assert_eq!(NotAllowed.message(&external), "this project's merges happen outside PDT");
         assert_eq!(NotAllowed.message(&people), "in this project only a person merges");
     }

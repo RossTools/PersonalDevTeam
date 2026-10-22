@@ -44,6 +44,9 @@ pub fn params() -> Vec<TemplateParam> {
         {"id": "accept", "title": "Who accepts", "type": "choice", "choices": ["user", "auto"], "default": "user",
          "description": "user: you accept from the Inbox before the merge; auto: it merges once QA passes (unless the \
                          project needs a person's approval)."},
+        {"id": "autoAcceptLabels", "title": "Labels accepted automatically", "type": "list", "default": [],
+         "description": "With user accepting: a ticket with any of these labels (lower case, as it had them when it \
+                         started) skips Accept and merges once QA passes; every other ticket waits for you at Accept."},
         {"id": "merge", "title": "Who merges", "type": "choice", "choices": ["workflow", "person"],
          "default": "workflow",
          "description": "workflow: the run merges after Accept (auto-merge of the pull request, or a local merge); \
@@ -160,6 +163,15 @@ pub fn doc() -> WorkflowDoc {
             "value": "{{params.accept}}", "cases": [{"port": "user", "equals": "user"}, {"port": "auto", "equals": "auto"}]}),
         ),
         node(
+            "auto_accept",
+            "condition",
+            1350,
+            250,
+            "Accepted by label?",
+            json!({"conditions": [
+                {"left": "{{trigger.labels}}", "op": "contains_any", "right": "{{params.autoAcceptLabels}}"}]}),
+        ),
+        node(
             "accept",
             "gate",
             1500,
@@ -243,7 +255,9 @@ pub fn doc() -> WorkflowDoc {
         edge("qa", "fail", "code"),
         edge("qa", "timeout", "stopped"),
         edge("qa", "stopped", "stopped"),
-        edge("accept_mode", "user", "accept"),
+        edge("accept_mode", "user", "auto_accept"),
+        edge("auto_accept", "true", "merge_mode"),
+        edge("auto_accept", "false", "accept"),
         edge("accept_mode", "auto", "merge_mode"),
         edge("accept_mode", "default", "accept"),
         edge("accept", "merge", "merge_mode"),

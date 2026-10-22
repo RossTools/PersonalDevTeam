@@ -23,6 +23,9 @@ pub enum Op {
     Lt,
     /// A string holding `right`, or a list with it.
     Contains,
+    /// A list sharing a value with the list `right` (or a string holding one of them): `{{trigger.labels}}` with
+    /// any of a set of labels.
+    ContainsAny,
     StartsWith,
 }
 
@@ -89,6 +92,13 @@ impl Condition {
                 (Value::Array(a), r) => a.iter().any(|x| same(x, r)),
                 _ => false,
             },
+            Op::ContainsAny => right.as_array().is_some_and(|rs| {
+                rs.iter().any(|r| match (&left, r) {
+                    (Value::String(s), Value::String(r)) => s.contains(r.as_str()),
+                    (Value::Array(a), r) => a.iter().any(|x| same(x, r)),
+                    _ => false,
+                })
+            }),
             Op::StartsWith => {
                 matches!((&left, &right), (Value::String(s), Value::String(r)) if s.starts_with(r.as_str()))
             }
@@ -132,6 +142,11 @@ mod tests {
         assert!(!c("{{t.pr}}", Op::Lt, Some(json!(3))).holds(&ctx));
         assert!(c("{{t.jobs}}", Op::Contains, Some(json!("lint"))).holds(&ctx));
         assert!(c("{{t.s}}", Op::Contains, Some(json!("PDT"))).holds(&ctx));
+        assert!(c("{{t.jobs}}", Op::ContainsAny, Some(json!(["test", "lint"]))).holds(&ctx));
+        assert!(!c("{{t.jobs}}", Op::ContainsAny, Some(json!(["test"]))).holds(&ctx));
+        assert!(!c("{{t.jobs}}", Op::ContainsAny, Some(json!([]))).holds(&ctx), "none of nothing");
+        assert!(!c("{{t.jobs}}", Op::ContainsAny, Some(json!("lint"))).holds(&ctx), "right is a list");
+        assert!(c("{{t.s}}", Op::ContainsAny, Some(json!(["x", "PDT"]))).holds(&ctx));
         assert!(c("{{t.s}}", Op::StartsWith, Some(json!("pdt-"))).holds(&ctx));
         assert!(all(&[], &ctx) && !any(&[], &ctx));
     }

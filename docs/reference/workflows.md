@@ -22,7 +22,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `insert_event` mirrors `moved`, `comment`, `started`, `merged`, `abandoned` and `overlap` into
   `ticket.stage_changed`, `ticket.commented`, `attempt.started`, `attempt.merged` (key `<attempt>:merged`, with `via`
   `detected` / `merged_here` / `closed`, `pr`, `finishOnMerge`, `finishDeleteBranch` and the merged `notice`),
-  `attempt.abandoned` and `ticket.overlap_found`, in the same transaction; an agent step's `outcome` timeline event
+  `attempt.abandoned` (every `attempt.*` carries the ticket's `labels` at the time, for `{{trigger.labels}}`
+  `contains` `<label>`) and `ticket.overlap_found`, in the same transaction; an agent step's `outcome` timeline event
   becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e
   adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
   `schedule.fired`, webhooks' `webhook.received` and `notify`'s `pdt.notified` ("Sensors and webhooks"). Payload types: pdt-core
@@ -163,8 +164,8 @@ gate's choices, a switch's cases; `error` not listed). The builder calls it afte
 Templates: `GET/POST /api/workflow-templates`, `GET/PUT/DELETE /api/workflow-templates/{id}`,
 `POST /api/workflow-templates/{id}/instantiate {params, name, scope, projectId}` (a new workflow, always disabled).
 A template is `{name, description, params, doc}`; a param `{id, title, description, type: string | text | number |
-boolean | choice | connection, choices, default, required, connectionKind}` (`connection`: a connection's name, of
-`connectionKind` when given); the document uses `{{params.<id>}}` (a string that is exactly one
+boolean | choice | connection | list, choices, default, required, connectionKind}` (`connection`: a connection's name,
+of `connectionKind` when given; `list`: a list of text, given as a JSON list or one comma-separated string); the document uses `{{params.<id>}}` (a string that is exactly one
 reference takes the value with its type; other references stay). Saving checks the params and validates the document
 with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, read-only, `409 builtin_template`):
 Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, the
@@ -317,12 +318,17 @@ builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_
   enabled). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
   `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
   | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (new) → QA
-  (new); `changes_requested` and `fail` go back to Code; `pass` → a switch on `{{params.accept}}`: `user` → Accept (a
-  gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`; `reject` → Code), `auto` → straight on; then
+  (new); `changes_requested` and `fail` go back to Code; `pass` → a switch on `{{params.accept}}`: `user` → a
+  condition (`{{trigger.labels}}` `contains_any` `{{params.autoAcceptLabels}}`): a ticket with one of those labels
+  goes straight on, any other to Accept (a gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`;
+  `reject` → Code); `auto` → straight on; then
   a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`merged` → `ticket.finish`; `queued` → end, Finish
   merged tickets finishes it; `refused` → wait), `person` → a wait for `attempt.merged` of this attempt. `timeout` and
   `stopped` add a ticket comment and end. Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
-  or `user`: manual), `afterRefine`, `accept`, `merge`, `loopLimit`. Runs may last 30 days.
+  or `user`: manual), `afterRefine`, `accept`, `autoAcceptLabels` (a list, default none; the labels the ticket had
+  when it started count), `merge`, `loopLimit`. Runs may last 30 days. A ticket accepted by label has no approval,
+  so with `requireApproval` on its merge is refused (the run waits for someone to merge) unless the label is also
+  in `approvalExemptLabels`.
 - **Manual stages**: an `agent` node with `owner: user` starts no session. Its binding's state is `manual` and the Inbox
   gets a `manual` item ("Your turn: <node>", group Gates) with the prompt and one `outcome:<id>` choice per outcome;
   answering (with an optional `text`, the summary) completes the step `by: user`.
@@ -332,6 +338,7 @@ builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_
 - **`attempt.merge`** runs the Merge command as an automated merger ([review.md](review.md#merge)): a policy refusal
   or anything that stops the merge leaves by `refused` (`code`, `reason`); `merge_failed` is an error.
 - **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`,
+  `approvalExemptLabels` (tickets with one of them need no approval; normalised like ticket labels, `[]` clears),
   `maxRunningAttempts`, `autoStart` `off | todo | ready`; `PUT` takes them as top-level fields, `maxRunningAttempts`
   0 clears it): Merge and Start enforce them ([review.md](review.md#merge), [tickets.md](tickets.md)). Web: the
   project page's "Pipeline and policies".
