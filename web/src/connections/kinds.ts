@@ -4,6 +4,10 @@
 export interface ConnectionKind {
   id: string;
   label: string;
+  /** Its section on the Connections page. */
+  plural: string;
+  /** How to set one up, under the section's title. */
+  setup: string;
   /** What it is for, in the kind picker. */
   description: string;
   /** Asks for a base URL. */
@@ -21,6 +25,8 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
   {
     id: 'discord_webhook',
     label: 'Discord webhook',
+    plural: 'Discord webhooks',
+    setup: 'A channel that Post to Discord steps post to. In Discord, open the channel’s settings → Integrations → Webhooks → New Webhook, copy its URL, and add it here.',
     description: 'Posts to one Discord channel (Post to Discord).',
     url: false,
     secretLabel: 'Webhook URL',
@@ -29,6 +35,8 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
   {
     id: 'webhook',
     label: 'Incoming webhook',
+    plural: 'Incoming webhooks',
+    setup: 'An address other machines post to, to start workflows with a Webhook trigger. Each has a secret the sender must send.',
     description: 'Lets another machine start workflows (the Webhook trigger).',
     url: false,
     secretLabel: 'Shared secret',
@@ -38,6 +46,8 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
   {
     id: 'http',
     label: 'HTTP service',
+    plural: 'HTTP services',
+    setup: 'A service HTTP request steps call by name: its address, and a token PDT sends only to it.',
     description: 'A service the HTTP request action calls: its address and token.',
     url: true,
     secretLabel: 'Token or password',

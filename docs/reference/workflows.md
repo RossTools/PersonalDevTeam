@@ -210,8 +210,10 @@ offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/
 
 ## Web
 
-Connections (`web/src/connections/`): Settings → This host → Connections lists them (kind, a missing secret, a
-webhook's address `/api/hooks/<name>`) with New connection, Edit and Delete. The dialog asks what the kind needs and
+Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
+has a section per kind (Discord webhooks, Incoming webhooks, HTTP services, and Other for kinds no action uses), each
+saying how to set one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address
+`/api/hooks/<name>` show on its row). The dialog asks what the kind needs and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
 Webhook URL); an incoming webhook can generate its secret. The secret is written to the keychain and never shown again
 (empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use

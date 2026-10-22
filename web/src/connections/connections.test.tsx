@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, stubApi } from '../test-utils';
 import type { Connection } from '../api/gen/Connection';
 import { ParamsForm } from '../workflows/NewWorkflowDialog';
-import { ConnectionsSection } from './ConnectionsSection';
+import { ConnectionsPage } from './ConnectionsPage';
 
 const conn = (name: string, kind: string, hasSecret = true): Connection => ({
   id: `c-${name}`, name, kind, url: '', config: {}, hasSecret, createdAt: 0, updatedAt: 0,
@@ -20,9 +20,9 @@ describe('connections', () => {
       'POST /api/connections': created,
       'PUT /api/connections/c-alerts/secret': { ...created, hasSecret: true },
     });
-    renderWithQuery(<ConnectionsSection />);
+    renderWithQuery(<ConnectionsPage />);
     expect(await screen.findByText(/Integrations → Webhooks → New Webhook/)).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'New connection' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add discord webhook' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/Copy Webhook URL/)).toBeTruthy();
     const save = within(dialog).getByRole('button', { name: 'Save' });
@@ -37,10 +37,15 @@ describe('connections', () => {
 
   it('shows an incoming webhook its address, and lists what is missing a secret', async () => {
     stubApi({ 'GET /api/connections': [conn('deploys', 'webhook', false), conn('alerts', 'discord_webhook')] });
-    renderWithQuery(<ConnectionsSection />);
+    renderWithQuery(<ConnectionsPage />);
     expect(await screen.findByText('deploys')).toBeTruthy();
     expect(screen.getByText(/\/api\/hooks\/deploys$/)).toBeTruthy();
     expect(screen.getAllByText('No secret')).toHaveLength(1);
+    // Each in its kind's section.
+    const section = (name: string) => screen.getByRole('region', { name });
+    expect(within(section('Incoming webhooks')).getByText('deploys')).toBeTruthy();
+    expect(within(section('Discord webhooks')).getByText('alerts')).toBeTruthy();
+    expect(within(section('HTTP services')).getByText('None yet.')).toBeTruthy();
   });
 
   it("a template's connection param offers the connections of its kind", async () => {
