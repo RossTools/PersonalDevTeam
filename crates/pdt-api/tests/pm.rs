@@ -107,6 +107,19 @@ async fn wait_said(env: &Env, session: &str, n: usize) -> Vec<String> {
     }
 }
 
+/// Waits until the agent says something starting with `prefix` (ticking the engine); returns it.
+async fn wait_for_reply(env: &Env, session: &str, prefix: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(r) = agent_says(env, session).await.into_iter().find(|s| s.starts_with(prefix)) {
+            return r;
+        }
+        assert!(Instant::now() < deadline, "the agent never said {prefix}: {:?}", agent_says(env, session).await);
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Sends a message and returns what the agent said to it.
 async fn ask(env: &Env, session: &str, text: &str) -> String {
     let n = agent_says(env, session).await.len();
@@ -337,7 +350,7 @@ async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
         assert!(Instant::now() < deadline, "no triage session");
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    let said = wait_said(&env, &session, 1).await;
+    wait_said(&env, &session, 1).await;
     let first = events(&env, &session).await;
     let prompt = first.iter().find(|e| e["event"]["kind"] == "user_message").unwrap()["event"]["text"].clone();
     let prompt = prompt.as_str().unwrap();
@@ -345,12 +358,13 @@ async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
     assert!(prompt.contains("project PX") && prompt.contains("submit_outcome"), "{prompt}");
 
     // Drafting the ticket asks first; then the outcome ends the run by `drafted`.
-    let n = said.len();
+    // (PDT also nudges the step after its first turn, so the agent may say other things in between.)
     send(&env, &session, r#"mcp: create_ticket {"project": "PX", "title": "Login fails on Safari"}"#).await;
     let req = open_request(&env, &session).await;
     let url = format!("/api/sessions/{session}/requests/{req}");
     call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
-    assert!(wait_said(&env, &session, n + 1).await.pop().unwrap().contains("\"created\": true"));
+    let reply = wait_for_reply(&env, &session, "mcp create_ticket").await;
+    assert!(reply.contains("\"created\": true"), "{reply}");
     assert_eq!(ticket_titles(&env).await, ["Fix the login", "Login fails on Safari"]);
     send(&env, &session, r#"mcp: submit_outcome {"outcome": "drafted", "summary": "Drafted PX-2."}"#).await;
     let deadline = Instant::now() + Duration::from_secs(20);
