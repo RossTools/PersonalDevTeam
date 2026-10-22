@@ -65,7 +65,7 @@ pub(crate) async fn branches(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Branch>>, ApiError> {
     let p = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    if p.is_personal() {
+    if !p.has_repo() {
         return Ok(Json(vec![]));
     }
     let repo = PathBuf::from(p.repo_path);

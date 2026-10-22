@@ -411,7 +411,7 @@ pub fn merge_flag(squash: bool, merge: bool, rebase: bool, queue: bool) -> Optio
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     #[test]
     fn comment_and_review_notices_quote_and_say_where() {
         let n =
@@ -457,7 +457,7 @@ mod tests {
         assert!(!p.merged_at("abc"), "closed without merging");
     }
 
-    fn pr() -> PullRequestStatus {
+    pub(crate) fn pr() -> PullRequestStatus {
         PullRequestStatus {
             number: 12,
             url: "https://gh/pull/12".into(),

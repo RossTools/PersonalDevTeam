@@ -117,6 +117,162 @@ struct WorkflowSave {
     project_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GetOverview {
+    /// A project's key (`PDT`) or id; every project when left out.
+    #[serde(default)]
+    project: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SearchTickets {
+    /// Words (prefix-matched in titles and descriptions) or a key (`PDT-12`).
+    #[serde(default)]
+    query: Option<String>,
+    /// A project's key or id; every project when left out.
+    #[serde(default)]
+    project: Option<String>,
+    /// Stages, comma-separated: draft, ready, todo, in_progress, done, wont_do. Open ones when left out.
+    #[serde(default)]
+    stage: Option<String>,
+    /// At most this many (default 20, at most 100).
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GetSession {
+    /// The session's id.
+    session: String,
+    /// How many of its last messages to include (default 10, at most 50).
+    #[serde(default)]
+    messages: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ListWorkflowRuns {
+    /// A workflow's id.
+    #[serde(default)]
+    workflow: Option<String>,
+    /// A ticket's key or id.
+    #[serde(default)]
+    ticket: Option<String>,
+    /// running, waiting, completed, failed or cancelled.
+    #[serde(default)]
+    status: Option<pdt_core::workflow::api::RunStatus>,
+    /// At most this many, newest first (default 10, at most 50).
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SearchNotes {
+    /// Words to look for in titles and bodies; every note when left out.
+    #[serde(default)]
+    query: Option<String>,
+    /// A project's key or id: its notes and the host-wide ones.
+    #[serde(default)]
+    project: Option<String>,
+    /// Only pinned notes (true) or unpinned ones (false).
+    #[serde(default)]
+    pinned: Option<bool>,
+    /// note or journal; both when left out.
+    #[serde(default)]
+    kind: Option<pdt_core::pm::NoteKind>,
+    /// At most this many (default 20, at most 100).
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SaveNote {
+    /// The note to replace; a new note when left out.
+    #[serde(default)]
+    id: Option<String>,
+    /// A project's key or id; host-wide when left out (or "" to make an existing note host-wide).
+    #[serde(default)]
+    project: Option<String>,
+    /// One line.
+    title: String,
+    /// Markdown.
+    #[serde(default)]
+    body: String,
+    /// Pinned notes are listed in every PM session's briefing.
+    #[serde(default)]
+    pinned: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteNote {
+    id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WriteJournal {
+    /// Markdown: what you and the user were working on, decisions, threads still open.
+    body: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateTicket {
+    /// The project's key (`PDT`) or id.
+    project: String,
+    /// One line.
+    title: String,
+    /// Markdown: scope, out of scope, "Done when".
+    #[serde(default)]
+    description: Option<String>,
+    /// draft (the default), ready or todo.
+    #[serde(default)]
+    stage: Option<pdt_core::ticket::TicketStage>,
+    /// none, low, medium, high or urgent.
+    #[serde(default)]
+    priority: Option<pdt_core::ticket::Priority>,
+    #[serde(default)]
+    labels: Option<Vec<String>>,
+    /// Make it a part of this ticket (key or id).
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EditTicket {
+    /// The ticket's key (`PDT-12`) or id.
+    ticket: String,
+    #[serde(default)]
+    title: Option<String>,
+    /// The new description, replacing the old one: keep what still holds.
+    #[serde(default)]
+    description: Option<String>,
+    /// draft, ready, todo, in_progress, done or wont_do. Done and wont_do end its attempt.
+    #[serde(default)]
+    stage: Option<pdt_core::ticket::TicketStage>,
+    #[serde(default)]
+    priority: Option<pdt_core::ticket::Priority>,
+    /// Replaces every label.
+    #[serde(default)]
+    labels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SendToSession {
+    /// The session's id.
+    session: String,
+    /// The message. PDT delivers it when the session is idle, marked as from the PM.
+    text: String,
+}
+
 struct Def {
     name: &'static str,
     title: &'static str,
@@ -125,8 +281,19 @@ struct Def {
 }
 
 /// Tools that change nothing.
-const READ_ONLY: [&str; 6] =
-    ["get_ticket", "catalog_search", "catalog_get", "workflow_get", "workflow_validate", "workflow_dry_run"];
+const READ_ONLY: [&str; 11] = [
+    "get_ticket",
+    "catalog_search",
+    "catalog_get",
+    "workflow_get",
+    "workflow_validate",
+    "workflow_dry_run",
+    "get_overview",
+    "search_tickets",
+    "get_session",
+    "list_workflow_runs",
+    "search_notes",
+];
 
 fn schema<T: JsonSchema>() -> Value {
     input_schema(crate::workflow::catalog::schema_of::<T>())
@@ -216,6 +383,82 @@ fn defs() -> Vec<Def> {
                           saves it as a new workflow, which starts disabled: the user reviews and enables it.",
             schema: schema::<WorkflowSave>,
         },
+        Def {
+            name: "get_overview",
+            title: "What's going on",
+            description: "Every project (or one): open tickets per stage, tickets in progress with their branch, PR, CI \
+                          and who has them, the Inbox's open items, and the agent sessions running now.",
+            schema: schema::<GetOverview>,
+        },
+        Def {
+            name: "search_tickets",
+            title: "Search tickets",
+            description: "Tickets matching words or a key, in every project or one, by stage: key, title, stage, \
+                          priority, labels and state. get_ticket reads one in full.",
+            schema: schema::<SearchTickets>,
+        },
+        Def {
+            name: "get_session",
+            title: "Get a session",
+            description: "An agent session's state: agent, status, activity, ticket, persona and workflow step, its \
+                          open requests, and its last messages.",
+            schema: schema::<GetSession>,
+        },
+        Def {
+            name: "list_workflow_runs",
+            title: "List workflow runs",
+            description: "Workflow runs (of a workflow or a ticket), newest first, with each step's status, port and \
+                          error.",
+            schema: schema::<ListWorkflowRuns>,
+        },
+        Def {
+            name: "search_notes",
+            title: "Search notes",
+            description: "The PM's notes and journal entries matching the words (full-text), host-wide and per \
+                          project; every pinned note when you give no words and pinned: true.",
+            schema: schema::<SearchNotes>,
+        },
+        Def {
+            name: "save_note",
+            title: "Save a note",
+            description: "Adds a note (or replaces one by id): what PDT's data can't tell you, such as the user's \
+                          preferences, decisions, people and rules at work. Pinned notes go in every briefing.",
+            schema: schema::<SaveNote>,
+        },
+        Def {
+            name: "delete_note",
+            title: "Delete a note",
+            description: "Removes a note that no longer holds.",
+            schema: schema::<DeleteNote>,
+        },
+        Def {
+            name: "write_journal",
+            title: "Write the journal",
+            description: "This session's journal entry, which the next PM session's briefing includes. Write it when \
+                          PDT says the session is ending.",
+            schema: schema::<WriteJournal>,
+        },
+        Def {
+            name: "create_ticket",
+            title: "Create a ticket",
+            description: "Adds a ticket to a project (a draft unless you give a stage), recorded as the PM's. The \
+                          user confirms each call unless the project lets you act.",
+            schema: schema::<CreateTicket>,
+        },
+        Def {
+            name: "edit_ticket",
+            title: "Edit a ticket",
+            description: "Changes a ticket's title, description, stage, priority or labels, recorded as the agent's. \
+                          The user confirms each call unless the project lets you act.",
+            schema: schema::<EditTicket>,
+        },
+        Def {
+            name: "send_to_session",
+            title: "Message a session",
+            description: "Sends an agent session a message, delivered when it is idle and marked as from the PM. The \
+                          user confirms each call unless the project lets you act.",
+            schema: schema::<SendToSession>,
+        },
     ]
 }
 
@@ -228,7 +471,7 @@ pub(crate) fn infos() -> Vec<ToolInfo> {
             description: d.description.into(),
             input_schema: (d.schema)(),
             annotations: json!({"title": d.title, "readOnlyHint": READ_ONLY.contains(&d.name),
-                                "destructiveHint": false, "openWorldHint": false}),
+                                "destructiveHint": d.name == "delete_note", "openWorldHint": false}),
         })
         .collect()
 }
@@ -325,7 +568,11 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 (Some(id), _) => id,
                 (None, Some(name)) => st
                     .store
-                    .list_workflows(Some(&cx.session.project_id))
+                    // The PM looks across every project.
+                    .list_workflows(match crate::pm::is_pm_session(st, cx.session).await {
+                        true => None,
+                        false => Some(&cx.session.project_id),
+                    })
                     .await
                     .map_err(store)?
                     .into_iter()
@@ -362,8 +609,13 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 }
                 None => {
                     let scope = a.scope.unwrap_or(Scope::Project);
-                    let project_id = match scope {
-                        Scope::Project => Some(a.project_id.unwrap_or_else(|| cx.session.project_id.clone())),
+                    let project_id = match (scope, a.project_id) {
+                        (Scope::Project, Some(p)) => Some(crate::pm::project_id(st, &p).await?),
+                        // The PM is in no project: it names one.
+                        (Scope::Project, None) if crate::pm::is_pm_session(st, cx.session).await => {
+                            return Err("name the workflow's project (`projectId`: its key or id)".into());
+                        }
+                        (Scope::Project, None) => Some(cx.session.project_id.clone()),
                         _ => None,
                     };
                     crate::workflow::routes::create_workflow(
@@ -382,37 +634,380 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             Ok(json!({"workflowId": d.workflow.id, "version": d.workflow.version, "proposed": d.workflow.proposed,
                       "enabled": d.workflow.enabled, "issues": d.issues}))
         }
+        "get_overview" => {
+            let a: GetOverview = args(a)?;
+            overview(cx, a.project.as_deref()).await
+        }
+        "search_tickets" => {
+            let a: SearchTickets = args(a)?;
+            let project = match a.project.as_deref().filter(|p| !p.trim().is_empty()) {
+                Some(p) => Some(crate::pm::project_id(st, p).await?),
+                None => None,
+            };
+            let q = pdt_core::ticket::TicketQuery {
+                project,
+                q: a.query,
+                stage: Some(a.stage.unwrap_or_else(|| "draft,ready,todo,in_progress".into())),
+                limit: Some(a.limit.unwrap_or(20).clamp(1, 100)),
+                ..Default::default()
+            };
+            let Json(page) = crate::tickets::list(State(st.clone()), Ok(axum::extract::Query(q))).await.map_err(api)?;
+            let tickets: Vec<Value> = page
+                .items
+                .iter()
+                .map(|t| {
+                    json!({"key": t.key, "id": t.id, "title": t.title, "stage": t.stage, "priority": t.priority,
+                           "labels": t.labels, "state": pdt_core::pm::ticket_state(t)})
+                })
+                .collect();
+            Ok(json!({"tickets": tickets, "total": page.total}))
+        }
+        "get_session" => {
+            let a: GetSession = args(a)?;
+            session_state(cx, &a.session, a.messages.unwrap_or(10).clamp(1, 50)).await
+        }
+        "list_workflow_runs" => {
+            let a: ListWorkflowRuns = args(a)?;
+            let ticket_id = match a.ticket.as_deref() {
+                Some(t) => Some(resolve_ticket(st, t, Some(&cx.session.project_id)).await?),
+                None => None,
+            };
+            let f = pdt_store::RunFilter {
+                workflow_id: a.workflow,
+                ticket_id,
+                status: a.status,
+                limit: a.limit.unwrap_or(10).clamp(1, 50),
+            };
+            let mut runs = vec![];
+            for r in st.store.list_workflow_runs(&f).await.map_err(store)? {
+                let steps: Vec<Value> = st
+                    .store
+                    .list_steps(&r.id)
+                    .await
+                    .map_err(store)?
+                    .into_iter()
+                    .map(|s| {
+                        json!({"node": s.node_id, "kind": s.kind, "status": s.status, "port": s.port,
+                                    "error": s.error})
+                    })
+                    .collect();
+                runs.push(json!({"id": r.id, "workflow": r.workflow_name, "workflowId": r.workflow_id,
+                                 "status": r.status, "error": r.error, "ticketId": r.ticket_id,
+                                 "startedAt": r.started_at, "endedAt": r.ended_at, "steps": steps}));
+            }
+            Ok(json!({"runs": runs}))
+        }
+        "search_notes" => {
+            let a: SearchNotes = args(a)?;
+            let project_id = match a.project.as_deref().filter(|p| !p.trim().is_empty()) {
+                Some(p) => Some(crate::pm::project_id(st, p).await?),
+                None => None,
+            };
+            let f = pdt_store::NoteFilter {
+                q: a.query,
+                project_id,
+                kind: a.kind,
+                pinned: a.pinned,
+                limit: a.limit.unwrap_or(20).clamp(1, 100),
+            };
+            Ok(json!({"notes": st.store.search_notes(&f).await.map_err(store)?}))
+        }
+        "save_note" => {
+            let a: SaveNote = args(a)?;
+            let n = match a.id {
+                Some(id) => {
+                    let p = pdt_core::pm::NotePatch {
+                        project: a.project,
+                        title: Some(a.title),
+                        body: Some(a.body),
+                        pinned: a.pinned,
+                    };
+                    crate::pm::edit_note(st, &id, p).await.map_err(api)?
+                }
+                None => {
+                    let n =
+                        pdt_core::pm::NewNote { project: a.project, title: a.title, body: a.body, pinned: a.pinned };
+                    crate::pm::add_note(st, n).await.map_err(api)?
+                }
+            };
+            Ok(json!({"saved": true, "id": n.id, "pinned": n.pinned}))
+        }
+        "delete_note" => {
+            let a: DeleteNote = args(a)?;
+            if !st.store.delete_note(&a.id).await.map_err(store)? {
+                return Err(format!("there is no note {}", a.id));
+            }
+            Ok(json!({"deleted": true}))
+        }
+        "write_journal" => {
+            let a: WriteJournal = args(a)?;
+            let body = pdt_core::pm::valid_journal(&a.body)?;
+            let n = crate::pm::write_journal(st, cx.session, &body).await.map_err(api)?;
+            Ok(json!({"written": true, "id": n.id}))
+        }
+        "create_ticket" => {
+            let a: CreateTicket = args(a)?;
+            let project = crate::pm::project_id(st, &a.project).await?;
+            confirmable(cx, name, &pdt_core::pm::AskTarget::Project(project.clone())).await?;
+            let parent = match a.parent.as_deref() {
+                Some(p) => Some(resolve_ticket(st, p, Some(&project)).await?),
+                None => None,
+            };
+            let input = pdt_core::ticket::NewTicket {
+                title: a.title,
+                description: a.description,
+                stage: Some(a.stage.unwrap_or(pdt_core::ticket::TicketStage::Draft)),
+                priority: a.priority,
+                labels: a.labels,
+                areas: None,
+                before: None,
+                after: None,
+                parent,
+                blocked_by_previous: None,
+            };
+            let valid = input.validate().map_err(|e| api(e.into()))?;
+            let id = uuid::Uuid::now_v7().to_string();
+            let t = st.store.create_ticket(&id, &project, &valid, now_ms()).await.map_err(|e| api(e.into()))?;
+            record_agent_change(cx, &t.summary.id, "Created by the PM.").await;
+            Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage}))
+        }
+        "edit_ticket" => {
+            let a: EditTicket = args(a)?;
+            let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+            confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
+            let patch = pdt_core::ticket::TicketPatch {
+                title: a.title,
+                description: a.description,
+                stage: a.stage,
+                priority: a.priority,
+                labels: a.labels,
+                ..Default::default()
+            };
+            let valid = patch.validate().map_err(|e| api(e.into()))?;
+            if valid == Default::default() {
+                return Err("give at least one field to change".into());
+            }
+            if let Some(stage) = valid.stage.filter(|s| s.is_closed()) {
+                crate::start::end_for_close(st, &id, stage).await.map_err(api)?;
+            }
+            let t = st
+                .store
+                .patch_ticket_by(&id, &valid, Actor::Agent, now_ms())
+                .await
+                .map_err(|e| api(e.into()))?
+                .ok_or("that ticket no longer exists")?;
+            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage}))
+        }
+        "send_to_session" => {
+            let a: SendToSession = args(a)?;
+            let to = st
+                .store
+                .get_session(a.session.trim())
+                .await
+                .map_err(store)?
+                .ok_or_else(|| format!("there is no session {}", a.session))?;
+            if !crate::pm::takes_messages(&to) {
+                return Err("that session has ended or is not an agent session".into());
+            }
+            if to.id == cx.session.id {
+                return Err("that is this session".into());
+            }
+            confirmable(cx, name, &pdt_core::pm::AskTarget::Session(to.id.clone())).await?;
+            let text = a.text.trim();
+            if text.is_empty() {
+                return Err("the message is empty".into());
+            }
+            let m = pdt_store::SessionMessage {
+                id: uuid::Uuid::now_v7().to_string(),
+                attempt_id: None,
+                session_id: Some(to.id.clone()),
+                ticket_id: to.ticket.as_ref().map(|t| t.id.clone()),
+                dedupe: None,
+                text: format!("[{}] From the project manager: {text}", pdt_core::brand::SHORT_NAME),
+                timeline: Value::Null,
+                run_id: None,
+                step_id: None,
+                status: "waiting".into(),
+                told_session: None,
+                created_at: now_ms(),
+                resolved_at: None,
+                by_user: false,
+            };
+            let m = st.store.queue_session_message(&m).await.map_err(store)?;
+            Ok(json!({"queued": true, "messageId": m.id}))
+        }
         other => Err(format!("no tool is called {other}")),
     }
 }
 
-/// The ticket a tool means: `given` (a key or id), else the session's (its attempt's, or its agent step's).
-async fn ticket_for(cx: &Cx<'_>, given: Option<&str>) -> Result<String, String> {
+/// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
+/// there) runs only where the project lets the PM act. Claude asks through its permission prompt (spec §4).
+async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
+    use pdt_core::session::AgentKind;
+    if !pdt_core::persona::asks(tool) || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
+        return Ok(());
+    }
+    if crate::pm::acts_without_asking(cx.st, target).await {
+        return Ok(());
+    }
+    Err(format!(
+        "{tool} needs the user's yes, and PDT can only ask for it in a Claude session. Tell the user what you would \
+         do so they can do it, or ask them to let the PM act in this project's settings."
+    ))
+}
+
+/// Notes on the ticket's timeline that an agent changed it through PDT's tools (principle 5: changes are on record).
+async fn record_agent_change(cx: &Cx<'_>, ticket_id: &str, text: &str) {
+    let data = json!({"sessionId": cx.session.id, "persona": cx.session.persona.as_ref().map(|p| &p.name)});
+    if let Err(e) = cx.st.store.add_comment_by(ticket_id, text, Actor::Agent, Some(data), now_ms()).await {
+        tracing::warn!(ticket = %ticket_id, error = %e, "could not record the PM's change on the timeline");
+    }
+}
+
+/// The overview (`get_overview`): projects with their open tickets per stage, tickets in progress, the Inbox, and
+/// running agent sessions.
+async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
     let st = cx.st;
-    if let Some(g) = given.map(str::trim).filter(|g| !g.is_empty()) {
-        if st.store.get_ticket(g).await.map_err(store)?.is_some() {
-            return Ok(g.to_string());
+    let only = match project.filter(|p| !p.trim().is_empty()) {
+        Some(p) => Some(crate::pm::project_id(st, p).await?),
+        None => None,
+    };
+    let projects: Vec<pdt_core::project::Project> = st
+        .store
+        .list_projects()
+        .await
+        .map_err(store)?
+        .into_iter()
+        .filter(|p| only.as_ref().is_none_or(|o| *o == p.id))
+        .collect();
+    let keys: std::collections::HashMap<String, String> =
+        projects.iter().map(|p| (p.id.clone(), p.key.clone())).collect();
+    let mut out_projects = vec![];
+    for p in &projects {
+        let stages: serde_json::Map<String, Value> =
+            crate::pm::stage_counts(st, &p.id).await.map_err(api)?.into_iter().map(|(s, n)| (s, json!(n))).collect();
+        let pm_acts = st.store.get_project_settings(&p.id).await.map_err(store)?.policy.pm_acts;
+        out_projects.push(json!({"key": p.key, "name": p.name, "id": p.id, "kind": p.kind, "openTickets": stages,
+                                 "pmActsWithoutAsking": pm_acts}));
+    }
+    let in_flight: Vec<Value> = crate::pm::in_flight(st, only.as_deref())
+        .await
+        .map_err(api)?
+        .iter()
+        .map(|t| {
+            json!({"key": t.key, "id": t.id, "title": t.title, "project": keys.get(&t.project_id),
+                   "state": pdt_core::pm::ticket_state(t), "attemptId": t.attempt.as_ref().map(|a| &a.id)})
+        })
+        .collect();
+    let Json(inbox) =
+        crate::inbox::list(State(st.clone()), axum::extract::Query(Default::default())).await.map_err(api)?;
+    let inbox: Vec<Value> = inbox
+        .items
+        .iter()
+        .filter(|i| only.is_none() || i.project_id == only)
+        .map(|i| {
+            json!({"id": i.id, "group": i.group, "ticket": i.ticket_key, "title": i.title, "sessionId": i.session_id,
+                   "persona": i.persona_name, "at": i.created_at})
+        })
+        .collect();
+    let sessions: Vec<Value> = st
+        .store
+        .list_sessions_by_status(pdt_core::session::SessionStatus::Running)
+        .await
+        .map_err(store)?
+        .into_iter()
+        .filter(|s| s.kind == pdt_core::session::SessionKind::AgentTui && s.id != cx.session.id)
+        .filter(|s| keys.contains_key(&s.project_id))
+        .map(|s| {
+            json!({"id": s.id, "title": s.title, "agent": s.agent, "project": keys.get(&s.project_id),
+                   "ticket": s.ticket.as_ref().map(|t| &t.key), "activity": s.activity,
+                   "persona": s.persona.as_ref().map(|p| &p.name), "mode": s.mode})
+        })
+        .collect();
+    Ok(json!({"projects": out_projects, "inProgress": in_flight, "inbox": inbox, "runningSessions": sessions}))
+}
+
+/// `get_session`: a session's state, open requests and last messages.
+async fn session_state(cx: &Cx<'_>, id: &str, messages: usize) -> Result<Value, String> {
+    use pdt_core::conversation::{AgentEvent, RequestState};
+    let st = cx.st;
+    let s = st.store.get_session(id.trim()).await.map_err(store)?.ok_or_else(|| format!("there is no session {id}"))?;
+    let project = st.store.get_project(&s.project_id).await.map_err(store)?;
+    let step = st.store.active_agent_step(&s.id).await.map_err(store)?.map(|a| {
+        json!({"persona": a.persona_name, "state": a.state, "outcomes": a.outcomes, "turns": a.turns,
+               "runId": a.run_id})
+    });
+    let recent = st.store.recent_session_events(&s.id, 400).await.map_err(store)?;
+    let mut open = vec![];
+    let mut texts = vec![];
+    for e in recent.iter().rev() {
+        match &e.event {
+            AgentEvent::Request { title, state: RequestState::Open, tool, .. } => {
+                open.push(json!({"tool": tool, "title": title, "at": e.ts}))
+            }
+            AgentEvent::UserMessage { text, source, .. } if texts.len() < messages => {
+                texts.push(json!({"from": source, "text": clip(text), "at": e.ts}))
+            }
+            AgentEvent::AgentMessage { markdown, .. } if texts.len() < messages => {
+                texts.push(json!({"from": "agent", "text": clip(markdown), "at": e.ts}))
+            }
+            _ => {}
         }
-        let k = pdt_core::ticket::parse_key(g).ok_or_else(|| format!("{g} is not a ticket key or id"))?;
-        let project = match &k.key {
-            Some(key) => st
-                .store
-                .list_projects()
-                .await
-                .map_err(store)?
-                .into_iter()
-                .find(|p| p.key.eq_ignore_ascii_case(key))
-                .map(|p| p.id)
-                .ok_or_else(|| format!("no project has the key {key}"))?,
-            None => cx.session.project_id.clone(),
-        };
-        return st
+    }
+    texts.reverse();
+    let mut v = serde_json::to_value(&s).map_err(|e| e.to_string())?;
+    v["project"] = json!(project.map(|p| p.key));
+    v["step"] = step.unwrap_or(Value::Null);
+    v["openRequests"] = json!(open);
+    v["lastMessages"] = json!(texts);
+    Ok(v)
+}
+
+/// A message, shortened for a tool result.
+fn clip(t: &str) -> String {
+    const MAX: usize = 2000;
+    if t.len() <= MAX {
+        return t.to_string();
+    }
+    let mut end = MAX;
+    while !t.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &t[..end])
+}
+
+/// A ticket's id from its id or key (`PDT-12`; a bare number is in `project`).
+pub(crate) async fn resolve_ticket(st: &AppState, given: &str, project: Option<&str>) -> Result<String, String> {
+    let g = given.trim();
+    if st.store.get_ticket(g).await.map_err(store)?.is_some() {
+        return Ok(g.to_string());
+    }
+    let k = pdt_core::ticket::parse_key(g).ok_or_else(|| format!("{g} is not a ticket key or id"))?;
+    let project = match &k.key {
+        Some(key) => st
             .store
-            .ticket_id_by_number(&project, k.number)
+            .list_projects()
             .await
             .map_err(store)?
-            .ok_or_else(|| format!("there is no ticket {g}"));
+            .into_iter()
+            .find(|p| p.key.eq_ignore_ascii_case(key))
+            .map(|p| p.id)
+            .ok_or_else(|| format!("no project has the key {key}"))?,
+        None => project.ok_or_else(|| format!("{g} needs its project's key, such as PDT-{}", k.number))?.to_string(),
+    };
+    st.store
+        .ticket_id_by_number(&project, k.number)
+        .await
+        .map_err(store)?
+        .ok_or_else(|| format!("there is no ticket {g}"))
+}
+
+/// The ticket a tool means: `given` (a key or id), else the session's (its attempt's, or its agent step's).
+async fn ticket_for(cx: &Cx<'_>, given: Option<&str>) -> Result<String, String> {
+    if let Some(g) = given.map(str::trim).filter(|g| !g.is_empty()) {
+        return resolve_ticket(cx.st, g, Some(&cx.session.project_id)).await;
     }
+    let st = cx.st;
     session_ticket(st, cx.session)
         .await
         .ok_or_else(|| "this session works on no ticket; name one (`ticket`: a key such as PDT-12)".to_string())

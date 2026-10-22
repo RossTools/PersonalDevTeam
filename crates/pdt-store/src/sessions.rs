@@ -344,12 +344,12 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::StoreError;
     use crate::worktrees::tests::store_with_project;
     use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 
-    fn session(id: &str, created_at: i64) -> Session {
+    pub(crate) fn session(id: &str, created_at: i64) -> Session {
         Session {
             id: id.into(),
             project_id: "p".into(),

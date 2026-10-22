@@ -5,9 +5,21 @@ use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
 const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
-/// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels).
-type ProjectSettingsRow =
-    (Option<String>, Option<String>, Option<String>, bool, Option<String>, String, bool, Option<i64>, String, String);
+/// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels, the PM
+/// may act).
+type ProjectSettingsRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    bool,
+    Option<String>,
+    String,
+    bool,
+    Option<i64>,
+    String,
+    String,
+    bool,
+);
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -83,7 +95,8 @@ impl Store {
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
-             merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels FROM project_settings \
+             merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels, pm_acts \
+             FROM project_settings \
              WHERE project_id = ?",
         )
         .bind(project_id)
@@ -100,6 +113,7 @@ impl Store {
             cap,
             auto,
             exempt,
+            pm_acts,
         )) = row
         else {
             return Ok(ProjectSettings::default());
@@ -126,6 +140,7 @@ impl Store {
                     .ok_or_else(|| StoreError::Corrupt(format!("auto-start {auto:?}")))?,
                 approval_exempt_labels: serde_json::from_str(&exempt)
                     .map_err(|_| StoreError::Corrupt(format!("approval-exempt labels {exempt:?}")))?,
+                pm_acts,
             },
         })
     }
@@ -134,12 +149,13 @@ impl Store {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
-             approval_exempt_labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
+             approval_exempt_labels, pm_acts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
              agent_permission_mode = excluded.agent_permission_mode, merge_by = excluded.merge_by, \
              require_approval = excluded.require_approval, max_running_attempts = excluded.max_running_attempts, \
-             auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels",
+             auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels, \
+             pm_acts = excluded.pm_acts",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -152,6 +168,7 @@ impl Store {
         .bind(s.policy.max_running_attempts.map(i64::from))
         .bind(s.policy.auto_start.as_str())
         .bind(serde_json::to_string(&s.policy.approval_exempt_labels).expect("a list of labels"))
+        .bind(s.policy.pm_acts)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -228,6 +245,7 @@ mod tests {
                 max_running_attempts: Some(2),
                 auto_start: pdt_core::policy::AutoStart::Ready,
                 approval_exempt_labels: vec!["automerge".into()],
+                pm_acts: true,
             },
         };
         store.put_project_settings("p", &s).await.unwrap();

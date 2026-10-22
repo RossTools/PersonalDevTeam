@@ -16,6 +16,7 @@ pub mod mcp;
 pub mod overlap;
 pub mod parts;
 pub mod persona;
+pub mod pm;
 pub mod policy;
 pub mod pr;
 pub mod project;

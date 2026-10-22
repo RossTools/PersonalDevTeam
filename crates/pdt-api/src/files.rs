@@ -98,7 +98,7 @@ async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(Pat
         }
         None => PathBuf::from(&project.repo_path),
     };
-    Ok((checkout, clean_path(&q.path)?, project.is_personal()))
+    Ok((checkout, clean_path(&q.path)?, !project.has_repo()))
 }
 
 /// Refuses a path that resolves (through symlinks) outside the checkout. Missing paths pass: git may list a deleted

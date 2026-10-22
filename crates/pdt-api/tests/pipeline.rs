@@ -243,7 +243,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     assert_eq!(
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
-               "autoStart": "off"})
+               "autoStart": "off", "pmActs": false})
     );
 
     let (s, started) =

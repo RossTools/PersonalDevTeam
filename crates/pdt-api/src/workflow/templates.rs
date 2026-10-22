@@ -140,7 +140,14 @@ fn every_param(default: &str) -> Value {
                         cron expression after creating it."})
 }
 
-/// Templates for the Hermes jobs that need no agent (Phase 7e spec §5).
+/// What the triage step asks of the PM (PDT-81).
+const TRIAGE_PROMPT: &str = "A new issue was opened on {{trigger.repo}}: #{{trigger.number}} \"{{trigger.title}}\" by \
+{{trigger.author}} ({{trigger.url}}). Labels: {{trigger.labels}}.\n\n{{trigger.body}}\n\nTriage it for project \
+{{params.project}}. Look for a ticket that already covers it with search_tickets. If it needs work, create a draft \
+ticket with create_ticket (project {{params.project}}): a clear title, then a description with the issue's link, what \
+it asks for, scope and \"Done when\". If only the user can decide, ask with ask_user. Finish with submit_outcome.";
+
+/// Templates for the Hermes jobs that need no agent (Phase 7e spec §5), and issue triage by the PM (PDT-81).
 fn integration_templates() -> Vec<Template> {
     let mut out = vec![
         builtin(
@@ -163,6 +170,48 @@ fn integration_templates() -> Vec<Template> {
                                     {{trigger.author}}\n{{trigger.url}}"}},
                 ],
                 "edges": [{"from": "opened", "to": "post"}],
+            })),
+        ),
+        builtin(
+            "issue-triage",
+            params(json!([
+                {"id": "repo", "title": "Repository", "type": "string", "required": true,
+                 "description": "owner/name on GitHub (read through gh)."},
+                {"id": "project", "title": "Project for its tickets", "type": "string", "required": true,
+                 "description": "The key of the project new tickets go in (PDT)."},
+                {"id": "persona", "title": "Persona", "type": "string", "default": "PM",
+                 "description": "Who triages: the project manager, or a persona of your own."},
+            ])),
+            doc(json!({
+                "name": "Triage new GitHub issues",
+                "description": "The PM reads each new issue of a GitHub repository and drafts a ticket for it, \
+                                marks it a duplicate, or leaves it. Creating the ticket asks you first unless the \
+                                project lets the PM act. The first look at the repository only records where it is.",
+                "nodes": [
+                    {"id": "opened", "kind": "github.issue.opened", "version": 1, "position": {"x": 0, "y": 160},
+                     "config": {"repos": ["{{params.repo}}"]}},
+                    {"id": "triage", "kind": "agent", "version": 1, "position": {"x": 320, "y": 160},
+                     "title": "Triage", "config": {
+                        "persona": "{{params.persona}}", "session": "new", "ticket": "", "attempt": "",
+                        "prompt": TRIAGE_PROMPT,
+                        "outcomes": [
+                            {"id": "drafted", "description": "you created a draft ticket for it with create_ticket"},
+                            {"id": "duplicate", "description": "a ticket already covers it (name it in the summary)"},
+                            {"id": "ignored", "description": "it needs no ticket (a question, spam, already fixed)"},
+                        ]}},
+                    {"id": "drafted", "kind": "end", "version": 1, "position": {"x": 640, "y": 0},
+                     "title": "Drafted", "config": {"output": {"summary": "{{steps.triage.summary}}"}}},
+                    {"id": "duplicate", "kind": "end", "version": 1, "position": {"x": 640, "y": 160},
+                     "title": "Duplicate", "config": {"output": {"summary": "{{steps.triage.summary}}"}}},
+                    {"id": "ignored", "kind": "end", "version": 1, "position": {"x": 640, "y": 320},
+                     "title": "Left", "config": {"quiet": true}},
+                ],
+                "edges": [
+                    {"from": "opened", "to": "triage"},
+                    {"from": "triage", "port": "drafted", "to": "drafted"},
+                    {"from": "triage", "port": "duplicate", "to": "duplicate"},
+                    {"from": "triage", "port": "ignored", "to": "ignored"},
+                ],
             })),
         ),
         builtin(
@@ -430,7 +479,7 @@ mod tests {
             assert!(errors.is_empty(), "{}: {errors:?}", t.id);
         }
         assert!(all.iter().any(|t| t.id == "builtin:pr-notices"));
-        for id in ["github-issues-discord", "health-watchdog", "brief-follow-ups", "email-processing"] {
+        for id in ["github-issues-discord", "issue-triage", "health-watchdog", "brief-follow-ups", "email-processing"] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
     }

@@ -18,6 +18,7 @@ export type KeyAction =
   | { type: 'backlog' }
   | { type: 'board' }
   | { type: 'inbox' }
+  | { type: 'pm' }
   | { type: 'help' };
 
 /** The action for the key pressed after the prefix, or null for an unbound key. */
@@ -35,6 +36,7 @@ export function actionFor(key: string): KeyAction | null {
     case 'l': return { type: 'backlog' };
     case 'b': return { type: 'board' };
     case 'i': return { type: 'inbox' };
+    case 'm': return { type: 'pm' };
     case '?': return { type: 'help' };
     default: return null;
   }
@@ -52,6 +54,7 @@ export const KEY_HELP: [string, string][] = [
   ['l', 'Tickets (backlog)'],
   ['b', 'Tickets (board)'],
   ['i', 'Inbox (then j / k, Enter, o, e)'],
+  ['m', 'Project manager'],
   ['?', 'Show these keys'],
   ['Ctrl+] twice', 'Send Ctrl+] to the terminal'],
 ];

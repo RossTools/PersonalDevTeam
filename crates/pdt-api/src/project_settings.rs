@@ -66,6 +66,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub approval_exempt_labels: Option<Vec<String>>,
+    /// The PM may create and edit tickets and message sessions here without asking (PDT-81).
+    #[serde(default)]
+    #[ts(optional)]
+    pub pm_acts: Option<bool>,
 }
 
 /// The highest running-attempt cap a project can set.
@@ -140,6 +144,7 @@ pub(crate) async fn put_settings(
         max_running_attempts,
         auto_start: input.auto_start.unwrap_or(current.policy.auto_start),
         approval_exempt_labels,
+        pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
     };
     let settings = ProjectSettings {
         run_overrides,

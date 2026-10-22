@@ -104,6 +104,11 @@ import type { PersonaDiff } from './gen/PersonaDiff';
 import type { PersonaPatch } from './gen/PersonaPatch';
 import type { PersonaVersion } from './gen/PersonaVersion';
 import type { SavePersona } from './gen/SavePersona';
+import type { NewNote } from './gen/NewNote';
+import type { NoteKind } from './gen/NoteKind';
+import type { NotePatch } from './gen/NotePatch';
+import type { PmNote } from './gen/PmNote';
+import type { PmState } from './gen/PmState';
 
 /** `PATCH /api/sessions/{id}`: any of these; `model: null` goes back to the agent's default. */
 export interface SessionPatch {
@@ -388,4 +393,13 @@ export const api = {
   personaVersions: (id: string) => request<PersonaVersion[]>(`/api/personas/${enc(id)}/versions`),
   personaDiff: (id: string, from: number, to: number) =>
     request<PersonaDiff>(`/api/personas/${enc(id)}/diff${queryString({ from, to })}`),
+  /** The project manager (PDT-81): its current session and the earlier ones. */
+  pm: () => request<PmState>('/api/pm'),
+  /** A new PM session (ending the current one), `text` its first message. */
+  startPm: (text?: string) => request<Session>('/api/pm/sessions', { method: 'POST', body: JSON.stringify({ text }) }),
+  pmNotes: (q: { q?: string; project?: string; kind?: NoteKind } = {}) => request<PmNote[]>(`/api/pm/notes${queryString(q)}`),
+  createPmNote: (n: NewNote) => request<PmNote>('/api/pm/notes', { method: 'POST', body: JSON.stringify(n) }),
+  patchPmNote: (id: string, p: NotePatch) =>
+    request<PmNote>(`/api/pm/notes/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deletePmNote: (id: string) => request<void>(`/api/pm/notes/${enc(id)}`, { method: 'DELETE' }),
 };

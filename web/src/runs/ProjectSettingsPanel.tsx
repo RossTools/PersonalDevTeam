@@ -296,7 +296,8 @@ const CAPS = [1, 2, 3, 4, 5, 6, 8, 10];
 
 /**
  * The project's policies (Phase 7c): who may merge, whether an automated merge needs a person's approval, the cap on
- * running tickets and auto-start. Merge and Start enforce them, whatever a workflow says. Each saves at once.
+ * running tickets, auto-start, and whether the PM asks before acting (PDT-81). Merge and Start enforce them, whatever
+ * a workflow says. Each saves at once.
  */
 function Pipeline({ project, settings, personal }: { project: Project; settings: ProjectSettingsView | undefined; personal: boolean }) {
   const save = useSaveProjectSettings(project, settings);
@@ -390,6 +391,17 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
           value={p?.autoStart ?? 'off'}
           disabled={!settings}
           onChange={(a) => save.mutate({ autoStart: a }, done)}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label="The PM acts without asking"
+        description="The project manager creates and edits this project's tickets and messages its sessions without asking you first. Off: you confirm each change."
+      >
+        <Switch
+          aria-label="The PM acts without asking"
+          checked={p?.pmActs ?? false}
+          disabled={!settings || save.isPending}
+          onChange={(on) => save.mutate({ pmActs: on }, done)}
         />
       </SettingsRow>
     </Section>

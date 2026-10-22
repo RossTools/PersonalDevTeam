@@ -117,6 +117,8 @@ pub struct AppState {
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// How old a PM session gets before it rotates (PDT-81; tests shorten it).
+    pub pm_rotate_age_ms: i64,
 }
 
 impl AppState {
@@ -174,6 +176,7 @@ impl AppState {
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             personas_installed: Default::default(),
+            pm_rotate_age_ms: pdt_core::pm::ROTATE_AGE_MS,
         }
     }
 }
@@ -382,6 +385,10 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/personas/{id}/versions", get(crate::personas::versions))
         .route("/personas/{id}/versions/{v}", get(crate::personas::version))
         .route("/personas/{id}/diff", get(crate::personas::diff))
+        .route("/pm", get(crate::pm::state))
+        .route("/pm/sessions", axum::routing::post(crate::pm::start))
+        .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))
+        .route("/pm/notes/{id}", axum::routing::patch(crate::pm::patch_note).delete(crate::pm::delete_note))
         .route("/inbox", get(crate::inbox::list))
         .route("/inbox/{id}/answer", axum::routing::post(crate::inbox::answer))
         .route("/inbox/{id}/dismiss", axum::routing::post(crate::inbox::dismiss))

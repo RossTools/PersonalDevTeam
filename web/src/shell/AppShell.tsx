@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
-import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useThemePref } from '@ui';
+import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref } from '@ui';
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
@@ -46,6 +46,8 @@ import { IconRail } from './IconRail';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
 import { PersonasList } from '../personas/PersonasList';
+import { PmList } from '../pm/PmList';
+import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
 import { useWorkflowNotifications } from '../common/useWorkflowNotifications';
@@ -55,7 +57,7 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
 
 /** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
 const LIST_NAME: Record<ViewId, string> = {
-  sessions: 'Workspaces and agents', inbox: 'Inbox items', tickets: 'Projects and filters', workflows: 'Workflows and templates',
+  sessions: 'Workspaces and agents', inbox: 'Inbox items', pm: 'PM sessions and notes', tickets: 'Projects and filters', workflows: 'Workflows and templates',
   personas: 'Personas', files: 'Files and folders', settings: 'Settings sections',
 };
 
@@ -80,6 +82,7 @@ const WorkflowsView = lazy(() => import('../workflows/WorkflowsView').then((m) =
 const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
 const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default: m.InboxView })));
 const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
+const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
 
 export function AppShell() {
   const [view, setView] = useState<ViewId>('sessions');
@@ -105,6 +108,11 @@ export function AppShell() {
   const [inboxId, setInboxId] = useState<string | null>(null);
   // The Personas view's persona (`new`: the create form).
   const [personaId, setPersonaId] = useState<string | null>(null);
+  // The PM view's session or the notes.
+  const [pmSelection, setPmSelection] = useState<PmSelection>('current');
+  const pm = usePm();
+  const refreshPm = useRefreshPm();
+  const confirm = useConfirm();
   const inbox = useInbox();
   const inboxItems = inbox.data?.items ?? [];
   const phone = useMediaQuery(PHONE_QUERY);
@@ -131,11 +139,38 @@ export function AppShell() {
     });
   }, [openTicket]);
   useWorkflowNotifications(openTicketByKey);
+  const pmSessions = pm.data?.sessions;
   const openSession = useCallback((s: { id: string; projectId: string }) => {
+    // A PM session has no tab: the PM view shows it.
+    if (pmSessions?.some((x) => x.session.id === s.id)) {
+      setPmSelection(pm.data?.current?.id === s.id ? 'current' : s.id);
+      setView('pm');
+      return;
+    }
     void runAction(async () => {
       if (await ws.focusItem({ kind: 'session', id: s.id }, s.projectId)) setView('sessions');
     });
-  }, [ws.focusItem]);
+  }, [ws.focusItem, pmSessions, pm.data?.current?.id]);
+  // A new PM session ends the current one (it writes no journal), so it asks first.
+  const newPmSession = useCallback(() => {
+    setView('pm');
+    setSheetOpen(false);
+    if (!pm.data?.current) {
+      setPmSelection('current');
+      return;
+    }
+    void runAction(async () => {
+      const { ok } = await confirm({
+        title: 'Start a new PM session?',
+        body: 'The current one ends and stays readable. The new one starts from a fresh briefing and the notes.',
+        action: 'New session',
+      });
+      if (!ok) return;
+      await api.startPm();
+      await refreshPm();
+      setPmSelection('current');
+    });
+  }, [pm.data?.current, confirm, refreshPm]);
   // After a ticket's tab, in the workspace that has it (its Start workspace).
   const placementNear = useCallback((ticketId: string): TabPlacement | undefined => {
     const hit = findTab(ws.workspaces, { kind: 'ticket', id: ticketId });
@@ -222,6 +257,10 @@ export function AppShell() {
     }
     if (a.type === 'inbox') {
       setView('inbox');
+      return;
+    }
+    if (a.type === 'pm') {
+      setView('pm');
       return;
     }
     setView('sessions');
@@ -318,6 +357,7 @@ export function AppShell() {
     showWorkflows: () => setView('workflows'),
     showInbox: () => setView('inbox'),
     showPersonas: () => setView('personas'),
+    showPm: () => setView('pm'),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
@@ -352,6 +392,8 @@ export function AppShell() {
     </>
   ) : view === 'inbox' ? (
     <InboxList items={inboxItems} selectedId={inboxId} loading={inbox.isLoading} onSelect={(id) => { setInboxId(id); setSheetOpen(false); }} />
+  ) : view === 'pm' ? (
+    <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
   ) : view === 'personas' ? (
     <PersonasList selectedId={personaId} onSelect={(id) => { setPersonaId(id); setSheetOpen(false); }} />
   ) : view === 'tickets' ? (
@@ -479,6 +521,8 @@ export function AppShell() {
           <div className="flex-1 flex flex-col min-h-0">
             {view === 'inbox' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} selectedId={inboxId} onSelect={setInboxId} /></Suspense>
+            ) : view === 'pm' ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
             ) : view === 'personas' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
             ) : view === 'tickets' ? (

@@ -60,6 +60,8 @@ pub struct EventFilter {
     pub attempt_id: Option<String>,
     /// Only events with a larger `seq`.
     pub after: Option<i64>,
+    /// Only events logged at or after this time (ms).
+    pub since: Option<i64>,
     /// Newest first (else oldest first).
     pub newest_first: bool,
     pub limit: i64,
@@ -99,6 +101,9 @@ impl Store {
         }
         if let Some(after) = f.after {
             qb.push(" AND seq > ").push_bind(after);
+        }
+        if let Some(since) = f.since {
+            qb.push(" AND created_at >= ").push_bind(since);
         }
         qb.push(if f.newest_first { " ORDER BY seq DESC" } else { " ORDER BY seq" });
         qb.push(" LIMIT ").push_bind(f.limit.clamp(1, 1000));

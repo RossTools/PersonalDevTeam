@@ -141,7 +141,7 @@ async fn personas_are_built_in_versioned_and_diffed() {
     let env = setup().await;
     let (_, list) = call(&env.app, "GET", "/api/personas", None).await;
     let names: Vec<&str> = list.as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["Coder", "QA", "Refiner", "Reviewer"]);
+    assert_eq!(names, ["Coder", "PM", "QA", "Refiner", "Reviewer"]);
     let reviewer = list.as_array().unwrap().iter().find(|p| p["name"] == "Reviewer").unwrap().clone();
     assert_eq!((reviewer["permissionMode"].as_str(), reviewer["builtin"].as_str()), (None, Some("reviewer")));
 

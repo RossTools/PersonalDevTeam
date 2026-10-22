@@ -527,6 +527,7 @@ pub(crate) async fn list_events(
         ticket_id: q.ticket,
         attempt_id: q.attempt,
         after: q.after,
+        since: None,
         limit: q.limit.unwrap_or(100),
     };
     Ok(Json(st.store.list_log_events(&f).await?))

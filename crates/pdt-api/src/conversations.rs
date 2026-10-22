@@ -506,13 +506,23 @@ async fn append(
             }
             AgentEvent::Turn { phase: TurnPhase::Ended, .. } => {
                 s.turn_running = false;
-                // An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)?
+                // An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)? A PM session's
+                // may be time to rotate (PDT-81).
                 let (st2, id) = (st.clone(), c.id.clone());
-                tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
+                tokio::spawn(async move {
+                    crate::workflow::agent::turn_ended(&st2, &id).await;
+                    crate::pm::turn_ended(&st2, &id).await;
+                });
                 true
             }
-            AgentEvent::Request { id, state: RequestState::Open, .. } => {
+            AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
                 s.open_requests.insert(id.clone());
+                // One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
+                if tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) {
+                    let (st2, sid, rid, tool, input) =
+                        (st.clone(), c.id.clone(), id.clone(), tool.clone(), input.clone());
+                    tokio::spawn(async move { crate::pm::request_opened(&st2, &sid, &rid, &tool, &input).await });
+                }
                 true
             }
             AgentEvent::Request { id, .. } => s.open_requests.remove(id),
@@ -1326,11 +1336,22 @@ pub(crate) async fn post_answer(
 ) -> Result<StatusCode, ApiError> {
     let Json(body) = payload?;
     let session = conversation_session(&st, &id).await?;
-    let c = conv(&st, &session).await?;
-    let live = c.current_live().await.ok_or_else(|| adapter_error(AdapterError::RequestClosed))?;
-    live.answer(&request_id, &body.answer).await.map_err(adapter_error)?;
-    c.state().last_active = Instant::now();
+    answer_request(&st, &session, &request_id, &body.answer).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Answers one of a live conversation's open requests.
+pub(crate) async fn answer_request(
+    st: &AppState,
+    session: &Session,
+    request_id: &str,
+    answer: &pdt_core::conversation::Answer,
+) -> Result<(), ApiError> {
+    let c = conv(st, session).await?;
+    let live = c.current_live().await.ok_or_else(|| adapter_error(AdapterError::RequestClosed))?;
+    live.answer(request_id, answer).await.map_err(adapter_error)?;
+    c.state().last_active = Instant::now();
+    Ok(())
 }
 
 /// `POST /api/sessions/{id}/ticket-draft`: Make ticket's draft (spec §10). A hidden one-turn side request forks the
