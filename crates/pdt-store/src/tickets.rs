@@ -2558,7 +2558,7 @@ mod tests {
     async fn attempts_end_once_and_remember_their_head() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
-        add(&store, "a", new("A")).await;
+        add(&store, "a", ValidNewTicket { labels: vec!["automerge".into(), "docs".into()], ..new("A") }).await;
         store.start_attempt("at1", "a", None, "br", "main", "abc", json!({}), 5).await.unwrap();
         let active = store.list_active_attempts().await.unwrap();
         assert_eq!(active.len(), 1);
@@ -2627,6 +2627,7 @@ mod tests {
             .unwrap();
         let kinds: Vec<&str> = log.iter().map(|e| e.kind.as_str()).collect();
         assert_eq!(kinds, ["ticket.stage_changed", "attempt.started", "attempt.merged"]);
+        assert_eq!(log[1].payload["labels"], json!(["automerge", "docs"]), "a condition can branch on them");
         let merged = &log[2].payload;
         assert_eq!(
             (merged["via"].as_str(), merged["pr"].as_u64(), merged["attemptId"].as_str()),

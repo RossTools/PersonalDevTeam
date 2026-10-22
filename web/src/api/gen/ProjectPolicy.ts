@@ -11,6 +11,11 @@ export type ProjectPolicy = { mergeBy: MergeBy,
  */
 requireApproval: boolean, 
 /**
+ * Tickets with any of these labels merge automatically without that approval (`require_approval` stays on for
+ * the rest).
+ */
+approvalExemptLabels: Array<string>, 
+/**
  * The most active attempts the project may have (null: no cap; auto-start then keeps to one).
  */
 maxRunningAttempts: number | null, autoStart: AutoStart, };

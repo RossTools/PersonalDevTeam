@@ -5,9 +5,9 @@ use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
 const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
-/// mode, and the policies (merge by, require approval, running-attempt cap, auto-start).
+/// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels).
 type ProjectSettingsRow =
-    (Option<String>, Option<String>, Option<String>, bool, Option<String>, String, bool, Option<i64>, String);
+    (Option<String>, Option<String>, Option<String>, bool, Option<String>, String, bool, Option<i64>, String, String);
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -83,13 +83,24 @@ impl Store {
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
-             merge_by, require_approval, max_running_attempts, auto_start FROM project_settings WHERE project_id = ?",
+             merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels FROM project_settings \
+             WHERE project_id = ?",
         )
         .bind(project_id)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((run_overrides, creds, agent_instructions, merge_via_pr, mode, merge_by, require_approval, cap, auto)) =
-            row
+        let Some((
+            run_overrides,
+            creds,
+            agent_instructions,
+            merge_via_pr,
+            mode,
+            merge_by,
+            require_approval,
+            cap,
+            auto,
+            exempt,
+        )) = row
         else {
             return Ok(ProjectSettings::default());
         };
@@ -113,6 +124,8 @@ impl Store {
                 max_running_attempts: cap.and_then(|n| u32::try_from(n).ok()),
                 auto_start: AutoStart::parse(&auto)
                     .ok_or_else(|| StoreError::Corrupt(format!("auto-start {auto:?}")))?,
+                approval_exempt_labels: serde_json::from_str(&exempt)
+                    .map_err(|_| StoreError::Corrupt(format!("approval-exempt labels {exempt:?}")))?,
             },
         })
     }
@@ -120,13 +133,13 @@ impl Store {
     pub async fn put_project_settings(&self, project_id: &str, s: &ProjectSettings) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
-             merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
+             merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
+             approval_exempt_labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
              agent_permission_mode = excluded.agent_permission_mode, merge_by = excluded.merge_by, \
              require_approval = excluded.require_approval, max_running_attempts = excluded.max_running_attempts, \
-             auto_start = excluded.auto_start",
+             auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -138,6 +151,7 @@ impl Store {
         .bind(s.policy.require_approval)
         .bind(s.policy.max_running_attempts.map(i64::from))
         .bind(s.policy.auto_start.as_str())
+        .bind(serde_json::to_string(&s.policy.approval_exempt_labels).expect("a list of labels"))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -213,6 +227,7 @@ mod tests {
                 require_approval: true,
                 max_running_attempts: Some(2),
                 auto_start: pdt_core::policy::AutoStart::Ready,
+                approval_exempt_labels: vec!["automerge".into()],
             },
         };
         store.put_project_settings("p", &s).await.unwrap();

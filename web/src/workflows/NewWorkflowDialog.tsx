@@ -28,7 +28,8 @@ export function ParamsForm({ params, values, onChange }: { params: TemplateParam
               : p.type === 'boolean' ? <Switch checked={v === true} onChange={(on) => set(p.id, on)} />
               : p.type === 'choice' ? <Select options={(p.choices ?? []).map((c) => ({ value: c, label: c }))} value={String(v ?? '')} onChange={(c) => set(p.id, c)} />
                 : p.type === 'text' ? <Textarea rows={3} value={String(v ?? '')} onChange={(e) => set(p.id, e.target.value)} />
-                  : <Input type={p.type === 'number' ? 'number' : 'text'} value={String(v ?? '')}
+                  : <Input type={p.type === 'number' ? 'number' : 'text'} value={Array.isArray(v) ? v.join(', ') : String(v ?? '')}
+                    placeholder={p.type === 'list' ? 'Comma-separated' : undefined}
                     onChange={(e) => set(p.id, p.type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value)} />}
           </Field>
         );

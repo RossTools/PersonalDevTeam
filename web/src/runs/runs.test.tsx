@@ -267,6 +267,28 @@ describe('ProjectSettingsPanel', () => {
     await waitFor(() => expect(toggle).toBeChecked());
   });
 
+  it('saves the labels that merge without approval once typed', async () => {
+    const policy = { mergeBy: 'agents', requireApproval: true, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off' };
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({
+        effectiveCredentials: 'subscription', agentInstructions: null,
+        policy: { ...policy, approvalExemptLabels: (c.body as { approvalExemptLabels: string[] }).approvalExemptLabels },
+      }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const box = await screen.findByRole('textbox', { name: 'Labels that merge without approval' });
+    await waitFor(() => expect(box).toBeEnabled());
+    await userEvent.type(box, 'automerge, docs{Enter}');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, approvalExemptLabels: ['automerge', 'docs'] });
+    await waitFor(() => expect(box).toHaveValue('automerge, docs'));
+    // Leaving the field unchanged saves nothing more.
+    await userEvent.click(document.body);
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+  });
+
   it('saves the credential policy as soon as it is chosen, keeping unsaved overrides on screen', async () => {
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: 'x = 1', agentInstructions: null },
