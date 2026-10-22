@@ -10,6 +10,7 @@ pub mod discord;
 pub mod end;
 pub mod gate;
 pub mod http;
+pub mod mcp_tool;
 pub mod merge;
 pub mod notify;
 pub mod plex;

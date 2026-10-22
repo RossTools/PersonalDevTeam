@@ -41,7 +41,7 @@ pub struct BriefArchiveConfig {
     /// What it covered: `[{title, link, note}]` (or a reference to such a list).
     #[serde(default)]
     #[schemars(with = "Vec<BriefItem>")]
-    #[ts(type = "BriefItem[] | string")]
+    #[ts(type = "Array<{ title: string, link?: string, note?: string }> | string")]
     pub items: Value,
     /// `YYYY-MM-DD`; default today in the host's time zone.
     #[serde(default)]

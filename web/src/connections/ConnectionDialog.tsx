@@ -2,14 +2,19 @@
 // never shown again; leaving it empty when editing keeps the one there is.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, Select } from '@ui';
+import { Alert, Button, Dialog, Field, Input, Select, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { AUTH_MODES, CONNECTION_KINDS, hookUrl, kindOf, randomSecret } from './kinds';
+import { AUTH_MODES, CONNECTION_KINDS, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, type ConnectionKind } from './kinds';
 
 export const connectionsKey = ['connections'] as const;
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/** Each setting of a kind as text, from a connection's config (a choice starts at its first option). */
+function settingsText(k: ConnectionKind | undefined, config: Record<string, unknown> = {}): Record<string, string> {
+  return Object.fromEntries((k?.fields ?? []).map((f) => [f.key, fieldText(f, config[f.key]) || (f.type === 'choice' ? f.options?.[0]?.value ?? '' : '')]));
+}
 
 export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved }: {
   /** Editing this one; else a new one. */
@@ -26,12 +31,17 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
+  const [settings, setSettings] = useState(() => settingsText(kindOf(kind), connection?.config));
   const k = kindOf(kind);
+  const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(id))); };
+  const askUrl = !!k?.url || (!!k?.urlWhen && settings[k.urlWhen.key] === k.urlWhen.value);
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
     mutationFn: async () => {
-      const config: Record<string, unknown> = k?.auth ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) } : {};
-      const body = { name: name.trim(), kind, url: k?.url ? url.trim() : '', config };
+      const config: Record<string, unknown> = k?.auth
+        ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
+        : fieldsConfig(k?.fields ?? [], settings);
+      const body = { name: name.trim(), kind, url: askUrl ? url.trim() : '', config };
       let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
       if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
       return c;
@@ -42,8 +52,8 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
       onClose();
     },
   });
-  const needsSecret = !connection?.hasSecret && kind !== 'http';
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || url.trim() !== '');
+  const needsSecret = !connection?.hasSecret && kind !== 'http' && !k?.secretOptional;
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || url.trim() !== '');
   return (
     <Dialog
       open
@@ -61,17 +71,32 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
             options={CONNECTION_KINDS.map((x) => ({ value: x.id, label: x.label }))}
             value={kind}
             disabled={!!connection || !!fixedKind}
-            onChange={setKind}
+            onChange={pickKind}
           />
         </Field>
         <Field label="Name" hint="How workflows refer to it, e.g. alerts or home-server.">
           <Input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {k?.url && (
-          <Field label="Address" hint="The service's base URL; a request's path is added to it.">
-            <Input aria-label="Address" placeholder="http://192.168.1.10:7878/api" value={url} onChange={(e) => setUrl(e.target.value)} />
+        {k?.fields?.filter((f) => f.type === 'choice').map((f) => (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            <Select className="w-full" aria-label={f.label} options={f.options ?? []} value={settings[f.key] ?? ''}
+              onChange={(v) => setSettings((s) => ({ ...s, [f.key]: v }))} />
+          </Field>
+        ))}
+        {askUrl && (
+          <Field label="Address" hint={k?.auth ? "The service's base URL; a request's path is added to it." : undefined}>
+            <Input aria-label="Address" placeholder={k?.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
         )}
+        {k?.fields?.filter((f) => f.type !== 'choice' && fieldShown(f, settings)).map((f) => (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            {f.type === 'lines' || f.type === 'env'
+              ? <Textarea mono aria-label={f.label} rows={3} placeholder={f.placeholder} value={settings[f.key] ?? ''}
+                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />
+              : <Input aria-label={f.label} placeholder={f.placeholder} value={settings[f.key] ?? ''}
+                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />}
+          </Field>
+        ))}
         {k?.auth && (
           <Field label="Send it as">
             <Select className="w-full" aria-label="Send it as" options={AUTH_MODES} value={auth} onChange={setAuth} />

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { KindSpec } from '../api/gen/KindSpec';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import {
-  addNode, canMove, connect, defaultConfig, freshId, layout, moveInChain, newNode, outline, referencePaths, removeNode,
+  addNode, canMove, configSchemaOf, connect, defaultConfig, freshId, layout, moveInChain, newNode, outline, referencePaths, removeNode,
   renameNode, summary, type Catalog,
 } from './model';
 import { CATALOG } from './testData';
@@ -24,6 +25,23 @@ describe('workflow model', () => {
     const n = newNode(d, cat.find((k) => k.id === 'gate')!);
     expect(n.config).toEqual({ question: '', choices: [] });
     expect(defaultConfig({ type: 'object', properties: { a: { type: 'boolean' }, b: { type: 'string' } }, required: ['a'] })).toEqual({ a: false });
+  });
+
+  it("adds an MCP tool's entry as an mcp.tool node for that tool, its settings from the tool's schema", () => {
+    const args = { type: 'object', properties: { path: { type: 'string' }, depth: { type: 'integer' } }, required: ['path'] };
+    const entry: KindSpec = {
+      id: 'mcp:files/read-file', version: 1, category: 'action', title: 'Read a file (files)', description: 'Reads one.',
+      configSchema: { type: 'object', properties: { server: { type: 'string' }, tool: { type: 'string' }, arguments: args }, required: ['server', 'tool'] },
+      outputSchema: {}, ports: [{ id: 'out', title: 'Then' }], dynamicPorts: false,
+      preset: { kind: 'mcp.tool', config: { server: 'files', tool: 'read-file', arguments: {} } },
+    };
+    const d = doc([['t', 'manual']], []);
+    const n = newNode(d, entry);
+    expect(n).toEqual({ id: 'read_file', kind: 'mcp.tool', version: 1, title: 'Read a file (files)',
+      config: { server: 'files', tool: 'read-file', arguments: { path: '' } } });
+    const base: KindSpec = { ...entry, id: 'mcp.tool', title: 'MCP tool', configSchema: { type: 'object' }, preset: undefined };
+    expect(configSchemaOf([...cat, base, entry], n)).toBe(entry.configSchema);
+    expect(configSchemaOf([...cat, base, entry], { ...n, config: { server: 'gone', tool: 'x' } })).toBe(base.configSchema);
   });
 
   it('adds a step between a port and what it led to, and removing it joins them again', () => {

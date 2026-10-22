@@ -880,3 +880,200 @@ async fn a_brief_is_archived_by_day_and_read_back() {
     let r = run_now(&env, &archive, json!({"date": "2026-10-22", "title": "x", "items": "not a list"})).await;
     assert_eq!(r["status"], "failed");
 }
+
+// ---- MCP tools as actions (7e-3) ----
+
+fn fake_mcp() -> &'static str {
+    env!("CARGO_BIN_EXE_fake-mcp")
+}
+
+async fn connection_id(env: &Env, name: &str) -> String {
+    let (_, all) = call(&env.app, "GET", "/api/connections", None).await;
+    all.as_array().unwrap().iter().find(|c| c["name"] == name).unwrap()["id"].as_str().unwrap().to_string()
+}
+
+fn tool_node(id: &str, server: &str, tool: &str, arguments: Value) -> Value {
+    json!({"id": id, "kind": "mcp.tool", "version": 1, "config": {"server": server, "tool": tool, "arguments": arguments}})
+}
+
+#[tokio::test]
+async fn a_stdio_mcp_servers_tools_are_listed_and_called() {
+    let env = setup().await;
+    connection(
+        &env,
+        "fake",
+        "mcp",
+        "",
+        json!({"transport": "stdio", "command": fake_mcp(), "secretEnv": "FAKE_MCP_SECRET"}),
+        Some("s3cret"),
+    )
+    .await;
+    let id = connection_id(&env, "fake").await;
+    let (s, listed) = call(&env.app, "POST", &format!("/api/connections/{id}/tools"), None).await;
+    assert_eq!(s, StatusCode::OK, "{listed}");
+    assert_eq!(listed["error"], Value::Null, "{listed}");
+    let names: Vec<_> = listed["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["echo", "add", "fail", "whoami"]);
+    let (_, cached) = call(&env.app, "GET", &format!("/api/connections/{id}/tools"), None).await;
+    assert_eq!(cached["tools"], listed["tools"]);
+
+    // Each tool is in the catalog, as a preset of mcp.tool.
+    let (_, catalog) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
+    let echo = catalog.as_array().unwrap().iter().find(|k| k["id"] == "mcp:fake/echo").expect("the echo tool");
+    assert_eq!((&echo["title"], &echo["category"]), (&json!("Echo (fake)"), &json!("action")));
+    assert_eq!(
+        echo["preset"],
+        json!({"kind": "mcp.tool", "config": {"server": "fake", "tool": "echo", "arguments": {}}})
+    );
+    assert_eq!(echo["configSchema"]["properties"]["arguments"]["required"], json!(["text"]));
+
+    let doc = json!({"name": "MCP", "nodes": [
+        {"id": "go", "kind": "manual", "version": 1},
+        tool_node("echo", "fake", "echo", json!({"text": "{{trigger.word}}", "times": 2})),
+        tool_node("add", "fake", "add", json!({"a": 1, "b": "{{trigger.n}}"})),
+        tool_node("who", "fake", "whoami", json!({})),
+        tool_node("again", "fake", "whoami", json!({}))],
+        "edges": [{"from": "go", "to": "echo"}, {"from": "echo", "to": "add"}, {"from": "add", "to": "who"},
+            {"from": "who", "to": "again"}]});
+    let wf = create(&env, doc).await;
+    let r = run_now(&env, &wf, json!({"word": "hi", "n": 2})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(step(&r, "echo")["output"], "hihi", "text content");
+    assert_eq!(step(&r, "add")["output"], json!({"sum": 3.0}), "structured content");
+    let who = &step(&r, "who")["output"];
+    assert_eq!(who["secret"], "s3cret", "the secret is in the env var the connection names");
+    assert_eq!(step(&r, "again")["output"]["pid"], who["pid"], "one process serves the calls");
+
+    // A changed connection starts the server again.
+    let (s, _) = call(
+        &env.app,
+        "PATCH",
+        &format!("/api/connections/{id}"),
+        Some(json!({"config": {"transport": "stdio", "command": fake_mcp(), "secretEnv": "FAKE_MCP_SECRET",
+            "env": {"X": "1"}}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let r = run_now(&env, &wf, json!({"word": "hi", "n": 2})).await;
+    assert_ne!(step(&r, "who")["output"]["pid"], who["pid"]);
+
+    // A tool error fails the step.
+    let wf = create(&env, manual_then(tool_node("x", "fake", "fail", json!({})))).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(r["status"], "failed");
+    assert!(r["error"].as_str().unwrap().contains("it broke"), "{r}");
+
+    // Validation checks arguments against the cached schema, and that the tool exists.
+    let doc = json!({"name": "x", "nodes": [{"id": "go", "kind": "manual", "version": 1},
+        tool_node("a", "fake", "echo", json!({"times": "two"})), tool_node("b", "fake", "nope", json!({}))],
+        "edges": [{"from": "go", "to": "a"}, {"from": "a", "to": "b"}]});
+    let (_, issues) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+    let messages: Vec<_> = issues
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["code"] == "mcp_tool")
+        .map(|i| i["message"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "a: echo arguments: text is required",
+            "a: echo arguments: times should be integer",
+            "b: the MCP server fake has no tool nope"
+        ]
+    );
+
+    // A dry run calls nothing.
+    let (_, d) = call(
+        &env.app,
+        "POST",
+        "/api/workflows/dry-run",
+        Some(json!({"doc": manual_then(tool_node("x", "fake", "fail", json!({}))), "event": {"type": "manual"}})),
+    )
+    .await;
+    assert!(d["run"]["steps"][1]["output"]["would"].as_str().unwrap().starts_with("call fail on fake"), "{d}");
+
+    // Deleting the connection drops its tools from the catalog.
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/connections/{id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, catalog) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
+    assert!(!catalog.to_string().contains("mcp:fake/"));
+    pdt_api::shutdown_mcp(&env.state).await;
+}
+
+#[tokio::test]
+async fn an_mcp_server_that_does_not_start_says_why() {
+    let env = setup().await;
+    let missing = env.tmp.path().join("no-such-server");
+    connection(&env, "broken", "mcp", "", json!({"command": missing.to_string_lossy()}), None).await;
+    let id = connection_id(&env, "broken").await;
+    let (_, listed) = call(&env.app, "POST", &format!("/api/connections/{id}/tools"), None).await;
+    assert!(listed["error"].as_str().unwrap().contains("could not start"), "{listed}");
+    assert_eq!(listed["tools"], json!([]));
+
+    let wf = create(&env, manual_then(tool_node("x", "broken", "anything", json!({})))).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("could not start"), "{r}");
+
+    // A connection of another kind is refused.
+    connection(&env, "plain", "http", "http://127.0.0.1:9", json!({}), None).await;
+    let plain = connection_id(&env, "plain").await;
+    let (s, _) = call(&env.app, "GET", &format!("/api/connections/{plain}/tools"), None).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let wf = create(&env, manual_then(tool_node("x", "plain", "anything", json!({})))).await;
+    assert!(run_now(&env, &wf, json!({})).await["error"].as_str().unwrap().contains("not mcp"));
+}
+
+/// A streamable-HTTP MCP server answering with plain JSON: `initialize`, `tools/list` (one tool, `add`) and
+/// `tools/call`; it wants `Authorization: Bearer tok`.
+async fn fake_http_mcp() -> String {
+    async fn handle(headers: axum::http::HeaderMap, body: String) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer tok") {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        let msg: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        let Some(id) = msg.get("id").cloned() else { return StatusCode::ACCEPTED.into_response() };
+        let result = match msg["method"].as_str().unwrap_or_default() {
+            "initialize" => json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake-http", "version": "1"}}),
+            "tools/list" => json!({"tools": [{"name": "add", "description": "Adds.",
+                "inputSchema": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}}}]}),
+            "tools/call" => {
+                let a = &msg["params"]["arguments"];
+                let sum = a["a"].as_f64().unwrap_or(0.0) + a["b"].as_f64().unwrap_or(0.0);
+                json!({"content": [{"type": "text", "text": format!("{{\"sum\": {sum}}}")}]})
+            }
+            _ => json!({}),
+        };
+        axum::Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
+    }
+    let app = axum::Router::new().route(
+        "/mcp",
+        axum::routing::post(handle)
+            .get(|| async { StatusCode::METHOD_NOT_ALLOWED })
+            .delete(|| async { StatusCode::METHOD_NOT_ALLOWED }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}/mcp")
+}
+
+#[tokio::test]
+async fn an_http_mcp_server_gets_the_secret_as_a_bearer_token() {
+    let url = fake_http_mcp().await;
+    let env = setup().await;
+    connection(&env, "remote", "mcp", &url, json!({"transport": "http"}), Some("tok")).await;
+    let wf = create(&env, manual_then(tool_node("sum", "remote", "add", json!({"a": 2, "b": 3})))).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(step(&r, "sum")["output"], json!({"sum": 5}), "JSON text is parsed");
+
+    connection(&env, "wrong", "mcp", &url, json!({"transport": "http"}), Some("nope")).await;
+    let id = connection_id(&env, "wrong").await;
+    let (_, listed) = call(&env.app, "POST", &format!("/api/connections/{id}/tools"), None).await;
+    assert!(listed["error"].is_string(), "{listed}");
+    pdt_api::shutdown_mcp(&env.state).await;
+}

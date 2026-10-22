@@ -3,14 +3,14 @@
 Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md, 2026-10-20-phase-7d-builder-design.md, for
 agent steps, personas, pdt-mcp and the Inbox, 2026-10-20-phase-7b-agent-steps-design.md, for the Pipeline
 template, policies, Board stages and scheduling, 2026-10-20-phase-7c-pipeline-design.md, and for schedules,
-webhooks, GitHub issues and PR comments, command, HTTP, Discord and notify, 2026-10-20-phase-7e-integrations-design.md
-(vision: 2026-10-20-workflows-and-pm-vision.md).
+webhooks, GitHub issues and PR comments, command, HTTP, Discord and notify, Radarr, Sonarr, Plex, MCP tools and the
+brief archive, 2026-10-20-phase-7e-integrations-design.md (vision: 2026-10-20-workflows-and-pm-vision.md).
 Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, templates, API
 records, what reaches an agent, agent steps), `persona.rs`, `inbox.rs`; pdt-store `event_log.rs`, `workflows.rs`,
 `personas.rs` and `inbox.rs` (migrations 0021–0024); pdt-api `workflow/` (catalog, engine, nodes, outbox,
 built-ins, templates and the Pipeline, repo files, routes, agent steps), `personas.rs`, `inbox.rs`, `scheduler.rs`,
-`finish.rs` (`ticket.finish`), `github_issues.rs` (the issues sensor and its trigger) and `hooks.rs` (incoming
-webhooks); pdt-core `policy.rs`;
+`finish.rs` (`ticket.finish`), `github_issues.rs` (the issues sensor and its trigger), `hooks.rs` (incoming
+webhooks) and `mcp_client.rs` (MCP servers as a client); pdt-core `policy.rs`;
 web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 
 ## Event log
@@ -72,7 +72,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 
 `GET /api/workflows/catalog` lists every kind: `id`, `version`, `category`, `title`, `description`,
 `configSchema` / `outputSchema` (JSON Schema from schemars), `ports`, `dynamicPorts`. One module per kind in
-pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types also derive ts-rs (web/src/api/gen).
+pdt-api `workflow/nodes/` (Radarr and Sonarr share `arr.rs`), registered in `catalog.rs` `catalog()`; config types also
+derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MCP tools as actions"), which have a
+`preset`.
 
 | Kind | Ports |
 |---|---|
@@ -96,6 +98,12 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
 | `notify` (`title`, `body`, `level: info \| warning \| error`, `link`) | `out` |
+| `radarr.search` / `sonarr.search` (`connection`, `term`, `limit`) | `out` |
+| `radarr.add` (`connection`, `tmdbId`, `qualityProfile`, `rootFolder`, `search`, `minimumAvailability`) / `sonarr.add` (`connection`, `tvdbId`, `qualityProfile`, `rootFolder`, `monitor`, `search`) | `added`, `exists` |
+| `radarr.queue` / `sonarr.queue` (`connection`) | `out` |
+| `plex.search` (`connection`, `query`, `limit`), `plex.recently_added` (`connection`, `section`, `limit`), `plex.refresh` (`connection`, `section`) | `out` |
+| `mcp.tool` (`server`: an `mcp` connection, `tool`, `arguments`) | `out` |
+| `brief.archive` (`brief`, `title`, `body`, `items [{title, link, note}]`, `date`), `brief.read` (`brief`, `since`, `last`) | `out` |
 
 Every node also has an `error` port: taken once its retries are spent, if it has an edge; otherwise the run fails.
 
@@ -116,7 +124,56 @@ notify itself forever).
 - `discord.post`: the connection's secret is the webhook URL. Content over 2000 characters goes as several messages
   (cut at line breaks), embeds with the first; mentions are never parsed; a 429 waits `retry_after` (up to 4 tries).
   Output `{messageIds}`.
-- Dry runs never run a command or call out: they report `would`.
+- **Radarr and Sonarr** (`arr.rs`; connection `url` the app's address, secret its API key, sent as `X-Api-Key` to
+  `/api/v3/…`). Search: `{results [{tmdbId | tvdbId, title, year, inLibrary, id, overview}]}` from `…/lookup` (10 by
+  default). Add: if the library has that id (`GET /movie?tmdbId=` / `/series?tvdbId=`, filtered again for versions that
+  ignore it) it takes `exists`; else it looks the film or series up, sets the quality profile (the node's name or id,
+  else the connection's `config.qualityProfile`, else the first profile), the root folder (node, `config.rootFolder`,
+  else the first), `monitored`, Radarr's `minimumAvailability` (default `released`) and `searchForMovie`, or Sonarr's
+  `monitor` (default `all`), `seasonFolder` and `searchForMissingEpisodes` (`search`, default true), and posts it:
+  `added`, the film or series as output. Queue: `{items [{title (film and year, or series and SxxEyy), release,
+  progress (percent), eta, timeLeft, status}]}`.
+- **Plex** (`plex.rs`; `url` the server, secret the `X-Plex-Token`, JSON asked for). Search: `/hub/search`, the hubs'
+  items flattened: `{items [{title, type, year, ratingKey, section, show, addedAt}]}`. Recently added:
+  `/library/sections/<key>/recentlyAdded` (or `/library/recentlyAdded`), `limit` default 20. Refresh:
+  `/library/sections/<key>/refresh` (or `all`) → `{section}`. A section is its key or its title (looked up in
+  `/library/sections`).
+- **Brief archive** (`brief.rs`): `brief.archive` appends to `<data dir>/briefs/<brief>/<date>.md` (a `# <brief> —
+  <date>` heading on a new day, then `## <title or time>`, the body, the items as a list `[title](link) — note`) and a
+  line `{date, at, title, items [{title, link}]}` to the brief's `index.jsonl`; `date` defaults to today in the host's
+  zone. `brief.read` returns `{entries, days [{date, markdown}]}`: the index entries on or after `since` and/or the
+  newest `last` (default 7 without `since`), oldest first, and their days' Markdown (256 KiB at most). Brief names are
+  `[a-z0-9_-]`, dates `YYYY-MM-DD`, so nothing leaves the folder.
+- Dry runs never run a command or call out: they report `would` (the Radarr, Sonarr, Plex and MCP reads too;
+  `brief.read` reads its files as usual).
+
+### MCP tools as actions (Phase 7e-3)
+
+An MCP server is a connection of kind `mcp` (pdt-api `mcp_client.rs`, the `rmcp` client): `config.transport` `stdio`
+(`command`, `args` a list, `env` an object, `cwd`; the secret, if any, in the env var `config.secretEnv`; no console
+window on Windows, where a `.cmd` such as `npx` needs `cmd /c`) or `http` (the connection's `url`, streamable HTTP, the
+secret as a bearer token); without `transport`, a URL and no command means `http`.
+
+- **Clients** (`McpPool` in `AppState`): one per server, started on first use (a 30 s limit on the handshake; a stdio
+  server that fails says its last stderr lines), shared by concurrent calls, started again when the connection's
+  settings or secret change or after a transport error, stopped after 5 minutes idle (`maintain_workflows`) and when
+  pdtd stops. A stdio server's stderr goes to pdtd's log at debug level.
+- **Tools** (`tools/list`) are cached in memory by connection name: listed in the background when an `mcp` connection
+  is saved, and again by `maintain_workflows` once the last try is 10 minutes old. A failed listing keeps the tools from
+  before and records the error. `GET /api/connections/{id}/tools` (the cache: `{server, tools [{name, title,
+  description, inputSchema, outputSchema}], error, listedAt, triedAt}`, null before the first listing), `POST` lists
+  now. Deleting or renaming a connection drops its cache.
+- **`mcp.tool`** calls `tools/call`; its output is the tool's `structuredContent` if it has any, else its text content
+  (joined; parsed when it is a JSON object or list). A result with `isError` fails the step with its text.
+- **Catalog entries.** `GET /api/workflows/catalog` (and pdt-mcp's `catalog_search` / `catalog_get`) add one entry per
+  cached tool: id `mcp:<server>/<tool>`, its title (or name) and the server, its description, `mcp.tool`'s config
+  schema with the tool's input schema as `arguments`, its output schema, and `preset: {kind: "mcp.tool", config:
+  {server, tool, arguments: {}}}`. Adding one in the builder makes that `mcp.tool` node (titled after the tool, its
+  required arguments started), and the node panel shows the tool's arguments.
+- **Validation** (validate, check, dry run and a workflow's issues) warns (`mcp_tool`) when a server whose tools are
+  cached lacks the node's tool, or the `arguments` miss a required property, have one the schema refuses
+  (`additionalProperties: false`) or a literal of the wrong type at the top level. References are checked when the step
+  runs (by the server). Warnings don't block saving.
 
 ## Engine
 
@@ -178,9 +235,11 @@ the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
 Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared
-secret) and `http` (`url`, `config.auth` and its field; secret: the token or password). A config field holding a
-connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `any`), so forms
-offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+secret), `http` (`url`, `config.auth` and its field; secret: the token or password), `radarr` and `sonarr` (`url`,
+`config.qualityProfile`, `config.rootFolder`; secret: the API key), `plex` (`url`; secret: the token) and `mcp`
+("MCP tools as actions"; `GET/POST /api/connections/{id}/tools`, `409 not_mcp` for another kind). A config field
+holding a connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `radarr`,
+`sonarr`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned).
 
@@ -215,9 +274,12 @@ offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/
 ## Web
 
 Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
-has a section per kind (Discord webhooks, Incoming webhooks, HTTP services, and Other for kinds no action uses), each
-saying how to set one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address
-`/api/hooks/<name>` show on its row). The dialog asks what the kind needs and
+has a section per kind (Discord webhooks, Incoming webhooks, HTTP services, Radarr, Sonarr, Plex servers, MCP servers,
+and Other for kinds no action uses), each saying how to set one up, with Add, and each connection's Edit and Delete (a
+missing secret and a webhook's address `/api/hooks/<name>` show on its row; an MCP server's row shows its tools, or why
+listing them failed, with List again). The dialog asks what the kind needs (`kinds.ts`: its address, its settings such
+as Radarr's default quality profile and root folder or an MCP server's transport, program, arguments, environment and
+secret variable) and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
 Webhook URL); an incoming webhook can generate its secret. The secret is written to the keychain and never shown again
 (empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use

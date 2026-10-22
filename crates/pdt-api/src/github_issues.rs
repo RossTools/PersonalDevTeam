@@ -55,6 +55,7 @@ impl NodeKind for IssueOpened {
             output_schema: serde_json::to_value((t.schema)()).unwrap_or(Value::Null),
             ports: ports(&[("out", "Then")]),
             dynamic_ports: false,
+            preset: None,
         }
     }
 

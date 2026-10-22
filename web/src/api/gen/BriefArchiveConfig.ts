@@ -12,7 +12,7 @@ body: string,
 /**
  * What it covered: `[{title, link, note}]` (or a reference to such a list).
  */
-items: BriefItem[] | string, 
+items: Array<{ title: string, link?: string, note?: string }> | string, 
 /**
  * `YYYY-MM-DD`; default today in the host's time zone.
  */
