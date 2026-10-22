@@ -3,9 +3,9 @@
 //! running), handles waits, retries, error paths, limits and sub-workflows, and dry-runs documents in memory.
 
 use super::catalog::{Category, Outcome, StepCx, catalog, parse};
-use super::nodes::trigger::{MANUAL, TriggerConfig};
+use super::nodes::trigger::{MANUAL, SharedTrigger};
 use crate::routes::{AppState, now_ms};
-use pdt_core::workflow::api::{LogEvent, Run, RunStatus, Scope, Step, StepStatus, Workflow};
+use pdt_core::workflow::api::{LogEvent, Run, RunStatus, Step, StepStatus, Workflow};
 use pdt_core::workflow::cond::all;
 use pdt_core::workflow::doc::{ERROR_PORT, WorkflowDoc};
 use pdt_core::workflow::refs::{resolve, resolve_keeping};
@@ -37,6 +37,8 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
     for s in steps.iter().filter(|s| s.status == StepStatus::Succeeded) {
         outputs.insert(s.node_id.clone(), s.output.clone());
     }
+    let state: serde_json::Map<String, Value> =
+        state.into_iter().filter(|(k, _)| !k.starts_with(super::nodes::schedule::RESERVED_STATE)).collect();
     json!({
         "trigger": run.trigger,
         "steps": outputs,
@@ -153,19 +155,15 @@ async fn match_events(st: &AppState) {
         let trigger = trigger_value(&e);
         let ctx = json!({"trigger": trigger});
         for (wf, doc) in &enabled {
-            let applies = match wf.scope {
-                Scope::Project => e.project_id.is_some() && e.project_id == wf.project_id,
-                Scope::Host => true,
-                Scope::Personal => e.project_id.is_none(),
-            };
-            if !applies {
-                continue;
-            }
             for node in &doc.nodes {
-                if catalog().get(&node.kind).and_then(|k| k.event_type()) != Some(e.kind.as_str()) {
+                let Some(kind) = catalog().get(&node.kind).filter(|k| k.event_type() == Some(e.kind.as_str())) else {
+                    continue;
+                };
+                let Ok(config) = catalog().current_config(node) else { continue };
+                if !kind.accepts(&config, wf, node, &e) {
                     continue;
                 }
-                let Ok(cfg) = catalog().current_config(node).and_then(|c| parse::<TriggerConfig>(&c)) else { continue };
+                let Ok(cfg) = parse::<SharedTrigger>(&config) else { continue };
                 if !cfg.projects.is_empty() && !e.project_id.as_ref().is_some_and(|p| cfg.projects.contains(p)) {
                     continue;
                 }
@@ -249,6 +247,10 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
             st.store.put_step(&s).await.map_err(err)?;
             end_step_extras(st, &s.id).await;
         }
+    }
+    let scratch = super::nodes::command::scratch_dir(&st.data_dir, &run.id);
+    if tokio::fs::try_exists(&scratch).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_dir_all(&scratch).await;
     }
     run.status = status;
     run.output = output;
@@ -467,6 +469,7 @@ pub async fn run_workflows(st: &AppState) {
     let _engine = st.engine_lock.lock().await;
     super::builtins::ensure_installed(st).await;
     crate::personas::ensure_builtins(st).await;
+    super::nodes::schedule::fire_schedules(st).await;
     match_events(st).await;
     crate::scheduler::admit_waiting(st).await;
     advance_all(st).await;
@@ -662,7 +665,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         if !fires {
             continue;
         }
-        let cfg = catalog().current_config(node).and_then(|c| parse::<TriggerConfig>(&c)).unwrap_or_default();
+        let cfg = catalog().current_config(node).and_then(|c| parse::<SharedTrigger>(&c)).unwrap_or_default();
         let project = trigger.get("projectId").and_then(|p| p.as_str());
         let reason = if !cfg.projects.is_empty() && !project.is_some_and(|p| cfg.projects.iter().any(|x| x == p)) {
             Some("the event's project is not in the trigger's projects".to_string())

@@ -20,6 +20,7 @@ import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
+import { ConnectionsPage } from '../connections/ConnectionsPage';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
@@ -49,6 +50,7 @@ import { PmList } from '../pm/PmList';
 import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
+import { useWorkflowNotifications } from '../common/useWorkflowNotifications';
 import { VIEWS, type ViewId } from './views';
 
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
@@ -58,6 +60,9 @@ const LIST_NAME: Record<ViewId, string> = {
   sessions: 'Workspaces and agents', inbox: 'Inbox items', pm: 'PM sessions and notes', tickets: 'Projects and filters', workflows: 'Workflows and templates',
   personas: 'Personas', files: 'Files and folders', settings: 'Settings sections',
 };
+
+/** The Settings page of connections (in place of a project id). */
+const CONNECTIONS = 'connections';
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
@@ -127,6 +132,13 @@ export function AppShell() {
       if (await ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId)) setView('sessions');
     });
   }, [ws.focusItem]);
+  const openTicketByKey = useCallback((key: string) => {
+    void runAction(async () => {
+      const hit = (await api.listTickets({ q: key, limit: 1 })).items[0];
+      if (hit) openTicket(hit);
+    });
+  }, [openTicket]);
+  useWorkflowNotifications(openTicketByKey);
   const pmSessions = pm.data?.sessions;
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     // A PM session has no tab: the PM view shows it.
@@ -398,8 +410,9 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={() => showProjectSettings(null)}>
+      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS ? CONNECTIONS : null)}>
         <ListRow id="host" title="This host" current={settingsProjectId === null} />
+        <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
       </List>
       <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
         <span className="flex-1">Projects</span>
@@ -519,7 +532,8 @@ export function AppShell() {
             ) : view === 'files' ? (
               <FileViewer state={folder} />
             ) : view === 'settings' ? (
-              settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} /> : <HostSettingsPage />
+              settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} />
+                : settingsProjectId === CONNECTIONS ? <ConnectionsPage /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : ws.tab?.worktreeId ? (

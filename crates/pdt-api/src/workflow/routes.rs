@@ -701,7 +701,6 @@ pub(crate) async fn delete_secret(
 }
 
 /// A connection and its secret by name, for node kinds that call external services (7e).
-#[allow(dead_code)]
 pub(crate) async fn connection_with_secret(st: &AppState, name: &str) -> Result<(Connection, Option<String>), String> {
     let c = st
         .store

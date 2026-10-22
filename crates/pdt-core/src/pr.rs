@@ -184,6 +184,10 @@ pub enum NoticeKind {
     Merged,
     /// Behind its base while it waits to merge without a merge queue (PDT-24).
     Behind,
+    /// Someone commented on the pull request (Phase 7e).
+    Commented,
+    /// Someone reviewed the pull request (Phase 7e).
+    Reviewed,
 }
 
 /// Something to tell the attempt's agent. `key` says when it is the same news again (it is told once per key).
@@ -309,6 +313,74 @@ pub fn behind_notice(now: &PullRequestStatus, branch: &str) -> Option<Notice> {
     })
 }
 
+/// The longest comment or review body a notice quotes.
+const QUOTE_MAX: usize = 4000;
+
+fn quote(body: &str) -> String {
+    let body = body.trim();
+    if body.chars().count() <= QUOTE_MAX {
+        return body.to_string();
+    }
+    let cut: String = body.chars().take(QUOTE_MAX).collect();
+    format!("{cut}… (cut short: read it at the link)")
+}
+
+/// What a comment on PR `pr` is, for the agent: on a line (`path`/`line`, in a review) or on the conversation.
+#[allow(clippy::too_many_arguments)]
+pub fn comment_notice(
+    pr: u32,
+    branch: &str,
+    id: u64,
+    author: &str,
+    body: &str,
+    path: Option<&str>,
+    line: Option<u32>,
+    url: &str,
+) -> Notice {
+    let place = match (path, line) {
+        (Some(p), Some(l)) => format!("a review comment on {p}:{l}"),
+        (Some(p), None) => format!("a review comment on {p}"),
+        _ => "a comment".into(),
+    };
+    Notice {
+        kind: NoticeKind::Commented,
+        key: format!("comment:{id}"),
+        pr: Some(pr),
+        url: Some(url.into()),
+        jobs: vec![],
+        text: format!(
+            "[PDT] {author} left {place} on PR #{pr} ({branch}):\n\n{}\n\n{url}\nAddress it if it asks for a change \
+             (then run the checks and push), or answer on the pull request.",
+            quote(body)
+        ),
+    }
+}
+
+/// What a review of PR `pr` is, for the agent. `state`: `approved`, `changes_requested`, `commented`.
+pub fn review_notice(pr: u32, branch: &str, id: u64, author: &str, state: &str, body: &str, url: &str) -> Notice {
+    let what = match state {
+        "approved" => "approved",
+        "changes_requested" => "requested changes on",
+        _ => "reviewed",
+    };
+    let mut text = format!("[PDT] {author} {what} PR #{pr} ({branch}).");
+    if !body.trim().is_empty() {
+        text.push_str(&format!("\n\n{}\n", quote(body)));
+    }
+    text.push_str(&format!("\n{url}"));
+    if state == "changes_requested" {
+        text.push_str("\nMake the changes (the review's line comments come separately), run the checks and push.");
+    }
+    Notice {
+        kind: NoticeKind::Reviewed,
+        key: format!("review:{id}"),
+        pr: Some(pr),
+        url: Some(url.into()),
+        jobs: vec![],
+        text,
+    }
+}
+
 /// The branch's work is in the base: by its PR (`pr`) or as git found it.
 pub fn merged_notice(pr: Option<u32>, branch: &str, base: &str) -> Notice {
     let what = match pr {
@@ -340,6 +412,22 @@ pub fn merge_flag(squash: bool, merge: bool, rebase: bool, queue: bool) -> Optio
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn comment_and_review_notices_quote_and_say_where() {
+        let n =
+            super::comment_notice(12, "pdt/x", 99, "alice", "Use a const.", Some("src/a.rs"), Some(40), "https://c");
+        assert_eq!((n.kind, n.key.as_str()), (super::NoticeKind::Commented, "comment:99"));
+        assert!(n.text.starts_with("[PDT] alice left a review comment on src/a.rs:40 on PR #12 (pdt/x):"));
+        assert!(n.text.contains("Use a const.") && n.text.contains("https://c"));
+        let long = "x".repeat(5000);
+        assert!(super::comment_notice(1, "b", 1, "a", &long, None, None, "u").text.contains("cut short"));
+        let r = super::review_notice(12, "pdt/x", 5, "bob", "changes_requested", "", "https://r");
+        assert_eq!(r.key, "review:5");
+        assert!(r.text.starts_with("[PDT] bob requested changes on PR #12 (pdt/x)."));
+        assert!(r.text.contains("Make the changes"));
+        assert!(!super::review_notice(1, "b", 1, "a", "approved", "LGTM", "u").text.contains("Make the changes"));
+    }
+
     use super::*;
 
     fn run(id: u64, workflow: &str, sha: &str, at: &str, state: CiState) -> CiRun {

@@ -82,6 +82,8 @@ import type { DryRunResult } from './gen/DryRunResult';
 import type { Instantiate } from './gen/Instantiate';
 import type { KindSpec } from './gen/KindSpec';
 import type { LogEvent } from './gen/LogEvent';
+import type { Connection } from './gen/Connection';
+import type { ConnectionInput } from './gen/ConnectionInput';
 import type { NewWorkflow } from './gen/NewWorkflow';
 import type { SaveWorkflow } from './gen/SaveWorkflow';
 import type { Started } from './gen/Started';
@@ -304,7 +306,14 @@ export const api = {
   cancelWorkflowRun: (id: string) => request<WorkflowRunDetail>(`/api/workflow-runs/${enc(id)}/cancel`, { method: 'POST' }),
   answerWorkflowStep: (run: string, step: string, choice: string) =>
     request<WorkflowRunDetail>(`/api/workflow-runs/${enc(run)}/steps/${enc(step)}/answer`, { method: 'POST', body: JSON.stringify({ choice }) }),
-  listLogEvents: (q: { type?: string; limit?: number } = {}) => request<LogEvent[]>(`/api/events${queryString(q)}`),
+  listLogEvents: (q: { type?: string; limit?: number; after?: number } = {}) => request<LogEvent[]>(`/api/events${queryString(q)}`),
+  listConnections: () => request<Connection[]>('/api/connections'),
+  createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
+  updateConnection: (id: string, c: Partial<ConnectionInput>) =>
+    request<Connection>(`/api/connections/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(c) }),
+  deleteConnection: (id: string) => request<void>(`/api/connections/${enc(id)}`, { method: 'DELETE' }),
+  setConnectionSecret: (id: string, secret: string) =>
+    request<Connection>(`/api/connections/${enc(id)}/secret`, { method: 'PUT', body: JSON.stringify({ secret }) }),
   listWorkflowTemplates: () => request<WorkflowTemplate[]>('/api/workflow-templates'),
   getWorkflowTemplate: (id: string) => request<WorkflowTemplate>(`/api/workflow-templates/${enc(id)}`),
   createWorkflowTemplate: (t: TemplateInput) =>
