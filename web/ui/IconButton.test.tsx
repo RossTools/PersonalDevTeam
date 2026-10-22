@@ -41,6 +41,24 @@ describe('IconButton', () => {
     expect(screen.getByRole('button', { name: 'New tab' })).toHaveFocus();
   });
 
+  it('opens its tooltip on the side tooltipPlacement names (top by default)', async () => {
+    const { unmount } = render(
+      <IconButton label="Board">
+        <Icon />
+      </IconButton>,
+    );
+    await userEvent.tab();
+    expect(await screen.findByRole('tooltip')).toHaveAttribute('data-placement', 'top');
+    unmount();
+    render(
+      <IconButton label="Board" tooltipPlacement="right">
+        <Icon />
+      </IconButton>,
+    );
+    await userEvent.tab();
+    expect(await screen.findByRole('tooltip')).toHaveAttribute('data-placement', 'right');
+  });
+
   it('pressed sets aria-pressed for toggles', () => {
     const { rerender } = render(
       <IconButton label="Maximize" pressed={false}>
