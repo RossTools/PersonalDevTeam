@@ -305,7 +305,8 @@ async fn an_old_session_writes_its_journal_and_ends() {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
-        if pm["current"].is_null() {
+        // The session is done before its "(no journal)" is written: wait for both.
+        if pm["current"].is_null() && !pm["sessions"][0]["journal"].is_null() {
             let s = &pm["sessions"][0];
             assert_eq!((s["rotation"].as_str(), s["reason"].as_str()), (Some("done"), Some("age")));
             assert_eq!(s["journal"], "(no journal)");
