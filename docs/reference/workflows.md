@@ -97,6 +97,7 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `command` (`program`, `args`, `cwd: scratch \| project \| attempt \| <full path>`, `input`, `env`, `parse: json \| text`) | `out` |
 | `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
+| `discord.channel.ensure` (`connection`: `discord_bot`, `name`, `category`, `topic`) | `out` |
 | `notify` (`title`, `body`, `level: info \| warning \| error`, `link`) | `out` |
 | `radarr.search` / `sonarr.search` (`connection`, `term`, `limit`) | `out` |
 | `radarr.add` (`connection`, `tmdbId`, `qualityProfile`, `rootFolder`, `search`, `minimumAvailability`) / `sonarr.add` (`connection`, `tvdbId`, `qualityProfile`, `rootFolder`, `monitor`, `search`) | `added`, `exists` |
@@ -144,6 +145,9 @@ notify itself forever).
   zone. `brief.read` returns `{entries, days [{date, markdown}]}`: the index entries on or after `since` and/or the
   newest `last` (default 7 without `since`), oldest first, and their days' Markdown (256 KiB at most). Brief names are
   `[a-z0-9_-]`, dates `YYYY-MM-DD`, so nothing leaves the folder.
+- `discord.channel.ensure` (pdt-api `discord.rs`): makes a text channel through a bot connection unless the server has
+  one called that (names as Discord makes them: lower case, dashes); a new one goes in `category` (made when
+  missing). Output `{channelId, name, created}`.
 - Dry runs never run a command or call out: they report `would` (the Radarr, Sonarr, Plex and MCP reads too;
   `brief.read` reads its files as usual).
 
@@ -234,12 +238,14 @@ PM persona, `{{params.persona}}`, with outcomes `drafted` (it made a draft ticke
 the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
-Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared
-secret), `http` (`url`, `config.auth` and its field; secret: the token or password), `radarr` and `sonarr` (`url`,
-`config.qualityProfile`, `config.rootFolder`; secret: the API key), `plex` (`url`; secret: the token) and `mcp`
-("MCP tools as actions"; `GET/POST /api/connections/{id}/tools`, `409 not_mcp` for another kind). A config field
-holding a connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `radarr`,
-`sonarr`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL; one the PM made has
+`config.webhookId`, `channelId`, `channel` and `bot`), `discord_bot` (secret: the bot token; `config.guildId`, checked
+on save, `applicationId` for the invite link, `pmActs`; `url` empty means Discord's API, tests point it at a fake),
+`webhook` (secret: the shared secret), `http` (`url`, `config.auth` and its field; secret: the token or password),
+`radarr` and `sonarr` (`url`, `config.qualityProfile`, `config.rootFolder`; secret: the API key), `plex` (`url`;
+secret: the token) and `mcp` ("MCP tools as actions"; `GET/POST /api/connections/{id}/tools`, `409 not_mcp` for
+another kind). A config field holding a connection's name says its kind in its schema (`x-connection-kind`:
+`discord_webhook`, `discord_bot`, `webhook`, `radarr`, `sonarr`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned).
 
@@ -274,20 +280,23 @@ holding a connection's name says its kind in its schema (`x-connection-kind`: `d
 ## Web
 
 Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
-has a section per kind (Discord webhooks, Incoming webhooks, HTTP services, Radarr, Sonarr, Plex servers, MCP servers,
-and Other for kinds no action uses), each saying how to set one up, with Add, and each connection's Edit and Delete (a
-missing secret and a webhook's address `/api/hooks/<name>` show on its row; an MCP server's row shows its tools, or why
-listing them failed, with List again). The dialog asks what the kind needs (`kinds.ts`: its address, its settings such
-as Radarr's default quality profile and root folder or an MCP server's transport, program, arguments, environment and
-secret variable) and
+has a section per kind (Discord webhooks, Discord bots, Incoming webhooks, HTTP services, Radarr, Sonarr, Plex
+servers, MCP servers, and Other for kinds no action uses), each saying how to set one up, with Add, and each
+connection's Edit and Delete (a missing secret and a webhook's address `/api/hooks/<name>` show on its row; an MCP
+server's row shows its tools, or why listing them failed, with List again). The dialog asks what the kind needs
+(`kinds.ts`: its address, its settings such as Radarr's default quality profile and root folder or an MCP server's
+transport, program, arguments, environment and secret variable) and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
-Webhook URL); an incoming webhook can generate its secret. The secret is written to the keychain and never shown again
+Webhook URL); an incoming webhook can generate its secret. A Discord bot asks for the server's id, the application's id
+(which makes the invite link with View Channels, Manage Channels, Send Messages and Manage Webhooks) and whether the PM
+changes the server without asking. Saving keeps config keys the dialog doesn't show. The secret is written to the keychain and never shown again
 (empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use
 `ConnectionPicker`: the connections of that kind, and Add… for a new one.
 
 To post to Discord: add a Discord webhook connection (above), then New workflow → a template that posts (New GitHub
 issues to Discord, Health watchdog, …) and pick it as the Discord channel, or add a Post to Discord step and pick it in
-the step's panel.
+the step's panel. Or add a Discord bot connection and ask the PM to set up the channel and its webhook
+([agents.md](agents.md#the-pm-pdt-81)).
 
 Notifications (`web/src/common/useWorkflowNotifications.ts`, in AppShell): follows `pdt.notified` from the page's load
 (`/api/events?type=pdt.notified&after=<seq>` every 2 s) and shows each as a toast ("Open": a ticket key opens the

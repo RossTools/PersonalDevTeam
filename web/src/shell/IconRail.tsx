@@ -18,12 +18,15 @@ export function IconRail({ active, onSelect, onSearch, top, counts }: {
   /** A count badge on a view's item (the Inbox's open items). */
   counts?: Partial<Record<ViewId, number>>;
 }) {
+  // Beside the column on desktop, so it never covers the next button; above the bar on phones.
+  const tooltipPlacement = onSearch ? 'top' : 'right';
   const view = ({ id, label, icon: Icon }: (typeof VIEWS)[number]) => {
     const n = counts?.[id] ?? 0;
     return (
       <IconButton
         key={id}
         label={n > 0 ? `${label} (${n})` : label}
+        tooltipPlacement={tooltipPlacement}
         aria-current={active === id ? 'page' : undefined}
         onClick={() => onSelect(id)}
         className={cn('relative', item, active === id ? 'bg-accent text-foreground' : 'text-muted-foreground')}
@@ -43,7 +46,7 @@ export function IconRail({ active, onSelect, onSearch, top, counts }: {
       {top && <div className="flex justify-center pb-1">{top}</div>}
       {VIEWS.filter((v) => v !== settings && (!onSearch || v.phone !== false)).map(view)}
       {onSearch && (
-        <IconButton label={SEARCH.label} onClick={onSearch} className={cn(item, 'text-muted-foreground')}>
+        <IconButton label={SEARCH.label} tooltipPlacement={tooltipPlacement} onClick={onSearch} className={cn(item, 'text-muted-foreground')}>
           <SEARCH.icon aria-hidden />
         </IconButton>
       )}

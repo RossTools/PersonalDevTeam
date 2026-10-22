@@ -327,6 +327,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(command::Command));
         kinds.push(Box::new(http::Http));
         kinds.push(Box::new(discord::Discord));
+        kinds.push(Box::new(crate::discord::EnsureChannel));
         kinds.push(Box::new(notify::Notify));
         kinds.extend(arr::kinds());
         kinds.push(Box::new(plex::Search));
@@ -374,6 +375,7 @@ mod tests {
         assert_eq!(prop("radarr.add", "connection")["x-connection-kind"], "radarr");
         assert_eq!(prop("sonarr.queue", "connection")["x-connection-kind"], "sonarr");
         assert_eq!(prop("mcp.tool", "server")["x-connection-kind"], "mcp");
+        assert_eq!(prop("discord.channel.ensure", "connection")["x-connection-kind"], "discord_bot");
         assert_eq!(
             prop("http.request", "connection")["x-connection-kind"],
             "any",

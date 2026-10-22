@@ -54,7 +54,8 @@ notifications get 202; `GET`/`DELETE` 405).
   results with `isError`.
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
   `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
-  less the asking tools (`create_ticket`, `edit_ticket`, `send_to_session`: pdt-core `ASKING_TOOLS`), which Claude
+  less the asking tools (`create_ticket`, `edit_ticket`, `send_to_session`, `discord_change`, `discord_webhook`:
+  pdt-core `ASKING_TOOLS`), which Claude
   asks about per call;
   Codex conversations a thread `config` `mcp_servers.pdt` with `http_headers` and `default_tools_approval_mode =
   "approve"`, Codex terminals the same through `-c` with the token in `PDT_MCP_TOKEN` (`bearer_token_env_var`); Devin
@@ -86,11 +87,21 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
   attempt, as the API) and `send_to_session` (through the outbox, "[PDT] From the project manager: …").
+- **Discord** (PDT-98; pdt-api `discord.rs`, pdt-core `discord.rs`). Through a `discord_bot` connection (`connection`:
+  its name, or the only one), with Discord's REST API (no gateway): `discord_get` (the server, its categories,
+  channels and webhooks, each webhook with the connection it is saved as), and the asking tools `discord_change`
+  (`changes`, in order: `create` a channel or category, `rename`, `move` into a category or out, `archive`: move into
+  an Archive category; nothing is deleted; the first failure stops the rest and the result says what was done) and
+  `discord_webhook` (a webhook on `channel`, made first with `createChannel`, saved as a `discord_webhook` connection
+  called `name` that `discord.post` uses; the URL goes to the keychain and never into the result; a taken name is
+  refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
+  line per change (pdt-core `discord::ask_title`).
 - **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
   Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s ticket,
   `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
-  project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`). Codex and Devin can't ask per
-  tool, so there the asking tools are refused unless the project lets the PM act.
+  project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`); for the Discord tools the
+  setting is the bot connection's `config.pmActs` (a Discord server is in no project). Codex and Devin can't ask per
+  tool, so there the asking tools are refused unless the project (or the bot connection) lets the PM act.
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
   may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest

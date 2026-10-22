@@ -571,6 +571,14 @@ fn valid_name(name: &str) -> Result<String, ApiError> {
     Ok(n.to_string())
 }
 
+/// What a kind needs in its config (a Discord bot: its server's id).
+fn check_config(kind: &str, config: &Value) -> Result<(), ApiError> {
+    if kind == pdt_core::discord::DISCORD_BOT {
+        pdt_core::discord::bot_config(config).map_err(invalid)?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn list_connections(State(st): State<AppState>) -> Result<Json<Vec<Connection>>, ApiError> {
     Ok(Json(st.store.list_connections().await?))
 }
@@ -585,10 +593,12 @@ pub(crate) async fn create_connection(
     if !config.is_object() {
         return Err(invalid("config must be an object"));
     }
+    let kind = c.kind.unwrap_or_else(|| "http".into()).trim().to_string();
+    check_config(&kind, &config)?;
     let conn = Connection {
         id: uuid::Uuid::now_v7().to_string(),
         name: valid_name(c.name.as_deref().unwrap_or_default())?,
-        kind: c.kind.unwrap_or_else(|| "http".into()).trim().to_string(),
+        kind,
         url: c.url.unwrap_or_default().trim().to_string(),
         config,
         has_secret: false,
@@ -638,6 +648,7 @@ pub(crate) async fn patch_connection(
         }
         c.config = cfg;
     }
+    check_config(&c.kind, &c.config)?;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(_) => {

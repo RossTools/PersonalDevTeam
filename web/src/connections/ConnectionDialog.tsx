@@ -2,10 +2,12 @@
 // never shown again; leaving it empty when editing keeps the one there is.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, Select, Textarea } from '@ui';
+import { Alert, Button, Dialog, Field, Input, Link, Select, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { AUTH_MODES, CONNECTION_KINDS, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, type ConnectionKind } from './kinds';
+import {
+  AUTH_MODES, CONNECTION_KINDS, discordInviteUrl, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, type ConnectionKind,
+} from './kinds';
 
 export const connectionsKey = ['connections'] as const;
 
@@ -32,15 +34,21 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
   const [settings, setSettings] = useState(() => settingsText(kindOf(kind), connection?.config));
+  const [guildId, setGuildId] = useState(str(connection?.config.guildId));
+  const [appId, setAppId] = useState(str(connection?.config.applicationId));
+  const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
   const k = kindOf(kind);
   const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(id))); };
   const askUrl = !!k?.url || (!!k?.urlWhen && settings[k.urlWhen.key] === k.urlWhen.value);
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
     mutationFn: async () => {
-      const config: Record<string, unknown> = k?.auth
+      const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
-        : fieldsConfig(k?.fields ?? [], settings);
+        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : fieldsConfig(k?.fields ?? [], settings);
+      // Keeps what PDT put there (a webhook the PM made records its channel); a kind with its own settings is what
+      // the form says, so a cleared setting goes.
+      const config = k?.fields ? own : { ...connection?.config, ...own };
       const body = { name: name.trim(), kind, url: askUrl ? url.trim() : '', config };
       let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
       if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
@@ -53,7 +61,8 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
     },
   });
   const needsSecret = !connection?.hasSecret && kind !== 'http' && !k?.secretOptional;
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || url.trim() !== '');
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || url.trim() !== '')
+    && (!k?.discordBot || /^\d+$/.test(guildId.trim()));
   return (
     <Dialog
       open
@@ -97,6 +106,23 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
                   onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />}
           </Field>
         ))}
+        {k?.discordBot && (
+          <>
+            <Field label="Server ID" hint="In Discord, turn on Developer Mode (Settings → Advanced), then right-click the server → Copy Server ID.">
+              <Input aria-label="Server ID" inputMode="numeric" value={guildId} onChange={(e) => setGuildId(e.target.value)} />
+            </Field>
+            <Field label="Application ID" hint="Developer Portal → your application → General Information. Used only to make the invite link.">
+              <Input aria-label="Application ID" inputMode="numeric" value={appId} onChange={(e) => setAppId(e.target.value)} />
+            </Field>
+            {/^\d+$/.test(appId.trim()) && (
+              <Alert tone="info" title="Invite the bot">
+                <Link href={discordInviteUrl(appId.trim())} external className="break-all text-xs">{discordInviteUrl(appId.trim())}</Link>
+                <div className="text-xs text-muted-foreground">Open it, pick the server, and keep the permissions it asks for.</div>
+              </Alert>
+            )}
+            <Switch checked={pmActs} onChange={setPmActs}>The PM changes this server without asking</Switch>
+          </>
+        )}
         {k?.auth && (
           <Field label="Send it as">
             <Select className="w-full" aria-label="Send it as" options={AUTH_MODES} value={auth} onChange={setAuth} />

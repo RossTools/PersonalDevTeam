@@ -281,7 +281,7 @@ struct Def {
 }
 
 /// Tools that change nothing.
-const READ_ONLY: [&str; 11] = [
+const READ_ONLY: [&str; 12] = [
     "get_ticket",
     "catalog_search",
     "catalog_get",
@@ -293,6 +293,7 @@ const READ_ONLY: [&str; 11] = [
     "get_session",
     "list_workflow_runs",
     "search_notes",
+    "discord_get",
 ];
 
 fn schema<T: JsonSchema>() -> Value {
@@ -460,6 +461,29 @@ fn defs() -> Vec<Def> {
                           user confirms each call unless the project lets you act.",
             schema: schema::<SendToSession>,
         },
+        Def {
+            name: "discord_get",
+            title: "Look at the Discord server",
+            description: "The Discord server a bot connection manages: its categories, channels and webhooks (with \
+                          the connection each webhook is saved as), and whether you may change it without asking.",
+            schema: schema::<crate::discord::DiscordGet>,
+        },
+        Def {
+            name: "discord_change",
+            title: "Change the Discord server",
+            description: "Creates, renames, moves or archives (moves into Archive) channels and categories on the \
+                          Discord server, in order. The user confirms each call unless the bot connection lets you \
+                          act.",
+            schema: schema::<crate::discord::DiscordChange>,
+        },
+        Def {
+            name: "discord_webhook",
+            title: "Make a Discord webhook",
+            description: "Makes a webhook on a channel (and the channel, with createChannel) and saves it as a \
+                          discord_webhook connection that discord.post steps use by name. Its URL is never shown. \
+                          The user confirms each call unless the bot connection lets you act.",
+            schema: schema::<crate::discord::DiscordWebhookArgs>,
+        },
     ]
 }
 
@@ -472,7 +496,8 @@ pub(crate) fn infos() -> Vec<ToolInfo> {
             description: d.description.into(),
             input_schema: (d.schema)(),
             annotations: json!({"title": d.title, "readOnlyHint": READ_ONLY.contains(&d.name),
-                                "destructiveHint": d.name == "delete_note", "openWorldHint": false}),
+                                "destructiveHint": d.name == "delete_note",
+                                "openWorldHint": d.name.starts_with("discord_")}),
         })
         .collect()
 }
@@ -838,6 +863,17 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let m = st.store.queue_session_message(&m).await.map_err(store)?;
             Ok(json!({"queued": true, "messageId": m.id}))
         }
+        "discord_get" => crate::discord::get(st, args(a)?).await,
+        "discord_change" => {
+            let a: crate::discord::DiscordChange = args(a)?;
+            confirmable(cx, name, &pdt_core::pm::AskTarget::Connection(a.connection.clone())).await?;
+            crate::discord::change(st, a).await
+        }
+        "discord_webhook" => {
+            let a: crate::discord::DiscordWebhookArgs = args(a)?;
+            confirmable(cx, name, &pdt_core::pm::AskTarget::Connection(a.connection.clone())).await?;
+            crate::discord::webhook_tool(st, a).await
+        }
         other => Err(format!("no tool is called {other}")),
     }
 }
@@ -854,7 +890,7 @@ async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) 
     }
     Err(format!(
         "{tool} needs the user's yes, and PDT can only ask for it in a Claude session. Tell the user what you would \
-         do so they can do it, or ask them to let the PM act in this project's settings."
+         do so they can do it, or ask them to let the PM act (the project's settings, or the Discord bot connection's)."
     ))
 }
 
