@@ -275,6 +275,9 @@ pub struct AttemptEvent {
     pub session_id: Option<String>,
     /// The message PDT tells the agent (`attempt.merged`).
     pub notice: Option<Notice>,
+    /// The ticket's labels when it happened, so a condition can branch on them (`contains` `automerge`).
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 /// `ticket.stage_changed`.
@@ -510,8 +513,10 @@ mod tests {
             finish_delete_branch: false,
             session_id: None,
             notice: None,
+            labels: vec!["automerge".into()],
         };
         let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["labels"], serde_json::json!(["automerge"]));
         assert_eq!((v["attemptId"].as_str(), v["via"].as_str()), (Some("a"), Some("merged_here")));
         assert_eq!(serde_json::from_value::<AttemptEvent>(v).unwrap(), a);
     }

@@ -20,6 +20,7 @@ import { TextView } from './TextView';
 const TYPES: { value: ParamType; label: string }[] = [
   { value: 'string', label: 'Text' }, { value: 'text', label: 'Long text' }, { value: 'number', label: 'Number' },
   { value: 'boolean', label: 'Yes or no' }, { value: 'choice', label: 'Choice' }, { value: 'connection', label: 'Connection' },
+  { value: 'list', label: 'List' },
 ];
 
 /** A default typed into the params table, as the param's type wants it. */
@@ -27,6 +28,7 @@ function typedDefault(type: ParamType, text: string): unknown {
   if (text === '') return undefined;
   if (type === 'number') return Number.isNaN(Number(text)) ? text : Number(text);
   if (type === 'boolean') return text === 'true' ? true : text === 'false' ? false : text;
+  if (type === 'list') return text.split(',').map((t) => t.trim()).filter(Boolean);
   return text;
 }
 
@@ -40,8 +42,8 @@ function ParamsTable({ params, onChange, readOnly }: { params: TemplateParam[]; 
           <Input mono aria-label={`Param ${i + 1} id`} placeholder="id" value={p.id} readOnly={readOnly} onChange={(e) => set(i, { id: e.target.value.trim() })} />
           <Input aria-label={`Param ${i + 1} title`} placeholder="Title" value={p.title} readOnly={readOnly} onChange={(e) => set(i, { title: e.target.value })} />
           <Select aria-label={`Param ${i + 1} type`} options={TYPES} value={p.type} disabled={readOnly} onChange={(type) => set(i, { type })} />
-          <Input aria-label={`Param ${i + 1} default`} placeholder={p.type === 'choice' ? 'Choices, comma-separated' : 'Default'} readOnly={readOnly}
-            value={p.type === 'choice' ? (p.choices ?? []).join(', ') : p.default === undefined || p.default === null ? '' : String(p.default)}
+          <Input aria-label={`Param ${i + 1} default`} placeholder={p.type === 'choice' ? 'Choices, comma-separated' : p.type === 'list' ? 'Default, comma-separated' : 'Default'} readOnly={readOnly}
+            value={p.type === 'choice' ? (p.choices ?? []).join(', ') : p.default === undefined || p.default === null ? '' : Array.isArray(p.default) ? p.default.join(', ') : String(p.default)}
             onChange={(e) => (p.type === 'choice'
               ? set(i, { choices: e.target.value.split(',').map((c) => c.trim()).filter(Boolean) })
               : set(i, { default: typedDefault(p.type, e.target.value) }))} />

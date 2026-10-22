@@ -5,7 +5,7 @@ Spec: docs/superpowers/specs/2026-10-21-pm-persona-design.md. One PR.
 1. **Core (TDD)**: `ProjectKind::Host` and `Project::has_repo`; `ProjectPolicy.pm_acts`; persona tools (the new PM
    tools in `ALL_TOOLS`, `ASKING_TOOLS`, `PM_TOOLS`) and the built-in PM persona; `pm.rs`: briefing renderer, PM
    instructions, rotation rule, the project an asking tool's input targets.
-2. **Store**: migration `0025_pm.sql` (`pm_notes` + FTS5 table and triggers, `pm_sessions`,
+2. **Store**: migration `0026_pm.sql` (`pm_notes` + FTS5 table and triggers, `pm_sessions`,
    `project_settings.pm_acts`); the host project made in `Store::open` and left out of `list_projects`; `pm.rs`
    (notes CRUD and search, journal, PM session rotation rows).
 3. **Agents**: `McpServer.ask` (left out of `--allowedTools`) and `McpServer.only_pdt_tools` (`--tools ""`).

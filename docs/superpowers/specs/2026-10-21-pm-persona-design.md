@@ -127,7 +127,7 @@ repo, project, persona) runs it on PDT-80's `github.issue.opened`: outcomes `dra
 
 - pdt-core `pm.rs` (briefing renderer, instructions, rotation rule, tool sets), `persona.rs` (PM built-in, new tools,
   `ASKING_TOOLS`), `project.rs` (`Host`), `policy.rs` (`PmActs`).
-- pdt-store migration `0025_pm.sql` (`pm_notes`, `pm_notes_fts`, `pm_sessions`, `project_settings.pm_acts`);
+- pdt-store migration `0026_pm.sql` (`pm_notes`, `pm_notes_fts`, `pm_sessions`, `project_settings.pm_acts`);
   `pm.rs`.
 - pdt-api `pm.rs` (routes, sessions, briefing data, rotation, auto-answer), `mcp/tools.rs` (the new tools);
   pdt-agents `mcp.rs` (asking tools out of `--allowedTools`, `--tools ""`).

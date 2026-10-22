@@ -62,6 +62,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub auto_start: Option<AutoStart>,
+    /// Tickets with any of these labels skip `requireApproval` ([] clears them).
+    #[serde(default)]
+    #[ts(optional)]
+    pub approval_exempt_labels: Option<Vec<String>>,
     /// The PM may create and edit tickets and message sessions here without asking (PDT-81).
     #[serde(default)]
     #[ts(optional)]
@@ -129,11 +133,17 @@ pub(crate) async fn put_settings(
         }
         Some(n) => Some(n),
     };
+    let approval_exempt_labels = match &input.approval_exempt_labels {
+        None => current.policy.approval_exempt_labels,
+        Some(l) => pdt_core::ticket::normalize_labels(l)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?,
+    };
     let policy = ProjectPolicy {
         merge_by: input.merge_by.unwrap_or(current.policy.merge_by),
         require_approval: input.require_approval.unwrap_or(current.policy.require_approval),
         max_running_attempts,
         auto_start: input.auto_start.unwrap_or(current.policy.auto_start),
+        approval_exempt_labels,
         pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
     };
     let settings = ProjectSettings {

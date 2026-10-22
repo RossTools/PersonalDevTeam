@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Field, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
+import { Alert, Button, Field, Input, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
@@ -305,6 +305,15 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
   const p = settings?.policy;
   const done = { onSuccess: () => setSaved(true) };
   const cap = p?.maxRunningAttempts ? String(p.maxRunningAttempts) : NO_CAP;
+  // Typed text until it is saved (the panel re-renders on every poll, so it is never overwritten while typed).
+  const storedExempt = (p?.approvalExemptLabels ?? []).join(', ');
+  const [exempt, setExempt] = useState<string | null>(null);
+  const saveExempt = () => {
+    if (save.isPending) return;
+    if (exempt === null || exempt === storedExempt) return setExempt(null);
+    const labels = exempt.split(',').map((l) => l.trim()).filter(Boolean);
+    save.mutate({ approvalExemptLabels: labels }, { onSuccess: () => { setExempt(null); setSaved(true); } });
+  };
   return (
     <Section
       label="Pipeline and policies"
@@ -339,6 +348,23 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
               onChange={(on) => save.mutate({ requireApproval: on }, done)}
             />
           </SettingsRow>
+          {p?.requireApproval && (
+            <SettingsRow
+              label="Labels that merge without approval"
+              description="A ticket with any of these labels may merge automatically without it. Comma-separated."
+            >
+              <Input
+                aria-label="Labels that merge without approval"
+                className="w-72 max-w-full"
+                placeholder="e.g. automerge"
+                value={exempt ?? storedExempt}
+                disabled={!settings}
+                onChange={(e) => setExempt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveExempt(); }}
+                onBlur={saveExempt}
+              />
+            </SettingsRow>
+          )}
         </>
       )}
       <SettingsRow

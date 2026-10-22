@@ -18,6 +18,10 @@ agentPermissionMode?: string, mergeBy?: MergeBy, requireApproval?: boolean,
  */
 maxRunningAttempts?: number, autoStart?: AutoStart, 
 /**
+ * Tickets with any of these labels skip `requireApproval` ([] clears them).
+ */
+approvalExemptLabels?: Array<string>, 
+/**
  * The PM may create and edit tickets and message sessions here without asking (PDT-81).
  */
 pmActs?: boolean, };

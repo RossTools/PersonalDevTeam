@@ -58,6 +58,18 @@ async fn ticket(env: &Env, title: &str) -> String {
     t["id"].as_str().unwrap().to_string()
 }
 
+async fn labelled(env: &Env, title: &str, labels: &[&str]) -> String {
+    let (s, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": title, "labels": labels})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    t["id"].as_str().unwrap().to_string()
+}
+
 async fn get_ticket(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1
 }
@@ -155,7 +167,11 @@ async fn timeline(env: &Env, id: &str) -> Value {
 
 /// Commits a change on the attempt's branch (what a real Coder would have done).
 fn commit_in(worktree: &Path) {
-    std::fs::write(worktree.join("b.txt"), "built\n").unwrap();
+    commit_file(worktree, "b.txt");
+}
+
+fn commit_file(worktree: &Path, name: &str) {
+    std::fs::write(worktree.join(name), "built\n").unwrap();
     git(worktree, &["add", "."]);
     git(worktree, &["commit", "-m", "build", "-q"]);
 }
@@ -226,7 +242,8 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     let (_, s) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
     assert_eq!(
         s["policy"],
-        json!({"mergeBy": "user", "requireApproval": true, "maxRunningAttempts": 1, "autoStart": "off", "pmActs": false})
+        json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
+               "autoStart": "off", "pmActs": false})
     );
 
     let (s, started) =
@@ -405,4 +422,91 @@ async fn a_rejected_tickets_coder_hears_why_once_without_the_whole_task_again() 
     }
     let all = agent_says(&env, &coder).await.join("\n");
     assert_eq!(all.matches("wrong colour").count(), 1, "{all}");
+}
+
+/// Starts `t` with no session and commits a change on its branch; the attempt.
+async fn start_with_a_commit(env: &Env, t: &str, file: &str) -> Value {
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    commit_file(&env.repo.join(".worktrees").join(started["attempt"]["branch"].as_str().unwrap()), file);
+    started["attempt"].clone()
+}
+
+async fn until_done(env: &Env, t: &str) -> Value {
+    tick_until(env, "the ticket done", || async {
+        let v = get_ticket(env, t).await;
+        (v["stage"] == "done").then_some(v)
+    })
+    .await
+}
+
+#[tokio::test]
+async fn labelled_tickets_merge_once_qa_passes_and_the_rest_wait_at_accept() {
+    let env = setup().await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": "automerge, trivial"}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    // The approval guard stays on for every ticket but the exempt ones.
+    settings(&env, json!({"requireApproval": true, "approvalExemptLabels": ["AutoMerge", "trivial"]})).await;
+    let (_, s) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
+    assert_eq!(s["policy"]["approvalExemptLabels"], json!(["automerge", "trivial"]), "labels are normalised");
+
+    // Labelled: no Inbox item, the run merges it and finishes the ticket.
+    let auto = labelled(&env, "Fix a typo", &["automerge"]).await;
+    start_with_a_commit(&env, &auto, "typo.txt").await;
+    until_done(&env, &auto).await;
+    assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != auto.as_str()), "no Inbox item for it");
+    assert_eq!(outcomes(&timeline(&env, &auto).await), ["submitted", "approved", "pass"]);
+
+    // Unlabelled: Accept waits in the Inbox, and an automated merge before it is refused for want of approval.
+    let other = labelled(&env, "A real change", &["docs"]).await;
+    let attempt = start_with_a_commit(&env, &other, "change.txt").await;
+    let accept = inbox_item(&env, "gate", &other).await;
+    assert_eq!(accept["group"], "accept");
+    let id = attempt["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("approval_required")), "{v}");
+    answer(&env, &accept, json!({"choice": "merge"})).await;
+    until_done(&env, &other).await;
+    let log = std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["ls-tree", "--name-only", "main"])
+        .output()
+        .unwrap();
+    let files = String::from_utf8_lossy(&log.stdout);
+    assert!(files.contains("typo.txt") && files.contains("change.txt"), "both merged into main: {files}");
+}
+
+#[tokio::test]
+async fn without_the_exemption_a_labelled_ticket_still_needs_approval_to_merge() {
+    let env = setup().await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["automerge"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    settings(&env, json!({"requireApproval": true})).await;
+    let t = labelled(&env, "Fix a typo", &["automerge"]).await;
+    start_with_a_commit(&env, &t, "typo.txt").await;
+    // Accept is skipped, but Merge refuses: the run waits for someone to merge.
+    tick_until(&env, "the run waiting for the merge", || async {
+        let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={t}"), None).await;
+        let r = runs.as_array().unwrap().iter().find(|r| r["status"] == "waiting").cloned()?;
+        let (_, run) = call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["id"].as_str().unwrap()), None).await;
+        run["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["nodeId"] == "wait_merge" && s["status"] == "waiting")
+            .then_some(run)
+    })
+    .await;
+    assert!(inbox(&env).await.iter().all(|i| i["kind"] != "gate"), "no Accept item");
+    assert_ne!(get_ticket(&env, &t).await["stage"], "done");
 }

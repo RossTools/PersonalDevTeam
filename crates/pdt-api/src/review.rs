@@ -559,8 +559,10 @@ pub(crate) async fn merge_attempt(
     let st = st.clone();
     let info = load_attempt(&st, id).await?;
     let policy = st.store.get_project_settings(&info.project_id).await?.policy;
-    let approved = merger == Merger::Automated && policy.require_approval && approved_at_head(&st, &info).await?;
-    if let Err(refusal) = may_merge(&policy, merger, approved) {
+    let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
+    let labels = ticket.as_ref().map(|t| t.labels.as_slice()).unwrap_or_default();
+    let approved = merger == Merger::Automated && policy.needs_approval(labels) && approved_at_head(&st, &info).await?;
+    if let Err(refusal) = may_merge(&policy, merger, approved, labels) {
         return Err(conflict(refusal.code(), refusal.message(&policy)));
     }
     let p = preview(&st, &info).await?;
@@ -586,7 +588,6 @@ pub(crate) async fn merge_attempt(
         crate::github::refresh_attempt(&st, &info).await;
         return Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None });
     }
-    let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
     let (key, title) = ticket.map(|t| (t.key, t.title)).unwrap_or_default();
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
