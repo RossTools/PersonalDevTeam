@@ -93,7 +93,8 @@ async fn new_session(st: &AppState, first: Option<String>) -> Result<Session, Ap
             agent: Some(p.setup.agent),
             bypass_permissions: mode == PermissionMode::Bypass,
             size: TerminalSize { cols: 120, rows: 30 },
-            initial_prompt: first,
+            // Sent once the session is a PM session (below): its first turn may end at once.
+            initial_prompt: None,
             mode: SessionMode::Conversation,
             model: p.setup.model.clone(),
             permission_mode: Some(mode),
@@ -107,6 +108,9 @@ async fn new_session(st: &AppState, first: Option<String>) -> Result<Session, Ap
     };
     let s = crate::sessions::create_session(st, req).await?;
     st.store.insert_pm_session(&s.id, s.created_at).await?;
+    if let Some(text) = first {
+        crate::conversations::send_user_message(st, &s, &text).await?;
+    }
     Ok(s)
 }
 
