@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const attempt = (over: Partial<AttemptSummary> = {}): AttemptSummary => ({
   id: 'a1', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: 'w1', state: 'active', createdAt: 1, endedAt: null,
-  lastHead: null, workspaceId: null, pr: null, ...over,
+  lastHead: null, workspaceId: null, ci: null, pr: null, ...over,
 });
 
 const sessions = [

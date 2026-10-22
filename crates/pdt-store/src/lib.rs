@@ -19,7 +19,7 @@ pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::NewEvent;
 pub use host::ProjectSettings;
 pub use pm::{NoteFilter, PmSessionRow};
-pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt, TicketError};
+pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt, StoredExternalLink, TicketError};
 pub use workflows::{RUN_RETENTION_MS, RunFilter, SessionMessage};
 pub use workspaces::DeleteWorkspace;
 

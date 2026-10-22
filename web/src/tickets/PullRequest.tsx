@@ -98,3 +98,25 @@ export function PrDetails({ pr, attemptMerged = false, className }: {
     </div>
   );
 }
+
+/** CI of a branch without a pull request (Buildkite builds branches), for a board card. */
+export function CiBadge({ ci }: { ci: CiStatus }) {
+  const jobs = failedJobs(ci);
+  return (
+    <Badge tone={CI_TONE[ci.state]} title={jobs.length ? `Failed: ${jobs.join(', ')}` : undefined} className="shrink-0">
+      {CI_LABEL[ci.state]}
+    </Badge>
+  );
+}
+
+/** CI of the attempt's branch without a pull request: its state, what failed, and the build. */
+export function CiDetails({ ci, className }: { ci: CiStatus; className?: string }) {
+  const jobs = failedJobs(ci);
+  return (
+    <div className={cn('flex min-w-0 flex-wrap items-center gap-1.5 text-xs', className)} aria-label="CI">
+      <Badge tone={CI_TONE[ci.state]}>{CI_LABEL[ci.state]}</Badge>
+      {jobs.length > 0 && <span className="text-meta text-muted-foreground">Failed: {jobs.join(', ')}</span>}
+      {ci.url && <Link href={ci.url} external className="text-meta">Build</Link>}
+    </div>
+  );
+}

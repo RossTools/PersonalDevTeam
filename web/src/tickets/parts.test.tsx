@@ -14,7 +14,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const progress = { total: 3, done: 1, merged: 0, review: 0, progress: 1, todo: 0, backlog: 1, segments: ['done', 'progress', 'backlog'] as const };
 const active: AttemptSummary = {
-  id: 'a2', branch: 'b', baseBranch: 'main', worktreeId: 'w2', state: 'active', createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr: null,
+  id: 'a2', branch: 'b', baseBranch: 'main', worktreeId: 'w2', state: 'active', createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, ci: null, pr: null,
 };
 const parentRef = { id: 't1', key: 'ALP-1', title: 'Phase 5' };
 const parts = [

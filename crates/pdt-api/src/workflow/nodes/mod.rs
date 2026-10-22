@@ -1,6 +1,7 @@
 //! The built-in node kinds, one module each (Phase 7a spec §4.4).
 
 pub mod agent;
+pub mod buildkite;
 pub mod call;
 pub mod command;
 pub mod condition;
@@ -8,6 +9,7 @@ pub mod discord;
 pub mod end;
 pub mod gate;
 pub mod http;
+pub mod jira;
 pub mod merge;
 pub mod notify;
 pub mod schedule;

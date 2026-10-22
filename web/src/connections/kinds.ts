@@ -19,6 +19,13 @@ export interface ConnectionKind {
   generate?: boolean;
   /** Asks how the secret is sent (an HTTP service). */
   auth?: boolean;
+  /** The address's example and hint, when it isn't a plain base URL. */
+  urlPlaceholder?: string;
+  urlHint?: string;
+  /** The address may be left empty (then PDT uses the service's own). */
+  urlOptional?: boolean;
+  /** Settings of its own, kept in the connection's config. */
+  fields?: { key: string; label: string; placeholder?: string; hint?: string }[];
   /** Asks for a Discord server and its bot's application (a Discord bot). */
   discordBot?: boolean;
 }
@@ -55,6 +62,33 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     secretLabel: 'Shared secret',
     secretHint: 'The sender sends it as Authorization: Bearer <secret>, or signs with it like GitHub (X-Hub-Signature-256).',
     generate: true,
+  },
+  {
+    id: 'jira',
+    label: 'Jira Cloud',
+    plural: 'Jira Cloud sites',
+    setup: 'A Jira Cloud site a project links to in its settings: issues assigned to you become tickets, and Done moves the issue.',
+    description: 'A Jira Cloud site (projects link to it; Jira actions).',
+    url: true,
+    urlPlaceholder: 'https://your-site.atlassian.net',
+    urlHint: 'Your Jira Cloud site.',
+    fields: [{ key: 'email', label: 'Email', placeholder: 'you@work.com', hint: 'The Atlassian account’s email; PDT signs in as it.' }],
+    secretLabel: 'API token',
+    secretHint: 'At id.atlassian.com → Security → Create and manage API tokens → Create API token.',
+  },
+  {
+    id: 'buildkite',
+    label: 'Buildkite',
+    plural: 'Buildkite organizations',
+    setup: 'A Buildkite organization whose pipelines build a project’s branches (named in the project’s settings).',
+    description: 'A Buildkite organization (CI of tickets’ branches; Buildkite actions).',
+    url: true,
+    urlOptional: true,
+    urlPlaceholder: 'https://api.buildkite.com',
+    urlHint: 'Leave empty for Buildkite’s own API.',
+    fields: [{ key: 'org', label: 'Organization', placeholder: 'acme', hint: 'Its slug, as in buildkite.com/<organization>.' }],
+    secretLabel: 'API token',
+    secretHint: 'In Buildkite: Personal Settings → API Access Tokens → New API Access Token, with Read Builds (and Write Builds to retry or start builds).',
   },
   {
     id: 'http',

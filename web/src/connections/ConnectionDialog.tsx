@@ -26,6 +26,8 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
+  const [fields, setFields] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(connection?.config ?? {}).map(([key, v]) => [key, str(v)])));
   const [guildId, setGuildId] = useState(str(connection?.config.guildId));
   const [appId, setAppId] = useState(str(connection?.config.applicationId));
   const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
@@ -36,6 +38,7 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
         : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : {};
+      for (const f of k?.fields ?? []) own[f.key] = (fields[f.key] ?? '').trim();
       // Keeps what PDT put there (a webhook the PM made records its channel).
       const config = { ...connection?.config, ...own };
       const body = { name: name.trim(), kind, url: k?.url ? url.trim() : '', config };
@@ -50,8 +53,9 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
     },
   });
   const needsSecret = !connection?.hasSecret && kind !== 'http';
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || url.trim() !== '')
-    && (!k?.discordBot || /^\d+$/.test(guildId.trim()));
+  const fieldsFilled = (k?.fields ?? []).every((f) => (fields[f.key] ?? '').trim() !== '');
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || k.urlOptional || url.trim() !== '')
+    && (!k?.discordBot || /^\d+$/.test(guildId.trim())) && fieldsFilled;
   return (
     <Dialog
       open
@@ -76,10 +80,15 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
           <Input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {k?.url && (
-          <Field label="Address" hint="The service's base URL; a request's path is added to it.">
-            <Input aria-label="Address" placeholder="http://192.168.1.10:7878/api" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <Field label="Address" hint={k.urlHint ?? "The service's base URL; a request's path is added to it."}>
+            <Input aria-label="Address" placeholder={k.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
         )}
+        {k?.fields?.map((f) => (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            <Input aria-label={f.label} placeholder={f.placeholder} value={fields[f.key] ?? ''} onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })} />
+          </Field>
+        ))}
         {k?.discordBot && (
           <>
             <Field label="Server ID" hint="In Discord, turn on Developer Mode (Settings → Advanced), then right-click the server → Copy Server ID.">

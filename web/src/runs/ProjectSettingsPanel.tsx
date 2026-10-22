@@ -16,6 +16,7 @@ import type { Project } from '../api/gen/Project';
 import type { ProjectSettingsInput } from '../api/gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
 import { CodeViewer } from '../files/LazyCodeViewer';
+import { ConnectionPicker } from '../connections/ConnectionPicker';
 
 /** The Select's value for "no override: use the host setting" (its empty value would show the placeholder). */
 const HOST = 'host';
@@ -82,6 +83,7 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
       <Agents project={project} settings={settings.data} />
       {!personal && <Merging project={project} settings={settings.data} />}
       <Pipeline project={project} settings={settings.data} personal={personal} />
+      {!personal && <Integrations project={project} settings={settings.data} />}
     </>
   );
 }
@@ -405,6 +407,79 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
         />
       </SettingsRow>
     </Section>
+  );
+}
+
+interface JiraForm { connection: string; scope: string; done: string }
+interface BuildkiteForm { connection: string; pipelines: string }
+
+/**
+ * The project's Jira project and Buildkite pipelines (Phase 7e): issues assigned to you become tickets, Done moves the
+ * issue, and the branches' builds show as CI. Kept on this host, never in the repository. Typed values stay until
+ * saved (the panel re-renders on every poll).
+ */
+function Integrations({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
+  const save = useSaveProjectSettings(project, settings);
+  const [saved, setSaved] = useSavedNote();
+  const j = settings?.jira;
+  const b = settings?.buildkite;
+  const [jira, setJira] = useState<JiraForm | null>(null);
+  const [bk, setBk] = useState<BuildkiteForm | null>(null);
+  const jv: JiraForm = jira ?? { connection: j?.connection ?? '', scope: j?.scope ?? '', done: j?.done ?? 'Done' };
+  const bv: BuildkiteForm = bk ?? { connection: b?.connection ?? '', pipelines: (b?.pipelines ?? []).join(', ') };
+  const dirty = jira !== null || bk !== null;
+  const done = { onSuccess: () => { setJira(null); setBk(null); setSaved(true); } };
+  const submit = () => {
+    if (!dirty || save.isPending) return;
+    save.mutate({
+      ...(jira ? { jira: { connection: jv.connection, scope: jv.scope, done: jv.done } } : {}),
+      ...(bk ? { buildkite: { connection: bv.connection, pipelines: bv.pipelines.split(',').map((p) => p.trim()).filter(Boolean) } } : {}),
+    }, done);
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <Section
+        label="Jira and Buildkite"
+        description="For a project whose issues are in Jira and whose CI is Buildkite. Kept on this host, never written to the repository."
+        footer={
+          <>
+            {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
+            <SaveFooter label="Save Jira and Buildkite" dirty={dirty} saved={saved} pending={save.isPending} />
+          </>
+        }
+      >
+        <SettingsRow
+          label="Jira"
+          description="Issues assigned to you in this scope become Draft tickets (checked every minute), and moving a linked ticket to Done moves its issue."
+        >
+          <div className="flex w-80 max-w-full flex-col gap-1">
+            <ConnectionPicker kind="jira" label="Jira connection" value={jv.connection} disabled={!settings} onChange={(c) => setJira({ ...jv, connection: c })} />
+            {j && <Button size="sm" variant="secondary" onClick={() => save.mutate({ jira: { connection: '' } }, done)}>Unlink Jira</Button>}
+          </div>
+        </SettingsRow>
+        {jv.connection && (
+          <>
+            <SettingsRow label="Jira issues" description="JQL for this project's issues. Empty: every issue the account can see.">
+              <Input aria-label="Jira issues" className="w-80 max-w-full" placeholder="project = ABC" value={jv.scope} onChange={(e) => setJira({ ...jv, scope: e.target.value })} />
+            </SettingsRow>
+            <SettingsRow label="Done in Jira" description="The transition (or status) a ticket moved to Done moves its issue to.">
+              <Input aria-label="Done in Jira" className="w-56 max-w-full" value={jv.done} onChange={(e) => setJira({ ...jv, done: e.target.value })} />
+            </SettingsRow>
+          </>
+        )}
+        <SettingsRow label="Buildkite" description="Builds of the tickets' branches show as their CI, and failures are told to the agent like GitHub's.">
+          <div className="flex w-80 max-w-full flex-col gap-1">
+            <ConnectionPicker kind="buildkite" label="Buildkite connection" value={bv.connection} disabled={!settings} onChange={(c) => setBk({ ...bv, connection: c })} />
+            {b && <Button size="sm" variant="secondary" onClick={() => save.mutate({ buildkite: { connection: '' } }, done)}>Unlink Buildkite</Button>}
+          </div>
+        </SettingsRow>
+        {bv.connection && (
+          <SettingsRow label="Pipelines" description="The pipelines (slugs) that build this project's branches. Comma-separated.">
+            <Input aria-label="Pipelines" className="w-80 max-w-full" placeholder="my-app, my-app-e2e" value={bv.pipelines} onChange={(e) => setBk({ ...bv, pipelines: e.target.value })} />
+          </SettingsRow>
+        )}
+      </Section>
+    </form>
   );
 }
 
