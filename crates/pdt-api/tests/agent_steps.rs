@@ -324,9 +324,14 @@ async fn questions_nudges_stalls_and_take_over_go_through_the_inbox() {
         tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
             .await;
     let session = stalled["sessionId"].as_str().unwrap().to_string();
-    let said = agent_says(&env, &session).await;
+    // The echo of the nudge can land in the session's events just after the stall shows (slow machines).
+    let said = tick_until(&env, "the nudge's echo", || async {
+        let said = agent_says(&env, &session).await;
+        said.iter().any(|m| m.contains("You ended your turn without `submit_outcome`")).then(|| json!(said))
+    })
+    .await;
+    let said: Vec<String> = serde_json::from_value(said).unwrap();
     assert!(said.iter().any(|m| m.contains("The user answered your questions") && m.contains("a.txt")), "{said:?}");
-    assert!(said.iter().any(|m| m.contains("You ended your turn without `submit_outcome`")), "{said:?}");
     let choices: Vec<&str> = stalled["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
     assert_eq!(choices, ["nudge", "outcome:approved", "outcome:changes_requested"]);
     let (s, v) = call(
