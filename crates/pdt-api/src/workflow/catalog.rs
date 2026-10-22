@@ -299,6 +299,12 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(http::Http));
         kinds.push(Box::new(discord::Discord));
         kinds.push(Box::new(notify::Notify));
+        kinds.extend(arr::kinds());
+        kinds.push(Box::new(plex::Search));
+        kinds.push(Box::new(plex::RecentlyAdded));
+        kinds.push(Box::new(plex::Refresh));
+        kinds.push(Box::new(brief::Archive));
+        kinds.push(Box::new(brief::Read));
         kinds.push(Box::new(merge::Merge));
         Catalog::new(kinds)
     })
