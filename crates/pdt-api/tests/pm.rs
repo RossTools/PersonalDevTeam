@@ -370,12 +370,15 @@ async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
 
 // ---- Discord (PDT-98) ----
 
+/// One request the fake Discord got: method, path, JSON body, Authorization.
+type Seen = (String, String, Value, String);
+
 /// A fake Discord: one server (`42`, "Home") with `#general`; records every request (method, path, body, auth).
 #[derive(Clone, Default)]
 struct FakeDiscord {
     channels: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
     hooks: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
-    seen: std::sync::Arc<std::sync::Mutex<Vec<(String, String, Value, String)>>>,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<Seen>>>,
 }
 
 impl FakeDiscord {
