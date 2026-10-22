@@ -105,7 +105,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   old (`AppState.pm_rotate_age_ms`), PDT queues "[PDT] This PM session is ending…" through the outbox (rotation
   `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). The user's next
   message starts a new session.
-- **As a workflow step.** The PM persona can be an `agent` node's persona (triage); its asking tools still ask.
+- **As a workflow step.** The PM persona can be an `agent` node's persona; its asking tools still ask (the approval
+  waits in the Inbox's Approvals). The built-in template **Triage new GitHub issues** (`builtin:issue-triage`) runs it
+  on each new issue of a repository: it drafts a ticket in the chosen project, marks a duplicate, or leaves it.
 
 ## Activity
 

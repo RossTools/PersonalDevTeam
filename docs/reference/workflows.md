@@ -170,7 +170,10 @@ with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, rea
 Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, the
 Pipeline (below), the Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a schedule, Discord
 only on a change, the first check silent; Brief follow-ups and Email processing: a script on a schedule whose
-`{"message": …}` goes to Discord), and the built-in workflows. A required text param with no default is checked as
+`{"message": …}` goes to Discord), Triage new GitHub issues (PDT-81: `github.issue.opened` → an `agent` step of the
+PM persona, `{{params.persona}}`, with outcomes `drafted` (it made a draft ticket in `{{params.project}}` with
+`create_ticket`, which asks first unless the project lets the PM act), `duplicate` and `ignored`, the last quiet), and
+the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
 Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared

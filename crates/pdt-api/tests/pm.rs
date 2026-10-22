@@ -17,6 +17,7 @@ struct Env {
     app: axum::Router,
     state: AppState,
     project: String,
+    gh: std::sync::Arc<pdt_github::testing::FakeGithub>,
     _tmp: tempfile::TempDir,
 }
 
@@ -36,6 +37,8 @@ async fn setup(rotate_age_ms: Option<i64>) -> Env {
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
+    let gh = std::sync::Arc::new(pdt_github::testing::FakeGithub::default());
+    state.github = gh.clone();
     if let Some(ms) = rotate_age_ms {
         state.pm_rotate_age_ms = ms;
     }
@@ -61,7 +64,7 @@ async fn setup(rotate_age_ms: Option<i64>) -> Env {
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
-    Env { app, state, project, _tmp: tmp }
+    Env { app, state, project, gh, _tmp: tmp }
 }
 
 async fn start_pm(env: &Env, text: &str) -> String {
@@ -289,4 +292,78 @@ async fn notes_are_checked_and_edited() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (s, _) = call(&env.app, "DELETE", &format!("/api/pm/notes/{id}"), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+fn issue(n: u64, title: &str, body: &str) -> pdt_github::Issue {
+    pdt_github::Issue {
+        number: n,
+        title: title.into(),
+        body: body.into(),
+        url: format!("https://github.com/o/r/issues/{n}"),
+        author: "al".into(),
+        labels: vec!["bug".into()],
+        created_at: "2026-10-20T00:00:00Z".into(),
+    }
+}
+
+#[tokio::test]
+async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
+    let env = setup(None).await;
+    let (s, w) = call(
+        &env.app,
+        "POST",
+        "/api/workflow-templates/builtin:issue-triage/instantiate",
+        Some(json!({"params": {"repo": "o/r", "project": "PX"}, "scope": "project", "projectId": env.project})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let wf = w["id"].as_str().unwrap().to_string();
+    call(&env.app, "PATCH", &format!("/api/workflows/{wf}"), Some(json!({"enabled": true}))).await;
+    // The first look is the baseline; the next new issue starts a run.
+    env.gh.set_issues("o/r", vec![issue(1, "Old", "")]);
+    pdt_api::refresh_issues(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    env.gh.set_issues("o/r", vec![issue(2, "Login fails on Safari", "It spins forever."), issue(1, "Old", "")]);
+    pdt_api::refresh_issues(&env.state).await;
+
+    // The PM's step session starts with the issue and where its ticket goes.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let session = loop {
+        pdt_api::run_workflows(&env.state).await;
+        let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
+        if let Some(s) = list.as_array().unwrap().iter().find(|s| s["persona"]["name"] == "PM") {
+            break s["id"].as_str().unwrap().to_string();
+        }
+        assert!(Instant::now() < deadline, "no triage session");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let said = wait_said(&env, &session, 1).await;
+    let first = events(&env, &session).await;
+    let prompt = first.iter().find(|e| e["event"]["kind"] == "user_message").unwrap()["event"]["text"].clone();
+    let prompt = prompt.as_str().unwrap();
+    assert!(prompt.contains("#2 \"Login fails on Safari\"") && prompt.contains("It spins forever."), "{prompt}");
+    assert!(prompt.contains("project PX") && prompt.contains("submit_outcome"), "{prompt}");
+
+    // Drafting the ticket asks first; then the outcome ends the run by `drafted`.
+    let n = said.len();
+    send(&env, &session, r#"mcp: create_ticket {"project": "PX", "title": "Login fails on Safari"}"#).await;
+    let req = open_request(&env, &session).await;
+    let url = format!("/api/sessions/{session}/requests/{req}");
+    call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert!(wait_said(&env, &session, n + 1).await.pop().unwrap().contains("\"created\": true"));
+    assert_eq!(ticket_titles(&env).await, ["Fix the login", "Login fails on Safari"]);
+    send(&env, &session, r#"mcp: submit_outcome {"outcome": "drafted", "summary": "Drafted PX-2."}"#).await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        pdt_api::run_workflows(&env.state).await;
+        let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?workflow={wf}"), None).await;
+        let r = &runs[0];
+        if r["status"] == "succeeded" {
+            assert_eq!(r["output"]["summary"], "Drafted PX-2.", "{r}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the run never ended: {r}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
 }

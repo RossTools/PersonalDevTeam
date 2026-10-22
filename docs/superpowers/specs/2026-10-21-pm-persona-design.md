@@ -110,9 +110,10 @@ kept in step by triggers. API: `GET /api/pm/notes?q=&project=&kind=`, `POST /api
 ## 6. As a workflow step
 
 The built-in **PM** persona (Claude, permission `ask`, the PM tool set plus `submit_outcome`) can be an `agent` node's
-persona: e.g. a triage step with outcomes `draft_ticket`, `ignore`, `ask_user`. A step session runs in the step's
-project as any persona does (7b §4.2); asking tools still ask (the approval waits in the Inbox's Approvals). A triage
-template waits for the GitHub issue trigger (PDT-80).
+persona. A step session runs in the step's project as any persona does (7b §4.2); asking tools still ask (the approval
+waits in the Inbox's Approvals). The built-in template **Triage new GitHub issues** (`builtin:issue-triage`; params
+repo, project, persona) runs it on PDT-80's `github.issue.opened`: outcomes `drafted` (a draft ticket made with
+`create_ticket`), `duplicate`, `ignored`; `ask_user` when only the user can decide.
 
 ## 7. Web
 
@@ -134,5 +135,5 @@ template waits for the GitHub issue trigger (PDT-80).
 
 ## 9. Out of scope
 
-Connections as PM tools (PDT-86), talking to the PM over Discord, a triage template (PDT-80), limits on non-Claude
-agents' own tools (PDT-90).
+Connections as PM tools (PDT-86), Discord server management (PDT-98), talking to the PM over Discord, limits on
+non-Claude agents' own tools (PDT-90).
