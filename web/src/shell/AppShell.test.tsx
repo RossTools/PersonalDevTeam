@@ -680,6 +680,17 @@ describe('settings page', () => {
     expect(within(dialog).getByRole('radio', { name: 'Clone URL' })).toBeInTheDocument();
   });
 
+  it('has a Connections page beside This host', async () => {
+    stubWorkspaces({ 'GET /api/connections': [] });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
+    await userEvent.click(within(nav).getByRole('row', { name: /Connections/ }));
+    const main = screen.getByRole('main');
+    expect(await within(main).findByRole('heading', { name: 'Connections' })).toBeInTheDocument();
+    expect(await within(main).findByRole('region', { name: 'Discord webhooks' })).toBeInTheDocument();
+  });
+
   it('lays a project page out in sections', async () => {
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
     renderWithQuery(<AppShell />);

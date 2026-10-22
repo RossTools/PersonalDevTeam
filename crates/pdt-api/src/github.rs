@@ -1,7 +1,9 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR through `gh` every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and logs what is
 //! news as events (Phase 7a): `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
-//! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent.
+//! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent. While an
+//! enabled workflow listens for them, it also reads an open PR's comments and reviews (Phase 7e): `pr.commented`,
+//! `pr.reviewed`, after a silent first look (the baseline in `host_settings`).
 
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{
@@ -28,6 +30,140 @@ pub(crate) struct PrWatch {
     jobs: HashMap<(u64, u32), Vec<String>>,
     /// The last error per project, so a broken `gh` is logged once rather than every minute.
     errors: HashMap<String, String>,
+    /// The login `gh` is authenticated as (comments by it are the user's own).
+    viewer: Option<String>,
+}
+
+/// The newest comment and review ids a PR's feedback was read up to (`sensor.pr_comments.<attempt>`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct FeedbackSeen {
+    comment: u64,
+    review_comment: u64,
+    review: u64,
+}
+
+fn feedback_key(attempt_id: &str) -> String {
+    format!("sensor.pr_comments.{attempt_id}")
+}
+
+/// Whether an enabled workflow has a trigger of one of `kinds` (so a sensor has someone to tell).
+pub(crate) async fn workflows_listen(st: &AppState, kinds: &[&str]) -> bool {
+    for wf in st.store.enabled_workflows().await.unwrap_or_default() {
+        if let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await
+            && doc.nodes.iter().any(|n| kinds.contains(&n.kind.as_str()))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `pr.commented` / `pr.reviewed` events of the feedback newer than `seen`, and how far it was read. Without
+/// `seen` (the first look) nothing is news: it only records the baseline.
+pub(crate) fn feedback_events(
+    info: &AttemptInfo,
+    pr: &PullRequestStatus,
+    comments: &[pdt_github::PrComment],
+    reviews: &[pdt_github::PrReview],
+    viewer: Option<&str>,
+    seen: Option<FeedbackSeen>,
+) -> (Vec<NewLogEvent>, FeedbackSeen) {
+    let max = |it: &mut dyn Iterator<Item = u64>, floor: u64| it.max().unwrap_or(0).max(floor);
+    let base = seen.unwrap_or_default();
+    let now = FeedbackSeen {
+        comment: max(&mut comments.iter().filter(|c| !c.in_review).map(|c| c.id), base.comment),
+        review_comment: max(&mut comments.iter().filter(|c| c.in_review).map(|c| c.id), base.review_comment),
+        review: max(&mut reviews.iter().map(|r| r.id), base.review),
+    };
+    let Some(seen) = seen else { return (vec![], now) };
+    let a = attempt_ref(info);
+    let by_owner = |author: &str| viewer.is_some_and(|v| v.eq_ignore_ascii_case(author));
+    let branch = &info.attempt.branch;
+    let mut out = vec![];
+    for c in comments {
+        let floor = if c.in_review { seen.review_comment } else { seen.comment };
+        if c.id <= floor {
+            continue;
+        }
+        let notice = pdt_core::pr::comment_notice(
+            pr.number,
+            branch,
+            c.id,
+            &c.author,
+            &c.body,
+            c.path.as_deref(),
+            c.line,
+            &c.url,
+        );
+        let e = ev::PrCommented {
+            attempt: a.clone(),
+            pr: pr.number,
+            url: c.url.clone(),
+            comment_id: c.id,
+            author: c.author.clone(),
+            body: c.body.clone(),
+            path: c.path.clone(),
+            line: c.line,
+            in_review: c.in_review,
+            by_owner: by_owner(&c.author),
+            is_bot: c.is_bot,
+            notice,
+        };
+        out.push(NewLogEvent::new(ev::PR_COMMENTED, format!("{}:comment:{}", a.attempt_id, c.id), "pr_poller", e));
+    }
+    for r in reviews.iter().filter(|r| r.id > seen.review) {
+        let notice = pdt_core::pr::review_notice(pr.number, branch, r.id, &r.author, &r.state, &r.body, &r.url);
+        let e = ev::PrReviewed {
+            attempt: a.clone(),
+            pr: pr.number,
+            url: r.url.clone(),
+            review_id: r.id,
+            author: r.author.clone(),
+            state: r.state.clone(),
+            body: r.body.clone(),
+            by_owner: by_owner(&r.author),
+            is_bot: r.is_bot,
+            notice,
+        };
+        out.push(NewLogEvent::new(ev::PR_REVIEWED, format!("{}:review:{}", a.attempt_id, r.id), "pr_poller", e));
+    }
+    (out, now)
+}
+
+/// Reads an open PR's comments and reviews and logs what is new.
+async fn refresh_feedback(st: &AppState, info: &AttemptInfo, repo: &str, pr: &PullRequestStatus) {
+    let key = feedback_key(&info.attempt.id);
+    let seen: Option<FeedbackSeen> =
+        st.store.get_host_value(&key).await.ok().flatten().and_then(|v| serde_json::from_value(v).ok());
+    let viewer = watch(st).viewer.clone();
+    let (gh, repo_s, n) = (st.github.clone(), repo.to_string(), pr.number);
+    let read = tokio::task::spawn_blocking(move || {
+        let viewer = match viewer {
+            Some(v) => Some(v),
+            None => gh.viewer_login().ok(),
+        };
+        let comments = gh.pr_comments(&repo_s, n)?;
+        let reviews = gh.pr_reviews(&repo_s, n)?;
+        Ok::<_, GhError>((viewer, comments, reviews))
+    })
+    .await;
+    let (viewer, comments, reviews) = match read {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return tracing::debug!(repo, error = %e, "could not read a pull request's comments"),
+        Err(e) => return tracing::warn!(error = %e, "the PR comments task failed"),
+    };
+    if viewer.is_some() {
+        watch(st).viewer = viewer.clone();
+    }
+    let (events, now) = feedback_events(info, pr, &comments, &reviews, viewer.as_deref(), seen);
+    for e in events {
+        if let Err(x) = st.store.emit_event(&e, now_ms()).await {
+            tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request comment");
+        }
+    }
+    if seen != Some(now) {
+        let _ = st.store.put_host_value(&key, &serde_json::to_value(now).unwrap_or_default()).await;
+    }
 }
 
 pub(crate) type SharedPrWatch = Arc<std::sync::Mutex<PrWatch>>;
@@ -193,6 +329,9 @@ async fn refresh_one(
                 tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event");
             }
         }
+        if now.state == PrState::Open && workflows_listen(st, &[ev::PR_COMMENTED, ev::PR_REVIEWED]).await {
+            refresh_feedback(st, info, repo, &now).await;
+        }
     }
 }
 
@@ -262,6 +401,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
             NoticeKind::QueueLeft => NewLogEvent::new(ev::PR_QUEUE_LEFT, k, "pr_poller", pr_event(n)),
             NoticeKind::Merged => NewLogEvent::new(ev::PR_MERGED, k, "pr_poller", pr_event(n)),
             NoticeKind::Behind => NewLogEvent::new(ev::PR_BEHIND, k, "pr_poller", pr_event(n)),
+            NoticeKind::Commented | NoticeKind::Reviewed => continue,
         };
         out.push(e);
     }

@@ -20,6 +20,12 @@ pub(crate) fn caller(headers: &HeaderMap) -> Caller {
 }
 
 pub(crate) async fn guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    // Webhooks come from machines with no user identity; their secret authenticates them (hooks.rs). Never over Funnel.
+    if req.uri().path().starts_with(crate::hooks::HOOKS_PREFIX)
+        && !req.headers().contains_key("tailscale-funnel-request")
+    {
+        return next.run(req).await;
+    }
     match check(&caller(req.headers()), st.owner().as_deref()) {
         Ok(()) => next.run(req).await,
         Err(denied) => {

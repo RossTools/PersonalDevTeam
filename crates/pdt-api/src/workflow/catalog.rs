@@ -2,7 +2,7 @@
 //! [`catalog`]. The catalog serves `GET /api/workflows/catalog`, checks configs for validation, and runs nodes.
 
 use crate::routes::AppState;
-use pdt_core::workflow::api::{Run, Step, Workflow};
+use pdt_core::workflow::api::{LogEvent, Run, Scope, Step, Workflow};
 use pdt_core::workflow::doc::{ERROR_PORT, Node};
 use pdt_core::workflow::validate::{KindFacts, Kinds};
 use schemars::JsonSchema;
@@ -131,6 +131,12 @@ pub trait NodeKind: Send + Sync {
         None
     }
 
+    /// Whether this trigger node (its current `config`) fires for `event`, before the shared `projects` and `where`
+    /// checks. Default: the event is in the workflow's scope. Schedules and webhooks fire for their own events only.
+    fn accepts(&self, _config: &Value, wf: &Workflow, _node: &Node, event: &LogEvent) -> bool {
+        in_scope(wf, event)
+    }
+
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>>;
 
     /// What the node would do, changing nothing. Kinds without side effects run as usual.
@@ -141,6 +147,16 @@ pub trait NodeKind: Send + Sync {
     /// How long one execution may take unless the node says.
     fn default_timeout_ms(&self) -> u64 {
         5 * 60 * 1000
+    }
+}
+
+/// Whether an event is in a workflow's scope: a project workflow's own project, any for a host one, none for a
+/// personal one.
+pub fn in_scope(wf: &Workflow, event: &LogEvent) -> bool {
+    match wf.scope {
+        Scope::Project => event.project_id.is_some() && event.project_id == wf.project_id,
+        Scope::Host => true,
+        Scope::Personal => event.project_id.is_none(),
     }
 }
 
@@ -204,11 +220,6 @@ impl Catalog {
         self.kinds.iter().map(|(s, _)| s.clone()).collect()
     }
 
-    #[cfg(test)]
-    pub fn is_trigger(&self, id: &str) -> bool {
-        self.spec(id).is_some_and(|s| s.category == Category::Trigger)
-    }
-
     /// The ports a node has with its config (the kind's titles where it names them; `error` left out). None for an
     /// unknown kind.
     pub fn node_ports(&self, node: &Node) -> Option<Vec<PortSpec>> {
@@ -269,6 +280,9 @@ pub fn catalog() -> &'static Catalog {
         let mut kinds: Vec<Box<dyn NodeKind>> = vec![];
         kinds.extend(trigger::event_triggers());
         kinds.push(Box::new(trigger::Manual));
+        kinds.push(Box::new(schedule::ScheduleTrigger));
+        kinds.push(Box::new(webhook::WebhookTrigger));
+        kinds.push(Box::new(crate::github_issues::IssueOpened));
         kinds.push(Box::new(condition::ConditionKind));
         kinds.push(Box::new(switch::Switch));
         kinds.push(Box::new(gate::Gate));
@@ -281,6 +295,10 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(ticket::Move));
         kinds.push(Box::new(ticket::Comment));
         kinds.push(Box::new(agent::Agent));
+        kinds.push(Box::new(command::Command));
+        kinds.push(Box::new(http::Http));
+        kinds.push(Box::new(discord::Discord));
+        kinds.push(Box::new(notify::Notify));
         kinds.push(Box::new(merge::Merge));
         Catalog::new(kinds)
     })
@@ -299,9 +317,29 @@ mod tests {
             assert!(s.config_schema.is_object(), "{}", s.id);
             assert!(!s.title.is_empty() && !s.description.is_empty(), "{}", s.id);
         }
-        for t in pdt_core::workflow::events::EVENT_TYPES {
-            assert!(catalog().is_trigger(t.id), "{} has a trigger", t.id);
+        use pdt_core::workflow::events::{EVENT_TYPES, NOT_TRIGGERS};
+        for t in EVENT_TYPES.iter().filter(|t| !NOT_TRIGGERS.contains(&t.id)) {
+            let kinds: Vec<_> = catalog()
+                .specs()
+                .into_iter()
+                .filter(|s| catalog().get(&s.id).unwrap().event_type() == Some(t.id))
+                .collect();
+            assert_eq!(kinds.len(), 1, "{} has one trigger", t.id);
+            assert_eq!(kinds[0].category, Category::Trigger);
         }
+    }
+
+    #[test]
+    fn connection_fields_say_their_kind() {
+        let prop = |kind: &str, field: &str| catalog().spec(kind).unwrap().config_schema["properties"][field].clone();
+        assert_eq!(prop("discord.post", "connection")["x-connection-kind"], "discord_webhook");
+        assert_eq!(prop("webhook", "hook")["x-connection-kind"], "webhook");
+        assert_eq!(
+            prop("http.request", "connection")["x-connection-kind"],
+            "any",
+            "{}",
+            prop("http.request", "connection")
+        );
     }
 
     #[test]

@@ -363,6 +363,11 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
         .merge(crate::workflow::routes::router())
         .route(
+            "/hooks/{name}",
+            axum::routing::post(crate::hooks::receive)
+                .layer(axum::extract::DefaultBodyLimit::max(crate::hooks::MAX_BODY)),
+        )
+        .route(
             "/mcp",
             axum::routing::post(crate::mcp::post).get(crate::mcp::not_allowed).delete(crate::mcp::not_allowed),
         )

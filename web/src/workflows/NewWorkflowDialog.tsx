@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Dialog, Field, Input, Select, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
+import { ConnectionPicker } from '../connections/ConnectionPicker';
 import type { Project } from '../api/gen/Project';
 import type { Scope } from '../api/gen/Scope';
 import type { TemplateParam } from '../api/gen/TemplateParam';
@@ -23,7 +24,8 @@ export function ParamsForm({ params, values, onChange }: { params: TemplateParam
         const label = <>{p.title}{p.required && <span className="text-muted-foreground"> *</span>}</>;
         return (
           <Field key={p.id} label={label} hint={p.description || undefined}>
-            {p.type === 'boolean' ? <Switch checked={v === true} onChange={(on) => set(p.id, on)} />
+            {p.type === 'connection' ? <ConnectionPicker label={p.title} kind={p.connectionKind} value={String(v ?? '')} onChange={(n) => set(p.id, n)} />
+              : p.type === 'boolean' ? <Switch checked={v === true} onChange={(on) => set(p.id, on)} />
               : p.type === 'choice' ? <Select options={(p.choices ?? []).map((c) => ({ value: c, label: c }))} value={String(v ?? '')} onChange={(c) => set(p.id, c)} />
                 : p.type === 'text' ? <Textarea rows={3} value={String(v ?? '')} onChange={(e) => set(p.id, e.target.value)} />
                   : <Input type={p.type === 'number' ? 'number' : 'text'} value={String(v ?? '')}

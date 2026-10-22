@@ -41,6 +41,9 @@ impl NodeKind for StateSet {
         if c.key.trim().is_empty() {
             return Err("key is empty".into());
         }
+        if c.key.starts_with(super::schedule::RESERVED_STATE) {
+            return Err(format!("keys starting {} are PDT's own", super::schedule::RESERVED_STATE));
+        }
         Ok(())
     }
 

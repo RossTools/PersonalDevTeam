@@ -218,6 +218,7 @@ interface PrEventData { notice?: NoticeKind; pr?: number | null; jobs?: string[]
 
 const NOTICE_TITLE: Record<NoticeKind, string> = {
   ci_failed: 'CI failed', conflict: 'Conflicts with the base branch', queue_left: 'Left the merge queue', merged: 'Merged', behind: 'Behind its base branch',
+  commented: 'Pull request comment', reviewed: 'Pull request review',
 };
 
 function prEventTitle(d: PrEventData | null): string {

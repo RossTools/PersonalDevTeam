@@ -1,14 +1,16 @@
-# Workflows, events, the engine, the builder, agent steps and the pipeline (Phases 7a–7d)
+# Workflows, events, the engine, the builder, agent steps, the pipeline and integrations (Phases 7a–7e)
 
 Specs: docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md, 2026-10-20-phase-7d-builder-design.md, for
-agent steps, personas, pdt-mcp and the Inbox, 2026-10-20-phase-7b-agent-steps-design.md, and for the Pipeline
-template, policies, Board stages and scheduling, 2026-10-20-phase-7c-pipeline-design.md (vision:
-2026-10-20-workflows-and-pm-vision.md).
+agent steps, personas, pdt-mcp and the Inbox, 2026-10-20-phase-7b-agent-steps-design.md, for the Pipeline
+template, policies, Board stages and scheduling, 2026-10-20-phase-7c-pipeline-design.md, and for schedules,
+webhooks, GitHub issues and PR comments, command, HTTP, Discord and notify, 2026-10-20-phase-7e-integrations-design.md
+(vision: 2026-10-20-workflows-and-pm-vision.md).
 Code: pdt-core `workflow/` (documents, references, conditions, validation, diffs, event types, templates, API
 records, what reaches an agent, agent steps), `persona.rs`, `inbox.rs`; pdt-store `event_log.rs`, `workflows.rs`,
 `personas.rs` and `inbox.rs` (migrations 0021–0024); pdt-api `workflow/` (catalog, engine, nodes, outbox,
-built-ins, templates and the Pipeline, repo files, routes, agent steps), `personas.rs`, `inbox.rs`, `scheduler.rs`
-and `finish.rs` (`ticket.finish`); pdt-core `policy.rs`;
+built-ins, templates and the Pipeline, repo files, routes, agent steps), `personas.rs`, `inbox.rs`, `scheduler.rs`,
+`finish.rs` (`ticket.finish`), `github_issues.rs` (the issues sensor and its trigger) and `hooks.rs` (incoming
+webhooks); pdt-core `policy.rs`;
 web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 
 ## Event log
@@ -21,7 +23,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `ticket.stage_changed`, `ticket.commented`, `attempt.started`, `attempt.merged` (key `<attempt>:merged`, with `via`
   `detected` / `merged_here` / `closed`, `pr`, `finishOnMerge`, `finishDeleteBranch` and the merged `notice`),
   `attempt.abandoned` and `ticket.overlap_found`, in the same transaction; an agent step's `outcome` timeline event
-  becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Payload types: pdt-core
+  becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e
+  adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
+  `schedule.fired`, webhooks' `webhook.received` and `notify`'s `pdt.notified` ("Sensors and webhooks"). Payload types: pdt-core
   `workflow/events.rs` (`EVENT_TYPES`). CI events carry `provider` (`github_actions`).
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
@@ -56,6 +60,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     through the API or a workflow's) with an active attempt → `session.send`. A note given with a gate's choice is the
     user's comment too, but carries `workflowId` and is skipped: that run passes it on itself.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
+  - **PR comments to the agent** (off, 7e): `pr.commented` and `pr.reviewed` (not `byOwner`, not `isBot`; reviews
+    not `approved` and with a body) → `session.send` (`{{trigger.notice.text}}`, dedupe on the notice key, `timeline:
+    pr`).
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
   are told.
@@ -81,13 +88,39 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`; Phase 7c) | `merged`, `queued`, `refused` |
+| `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
+| `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
+| `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |
+| `command` (`program`, `args`, `cwd: scratch \| project \| attempt \| <full path>`, `input`, `env`, `parse: json \| text`) | `out` |
+| `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
+| `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
+| `notify` (`title`, `body`, `level: info \| warning \| error`, `link`) | `out` |
 
 Every node also has an `error` port: taken once its retries are spent, if it has an edge; otherwise the run fails.
+
+A trigger kind decides which events it fires for (`NodeKind::accepts`; default: the event is in the workflow's scope),
+then the engine checks the shared `projects` and `where`. `schedule` and `webhook` fire only for their own events, and
+`github.issue.opened` with `repos` for those repos whatever the scope. `pdt.notified` has no trigger (a workflow could
+notify itself forever).
+
+- `command` runs the program without a shell (`sh -c` / `cmd /c` for one), `input` as JSON on stdin, `env` added to
+  pdtd's environment, in a scratch folder (`<data dir>/workflow-scratch/<run>`, removed when the run ends), the run's
+  project's main checkout, its attempt's worktree or a full path. stdout (up to 64 KiB) is parsed as JSON into `json`
+  (empty: null); `{"quiet": true}` makes the step quiet. A non-zero exit or unparseable stdout fails it (with the end
+  of stderr). The time limit kills the process tree (its own process group on Unix, `taskkill /T` on Windows).
+- `http.request`: `url` may be relative to the connection's URL; the connection's secret is sent per its `config.auth`
+  (`bearer` default, `basic` with `username`, `header` with `header`, `query` with `param`, `none`), and only to an
+  address at or below the connection's URL. Output `{status, ok, headers, body}` (JSON when the response is, else
+  text; 1 MiB). A status outside `expect` is an error.
+- `discord.post`: the connection's secret is the webhook URL. Content over 2000 characters goes as several messages
+  (cut at line breaks), embeds with the first; mentions are never parsed; a 429 waits `retry_after` (up to 4 tries).
+  Output `{messageIds}`.
+- Dry runs never run a command or call out: they report `would`.
 
 ## Engine
 
 - `run_workflows` (pdtd every 2 s; tests call it; serialized by `AppState.engine_lock`): installs the built-ins once,
-  matches unprocessed events to enabled workflows' triggers (scope, `projects`, `where`) and starts a run per match
+  emits due schedules ("Sensors and webhooks"), matches unprocessed events to enabled workflows' triggers (scope, `projects`, `where`) and starts a run per match
   unless its run key (default `<node>:<event id>`) already ran, wakes steps waiting for that event, advances runnable
   runs, delivers the outbox, and advances again.
 - `workflow_runs` / `workflow_steps`: a run starts with its trigger's step; each step is written before and after it
@@ -102,7 +135,8 @@ Every node also has an `error` port: taken once its retries are spent, if it has
   `/steps/{step}/answer {choice, text?}` (a waiting gate; the user's `text` goes on the run's ticket as their comment,
 naming the workflow, run and choice, so "Ticket comments to the agent" forwards it, and is in the gate's output). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
   `GET /api/workflow-runs/{id}` (with steps).
-- Per-workflow state: `workflow_state`, `GET /api/workflows/{id}/state`.
+- Per-workflow state: `workflow_state`, `GET /api/workflows/{id}/state`. Keys starting `_pdt.` are PDT's own (a
+  schedule's last slot): `{{state}}` leaves them out and `state.set` refuses them.
 
 ## Outbox (`session.send`)
 
@@ -129,17 +163,70 @@ gate's choices, a switch's cases; `error` not listed). The builder calls it afte
 Templates: `GET/POST /api/workflow-templates`, `GET/PUT/DELETE /api/workflow-templates/{id}`,
 `POST /api/workflow-templates/{id}/instantiate {params, name, scope, projectId}` (a new workflow, always disabled).
 A template is `{name, description, params, doc}`; a param `{id, title, description, type: string | text | number |
-boolean | choice, choices, default, required}`; the document uses `{{params.<id>}}` (a string that is exactly one
+boolean | choice | connection, choices, default, required, connectionKind}` (`connection`: a connection's name, of
+`connectionKind` when given); the document uses `{{params.<id>}}` (a string that is exactly one
 reference takes the value with its type; other references stay). Saving checks the params and validates the document
 with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, read-only, `409 builtin_template`):
 Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, the
-Pipeline (below), and the four built-in workflows. The user's are in `workflow_templates`.
+Pipeline (below), the Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a schedule, Discord
+only on a change, the first check silent; Brief follow-ups and Email processing: a script on a schedule whose
+`{"message": …}` goes to Discord), and the built-in workflows. A required text param with no default is checked as
+the reference itself. The user's are in `workflow_templates`.
 
-Connections: `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared
+secret) and `http` (`url`, `config.auth` and its field; secret: the token or password). A config field holding a
+connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `any`), so forms
+offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned).
 
+## Sensors and webhooks (Phase 7e)
+
+- **Schedules** (`workflow/nodes/schedule.rs`, pdt-core `workflow/schedule.rs`): each engine tick, every enabled
+  workflow's `schedule` node's latest slot (`every` aligned to the epoch, at least 1 minute; or a 5-field cron in
+  `timezone`, default the host's) is compared with its mark in state (`_pdt.schedule.<node>`): a node seen for the first
+  time, or a workflow saved or enabled since the mark, takes the slot as its baseline; a newer slot emits
+  `schedule.fired` (key `schedule:<workflow>:<node>:<slot>`, payload `workflowId`, `nodeId`, `slot`, `slotIso`,
+  `date`). A slot more than 2 minutes old (pdtd was down) fires only with `catchUp` (default on), and only the latest.
+- **GitHub issues** (`github_issues.rs` `refresh_issues`, pdtd every 60 s): the repos enabled `github.issue.opened`
+  nodes name, else the GitHub repos of the projects in their scope, through `gh api …/issues` (pull requests left out).
+  The newest number per repo is kept in `host_settings` (`sensor.github_issues.<repo>`); the first look only records
+  it. Event key `github:<repo>:issue:<n>`, payload `repo`, `number`, `title`, `body`, `url`, `author`, `labels`,
+  `createdAt`, `projectId` (when it is a project's repo).
+- **PR comments and reviews** (`github.rs`): while an enabled workflow has a `pr.commented` or `pr.reviewed` trigger,
+  the PR poller also reads each active attempt's open PR's conversation comments, review comments and reviews. The
+  newest ids are kept per attempt (`sensor.pr_comments.<attempt>`); the first look only records them. Keys
+  `<attempt>:comment:<id>` / `<attempt>:review:<id>`; payloads carry `author`, `body` (`path`, `line`, `inReview`; a
+  review's `state`), `byOwner` (gh's own login), `isBot` and a `notice` (`commented` / `reviewed`).
+- **Webhooks** (`hooks.rs`): `POST /api/hooks/<name>` for a `webhook` connection; its secret as `Authorization: Bearer`
+  or GitHub's `X-Hub-Signature-256` (constant-time check). `404` no such hook, `409 webhook_no_secret`, `401
+  bad_signature`; body up to 1 MiB. The identity guard lets `/api/hooks/*` through (tailnet machines have no user
+  login) except over Funnel; the Host guard still applies. `webhook.received` (key `webhook:<name>:<delivery>` from
+  `X-GitHub-Delivery`, `Idempotency-Key` or `X-Request-Id`, else new; a repeat answers `200 {duplicate: true}`, else
+  `202 {eventId}`), payload `hook`, `method`, `query`, `headers` (`content-type`, `user-agent`, `x-*` but the
+  signature), `body` (JSON, else text).
+- **Notify** (`workflow/nodes/notify.rs`): `pdt.notified` (`title`, `body`, `level`, `link`, `workflowId`,
+  `workflowName`, `runId`; key per step).
+
 ## Web
+
+Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
+has a section per kind (Discord webhooks, Incoming webhooks, HTTP services, and Other for kinds no action uses), each
+saying how to set one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address
+`/api/hooks/<name>` show on its row). The dialog asks what the kind needs and
+says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
+Webhook URL); an incoming webhook can generate its secret. The secret is written to the keychain and never shown again
+(empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use
+`ConnectionPicker`: the connections of that kind, and Add… for a new one.
+
+To post to Discord: add a Discord webhook connection (above), then New workflow → a template that posts (New GitHub
+issues to Discord, Health watchdog, …) and pick it as the Discord channel, or add a Post to Discord step and pick it in
+the step's panel.
+
+Notifications (`web/src/common/useWorkflowNotifications.ts`, in AppShell): follows `pdt.notified` from the page's load
+(`/api/events?type=pdt.notified&after=<seq>` every 2 s) and shows each as a toast ("Open": a ticket key opens the
+ticket, else the URL); with Settings → This host → Notifications → Desktop notifications on (per browser, after the
+browser's permission), also as a system notification while the page is hidden.
 
 The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings → This host → Workflows:
 

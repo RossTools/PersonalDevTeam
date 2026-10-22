@@ -7,7 +7,9 @@ mod files;
 mod finish;
 mod folders;
 mod github;
+mod github_issues;
 pub mod guides;
+mod hooks;
 mod host;
 mod host_guard;
 mod identity_guard;
@@ -43,6 +45,7 @@ pub use conversations::{
 };
 pub use error::ApiErrorBody;
 pub use github::refresh_prs;
+pub use github_issues::refresh_issues;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, apply_remote_access};
