@@ -19,6 +19,8 @@ export interface ConnectionKind {
   generate?: boolean;
   /** Asks how the secret is sent (an HTTP service). */
   auth?: boolean;
+  /** Asks for a Discord server and its bot's application (a Discord bot). */
+  discordBot?: boolean;
 }
 
 export const CONNECTION_KINDS: ConnectionKind[] = [
@@ -31,6 +33,17 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     url: false,
     secretLabel: 'Webhook URL',
     secretHint: 'In Discord: the channel’s settings (Edit Channel) → Integrations → Webhooks → New Webhook → Copy Webhook URL. It looks like https://discord.com/api/webhooks/…',
+  },
+  {
+    id: 'discord_bot',
+    label: 'Discord bot',
+    plural: 'Discord bots',
+    setup: 'A bot that lets the PM manage a Discord server: make and organise channels, and make the webhooks workflows post to. In the Discord Developer Portal, make an application, then under Bot reset its token and copy it. Invite the bot to your server with the link this dialog shows (Manage Channels, Manage Webhooks, Send Messages).',
+    description: 'Lets the PM manage a Discord server’s channels and webhooks.',
+    url: false,
+    secretLabel: 'Bot token',
+    secretHint: 'Discord Developer Portal → your application → Bot → Reset Token → Copy.',
+    discordBot: true,
   },
   {
     id: 'webhook',
@@ -67,6 +80,13 @@ export const AUTH_MODES = [
   { value: 'query', label: 'A query parameter' },
   { value: 'none', label: 'Not sent' },
 ];
+
+/** What a Discord bot needs: View Channels, Manage Channels, Send Messages, Manage Webhooks. */
+export const DISCORD_BOT_PERMISSIONS = String(1024 + 16 + 2048 + 536870912);
+
+/** The link that adds an application's bot to a server with the permissions PDT needs. */
+export const discordInviteUrl = (applicationId: string) =>
+  `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(applicationId)}&scope=bot&permissions=${DISCORD_BOT_PERMISSIONS}`;
 
 /** A random secret for an incoming webhook. */
 export function randomSecret(): string {
