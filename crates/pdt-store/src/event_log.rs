@@ -169,6 +169,16 @@ pub(crate) async fn mirror_timeline(
     let null = serde_json::Value::Null;
     let data = data.unwrap_or(&null);
     let s = |k: &str| data.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let jira_key = if kind == K::Moved {
+        let k: Option<(String,)> =
+            sqlx::query_as("SELECT key FROM ticket_links_external WHERE ticket_id = ? AND system = 'jira' LIMIT 1")
+                .bind(ticket_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        k.map(|(k,)| k)
+    } else {
+        None
+    };
     let event = match kind {
         K::Moved => NewLogEvent::new(
             ev::TICKET_STAGE_CHANGED,
@@ -181,6 +191,7 @@ pub(crate) async fn mirror_timeline(
                 from: s("from"),
                 to: s("to"),
                 actor: actor.as_str().into(),
+                jira_key,
             },
         ),
         K::Comment => {

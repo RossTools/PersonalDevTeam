@@ -607,6 +607,7 @@ mod tests {
             last_head: None,
             workspace_id: None,
             pr: Some(pr),
+            ci: None,
         });
         t.agent = Some(TicketAgent {
             persona: Some("Coder".into()),

@@ -110,6 +110,20 @@ impl CiStatus {
     pub fn failed(&self) -> impl Iterator<Item = &CiRun> {
         self.runs.iter().filter(|r| r.state == CiState::Failed)
     }
+
+    /// Two providers' CI on one commit as one (GitHub Actions and Buildkite): their runs together, rolled up the same
+    /// way.
+    pub fn merge(a: Option<CiStatus>, b: Option<CiStatus>) -> Option<CiStatus> {
+        match (a, b) {
+            (Some(mut a), Some(b)) => {
+                a.runs.extend(b.runs);
+                a.state = a.runs.iter().map(|r| r.state).max().unwrap_or(a.state);
+                a.url = a.runs.iter().find(|r| r.state == a.state).map(|r| r.url.clone()).unwrap_or_default();
+                Some(a)
+            }
+            (a, b) => a.or(b),
+        }
+    }
 }
 
 /// An attempt's pull request, as pdtd last saw it.

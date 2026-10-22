@@ -32,6 +32,8 @@ pub(crate) struct PrWatch {
     errors: HashMap<String, String>,
     /// The login `gh` is authenticated as (comments by it are the user's own).
     viewer: Option<String>,
+    /// Buildkite CI of each active attempt's head (Phase 7e), shown with its PR's CI or on its own.
+    buildkite: HashMap<String, CiStatus>,
 }
 
 /// The newest comment and review ids a PR's feedback was read up to (`sensor.pr_comments.<attempt>`).
@@ -174,6 +176,29 @@ fn watch(st: &AppState) -> std::sync::MutexGuard<'_, PrWatch> {
 
 fn decorate_attempt(w: &PrWatch, a: &mut AttemptSummary) {
     a.pr = w.by_attempt.get(&a.id).cloned();
+    let bk = w.buildkite.get(&a.id).cloned();
+    match a.pr.as_mut().filter(|p| p.state == PrState::Open) {
+        // On the PR's head: one badge for both providers.
+        Some(pr) if bk.as_ref().is_some_and(|b| b.runs.iter().all(|r| r.head_sha == pr.head_sha)) => {
+            pr.ci = CiStatus::merge(pr.ci.take(), bk);
+        }
+        Some(_) => {}
+        None => a.ci = bk,
+    }
+}
+
+/// Keeps (or with None, drops) an attempt's Buildkite CI.
+pub(crate) fn set_buildkite(st: &AppState, attempt_id: &str, ci: Option<CiStatus>) {
+    let mut w = watch(st);
+    match ci {
+        Some(c) => w.buildkite.insert(attempt_id.to_string(), c),
+        None => w.buildkite.remove(attempt_id),
+    };
+}
+
+/// Drops the Buildkite CI of attempts no longer active.
+pub(crate) fn keep_buildkite(st: &AppState, active: &HashSet<String>) {
+    watch(st).buildkite.retain(|id, _| active.contains(id));
 }
 
 /// Fills in `attempt.pr` of a backlog row.
@@ -335,7 +360,7 @@ async fn refresh_one(
     }
 }
 
-fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
+pub(crate) fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
     AttemptRef {
         project_id: info.project_id.clone(),
         ticket_id: info.ticket_id.clone(),
@@ -346,7 +371,7 @@ fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
     }
 }
 
-fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
+pub(crate) fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
     ci.runs
         .iter()
         .map(|r| CiRunRef {

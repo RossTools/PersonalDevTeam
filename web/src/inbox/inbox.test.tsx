@@ -126,7 +126,7 @@ describe('inbox', () => {
 
   it('opens the ticket\'s changes and runs its branch next to its tab in its own workspace', async () => {
     const accept = item('a', { group: 'accept', ticketId: 't1', attemptId: 'a1', title: 'Accept PDT-7?', choices: [{ id: 'merge', title: 'merge', primary: true }] });
-    const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: 'ws7', pr: null };
+    const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: 'ws7', ci: null, pr: null };
     const calls = stubApi({
       'GET /api/tickets/t1': ticket(1, { attempts: [attempt], sessions: [
         { id: 'old', title: 'Coder · PDT-7', status: 'finished', agent: 'claude', attemptId: 'a1', mode: 'conversation' },

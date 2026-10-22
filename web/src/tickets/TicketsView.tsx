@@ -1,5 +1,5 @@
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { useQueryClient, type InfiniteData, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type InfiniteData, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { Check, ChevronDown, Plus } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
@@ -25,6 +25,7 @@ import { AttemptSection, MergedBanner } from './Attempt';
 import { Board } from './Board';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
+import { ImportJiraDialog } from './ImportJiraDialog';
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
@@ -324,6 +325,13 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   const start = useStartTicket();
   const { projectId, filters, mode } = backlog;
   const project = projects.find((p) => p.id === projectId) ?? null;
+  // A project linked to Jira can import an issue by its key.
+  const settings = useQuery({
+    queryKey: ['project-settings', project?.id],
+    queryFn: () => api.projectSettings(project!.id),
+    enabled: !!project && project.kind !== 'personal',
+  });
+  const [importing, setImporting] = useState(false);
   const query = useMemo(() => toQuery(project?.id ?? null, filters), [project?.id, filters]);
   const pages = useTicketPages(query, mode === 'backlog');
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
@@ -494,9 +502,15 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
           </>
         }
         actions={
-          <Button variant="primary" size="sm" disabled={projects.length === 0} onClick={() => onNewTicket(project?.id ?? null)}>
-            <Plus aria-hidden /> <span className="max-sm:sr-only">New ticket</span>
-          </Button>
+          <>
+            {project && settings.data?.jira && (
+              <Button size="sm" onClick={() => setImporting(true)}>Import from Jira…</Button>
+            )}
+            <Button variant="primary" size="sm" disabled={projects.length === 0} onClick={() => onNewTicket(project?.id ?? null)}>
+              <Plus aria-hidden /> <span className="max-sm:sr-only">New ticket</span>
+            </Button>
+            {importing && project && <ImportJiraDialog projectId={project.id} onClose={() => setImporting(false)} />}
+          </>
         }
       />
       {mode === 'backlog' && projects.length > 0 && (

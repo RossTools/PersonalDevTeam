@@ -19,6 +19,8 @@ pub const FINISH_MERGED: &str = "finish-merged";
 pub const COMMENTS_TO_AGENT: &str = "comments-to-agent";
 pub const BASE_MOVED: &str = "base-moved";
 pub const PR_FEEDBACK: &str = "pr-feedback";
+pub const JIRA_IMPORT: &str = "jira-import";
+pub const JIRA_DONE: &str = "jira-done";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, doc: pr_notices },
@@ -26,6 +28,8 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin { id: COMMENTS_TO_AGENT, enabled: true, doc: comments_to_agent },
     Builtin { id: BASE_MOVED, enabled: false, doc: base_moved },
     Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
+    Builtin { id: JIRA_IMPORT, enabled: true, doc: jira_import },
+    Builtin { id: JIRA_DONE, enabled: true, doc: jira_done },
 ];
 
 fn doc(v: serde_json::Value) -> WorkflowDoc {
@@ -144,6 +148,43 @@ fn pr_feedback() -> WorkflowDoc {
                 "dedupe": "{{trigger.notice.key}}", "timeline": "pr"}},
         ],
         "edges": [{"from": "commented", "to": "tell"}, {"from": "reviewed", "to": "tell"}],
+    }))
+}
+
+fn jira_import() -> WorkflowDoc {
+    let mine = json!([
+        {"left": "{{trigger.assignedToMe}}", "op": "truthy"},
+        {"left": "{{trigger.ticketId}}", "op": "missing"},
+    ]);
+    doc(json!({
+        "name": "Import assigned Jira issues",
+        "description": "An issue in a linked project's Jira scope that is assigned to you and has no ticket yet becomes \
+                        a Draft ticket, linked to it. Does nothing until a project links Jira in its settings.",
+        "nodes": [
+            {"id": "created", "kind": "jira.issue.created", "version": 1, "position": {"x": 0, "y": 0},
+             "config": {"where": mine}},
+            {"id": "updated", "kind": "jira.issue.updated", "version": 1, "position": {"x": 0, "y": 140},
+             "config": {"where": mine}},
+            {"id": "import", "kind": "jira.import", "version": 1, "position": {"x": 320, "y": 70}, "config": {
+                "key": "{{trigger.key}}", "project": "{{trigger.projectId}}"}},
+        ],
+        "edges": [{"from": "created", "to": "import"}, {"from": "updated", "to": "import"}],
+    }))
+}
+
+fn jira_done() -> WorkflowDoc {
+    doc(json!({
+        "name": "Done moves the Jira issue",
+        "description": "Moving a ticket linked to a Jira issue to Done moves the issue to Done too (the project's done \
+                        transition, in its settings). Nothing else goes to Jira unless a workflow says so.",
+        "nodes": [
+            {"id": "done", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 0}, "config": {"where": [
+                {"left": "{{trigger.to}}", "op": "eq", "right": "done"},
+                {"left": "{{trigger.jiraKey}}", "op": "exists"}]}},
+            {"id": "move", "kind": "jira.transition", "version": 1, "position": {"x": 320, "y": 0}, "config": {
+                "ticket": "{{trigger.ticketId}}"}},
+        ],
+        "edges": [{"from": "done", "to": "move"}],
     }))
 }
 

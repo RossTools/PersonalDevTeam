@@ -26,8 +26,11 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `contains` `<label>`) and `ticket.overlap_found`, in the same transaction; an agent step's `outcome` timeline event
   becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e
   adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
-  `schedule.fired`, webhooks' `webhook.received` and `notify`'s `pdt.notified` ("Sensors and webhooks"). Payload types: pdt-core
-  `workflow/events.rs` (`EVENT_TYPES`). CI events carry `provider` (`github_actions`).
+  `schedule.fired`, webhooks' `webhook.received` and `notify`'s `pdt.notified` ("Sensors and webhooks"); 7e-2 the
+  Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and the Buildkite sensor's
+  `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (`EVENT_TYPES`). CI events carry
+  `provider` (`github_actions` or `buildkite`). `ticket.stage_changed` carries `jiraKey` when the ticket is linked to
+  a Jira issue.
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
 - `GET /api/events?type=&project=&ticket=&attempt=&limit=` (newest first) or `&after=<seq>` (oldest first, to
@@ -64,6 +67,11 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   - **PR comments to the agent** (off, 7e): `pr.commented` and `pr.reviewed` (not `byOwner`, not `isBot`; reviews
     not `approved` and with a body) → `session.send` (`{{trigger.notice.text}}`, dedupe on the notice key, `timeline:
     pr`).
+  - **Import assigned Jira issues** (on, 7e-2): `jira.issue.created` and `jira.issue.updated` where `assignedToMe`
+    and no `ticketId` → `jira.import` (`{{trigger.key}}` into `{{trigger.projectId}}`). Does nothing until a project
+    links Jira.
+  - **Done moves the Jira issue** (on, 7e-2): `ticket.stage_changed` to `done` with a `jiraKey` →
+    `jira.transition` (`ticket`: the project's done mapping). Nothing else is pushed to Jira.
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
   are told.
@@ -96,6 +104,12 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
 | `notify` (`title`, `body`, `level: info \| warning \| error`, `link`) | `out` |
+| `jira.import` (`key`, `project`: a PDT project, `connection`: default the project's) | `imported`, `exists` |
+| `jira.create` (`connection`, `project`: a Jira project key, `issueType` default `Task`, `summary`, `description`, `fields`) | `out` |
+| `jira.transition` (`connection` + `key`, or `ticket`; `to`: a transition or status, with `ticket` default the project's done mapping) | `out`, `unavailable` |
+| `jira.comment` (`connection`, `key`, `body`) | `out` |
+| `buildkite.retry` (`connection`, `build`: a build URL, or a number with `pipeline`) | `out` |
+| `buildkite.trigger` (`connection`, `pipeline`, `branch`, `commit` default `HEAD`, `message`, `env`) | `out` |
 
 Every node also has an `error` port: taken once its retries are spent, if it has an edge; otherwise the run fails.
 
@@ -116,6 +130,17 @@ notify itself forever).
 - `discord.post`: the connection's secret is the webhook URL. Content over 2000 characters goes as several messages
   (cut at line breaks), embeds with the first; mentions are never parsed; a 429 waits `retry_after` (up to 4 tries).
   Output `{messageIds}`.
+- Jira actions (`workflow/nodes/jira.rs`, client in `jira.rs`) sign in with the connection's email and API token
+  (basic auth, REST v3); text goes as ADF (a paragraph per blank-line-separated block, line breaks kept).
+  `jira.import` makes a Draft ticket (title the summary, description the issue's text) linked to the issue, or leaves
+  by `exists` (quiet) when a ticket already links it. `jira.transition` counts an issue already in `to` as done
+  (quiet), picks the transition named `to` or the one leading to that status, and otherwise leaves by `unavailable`
+  (quiet, with the `available` names); a ticket without a Jira link also leaves by `unavailable`. `jira.create`
+  outputs `{key, url}`, `jira.comment` `{key, commentId}`.
+- Buildkite actions (`workflow/nodes/buildkite.rs`, client in `buildkite.rs`; bearer token, the connection's `url`
+  or `https://api.buildkite.com`, `config.org`): `buildkite.retry` retries the build's failed retryable jobs (output
+  `retried`), else rebuilds it (`rebuilt`, the new build); `buildkite.trigger` starts a build (message default
+  "Started by <workflow>"). Both output `{number, url}`.
 - Dry runs never run a command or call out: they report `would`.
 
 ## Engine
@@ -178,9 +203,11 @@ the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
 Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared
-secret) and `http` (`url`, `config.auth` and its field; secret: the token or password). A config field holding a
-connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `any`), so forms
-offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+secret), `http` (`url`, `config.auth` and its field; secret: the token or password), `jira` (`url` the site
+`https://<site>.atlassian.net`, `config.email`; secret: an API token) and `buildkite` (`url` empty for Buildkite's own
+API, `config.org`; secret: an API token with read builds, and write builds to retry or start them). A config field
+holding a connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `jira`,
+`buildkite`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned).
 
@@ -209,13 +236,36 @@ offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/
   `X-GitHub-Delivery`, `Idempotency-Key` or `X-Request-Id`, else new; a repeat answers `200 {duplicate: true}`, else
   `202 {eventId}`), payload `hook`, `method`, `query`, `headers` (`content-type`, `user-agent`, `x-*` but the
   signature), `body` (JSON, else text).
+- **Jira** (`jira.rs` `refresh_jira`, pdtd every 60 s): each project whose settings link Jira (a `jira` connection,
+  a JQL scope, the done transition) is searched with `POST /rest/api/3/search/jql`, `(<scope>) AND updated >= "-<n>m"
+  ORDER BY updated ASC` (relative, since JQL dates are in the Jira user's zone; n covers the time since the last look
+  plus a minute), with the changelog, up to 5 pages of 100. The last look is `sensor.jira.<project>` (`since`, the
+  connection and scope; the first look, or a new connection or scope, only records it). Per issue, news since then
+  less a minute (keys make re-reads harmless): `jira.issue.created` (key `jira:<connection id>:<key>:created`),
+  `jira.issue.updated` (the fields changelog entries changed, `changed`; key `…:updated:<updated>`; not for an issue
+  created in the window), `jira.issue.transitioned` (`from`, `to`; key `…:status:<history id>`) and
+  `jira.issue.commented` (`commentId`, `author`, `body` as text, `byMe`; key `…:comment:<id>`). Each carries the
+  issue (`projectId`, `connection`, `key`, `url`, `summary`, `description` as text, `status`, `assignee`,
+  `assignedToMe` against `GET /rest/api/3/myself`, `reporter`, `issueType`, `priority`, `labels`) and `ticketId` when
+  a ticket links it.
+- **Buildkite** (`buildkite.rs` `refresh_buildkite`, pdtd every 60 s after the PR check): for each active attempt of
+  a project whose settings name a `buildkite` connection and pipelines, the head is its open PR's head, else
+  `origin/<branch>`, else the local branch. Each pipeline's builds for that branch and commit become CI runs (pdt-core
+  `buildkite.rs`: `workflow` the pipeline, `id` the build number, `attempt` 1 plus the jobs' retries, so a retried
+  build is news again; `failing` counts as running, `blocked` as queued; failed jobs are the hard-failed script jobs),
+  rolled up per pipeline as GitHub's are. Kept in memory: merged into `attempt.pr.ci` while the PR is open at that
+  head (one badge for both providers), else `attempt.ci`. Events `ci.run_failed` (key `<attempt>:bk_failed:<pipeline>
+  #<number>.<attempt>,…`, a CI-failed `notice` naming the build) and `ci.run_passed` (`…:bk_passed:…`), `provider:
+  buildkite`, `pr` when there is one, so the built-in PR notices tell the agent.
 - **Notify** (`workflow/nodes/notify.rs`): `pdt.notified` (`title`, `body`, `level`, `link`, `workflowId`,
   `workflowName`, `runId`; key per step).
 
 ## Web
 
 Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
-has a section per kind (Discord webhooks, Incoming webhooks, HTTP services, and Other for kinds no action uses), each
+has a section per kind (Discord webhooks, Incoming webhooks, Jira Cloud sites, Buildkite organizations, HTTP services,
+and Other for kinds no action uses; a kind's own settings, Jira's email and Buildkite's organization, are fields of
+its dialog), each
 saying how to set one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address
 `/api/hooks/<name>` show on its row). The dialog asks what the kind needs and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy

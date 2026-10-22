@@ -26,11 +26,14 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
+  const [fields, setFields] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(connection?.config ?? {}).map(([key, v]) => [key, str(v)])));
   const k = kindOf(kind);
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
     mutationFn: async () => {
       const config: Record<string, unknown> = k?.auth ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) } : {};
+      for (const f of k?.fields ?? []) config[f.key] = (fields[f.key] ?? '').trim();
       const body = { name: name.trim(), kind, url: k?.url ? url.trim() : '', config };
       let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
       if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
@@ -43,7 +46,8 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
     },
   });
   const needsSecret = !connection?.hasSecret && kind !== 'http';
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || url.trim() !== '');
+  const fieldsFilled = (k?.fields ?? []).every((f) => (fields[f.key] ?? '').trim() !== '');
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || k.urlOptional || url.trim() !== '') && fieldsFilled;
   return (
     <Dialog
       open
@@ -68,10 +72,15 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
           <Input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {k?.url && (
-          <Field label="Address" hint="The service's base URL; a request's path is added to it.">
-            <Input aria-label="Address" placeholder="http://192.168.1.10:7878/api" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <Field label="Address" hint={k.urlHint ?? "The service's base URL; a request's path is added to it."}>
+            <Input aria-label="Address" placeholder={k.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
         )}
+        {k?.fields?.map((f) => (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            <Input aria-label={f.label} placeholder={f.placeholder} value={fields[f.key] ?? ''} onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })} />
+          </Field>
+        ))}
         {k?.auth && (
           <Field label="Send it as">
             <Select className="w-full" aria-label="Send it as" options={AUTH_MODES} value={auth} onChange={setAuth} />

@@ -25,7 +25,8 @@ import { canStart, patchTicket, startNextPart, ticketMenu, useOpenTicket, useSta
 import { buildLanes, laneIds, lanePr, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
 import { useAllSessions, useTicketPages } from './queries';
 import { useClearToStartToasts } from './clearToStart';
-import { PrBadge } from './PullRequest';
+import { CiBadge, PrBadge } from './PullRequest';
+import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { LabelChips } from './TicketParts';
 
@@ -164,6 +165,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
         >
           <span className="flex min-w-0 flex-wrap items-center gap-1.5">
             <TicketKey ticketKey={t.key} />
+            <ExternalKeys links={t.external} />
             <PriorityIcon priority={t.priority} />
             <TicketBadges ticket={t} className="flex-wrap" />
           </span>
@@ -183,6 +185,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
               {activity ? <AgentDot state={activity} /> : <GitBranch aria-hidden className="size-3 shrink-0" />}
               <span className="min-w-0 truncate font-mono" title={t.attempt.branch}>{t.attempt.branch}</span>
               {t.attempt.pr && <PrBadge pr={t.attempt.pr} attemptMerged={t.attempt.state === 'merged'} />}
+              {!t.attempt.pr && t.attempt.ci && <CiBadge ci={t.attempt.ci} />}
             </span>
           )}
         </button>

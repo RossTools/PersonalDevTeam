@@ -6,7 +6,7 @@ const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
 /// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels, the PM
-/// may act).
+/// may act), and the Jira and Buildkite links (connection, scope, done; connection, pipelines).
 type ProjectSettingsRow = (
     Option<String>,
     Option<String>,
@@ -19,6 +19,11 @@ type ProjectSettingsRow = (
     String,
     String,
     bool,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+    String,
 );
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
@@ -36,6 +41,10 @@ pub struct ProjectSettings {
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
     /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c §4).
     pub policy: ProjectPolicy,
+    /// Its Jira project (Phase 7e §6.1): issues assigned to the user become tickets.
+    pub jira: Option<pdt_core::jira::JiraSettings>,
+    /// Its Buildkite pipelines (Phase 7e §6.4): CI of its attempts' branches.
+    pub buildkite: Option<pdt_core::buildkite::BuildkiteSettings>,
 }
 
 impl Store {
@@ -95,7 +104,8 @@ impl Store {
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
-             merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels, pm_acts \
+             merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels, pm_acts, \
+             jira_connection, jira_scope, jira_done, buildkite_connection, buildkite_pipelines \
              FROM project_settings \
              WHERE project_id = ?",
         )
@@ -114,6 +124,11 @@ impl Store {
             auto,
             exempt,
             pm_acts,
+            jira_connection,
+            jira_scope,
+            jira_done,
+            buildkite_connection,
+            buildkite_pipelines,
         )) = row
         else {
             return Ok(ProjectSettings::default());
@@ -142,6 +157,19 @@ impl Store {
                     .map_err(|_| StoreError::Corrupt(format!("approval-exempt labels {exempt:?}")))?,
                 pm_acts,
             },
+            jira: jira_connection.filter(|c| !c.is_empty()).map(|connection| pdt_core::jira::JiraSettings {
+                connection,
+                scope: jira_scope,
+                done: jira_done,
+            }),
+            buildkite: match buildkite_connection.filter(|c| !c.is_empty()) {
+                Some(connection) => Some(pdt_core::buildkite::BuildkiteSettings {
+                    connection,
+                    pipelines: serde_json::from_str(&buildkite_pipelines)
+                        .map_err(|_| StoreError::Corrupt(format!("buildkite pipelines {buildkite_pipelines:?}")))?,
+                }),
+                None => None,
+            },
         })
     }
 
@@ -149,13 +177,17 @@ impl Store {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
-             approval_exempt_labels, pm_acts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET \
+             approval_exempt_labels, pm_acts, jira_connection, jira_scope, jira_done, buildkite_connection, \
+             buildkite_pipelines) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
              agent_permission_mode = excluded.agent_permission_mode, merge_by = excluded.merge_by, \
              require_approval = excluded.require_approval, max_running_attempts = excluded.max_running_attempts, \
              auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels, \
-             pm_acts = excluded.pm_acts",
+             pm_acts = excluded.pm_acts, jira_connection = excluded.jira_connection, \
+             jira_scope = excluded.jira_scope, jira_done = excluded.jira_done, \
+             buildkite_connection = excluded.buildkite_connection, buildkite_pipelines = excluded.buildkite_pipelines",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -169,6 +201,14 @@ impl Store {
         .bind(s.policy.auto_start.as_str())
         .bind(serde_json::to_string(&s.policy.approval_exempt_labels).expect("a list of labels"))
         .bind(s.policy.pm_acts)
+        .bind(s.jira.as_ref().map(|j| j.connection.as_str()))
+        .bind(s.jira.as_ref().map_or("", |j| j.scope.as_str()))
+        .bind(s.jira.as_ref().map_or(pdt_core::jira::DEFAULT_DONE, |j| j.done.as_str()))
+        .bind(s.buildkite.as_ref().map(|b| b.connection.as_str()))
+        .bind(
+            serde_json::to_string(&s.buildkite.as_ref().map(|b| b.pipelines.clone()).unwrap_or_default())
+                .expect("a list of pipelines"),
+        )
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -247,6 +287,15 @@ mod tests {
                 approval_exempt_labels: vec!["automerge".into()],
                 pm_acts: true,
             },
+            jira: Some(pdt_core::jira::JiraSettings {
+                connection: "work-jira".into(),
+                scope: "project = ABC".into(),
+                done: "Close".into(),
+            }),
+            buildkite: Some(pdt_core::buildkite::BuildkiteSettings {
+                connection: "bk".into(),
+                pipelines: vec!["app".into(), "e2e".into()],
+            }),
         };
         store.put_project_settings("p", &s).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), s);

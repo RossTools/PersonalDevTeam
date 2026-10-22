@@ -313,6 +313,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/runs/{id}/reset-data", axum::routing::post(crate::runs::reset_data))
         .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
         .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
+        .route("/projects/{id}/jira/import", axum::routing::post(crate::jira::import_route))
         .route("/projects/{id}/labels", get(crate::tickets::labels))
         .route("/projects/{id}/areas", get(crate::overlap::areas))
         .route("/tickets", get(crate::tickets::list))

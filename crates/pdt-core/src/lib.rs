@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod agent_context;
 pub mod brand;
+pub mod buildkite;
 pub mod conversation;
 pub mod git_url;
 pub mod handoff;
@@ -11,6 +12,7 @@ pub mod host_path;
 pub mod identity;
 pub mod inbox;
 pub mod instance;
+pub mod jira;
 pub mod links;
 pub mod mcp;
 pub mod overlap;
