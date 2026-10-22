@@ -318,6 +318,35 @@ async fn discord_posts_split_long_messages_and_wait_out_a_rate_limit() {
     assert!(run_now(&env, &wf, json!({})).await["error"].as_str().unwrap().contains("not discord_webhook"));
 }
 
+#[tokio::test]
+async fn a_discord_channel_is_made_only_when_missing() {
+    // Requests in order: the first run lists the channels; the second lists them, makes the category, then the
+    // channel.
+    let (url, seen) = fake_server(|_, n| match n {
+        1 | 2 => (200, json!([{"id": "1", "name": "alerts", "type": 0}])),
+        3 => (201, json!({"id": "5", "name": "Bots", "type": 4})),
+        _ => (201, json!({"id": "6", "name": "ai-briefs", "type": 0, "parent_id": "5"})),
+    })
+    .await;
+    let env = setup().await;
+    connection(&env, "home", "discord_bot", &url, json!({"guildId": "42"}), Some("tok")).await;
+    let ensure = |name: &str| {
+        manual_then(json!({"id": "ch", "kind": "discord.channel.ensure", "version": 1,
+            "config": {"connection": "home", "name": name, "category": "Bots"}}))
+    };
+    let wf = create(&env, ensure("#alerts")).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(step(&r, "ch")["output"], json!({"channelId": "1", "name": "alerts", "created": false}), "{r}");
+    let wf = create(&env, ensure("AI Briefs")).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(step(&r, "ch")["output"], json!({"channelId": "6", "name": "ai-briefs", "created": true}), "{r}");
+    let all = seen.all();
+    assert_eq!(all.len(), 4, "{all:?}");
+    assert!(all.iter().all(|r| r.1 == "/guilds/42/channels" && r.3.as_deref() == Some("Bot tok")), "{all:?}");
+    assert_eq!((all[2].2["name"].as_str(), all[2].2["type"].as_u64()), (Some("Bots"), Some(4)));
+    assert_eq!(all[3].2, json!({"name": "ai-briefs", "type": 0, "parent_id": "5"}));
+}
+
 // ---- notify ----
 
 #[tokio::test]

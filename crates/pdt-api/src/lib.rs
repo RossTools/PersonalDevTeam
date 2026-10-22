@@ -3,6 +3,7 @@ mod attachments;
 mod buildkite;
 mod checks;
 mod conversations;
+mod discord;
 mod error;
 mod files;
 mod finish;

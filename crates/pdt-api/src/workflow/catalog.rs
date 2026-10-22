@@ -298,6 +298,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(command::Command));
         kinds.push(Box::new(http::Http));
         kinds.push(Box::new(discord::Discord));
+        kinds.push(Box::new(crate::discord::EnsureChannel));
         kinds.push(Box::new(notify::Notify));
         kinds.push(Box::new(jira::JiraImport));
         kinds.push(Box::new(jira::JiraCreate));
@@ -340,6 +341,7 @@ mod tests {
         let prop = |kind: &str, field: &str| catalog().spec(kind).unwrap().config_schema["properties"][field].clone();
         assert_eq!(prop("discord.post", "connection")["x-connection-kind"], "discord_webhook");
         assert_eq!(prop("webhook", "hook")["x-connection-kind"], "webhook");
+        assert_eq!(prop("discord.channel.ensure", "connection")["x-connection-kind"], "discord_bot");
         assert_eq!(
             prop("http.request", "connection")["x-connection-kind"],
             "any",
