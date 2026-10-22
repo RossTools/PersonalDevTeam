@@ -244,6 +244,9 @@ pub fn tool_title(tool: &str, input: &Value) -> String {
             format!("Edit {}: {}", field("ticket"), changes.join(", "))
         }
         (_, Some("send_to_session")) => format!("To session {}: {}", field("session"), field("text")),
+        (_, Some(t @ ("discord_change" | "discord_webhook"))) => {
+            crate::discord::ask_title(t, input).unwrap_or_else(|| "Discord".into())
+        }
         ("Bash", _) => field("command"),
         ("Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit", _) => {
             let f = field("file_path");
