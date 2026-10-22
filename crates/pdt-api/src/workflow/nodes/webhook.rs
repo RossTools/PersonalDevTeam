@@ -19,6 +19,7 @@ pub const WEBHOOK_CONNECTION: &str = "webhook";
 #[ts(export)]
 pub struct WebhookConfig {
     /// The webhook connection's name: requests to `POST /api/hooks/<hook>` start this workflow.
+    #[schemars(extend("x-connection-kind" = "webhook"))]
     pub hook: String,
     /// Only requests for which every condition holds (`{{trigger.body.action}}` …).
     #[serde(rename = "where")]

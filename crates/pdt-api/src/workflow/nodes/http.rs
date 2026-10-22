@@ -20,6 +20,7 @@ pub struct HttpConfig {
     /// A connection: `url` may then be relative to its URL, and its secret is sent (`config.auth`: `bearer`
     /// (default), `basic` with `config.username`, `header` with `config.header`, `query` with `config.param`).
     #[serde(default)]
+    #[schemars(extend("x-connection-kind" = "any"))]
     pub connection: Option<String>,
     #[serde(default = "get")]
     pub method: String,

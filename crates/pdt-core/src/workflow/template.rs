@@ -20,6 +20,8 @@ pub enum ParamType {
     Boolean,
     /// One of `choices`.
     Choice,
+    /// A connection's name (of `connectionKind`, when given): the form offers the connections there are.
+    Connection,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -42,6 +44,10 @@ pub struct TemplateParam {
     /// Instantiating needs a value (when there is no default).
     #[serde(default)]
     pub required: bool,
+    /// A `connection` param's kind (`discord_webhook`); none: any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub connection_kind: Option<String>,
 }
 
 /// A template as the API lists it.
@@ -72,7 +78,7 @@ fn valid_id(id: &str) -> bool {
 fn typed(p: &TemplateParam, v: &Value) -> Result<Value, String> {
     let bad = || format!("{} must be {}", p.id, describe(p));
     match p.kind {
-        ParamType::String | ParamType::Text => v.as_str().map(|s| json!(s)).ok_or_else(bad),
+        ParamType::String | ParamType::Text | ParamType::Connection => v.as_str().map(|s| json!(s)).ok_or_else(bad),
         ParamType::Number => match v {
             Value::Number(_) => Ok(v.clone()),
             Value::String(s) => s
@@ -98,6 +104,7 @@ fn typed(p: &TemplateParam, v: &Value) -> Result<Value, String> {
 fn describe(p: &TemplateParam) -> String {
     match p.kind {
         ParamType::String | ParamType::Text => "text".into(),
+        ParamType::Connection => "a connection's name".into(),
         ParamType::Number => "a number".into(),
         ParamType::Boolean => "true or false".into(),
         ParamType::Choice => format!("one of {}", p.choices.join(", ")),
@@ -152,7 +159,7 @@ fn placeholder(p: &TemplateParam) -> Value {
         return v;
     }
     match p.kind {
-        ParamType::String | ParamType::Text => json!(""),
+        ParamType::String | ParamType::Text | ParamType::Connection => json!(""),
         ParamType::Number => json!(0),
         ParamType::Boolean => json!(false),
         ParamType::Choice => json!(p.choices.first().cloned().unwrap_or_default()),
@@ -166,7 +173,7 @@ pub fn placeholder_values(params: &[TemplateParam]) -> Map<String, Value> {
         .iter()
         .map(|p| {
             let v = match p.kind {
-                ParamType::String | ParamType::Text if p.required && p.default.is_none() => {
+                ParamType::String | ParamType::Text | ParamType::Connection if p.required && p.default.is_none() => {
                     json!(format!("{{{{params.{}}}}}", p.id))
                 }
                 _ => placeholder(p),
@@ -196,6 +203,7 @@ mod tests {
             choices: vec![],
             default: None,
             required: false,
+            connection_kind: None,
         }
     }
 

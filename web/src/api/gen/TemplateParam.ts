@@ -9,4 +9,8 @@ id: string, title: string, description: string, type: ParamType, choices?: Array
 /**
  * Instantiating needs a value (when there is no default).
  */
-required: boolean, };
+required: boolean, 
+/**
+ * A `connection` param's kind (`discord_webhook`); none: any.
+ */
+connectionKind?: string, };

@@ -38,6 +38,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -53,6 +54,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': { caller: 'tailnet', login: 'phone@example.com' },
+      'GET /api/connections': [],
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByRole('button', { name: 'Use phone@example.com' })).toBeInTheDocument();
@@ -64,6 +66,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
     });
     renderWithQuery(<HostSettingsPage />);
     const owner = await screen.findByLabelText('Owner login');
@@ -78,6 +81,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': new Reply(400, { code: 'owner_required', message: 'set the owner first' }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -91,6 +95,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/token': update({ token: { state: 'valid', expiresAt: null } }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -108,6 +113,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Token: cannot be read/)).toBeInTheDocument();
@@ -121,6 +127,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -136,6 +143,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -154,6 +162,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -170,6 +179,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -190,6 +200,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'PUT /api/host/settings': new Reply(400, { code: 'invalid_ports', message: 'the port range is empty' }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -213,6 +224,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update({ token: { state: 'valid', expiresAt: null } }),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'DELETE /api/host/token': undefined,
     });
     renderWithQuery(<HostSettingsPage />);
@@ -236,6 +248,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
       'POST /api/host/update/check': update({ state: 'available', latest: release, lastCheckedAt: 1 }),
     });
     renderWithQuery(<HostSettingsPage />);
@@ -252,6 +265,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Host settings could not be loaded: internal error');
@@ -263,6 +277,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/update': update({ state: 'disabled', disabledReason: 'not supervised', token: { state: 'expired' } }),
       'GET /api/host/checks': { ...checks(true), claude: { found: false, ok: false, detail: 'program not found' } },
       'GET /api/host/whoami': local,
+      'GET /api/connections': [],
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();

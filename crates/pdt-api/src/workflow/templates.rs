@@ -128,8 +128,8 @@ pub fn builtin_templates() -> Vec<Template> {
 
 /// The param of a Discord webhook connection.
 fn discord_param() -> Value {
-    json!({"id": "discord", "title": "Discord connection", "type": "string", "required": true,
-        "description": "The name of a discord_webhook connection (its secret is the channel's webhook URL)."})
+    json!({"id": "discord", "title": "Discord channel", "type": "connection", "connectionKind": "discord_webhook",
+        "required": true, "description": "Where it posts: a Discord webhook connection (Settings → This host → Connections)."})
 }
 
 /// A schedule's `every`.

@@ -19,7 +19,7 @@ import { TextView } from './TextView';
 
 const TYPES: { value: ParamType; label: string }[] = [
   { value: 'string', label: 'Text' }, { value: 'text', label: 'Long text' }, { value: 'number', label: 'Number' },
-  { value: 'boolean', label: 'Yes or no' }, { value: 'choice', label: 'Choice' },
+  { value: 'boolean', label: 'Yes or no' }, { value: 'choice', label: 'Choice' }, { value: 'connection', label: 'Connection' },
 ];
 
 /** A default typed into the params table, as the param's type wants it. */

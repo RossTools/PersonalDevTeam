@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Braces, Plus, Trash2 } from 'lucide-react';
 import { Button, Field, IconButton, Input, MenuButton, Select, Switch, Textarea } from '@ui';
 import { deref } from './model';
+import { ConnectionPicker } from '../connections/ConnectionPicker';
 
 type Schema = Record<string, unknown>;
 type Value = unknown;
@@ -20,6 +21,8 @@ const isRef = (v: Value) => typeof v === 'string' && /\{\{.*\}\}/.test(v);
 /** What a schema is, as far as the form cares. */
 export type FieldKind =
   | { kind: 'string'; multiline: boolean }
+  /** A connection's name (`x-connection-kind`: the kind it must be, or `any`). */
+  | { kind: 'connection'; connectionKind: string }
   | { kind: 'number'; integer: boolean }
   | { kind: 'boolean' }
   | { kind: 'enum'; options: { value: string; description?: string }[] }
@@ -83,6 +86,8 @@ export function classify(raw: Schema | boolean | undefined, root: Schema, key = 
     const t = type.filter((x) => x !== 'null');
     type = t.length === 1 ? t[0] : undefined;
   }
+  const connectionKind = [raw['x-connection-kind'], s['x-connection-kind']].find((k) => typeof k === 'string') as string | undefined;
+  if (connectionKind) return { field: { kind: 'connection', connectionKind }, nullable, tpl, description };
   const options = enumOptions(s, root);
   if (options) return { field: { kind: 'enum', options }, nullable, tpl, description };
   const base = { nullable, tpl, description };
@@ -193,6 +198,10 @@ function Control({ c, value, onChange, label, root, refs, readOnly }: ControlPro
     </MenuButton>
   );
   switch (f.kind) {
+    case 'connection':
+      return isRef(value)
+        ? <Input mono aria-label={label} value={String(value)} readOnly={readOnly} onChange={(e) => clear(e.target.value)} />
+        : <ConnectionPicker label={label} kind={f.connectionKind} value={typeof value === 'string' ? value : ''} disabled={readOnly} onChange={(n) => onChange(n)} />;
     case 'string': {
       const text = typeof value === 'string' ? value : value == null ? '' : String(value);
       const multiline = f.multiline || text.includes('\n');

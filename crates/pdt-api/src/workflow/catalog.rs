@@ -329,6 +329,19 @@ mod tests {
     }
 
     #[test]
+    fn connection_fields_say_their_kind() {
+        let prop = |kind: &str, field: &str| catalog().spec(kind).unwrap().config_schema["properties"][field].clone();
+        assert_eq!(prop("discord.post", "connection")["x-connection-kind"], "discord_webhook");
+        assert_eq!(prop("webhook", "hook")["x-connection-kind"], "webhook");
+        assert_eq!(
+            prop("http.request", "connection")["x-connection-kind"],
+            "any",
+            "{}",
+            prop("http.request", "connection")
+        );
+    }
+
+    #[test]
     fn node_ports_follow_the_config() {
         let node: Node = serde_json::from_value(serde_json::json!({"id": "g", "kind": "gate", "version": 1,
             "config": {"question": "q", "choices": ["yes", "no"]}}))

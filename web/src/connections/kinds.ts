@@ -1,0 +1,69 @@
+// The kinds of connection the workflow actions use (crates/pdt-api/src/workflow/nodes/): what each needs, and how to
+// get its secret. A connection's secret is kept in the OS keychain; PDT never shows it again.
+
+export interface ConnectionKind {
+  id: string;
+  label: string;
+  /** What it is for, in the kind picker. */
+  description: string;
+  /** Asks for a base URL. */
+  url: boolean;
+  /** What the secret is, and where to find it. */
+  secretLabel: string;
+  secretHint: string;
+  /** A random secret can be generated (an incoming webhook's). */
+  generate?: boolean;
+  /** Asks how the secret is sent (an HTTP service). */
+  auth?: boolean;
+}
+
+export const CONNECTION_KINDS: ConnectionKind[] = [
+  {
+    id: 'discord_webhook',
+    label: 'Discord webhook',
+    description: 'Posts to one Discord channel (Post to Discord).',
+    url: false,
+    secretLabel: 'Webhook URL',
+    secretHint: 'In Discord: the channel’s settings (Edit Channel) → Integrations → Webhooks → New Webhook → Copy Webhook URL. It looks like https://discord.com/api/webhooks/…',
+  },
+  {
+    id: 'webhook',
+    label: 'Incoming webhook',
+    description: 'Lets another machine start workflows (the Webhook trigger).',
+    url: false,
+    secretLabel: 'Shared secret',
+    secretHint: 'The sender sends it as Authorization: Bearer <secret>, or signs with it like GitHub (X-Hub-Signature-256).',
+    generate: true,
+  },
+  {
+    id: 'http',
+    label: 'HTTP service',
+    description: 'A service the HTTP request action calls: its address and token.',
+    url: true,
+    secretLabel: 'Token or password',
+    secretHint: 'Sent only to this address, the way “Send it as” says.',
+    auth: true,
+  },
+];
+
+export const kindOf = (id: string): ConnectionKind | undefined => CONNECTION_KINDS.find((k) => k.id === id);
+
+export const kindLabel = (id: string) => kindOf(id)?.label ?? id;
+
+export const AUTH_MODES = [
+  { value: 'bearer', label: 'Bearer token' },
+  { value: 'header', label: 'A header' },
+  { value: 'basic', label: 'Basic (user and password)' },
+  { value: 'query', label: 'A query parameter' },
+  { value: 'none', label: 'Not sent' },
+];
+
+/** A random secret for an incoming webhook. */
+export function randomSecret(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Where another machine posts to start an incoming webhook's workflows. */
+export const hookUrl = (name: string) => `${window.location.origin}/api/hooks/${encodeURIComponent(name)}`;

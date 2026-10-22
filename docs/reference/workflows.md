@@ -156,7 +156,8 @@ gate's choices, a switch's cases; `error` not listed). The builder calls it afte
 Templates: `GET/POST /api/workflow-templates`, `GET/PUT/DELETE /api/workflow-templates/{id}`,
 `POST /api/workflow-templates/{id}/instantiate {params, name, scope, projectId}` (a new workflow, always disabled).
 A template is `{name, description, params, doc}`; a param `{id, title, description, type: string | text | number |
-boolean | choice, choices, default, required}`; the document uses `{{params.<id>}}` (a string that is exactly one
+boolean | choice | connection, choices, default, required, connectionKind}` (`connection`: a connection's name, of
+`connectionKind` when given); the document uses `{{params.<id>}}` (a string that is exactly one
 reference takes the value with its type; other references stay). Saving checks the params and validates the document
 with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, read-only, `409 builtin_template`):
 Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, the
@@ -164,7 +165,10 @@ Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a sch
 first check silent; Brief follow-ups and Email processing: a script on a schedule whose `{"message": …}` goes to
 Discord), and the built-in workflows. A required text param with no default is checked as the reference itself. The user's are in `workflow_templates`.
 
-Connections: `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL), `webhook` (secret: the shared
+secret) and `http` (`url`, `config.auth` and its field; secret: the token or password). A config field holding a
+connection's name says its kind in its schema (`x-connection-kind`: `discord_webhook`, `webhook`, `any`), so forms
+offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned).
 
@@ -197,6 +201,17 @@ Connections: `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id
   `workflowName`, `runId`; key per step).
 
 ## Web
+
+Connections (`web/src/connections/`): Settings → This host → Connections lists them (kind, a missing secret, a
+webhook's address `/api/hooks/<name>`) with New connection, Edit and Delete. The dialog asks what the kind needs and
+says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
+Webhook URL); an incoming webhook can generate its secret. The secret is written to the keychain and never shown again
+(empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use
+`ConnectionPicker`: the connections of that kind, and Add… for a new one.
+
+To post to Discord: add a Discord webhook connection (above), then New workflow → a template that posts (New GitHub
+issues to Discord, Health watchdog, …) and pick it as the Discord channel, or add a Post to Discord step and pick it in
+the step's panel.
 
 Notifications (`web/src/common/useWorkflowNotifications.ts`, in AppShell): follows `pdt.notified` from the page's load
 (`/api/events?type=pdt.notified&after=<seq>` every 2 s) and shows each as a toast ("Open": a ticket key opens the

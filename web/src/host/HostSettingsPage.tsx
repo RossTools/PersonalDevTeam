@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
 import { api } from '../api/client';
+import { ConnectionsSection } from '../connections/ConnectionsSection';
 import { desktopNotificationsOn, setDesktopNotifications } from '../common/useWorkflowNotifications';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
@@ -473,6 +474,7 @@ export function HostSettingsPage() {
       <RemoteAccess v={v} me={me ?? null} />
       <Agents v={v} />
       <Notifications />
+      <ConnectionsSection />
       <Runs v={v} />
       <ProjectsFolder v={v} />
       <Checks />

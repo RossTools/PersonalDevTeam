@@ -21,6 +21,7 @@ const TRIES: u32 = 4;
 #[ts(export)]
 pub struct DiscordConfig {
     /// A `discord_webhook` connection (its secret is the webhook URL).
+    #[schemars(extend("x-connection-kind" = "discord_webhook"))]
     pub connection: String,
     /// The message (Discord Markdown). Longer than 2000 characters, it goes as several messages.
     #[serde(default)]
