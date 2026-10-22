@@ -8,9 +8,9 @@ export type ViewId = 'sessions' | 'inbox' | 'pm' | 'tickets' | 'workflows' | 'pe
  * are in the palette's Go to).
  */
 export const VIEWS: { id: ViewId; label: string; icon: LucideIcon; phone?: false }[] = [
+  { id: 'pm', label: 'Project manager', icon: BriefcaseBusiness, phone: false },
   { id: 'sessions', label: 'Sessions', icon: TerminalSquare },
   { id: 'inbox', label: 'Inbox', icon: Inbox },
-  { id: 'pm', label: 'Project manager', icon: BriefcaseBusiness, phone: false },
   { id: 'tickets', label: 'Tickets', icon: Ticket },
   { id: 'workflows', label: 'Workflows', icon: Workflow, phone: false },
   { id: 'personas', label: 'Personas', icon: UserCog, phone: false },
