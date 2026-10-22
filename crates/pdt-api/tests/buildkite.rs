@@ -149,8 +149,13 @@ async fn setup() -> Env {
     assert_eq!(v["buildkite"], json!({"connection": "bk", "pipelines": ["app"]}));
     let (_, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Ship it"}))).await;
     let ticket = t["id"].as_str().unwrap().to_string();
-    let (s, started) =
-        call(&app, "POST", &format!("/api/tickets/{ticket}/start"), Some(json!({"agent": "claude"}))).await;
+    let (s, started) = call(
+        &app,
+        "POST",
+        &format!("/api/tickets/{ticket}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "terminal"})),
+    )
+    .await;
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let out = std::process::Command::new("git").arg("-C").arg(&repo).args(["rev-parse", "main"]).output().unwrap();
     let head = String::from_utf8(out.stdout).unwrap().trim().to_string();
