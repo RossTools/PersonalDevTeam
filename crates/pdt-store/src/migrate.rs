@@ -7,10 +7,10 @@ use std::path::Path;
 /// Every migration in crates/pdt-store/migrations, embedded at build time (build.rs rebuilds when the folder changes).
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-/// The last numbered migration (`0028_…`). Every later one is named by its UTC creation time, `YYYYMMDDHHMMSS_<what>.sql`,
+/// The last numbered migration (`0029_…`). Every later one is named by its UTC creation time, `YYYYMMDDHHMMSS_<what>.sql`,
 /// so two branches cut from the same main never pick the same name.
 #[cfg(test)]
-const LAST_NUMBERED: i64 = 28;
+const LAST_NUMBERED: i64 = 29;
 
 /// What is wrong with a migrations folder's file names: each must be `<version>_<what>.sql`, the version a number up to
 /// [`LAST_NUMBERED`] or a UTC timestamp `YYYYMMDDHHMMSS`, and no two files may share a version (sqlx would refuse the
@@ -138,10 +138,10 @@ mod tests {
     #[test]
     fn names_take_old_numbers_or_timestamps() {
         let ok =
-            ["0001_projects.sql", "0028_merge_requested.sql", "20261022143000_add_x.sql", "20261022143001_add_y.sql"];
+            ["0001_projects.sql", "0029_session_ticket.sql", "20261022143000_add_x.sql", "20261022143001_add_y.sql"];
         assert!(super::name_problems(ok).is_empty());
         for bad in [
-            "0029_next_number.sql",
+            "0030_next_number.sql",
             "20261322143000_bad_month.sql",
             "2026102214300_too_short.sql",
             "20261022143000.sql",
