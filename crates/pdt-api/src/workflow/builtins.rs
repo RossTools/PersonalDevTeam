@@ -407,6 +407,10 @@ pub(crate) async fn ensure_installed(st: &AppState) {
             tracing::warn!(builtin = b.id, error = %e, "could not install a built-in workflow");
         }
     }
+    if let Err(e) = super::templates::follow_templates(st).await {
+        ok = false;
+        tracing::warn!(error = %e, "could not move workflows to their templates' newer versions");
+    }
     // Tried again on the next tick when something failed.
     st.builtins_installed.store(ok, Ordering::SeqCst);
 }

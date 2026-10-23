@@ -56,7 +56,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   workflow. They can't be edited or deleted through the API (`409 workflow_in_repo`).
 - Built-ins (`builtins.rs`), installed host-wide on the engine's first tick; an untouched one follows newer templates,
   an edited one is left alone; they can be disabled, not deleted (`409 builtin_workflow`):
-  - **PR notices** (on): `pr.merged`, `attempt.merged` (not `via: closed`) → `session.send` (`text:
+  - **PR notices** (on; a Pipeline's own refused merge is fixed and reviewed in the Pipeline, PDT-124: see
+    "Pipeline"): `pr.merged`, `attempt.merged` (not `via: closed`) → `session.send` (`text:
     {{trigger.notice.text}}`, `dedupe: {{trigger.notice.key}}`, `timeline: pr`). `ci.run_failed`, `pr.conflict`,
     `pr.queue_left` and `pr.behind` → a condition on `{{trigger.mergeRequested}}` (PDT-104): not set to merge → the
     same `session.send`; set to merge but an agent on it (`attempt.agent_working`, read as the step runs, so a
@@ -103,16 +104,16 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | one trigger per event type; `manual` (Run now, sub-workflows) — config `projects`, `where`, `runKey` | `out` |
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
-| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`) | each choice, `unanswered`, `timeout` |
+| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `event {type, where}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
 | `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
-| `wait` (`ms`, `until`, or `event {type, where}` with `timeoutMs`) | `done`, `event`, `timeout` |
+| `wait` (`ms`, `until`, or `event {type, where}` with `timeoutMs`; `pipelineStage`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
 | `state.set` (`key`, `value`, `ifMissing`; or `add`: a counter, output `value`) | `out` |
 | `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`) | `sent`, `untold`, `skipped` |
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
-| `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`; Phase 7c) | `merged`, `queued`, `refused` |
+| `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`, `pipelineStage`; Phase 7c) | `merged`, `queued`, `refused` |
 | `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
@@ -280,6 +281,15 @@ PM persona, `{{params.persona}}`, with outcomes `drafted` (it made a draft ticke
 `create_ticket`, which asks first unless the project lets the PM act), `duplicate` and `ignored`, the last quiet), and
 the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
+
+A workflow made from a built-in template records it and its params in its state (`_pdt.template`: `{id, params}`).
+On the engine's first tick (with the built-ins), each such workflow still untouched (its current version is the one
+instantiating wrote, or one PDT wrote) moves to the template's current document filled with those params (its name
+kept; a version authored `builtin`, "updated by PDT to the newer template …"); one the user or an agent saved a
+version of is left alone (PDT-124). A Pipeline made before templates were recorded (version 1, noted "from the
+template Pipeline", with the Pipeline's triggers and merge) is recognised, and its params are read back from the
+document (the value at each place the template has exactly `{{params.<id>}}`; defaults for the rest). A waiting run
+goes on with the version it started on.
 
 Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL; one the PM made has
 `config.webhookId`, `channelId`, `channel` and `bot`), `discord_bot` (secret: the bot token; `config.guildId`, checked
@@ -502,20 +512,31 @@ deleted (`409 persona_in_use`).
 ## Pipeline, policies and scheduling (Phase 7c)
 
 - **The Pipeline template** (`builtin:pipeline`, pdt-api `workflow/pipeline.rs`): instantiated per project (off until
-  enabled). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
+  enabled); an untouched instance follows newer versions of it (Templates, above). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
   `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
   | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (new) → QA
   (new); `changes_requested` and `fail` go back to Code; `pass` → a switch on `{{params.accept}}`: `user` → a
   condition (`{{trigger.labels}}` `contains_any` `{{params.autoAcceptLabels}}`): a ticket with one of those labels
   goes straight on, any other to Accept (a gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`;
   `reject` → Code); `auto` → straight on; then
-  a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`merged` → `ticket.finish`; `queued` → end, Finish
-  merged tickets finishes it, and PR notices gets it merging again after a failure, PDT-104; `refused` → wait), `person` → a wait for `attempt.merged` of this attempt. `timeout` and
-  `stopped` add a ticket comment and end (a timeout is also in the Inbox, and the run can be resumed: PDT-123). Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
+  a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`pipelineStage: merge`; `merged` → `ticket.finish`;
+  `queued` → end, Finish merged tickets finishes it, and PR notices gets it merging again after a failure, PDT-104;
+  `refused` → a condition on `{{steps.merge.fixable}}`, PDT-124). Fixable (a conflict, uncommitted changes; not recorded as set
+  to merge, so nothing merges the fix before its review, even when the loop ends early) → Fix the merge (agent `{{params.coder}}`, `session: reuse`, owner
+  `{{params.codeBy}}`, `pipelineStage: code`, `loopLimit`; the prompt has the refusal's reason) → Review the fix (agent
+  `{{params.reviewer}}`, new session, `pipelineStage: review`): `approved` → `attempt.merge` again,
+  `changes_requested` → Fix again; a later refusal's reason is what Fix hears on its next pass. Not fixable (the
+  policy, a draft, no PR, …) → Merge blocked (a gate, Needs you: "Merge blocked on <key>: <reason>", `merge_again`
+  (records the approval, then `attempt.merge`) | `stop` (quiet end), `pipelineStage: merge_blocked`, `event`: this
+  attempt's `attempt.merged` → end, closing the item; 3 days → `timeout`). `person` → a wait for this attempt's
+  `attempt.merged` (`pipelineStage: merge`, `timeoutMs` 3 days); its `timeout` → Still not merged (a gate:
+  `keep_waiting` → the wait again | `merge` (records the approval, then `attempt.merge`) | `stop`; ends on the merge
+  too). The Inbox item of either gate offers Open PR when the attempt has one. `timeout` and `stopped` add a ticket
+  comment and end (a timeout is also in the Inbox, and the run can be resumed: PDT-123). Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
   or `user`: manual), `afterRefine`, `accept`, `autoAcceptLabels` (a list, default none; the labels the ticket had
   when it started count), `merge`, `loopLimit`. Runs may last 30 days. A ticket accepted by label has no approval,
-  so with `requireApproval` on its merge is refused (the run waits for someone to merge) unless the label is also
-  in `approvalExemptLabels`.
+  so with `requireApproval` on its merge is refused (Merge blocked asks; Merge again records the approval) unless the
+  label is also in `approvalExemptLabels`.
 - **Manual stages**: an `agent` node with `owner: user` starts no session. Its binding's state is `manual` and the Inbox
   gets a `manual` item ("Your turn: <node>", group Gates) with the prompt and one `outcome:<id>` choice per outcome;
   answering (with an optional `text`, the summary) completes the step `by: user`.
@@ -523,7 +544,8 @@ deleted (`409 persona_in_use`).
 - **`approve`** on a gate: taking that choice records the user's approval of the run's attempt at its branch head (a
   `review` event naming the workflow), which `requireApproval` needs before an automated merge.
 - **`attempt.merge`** runs the Merge command as an automated merger ([review.md](review.md#merge)): a policy refusal
-  or anything that stops the merge leaves by `refused` (`code`, `reason`); `merge_failed` is an error. With `again`
+  or anything that stops the merge leaves by `refused` (`code`, `reason`, `fixable`: a conflict or uncommitted
+  changes, which the attempt's agent can clear); `merge_failed` is an error. With `again`
   (PR notices after a fix, PDT-104) it reads the PR from GitHub first: one already on auto-merge or in the queue is
   `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays.
 - **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`,

@@ -804,3 +804,112 @@ async fn templates_are_listed_saved_and_instantiated_disabled() {
     let (s, _) = call(&env.app, "DELETE", &format!("/api/workflow-templates/{tid}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
 }
+
+/// The Pipeline as PDT shipped it before PDT-124: a refused merge waited for the merge, with no time limit.
+fn older_pipeline(doc: &Value) -> Value {
+    let gone = ["fixable", "fix", "fix_review", "blocked", "not_merged"];
+    let mut d = doc.clone();
+    d["nodes"].as_array_mut().unwrap().retain(|n| !gone.contains(&n["id"].as_str().unwrap()));
+    for n in d["nodes"].as_array_mut().unwrap() {
+        if n["id"] == "wait_merge" {
+            let c = n["config"].as_object_mut().unwrap();
+            c.remove("timeoutMs");
+            c.remove("pipelineStage");
+        }
+        if n["id"] == "merge" {
+            n["config"].as_object_mut().unwrap().remove("pipelineStage");
+        }
+    }
+    let edges = d["edges"].as_array_mut().unwrap();
+    edges.retain(|e| {
+        !gone.contains(&e["from"].as_str().unwrap())
+            && !gone.contains(&e["to"].as_str().unwrap())
+            && !(e["from"] == "wait_merge" && e["port"] == "timeout")
+    });
+    edges.push(json!({"from": "merge", "port": "refused", "to": "wait_merge"}));
+    edges.push(json!({"from": "wait_merge", "port": "timeout", "to": "stopped"}));
+    d
+}
+
+/// PDT-124: a workflow made from PDT's Pipeline template, never changed since, follows the template's newer versions
+/// with the params it was made with (one made before workflows recorded their template too); one the user changed
+/// stays theirs.
+#[tokio::test]
+async fn untouched_pipelines_follow_the_newer_template_and_edited_ones_stay() {
+    use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
+    let env = setup().await;
+    let params = json!({"coder": "Builder", "accept": "auto", "autoAcceptLabels": ["agentic"], "loopLimit": 5});
+    let instantiate = || async {
+        let body = json!({"params": params, "scope": "project", "projectId": env.project});
+        let (s, w) = call(&env.app, "POST", "/api/workflow-templates/builtin:pipeline/instantiate", Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{w}");
+        w
+    };
+    let newest = instantiate().await;
+    let old = older_pipeline(&newest["doc"]);
+    assert_ne!(old, newest["doc"]);
+    let old_doc: pdt_core::workflow::doc::WorkflowDoc = serde_json::from_value(old.clone()).unwrap();
+    let store = &env.state.store;
+
+    // Made before PDT recorded templates: version 1, as instantiating wrote it.
+    let legacy = |id: &str| Workflow {
+        id: id.into(),
+        name: "Pipeline".into(),
+        description: String::new(),
+        scope: Scope::Project,
+        project_id: Some(env.project.clone()),
+        enabled: true,
+        builtin: None,
+        source: Source::Host,
+        repo_file: None,
+        version: 1,
+        proposed: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    store.insert_workflow(&legacy("old"), &old_doc, Author::User, "from the template Pipeline").await.unwrap();
+    // The same, then changed by the user.
+    store.insert_workflow(&legacy("edited"), &old_doc, Author::User, "from the template Pipeline").await.unwrap();
+    let mut mine = old_doc.clone();
+    mine.description = "Mine now".into();
+    store.save_workflow_version("edited", &mine, Author::User, "mine", 2).await.unwrap();
+    // Made recently (its template recorded), then given an older template by PDT.
+    let recorded = instantiate().await["id"].as_str().unwrap().to_string();
+    store.save_workflow_version(&recorded, &old_doc, Author::Builtin, "updated by PDT", 3).await.unwrap();
+
+    // pdtd starts again.
+    let restart = || async {
+        let store = Store::open(&env._tmp.path().join("pdt.db")).await.unwrap();
+        let state = AppState::new(store, env._tmp.path().join("data"));
+        pdt_api::run_workflows(&state).await;
+        router(state, None)
+    };
+    let app = restart().await;
+    let get =
+        |app: axum::Router, id: String| async move { call(&app, "GET", &format!("/api/workflows/{id}"), None).await.1 };
+    let followed = get(app.clone(), "old".into()).await;
+    assert_eq!(
+        (followed["version"].as_u64(), &followed["doc"]),
+        (Some(2), &newest["doc"]),
+        "the newer template, its params"
+    );
+    assert_eq!(
+        followed["doc"]["nodes"].as_array().unwrap().iter().find(|n| n["id"] == "fix").unwrap()["config"]["persona"],
+        "Builder"
+    );
+    let (_, versions) = call(&app, "GET", "/api/workflows/old/versions", None).await;
+    assert_eq!(versions[0]["author"], "builtin", "{versions}");
+    let again = get(app.clone(), recorded.clone()).await;
+    assert_eq!((again["version"].as_u64(), &again["doc"]), (Some(3), &newest["doc"]));
+    let edited = get(app.clone(), "edited".into()).await;
+    assert_eq!(
+        (edited["version"].as_u64(), edited["doc"]["description"].as_str()),
+        (Some(2), Some("Mine now")),
+        "left alone"
+    );
+
+    // Once is enough: another start writes nothing.
+    let app = restart().await;
+    assert_eq!(get(app.clone(), "old".into()).await["version"], 2);
+    assert_eq!(get(app, recorded).await["version"], 3);
+}
