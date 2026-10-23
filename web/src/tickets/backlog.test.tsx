@@ -236,6 +236,87 @@ describe('backlog', () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 't2' }));
   });
 
+  describe('on a phone', () => {
+    beforeEach(() => {
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
+    });
+
+    it('selects nothing until Select in a row menu; then taps select, the bar docks at the bottom and moves them', async () => {
+      const calls = stub({ 'POST /api/tickets/bulk': { count: 2 } });
+      renderWithQuery(<Harness />);
+      const grid = await screen.findByRole('grid', { name: 'Tickets' });
+      const row = (n: number) => within(grid).getByRole('row', { name: new RegExp(`ALP-${n} `) });
+      expect(within(row(1)).queryByRole('checkbox')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New ticket' })).toBeInTheDocument();
+
+      await userEvent.pointer({ keys: '[MouseRight]', target: row(1) });
+      await userEvent.click(within(await screen.findByRole('menu', { name: 'Ticket ALP-1' })).getByRole('menuitem', { name: 'Select' }));
+      const bar = await screen.findByRole('toolbar', { name: 'Bulk actions' });
+      expect(bar).toHaveTextContent('1 selected');
+      // Docked below the list, in place of ＋.
+      expect(grid.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'New ticket' })).not.toBeInTheDocument();
+      // In bulk mode a tap toggles the row instead of opening it.
+      await userEvent.click(row(2));
+      expect(bar).toHaveTextContent('2 selected');
+      expect(screen.queryByRole('region', { name: /ALP-2 · Ticket 2/ })).not.toBeInTheDocument();
+
+      await userEvent.click(within(bar).getByRole('button', { name: /Move/ }));
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'Move to To do' }));
+      await waitFor(() => expect(calls.find((c) => c.path === '/api/tickets/bulk')?.body).toEqual({ ids: ['t1', 't2'], action: 'stage', value: 'todo' }));
+      // Labels and Delete are under ⋯.
+      await userEvent.click(within(bar).getByRole('button', { name: 'More bulk actions' }));
+      const more = await screen.findByRole('menu', { name: 'More bulk actions' });
+      expect(within(more).getByRole('menuitem', { name: 'Label' })).toBeInTheDocument();
+      expect(within(more).getByRole('menuitem', { name: 'Delete…' })).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+
+      // Clear ends bulk mode: no checkboxes, ＋ is back.
+      await userEvent.click(within(bar).getByRole('button', { name: 'Clear' }));
+      await waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument());
+      expect(within(row(1)).queryByRole('checkbox')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New ticket' })).toBeInTheDocument();
+    });
+
+    it('ends bulk mode when the last selected row is tapped again', async () => {
+      stub();
+      renderWithQuery(<Harness />);
+      const grid = await screen.findByRole('grid', { name: 'Tickets' });
+      const row = within(grid).getByRole('row', { name: /ALP-1 / });
+      await userEvent.pointer({ keys: '[MouseRight]', target: row });
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'Select' }));
+      await userEvent.click(row);
+      await waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument());
+      expect(within(row).queryByRole('checkbox')).not.toBeInTheDocument();
+    });
+
+    it('searches behind ⌕, filters in a bottom sheet with a count, saves the filter, and ＋ opens New ticket', async () => {
+      const onNewTicket = vi.fn();
+      const calls = stub();
+      renderWithQuery(<Harness onNewTicket={onNewTicket} />);
+      await screen.findByRole('grid', { name: 'Tickets' });
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Search tickets' }));
+      await userEvent.type(screen.getByRole('searchbox', { name: 'Search tickets' }), 'cache');
+      await waitFor(() => expect(lastList(calls).q).toBe('cache'));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Filters' }));
+      const sheet = await screen.findByRole('dialog', { name: 'Filters' });
+      await userEvent.click(within(sheet).getByRole('checkbox', { name: 'High' }));
+      await userEvent.click(within(sheet).getByRole('checkbox', { name: 'Ready' }));
+      await waitFor(() => expect(lastList(calls)).toMatchObject({ priority: 'high', stage: 'ready' }));
+      await userEvent.click(within(sheet).getByRole('button', { name: 'Save filter…' }));
+      const save = await screen.findByRole('dialog', { name: 'Save filter' });
+      await userEvent.type(within(save).getByRole('textbox', { name: 'Name' }), 'Hot');
+      await userEvent.click(within(save).getByRole('button', { name: 'Save' }));
+      expect(await screen.findByRole('row', { name: /Hot/ })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: 'Filters (2)' })).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'New ticket' }));
+      expect(onNewTicket).toHaveBeenCalledWith(null);
+    });
+  });
+
   it('saves the filter on screen by name and applies it again', async () => {
     const calls = stub();
     renderWithQuery(<Harness />);
