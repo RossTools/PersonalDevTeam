@@ -246,7 +246,9 @@ secret as a bearer token); without `transport`, a URL and no command means `http
   holds up only its own ticket's runs: other runs, the outbox, timers and schedules go on. Commands on a run's steps
   take its lock first (they never see a step half-run, e.g. an agent step whose session is starting), then the
   engine lock; cancel takes only the engine lock, so it never waits for a hung step, whose result is dropped when it
-  comes (a step's result is written only while it is still `running` with the same attempt). Agent steps start one
+  comes (a step's result is written only while it is still `running` with the same attempt). The limit: as the run
+  lock is the ticket's, a command for one of a ticket's agent steps (`submit_outcome`, `ask_user`, a turn's end, an
+  Inbox answer) still waits while another run of that ticket is in a slow action's body, up to that node's timeout. Agent steps start one
   at a time (`agent_step_start`), so runs side by side can't both take the host's last slot.
 - `workflow_runs` / `workflow_steps`: a run starts with its trigger's step; each step is written before and after it
   runs (`pending` → `running` → `succeeded` / `waiting` / `failed`), so after a restart a `running` step runs again
