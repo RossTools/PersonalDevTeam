@@ -120,10 +120,19 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   lines), the last three journal entries, and pinned notes (id, project, title). Sections are capped at 30 lines. The
   instructions are pdt-core `pm::instructions`: who the PM is, its work folder, its tools (the asking ones named; its
   agent's own), PDT's API and guides, the persona's instructions, the briefing (each project with its folder).
-- **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal, host-wide or per project,
-  pinned or not. `GET /api/pm/notes?q=&project=&kind=` (words are quoted prefixes, all required; a project gets its
-  own and host-wide notes), `POST`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`. The PM
-  view's Notes page lists, searches, adds, edits, pins and deletes them.
+- **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal | user, host-wide or per
+  project, pinned or not. `GET /api/pm/notes?q=&project=&kind=&limit=` (words are quoted prefixes, all required; a
+  project gets its own and host-wide notes, pinned first), `POST` (`kind` note, the default, or user; never journal),
+  `GET`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`. The PM view's Notes page lists,
+  searches, adds, edits, pins and deletes them, with a **Mine | PM's** switch (Mine first; a new note takes the
+  side's kind).
+- **The user's own notes** (`kind` user, PDT-126): ideas and the like. They are never in a briefing, even pinned (a pin
+  only lists them first). The PM's `search_notes` finds them, each result marked `writtenBy` "the user" (or "the
+  PM"); its `save_note` (with that id) and `delete_note` refuse them. A user note has **Make a ticket** (in the list
+  and on its page): the new-ticket form, as a Draft in the note's project, titled with the note's title, its body the
+  description followed by "From the note [title](<origin>/pm/notes/<id>)." The right panel's Notes tab
+  (`web/src/pm/NotesPanel.tsx`) captures one (a title and an optional markdown body; ⌘Enter saves, in the scope's
+  project), searches them, scopes them (everywhere, host-wide or one project's) and opens one at `/pm/notes/<id>`.
 - **Paths and the phone** (PDT-113). `/pm` is the current session (or the start box), `/pm/notes` the notes,
   `/pm/notes/<id>` one note, `/pm/earlier` the sessions that ended (when, how it ended, the journal's first line) and
   `/pm/<session id>` one of them, read-only with "Go to the current session". On a phone the conversation is the

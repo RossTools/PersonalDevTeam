@@ -426,7 +426,8 @@ export const api = {
   pm: () => request<PmState>('/api/pm'),
   /** A new PM session (ending the current one), `text` its first message. */
   startPm: (text?: string) => request<Session>('/api/pm/sessions', { method: 'POST', body: JSON.stringify({ text }) }),
-  pmNotes: (q: { q?: string; project?: string; kind?: NoteKind } = {}) => request<PmNote[]>(`/api/pm/notes${queryString(q)}`),
+  pmNotes: (q: { q?: string; project?: string; kind?: NoteKind; limit?: number } = {}) => request<PmNote[]>(`/api/pm/notes${queryString(q)}`),
+  pmNote: (id: string) => request<PmNote>(`/api/pm/notes/${enc(id)}`),
   createPmNote: (n: NewNote) => request<PmNote>('/api/pm/notes', { method: 'POST', body: JSON.stringify(n) }),
   patchPmNote: (id: string, p: NotePatch) =>
     request<PmNote>(`/api/pm/notes/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),

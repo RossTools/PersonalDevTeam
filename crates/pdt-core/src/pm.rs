@@ -94,7 +94,7 @@ impl Rotation {
     }
 }
 
-/// A note or a journal entry.
+/// A note, a journal entry or one of the user's own notes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -103,6 +103,8 @@ pub enum NoteKind {
     Note,
     /// Written by a PM session as it rotates.
     Journal,
+    /// The user's own note (PDT-126): never in a briefing, and the PM can find it but not write or delete it.
+    User,
 }
 
 impl NoteKind {
@@ -110,10 +112,15 @@ impl NoteKind {
         match self {
             NoteKind::Note => "note",
             NoteKind::Journal => "journal",
+            NoteKind::User => "user",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [NoteKind::Note, NoteKind::Journal].into_iter().find(|k| k.as_str() == s)
+        [NoteKind::Note, NoteKind::Journal, NoteKind::User].into_iter().find(|k| k.as_str() == s)
+    }
+    /// Whether the PM's tools may change or delete a note of this kind (never the user's own).
+    pub fn pm_may_write(self) -> bool {
+        self != NoteKind::User
     }
 }
 
@@ -153,6 +160,10 @@ pub struct NewNote {
     #[serde(default)]
     #[ts(optional)]
     pub pinned: Option<bool>,
+    /// `note` (the PM's, the default) or `user`; journal entries are only written by rotation.
+    #[serde(default)]
+    #[ts(optional)]
+    pub kind: Option<NoteKind>,
 }
 
 /// `PATCH /api/pm/notes/{id}`: absent fields are left alone; `project: ""` makes it host-wide.
@@ -601,6 +612,16 @@ mod tests {
         assert_eq!(fts_query("  ").as_deref(), None);
         assert_eq!(fts_query("Deploy key").as_deref(), Some("\"deploy\"* \"key\"*"));
         assert_eq!(fts_query("a\"b OR c*").as_deref(), Some("\"a\"* \"b\"* \"or\"* \"c\"*"));
+    }
+
+    #[test]
+    fn note_kinds_round_trip_and_the_users_are_not_the_pms() {
+        for k in [NoteKind::Note, NoteKind::Journal, NoteKind::User] {
+            assert_eq!(NoteKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(NoteKind::parse("idea"), None);
+        assert!(NoteKind::Note.pm_may_write() && NoteKind::Journal.pm_may_write());
+        assert!(!NoteKind::User.pm_may_write());
     }
 
     #[test]
