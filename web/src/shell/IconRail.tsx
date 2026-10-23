@@ -5,7 +5,7 @@ import { Button, IconButton } from '@ui';
 import { SEARCH, VIEWS, type ViewId } from './views';
 
 const item = 'size-9 pointer-coarse:size-11';
-const wide = 'h-9 w-full justify-start gap-2 px-2.5 pointer-coarse:h-11';
+const wide = 'h-9 w-full justify-start gap-2 px-2.5 font-normal pointer-coarse:h-11';
 
 /** Whether the desktop rail shows each view's name, in this browser (localStorage; any failure reads as collapsed). */
 export const RAIL_EXPANDED_KEY = 'pdt.rail.expanded';
