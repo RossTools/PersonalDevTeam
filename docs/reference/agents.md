@@ -54,7 +54,8 @@ notifications get 202; `GET`/`DELETE` 405).
   results with `isError`.
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
   `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
-  less the asking tools (`create_ticket`, `edit_ticket`, `send_to_session`, `discord_change`, `discord_webhook`:
+  less the asking tools (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `send_to_session`,
+  `discord_change`, `discord_webhook`:
   pdt-core `ASKING_TOOLS`), which Claude
   asks about per call;
   Codex conversations a thread `config` `mcp_servers.pdt` with `http_headers` and `default_tools_approval_mode =
@@ -94,7 +95,10 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
-  attempt, as the API) and `send_to_session` (through the outbox, "[PDT] From the project manager: …").
+  attempt, as the API; `parent` takes a key or id, `""` detaches), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
+  `blocks`, `blockedBy` or `relates`, and `other` in the same project; the store's link rules, so self-links, blocking
+  cycles and unknown tickets are errors; the `linked`/`unlinked` and `parted` events are the agent's) and
+  `send_to_session` (through the outbox, "[PDT] From the project manager: …").
 - **Discord** (PDT-98; pdt-api `discord.rs`, pdt-core `discord.rs`). Through a `discord_bot` connection (`connection`:
   its name, or the only one), with Discord's REST API (no gateway): `discord_get` (the server, its categories,
   channels and webhooks, each webhook with the connection it is saved as), and the asking tools `discord_change`
@@ -105,7 +109,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
   line per change (pdt-core `discord::ask_title`).
 - **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
-  Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s ticket,
+  Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s, `link_tickets`' and `unlink_tickets`' ticket,
   `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
   project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`); for the Discord tools the
   setting is the bot connection's `config.pmActs` (a Discord server is in no project). Codex and Devin can't ask per

@@ -251,6 +251,91 @@ async fn the_pm_works_from_the_work_folder_with_its_agents_own_tools() {
     }
 }
 
+/// PDT-106: the PM links and unlinks tickets (blocks, blocked by, relates) and sets a parent, asking first like
+/// `edit_ticket`; the links show on both tickets and hold the blocked one back; mistakes come back as errors.
+#[tokio::test]
+async fn the_pm_links_and_unlinks_tickets_and_sets_a_parent() {
+    let env = setup(None).await;
+    for title in ["Ship the login", "The epic"] {
+        let url = format!("/api/projects/{}/tickets", env.project);
+        let (s, v) = call(&env.app, "POST", &url, Some(json!({"title": title, "stage": "todo"}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+    }
+    let ticket = |key: &'static str| {
+        let app = env.app.clone();
+        async move {
+            let (_, v) = call(&app, "GET", &format!("/api/tickets?project=&q={key}"), None).await;
+            let id = v["items"][0]["id"].as_str().unwrap().to_string();
+            call(&app, "GET", &format!("/api/tickets/{id}"), None).await.1
+        }
+    };
+    let id = start_pm(&env, "hi").await;
+    wait_said(&env, &id, 1).await;
+
+    // Linking asks first, the same as edit_ticket.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: link_tickets {"ticket": "PX-2", "kind": "blockedBy", "other": "PX-1"}"#).await;
+    let req = open_request(&env, &id).await;
+    assert_eq!(ticket("PX-2").await["blockedBy"], 0, "nothing before the yes");
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(said.contains("\"linked\": true") && said.contains("\"blockedBy\""), "{said}");
+
+    // Like a link made in the UI: on both tickets, recorded as the agent's, and the blocked one waits.
+    let (two, one) = (ticket("PX-2").await, ticket("PX-1").await);
+    assert_eq!((two["blockedBy"].as_i64(), two["clearToStart"].as_bool()), (Some(1), Some(false)), "{two}");
+    assert_eq!(two["links"][0]["key"], "PX-1");
+    assert_eq!(
+        (one["links"][0]["key"].as_str(), one["links"][0]["direction"].as_str()),
+        (Some("PX-2"), Some("outgoing"))
+    );
+    let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{}/events", two["id"].as_str().unwrap()), None).await;
+    let linked = ev["items"].as_array().unwrap().iter().find(|e| e["kind"] == "linked").unwrap().clone();
+    assert_eq!(linked["actor"], "agent", "{linked}");
+
+    // The rest act without asking once the project lets the PM act.
+    let (s, _) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK);
+    for (call_, want) in [
+        (r#"{"ticket": "PX-1", "kind": "blocks", "other": "PX-1"}"#, "can't link to itself"),
+        (r#"{"ticket": "PX-1", "kind": "blockedBy", "other": "PX-2"}"#, "would close a cycle"),
+        (r#"{"ticket": "PX-1", "kind": "blocks", "other": "PX-99"}"#, "there is no ticket PX-99"),
+        (r#"{"ticket": "PX-1", "kind": "blocks", "other": "NOPE-1"}"#, "no project has the key NOPE"),
+    ] {
+        let said = ask(&env, &id, &format!("mcp: link_tickets {call_}")).await;
+        assert!(said.contains(want) && !said.contains("\"linked\""), "{call_}: {said}");
+    }
+    assert_eq!(ticket("PX-1").await["links"].as_array().unwrap().len(), 1, "the refused links were not made");
+
+    let said = ask(&env, &id, r#"mcp: unlink_tickets {"ticket": "PX-2", "kind": "blockedBy", "other": "PX-1"}"#).await;
+    assert!(said.contains("\"unlinked\": true"), "{said}");
+    let two = ticket("PX-2").await;
+    assert_eq!((two["blockedBy"].as_i64(), two["links"].as_array().unwrap().len()), (Some(0), 0), "{two}");
+    let said = ask(&env, &id, r#"mcp: unlink_tickets {"ticket": "PX-2", "kind": "blockedBy", "other": "PX-1"}"#).await;
+    assert!(said.contains("there is no such link"), "{said}");
+
+    // relates, either way round.
+    let said = ask(&env, &id, r#"mcp: link_tickets {"ticket": "PX-1", "kind": "relates", "other": "PX-2"}"#).await;
+    assert!(said.contains("\"relates\""), "{said}");
+    assert_eq!(ticket("PX-2").await["links"][0]["kind"], "relates");
+    let said = ask(&env, &id, r#"mcp: unlink_tickets {"ticket": "PX-2", "kind": "relates", "other": "PX-1"}"#).await;
+    assert!(said.contains("\"unlinked\": true"), "{said}");
+    assert!(ticket("PX-1").await["links"].as_array().unwrap().is_empty());
+
+    // A parent, by key, and detached again.
+    let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "parent": "PX-3"}"#).await;
+    assert!(said.contains("\"parent\": \"PX-3\""), "{said}");
+    assert_eq!(ticket("PX-3").await["partList"][0]["key"], "PX-2");
+    let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "parent": ""}"#).await;
+    assert!(said.contains("\"parent\": null"), "{said}");
+    assert!(ticket("PX-2").await["parent"].is_null());
+    let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "parent": "PX-2"}"#).await;
+    assert!(!said.contains("\"updated\""), "a ticket can't be its own parent: {said}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
 #[tokio::test]
 async fn notes_and_the_journal_carry_into_the_next_session() {
     let env = setup(None).await;
