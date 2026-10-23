@@ -1,5 +1,6 @@
 // One workflow (Phase 7d spec §2): the header (Enabled, Dry run, Run now, ⋯), the draft bar, and the Graph, Outline,
-// Text, Runs and Versions views. The three builder views edit one draft; Save makes a version.
+// Text, Runs and Versions views. The three builder views edit one draft; Save makes a version. On a phone it is
+// view-only (PDT-120): Outline first, nothing that edits, and Enable/Disable under the top bar's ⋯.
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Redo2, Undo2 } from 'lucide-react';
@@ -13,8 +14,9 @@ import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
+import { useTopBarActions } from '../shell/PhoneTopBar';
 import { DryRunDialog } from './DryRunDialog';
-import { EnableSwitch } from './EnableSwitch';
+import { EnableDialog, EnableSwitch, useEnable } from './EnableSwitch';
 import { GraphView } from './GraphView';
 import { hasErrors, type Catalog } from './model';
 import { NodePanel } from './NodePanel';
@@ -114,7 +116,15 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
   const [dryRun, setDryRun] = useState(false);
   const [note, setNote] = useState('');
   const [templating, setTemplating] = useState(false);
-  const readOnly = w.source === 'repo';
+  // Workflows are view-only on a phone.
+  const readOnly = w.source === 'repo' || phone;
+  const enable = useEnable(w);
+  const blocked = hasErrors({ issues: w.issues, ports: {} }) ? 'Fix the errors first' : null;
+  useTopBarActions(phone ? () => [
+    w.enabled
+      ? { label: 'Disable', onSelect: () => enable.toggle.mutate(false, { onError: (e) => toast.error(e.message) }) }
+      : { label: 'Enable…', disabled: !!blocked, onSelect: () => enable.setAsking(true) },
+  ] : null);
   const draft = useDraft(w.doc, `${w.id}:${w.version}`);
   const check = useCheck(draft.doc).data;
   const errors = hasErrors(check);
@@ -191,18 +201,17 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
             {issueCount > 0 && <Badge tone="failed">{issueCount === 1 ? '1 error' : `${issueCount} errors`}</Badge>}
           </>
         }
-        actions={
+        actions={phone ? undefined : (
           <>
-            <EnableSwitch w={w} catalog={catalog} onDryRun={() => setDryRun(true)}
-              blocked={hasErrors({ issues: w.issues, ports: {} }) ? 'Fix the errors first' : null} />
+            <EnableSwitch w={w} catalog={catalog} onDryRun={() => setDryRun(true)} blocked={blocked} />
             <Button size="sm" variant="secondary" onClick={() => setDryRun(true)}>Dry run</Button>
             {hasManual && <Button size="sm" variant="secondary" disabled={draft.dirty} pending={runNow.isPending} onClick={() => runNow.mutate()}
               title={draft.dirty ? 'Save first: Run now runs the saved version' : undefined}>Run now</Button>}
             <MenuButton label="More workflow actions" entries={menu} />
           </>
-        }
+        )}
       />
-      {readOnly && <Banner tone="neutral">This workflow lives in the repo ({w.repoFile}): edit the file to change it.</Banner>}
+      {w.source === 'repo' && <Banner tone="neutral">This workflow lives in the repo ({w.repoFile}): edit the file to change it.</Banner>}
       {w.proposed !== null && (
         <Banner tone="waiting" actions={<Button size="sm" variant="secondary" onClick={() => setTab('versions')}>Review</Button>}>
           An agent proposed version {w.proposed}.
@@ -222,8 +231,11 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
           {save.error && <span className="basis-full text-destructive">{save.error.message}</span>}
         </div>
       )}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-        <SegmentedControl<WorkflowTab> aria-label="View" size="sm" value={tab} onChange={setTab} options={[
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 overflow-x-auto">
+        <SegmentedControl<WorkflowTab> aria-label="View" size="sm" value={tab} onChange={setTab} options={phone ? [
+          { value: 'outline', label: 'Outline' }, { value: 'runs', label: 'Runs' }, { value: 'graph', label: 'Graph' },
+          { value: 'text', label: 'Text' }, { value: 'versions', label: 'Versions' },
+        ] : [
           { value: 'graph', label: 'Graph' }, { value: 'outline', label: 'Outline' }, { value: 'text', label: 'Text' },
           { value: 'runs', label: 'Runs' }, { value: 'versions', label: 'Versions' },
         ]} />
@@ -233,7 +245,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
         {tab === 'graph' && <GraphView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} />}
         {tab === 'outline' && <OutlineView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} />}
         {tab === 'text' && <TextView doc={draft.doc} onChange={edit} readOnly={readOnly} />}
-        {tab === 'runs' && <RunsView workflowId={w.id} catalog={catalog} runId={runId} onRunChange={setRunId} />}
+        {tab === 'runs' && <RunsView workflowId={w.id} catalog={catalog} runId={runId} onRunChange={setRunId} viewOnly={phone} />}
         {tab === 'versions' && <VersionsView w={w} dirty={draft.dirty} readOnly={readOnly} onChanged={() => draft.discard()} />}
         {builder && !phone && <aside aria-label="Panel" className="w-80 shrink-0 overflow-auto border-l border-border">{panel}</aside>}
       </div>
@@ -242,6 +254,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
           <div className="-mx-4 overflow-auto">{panel}</div>
         </Sheet>
       )}
+      {phone && <EnableDialog w={w} catalog={catalog} enable={enable} />}
       {dryRun && <DryRunDialog open onOpenChange={setDryRun} doc={draft.doc} workflowId={w.id} catalog={catalog} />}
       {templating && <SaveAsTemplateDialog w={w} doc={draft.doc} onClose={() => setTemplating(false)} onSaved={(tid) => { setTemplating(false); void qc.invalidateQueries({ queryKey: ['workflow-templates'] }); onOpen({ kind: 'template', id: tid }); }} />}
     </div>

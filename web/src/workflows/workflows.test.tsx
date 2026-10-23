@@ -1,7 +1,8 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
+import { TopBarActionsContext, type TopBarActions } from '../shell/PhoneTopBar';
 import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
 import { DryRunDialog } from './DryRunDialog';
 import { NewWorkflowDialog } from './NewWorkflowDialog';
@@ -15,6 +16,15 @@ import { groupWorkflows } from './WorkflowsList';
 import { fromText, toText } from './textFormat';
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** Below the md breakpoint: every max-width media query matches (the phone layout). */
+const stubPhone = () =>
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('max-width'),
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
 
 const check = { issues: [], ports: { ci: [{ id: 'out', title: 'Then' }], tell: [{ id: 'sent', title: 'Told' }, { id: 'untold', title: 'No session to tell' }, { id: 'skipped', title: 'Already sent' }] } };
 
@@ -76,6 +86,46 @@ describe('workflow page', () => {
   });
 });
 
+describe('workflow page on a phone', () => {
+  it('opens on the outline, shows nothing that edits, and enables from ⋯', async () => {
+    stubPhone();
+    const calls = stubApi({
+      'GET /api/workflows/w1': detail({ enabled: false }),
+      'POST /api/workflows/check': check,
+      'PATCH /api/workflows/w1': (c: Call) => ({ ...detail(), ...(c.body as object) }),
+    });
+    let actions: { entries: TopBarActions } | null = null;
+    renderWithQuery(
+      <TopBarActionsContext.Provider value={(a) => { actions = a; }}>
+        <WorkflowPage id="w1" catalog={CATALOG} projects={[]} onOpen={() => {}} />
+      </TopBarActionsContext.Provider>,
+    );
+    const steps = await screen.findByRole('list', { name: 'Steps' });
+    expect(within(steps).getByText('Tell the agent')).toBeInTheDocument();
+    // Outline first on a phone.
+    expect(screen.getByRole('radiogroup', { name: 'View' })).toHaveTextContent(/^OutlineRunsGraphTextVersions$/);
+    expect(screen.getByRole('radio', { name: 'Outline' })).toBeChecked();
+    for (const name of ['Dry run', 'Run now', 'More workflow actions', 'Add trigger', 'Actions for Tell the agent']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole('switch', { name: 'Enabled' })).not.toBeInTheDocument();
+    // A step opens read-only.
+    await userEvent.click(within(steps).getByText('Tell the agent'));
+    const sheet = await screen.findByRole('dialog');
+    for (const box of within(sheet).queryAllByRole('textbox')) expect(box).toHaveAttribute('readonly');
+    await userEvent.keyboard('{Escape}');
+    // ⋯ has Enable…, which asks first (without a dry run on the phone).
+    await waitFor(() => expect(actions).not.toBeNull());
+    const entries = actions!.entries();
+    expect(entries.map((e) => ('label' in e ? e.label : null))).toEqual(['Enable…']);
+    act(() => (entries[0] as { onSelect: () => void }).onSelect());
+    const ask = await screen.findByRole('dialog', { name: 'Turn on CI to agent?' });
+    expect(within(ask).queryByRole('button', { name: 'Dry run first' })).not.toBeInTheDocument();
+    await userEvent.click(within(ask).getByRole('button', { name: 'Turn on' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ enabled: true }));
+  });
+});
+
 describe('text view', () => {
   it('applies a document that reads and shows why one does not', async () => {
     const onChange = vi.fn();
@@ -132,6 +182,35 @@ describe('runs view', () => {
     expect(await screen.findByText('Go on?')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'yes' }));
     await waitFor(() => expect(calls.find((c) => c.path.endsWith('/answer'))?.body).toEqual({ choice: 'yes' }));
+  });
+
+  it('on a phone: the list is its own screen, and a run is its steps, each opening to its input and output', async () => {
+    const failed = run('failed', [step('s1', 'ci', 'succeeded', { input: { ticket: 'PDT-1' } }), step('s2', 'tell', 'failed', { error: 'no session' })]);
+    stubApi({
+      'GET /api/workflow-runs': [failed],
+      'GET /api/workflow-runs/r1': failed,
+      'GET /api/workflows/w1/versions/1': { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', createdAt: 1, doc: DOC },
+      'POST /api/workflows/check': check,
+    });
+    const onRunChange = vi.fn();
+    const { rerender } = renderWithQuery(<RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={onRunChange} viewOnly />);
+    const list = await screen.findByRole('navigation', { name: 'Runs' });
+    await userEvent.click(await within(list).findByRole('button', { name: /ci\.run_failed/ }));
+    expect(onRunChange).toHaveBeenCalledWith('r1');
+    expect(screen.queryByRole('region', { name: 'Run' })).not.toBeInTheDocument();
+    rerender(<RunsView workflowId="w1" catalog={CATALOG} runId="r1" onRunChange={onRunChange} viewOnly />);
+    const detail = await screen.findByRole('region', { name: 'Run' });
+    expect(screen.queryByRole('navigation', { name: 'Runs' })).not.toBeInTheDocument();
+    expect(within(detail).queryByRole('button', { name: 'Retry from the failed step' })).not.toBeInTheDocument();
+    expect(within(detail).queryByRole('application')).not.toBeInTheDocument();
+    expect(await within(detail).findByText('no session')).toBeInTheDocument();
+    const steps = within(detail).getByRole('list', { name: 'Steps' });
+    const first = within(steps).getAllByRole('button')[0];
+    expect(first).toHaveAttribute('aria-expanded', 'false');
+    expect(within(steps).queryByText(/"ticket": "PDT-1"/)).not.toBeInTheDocument();
+    await userEvent.click(first);
+    expect(first).toHaveAttribute('aria-expanded', 'true');
+    expect(within(steps).getByText(/"ticket": "PDT-1"/)).toBeInTheDocument();
   });
 
   it('resumes a run from the agent step it timed out at', async () => {

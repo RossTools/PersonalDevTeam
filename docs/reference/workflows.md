@@ -398,6 +398,12 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
 - Versions (`VersionsView`): every version with author, status and note, a diff against the current one, Restore,
   Accept / Discard for a proposal.
 - Templates (`TemplatePage`): built-in ones read-only; the user's edit name, description, params and the document.
+- On a phone (PDT-120) all of it is view-only except turning a workflow on or off: no New workflow, Dry run, Run now,
+  workflow ⋯ menu or draft edits (the panel's fields are read-only, Outline rows have no ⋯), and templates have no Use
+  or Delete. The top bar's ⋯ has Enable… (the same "Turn on?" dialog, without Dry run first) or Disable. The tabs are
+  Outline (the default) · Runs · Graph · Text · Versions; the graph pans and pinch-zooms. Runs is a list of its own;
+  a run (`/workflows/<id>/runs/<runId>`) is its steps in order (status, port, error), each opening to its input and
+  output, without the graph, Retry, Resume, Cancel or a gate's choices (answer those from the Inbox).
 
 ## Agent steps (Phase 7b)
 

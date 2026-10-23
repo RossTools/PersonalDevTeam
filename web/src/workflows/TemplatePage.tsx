@@ -1,5 +1,5 @@
 // A template (Phase 7d spec §5): its params and document. Built-in ones are read-only; the user's own can be edited:
-// name, description, params, and the document as text with `{{params.<id>}}`.
+// name, description, params, and the document as text with `{{params.<id>}}`. On a phone it is view-only (PDT-120).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
@@ -13,6 +13,7 @@ import type { TemplateParam } from '../api/gen/TemplateParam';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import type { WorkflowTemplate } from '../api/gen/WorkflowTemplate';
 import { runAction } from '../common/useAction';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { GraphView } from './GraphView';
 import type { Catalog } from './model';
 import { TextView } from './TextView';
@@ -71,7 +72,8 @@ export function TemplatePage({ id, catalog, onUse, onDeleted }: { id: string; ca
 function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog: Catalog; onUse: (id: string) => void; onDeleted: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const readOnly = t.builtin;
+  const phone = useMediaQuery(PHONE_QUERY);
+  const readOnly = t.builtin || phone;
   const [name, setName] = useState(t.name);
   const [description, setDescription] = useState(t.description);
   const [params, setParams] = useState(t.params);
@@ -91,7 +93,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
       <ViewHeader
         title={t.name}
         meta={<>{t.builtin ? <Badge tone="neutral">Built in</Badge> : <span>Your template</span>}<span>{t.params.length} parameters</span></>}
-        actions={
+        actions={phone ? undefined : (
           <>
             <Button size="sm" variant="primary" onClick={() => onUse(t.id)} disabled={dirty} title={dirty ? 'Save first' : undefined}>Use this template</Button>
             {!t.builtin && (
@@ -106,11 +108,11 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
               }]} />
             )}
           </>
-        }
+        )}
       />
       <div className="flex min-h-0 flex-1 flex-col overflow-auto">
         <div className="flex flex-col gap-3 p-3">
-          {readOnly && <p className="text-sm text-muted-foreground">{t.description} Built-in templates can't be changed: use it, then edit the workflow.</p>}
+          {readOnly && <p className="text-sm text-muted-foreground">{t.description}{t.builtin && " Built-in templates can't be changed: use it, then edit the workflow."}</p>}
           {!readOnly && (
             <>
               <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
