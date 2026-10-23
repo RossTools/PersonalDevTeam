@@ -50,11 +50,43 @@ the design (below). iOS Safari is still unverified.
 
 ## Still open
 
-- **iOS Safari is unverified**: long press (React Aria blocks the callout), touch drag (Safari supports HTML drag and
-  drop on iPhone since iOS 15) and the drawer. Check from a phone over Tailscale when one is available, or install
-  Xcode for the iOS Simulator. Every drag already has a menu equivalent (spec §3), so a failure there degrades, not
-  blocks.
+- **iOS Safari on a device is still unverified** (PDT-122 below checked it in Playwright's WebKit only). Check from a
+  phone over Tailscale when one is available, or install Xcode for the iOS Simulator. Every drag already has a menu
+  equivalent (spec §3), so a failure there degrades, not blocks.
 - Keyboard drag (Enter to pick up, Tab to a target, Enter to drop) was not exercised here; it's covered by the
   component tests once the drag handle exists.
 - The spike's own markup showed "No results" next to matches (the empty state was outside the list); the real
   `CommandList` puts it inside, as shadcn's examples do.
+
+## Phone redesign check (PDT-122, 2026-10-23)
+
+PDT-7's phone UI walked in Playwright: WebKit with the iPhone 13 profile (and `navigator.platform` set to `iPhone`, so
+React Aria takes its iOS paths) and Chromium with the Pixel 7 profile, touch input through CDP
+(`Input.dispatchTouchEvent`) on Chromium and synthetic touch `PointerEvent`s on WebKit. Still no Xcode or iPhone here.
+
+| Check | iOS (WebKit) | Android (Chromium) |
+|---|---|---|
+| Every drawer screen (PM, Sessions, Inbox, Tickets, Board, Workflows, Personas, Files, Settings and its sections) renders with no page errors and no sideways overflow | Pass | Pass |
+| Drawer: opens from ☰; Back closes it (URL unchanged); a tap outside closes it | Pass | Pass |
+| Drawer: a swipe left closes it | Not checkable (no touch input in WebKit) | Pass |
+| List screen → detail (`/tickets` → `/tickets/SA-8`) and Back returns | Pass | Pass |
+| Text fields, the composer and the terminal's input are ≥ 16px (iOS zooms the page on focus below that) | Pass | Pass |
+| Long press on a list row (tickets, sessions) opens its menu and does nothing else | **Failed, fixed** (below) | Pass |
+| Long press on a tab or a board card opens its menu (React Aria's own timer on iOS) | Pass | Not checkable (CDP touch fires no `contextmenu`; the spike passed it on a device) |
+| Board: a swipe changes the column | Not checkable | Pass |
+
+**Fixed:** iOS sends no `click` after a long press, and without one React Aria fires the row's press itself when the
+finger lifts, so a long press on a `List`/`DataList` row opened its menu and then opened the row (a ticket long press
+navigated to the ticket). `useRowMenu` now ends React Aria's press (a `pointercancel`) when its timer opens the menu.
+
+**Needs a device** (steps for whoever has one):
+1. Composer above the keyboard: open `/pm`, tap the box; the composer stays above the keyboard and the top bar stays
+   visible; type, rotate, dismiss the keyboard; the layout returns to full height.
+2. Terminal: open a running shell tab, tap the terminal; the keyboard opens without zooming the page; the key bar sits
+   above it; a long press selects a word with no iOS callout or magnifier, Copy then Paste (⋯) works.
+3. Safe areas: `index.html` has no `viewport-fit=cover`, so `env(safe-area-inset-*)` is 0 and Safari keeps the page out
+   of the notch and home-indicator areas itself. Check the bottom bars (ticket actions, Inbox decisions, composer) in
+   portrait and landscape aren't under Safari's toolbar.
+4. Swipe-back from the left edge on a detail screen goes up one screen, like ←; on the drawer it closes the drawer.
+5. A long press on a ticket row, a tab and a board card opens the menu only: no text selection, callout, or opening
+   the item.

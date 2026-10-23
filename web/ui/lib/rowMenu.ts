@@ -59,11 +59,15 @@ export function useRowMenu(id: string, onMenu: ((p: MenuPoint) => void) | undefi
       fired.current = false;
       if (e.pointerType !== 'touch') return;
       const at = { x: e.clientX, y: e.clientY };
+      const { currentTarget: row, pointerId } = e;
       start.current = at;
       cancel();
       timer.current = setTimeout(() => {
         timer.current = null;
         fired.current = true;
+        // End React Aria's press on the row: iOS sends no click after a long press, and without one React Aria
+        // fires the row's action itself when the finger lifts, over the menu just opened.
+        row.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId, pointerType: 'touch' }));
         longPressed?.(id);
         onMenu(at);
       }, LONG_PRESS_MS);

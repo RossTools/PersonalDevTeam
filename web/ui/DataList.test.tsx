@@ -228,6 +228,30 @@ describe('DataList touch long press', () => {
       vi.useRealTimers();
     }
   });
+  it('does not act on the row after the menu opened (iOS sends no click after a long press)', () => {
+    vi.useFakeTimers();
+    try {
+      const onAction = vi.fn();
+      render(
+        <DataList aria-label="Tickets" rowHeight={36} items={many(3)} onAction={onAction}>
+          {(r) => (
+            <DataListRow id={r.id} textValue={r.title} onMenu={() => {}}>
+              <span>{r.title}</span>
+            </DataListRow>
+          )}
+        </DataList>,
+      );
+      const target = row('Ticket 1');
+      const touch = { pointerType: 'touch', pointerId: 1, button: 0, width: 1, height: 1, clientX: 5, clientY: 6 };
+      fireEvent.pointerDown(target, touch);
+      act(() => { vi.advanceTimersByTime(800); });
+      fireEvent.pointerUp(target, touch);
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(onAction).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('DataList striped', () => {
