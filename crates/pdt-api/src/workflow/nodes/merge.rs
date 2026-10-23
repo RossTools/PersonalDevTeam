@@ -30,6 +30,9 @@ pub struct MergeConfig {
     #[serde(default)]
     #[ts(type = "boolean | string")]
     pub delete_branch: Tpl<bool>,
+    /// Merging again after a failure (PDT-104): `finishOnMerge` and `deleteBranch` stay as the first merge asked.
+    #[serde(default)]
+    pub again: bool,
 }
 
 fn yes() -> Tpl<bool> {
@@ -37,6 +40,13 @@ fn yes() -> Tpl<bool> {
 }
 
 pub struct Merge;
+
+/// The attempt's open pull request as GitHub has it now (a push just changed it, so the last look may be stale).
+async fn fresh_pr(cx: &StepCx<'_>, attempt: &str) -> Option<pdt_core::pr::PullRequestStatus> {
+    let info = cx.st.store.get_attempt(attempt).await.ok().flatten()?;
+    crate::github::refresh_attempt(cx.st, &info).await;
+    crate::github::watched_pr(cx.st, attempt).filter(|p| p.state == pdt_core::pr::PrState::Open)
+}
 
 impl NodeKind for Merge {
     fn spec(&self) -> KindSpec {
@@ -47,7 +57,8 @@ impl NodeKind for Merge {
             "Merge the attempt",
             "Merges the attempt as Merge… does: turns on auto-merge for its pull request (`queued`), or merges it \
              locally (`merged`). The project's policy may not let a workflow merge, or may need a person's approval \
-             first; that, and anything that stops the merge, leaves by `refused`.",
+             first; that, and anything that stops the merge, leaves by `refused`. With `again` (after a fix), a pull \
+             request already set to merge counts as `queued`, and the first merge's finishing choice stays.",
             &[("merged", "Merged"), ("queued", "Auto-merge on"), ("refused", "Refused")],
             false,
         )
@@ -63,10 +74,16 @@ impl NodeKind for Merge {
             if cx.dry_run {
                 return Ok(Outcome::next("queued", json!({"would": format!("merge attempt {}", c.attempt)})));
             }
+            if c.again
+                && let Some(pr) = fresh_pr(cx, &c.attempt).await
+                && (pr.auto_merge || pr.in_merge_queue)
+            {
+                return Ok(Outcome::next("queued", json!({"outcome": MergeOutcome::Queued, "already": true})));
+            }
             let req = MergeRequest {
                 style: Some(c.style),
-                finish_on_merge: Some(c.finish_on_merge.or(true)),
-                delete_branch: Some(c.delete_branch.or(false)),
+                finish_on_merge: (!c.again).then(|| c.finish_on_merge.or(true)),
+                delete_branch: (!c.again).then(|| c.delete_branch.or(false)),
                 by: None,
             };
             match crate::review::merge_attempt(cx.st, &c.attempt, &req, Merger::Automated).await {

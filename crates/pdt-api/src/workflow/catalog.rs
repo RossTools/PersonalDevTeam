@@ -307,6 +307,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(buildkite::Retry));
         kinds.push(Box::new(buildkite::TriggerBuild));
         kinds.push(Box::new(merge::Merge));
+        kinds.push(Box::new(attempt::AgentWorking));
         Catalog::new(kinds)
     })
 }
