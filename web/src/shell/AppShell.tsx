@@ -215,8 +215,11 @@ export function AppShell() {
   };
   const peek: TicketPeekState = useMemo(() => ({
     ticket: peekRef,
-    onChange: (ticket, opts) => go({ view: 'tickets', board: mode === 'board', ticket }, opts),
-  }), [peekRef, mode]);
+    // On a phone the ticket is a detail screen, so closing it is ← (Back), not a new entry.
+    onChange: (ticket, opts) => (phone && ticket === null && peekRef !== null
+      ? goBack(routePath({ view: 'tickets', board: mode === 'board', ticket: null }))
+      : go({ view: 'tickets', board: mode === 'board', ticket }, opts)),
+  }), [peekRef, mode, phone]);
   /** Shows a view as it was last (a view's own path the first time). */
   const setView = useCallback((v: ViewId) => {
     if ((parseLocation(currentLocation()).view ?? defaultView) === v) return;
@@ -575,7 +578,8 @@ export function AppShell() {
       <span className="truncate">{ticketsProject ? `${label} · ${ticketsProject.key}` : label}</span>
       <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
     </Button>
-  ) : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label) : label;
+  ) : view === 'tickets' && detail ? peekRef ?? label
+  : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label) : label;
   const shellActions = (): MenuEntry[] =>
     view === 'pm' ? [
       { label: 'New session…', onSelect: newPmSession },

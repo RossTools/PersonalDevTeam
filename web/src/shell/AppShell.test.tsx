@@ -1137,6 +1137,30 @@ describe('routes (PDT-111)', () => {
     expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
   });
 
+  it('shows a ticket as a detail screen on a phone, where ← and Back agree', async () => {
+    stubPhone();
+    stubWorkspaces(ticketRoutes);
+    at('/tickets');
+    renderWithQuery(<AppShell />);
+    const bar = screen.getByRole('banner', { name: 'Top bar' });
+    await userEvent.click(await screen.findByRole('row', { name: /Fix login/ }));
+    await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
+    // Under the top bar, in place of the list, not a sheet over it.
+    expect(await within(screen.getByRole('main')).findByRole('region', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('row', { name: /Fix login/ })).not.toBeInTheDocument();
+    expect(within(bar).getByRole('heading', { name: 'ALP-1' })).toBeInTheDocument();
+    // ← goes Back: Forward returns to the ticket.
+    await userEvent.click(within(bar).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/tickets'));
+    expect(await screen.findByRole('row', { name: /Fix login/ })).toBeInTheDocument();
+    await act(() => window.history.forward());
+    await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
+    await back();
+    await waitFor(() => expect(here()).toBe('/tickets'));
+    expect(within(bar).getByRole('button', { name: 'Menu' })).toBeInTheDocument();
+  });
+
   it('opens a ticket key linked in a conversation', async () => {
     stubWorkspaces(ticketRoutes);
     at('/tickets');

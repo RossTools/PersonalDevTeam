@@ -249,64 +249,82 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
   useEffect(() => {
     if (t) onLoaded(t);
   }, [t, onLoaded]);
+  const title = t ? `${t.key} · ${t.title}` : 'Ticket';
+  const actions = t && (
+    <>
+      <MenuButton
+        label="Ticket actions"
+        placement="top end"
+        entries={() => [
+          ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
+          { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
+          ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
+          { separator: true },
+          { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
+        ]}
+      />
+      {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
+      {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
+      {/* On a phone the route changes to the tab, so the peek goes with it: closing it too would go Back over that. */}
+      <Button variant="primary" onClick={() => { if (!phone) onClose(); open(t); }}>Open</Button>
+    </>
+  );
+  const body = (
+    !t ? (
+      q.isPending && !missing ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
+    ) : (
+      // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
+      <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
+        <div className={cn('flex flex-col gap-2', !phone && 'pr-8')}>
+          <span className="flex items-center gap-1 self-start">
+            {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} />}
+            <TicketKey ticketKey={t.key} />
+          </span>
+          <TicketTitle ticket={t} className="text-base font-semibold" />
+          <StageStepper stage={t.stage} compact />
+          <TicketBadges ticket={t} className="flex-wrap" />
+          {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
+          <MergedBanner ticket={t} className="rounded-md border" />
+        </div>
+        <TicketDetails ticket={t} />
+        <AttemptSection ticket={t} compact />
+        {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
+        <TicketDescription key={t.id} ticket={t} />
+        <PartsSection ticket={t} />
+        <TicketLinks ticket={t} />
+        <TicketTimeline ticketId={t.id} recent={5} />
+      </div>
+    )
+  );
+  const makeParts = making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />;
+  // On a phone the ticket is a detail screen under the top bar (← is Back), not a sheet over it (PDT-112).
+  if (phone) {
+    if (!shown) return makeParts || null;
+    return (
+      <section aria-label={title} className="flex min-h-0 flex-1 flex-col">
+        {makeParts}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{body}</div>
+        {actions && <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">{actions}</div>}
+      </section>
+    );
+  }
   return (
     <>
-    {making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />}
+    {makeParts}
     <Sheet
       side="right"
-      title={t ? `${t.key} · ${t.title}` : 'Ticket'}
+      title={title}
       hideTitle
       open={shown}
-      // On desktop the backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on
-      // a backlog row or a board card or lane, which shows that ticket instead.
-      modal={phone}
+      // The backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on a backlog
+      // row or a board card or lane, which shows that ticket instead.
+      modal={false}
       keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}
       onOpenChange={(o) => !o && onClose()}
-      className={phone ? 'w-full max-w-full' : 'w-[32rem] max-w-[90vw]'}
-      footer={t && (
-        <>
-          <MenuButton
-            label="Ticket actions"
-            placement="top end"
-            entries={() => [
-              ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-              { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
-              ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
-              { separator: true },
-              { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
-            ]}
-          />
-          {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
-          {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
-          <Button variant="primary" onClick={() => { onClose(); open(t); }}>Open</Button>
-        </>
-      )}
+      className="w-[32rem] max-w-[90vw]"
+      footer={actions}
     >
-      {!t ? (
-        q.isPending && !missing ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
-      ) : (
-        // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
-        <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
-          <div className="flex flex-col gap-2 pr-8">
-            <span className="flex items-center gap-1 self-start">
-              {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} />}
-              <TicketKey ticketKey={t.key} />
-            </span>
-            <TicketTitle ticket={t} className="text-base font-semibold" />
-            <StageStepper stage={t.stage} compact />
-            <TicketBadges ticket={t} className="flex-wrap" />
-            {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
-            <MergedBanner ticket={t} className="rounded-md border" />
-          </div>
-          <TicketDetails ticket={t} />
-          <AttemptSection ticket={t} compact />
-          {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
-          <TicketDescription key={t.id} ticket={t} />
-          <PartsSection ticket={t} />
-          <TicketLinks ticket={t} />
-          <TicketTimeline ticketId={t.id} recent={5} />
-        </div>
-      )}
+      {body}
     </Sheet>
     </>
   );
@@ -503,6 +521,9 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     );
   }
 
+  const ticketPeek = <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />;
+  // On a phone a peeked ticket is its own screen, in place of the list.
+  if (phone && peekRef !== null) return <div className="flex min-h-0 flex-1 flex-col">{ticketPeek}</div>;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader
@@ -580,7 +601,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       )}
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>
       {menu}
-      <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />
+      {ticketPeek}
     </div>
   );
 }

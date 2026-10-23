@@ -32,7 +32,7 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
   adds a Draft above the first row when the list is a flat rank order; Shift+Enter opens the full form), filters
   (saved filters per browser in localStorage), bulk bar, rank by drag or Alt+↑/↓; a row opens the peek sheet
-  (non-modal on desktop, full screen on phones), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
+  (non-modal on desktop; on phones a detail screen under the top bar, whose ← is Back), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
   progress / Done (closed in the last 14 days, `closedAfter`); cards drag between columns on desktop, phones show one
   column at a time.
 - **Pipeline stage** (Phase 7c): `pipelineStage` (`refine | code | review | qa | accept`, `tickets.pipeline_stage`)
