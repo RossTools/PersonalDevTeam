@@ -307,7 +307,8 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
   // On a phone the ticket is its own screen under the top bar (← is Back), not a sheet over it (PDT-112, PDT-119).
   if (phone) {
     if (!shown) return null;
-    return t ? <PhoneTicket ticket={t} onDeleted={onClose} /> : <div className="px-4 py-3">{body}</div>;
+    // Keyed by ticket: its edit, folds and section are its own.
+    return t ? <PhoneTicket key={t.id} ticket={t} onDeleted={onClose} /> : <div className="px-4 py-3">{body}</div>;
   }
   return (
     <>
