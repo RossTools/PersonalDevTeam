@@ -26,6 +26,8 @@ web/src/tickets. Review and merge are in [review.md](review.md).
     comments. So an agent's comment never passes for the user's, and workflows that react to the user's comments
     (below) don't fire on it.
 - A workspace tab holds a session, a run, a ticket (`workspace_tabs.ticket_id`) or a worktree's changes, exactly one.
+  A ticket tab's place is its active attempt's worktree (else the main checkout): a new session or run from it (the
+  new-tab chooser, palette, Run) and the folder view default to the ticket's branch.
 - Web: the Tickets view (rail item, Ctrl+] l) is the backlog (Draft and Ready unless the Stage filter says
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
   adds a Draft above the first row when the list is a flat rank order; Shift+Enter opens the full form), filters
