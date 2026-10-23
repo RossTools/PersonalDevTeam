@@ -103,9 +103,9 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   ticket by rank (then Ready with `ready`), skipping parents, tickets that ever had an attempt, blocked ones, `conflict`
   overlaps and waiting tickets that aren't clear (pdt-core `policy::pick_next`). It starts in a new workspace with the
   host's default agent, view and ticket permission mode, or with no session when an enabled workflow for the project
-  has an `attempt.started` trigger (the Pipeline's Coder step starts one); the `started` event has `auto: true`. A
-  failed start is logged and skipped until the ticket changes; a start with its own session waits for a slot under the
-  host's cap.
+  has an `attempt.started` trigger (the Pipeline's Coder step starts one, its tab after the ticket's); the `started`
+  event has `auto: true`. A failed start is logged and skipped until the ticket changes; a start with its own session
+  waits for a slot under the host's cap.
 - `noSession: true` (PDT-72; the Start dialog's "No session") starts no agent session: the branch, worktree, attempt
   and only the ticket's tab (still in its new workspace with `newWorkspace`); the result's `session` is `null`.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as
