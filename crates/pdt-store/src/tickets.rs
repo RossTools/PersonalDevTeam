@@ -760,12 +760,13 @@ async fn parted_events(
     (parent, parent_key): (&str, &str),
     (part, part_key): (&str, &str),
     removed: bool,
+    actor: Actor,
     now: i64,
 ) -> Result<(), StoreError> {
     let data =
         json!({"parentId": parent, "parentKey": parent_key, "partId": part, "partKey": part_key, "removed": removed});
-    insert_event(conn, parent, EventKind::Parted, Actor::User, None, Some(data.clone()), now).await?;
-    insert_event(conn, part, EventKind::Parted, Actor::User, None, Some(data), now).await?;
+    insert_event(conn, parent, EventKind::Parted, actor, None, Some(data.clone()), now).await?;
+    insert_event(conn, part, EventKind::Parted, actor, None, Some(data), now).await?;
     Ok(())
 }
 
@@ -843,7 +844,7 @@ async fn insert_ticket(
             .fetch_one(&mut *conn)
             .await?;
         let own_key = format_key(&pkey, u32::try_from(number).unwrap_or(0));
-        parted_events(conn, (parent, &parent_key), (id, &own_key), false, now).await?;
+        parted_events(conn, (parent, &parent_key), (id, &own_key), false, Actor::User, now).await?;
         if let (true, Some(prev)) = (t.blocked_by_previous, previous) {
             sqlx::query("INSERT INTO ticket_links (from_id, to_id, kind, created_at) VALUES (?, ?, 'blocks', ?)")
                 .bind(&prev)
@@ -852,7 +853,16 @@ async fn insert_ticket(
                 .execute(&mut *conn)
                 .await?;
             let prev_key = ticket_head(conn, &prev).await?.map(|h| h.1).unwrap_or_default();
-            link_events(conn, EventKind::Linked, LinkKind::Blocks, (&prev, &prev_key), (id, &own_key), now).await?;
+            link_events(
+                conn,
+                EventKind::Linked,
+                LinkKind::Blocks,
+                (&prev, &prev_key),
+                (id, &own_key),
+                Actor::User,
+                now,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -1248,12 +1258,12 @@ impl Store {
             let current = cur.parent.as_ref().map(|x| x.id.as_str());
             if current != parent.as_deref() {
                 if let Some(old) = &cur.parent {
-                    parted_events(&mut tx, (&old.id, &old.key), (id, &cur.key), true, now).await?;
+                    parted_events(&mut tx, (&old.id, &old.key), (id, &cur.key), true, actor, now).await?;
                 }
                 if let Some(new) = parent {
                     let (facts, key, _) = parent_facts(&mut tx, Some((id, &cur.project_id)), new).await?;
                     valid_parent(&facts)?;
-                    parted_events(&mut tx, (new, &key), (id, &cur.key), false, now).await?;
+                    parted_events(&mut tx, (new, &key), (id, &cur.key), false, actor, now).await?;
                 }
                 sqlx::query("UPDATE tickets SET parent_id = ?, updated_at = ? WHERE id = ?")
                     .bind(parent)
@@ -1946,6 +1956,18 @@ impl Store {
     /// Links `from` to `to` (both in one project). A `blocks` link that would close a cycle is refused with the
     /// cycle's keys. Linking twice (or `relates` in either direction) is a no-op. None if `from` doesn't exist.
     pub async fn add_link(&self, from: &str, to: &str, kind: LinkKind, now: i64) -> TResult<Option<Ticket>> {
+        self.add_link_by(from, to, kind, Actor::User, now).await
+    }
+
+    /// [`Store::add_link`] on behalf of `actor` (the PM's `link_tickets`), who the `linked` events name.
+    pub async fn add_link_by(
+        &self,
+        from: &str,
+        to: &str,
+        kind: LinkKind,
+        actor: Actor,
+        now: i64,
+    ) -> TResult<Option<Ticket>> {
         if from == to {
             return Err(TicketError::Invalid("a ticket can't link to itself".into()));
         }
@@ -1993,7 +2015,7 @@ impl Store {
             .bind(now)
             .execute(&mut *tx)
             .await?;
-        link_events(&mut tx, EventKind::Linked, kind, (from, &from_key), (to, &to_key), now).await?;
+        link_events(&mut tx, EventKind::Linked, kind, (from, &from_key), (to, &to_key), actor, now).await?;
         tx.commit().await?;
         Ok(self.get_ticket(from).await?)
     }
@@ -2001,6 +2023,18 @@ impl Store {
     /// Removes a link (`relates` in either direction). NotFound("link") if there is none; None if `from` doesn't
     /// exist.
     pub async fn remove_link(&self, from: &str, to: &str, kind: LinkKind, now: i64) -> TResult<Option<Ticket>> {
+        self.remove_link_by(from, to, kind, Actor::User, now).await
+    }
+
+    /// [`Store::remove_link`] on behalf of `actor` (the PM's `unlink_tickets`), who the `unlinked` events name.
+    pub async fn remove_link_by(
+        &self,
+        from: &str,
+        to: &str,
+        kind: LinkKind,
+        actor: Actor,
+        now: i64,
+    ) -> TResult<Option<Ticket>> {
         let mut tx = self.write_tx().await?;
         let Some((_, from_key, from_stage)) = ticket_head(&mut tx, from).await? else { return Ok(None) };
         let r = sqlx::query(
@@ -2016,7 +2050,7 @@ impl Store {
             return Err(TicketError::NotFound("link"));
         }
         let to_key = ticket_head(&mut tx, to).await?.map(|h| h.1).unwrap_or_default();
-        link_events(&mut tx, EventKind::Unlinked, kind, (from, &from_key), (to, &to_key), now).await?;
+        link_events(&mut tx, EventKind::Unlinked, kind, (from, &from_key), (to, &to_key), actor, now).await?;
         if kind == LinkKind::Blocks && !from_stage.is_closed() {
             let sql = format!("SELECT {BLOCKED_BY} FROM tickets t WHERE t.id = ?");
             let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(to).fetch_one(&mut *tx).await?;
@@ -2103,13 +2137,14 @@ async fn link_events(
     kind: LinkKind,
     (from, from_key): (&str, &str),
     (to, to_key): (&str, &str),
+    actor: Actor,
     now: i64,
 ) -> Result<(), StoreError> {
     let data = |dir: LinkDirection, other: &str, key: &str| {
         Some(json!({"kind": kind, "direction": dir, "ticketId": other, "key": key}))
     };
-    insert_event(conn, from, event, Actor::User, None, data(LinkDirection::Outgoing, to, to_key), now).await?;
-    insert_event(conn, to, event, Actor::User, None, data(LinkDirection::Incoming, from, from_key), now).await?;
+    insert_event(conn, from, event, actor, None, data(LinkDirection::Outgoing, to, to_key), now).await?;
+    insert_event(conn, to, event, actor, None, data(LinkDirection::Incoming, from, from_key), now).await?;
     Ok(())
 }
 

@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 26] = [
+pub const ALL_TOOLS: [&str; 28] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -35,6 +35,8 @@ pub const ALL_TOOLS: [&str; 26] = [
     "write_journal",
     "create_ticket",
     "edit_ticket",
+    "link_tickets",
+    "unlink_tickets",
     "send_to_session",
     "discord_get",
     "discord_change",
@@ -44,11 +46,18 @@ pub const ALL_TOOLS: [&str; 26] = [
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
 /// card) unless the project's policy (for Discord, the bot connection) lets the PM act, so they are never in Claude's
 /// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 5] =
-    ["create_ticket", "edit_ticket", "send_to_session", "discord_change", "discord_webhook"];
+pub const ASKING_TOOLS: [&str; 7] = [
+    "create_ticket",
+    "edit_ticket",
+    "link_tickets",
+    "unlink_tickets",
+    "send_to_session",
+    "discord_change",
+    "discord_webhook",
+];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 24] = [
+pub const PM_TOOLS: [&str; 26] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -69,6 +78,8 @@ pub const PM_TOOLS: [&str; 24] = [
     "write_journal",
     "create_ticket",
     "edit_ticket",
+    "link_tickets",
+    "unlink_tickets",
     "send_to_session",
     "discord_get",
     "discord_change",
@@ -478,7 +489,11 @@ pub const PM_INSTRUCTIONS: &str = "You are the PM: the user's project manager ac
 messages), its workflow runs and the Inbox, then say what it waits on and who can unblock it.\n\
 - Drafting a ticket: write the title and description (scope, out of scope, \"Done when\") in your reply first, then \
 call `create_ticket`; the user confirms it (PDT shows them the call) unless the project lets you act. The same for \
-`edit_ticket` and `send_to_session`. Never claim you made a change the tool did not report.\n\
+`edit_ticket`, `link_tickets`, `unlink_tickets` and `send_to_session`. Never claim you made a change the tool did not \
+report.\n\
+- Links: \"make A blocked by B\" is `link_tickets` (`blocks`, `blockedBy` or `relates`), and `unlink_tickets` removes \
+one; a ticket's parent is `edit_ticket`'s `parent` (`\"\"` detaches it). Never fall back to a comment asking the user \
+to link them.\n\
 - \"How does X work\", estimates and splitting a ticket: read the project's code first (its folder is in the \
 briefing) and name the files you mean. What an attempt changed: `git diff <base>...<branch>` in its project's \
 checkout (`get_ticket` gives the branch and base). Hand broad digging to a subagent when your agent has them.\n\
