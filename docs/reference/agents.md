@@ -124,6 +124,12 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   pinned or not. `GET /api/pm/notes?q=&project=&kind=` (words are quoted prefixes, all required; a project gets its
   own and host-wide notes), `POST`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`. The PM
   view's Notes page lists, searches, adds, edits, pins and deletes them.
+- **Paths and the phone** (PDT-113). `/pm` is the current session (or the start box), `/pm/notes` the notes,
+  `/pm/notes/<id>` one note, `/pm/earlier` the sessions that ended (when, how it ended, the journal's first line) and
+  `/pm/<session id>` one of them, read-only with "Go to the current session". On a phone the conversation is the
+  whole screen (no header: the top bar has the title), ⋯ has New session… (asks first), Notes and Earlier sessions,
+  a tap on a note opens it as its own screen, and the start box shows the usual text but isn't focused (the keyboard
+  would cover it).
 - **Rotation.** When a PM session ends a turn with its context at least 60 % full (the last `usage` event) or 24 h
   old (`AppState.pm_rotate_age_ms`), PDT queues "[PDT] This PM session is ending…" through the outbox (rotation
   `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). The user's next

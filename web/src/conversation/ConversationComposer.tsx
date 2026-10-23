@@ -1,12 +1,14 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Paperclip } from 'lucide-react';
-import { Alert, IconButton, ImageThumb, Kbd, PromptBox, Select, SuggestionList, suggestionId, type SelectOption, type Suggestion } from '@ui';
+import { Alert, IconButton, ImageThumb, Kbd, PromptBox, Select, StatusDot, SuggestionList, suggestionId, type SelectOption, type Suggestion } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentCommandInfo } from '../api/gen/AgentCommandInfo';
 import type { AgentModel } from '../api/gen/AgentModel';
 import type { Delivery } from '../api/gen/Delivery';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import { actionError } from '../common/useAction';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
+import { softKeyboardOpen } from '../common/viewport';
 import { isMac } from '../palette/useMetaK';
 import { loadDraft, saveDraft } from './drafts';
 import { applyCompletion, commandSuggestions, completionAt, type LimitWarning } from './completion';
@@ -99,9 +101,16 @@ export interface ConversationComposerProps {
 }
 
 /**
+ * Whether Enter adds a new line instead of sending: on a phone typing on its on-screen keyboard, where ⬆ sends. A
+ * hardware keyboard (no on-screen one) keeps Enter to send.
+ */
+export const enterAddsLine = (phone: boolean) => phone && softKeyboardOpen();
+
+/**
  * The conversation's prompt box. Enter sends (Shift+Enter adds a line); while the agent works Enter queues for its
  * next opportunity and Cmd/Ctrl+Enter interrupts and sends now; Escape or Stop interrupts. The bottom row has the
- * model and permission-mode pickers.
+ * model and permission-mode pickers. On a phone's on-screen keyboard Enter adds a line and ⬆ sends (`enterAddsLine`);
+ * ⬆ turns into Stop while the agent works and the box is empty.
  */
 export function ConversationComposer({
   turnRunning,
@@ -124,6 +133,7 @@ export function ConversationComposer({
   limit,
   draftKey,
 }: ConversationComposerProps) {
+  const phone = useMediaQuery(PHONE_QUERY);
   const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ''));
   useEffect(() => {
     if (draftKey) saveDraft(draftKey, text);
@@ -291,6 +301,7 @@ export function ConversationComposer({
     }
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     const mod = e.metaKey || e.ctrlKey;
+    if (!mod && enterAddsLine(phone)) return;
     if (mod || (!e.shiftKey && !e.altKey)) {
       e.preventDefault();
       void send(mod);
@@ -368,6 +379,7 @@ export function ConversationComposer({
         autoFocus={autoFocus}
         placeholder={turnRunning ? `${agentName} is working. Queue a message…` : `Message ${agentName}…`}
         className="mx-auto w-full max-w-3xl"
+        layout={phone ? 'phone' : 'default'}
         toolbar={
           <>
             {onUpload && (
@@ -387,7 +399,12 @@ export function ConversationComposer({
           </>
         }
         meta={
-          turnRunning ? (
+          phone ? (
+            <span className="flex items-center gap-1.5" role="status">
+              <span aria-hidden className="flex"><StatusDot status={turnRunning ? 'running' : stopped ? 'failed' : 'idle'} pulse /></span>
+              {turnRunning ? 'working' : stopped ? 'stopped' : 'ready'}
+            </span>
+          ) : turnRunning ? (
             <span>
               <Kbd>↵</Kbd> queues · <Kbd>{isMac() ? '⌘↵' : 'Ctrl+↵'}</Kbd> sends now · <Kbd>Esc</Kbd> stops
             </span>

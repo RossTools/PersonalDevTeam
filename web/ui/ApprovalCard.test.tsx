@@ -10,7 +10,7 @@ describe('ApprovalCard', () => {
     expect(screen.getByRole('region', { name: 'Run this command?' })).toHaveTextContent('cargo test');
     expect(screen.getByText('Runs the tests')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Always allow/ })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Allow' }));
     expect(onAnswer).toHaveBeenCalledWith({ type: 'approve', always: false });
   });
 
@@ -54,7 +54,7 @@ describe('ApprovalCard', () => {
     render(<ApprovalCard title="Run this command?" onAnswer={() => {}} />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     await userEvent.keyboard('{Escape}');
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
   });
 
   it('answers questions with the picked option labels', async () => {
@@ -128,7 +128,7 @@ describe('ApprovalCard', () => {
     let resolve!: () => void;
     const onAnswer = vi.fn(() => new Promise<void>((r) => { resolve = r; }));
     render(<ApprovalCard title="Run this command?" onAnswer={onAnswer} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Allow' }));
     expect(screen.getByRole('button', { name: 'Deny' })).toBeDisabled();
     resolve();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Deny' })).toBeEnabled());
