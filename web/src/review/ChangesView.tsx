@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type TouchEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Files } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Files } from 'lucide-react';
 import {
-  Alert, Badge, Button, Checkbox, CommentComposer, CommentThread, DiffStat, EmptyState, SegmentedControl, Skeleton, SplitPane,
+  Alert, Badge, Button, Checkbox, CommentComposer, CommentThread, DiffStat, EmptyState, IconButton, SegmentedControl, Sheet, Skeleton, SplitPane,
   relativeTime, toast,
 } from '@ui';
+import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { ReviewComment } from '../api/gen/ReviewComment';
@@ -12,11 +13,12 @@ import type { Ticket } from '../api/gen/Ticket';
 import { isMarkdownPath, Markdown } from '../common/Markdown';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { actionError, runAction } from '../common/useAction';
+import { useBackCloses } from '../shell/router';
 import { PrBadge } from '../tickets/PullRequest';
 import { invalidateTickets, useTicket } from '../tickets/queries';
 import { anchorLabel, linesOf, relocate, threadsOf, type Thread } from './anchors';
 import type { DiffAnchor, LineRange } from './CodeDiff';
-import { FileList } from './FileList';
+import { FileList, PhoneFileList } from './FileList';
 import { MergeDialog } from './MergeDialog';
 import { invalidateReview, useChanges, useFileSides, useReviewComments } from './queries';
 import { ReviewBar } from './ReviewBar';
@@ -42,6 +44,8 @@ const isTyping = (t: EventTarget) => t instanceof HTMLElement && !!t.closest('te
 /**
  * A worktree's changes against its base branch (review spec §2): the review bar, the changed files and the selected
  * file's diff with its comment threads. `ticket` is given in the ticket tab; a changes tab reads the attempt's own.
+ * On a phone (PDT-116) the files are a screen of their own and a file opens its unified diff as the next screen (Back
+ * returns to the list); a swipe moves to the next or previous file, and a new comment opens in a bottom sheet.
  */
 export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket?: Ticket }) {
   const qc = useQueryClient();
@@ -55,7 +59,9 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   const mode: Mode = narrow ? 'unified' : modePref;
   const [wholeFile, setWholeFile] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [filesOpen, setFilesOpen] = useState(false);
+  // Phones: a file's screen is open (else the list), and which way the last move went (for the slide).
+  const [fileOpen, setFileOpen] = useState(false);
+  const [dir, setDir] = useState<1 | -1>(1);
   const [composer, setComposer] = useState<LineRange | null>(null);
   const [sending, setSending] = useState(false);
   const [merging, setMerging] = useState(false);
@@ -72,9 +78,37 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   }, [threads]);
   const drafts = (comments.data ?? []).filter((c) => c.sentAt === null).length;
 
+  useBackCloses(phone && fileOpen && file !== null, () => setFileOpen(false));
+
   const select = (path: string) => {
     setSelected(path);
-    setFilesOpen(false);
+    setDir(1);
+    setFileOpen(true);
+  };
+  // Phones: the next or previous file, stopping at either end.
+  const move = (by: 1 | -1) => {
+    const i = file ? files.findIndex((f) => f.path === file.path) : -1;
+    const next = files[i + by];
+    if (i < 0 || !next) return;
+    setDir(by);
+    setSelected(next.path);
+  };
+  const touch = useRef<{ x: number; y: number } | null>(null);
+  const onTouchStart = (e: TouchEvent) => {
+    // Text boxes and threads keep their own gestures.
+    const t = e.target as Element;
+    const p = e.touches[0];
+    touch.current = !p || t.closest('textarea, input, .cm-review-anchor') ? null : { x: p.clientX, y: p.clientY };
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    const from = touch.current;
+    touch.current = null;
+    const p = e.changedTouches[0];
+    if (!from || !p) return;
+    const dx = p.clientX - from.x;
+    const dy = p.clientY - from.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < 2 * Math.abs(dy)) return;
+    move(dx < 0 ? 1 : -1);
   };
   const step = (by: number) => {
     if (!file || files.length === 0) return;
@@ -131,14 +165,18 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
         </span>
         {files.length > 0 && <span className="ml-auto shrink-0">{viewedCount} / {files.length} viewed</span>}
       </div>
-      <FileList
-        files={files}
-        selected={file?.path ?? null}
-        onSelect={select}
-        comments={threadCounts}
-        viewed={isViewed}
-        className="min-h-0 flex-1 overflow-auto"
-      />
+      {phone ? (
+        <PhoneFileList files={files} onSelect={select} comments={threadCounts} viewed={isViewed} />
+      ) : (
+        <FileList
+          files={files}
+          selected={file?.path ?? null}
+          onSelect={select}
+          comments={threadCounts}
+          viewed={isViewed}
+          className="min-h-0 flex-1 overflow-auto"
+        />
+      )}
     </div>
   );
   const pane = file ? (
@@ -149,6 +187,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
       threads={threads.filter((th) => th.root.path === file.path)}
       mode={mode}
       narrow={narrow}
+      phone={phone}
       onMode={(m) => {
         setModePref(m);
         try { localStorage.setItem(MODE_KEY, m); } catch { /* storage blocked */ }
@@ -176,18 +215,28 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
         onMerge={() => setMerging(true)}
         leading={
           <>
-            {phone && (
-              <Button size="sm" variant="ghost" aria-expanded={filesOpen} onClick={() => setFilesOpen((o) => !o)}>
-                <Files aria-hidden /> Files ({files.length})
-              </Button>
-            )}
             {t?.attempt?.pr && <PrBadge pr={t.attempt.pr} attemptMerged={t.attempt.state === 'merged'} />}
             {c.dirty && <Badge tone="waiting" title="The worktree has changes that aren't committed">Uncommitted</Badge>}
           </>
         }
       />
       {phone ? (
-        filesOpen ? list : pane
+        fileOpen && file ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+            <PhoneFileNav
+              index={files.findIndex((f) => f.path === file.path)}
+              count={files.length}
+              onList={() => setFileOpen(false)}
+              onMove={move}
+            />
+            <div
+              key={file.path}
+              className={cn('flex min-h-0 flex-1 flex-col animate-in duration-200 motion-reduce:animate-none', dir === 1 ? 'slide-in-from-right' : 'slide-in-from-left')}
+            >
+              {pane}
+            </div>
+          </div>
+        ) : list
       ) : (
         <SplitPane id="review-files" label="Resize the file list" defaultSize={300} start={list} end={pane} />
       )}
@@ -196,12 +245,26 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   );
 }
 
-function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, onWholeFile, viewed, onViewed, composer, onComposer }: {
+/** A phone's file screen: back to the list, and the previous and next file (a swipe does the same). */
+function PhoneFileNav({ index, count, onList, onMove }: { index: number; count: number; onList: () => void; onMove: (by: 1 | -1) => void }) {
+  return (
+    <nav aria-label="Files" className="flex shrink-0 items-center gap-1 border-b border-border px-1 py-1">
+      <Button size="sm" variant="ghost" onClick={onList}><Files aria-hidden /> All files</Button>
+      <span className="ml-auto text-meta text-muted-foreground" aria-live="polite">{index + 1} of {count}</span>
+      <IconButton label="Previous file" noTooltip disabled={index <= 0} onClick={() => onMove(-1)}><ChevronLeft aria-hidden /></IconButton>
+      <IconButton label="Next file" noTooltip disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronRight aria-hidden /></IconButton>
+    </nav>
+  );
+}
+
+function FilePane({ worktreeId, file, threads, mode, narrow, phone, onMode, wholeFile, onWholeFile, viewed, onViewed, composer, onComposer }: {
   worktreeId: string;
   file: ChangedFile;
   threads: Thread[];
   mode: Mode;
   narrow: boolean;
+  /** The composer opens in a bottom sheet, and line numbers take taps (`CodeDiff` `touch`). */
+  phone: boolean;
   onMode: (m: Mode) => void;
   wholeFile: boolean;
   onWholeFile: (on: boolean) => void;
@@ -230,7 +293,7 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
   }, [threads, sides.data]);
   const anchors: DiffAnchor[] = [
     ...placed.flatMap(({ th, at }) => (at === null ? [] : [{ id: th.root.id, side: th.root.side, line: at + th.root.endLine - th.root.line }])),
-    ...(composer ? [{ id: COMPOSER, side: composer.side, line: composer.endLine }] : []),
+    ...(composer && !phone ? [{ id: COMPOSER, side: composer.side, line: composer.endLine }] : []),
   ];
   const outdated = placed.filter((p) => p.at === null).map((p) => p.th);
 
@@ -254,26 +317,26 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
       onDelete={(id) => void act(() => api.deleteReviewComment(id))}
     />
   );
+  const composerLabel = (r: LineRange) => `Comment on ${r.endLine > r.line ? `lines ${r.line}–${r.endLine}` : `line ${r.line}`}`;
+  const commentComposer = (r: LineRange) => (
+    <CommentComposer
+      label={composerLabel(r)}
+      action="Comment"
+      autoFocus
+      placeholder={phone ? 'Leave a comment (Markdown).' : 'Leave a comment (Markdown). Ctrl+Enter to save.'}
+      onSubmit={async (text) => {
+        const res = await runAction(() =>
+          api.createReviewComment(worktreeId, { path: file.path, side: r.side, line: r.line, endLine: r.endLine, lineText: r.lineText, body: text }));
+        if (res) {
+          onComposer(null);
+          refresh();
+        }
+      }}
+      onCancel={() => onComposer(null)}
+    />
+  );
   const renderAnchor = (id: string) => {
-    if (id === COMPOSER && composer) {
-      return (
-        <CommentComposer
-          label={`Comment on ${composer.endLine > composer.line ? `lines ${composer.line}–${composer.endLine}` : `line ${composer.line}`}`}
-          action="Comment"
-          autoFocus
-          placeholder="Leave a comment (Markdown). Ctrl+Enter to save."
-          onSubmit={async (text) => {
-            const r = await runAction(() =>
-              api.createReviewComment(worktreeId, { path: file.path, side: composer.side, line: composer.line, endLine: composer.endLine, lineText: composer.lineText, body: text }));
-            if (r) {
-              onComposer(null);
-              refresh();
-            }
-          }}
-          onCancel={() => onComposer(null)}
-        />
-      );
-    }
+    if (id === COMPOSER && composer) return commentComposer(composer);
     const th = threads.find((x) => x.root.id === id);
     return th ? thread(th) : null;
   };
@@ -341,10 +404,23 @@ function FilePane({ worktreeId, file, threads, mode, narrow, onMode, wholeFile, 
               anchors={anchors}
               renderAnchor={renderAnchor}
               onComment={(r) => onComposer(r)}
+              touch={phone}
             />
           </Suspense>
         )}
       </div>
+      {phone && (
+        <Sheet side="bottom" title={composer ? composerLabel(composer) : 'Comment'} open={composer !== null} onOpenChange={(o) => { if (!o) onComposer(null); }}>
+          {composer && (
+            <div className="flex flex-col gap-2">
+              {composer.lineText && (
+                <pre className="max-h-24 overflow-auto rounded-md bg-surface-2 px-2 py-1 font-mono text-xs whitespace-pre-wrap">{composer.lineText}</pre>
+              )}
+              {commentComposer(composer)}
+            </div>
+          )}
+        </Sheet>
+      )}
     </div>
   );
 }
