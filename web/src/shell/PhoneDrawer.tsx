@@ -1,10 +1,13 @@
 // The phone's drawer (PDT-112): the project, the views, the workspaces (folding open to their tabs), the agents,
 // and Settings with the host's connection state. Opened from ☰ only.
-import { Settings } from 'lucide-react';
-import { Button, Select, Sheet, StatusDot, TreeView, type TreeChildren, type TreeNode } from '@ui';
+import { useState } from 'react';
+import { Plus, Settings } from 'lucide-react';
+import { Button, IconButton, Select, Sheet, StatusDot, TreeView, type TreeChildren, type TreeNode } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Tab } from '../api/gen/Tab';
 import { AgentDot, AgentLabel, itemState, UnseenDot } from '../common/AgentState';
+import { InlineRename } from '../common/InlineRename';
+import { runAction } from '../common/useAction';
 import { itemOf } from '../workspaces/model';
 import { AgentsSection, workspaceState } from '../workspaces/Sidebar';
 import type { WorkspacesApi } from '../workspaces/useWorkspaces';
@@ -12,7 +15,7 @@ import { useBackCloses } from './router';
 import { VIEWS, type ViewId } from './views';
 
 const ALL = 'all';
-const heading = 'px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
+const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 const row = 'h-11 w-full justify-start gap-3 px-2.5 font-normal';
 
 type Node = TreeNode & { tab?: Tab };
@@ -31,7 +34,8 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
   onProject: (id: string | null) => void;
   onRenameTab: (tabId: string) => void;
 }) {
-  const close = () => onOpenChange(false);
+  const [adding, setAdding] = useState(false);
+  const close = () => { setAdding(false); onOpenChange(false); };
   useBackCloses(open, close);
   const choose = (v: ViewId) => { onView(v); close(); };
 
@@ -65,7 +69,7 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
 
   const connected = !ws.workspacesError;
   return (
-    <Sheet side="left" title="Menu" hideTitle open={open} onOpenChange={onOpenChange} className="w-80 max-w-[85vw]">
+    <Sheet side="left" title="Menu" hideTitle open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())} className="w-80 max-w-[85vw]">
       <div className="-mx-2 flex min-h-full flex-col">
         {/* Room on the right for the sheet's close button. */}
         <div className="pt-1 pr-10 pb-2 pl-2">
@@ -93,7 +97,23 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
           })}
         </nav>
         <section aria-label="Workspaces" className="px-1">
-          <h2 className={heading}>Workspaces</h2>
+          <h2 className={heading}>
+            <span className="flex-1">Workspaces</span>
+            <IconButton label="New workspace" size="sm" noTooltip className="size-5" onClick={() => setAdding(true)}>
+              <Plus aria-hidden />
+            </IconButton>
+          </h2>
+          {adding && (
+            <div className="px-1 pb-1">
+              <InlineRename
+                label="New workspace name"
+                placeholder="Workspace name"
+                // Creating one opens it, so the drawer closes.
+                onCommit={(name) => { close(); void runAction(() => ws.createWorkspace(name)); }}
+                onCancel={() => setAdding(false)}
+              />
+            </div>
+          )}
           <TreeView<Node>
             aria-label="Workspaces"
             items={ws.workspaces.map(node)}
