@@ -453,8 +453,16 @@ tools; empty: the default five). Every save (`PUT /api/personas/{id}`) is a new 
 description, `archived`; `GET /versions`, `/versions/{v}`, `/diff?from=&to=` (the fields that changed and a unified
 diff). Built-ins Refiner, Coder, Reviewer, QA and PM (the project manager, [agents.md](agents.md#the-pm-pdt-81);
 permission mode `ask`, the PM's tools) (pdt-core `persona.rs`) are installed on the engine's first tick (and
-on `GET /api/personas`), follow newer templates until edited, and can be archived, not deleted (`409
-builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_use`).
+on `GET /api/personas`) and can be archived, not deleted (`409 builtin_persona`); a persona a workflow names can't be
+deleted (`409 persona_in_use`).
+- **Newer templates** (PDT-100): `personas.builtin_template` records the template PDT applied last (until recorded,
+  the newest version PDT wrote). Once per daemon run, when the template changed, each field still as that template
+  (agent, model, permission mode, tools as the set the persona gets, instructions as a whole) follows the new one and
+  each field the user changed stays theirs (pdt-core `follow_template`): a new `builtin` version noted "updated by
+  PDT" (plus "; kept your …" naming kept fields whose template moved on), none when nothing would change.
+- `GET /api/personas/{id}/template` (`404 not_builtin` otherwise) → `{setup, diff}`: the current template and the
+  current version's diff to it. The persona page shows it for a built-in that differs (the fields, **Show the
+  changes**) and **Load PDT's template** fills the setup form with it to review and save as a version.
 
 ## Pipeline, policies and scheduling (Phase 7c)
 

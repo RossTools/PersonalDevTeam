@@ -54,13 +54,18 @@ pub fn codex_policy(mode: PermissionMode) -> (&'static str, &'static str) {
     }
 }
 
-/// The `sandboxPolicy` object `turn/start` takes for a sandbox mode name.
-pub fn sandbox_policy(sandbox: &str) -> Value {
-    match sandbox {
+/// The `sandboxPolicy` object `turn/start` takes for a sandbox mode name; `network` lets commands in a sandbox reach
+/// the network (the PM, PDT-100).
+pub fn sandbox_policy(sandbox: &str, network: bool) -> Value {
+    let mut p = match sandbox {
         "read-only" => json!({"type": "readOnly"}),
-        "danger-full-access" => json!({"type": "dangerFullAccess"}),
+        "danger-full-access" => return json!({"type": "dangerFullAccess"}),
         _ => json!({"type": "workspaceWrite"}),
+    };
+    if network {
+        p["networkAccess"] = json!(true);
     }
+    p
 }
 
 pub fn item_key(id: &str) -> String {
@@ -1134,6 +1139,8 @@ mod tests {
         assert_eq!(codex_policy(PermissionMode::Ask), ("on-request", "workspace-write"));
         assert_eq!(codex_policy(PermissionMode::Bypass), ("never", "danger-full-access"));
         assert_eq!(codex_policy(PermissionMode::Plan).1, "read-only");
-        assert_eq!(sandbox_policy("read-only"), json!({"type": "readOnly"}));
+        assert_eq!(sandbox_policy("read-only", false), json!({"type": "readOnly"}));
+        assert_eq!(sandbox_policy("workspace-write", true), json!({"type": "workspaceWrite", "networkAccess": true}));
+        assert_eq!(sandbox_policy("danger-full-access", true), json!({"type": "dangerFullAccess"}));
     }
 }

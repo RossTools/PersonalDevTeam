@@ -7,6 +7,7 @@
 //! - `exit` — writes to stderr and exits 3.
 //! - `who` — says the session id, whether it was loaded, its mode and model, and whether `--config` carries PDT's
 //!   instructions hook.
+//! - `where` — says the session's working folder.
 //! - a prompt with images — says `saw N images (<media types>)`.
 //! - anything else — `echo: <text>`.
 //!
@@ -58,6 +59,8 @@ struct Acp {
     mode: String,
     model: String,
     hook: bool,
+    /// The `cwd` of `session/new` or `session/load`.
+    cwd: String,
     next: u64,
     cancelled: bool,
     /// Prompts sent while a turn ran: answered with it.
@@ -198,6 +201,8 @@ impl Acp {
         } else if text == "exit" {
             eprintln!("fake devin: exiting");
             std::process::exit(3);
+        } else if text == "where" {
+            self.say(&format!("cwd={}", self.cwd));
         } else if text == "who" {
             self.say(&format!(
                 "session={} loaded={} mode={} model={} instructions={}",
@@ -245,6 +250,7 @@ pub fn serve(args: &[String]) {
         mode: "accept-edits".into(),
         model: "fake-1".into(),
         hook,
+        cwd: String::new(),
         next: 0,
         cancelled: false,
         joined: Vec::new(),
@@ -265,6 +271,7 @@ pub fn serve(args: &[String]) {
             "initialize" => ok(json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true,
                 "promptCapabilities": {"image": true}}, "agentInfo": {"name": "fake", "version": "0.0.0-fake"}})),
             "session/new" => {
+                a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
                 a.session = format!("fake-{}-{}", std::process::id(), a.next);
                 a.announce();
                 ok(json!({"sessionId": a.session, "configOptions": a.config()}));
@@ -278,6 +285,7 @@ pub fn serve(args: &[String]) {
                 }
                 a.session = sid;
                 a.loaded = true;
+                a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
                 // The whole conversation again, as Devin replays it (the answers are stand-ins).
                 let saved = std::fs::read_to_string(saved_marker(&a.session)).unwrap_or_default();
                 for (n, line) in saved.lines().enumerate() {

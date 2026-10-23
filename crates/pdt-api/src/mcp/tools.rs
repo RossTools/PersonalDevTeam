@@ -262,6 +262,32 @@ struct EditTicket {
     /// Replaces every label.
     #[serde(default)]
     labels: Option<Vec<String>>,
+    /// Make it a part of this ticket (key or id), or `""` to detach it from its parent.
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+/// How `ticket` stands to `other` in a link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+enum LinkAs {
+    /// `ticket` blocks `other`: `other` waits until `ticket` is done.
+    Blocks,
+    /// `ticket` is blocked by `other`.
+    BlockedBy,
+    /// Related, either way round.
+    Relates,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LinkTickets {
+    /// The ticket's key (`PDT-12`) or id.
+    ticket: String,
+    /// blocks, blockedBy or relates: how `ticket` stands to `other`.
+    kind: LinkAs,
+    /// The other ticket's key or id, in the same project.
+    other: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -450,9 +476,25 @@ fn defs() -> Vec<Def> {
         Def {
             name: "edit_ticket",
             title: "Edit a ticket",
-            description: "Changes a ticket's title, description, stage, priority or labels, recorded as the agent's. \
-                          The user confirms each call unless the project lets you act.",
+            description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
+                          agent's. The user confirms each call unless the project lets you act.",
             schema: schema::<EditTicket>,
+        },
+        Def {
+            name: "link_tickets",
+            title: "Link two tickets",
+            description: "Links a ticket to another in its project: it blocks the other, is blocked by it, or relates \
+                          to it. The link shows on both tickets and a blocked ticket waits on the board. Self-links \
+                          and blocking cycles are refused. The user confirms each call unless the project lets you \
+                          act.",
+            schema: schema::<LinkTickets>,
+        },
+        Def {
+            name: "unlink_tickets",
+            title: "Unlink two tickets",
+            description: "Removes a link made with link_tickets (or in the UI): the same ticket, kind and other. The \
+                          user confirms each call unless the project lets you act.",
+            schema: schema::<LinkTickets>,
         },
         Def {
             name: "send_to_session",
@@ -802,12 +844,19 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: EditTicket = args(a)?;
             let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
             confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
+            let project = st.store.get_ticket(&id).await.map_err(store)?.map(|t| t.summary.project_id);
+            let parent = match a.parent.as_deref().map(str::trim) {
+                Some("") => Some(String::new()),
+                Some(p) => Some(resolve_ticket(st, p, project.as_deref()).await?),
+                None => None,
+            };
             let patch = pdt_core::ticket::TicketPatch {
                 title: a.title,
                 description: a.description,
                 stage: a.stage,
                 priority: a.priority,
                 labels: a.labels,
+                parent,
                 ..Default::default()
             };
             let valid = patch.validate().map_err(|e| api(e.into()))?;
@@ -823,7 +872,44 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
-            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage}))
+            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
+                      "parent": t.summary.parent.map(|p| p.key)}))
+        }
+        "link_tickets" | "unlink_tickets" => {
+            let a: LinkTickets = args(a)?;
+            let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+            let project = st.store.get_ticket(&id).await.map_err(store)?.map(|t| t.summary.project_id);
+            let other = resolve_ticket(st, &a.other, project.as_deref()).await?;
+            confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
+            let (from, to, kind) = match a.kind {
+                LinkAs::Blocks => (&id, &other, pdt_core::ticket::LinkKind::Blocks),
+                LinkAs::BlockedBy => (&other, &id, pdt_core::ticket::LinkKind::Blocks),
+                LinkAs::Relates => (&id, &other, pdt_core::ticket::LinkKind::Relates),
+            };
+            let linked = name == "link_tickets";
+            let done = match linked {
+                true => st.store.add_link_by(from, to, kind, Actor::Agent, now_ms()).await,
+                false => st.store.remove_link_by(from, to, kind, Actor::Agent, now_ms()).await,
+            };
+            done.map_err(|e| match e {
+                pdt_store::TicketError::NotFound("link") => "there is no such link between them".to_string(),
+                e => api(e.into()),
+            })?
+            .ok_or("that ticket no longer exists")?;
+            let t = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+            let links: Vec<Value> = t
+                .links
+                .iter()
+                .map(|l| {
+                    let kind = match (l.kind, l.direction) {
+                        (pdt_core::ticket::LinkKind::Relates, _) => "relates",
+                        (_, pdt_core::ticket::LinkDirection::Outgoing) => "blocks",
+                        (_, pdt_core::ticket::LinkDirection::Incoming) => "blockedBy",
+                    };
+                    json!({"kind": kind, "key": l.key, "title": l.title, "stage": l.stage})
+                })
+                .collect();
+            Ok(json!({if linked { "linked" } else { "unlinked" }: true, "key": t.summary.key, "links": links}))
         }
         "send_to_session" => {
             let a: SendToSession = args(a)?;

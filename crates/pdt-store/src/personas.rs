@@ -201,6 +201,29 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// The built-in template PDT last applied to a persona (PDT-100); None when not recorded.
+    pub async fn persona_template(&self, id: &str) -> Result<Option<PersonaSetup>, StoreError> {
+        let t: Option<(Option<String>,)> = sqlx::query_as("SELECT builtin_template FROM personas WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        match t.and_then(|(t,)| t) {
+            Some(t) => {
+                serde_json::from_str(&t).map(Some).map_err(|e| StoreError::Corrupt(format!("persona template: {e}")))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn set_persona_template(&self, id: &str, template: &PersonaSetup) -> Result<(), StoreError> {
+        sqlx::query("UPDATE personas SET builtin_template = ? WHERE id = ?")
+            .bind(serde_json::to_string(template).unwrap_or_default())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// A persona's versions, newest first.
     pub async fn list_persona_versions(&self, id: &str) -> Result<Vec<PersonaVersion>, StoreError> {
         let sql = format!("SELECT {VERSION_COLUMNS} FROM persona_versions WHERE persona_id = ? ORDER BY version DESC");
@@ -262,6 +285,10 @@ mod tests {
         assert_eq!(versions.iter().map(|v| v.version).collect::<Vec<_>>(), [2, 1]);
         assert_eq!(versions[1].setup, p.setup);
         assert_eq!(store.get_persona_version("p1", 1).await.unwrap().unwrap().note, "new");
+
+        assert_eq!(store.persona_template("p1").await.unwrap(), None);
+        store.set_persona_template("p1", &s2).await.unwrap();
+        assert_eq!(store.persona_template("p1").await.unwrap(), Some(s2.clone()));
 
         let renamed = Persona { name: "Strict reviewer".into(), archived: true, ..now };
         assert!(store.update_persona(&renamed, 30).await.unwrap());

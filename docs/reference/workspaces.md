@@ -20,6 +20,9 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 - Shortcuts: Ctrl+] then one key (web/src/workspaces/keys.ts), caught on window in the capture phase; Ctrl+] twice
   reaches the terminal. The command palette (web/src/palette) opens with Ctrl+] k or ⌘K on macOS (never Ctrl+K: the
   terminal's kill-line).
+- The desktop rail (web/src/shell/IconRail.tsx) is icons only, with tooltips on the right; the toggle at its bottom
+  expands it to show each view's name beside its icon (badges beside the names, no tooltips) and collapses it again.
+  The state is per browser (localStorage `pdt.rail.expanded`).
 - On phones (< 768px) the list column is a left sheet opened from the workspace name; the rail is Sessions, Tickets,
   Search (palette), Settings (Files is in the palette's Go to).
 
@@ -31,8 +34,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   plain folder, and its tickets start in folders ([tickets.md](tickets.md#start-phase-4b)). Web: Add project's
   "Personal (no repo)", and the project page and Start dialog leave out what needs git.
 - The **host project** (PDT-81; `kind: host`, key `_HOST`, folder `<data dir>/pm`) holds the PM's sessions
-  ([agents.md](agents.md#the-pm-pdt-81)). PDT makes it on first use; it is never listed, has no workspace, and
-  `POST /api/projects` refuses `kind: host`.
+  ([agents.md](agents.md#the-pm-pdt-81)), which run in the work folder that holds the projects' checkouts. PDT makes
+  it on first use; it is never listed, has no workspace, and `POST /api/projects` refuses `kind: host`.
 - Projects have a unique key (`PDT`; suggested from the name, backfilled when the store opens).
   `POST /api/projects/clone` clones into the host's Projects folder (default `~/work`) with `GIT_TERMINAL_PROMPT=0`;
   removing a project stops its sessions and runs and never touches files. Projects carry `githubRepo` from `origin`
