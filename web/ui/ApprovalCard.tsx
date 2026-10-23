@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { ShieldQuestion } from 'lucide-react';
+import { ChevronDown, ShieldQuestion } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Button } from './Button';
 import { Input } from './Input';
@@ -31,6 +31,10 @@ export interface ApprovalCardProps {
   /** What the request would change (a `DiffViewer`), under the subject. */
   preview?: ReactNode;
   description?: ReactNode;
+  /** Everything the request carries (a tool's arguments), behind a ▾ under the subject. */
+  details?: ReactNode;
+  /** Names the ▾ (default "All arguments"). */
+  detailsLabel?: string;
   /** Offer "Always allow in this session". */
   canAlways?: boolean;
   /** `question` cards: what is asked. */
@@ -44,6 +48,8 @@ export interface ApprovalCardProps {
   /** `y` approves and `n` starts a denial, from anywhere on the page outside text fields. Give it to one card. */
   keyboard?: boolean;
   disabled?: boolean;
+  /** The card's DOM id (something elsewhere jumps to it). */
+  id?: string;
   className?: string;
 }
 
@@ -66,6 +72,8 @@ export function ApprovalCard({
   subject,
   preview,
   description,
+  details,
+  detailsLabel = 'All arguments',
   canAlways = false,
   questions = [],
   plan,
@@ -73,10 +81,12 @@ export function ApprovalCard({
   onAnswer,
   keyboard = false,
   disabled = false,
+  id,
   className,
 }: ApprovalCardProps) {
   const [pending, setPending] = useState<string | null>(null);
   const [denying, setDenying] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [reason, setReason] = useState('');
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   // Questions answered in the user's own words ("Other…"): question → text (present while the field is open).
@@ -168,8 +178,10 @@ export function ApprovalCard({
 
   return (
     <section
+      id={id}
+      tabIndex={id ? -1 : undefined}
       aria-label={title}
-      className={cn('flex w-full flex-col gap-2 rounded-lg border border-waiting bg-card p-3 text-sm shadow-popover', className)}
+      className={cn('flex w-full scroll-mt-4 flex-col gap-2 rounded-lg border border-waiting bg-card p-3 text-sm shadow-popover outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
     >
       <header className="flex items-center gap-2 font-medium">
         <ShieldQuestion aria-hidden className="size-4 shrink-0 text-waiting" />
@@ -181,6 +193,20 @@ export function ApprovalCard({
         </pre>
       )}
       {preview && <div className="max-h-96 overflow-auto">{preview}</div>}
+      {details && (
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            aria-expanded={showDetails}
+            onClick={() => setShowDetails((o) => !o)}
+            className="flex items-center gap-1 self-start rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch"
+          >
+            {detailsLabel}
+            <ChevronDown aria-hidden className={cn('size-3.5 transition-transform motion-reduce:transition-none', showDetails && 'rotate-180')} />
+          </button>
+          {showDetails && <div className="max-h-80 overflow-auto">{details}</div>}
+        </div>
+      )}
       {description && <div className="text-xs text-muted-foreground">{description}</div>}
       {kind === 'plan' && plan && <div className="max-h-96 overflow-auto rounded-md border border-border p-2">{plan}</div>}
       {kind === 'question' &&
@@ -263,7 +289,8 @@ export function ApprovalCard({
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-2">
+        // On a phone the answers sit at the card's foot as big buttons, Deny on the left and Allow on the right.
+        <div className="flex flex-wrap items-center gap-2 max-md:grid max-md:grid-cols-2 max-md:[&_button]:min-h-control-touch">
           {kind === 'question' ? (
             <>
               <Button variant="primary" pending={pending === 'question'} disabled={busy || !allAnswered} onClick={() => void answer('question', { type: 'question', answers: answersOf() })}>
@@ -278,6 +305,7 @@ export function ApprovalCard({
               {kind === 'plan' && planAcceptEdits && (
                 <Button
                   variant="primary"
+                  className="max-md:col-span-2"
                   pending={pending === 'accept_edits'}
                   disabled={busy}
                   onClick={() => void answer('accept_edits', { type: 'plan', approve: true, mode: 'accept_edits' })}
@@ -285,14 +313,20 @@ export function ApprovalCard({
                   Approve, accept edits
                 </Button>
               )}
-              <Button variant={kind === 'plan' && planAcceptEdits ? 'secondary' : 'primary'} pending={pending === 'approve'} disabled={busy} onClick={approve}>
-                {kind === 'plan' ? (planAcceptEdits ? 'Approve, ask before edits' : 'Approve plan') : 'Approve'}{hint('y')}
+              <Button
+                variant={kind === 'plan' && planAcceptEdits ? 'secondary' : 'primary'}
+                pending={pending === 'approve'}
+                disabled={busy}
+                onClick={approve}
+                className={cn('max-md:order-2', kind === 'plan' && 'max-md:col-span-2')}
+              >
+                {kind === 'plan' ? (planAcceptEdits ? 'Approve, ask before edits' : 'Approve plan') : 'Allow'}{hint('y')}
               </Button>
-              <Button variant="secondary" disabled={busy} onClick={() => setDenying(true)}>
+              <Button variant="secondary" disabled={busy} onClick={() => setDenying(true)} className={cn('max-md:order-1', kind === 'plan' && 'max-md:col-span-2')}>
                 {kind === 'plan' ? 'Keep planning' : 'Deny'}{hint('n')}
               </Button>
               {canAlways && kind === 'approval' && (
-                <Button variant="ghost" pending={pending === 'always'} disabled={busy} onClick={() => void answer('always', { type: 'approve', always: true })}>
+                <Button variant="ghost" pending={pending === 'always'} disabled={busy} onClick={() => void answer('always', { type: 'approve', always: true })} className="max-md:order-3 max-md:col-span-2">
                   Always allow in this session
                 </Button>
               )}
