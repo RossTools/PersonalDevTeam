@@ -259,17 +259,39 @@ function Setup({ persona }: { persona: Persona }) {
         label={`Setup · version ${persona.version}`}
         description={
           persona.builtin
-            ? "Saving makes a new version. An edited built-in persona keeps your version instead of following PDT's newer templates."
+            ? "Saving makes a new version. PDT brings a built-in persona up to its newer templates, except the fields you changed."
             : 'Saving makes a new version; sessions record the version they ran with.'
         }
         footer={<SaveFooter label="Save a new version" text="Save new version" dirty={dirty} saved={false} pending={saving} />}
       >
+        {persona.builtin && <TemplateNote persona={persona} onLoad={(s) => setSetup(setupOf(s))} />}
         <SetupFields value={setup} onChange={setSetup} />
         <SettingsRow label="Note" htmlFor={noteId} description="Optional: what this version changes.">
           <Input id={noteId} aria-label="Version note" className="w-72 max-w-full" value={note} onChange={(e) => setNote(e.target.value)} />
         </SettingsRow>
       </Section>
     </form>
+  );
+}
+
+/** A built-in persona whose version differs from PDT's current template (fields the user changed): what differs, and
+ * loading the template into the form to review and save. */
+function TemplateNote({ persona, onLoad }: { persona: Persona; onLoad: (s: PersonaSetup) => void }) {
+  const template = useQuery({ queryKey: personaKeys.template(persona.id, persona.version), queryFn: () => api.personaTemplate(persona.id) });
+  const [open, setOpen] = useState(false);
+  const t = template.data;
+  if (!t || t.diff.changed.length === 0) return null;
+  return (
+    <div role="region" aria-label="PDT's template" className="flex flex-col gap-2 px-4 py-3 text-xs">
+      <p className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
+        PDT's template differs from this version in {t.diff.changed.map((f) => <Badge key={f}>{f}</Badge>)}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => setOpen(!open)}>{open ? 'Hide the changes' : 'Show the changes'}</Button>
+        <Button size="sm" onClick={() => onLoad(t.setup)}>Load PDT's template</Button>
+      </div>
+      {open && <DiffViewer diff={t.diff.unified} className="max-h-96 overflow-auto" />}
+    </div>
   );
 }
 

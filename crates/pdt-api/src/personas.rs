@@ -166,8 +166,22 @@ pub(crate) async fn diff(
     Ok(Json(persona_diff(&a.setup, &b.setup, &format!("v{from}"), &format!("v{to}"))))
 }
 
-/// Installs the built-in personas, or brings untouched ones up to their templates. Once per daemon run (again after
-/// a failure).
+/// `GET /api/personas/{id}/template` (PDT-100): a built-in persona's current template, for "Load PDT's template".
+pub(crate) async fn template(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<pdt_core::persona::PersonaTemplate>, ApiError> {
+    let p = load(&st, &id).await?;
+    let b = p.builtin.as_deref().and_then(pdt_core::persona::builtin_persona).ok_or_else(|| {
+        ApiError::new(StatusCode::NOT_FOUND, "not_builtin", format!("{} is not a built-in persona", p.name))
+    })?;
+    let setup = b.setup();
+    let diff = persona_diff(&p.setup, &setup, &format!("v{}", p.version), "PDT's template");
+    Ok(Json(pdt_core::persona::PersonaTemplate { setup, diff }))
+}
+
+/// Installs the built-in personas, or brings them up to newer templates: fields the user changed stay theirs. Once
+/// per daemon run (again after a failure).
 pub(crate) async fn ensure_builtins(st: &AppState) {
     use std::sync::atomic::Ordering;
     if st.personas_installed.load(Ordering::SeqCst) {
@@ -186,38 +200,51 @@ pub(crate) async fn ensure_builtins(st: &AppState) {
 async fn install(st: &AppState, b: &pdt_core::persona::BuiltinPersona) -> Result<(), pdt_store::StoreError> {
     let template = b.setup();
     let now = now_ms();
-    match st.store.persona_by_builtin(b.id).await? {
-        None => {
-            // A persona the user already called that keeps their own; the built-in gets a free name.
-            let mut name = b.name.to_string();
-            let mut n = 2;
-            while st.store.find_persona(&name).await?.is_some() {
-                name = format!("{} {n}", b.name);
-                n += 1;
-            }
-            let p = Persona {
-                id: uuid::Uuid::now_v7().to_string(),
-                name,
-                role: b.role.into(),
-                description: b.description.into(),
-                builtin: Some(b.id.into()),
-                archived: false,
-                version: 1,
-                setup: template,
-                created_at: now,
-                updated_at: now,
-            };
-            st.store.insert_persona(&p, PersonaAuthor::Builtin, "installed").await?;
-            tracing::info!(persona = b.id, "installed a built-in persona");
+    let Some(p) = st.store.persona_by_builtin(b.id).await? else {
+        // A persona the user already called that keeps their own; the built-in gets a free name.
+        let mut name = b.name.to_string();
+        let mut n = 2;
+        while st.store.find_persona(&name).await?.is_some() {
+            name = format!("{} {n}", b.name);
+            n += 1;
         }
-        Some(p) => {
-            let versions = st.store.list_persona_versions(&p.id).await?;
-            let untouched = versions.first().is_some_and(|v| v.author == PersonaAuthor::Builtin);
-            if untouched && p.setup != template {
-                st.store.save_persona_version(&p.id, &template, PersonaAuthor::Builtin, "updated by PDT", now).await?;
-                tracing::info!(persona = b.id, "updated a built-in persona");
-            }
-        }
+        let p = Persona {
+            id: uuid::Uuid::now_v7().to_string(),
+            name,
+            role: b.role.into(),
+            description: b.description.into(),
+            builtin: Some(b.id.into()),
+            archived: false,
+            version: 1,
+            setup: template.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        st.store.insert_persona(&p, PersonaAuthor::Builtin, "installed").await?;
+        st.store.set_persona_template(&p.id, &template).await?;
+        tracing::info!(persona = b.id, "installed a built-in persona");
+        return Ok(());
+    };
+    // The template PDT applied last; until PDT-100 recorded it, the newest version PDT wrote.
+    let base = match st.store.persona_template(&p.id).await? {
+        Some(t) if t == template => return Ok(()),
+        Some(t) => t,
+        None => st
+            .store
+            .list_persona_versions(&p.id)
+            .await?
+            .into_iter()
+            .find(|v| v.author == PersonaAuthor::Builtin)
+            .map_or_else(|| template.clone(), |v| v.setup),
+    };
+    let (setup, kept) = pdt_core::persona::follow_template(&base, &p.setup, &template);
+    if setup != p.setup {
+        let note = match kept.as_slice() {
+            [] => "updated by PDT".to_string(),
+            kept => format!("updated by PDT; kept your {}", kept.join(", ")),
+        };
+        st.store.save_persona_version(&p.id, &setup, PersonaAuthor::Builtin, &note, now).await?;
+        tracing::info!(persona = b.id, ?kept, "updated a built-in persona");
     }
-    Ok(())
+    st.store.set_persona_template(&p.id, &template).await
 }

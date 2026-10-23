@@ -10,6 +10,7 @@ export const personaKeys = {
   all: ['personas'] as const,
   versions: (id: string) => ['personas', id, 'versions'] as const,
   diff: (id: string, from: number, to: number) => ['personas', id, 'diff', from, to] as const,
+  template: (id: string, version: number) => ['personas', id, 'template', version] as const,
 };
 
 /** Every persona with its current version (archived ones too). */

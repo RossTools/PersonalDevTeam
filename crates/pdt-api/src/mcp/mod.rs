@@ -135,7 +135,7 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
         // Asking tools (PDT-81) stay out of Claude's allowed list, so it asks before each call.
         tools: session_tools(st, s).await.into_iter().filter(|t| !pdt_core::persona::asks(t)).collect(),
         claude_config: None,
-        only_pdt_tools: crate::pm::is_pm_session(st, s).await,
+        pm: crate::pm::is_pm_session(st, s).await,
     };
     if s.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
         let dir: PathBuf = st.data_dir.join("sessions").join(&s.id);

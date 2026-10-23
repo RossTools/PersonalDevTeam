@@ -74,15 +74,23 @@ A host-level project manager to talk to (spec docs/superpowers/specs/2026-10-21-
 pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 
 - **Where it lives.** PM sessions are conversations in the **host project** (`kind: host`, key `_HOST`, folder
-  `<data dir>/pm`, no git, no workspace), made on first use and never listed (`list_projects` leaves it out). They
-  have no tab: the PM rail item (`Ctrl+] m`, the palette's Go to) shows them, and opening one from the Inbox goes there.
+  `<data dir>/pm`, no git, no workspace), made on first use and never listed (`list_projects` leaves it out). Each
+  runs in the **work folder** (PDT-100, pdt-core `pm::work_folder`): the deepest folder holding every project's
+  folder (each checkout's parent) and Host settings' Projects folder (its default `~/work` only while there are no
+  projects); the home folder when they share nothing below the root. They have no tab: the PM rail item (`Ctrl+] m`,
+  the palette's Go to) shows them, and opening one from the Inbox goes there.
 - **Sessions.** `GET /api/pm` → `{current, sessions}` (`pm_sessions`: rotation `none` | `journal` | `done`, reason,
   journal); `POST /api/pm/sessions {text?}` ends the current one (reason `user`, no journal) and starts one of the
   built-in **PM** persona's current version (its agent and model; permission mode `ask` unless the persona sets one).
   The web starts one with the first message when there is none; an ended session is read-only.
-- **Tools only.** pdt-mcp with the PM's set (pdt-core `PM_TOOLS`) and, for Claude, `--tools ""` (no built-in tools).
-  `get_overview` (projects with open tickets per stage, tickets in progress with branch/PR/CI/agent in words, the
-  Inbox, running agent sessions), `search_tickets`, `get_ticket`, `get_session` (state, open requests, last messages),
+- **Its agent's own tools** (PDT-100), with the agent's usual permission prompts: read and search checkouts and
+  worktrees, git, web search and fetch, commands and installs, file edits, subagents. Claude and Devin keep theirs;
+  Codex also gets `web_search = "live"` and network access in its workspace-write sandbox (thread config
+  `sandbox_workspace_write.network_access`, `networkAccess` on each turn's `sandboxPolicy`; pdt-agents
+  `mcp::CODEX_PM_CONFIG`).
+- **PDT's tools.** pdt-mcp with the PM's set (pdt-core `PM_TOOLS`): `get_overview` (projects with open tickets per
+  stage, tickets in progress with branch/PR/CI/agent in words, the Inbox, running agent sessions), `search_tickets`,
+  `get_ticket`, `get_session` (state, open requests, last messages),
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
@@ -106,8 +114,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
   may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest
   lines), the last three journal entries, and pinned notes (id, project, title). Sections are capped at 30 lines. The
-  instructions are pdt-core `pm::instructions`: who the PM is, its tools (the asking ones named), the persona's
-  instructions, the briefing.
+  instructions are pdt-core `pm::instructions`: who the PM is, its work folder, its tools (the asking ones named; its
+  agent's own), PDT's API and guides, the persona's instructions, the briefing (each project with its folder).
 - **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal, host-wide or per project,
   pinned or not. `GET /api/pm/notes?q=&project=&kind=` (words are quoted prefixes, all required; a project gets its
   own and host-wide notes), `POST`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`. The PM

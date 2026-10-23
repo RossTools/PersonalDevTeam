@@ -123,6 +123,30 @@ describe('PersonaPage', () => {
     expect(calls.some((c) => c.path === '/api/personas/a/diff?from=1&to=3')).toBe(true);
   });
 
+  it("shows how a built-in persona differs from PDT's template and loads it into the form", async () => {
+    const calls = stubApi({
+      'GET /api/personas': [persona('a', { builtin: 'pm', version: 2, model: 'opus', instructions: 'Mine.' })],
+      'GET /api/personas/a/versions': [version(2), version(1, { author: 'builtin' })],
+      'GET /api/personas/a/diff?from=1&to=2': { changed: [], unified: '' },
+      'GET /api/personas/a/template': {
+        setup: { agent: 'claude', model: null, instructions: 'New PM text.', permissionMode: 'ask', tools: [] },
+        diff: { changed: ['model', 'instructions'], unified: '--- v2\n+++ PDT\n@@ -1 +1 @@\n-Mine.\n+New PM text.\n' },
+      },
+      'PUT /api/personas/a': persona('a', { version: 3 }),
+    });
+    renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
+    const note = await screen.findByRole('region', { name: "PDT's template" });
+    expect(within(note).getByText('model')).toBeInTheDocument();
+    await userEvent.click(within(note).getByRole('button', { name: 'Show the changes' }));
+    expect(within(note).getByText('New PM text.')).toBeInTheDocument();
+    await userEvent.click(within(note).getByRole('button', { name: "Load PDT's template" }));
+    const setup = screen.getByRole('region', { name: 'Setup · version 2' });
+    await userEvent.click(within(setup).getByRole('button', { name: 'Save a new version' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
+      note: '', agent: 'claude', model: null, instructions: 'New PM text.', permissionMode: 'ask', tools: [],
+    }));
+  });
+
   it('archives a built-in persona and offers no Delete for it', async () => {
     const calls = stubApi({
       'GET /api/personas': [persona('a', { builtin: 'coder' })],

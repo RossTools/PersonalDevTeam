@@ -389,6 +389,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/personas/{id}/versions", get(crate::personas::versions))
         .route("/personas/{id}/versions/{v}", get(crate::personas::version))
         .route("/personas/{id}/diff", get(crate::personas::diff))
+        .route("/personas/{id}/template", get(crate::personas::template))
         .route("/pm", get(crate::pm::state))
         .route("/pm/sessions", axum::routing::post(crate::pm::start))
         .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))

@@ -38,9 +38,10 @@ than make that optional, PDT keeps one **host project** for its own sessions:
 - `POST /api/pm/sessions {text?}` starts a new PM session (ending the current one, which writes no journal) with
   `text` as its first message. The web sends the first message of a new conversation this way.
 - A PM session is a **conversation** of the PM persona's current version: its agent and model, permission mode `ask`
-  unless the persona sets one (never the project override: the host project has none), in `<data dir>/pm`.
-- **Tools only.** It gets pdt-mcp with the PM tool set and, for Claude, `--tools ""` (no built-in tools: no shell, no
-  file tools). PDT-90 covers limiting other agents' own tools.
+  unless the persona sets one (never the project override: the host project has none), in the work folder (§10; it
+  was `<data dir>/pm` before PDT-100).
+- **Tools.** It gets pdt-mcp with the PM tool set. PDT-81 also gave Claude `--tools ""` (no built-in tools); PDT-100
+  dropped that: the PM has its agent's own tools too (§10).
 - **Instructions** (`pdt_core::pm::instructions`): who the PM is and what it may do, the persona's instructions, and
   the briefing (§5) made when the session was created and kept in `<session dir>/briefing.md`, so a restart or resume
   sends the same text.
@@ -130,10 +131,35 @@ repo, project, persona) runs it on PDT-80's `github.issue.opened`: outcomes `dra
 - pdt-store migration `0026_pm.sql` (`pm_notes`, `pm_notes_fts`, `pm_sessions`, `project_settings.pm_acts`);
   `pm.rs`.
 - pdt-api `pm.rs` (routes, sessions, briefing data, rotation, auto-answer), `mcp/tools.rs` (the new tools);
-  pdt-agents `mcp.rs` (asking tools out of `--allowedTools`, `--tools ""`).
+  pdt-agents `mcp.rs` (asking tools out of `--allowedTools`; PDT-100: the PM's Codex settings).
 - web `pm/` (view, list, notes), rail, palette, project settings.
 
 ## 9. Out of scope
 
 Connections as PM tools (PDT-86), Discord server management (PDT-98), talking to the PM over Discord, limits on
 non-Claude agents' own tools (PDT-90).
+
+## 10. The PM as a TPM (PDT-100, 2026-10-22)
+
+The PM reads code, researches, writes light designs and helps with setup, like a technical project manager.
+
+- **Work folder.** A new PM session runs in the deepest folder that holds every project's folder (each checkout's
+  parent) and the Projects folder (Host settings' `projects_dir`; its default `~/work` counts only while there are no
+  projects): pdt-core `pm::work_folder`. When they share nothing below the file system's root it is the home folder,
+  else the host project's `<data dir>/pm`. No setting: add a Projects folder to widen it. The PM's own files (briefing,
+  instructions, MCP config) stay in its session folder; the host project's folder is unchanged.
+- **Its agent's own tools**, with no extra limits and the agent's usual permission prompts (`ask` by default): Claude
+  keeps its built-in tools (Read/Grep/Glob, Bash, Edit/Write, WebSearch/WebFetch, subagents); Devin keeps its own.
+  Codex has shell and file tools already and also gets live web search (`web_search = "live"`) and the network inside
+  its workspace-write sandbox (`sandbox_workspace_write.network_access`, and `networkAccess` on each turn's
+  `sandboxPolicy`), so installs and fetches work; writes outside the work folder ask as usual.
+- **Instructions.** `pm::instructions` names the work folder, what the agent's own tools are for (reading checkouts
+  and worktrees, `git diff <base>...<branch>` for an attempt, the web, commands, installs, files) and PDT's API and
+  guides; the briefing gives each project's folder. The persona's instructions add how to use them: read the code
+  before answering or estimating, link sources, put designs on the ticket, set up `.pdt/project.toml` from the
+  run-config guide, and leave code changes to coding agents (draft a ticket instead).
+- **Reaching edited personas.** Before PDT-100 any saved version (even a model change) froze a built-in persona on
+  the template it had. Now each field the user left as PDT's last template follows newer ones and each field they
+  changed stays theirs, and the persona page can load PDT's current template into the form
+  (docs/reference/workflows.md "Personas"). Edited PM personas get the new instructions without the user doing
+  anything unless they changed the instructions themselves.

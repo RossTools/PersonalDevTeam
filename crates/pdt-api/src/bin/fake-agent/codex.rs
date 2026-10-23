@@ -4,6 +4,8 @@
 //! - `slow` — streams for ~20 s unless interrupted; `turn/steer` messages join it.
 //! - `who` — says the thread, whether it was resumed, the turn's model, approval policy and sandbox, and whether the
 //!   thread got developer instructions.
+//! - `where` — says the thread's working folder, its `web_search` config and whether the turn's sandbox has the
+//!   network.
 //! - `exit` — the server exits 3.
 //! - anything else — `echo: <text>` (plus `saw N images` when the input has `localImage`s).
 //!
@@ -89,6 +91,8 @@ struct Conn {
     resumed: Mutex<std::collections::HashSet<String>>,
     /// Threads started or resumed with `developerInstructions`.
     instructed: Mutex<std::collections::HashSet<String>>,
+    /// Each thread's last `thread/start` or `thread/resume` params.
+    opened: Mutex<HashMap<String, Value>>,
 }
 
 impl Conn {
@@ -160,6 +164,7 @@ async fn connection(server: Arc<Server>, tcp: tokio::net::TcpStream) {
         turns: Mutex::new(HashMap::new()),
         resumed: Mutex::new(Default::default()),
         instructed: Mutex::new(Default::default()),
+        opened: Mutex::new(Default::default()),
     });
     while let Some(Ok(msg)) = read.next().await {
         let Message::Text(text) = msg else { continue };
@@ -200,6 +205,7 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
             if p.get("developerInstructions").and_then(Value::as_str).is_some_and(|t| t.contains("Running in")) {
                 conn.instructed.lock().unwrap().insert(id.clone());
             }
+            conn.opened.lock().unwrap().insert(id.clone(), p.clone());
             conn.notify("thread/started", json!({"thread": {"id": id}}));
             Ok(json!({"thread": {"id": id, "status": {"type": "idle"}}}))
         }
@@ -214,6 +220,7 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
                 }
             }
             conn.resumed.lock().unwrap().insert(thread.clone());
+            conn.opened.lock().unwrap().insert(thread.clone(), p.clone());
             if p.get("developerInstructions").and_then(Value::as_str).is_some_and(|t| t.contains("Running in")) {
                 conn.instructed.lock().unwrap().insert(thread.clone());
             }
@@ -455,6 +462,15 @@ async fn run_turn(
         // Let the frames sent so far reach the client first.
         tokio::time::sleep(Duration::from_millis(300)).await;
         std::process::exit(3);
+    } else if t == "where" {
+        let opened = conn.opened.lock().unwrap().get(&thread).cloned().unwrap_or_default();
+        let s = format!(
+            "cwd={} web_search={} network={}",
+            opened["cwd"].as_str().unwrap_or("?"),
+            opened.pointer("/config/web_search").and_then(Value::as_str).unwrap_or("default"),
+            params.pointer("/sandboxPolicy/networkAccess").and_then(Value::as_bool).unwrap_or(false),
+        );
+        say(&s, &mut items);
     } else if t == "who" {
         let resumed = conn.resumed.lock().unwrap().contains(&thread);
         let instructions = conn.instructed.lock().unwrap().contains(&thread);
