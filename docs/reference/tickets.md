@@ -189,6 +189,16 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   for 20 s, then recorded as a `pr` event (`told`, `sessionId`, `workflowId`, `runId`); with no running agent session
   it is recorded as not told. Each notice key is sent once per attempt, across restarts too. Turning the workflow off
   stops the notices. Conversations: see [conversations.md](conversations.md#tickets-5d).
+- A PR that was set to merge (PDT-104) is handled further: its CI failure, conflict, queue drop or falling behind
+  becomes an agent step (the attempt's Coder session, or a new one when it has ended) that fixes it and pushes, with a
+  Reviewer first when the agent calls the fix large; then auto-merge goes back on (`attempt.merge` again), and a CI
+  pass with auto-merge off turns it on too. After 3 tries per attempt PR notices comments on the ticket and only tells
+  the agent again. "Set to merge" (`mergeRequested` on the events) is kept per attempt
+  (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on, or the poller seeing auto-merge or the
+  merge queue; a merge queue drop counts too, a person dequeuing it does not, and a person turning auto-merge off
+  (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A failure while an
+  agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.
+  Details: [workflows.md](workflows.md) "Workflows".
 - A user's comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments
   to the agent"; an agent's own comments, actor `agent`, are not sent); Start already puts the earlier comments in the
   first prompt.

@@ -29,7 +29,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `schedule.fired`, webhooks' `webhook.received` and `notify`'s `pdt.notified` ("Sensors and webhooks"); 7e-2 the
   Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and the Buildkite sensor's
   `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (`EVENT_TYPES`). CI events carry
-  `provider` (`github_actions` or `buildkite`). `ticket.stage_changed` carries `jiraKey` when the ticket is linked to
+  `provider` (`github_actions` or `buildkite`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
+  carry `mergeRequested` (the open PR was set to merge and hasn't merged, PDT-104: [tickets.md](tickets.md)) and
+  `agentWorking` (an agent step is open on the attempt). `ticket.stage_changed` carries `jiraKey` when the ticket is linked to
   a Jira issue.
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
@@ -54,8 +56,19 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   workflow. They can't be edited or deleted through the API (`409 workflow_in_repo`).
 - Built-ins (`builtins.rs`), installed host-wide on the engine's first tick; an untouched one follows newer templates,
   an edited one is left alone; they can be disabled, not deleted (`409 builtin_workflow`):
-  - **PR notices** (on): `ci.run_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `attempt.merged` (not `via:
-    closed`) → `session.send` (`text: {{trigger.notice.text}}`, `dedupe: {{trigger.notice.key}}`, `timeline: pr`).
+  - **PR notices** (on): `pr.merged`, `attempt.merged` (not `via: closed`) → `session.send` (`text:
+    {{trigger.notice.text}}`, `dedupe: {{trigger.notice.key}}`, `timeline: pr`). `ci.run_failed`, `pr.conflict`,
+    `pr.queue_left` and `pr.behind` → a condition on `{{trigger.mergeRequested}}` (PDT-104): not set to merge → the
+    same `session.send`; set to merge but an agent on it (`attempt.agent_working`, read as the step runs, so a
+    conflict and the queue drop it caused, logged in one look, get one fix) → the `session.send` too; else
+    `state.set` `tries.{{trigger.attemptId}}` `add: 1`, and over 3 (`FIX_TRIES`) → a `ticket.comment` the first time
+    (4) → the `session.send`; within 3 → `fix` (agent, Coder, `session: reuse`; the prompt is the notice plus "this
+    pull request was set to merge…"; outcomes `submitted`: pushed, `review`: a large fix, committed, not pushed) →
+    `submitted` → `remerge` (`attempt.merge` with `again`); `review` → `review` (agent, Reviewer, new session):
+    `approved` → `push` (agent, Coder, reuse: push it; `submitted` → `remerge`), `changes_requested` → `fix`.
+    `timeout` / `stopped` of these → a ticket comment. `remerge` `refused` → a ticket comment with the reason.
+    `ci.run_passed` where `pr` exists, `mergeRequested`, not `autoMerge`, not `inMergeQueue`, not `agentWorking` →
+    `remerge`. An untouched PR notices follows this template, so an enabled one picks it up on pdtd's next start.
   - **Finish merged tickets** (on): `attempt.merged` (`via: detected`) → gate answered ahead by `finishOnMerge`
     (Merge…'s "Move to Done and clean up once it merges", PDT-75), else `unanswered` → quiet end (the merged banner
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
@@ -63,7 +76,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user (`actor` = `user`, not an agent's comment
     through the API or a workflow's) with an active attempt → `session.send`. A note given with a gate's choice is the
     user's comment too, but carries `workflowId` and is skipped: that run passes it on itself.
-  - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`.
+  - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`. PR notices now handles `pr.behind`
+    too (PDT-104), so with both on the agent hears it twice.
   - **PR comments to the agent** (off, 7e): `pr.commented` and `pr.reviewed` (not `byOwner`, not `isBot`; reviews
     not `approved` and with a body) → `session.send` (`{{trigger.notice.text}}`, dedupe on the notice key, `timeline:
     pr`).
@@ -92,11 +106,12 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | `wait` (`ms`, `until`, or `event {type, where}` with `timeoutMs`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
-| `state.set` (`key`, `value`, `ifMissing`) | `out` |
+| `state.set` (`key`, `value`, `ifMissing`; or `add`: a counter, output `value`) | `out` |
 | `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`) | `sent`, `untold`, `skipped` |
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
-| `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`; Phase 7c) | `merged`, `queued`, `refused` |
+| `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`; Phase 7c) | `merged`, `queued`, `refused` |
+| `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
 | `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |
@@ -165,7 +180,8 @@ notify itself forever).
   `/steps/{step}/answer {choice, text?}` (a waiting gate; the user's `text` goes on the run's ticket as their comment,
 naming the workflow, run and choice, so "Ticket comments to the agent" forwards it, and is in the gate's output). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
   `GET /api/workflow-runs/{id}` (with steps).
-- Per-workflow state: `workflow_state`, `GET /api/workflows/{id}/state`. Keys starting `_pdt.` are PDT's own (a
+- Per-workflow state: `workflow_state`, `GET /api/workflows/{id}/state`. `state.set` with `add` counts (none or not a
+  number is 0; a dry run reads the count but doesn't write it). Keys starting `_pdt.` are PDT's own (a
   schedule's last slot): `{{state}}` leaves them out and `state.set` refuses them.
 
 ## Outbox (`session.send`)
@@ -392,7 +408,7 @@ builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_
   goes straight on, any other to Accept (a gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`;
   `reject` → Code); `auto` → straight on; then
   a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`merged` → `ticket.finish`; `queued` → end, Finish
-  merged tickets finishes it; `refused` → wait), `person` → a wait for `attempt.merged` of this attempt. `timeout` and
+  merged tickets finishes it, and PR notices gets it merging again after a failure, PDT-104; `refused` → wait), `person` → a wait for `attempt.merged` of this attempt. `timeout` and
   `stopped` add a ticket comment and end. Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
   or `user`: manual), `afterRefine`, `accept`, `autoAcceptLabels` (a list, default none; the labels the ticket had
   when it started count), `merge`, `loopLimit`. Runs may last 30 days. A ticket accepted by label has no approval,
@@ -405,7 +421,9 @@ builtin_persona`); a persona a workflow names can't be deleted (`409 persona_in_
 - **`approve`** on a gate: taking that choice records the user's approval of the run's attempt at its branch head (a
   `review` event naming the workflow), which `requireApproval` needs before an automated merge.
 - **`attempt.merge`** runs the Merge command as an automated merger ([review.md](review.md#merge)): a policy refusal
-  or anything that stops the merge leaves by `refused` (`code`, `reason`); `merge_failed` is an error.
+  or anything that stops the merge leaves by `refused` (`code`, `reason`); `merge_failed` is an error. With `again`
+  (PR notices after a fix, PDT-104) it reads the PR from GitHub first: one already on auto-merge or in the queue is
+  `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays.
 - **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`,
   `approvalExemptLabels` (tickets with one of them need no approval; normalised like ticket labels, `[]` clears),
   `maxRunningAttempts`, `autoStart` `off | todo | ready`; `PUT` takes them as top-level fields, `maxRunningAttempts`

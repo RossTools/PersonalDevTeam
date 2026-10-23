@@ -4,7 +4,16 @@ import type { Notice } from "./Notice";
 /**
  * `pr.*`.
  */
-export type PrEvent = { pr: number, url: string, headSha: string, autoMerge: boolean, inMergeQueue: boolean, notice: Notice, projectId: string, ticketId: string, 
+export type PrEvent = { pr: number, url: string, headSha: string, autoMerge: boolean, inMergeQueue: boolean, notice: Notice, 
+/**
+ * The pull request was set to merge (Merge…, `attempt.merge`, auto-merge or the merge queue) and hasn't merged
+ * (PDT-104): PR notices gets it merging again.
+ */
+mergeRequested: boolean, 
+/**
+ * An agent step is working on the attempt (a workflow already has an agent on it).
+ */
+agentWorking: boolean, projectId: string, ticketId: string, 
 /**
  * `PDT-42`.
  */

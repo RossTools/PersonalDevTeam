@@ -272,6 +272,33 @@ impl Store {
         row.as_ref().map(to_step).transpose()
     }
 
+    /// Whether a step that is not done works on the attempt (an agent is on it, PDT-104).
+    pub async fn attempt_has_open_agent_step(&self, attempt_id: &str) -> Result<bool, StoreError> {
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_steps WHERE attempt_id = ? AND state != 'done'")
+            .bind(attempt_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(n > 0)
+    }
+
+    /// Whether an agent step works on the attempt now, outside run `except`: one not done, or a run's agent step not
+    /// yet bound (waiting for a slot, or about to start) in an active run of the attempt (PDT-104).
+    pub async fn attempt_agent_busy(&self, attempt_id: &str, except: &str) -> Result<bool, StoreError> {
+        if self.attempt_has_open_agent_step(attempt_id).await? {
+            return Ok(true);
+        }
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM workflow_steps s JOIN workflow_runs r ON r.id = s.run_id \
+             WHERE r.attempt_id = ? AND r.id != ? AND r.status IN ('running', 'waiting') AND s.kind = 'agent' \
+             AND s.status IN ('pending', 'running', 'waiting')",
+        )
+        .bind(attempt_id)
+        .bind(except)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n > 0)
+    }
+
     /// Every step that is not done.
     pub async fn active_agent_steps(&self) -> Result<Vec<AgentStep>, StoreError> {
         let sql = format!("SELECT {STEP_COLUMNS} FROM agent_steps WHERE state != 'done' ORDER BY created_at");

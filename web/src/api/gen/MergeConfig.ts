@@ -17,4 +17,8 @@ finishOnMerge: boolean | string,
 /**
  * With `finishOnMerge`: delete the branch too.
  */
-deleteBranch: boolean | string, };
+deleteBranch: boolean | string, 
+/**
+ * Merging again after a failure (PDT-104): `finishOnMerge` and `deleteBranch` stay as the first merge asked.
+ */
+again: boolean, };

@@ -43,10 +43,11 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   user's for a person's merge, else `system`.
   Every refusal is 409 `merge_blocked` with a message (inactive, dirty, conflict, base_dirty, nothing,
   pr_not_mergeable, pr_queued, no_pr); a failing gh or git is 409 `merge_failed`.
-- With an open PR (`attempt.pr`) it runs `gh pr merge --auto` (pdt-github `merge_pr`; the method from
+- With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
+  (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (pdt-github `merge_pr`; the method from
   `merge_settings`, none with a merge queue; when GitHub says the PR is already clean it merges at once) and the merge
   check ends the attempt later. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
-  branch off) sends `{finishOnMerge, deleteBranch}`, kept on the attempt (`attempts.finish_on_merge`,
+  branch off) sends `{finishOnMerge, deleteBranch}` (left out: what an earlier merge asked stays), kept on the attempt (`attempts.finish_on_merge`,
   `finish_delete_branch`, PDT-75): when the merge check ends the attempt as merged, pdt-api `finish.rs` does what
   `finishMerged` does without its questions (Done; the worktree's and the Start workspace's sessions and runs
   stopped and removed, the attempt's other sessions stopped; the worktree, the workspace with its tabs; the base
