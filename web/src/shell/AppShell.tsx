@@ -47,6 +47,7 @@ import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
+import { RightPanel, RightPanelContent, useRightPanelKey, useRightPanelOpen } from './RightPanel';
 import { IconRail } from './IconRail';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
@@ -154,6 +155,8 @@ export function AppShell() {
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [rightOpen, setRightOpen] = useRightPanelOpen();
+  const [todosSheetOpen, setTodosSheetOpen] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
@@ -357,6 +360,7 @@ export function AppShell() {
   }, []);
 
   useMetaK(() => setPaletteOpen(true));
+  useRightPanelKey(() => (phone ? setTodosSheetOpen((o) => !o) : setRightOpen((o) => !o)));
 
   usePrefixKeys((a: KeyAction) => {
     const w = ws.workspace;
@@ -375,6 +379,11 @@ export function AppShell() {
     }
     if (a.type === 'pm') {
       setView('pm');
+      return;
+    }
+    if (a.type === 'todos') {
+      if (phone) setTodosSheetOpen(true);
+      else setRightOpen((o) => !o);
       return;
     }
     setView('sessions');
@@ -693,6 +702,8 @@ export function AppShell() {
   const phoneActions: TopBarActions | null = hasShellActions || screenActions
     ? () => [...shellActions(), ...(screenActions?.entries() ?? [])]
     : null;
+  // The todo list's "current project": the workspace on screen's, else the one picked in the lists.
+  const todoProjectId = (view === 'sessions' ? ws.workspace?.projectId : null) ?? stored.projectId ?? null;
   const projectKeyList = ws.projects.map((p) => p.key).join(' ');
   const projectKeys = useMemo(() => (projectKeyList ? projectKeyList.split(' ') : []), [projectKeyList]);
 
@@ -720,6 +731,7 @@ export function AppShell() {
             needsYou={inbox.data?.total ?? 0}
             onInbox={() => go(viewRoute('inbox'))}
             onSearch={() => setPaletteOpen(true)}
+            onTodos={() => setTodosSheetOpen(true)}
             actions={phoneActions}
             edit={screenEdit}
           />
@@ -735,6 +747,9 @@ export function AppShell() {
             onProject={stored.setProjectId}
             onRenameTab={setRenamingTabId}
           />
+          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
+            <RightPanelContent projectId={todoProjectId} projects={ws.projects} />
+          </Sheet>
           {pickerSheet && (
             <Sheet side="left" title="Projects and filters" hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
               <div className="-mx-2">{list}</div>
@@ -884,6 +899,7 @@ export function AppShell() {
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
+      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} />}
     </div>
     </TopBarEditContext.Provider>
     </TopBarActionsContext.Provider>

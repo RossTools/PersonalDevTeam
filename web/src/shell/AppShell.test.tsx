@@ -112,6 +112,18 @@ describe('AppShell', () => {
   });
 
 
+  it('has the right panel beside the main area, opened by the strip and closed by its button or the prefix key', async () => {
+    stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/todos': [] });
+    renderWithQuery(<AppShell />);
+    const panel = screen.getByRole('complementary', { name: 'Right panel' });
+    await userEvent.click(within(panel).getByRole('button', { name: 'Open the todo list' }));
+    expect(await within(panel).findByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Collapse the right panel' }));
+    expect(within(panel).queryByRole('textbox')).not.toBeInTheDocument();
+    await userEvent.keyboard('{Control>}]{/Control}t');
+    expect(await within(screen.getByRole('complementary', { name: 'Right panel' })).findByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
+  });
+
   it('shows the empty state when the project workspace has no tabs', async () => {
     stubAlpha();
     renderWithQuery(<AppShell />);
@@ -744,6 +756,18 @@ describe('phone', () => {
     await userEvent.keyboard('{Escape}');
     await userEvent.click(await within(bar).findByRole('button', { name: 'Needs you (3)' }));
     expect(here()).toBe('/inbox');
+  });
+
+  it('opens the todo list in a sheet from the top bar, with no right panel', async () => {
+    stubPhone();
+    stubWorkspaces({ 'GET /api/todos': [{ id: 'a', title: 'Call Sam', position: 0, done: false, projectId: null, ticketId: null,
+      createdAt: 1, updatedAt: 1, doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null }] });
+    renderWithQuery(<AppShell />);
+    expect(screen.queryByRole('complementary', { name: 'Right panel' })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Todos' });
+    expect(await within(sheet).findByText('Call Sam')).toBeInTheDocument();
+    expect(within(sheet).getByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
   });
 
   it("lists the views in the drawer in the rail's order, with the Inbox count, Settings and the host's state", async () => {

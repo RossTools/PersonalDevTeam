@@ -50,6 +50,22 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   header is one line (state, title, branch chip) with Changes, Conversation/Terminal, Paste, Compose, Font size (a
   terminal's, [agents.md](agents.md) "Terminals"), Stop, Restart, Make ticket and Remove under its ⋯; a run's is one line with its state, Stop and Restart under ⋯.
 
+## Right panel and todos (PDT-125)
+
+- On desktop a panel sits right of the main area (web/src/shell/RightPanel.tsx). Open it is 320px wide and drags
+  wider (240–640px; the divider also takes Left/Right); collapsed it is a 40px strip with a checklist icon and the count
+  of open todos. The strip, the panel's collapse button, ⌘. (Mac) and Ctrl+] t open and close it. Open/closed and
+  width are kept per browser (`pdt.rightPanel.open`, `pdt.rightPanel.width`). It has tabs, starting with Todos.
+- Phones have no panel: ☑ in the top bar opens the same content in a right sheet.
+- The todo list (web/src/todos): "Add a todo…" (Enter adds it at the top), a filter (All, or the project on screen,
+  which new todos then join; kept as `pdt.todos.filter`), rows with a checkbox, the title (click to edit), a drag
+  handle (also Alt+↑/↓) and ⋯ (Edit, Link to a ticket…, Unlink, Project, Delete), chips for the project key and the
+  linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
+- The server keeps them in `todos` (`GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`; GET filters by `project`
+  and `done`). Order is a float `position` (a move takes the midpoint of its new neighbours). A linked ticket is always
+  in the todo's project: linking one sets the project, moving the todo to another project drops the link, and deleting
+  the ticket or project only removes the link. The PM reads them with `list_todos` ([agents.md](agents.md) "The PM").
+
 ## URLs
 
 What is on screen is in the URL path (web/src/shell/route.ts, router.ts), so browser Back/Forward walk through what

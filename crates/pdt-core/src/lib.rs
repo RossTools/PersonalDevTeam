@@ -32,6 +32,7 @@ pub mod runconfig;
 pub mod session;
 pub mod start;
 pub mod ticket;
+pub mod todo;
 pub mod workflow;
 pub mod workspace;
 pub mod worktree;
