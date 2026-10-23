@@ -17,7 +17,7 @@ import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
 import { newSession, type Choice } from '../sessions/newSession';
 import { ProjectPage } from '../projects/ProjectPage';
-import { FileViewer, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
+import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
@@ -417,9 +417,11 @@ export function AppShell() {
   // current tab's.
   const filesRoute = route.view === 'files' ? route : null;
   const filesProject = filesRoute?.project ? ws.projects.find((p) => p.key === filesRoute.project) : undefined;
+  // A path ending in `/` is a folder: the phone shows it as its own screen (PDT-120).
+  const filesDir = filesRoute?.path?.endsWith('/') ? filesRoute.path.slice(0, -1) : null;
   const folder: FolderViewState = useFolderView(ws.projects, current ? { projectId: current.projectId, worktreeId: current.worktreeId } : null, {
     picked: filesProject ? { projectId: filesProject.id, worktreeId: filesRoute?.worktree ?? null } : null,
-    file: filesRoute?.path ?? null,
+    file: filesDir === null ? filesRoute?.path ?? null : null,
     onChange: (picked, file) => {
       // A file's path names its checkout, so a reload shows the same file even if the current tab changes.
       const at = picked ?? (file ? folder.place : null);
@@ -550,10 +552,12 @@ export function AppShell() {
       onOpen={(t) => { setWorkflowTarget(t); setSheetOpen(false); }}
       onNew={() => { setSheetOpen(false); setCreatingWorkflow({}); }} />
   ) : view === 'files' ? (
-    <>
-      <h2 className={listHeading}>{label}</h2>
-      <FolderTree state={folder} />
-    </>
+    phone ? <FolderList state={folder} dir="" /> : (
+      <>
+        <h2 className={listHeading}>{label}</h2>
+        <FolderTree state={folder} />
+      </>
+    )
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
@@ -589,6 +593,7 @@ export function AppShell() {
   ) : view === 'tickets' && detail ? peekRef ?? label
   : view === 'inbox' && detail && inboxId ? (triageTitle(inboxItems, inboxId) ?? label)
   : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label)
+  : view === 'files' && detail && filesRoute?.path ? filesRoute.path.split('/').filter(Boolean).pop() ?? label
   : view === 'pm' && detail ? (pmSelection === 'notes' ? 'Notes' : noteOf(pmSelection) ? 'Note' : pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
   : label;
   const shellActions = (): MenuEntry[] =>
@@ -750,7 +755,7 @@ export function AppShell() {
             ) : view === 'workflows' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></Suspense>
             ) : view === 'files' ? (
-              <FileViewer state={folder} />
+              phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} />
             ) : view === 'settings' ? (
               settingsPage.kind === 'project' ? (
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => showProjectSettings(null)} />

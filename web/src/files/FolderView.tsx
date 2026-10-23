@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { File, FileQuestion, Folder, FolderOpen } from 'lucide-react';
-import { Alert, Chip, EmptyState, MenuButton, SegmentedControl, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
+import { ChevronRight, File, FileQuestion, Folder, FolderOpen } from 'lucide-react';
+import {
+  Alert, Chip, EmptyState, List, ListRow, MenuButton, SegmentedControl, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode,
+} from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { FileEntry } from '../api/gen/FileEntry';
@@ -117,6 +119,43 @@ export function FolderTree({ state }: { state: FolderViewState }) {
       <div className="px-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} /></div>
       <Files key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} />
     </div>
+  );
+}
+
+/**
+ * One folder of the checkout as its own screen (phones, PDT-120): its entries as rows, a folder opening its own screen
+ * (its path ends in `/`) and a file its viewer. The top one (`dir` empty) has the checkout picker.
+ */
+export function FolderList({ state, dir }: { state: FolderViewState; dir: string }) {
+  if (!state.place) return <EmptyState icon={<FolderOpen />}>Add a project to browse its files.</EmptyState>;
+  return (
+    <div className="flex flex-col gap-2 py-1">
+      {dir === '' && <div className="px-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} /></div>}
+      <FolderEntries key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} dir={dir} />
+    </div>
+  );
+}
+
+function FolderEntries({ state, place, dir }: { state: FolderViewState; place: Place; dir: string }) {
+  const q = useFolder(place, dir);
+  if (q.isPending) return <Skeleton lines={6} label="Loading files" className="px-2" />;
+  if (q.isError) return <div className="px-1"><Alert tone="error">{q.error.message}</Alert></div>;
+  const dirs = new Set(q.data.filter((e) => e.dir).map((e) => e.path));
+  return (
+    <List aria-label={dir ? `Files in ${dir}` : 'Files'} onAction={(path) => state.setFile(dirs.has(path) ? `${path}/` : path)}
+      renderEmpty={() => <p className="px-2 py-1 text-xs text-muted-foreground">{dir ? 'This folder is empty.' : 'This checkout has no files.'}</p>}>
+      {q.data.map((e) => (
+        <ListRow key={e.path} id={e.path} title={e.name} textValue={e.name}
+          className={e.status === 'D' ? 'line-through text-muted-foreground' : undefined}
+          leading={e.dir ? <Folder size={15} aria-hidden /> : <File size={15} aria-hidden />}
+          trailing={(e.status || e.dir) ? (
+            <span className="flex items-center gap-1">
+              <StatusMark status={e.status} />
+              {e.dir && <ChevronRight aria-hidden className="size-4 text-muted-foreground" />}
+            </span>
+          ) : undefined} />
+      ))}
+    </List>
   );
 }
 

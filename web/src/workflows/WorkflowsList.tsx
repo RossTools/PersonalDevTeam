@@ -1,9 +1,10 @@
 // The Workflows view's list column (Phase 7d spec §2): New workflow, the workflows by where they apply, and the
-// templates.
+// templates. On a phone there is no New workflow (workflows are view-only there, PDT-120).
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Badge, Button, List, ListRow, StatusDot } from '@ui';
 import { api } from '../api/client';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import type { Project } from '../api/gen/Project';
 import type { Workflow } from '../api/gen/Workflow';
 import { scopeLabel } from './scope';
@@ -31,11 +32,14 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
   const workflows = useQuery({ queryKey: ['workflows'], queryFn: () => api.listWorkflows(), refetchInterval: 5000 });
   const templates = useQuery({ queryKey: ['workflow-templates'], queryFn: () => api.listWorkflowTemplates() });
   const groups = groupWorkflows(workflows.data ?? [], projects);
+  const phone = useMediaQuery(PHONE_QUERY);
   return (
     <nav aria-label="Workflows" className="flex flex-col gap-0.5 py-1">
-      <div className="px-2 pt-2">
-        <Button size="sm" className="w-full" onClick={onNew}><Plus aria-hidden /> New workflow</Button>
-      </div>
+      {!phone && (
+        <div className="px-2 pt-2">
+          <Button size="sm" className="w-full" onClick={onNew}><Plus aria-hidden /> New workflow</Button>
+        </div>
+      )}
       {workflows.error && <p className="px-3 text-sm text-destructive">Workflows could not be loaded: {workflows.error.message}</p>}
       {groups.map((g) => (
         <section key={g.label} aria-label={g.label}>

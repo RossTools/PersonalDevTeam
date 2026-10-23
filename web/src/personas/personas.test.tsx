@@ -224,3 +224,40 @@ describe('PersonaPage', () => {
     expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(2);
   });
 });
+
+describe('on a phone', () => {
+  const stubPhone = () =>
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+
+  it('lists personas without New persona, and shows one read-only', async () => {
+    stubPhone();
+    stubApi({
+      ...TOOLS_ROUTE,
+      'GET /api/personas': [persona('a', { name: 'Coder', model: 'opus', instructions: '# Build it\n\nWith tests.' })],
+      'GET /api/personas/a/versions': [version(1)],
+    });
+    renderWithQuery(<PersonasList selectedId={null} onSelect={() => {}} />);
+    expect(await screen.findByRole('grid', { name: 'Personas' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New persona' })).not.toBeInTheDocument();
+  });
+
+  it('shows a persona with nothing to edit', async () => {
+    stubPhone();
+    stubApi({
+      ...TOOLS_ROUTE,
+      'GET /api/personas': [persona('a', { name: 'Coder', model: 'opus', instructions: '# Build it\n\nWith tests.' })],
+      'GET /api/personas/a/versions': [version(1)],
+    });
+    renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
+    expect(await screen.findByRole('heading', { name: 'Build it' })).toBeInTheDocument();
+    expect(screen.getByText('opus')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Tools' })).getAllByRole('listitem')).toHaveLength(DEFAULTS.length);
+    expect(screen.queryAllByRole('textbox')).toEqual([]);
+    for (const name of [/Save/, 'Archive', 'Delete persona…']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  });
+});
