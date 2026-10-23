@@ -560,6 +560,44 @@ async fn new_issues_in_a_watched_repo_start_runs_after_a_silent_first_look() {
     assert_eq!(env.gh.calls.lock().unwrap().len(), before);
 }
 
+#[tokio::test]
+async fn an_issue_that_could_not_be_logged_is_logged_on_the_next_look() {
+    let env = setup().await;
+    create(
+        &env,
+        json!({"name": "Issues", "nodes": [
+            {"id": "opened", "kind": "github.issue.opened", "version": 1, "config": {"repos": ["o/r"]}},
+            {"id": "end", "kind": "end", "version": 1}],
+          "edges": [{"from": "opened", "to": "end"}]}),
+    )
+    .await;
+    let mark = || async {
+        env.state.store.get_host_value("sensor.github_issues.o/r").await.unwrap().unwrap()["newest"].as_u64()
+    };
+    env.gh.set_issues("o/r", vec![issue(4, "Old")]);
+    pdt_api::refresh_issues(&env.state).await;
+    assert_eq!(mark().await, Some(4));
+
+    // gh failing: nothing moves.
+    *env.gh.error.lock().unwrap() = Some("HTTP 401: Bad credentials".into());
+    env.gh.set_issues("o/r", vec![issue(5, "New"), issue(4, "Old")]);
+    pdt_api::refresh_issues(&env.state).await;
+    assert_eq!(mark().await, Some(4));
+    *env.gh.error.lock().unwrap() = None;
+
+    // The store failing: the mark stays before the issue it could not log.
+    let db = env.tmp.path().join("pdt.db");
+    common::fail_events(&db, Some("github.issue.opened")).await;
+    pdt_api::refresh_issues(&env.state).await;
+    assert_eq!(mark().await, Some(4), "#5 was not logged");
+    common::fail_events(&db, None).await;
+    pdt_api::refresh_issues(&env.state).await;
+    assert_eq!(mark().await, Some(5));
+    let (_, ev) = call(&env.app, "GET", "/api/events?type=github.issue.opened", None).await;
+    let numbers: Vec<u64> = ev.as_array().unwrap().iter().map(|e| e["payload"]["number"].as_u64().unwrap()).collect();
+    assert_eq!(numbers, [5]);
+}
+
 // ---- templates ----
 
 #[tokio::test]
@@ -954,7 +992,7 @@ async fn a_stdio_mcp_servers_tools_are_listed_and_called() {
     assert_eq!(s, StatusCode::OK, "{listed}");
     assert_eq!(listed["error"], Value::Null, "{listed}");
     let names: Vec<_> = listed["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["echo", "add", "fail", "whoami"]);
+    assert_eq!(names, ["echo", "add", "fail", "whoami", "hang"]);
     let (_, cached) = call(&env.app, "GET", &format!("/api/connections/{id}/tools"), None).await;
     assert_eq!(cached["tools"], listed["tools"]);
 
@@ -1040,6 +1078,33 @@ async fn a_stdio_mcp_servers_tools_are_listed_and_called() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (_, catalog) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
     assert!(!catalog.to_string().contains("mcp:fake/"));
+    pdt_api::shutdown_mcp(&env.state).await;
+}
+
+#[tokio::test]
+async fn a_wedged_mcp_server_is_started_again_after_a_call_times_out() {
+    let env = setup().await;
+    connection(&env, "fake", "mcp", "", json!({"transport": "stdio", "command": fake_mcp()}), None).await;
+    let mut hang = tool_node("hang", "fake", "hang", json!({}));
+    hang["timeoutMs"] = json!(2000);
+    let doc = json!({"name": "Hang", "nodes": [
+        {"id": "go", "kind": "manual", "version": 1},
+        tool_node("who", "fake", "whoami", json!({})), hang],
+        "edges": [{"from": "go", "to": "who"}, {"from": "who", "to": "hang"}]});
+    let wf = create(&env, doc).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    let error = step(&r, "hang")["error"].as_str().unwrap().to_string();
+    assert!(error.contains("did not answer"), "the call's own timeout, naming the server: {error}");
+    let first = step(&r, "who")["output"]["pid"].clone();
+
+    let doc = json!({"name": "After", "nodes": [
+        {"id": "go", "kind": "manual", "version": 1}, tool_node("who", "fake", "whoami", json!({}))],
+        "edges": [{"from": "go", "to": "who"}]});
+    let wf = create(&env, doc).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_ne!(step(&r, "who")["output"]["pid"], first, "a new server answered");
     pdt_api::shutdown_mcp(&env.state).await;
 }
 

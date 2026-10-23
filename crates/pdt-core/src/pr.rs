@@ -153,8 +153,12 @@ pub struct PullRequestStatus {
     #[serde(skip)]
     #[ts(skip)]
     pub queue_removal: Option<QueueRemoval>,
+    /// When it was last read (ms).
     #[ts(type = "number")]
     pub checked_at: i64,
+    /// Why the reads since `checked_at` failed (`gh` signed out, GitHub down): the rest is that older look.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 impl PullRequestStatus {
@@ -489,6 +493,7 @@ pub(crate) mod tests {
             queue_ci: None,
             queue_removal: None,
             checked_at: 0,
+            error: None,
         }
     }
 

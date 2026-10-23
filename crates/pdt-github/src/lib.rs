@@ -121,8 +121,9 @@ pub trait GithubApi: Send + Sync {
     fn viewer_login(&self) -> Result<String, GhError> {
         Err(GhError::NotInstalled)
     }
-    /// The newest issues of `repo` (pull requests left out), newest first.
-    fn recent_issues(&self, _repo: &str) -> Result<Vec<Issue>, GhError> {
+    /// The newest issues of `repo` (pull requests left out), newest first: one page without `after`, else every page
+    /// back to issue `after` (up to [`ISSUE_PAGES`]).
+    fn recent_issues(&self, _repo: &str, _after: Option<u64>) -> Result<Vec<Issue>, GhError> {
         Err(GhError::NotInstalled)
     }
     /// Every comment on PR `number`: the conversation's and the reviews' line comments.
@@ -147,9 +148,14 @@ fn list_args(path: &str, jq: &str, paginate: bool) -> Vec<String> {
     a
 }
 
-pub fn recent_issues_args(repo: &str) -> Vec<String> {
+/// Issues (and pull requests, which share their numbers) per page of [`GithubApi::recent_issues`], and the most pages
+/// one read takes.
+pub const ISSUE_PAGE: usize = 100;
+pub const ISSUE_PAGES: u32 = 10;
+
+pub fn recent_issues_args(repo: &str, page: u32) -> Vec<String> {
     list_args(
-        &format!("repos/{repo}/issues?state=all&sort=created&direction=desc&per_page=50"),
+        &format!("repos/{repo}/issues?state=all&sort=created&direction=desc&per_page={ISSUE_PAGE}&page={page}"),
         "{number, title, body, url: .html_url, author: .user.login, labels: [.labels[].name], created_at, \
          pr: (.pull_request != null)}",
         false,
@@ -185,8 +191,34 @@ fn lines(out: &str) -> Result<Vec<Value>, GhError> {
     out.lines().filter(|l| !l.trim().is_empty()).map(json).collect()
 }
 
+/// Reads pages of issues (newest first, `page(n)` the output of page `n`) until one reaches issue `after` or is the
+/// last: one page without `after`.
+pub fn read_issue_pages(
+    after: Option<u64>,
+    mut page: impl FnMut(u32) -> Result<String, GhError>,
+) -> Result<Vec<Issue>, GhError> {
+    let mut out = vec![];
+    for n in 1..=ISSUE_PAGES {
+        let items = lines(&page(n)?)?;
+        let lowest = items.iter().filter_map(|v| v["number"].as_u64()).min();
+        out.extend(issues_of(&items));
+        let reached = match after {
+            None => true,
+            Some(a) => lowest.is_none_or(|l| l <= a),
+        };
+        if reached || items.len() < ISSUE_PAGE {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 pub fn parse_issues(out: &str) -> Result<Vec<Issue>, GhError> {
-    Ok(lines(out)?
+    Ok(issues_of(&lines(out)?))
+}
+
+fn issues_of(items: &[Value]) -> Vec<Issue> {
+    items
         .iter()
         .filter(|v| v["pr"] != true)
         .filter_map(|v| {
@@ -203,7 +235,7 @@ pub fn parse_issues(out: &str) -> Result<Vec<Issue>, GhError> {
                 created_at: s(v, "created_at"),
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Conversation comments (`in_review: false`) or review comments.
@@ -526,8 +558,8 @@ impl GithubApi for GhCli {
         Ok(out.trim().to_string())
             .and_then(|l| if l.is_empty() { Err(GhError::BadOutput("no login".into())) } else { Ok(l) })
     }
-    fn recent_issues(&self, repo: &str) -> Result<Vec<Issue>, GhError> {
-        parse_issues(&self.run(&recent_issues_args(repo))?)
+    fn recent_issues(&self, repo: &str, after: Option<u64>) -> Result<Vec<Issue>, GhError> {
+        read_issue_pages(after, |n| self.run(&recent_issues_args(repo, n)))
     }
     fn pr_comments(&self, repo: &str, number: u32) -> Result<Vec<PrComment>, GhError> {
         let mut all = parse_comments(&self.run(&issue_comments_args(repo, number))?, false)?;
@@ -610,6 +642,8 @@ pub mod testing {
         pub merge_error: Mutex<Option<String>>,
         /// `viewer_login`'s answer (`me` when unset).
         pub login: Mutex<Option<String>>,
+        /// Reads of PRs and issues fail with this (gh signed out, GitHub down).
+        pub error: Mutex<Option<String>>,
         /// Issues by repo, newest first.
         pub issues: Mutex<HashMap<String, Vec<Issue>>>,
         /// Comments and reviews by PR number.
@@ -644,11 +678,18 @@ pub mod testing {
         fn call(&self, what: String) {
             self.calls.lock().unwrap().push(what);
         }
+        fn failing(&self) -> Result<(), GhError> {
+            match self.error.lock().unwrap().clone() {
+                Some(e) => Err(GhError::Command(e)),
+                None => Ok(()),
+            }
+        }
     }
 
     impl GithubApi for FakeGithub {
         fn pull_request(&self, repo: &str, branch: &str) -> Result<Option<PullRequest>, GhError> {
             self.call(format!("pr {repo} {branch}"));
+            self.failing()?;
             Ok(self.prs.lock().unwrap().get(branch).cloned())
         }
         fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, GhError> {
@@ -682,8 +723,9 @@ pub mod testing {
         fn viewer_login(&self) -> Result<String, GhError> {
             Ok(self.login.lock().unwrap().clone().unwrap_or_else(|| "me".into()))
         }
-        fn recent_issues(&self, repo: &str) -> Result<Vec<Issue>, GhError> {
+        fn recent_issues(&self, repo: &str, _after: Option<u64>) -> Result<Vec<Issue>, GhError> {
             self.call(format!("issues {repo}"));
+            self.failing()?;
             Ok(self.issues.lock().unwrap().get(repo).cloned().unwrap_or_default())
         }
         fn pr_comments(&self, repo: &str, number: u32) -> Result<Vec<PrComment>, GhError> {
@@ -759,6 +801,41 @@ mod tests {
     }
 
     #[test]
+    fn issue_pages_are_read_back_to_the_last_issue_seen() {
+        // 250 issues and PRs, newest first, 100 a page.
+        let page = |n: u32| -> Result<String, GhError> {
+            let top = 250 - u64::from(n - 1) * 100;
+            Ok((top.saturating_sub(99).max(1)..=top)
+                .rev()
+                .map(|i| format!(r#"{{"number":{i},"title":"t","pr":{}}}"#, i % 10 == 0))
+                .collect::<Vec<_>>()
+                .join("\n"))
+        };
+        let mut asked = vec![];
+        let first = read_issue_pages(None, |n| {
+            asked.push(n);
+            page(n)
+        })
+        .unwrap();
+        assert_eq!((asked.as_slice(), first.len()), (&[1][..], 90), "the first look reads one page, PRs left out");
+        asked.clear();
+        let since = read_issue_pages(Some(120), |n| {
+            asked.push(n);
+            page(n)
+        })
+        .unwrap();
+        assert_eq!(asked, [1, 2], "page 2 reaches #120");
+        assert!(since.iter().any(|i| i.number == 121) && since.iter().all(|i| i.number % 10 != 0));
+        asked.clear();
+        read_issue_pages(Some(0), |n| {
+            asked.push(n);
+            page(n)
+        })
+        .unwrap();
+        assert_eq!(asked, [1, 2, 3], "the third page is the last");
+    }
+
+    #[test]
     fn parses_issues_comments_and_reviews() {
         let issues = r#"{"number":7,"title":"Bug","body":"b","url":"https://i/7","author":"al","labels":["bug"],"created_at":"t","pr":false}
 {"number":6,"title":"A PR","body":null,"url":"u","author":"bo","labels":[],"created_at":"t","pr":true}
@@ -774,6 +851,8 @@ mod tests {
         let r = parse_reviews(r).unwrap();
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].state, "changes_requested");
+        let a = recent_issues_args("o/r", 2);
+        assert!(a[1].ends_with("per_page=100&page=2"), "{a:?}");
         let a = issue_comments_args("o/r", 3);
         assert_eq!(&a[..3], &["api", "--paginate", "repos/o/r/issues/3/comments?per_page=100"].map(String::from));
     }

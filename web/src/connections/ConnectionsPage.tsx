@@ -3,7 +3,7 @@
 // token, Radarr, Sonarr, Plex, MCP servers and their tools). Secrets stay in the OS keychain.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Page, Section, Skeleton, useConfirm } from '@ui';
+import { Alert, Badge, Button, Page, Section, Skeleton, relativeTime, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from './ConnectionDialog';
@@ -42,6 +42,11 @@ function Row({ c, onEdit, onDelete }: { c: Connection; onEdit: () => void; onDel
       <span className="flex-1" />
       <Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>
       <Button size="sm" variant="secondary" onClick={onDelete}>Delete</Button>
+      {c.lastError && (
+        <p role="status" className="w-full pl-2 text-xs text-destructive">
+          Failing{c.lastErrorAt !== null ? ` since ${relativeTime(c.lastErrorAt)}` : ''}: {c.lastError}
+        </p>
+      )}
       {c.kind === 'mcp' && <McpToolsLine c={c} />}
     </div>
   );

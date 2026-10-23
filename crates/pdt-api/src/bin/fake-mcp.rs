@@ -5,6 +5,7 @@
 //! - `add {a, b}`: structured content `{sum}`
 //! - `fail`: an `isError` result saying `it broke`
 //! - `whoami`: text content holding JSON `{secret: $FAKE_MCP_SECRET, pid}` (which process answered, and its secret)
+//! - `hang`: never answers, and the server answers nothing after it (a wedged server)
 
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
@@ -19,7 +20,8 @@ fn tools() -> Value {
                 "required": ["a", "b"]},
             "outputSchema": {"type": "object", "properties": {"sum": {"type": "number"}}}},
         {"name": "fail", "description": "Always fails.", "inputSchema": {"type": "object"}},
-        {"name": "whoami", "description": "Which process answered.", "inputSchema": {"type": "object"}}
+        {"name": "whoami", "description": "Which process answered.", "inputSchema": {"type": "object"}},
+        {"name": "hang", "description": "Never answers again.", "inputSchema": {"type": "object"}}
     ])
 }
 
@@ -63,10 +65,15 @@ fn answer(msg: &Value) -> Option<Value> {
 fn main() {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
+    let mut wedged = false;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
         eprintln!("fake-mcp got {}", msg["method"]);
+        wedged |= msg["method"] == "tools/call" && msg["params"]["name"] == "hang";
+        if wedged {
+            continue;
+        }
         if let Some(a) = answer(&msg) {
             let _ = writeln!(out, "{a}");
             let _ = out.flush();

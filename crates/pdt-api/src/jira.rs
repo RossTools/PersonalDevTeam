@@ -1,7 +1,10 @@
 //! Jira Cloud (Phase 7e spec §6, PDT-85). A project links to Jira in its host settings (a `jira` connection, a JQL
 //! scope and the done transition). Every 60 s pdtd reads the issues of each linked project updated since its last look
 //! and logs `jira.issue.created`, `.updated`, `.transitioned` and `.commented` (the first look only records the time,
-//! `sensor.jira.<project>`). The built-in "Import assigned Jira issues" turns issues assigned to the user into tickets
+//! `sensor.jira.<project>`). Event keys name the project, so two projects whose scopes overlap on one connection each
+//! get their events. The mark moves only past what was logged: a failed insert leaves it for the next poll, and a poll
+//! that hits the page cap moves it to the last issue it read. A failing connection is reported once
+//! ([`crate::connection_health`]). The built-in "Import assigned Jira issues" turns issues assigned to the user into tickets
 //! through [`import_issue`], which `POST /api/projects/{id}/jira/import` also calls; linking is the dedupe, so an
 //! issue is never imported twice.
 
@@ -26,8 +29,9 @@ use ts_rs::TS;
 /// How far back each poll reads before its last one (clocks differ; event keys make re-reads harmless).
 const MARGIN_MS: i64 = 60 * 1000;
 
-/// The most pages one poll reads (of 100 issues).
+/// The most pages one poll reads (of [`PAGE`] issues); the next poll reads on from where it stopped.
 const MAX_PAGES: usize = 5;
+const PAGE: usize = 100;
 
 /// A `jira` connection ready to call: its site, and the email and API token it signs in with.
 pub(crate) struct JiraClient {
@@ -101,12 +105,12 @@ impl JiraClient {
         v["accountId"].as_str().map(String::from).ok_or_else(|| "Jira did not say who the account is".into())
     }
 
-    /// The issues `jql` finds, with their changelog (up to [`MAX_PAGES`] pages).
-    pub(crate) async fn search(&self, jql: &str) -> Result<Vec<Value>, String> {
+    /// The issues `jql` finds, with their changelog (up to [`MAX_PAGES`] pages), and whether there were more.
+    pub(crate) async fn search(&self, jql: &str) -> Result<(Vec<Value>, bool), String> {
         let mut out = vec![];
         let mut token: Option<String> = None;
         for _ in 0..MAX_PAGES {
-            let mut body = json!({"jql": jql, "fields": FIELDS, "expand": "changelog", "maxResults": 100});
+            let mut body = json!({"jql": jql, "fields": FIELDS, "expand": "changelog", "maxResults": PAGE});
             if let Some(t) = &token {
                 body["nextPageToken"] = json!(t);
             }
@@ -114,10 +118,34 @@ impl JiraClient {
             out.extend(v["issues"].as_array().cloned().unwrap_or_default());
             token = v["nextPageToken"].as_str().map(String::from);
             if token.is_none() || v["isLast"].as_bool() == Some(true) {
-                break;
+                return Ok((out, false));
             }
         }
-        Ok(out)
+        Ok((out, true))
+    }
+
+    /// Fills in the newest changelog entries and comments of a search result whose lists Jira cut short (a search
+    /// returns at most 100 of each, oldest first), so recent ones are never missed.
+    async fn complete(&self, v: &mut Value) -> Result<(), String> {
+        let key = v["key"].as_str().unwrap_or_default().to_string();
+        let short = |list: &Value, total: &Value| {
+            total.as_u64().is_some_and(|t| t > list.as_array().map_or(0, |l| l.len()) as u64)
+        };
+        if short(&v["changelog"]["histories"], &v["changelog"]["total"]) {
+            let total = v["changelog"]["total"].as_u64().unwrap_or(0);
+            let start = total.saturating_sub(PAGE as u64);
+            let path = format!("/rest/api/3/issue/{key}/changelog?startAt={start}&maxResults={PAGE}");
+            if let Some(page) = self.call(reqwest::Method::GET, &path, None).await? {
+                v["changelog"]["histories"] = page["values"].clone();
+            }
+        }
+        if short(&v["fields"]["comment"]["comments"], &v["fields"]["comment"]["total"]) {
+            let path = format!("/rest/api/3/issue/{key}/comment?orderBy=-created&maxResults={PAGE}");
+            if let Some(page) = self.call(reqwest::Method::GET, &path, None).await? {
+                v["fields"]["comment"]["comments"] = page["comments"].clone();
+            }
+        }
+        Ok(())
     }
 
     /// One issue by key (None: no such issue, or the account can't see it).
@@ -199,7 +227,7 @@ pub(crate) fn issue_events(
     since: i64,
 ) -> Vec<NewLogEvent> {
     let r = issue_ref(project_id, conn, issue, me, ticket);
-    let key = |what: &str| format!("jira:{}:{}:{what}", conn.id, issue.key);
+    let key = |what: &str| format!("jira:{project_id}:{}:{}:{what}", conn.id, issue.key);
     news(issue, since)
         .into_iter()
         .map(|n| match n {
@@ -238,30 +266,46 @@ fn baseline_key(project_id: &str) -> String {
     format!("sensor.jira.{project_id}")
 }
 
-/// One look at every linked project's recently updated issues. pdtd runs it every 60 s. Never fails; problems are
-/// logged.
+/// Why a poll stopped: the connection failed (reported on it), or something of PDT's own (logged).
+enum PollError {
+    Connection(String),
+    Local(String),
+}
+
+fn local(e: impl std::fmt::Display) -> PollError {
+    PollError::Local(e.to_string())
+}
+
+/// One look at every linked project's recently updated issues. pdtd runs it every 60 s. Never fails: a connection
+/// that fails is reported on it ([`crate::connection_health`]), other problems are logged.
 pub async fn refresh_jira(st: &AppState) {
     let projects = match st.store.list_projects().await {
         Ok(p) => p,
         Err(e) => return tracing::warn!(error = %e, "the Jira check could not list projects"),
     };
+    let mut uses = crate::connection_health::Uses::default();
     for p in projects {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
         let Ok(settings) = st.store.get_project_settings(&p.id).await else { continue };
         let Some(jira) = settings.jira else { continue };
-        if let Err(e) = poll_project(st, &p.id, &jira).await {
-            tracing::debug!(project = %p.id, error = %e, "could not read the project's Jira issues");
+        match poll_project(st, &p.id, &jira).await {
+            Ok(()) => uses.worked(&jira.connection),
+            Err(PollError::Connection(e)) => uses.failed(&jira.connection, &e),
+            Err(PollError::Local(e)) => {
+                tracing::warn!(project = %p.id, error = %e, "could not log the project's Jira news");
+            }
         }
     }
+    uses.report(st).await;
 }
 
-async fn poll_project(st: &AppState, project_id: &str, jira: &pdt_core::jira::JiraSettings) -> Result<(), String> {
-    let c = JiraClient::named(st, &jira.connection).await?;
+async fn poll_project(st: &AppState, project_id: &str, jira: &pdt_core::jira::JiraSettings) -> Result<(), PollError> {
+    let c = JiraClient::named(st, &jira.connection).await.map_err(PollError::Connection)?;
     let key = baseline_key(project_id);
     let started = now_ms();
-    let seen = st.store.get_host_value(&key).await.map_err(|e| e.to_string())?;
+    let seen = st.store.get_host_value(&key).await.map_err(local)?;
     // A new link, or one to another connection or scope, starts from now.
     let same =
         |v: &Value| v["connection"].as_str() == Some(c.conn.id.as_str()) && v["scope"].as_str() == Some(&jira.scope);
@@ -269,23 +313,34 @@ async fn poll_project(st: &AppState, project_id: &str, jira: &pdt_core::jira::Ji
         Some(s) => s,
         None => {
             let v = json!({"since": started, "connection": c.conn.id, "scope": jira.scope});
-            return st.store.put_host_value(&key, &v).await.map_err(|e| e.to_string());
+            return st.store.put_host_value(&key, &v).await.map_err(local);
         }
     };
     let minutes = (started - since + MARGIN_MS) / 60_000 + 1;
-    let issues = c.search(&poll_jql(&jira.scope, minutes)).await?;
+    let (mut issues, more) = c.search(&poll_jql(&jira.scope, minutes)).await.map_err(PollError::Connection)?;
     let me = c.myself().await.ok();
-    for v in &issues {
+    let mut last_updated = since;
+    for v in issues.iter_mut() {
+        c.complete(v).await.map_err(PollError::Connection)?;
         let Some(issue) = parse_issue(c.site(), v) else { continue };
-        let ticket = st.store.ticket_for_external(JIRA, &c.conn.id, &issue.key).await.map_err(|e| e.to_string())?;
+        let ticket = st.store.ticket_for_external(JIRA, &c.conn.id, &issue.key).await.map_err(local)?;
         for e in issue_events(project_id, &c.conn, &issue, me.as_deref(), ticket, since - MARGIN_MS) {
-            if let Err(x) = st.store.emit_event(&e, now_ms()).await {
-                tracing::warn!(issue = %issue.key, error = %x, "could not log a Jira event");
-            }
+            // The mark stays: the next poll reads this again (keys make what was logged harmless).
+            st.store.emit_event(&e, now_ms()).await.map_err(|x| local(format!("{}: {x}", issue.key)))?;
         }
+        last_updated = last_updated.max(issue.updated);
     }
-    let v = json!({"since": started, "connection": c.conn.id, "scope": jira.scope});
-    st.store.put_host_value(&key, &v).await.map_err(|e| e.to_string())
+    // Cut short by the page cap (oldest first): read on from the last issue read, unless that would not move it.
+    let next = if more && last_updated > since {
+        last_updated
+    } else {
+        if more {
+            tracing::warn!(project = project_id, "more Jira issues changed in a minute than one poll reads");
+        }
+        started
+    };
+    let v = json!({"since": next, "connection": c.conn.id, "scope": jira.scope});
+    st.store.put_host_value(&key, &v).await.map_err(local)
 }
 
 /// What an import came to.

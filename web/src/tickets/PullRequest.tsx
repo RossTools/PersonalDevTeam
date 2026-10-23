@@ -1,7 +1,7 @@
 // An attempt's pull request on GitHub (PDT-25): the board card's one-badge summary and the ticket's PR details.
-import { GitPullRequest } from 'lucide-react';
+import { GitPullRequest, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Badge, Link, type BadgeTone } from '@ui';
+import { Badge, Link, relativeTime, type BadgeTone } from '@ui';
 import type { CiState } from '../api/gen/CiState';
 import type { CiStatus } from '../api/gen/CiStatus';
 import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
@@ -45,14 +45,20 @@ export function prSummary(pr: PullRequestStatus, attemptMerged = false): { label
   return { label: pr.autoMerge ? 'Auto-merge' : 'Open', tone: 'neutral' };
 }
 
-/** `#12 · CI failed`, for a board card (inside its button, so not a link). */
+/** When the PR was last read and, when reading it fails now, why (the rest is that older look). */
+export function prFreshness(pr: PullRequestStatus): string {
+  const checked = `checked ${relativeTime(pr.checkedAt)}`;
+  return pr.error ? `Not updated: ${pr.error} (last ${checked})` : `Last ${checked}`;
+}
+
+/** `#12 · CI failed`, for a board card (inside its button, so not a link). A warning sign when it can't be read now. */
 export function PrBadge({ pr, attemptMerged = false }: { pr: PullRequestStatus; attemptMerged?: boolean }) {
   const s = prSummary(pr, attemptMerged);
   const jobs = failedJobs(pr.ci);
-  const title = `PR #${pr.number}: ${pr.title}${jobs.length ? ` — failed: ${jobs.join(', ')}` : ''}`;
+  const title = `PR #${pr.number}: ${pr.title}${jobs.length ? ` — failed: ${jobs.join(', ')}` : ''}\n${prFreshness(pr)}`;
   return (
     <Badge tone={s.tone} title={title} className="shrink-0">
-      <GitPullRequest aria-hidden /> #{pr.number} · {s.label}
+      {pr.error ? <TriangleAlert aria-label="Not updated" /> : <GitPullRequest aria-hidden />} #{pr.number} · {s.label}
     </Badge>
   );
 }
@@ -95,6 +101,7 @@ export function PrDetails({ pr, attemptMerged = false, className }: {
           {queueJobs.length > 0 && <> ({queueJobs.join(', ')})</>} · <Link href={pr.queueCi.url} external>Run</Link>
         </p>
       )}
+      <p className={cn('text-meta', pr.error ? 'text-destructive' : 'text-muted-foreground')}>{prFreshness(pr)}</p>
     </div>
   );
 }

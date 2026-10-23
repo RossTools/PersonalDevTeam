@@ -101,13 +101,15 @@ pub enum NotificationKind {
     WorkflowFailed,
     #[serde(rename = "workflow.notify")]
     WorkflowNotify,
+    #[serde(rename = "connection.failed")]
+    ConnectionFailed,
 }
 
 use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 15] = [
+    pub const ALL: [NotificationKind; 16] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -123,6 +125,7 @@ impl NotificationKind {
         K::PrMerged,
         K::WorkflowFailed,
         K::WorkflowNotify,
+        K::ConnectionFailed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -142,6 +145,7 @@ impl NotificationKind {
             K::PrMerged => "pr.merged",
             K::WorkflowFailed => "workflow.failed",
             K::WorkflowNotify => "workflow.notify",
+            K::ConnectionFailed => "connection.failed",
         }
     }
 
@@ -174,7 +178,12 @@ impl NotificationKind {
     pub fn default_show(self) -> Show {
         match self {
             K::SessionNeedsYou | K::InboxQuestion | K::InboxApproval => Show::Desktop,
-            K::InboxGate | K::InboxManual | K::InboxStalled | K::InboxLoopLimit | K::WorkflowNotify => Show::Toast,
+            K::InboxGate
+            | K::InboxManual
+            | K::InboxStalled
+            | K::InboxLoopLimit
+            | K::WorkflowNotify
+            | K::ConnectionFailed => Show::Toast,
             K::SessionTurnEnded => Show::Dot,
             K::SessionExited | K::PrCiFailed | K::PrConflict | K::PrQueueLeft | K::PrMerged | K::WorkflowFailed => {
                 Show::Inbox
@@ -209,6 +218,7 @@ impl NotificationKind {
             K::PrMerged => "Merged",
             K::WorkflowFailed => "Workflow failed",
             K::WorkflowNotify => "Workflow notification",
+            K::ConnectionFailed => "Connection failing",
         }
     }
 
@@ -230,6 +240,7 @@ impl NotificationKind {
             K::PrMerged => "An attempt's pull request merged.",
             K::WorkflowFailed => "A workflow run failed.",
             K::WorkflowNotify => "A workflow's Notify me step.",
+            K::ConnectionFailed => "A sensor could not use a connection (a revoked token, the service down).",
         }
     }
 
@@ -295,6 +306,8 @@ pub enum NotificationTarget {
     Url {
         url: String,
     },
+    /// Settings → Connections.
+    Connections,
     None,
 }
 
@@ -376,6 +389,11 @@ pub fn session_key(session_id: &str, kind: NotificationKind) -> String {
         K::SessionExited => format!("session:{session_id}:exited"),
         _ => format!("session:{session_id}:needs_you"),
     }
+}
+
+/// The one live row per failing connection (by name: a missing connection has no id).
+pub fn connection_key(name: &str) -> String {
+    format!("connection:{name}")
 }
 
 pub fn inbox_key(item_id: &str) -> String {

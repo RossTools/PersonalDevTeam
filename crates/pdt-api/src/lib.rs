@@ -2,6 +2,7 @@ mod activity;
 mod attachments;
 mod buildkite;
 mod checks;
+mod connection_health;
 mod conversations;
 mod discord;
 mod error;

@@ -7,11 +7,19 @@ import { ParamsForm } from '../workflows/NewWorkflowDialog';
 import { ConnectionsPage } from './ConnectionsPage';
 
 const conn = (name: string, kind: string, hasSecret = true): Connection => ({
-  id: `c-${name}`, name, kind, url: '', config: {}, hasSecret, createdAt: 0, updatedAt: 0,
+  id: `c-${name}`, name, kind, url: '', config: {}, hasSecret, createdAt: 0, updatedAt: 0, lastError: null, lastErrorAt: null,
 });
 
 describe('connections', () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it('shows why a sensor cannot use a connection, and since when', async () => {
+    const failing = { ...conn('work', 'jira'), lastError: 'Jira answered 401', lastErrorAt: Date.now() - 5 * 60_000 };
+    stubApi({ 'GET /api/connections': [failing, conn('ci', 'buildkite')] });
+    renderWithQuery(<ConnectionsPage />);
+    expect(await screen.findByText('Failing since 5m ago: Jira answered 401')).toBeTruthy();
+    expect(screen.getAllByText(/^Failing since/)).toHaveLength(1);
+  });
 
   it('says how to get a Discord webhook, and saves one with its URL as the secret', async () => {
     const created = conn('alerts', 'discord_webhook', false);
