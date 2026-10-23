@@ -45,13 +45,19 @@ pub fn authentic(headers: &HeaderMap, body: &[u8], secret: &str) -> bool {
     false
 }
 
-/// The headers a workflow sees: `content-type`, `user-agent` and the `x-*` ones (not the signature).
+/// Whether a header looks like a credential (`X-Api-Key`, `X-Gitlab-Token`, `X-Hub-Signature-256`, …): never stored.
+fn credential(name: &str) -> bool {
+    const WORDS: [&str; 8] = ["auth", "token", "secret", "signature", "password", "passwd", "credential", "cookie"];
+    WORDS.iter().any(|w| name.contains(w)) || (name.ends_with("key") && !name.ends_with("idempotency-key"))
+}
+
+/// The headers a workflow sees: `content-type`, `user-agent` and the `x-*` ones, but no credential.
 fn kept_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
     headers
         .iter()
         .filter(|(n, _)| {
             let n = n.as_str();
-            (n == "content-type" || n == "user-agent" || n.starts_with("x-")) && n != "x-hub-signature-256"
+            (n == "content-type" || n == "user-agent" || n.starts_with("x-")) && !credential(n)
         })
         .filter_map(|(n, v)| Some((n.as_str().to_string(), v.to_str().ok()?.to_string())))
         .collect()
@@ -141,16 +147,25 @@ mod tests {
     }
 
     #[test]
-    fn workflows_see_some_headers_and_never_the_signature() {
+    fn workflows_see_some_headers_and_never_a_credential() {
         let h = headers(&[
             ("content-type", "application/json"),
             ("x-github-event", "issues"),
             ("x-hub-signature-256", "sha256=00"),
+            ("x-hub-signature", "sha1=00"),
             ("authorization", "Bearer s"),
             ("cookie", "c"),
+            ("x-api-key", "k"),
+            ("x-gitlab-token", "t"),
+            ("x-auth-user", "u"),
+            ("x-webhook-secret", "s"),
+            ("x-idempotency-key", "i"),
         ]);
         let kept = kept_headers(&h);
-        assert_eq!(kept.keys().map(String::as_str).collect::<Vec<_>>(), ["content-type", "x-github-event"]);
+        assert_eq!(
+            kept.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["content-type", "x-github-event", "x-idempotency-key"]
+        );
         assert_eq!(delivery(&headers(&[("x-github-delivery", "abc")])).as_deref(), Some("abc"));
         assert_eq!(delivery(&headers(&[])), None);
     }
