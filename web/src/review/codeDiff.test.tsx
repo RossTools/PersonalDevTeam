@@ -130,4 +130,24 @@ describe('CodeDiff collapsed runs and picked lines', () => {
     expect(onComment).toHaveBeenCalledWith({ side: 'new', line: 3, endLine: 5, lineText: 'line 3\nline 4\nline 5' });
     expect(container.querySelectorAll('.cm-picked-line')).toHaveLength(0);
   });
+
+  it('on touch, a second tap extends the pick, "+" comments on it, and a tap inside drops it', () => {
+    const onComment = vi.fn();
+    const { container } = render(
+      <CodeDiff path="a.txt" oldText={lines(6)} newText={lines(6, 2)} mode="unified" wholeFile anchors={[]} renderAnchor={() => null}
+        onComment={onComment} touch />,
+    );
+    const numbers = container.querySelector('.cm-lineNumbers')!;
+    const view = EditorView.findFromDOM(container.querySelector('.cm-editor') as HTMLElement)!;
+    const y = (n: number) => view.documentTop + view.lineBlockAt(view.state.doc.line(n).from).top + 1;
+    fireEvent.mouseDown(numbers, { clientY: y(3) });
+    fireEvent.mouseDown(numbers, { clientY: y(5) });
+    expect(container.querySelectorAll('.cm-picked-line')).toHaveLength(3);
+    fireEvent.mouseDown(numbers, { clientY: y(4) });
+    expect(container.querySelectorAll('.cm-picked-line')).toHaveLength(0);
+    fireEvent.mouseDown(numbers, { clientY: y(2) });
+    fireEvent.mouseDown(numbers, { clientY: y(3) });
+    fireEvent.mouseDown(container.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
+    expect(onComment).toHaveBeenCalledWith({ side: 'new', line: 2, endLine: 3, lineText: 'CHANGED 2\nline 3' });
+  });
 });

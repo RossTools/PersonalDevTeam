@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Check, File, Folder, MessageSquare } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { DiffStat, TreeView, type TreeChildren, type TreeNode } from '@ui';
+import { DiffStat, List, ListRow, TreeView, type TreeChildren, type TreeNode } from '@ui';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { ChangeStatus } from '../api/gen/ChangeStatus';
 
@@ -28,6 +28,25 @@ export interface FileListProps {
   className?: string;
 }
 
+/** A file's comment threads, viewed tick, +/− and status letter. */
+function FileMarks({ file: f, comments: n, seen }: { file: ChangedFile; comments: number; seen: boolean }) {
+  return (
+    <span className="flex items-center gap-1.5 text-meta">
+      {n > 0 && (
+        <span className="flex items-center gap-0.5 text-muted-foreground" title={`${n} comment thread${n === 1 ? '' : 's'}`}>
+          <MessageSquare aria-hidden className="size-3" />
+          {n}
+        </span>
+      )}
+      {seen && <Check aria-label="Viewed" className="size-3 text-muted-foreground" />}
+      {!f.binary && <DiffStat added={f.added} removed={f.removed} />}
+      <span className={cn('w-3 text-center font-mono font-semibold', LETTER_TONE[f.status])} title={f.status}>
+        {LETTER[f.status]}
+      </span>
+    </span>
+  );
+}
+
 /** The changed files, one folder level per directory path (as GitHub groups them): status, +/−, comments, viewed. */
 export function FileList({ files, selected, onSelect, comments, viewed, className }: FileListProps) {
   const items = useMemo(() => {
@@ -41,21 +60,7 @@ export function FileList({ files, selected, onSelect, comments, viewed, classNam
         file: f,
         icon: <File aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />,
         labelClassName: cn(f.status === 'deleted' && 'line-through', seen && 'text-muted-foreground'),
-        trailing: (
-          <span className="flex items-center gap-1.5 text-meta">
-            {n > 0 && (
-              <span className="flex items-center gap-0.5 text-muted-foreground" title={`${n} comment thread${n === 1 ? '' : 's'}`}>
-                <MessageSquare aria-hidden className="size-3" />
-                {n}
-              </span>
-            )}
-            {seen && <Check aria-label="Viewed" className="size-3 text-muted-foreground" />}
-            {!f.binary && <DiffStat added={f.added} removed={f.removed} />}
-            <span className={cn('w-3 text-center font-mono font-semibold', LETTER_TONE[f.status])} title={f.status}>
-              {LETTER[f.status]}
-            </span>
-          </span>
-        ),
+        trailing: <FileMarks file={f} comments={n} seen={seen} />,
       };
     };
     const byDir = new Map<string, ChangedFile[]>();
@@ -90,5 +95,26 @@ export function FileList({ files, selected, onSelect, comments, viewed, classNam
       renderEmpty={() => <p className="p-3 text-xs text-muted-foreground">No changes yet.</p>}
       className={className}
     />
+  );
+}
+
+/**
+ * The changed files as a screen of their own (phones, PDT-116): one row per file (its name, the folder under it, the
+ * same marks as the tree), in path order; a tap opens the file.
+ */
+export function PhoneFileList({ files, onSelect, comments, viewed }: Omit<FileListProps, 'selected' | 'className'>) {
+  return (
+    <List aria-label="Changed files" onAction={onSelect} className="min-h-0 flex-1 overflow-auto p-1"
+      renderEmpty={() => <p className="p-3 text-xs text-muted-foreground">No changes yet.</p>}>
+      {files.map((f) => {
+        const seen = viewed(f);
+        return (
+          <ListRow key={f.path} id={f.path} title={nameOf(f.path)} textValue={f.path}
+            secondary={f.oldPath ? `${f.oldPath} →` : dirOf(f.path) || undefined}
+            className={cn(f.status === 'deleted' && 'line-through', seen && 'text-muted-foreground')}
+            trailing={<FileMarks file={f} comments={comments[f.path] ?? 0} seen={seen} />} />
+        );
+      })}
+    </List>
   );
 }

@@ -1,4 +1,5 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Changes } from '../api/gen/Changes';
@@ -134,6 +135,87 @@ describe('ChangesView', () => {
     expect(await screen.findByRole('button', { name: /Send feedback/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /Merge/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('ChangesView on a phone', () => {
+  const asPhone = () =>
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
+  const fileName = () => screen.getByRole('checkbox', { name: 'Viewed', hidden: true }).closest('header')!.querySelector('.font-mono')!.textContent;
+  const swipe = (el: Element, dx: number) => {
+    fireEvent.touchStart(el, { touches: [{ clientX: 200, clientY: 300 }] });
+    fireEvent.touchEnd(el, { changedTouches: [{ clientX: 200 + dx, clientY: 310 }] });
+  };
+
+  it('lists the files as a screen; a file opens its own, swipes and buttons step through, Back returns', async () => {
+    asPhone();
+    stub();
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const list = await screen.findByRole('grid', { name: 'Changed files' });
+    expect(screen.queryByRole('checkbox', { name: 'Viewed' })).not.toBeInTheDocument();
+    expect(within(list).getByRole('row', { name: /login\.ts/ })).toHaveTextContent('src');
+    await userEvent.click(within(list).getByRole('row', { name: /login\.ts/ }));
+    expect(await screen.findByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
+    expect(fileName()).toBe('src/login.ts');
+    expect(screen.queryByRole('grid', { name: 'Changed files' })).not.toBeInTheDocument();
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+    // No split layout on a phone.
+    expect(screen.queryByRole('radio', { name: 'Split' })).not.toBeInTheDocument();
+
+    const nav = screen.getByRole('navigation', { name: 'Files' });
+    swipe(nav, -120);
+    await waitFor(() => expect(fileName()).toBe('src/old.ts'));
+    expect(screen.getByRole('button', { name: 'Next file' })).toBeDisabled();
+    swipe(nav, -120); // the last file: stays
+    expect(fileName()).toBe('src/old.ts');
+    swipe(nav, 30); // too short to count
+    expect(fileName()).toBe('src/old.ts');
+    swipe(nav, 120);
+    await waitFor(() => expect(fileName()).toBe('src/login.ts'));
+    await userEvent.click(screen.getByRole('button', { name: 'Previous file' }));
+    await waitFor(() => expect(fileName()).toBe('README.md'));
+    expect(screen.getByRole('button', { name: 'Previous file' })).toBeDisabled();
+
+    // Back (the browser's, the top bar's ←) walks out to the list.
+    window.history.back();
+    expect(await screen.findByRole('grid', { name: 'Changed files' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Viewed' })).not.toBeInTheDocument();
+    // All files does too.
+    await userEvent.click(within(screen.getByRole('grid', { name: 'Changed files' })).getByRole('row', { name: /old\.ts/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /All files/ }));
+    expect(await screen.findByRole('grid', { name: 'Changed files' })).toBeInTheDocument();
+  });
+
+  it('shows threads inline and writes a new comment in a bottom sheet', async () => {
+    asPhone();
+    const calls = stub({ 'POST /api/worktrees/w1/comments': comment({ id: 'c2', line: 3, endLine: 3, body: 'Why c?' }) }, changes(),
+      [comment({ line: 2, endLine: 2, lineText: 'B', body: 'Rename this' })]);
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    await userEvent.click(within(await screen.findByRole('grid', { name: 'Changed files' })).getByRole('row', { name: /login\.ts/ }));
+    expect(await screen.findByText('Rename this')).toBeInTheDocument();
+    expect(screen.queryByText('The lines this was on have changed.')).not.toBeInTheDocument();
+
+    const editor = await waitFor(() => {
+      const el = document.querySelector('.cm-editor');
+      if (!el) throw new Error('no editor yet');
+      return el as HTMLElement;
+    });
+    const view = EditorView.findFromDOM(editor)!;
+    const y = (n: number) => view.documentTop + view.lineBlockAt(view.state.doc.line(n).from).top + 1;
+    fireEvent.mouseDown(document.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
+    const sheet = await screen.findByRole('dialog', { name: 'Comment on line 3' });
+    await userEvent.type(within(sheet).getByRole('textbox'), 'Why c?');
+    // A swipe on the open sheet stays there: the file and the draft are kept.
+    swipe(within(sheet).getByText('Comment on line 3'), -120);
+    swipe(within(sheet).getByText('Comment on line 3'), 120);
+    expect(fileName()).toBe('src/login.ts');
+    expect(screen.getByRole('dialog', { name: 'Comment on line 3' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('textbox')).toHaveValue('Why c?');
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Comment' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')?.body)
+      .toMatchObject({ path: 'src/login.ts', side: 'new', line: 3, endLine: 3, lineText: 'c', body: 'Why c?' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Comment on line 3' })).not.toBeInTheDocument());
   });
 });
 

@@ -36,6 +36,11 @@ export interface CodeDiffProps {
   renderAnchor: (id: string) => ReactNode;
   /** "+" on a line (on the picked lines when it is one of them), or `c` with lines picked or selected. */
   onComment: (range: LineRange) => void;
+  /**
+   * Touch (phones): a tap on a line number outside the pick extends it (there is no Shift), a tap inside drops it, and
+   * the picked lines show "+".
+   */
+  touch?: boolean;
 }
 
 const setAnchors = StateEffect.define<{ line: number; id: string }[]>();
@@ -286,6 +291,12 @@ const diffTheme = EditorView.theme({
   },
 });
 
+/** Touch: there is no hover, so the picked lines show their "+". */
+const touchTheme = EditorView.theme({
+  '.cm-comment-gutter .cm-gutterElement.cm-picked-gutter .cm-comment-plus': { display: 'block' },
+  '.cm-comment-gutter .cm-gutterElement.cm-picked-gutter .cm-sign': { visibility: 'hidden' },
+});
+
 /** In a unified view, the line of the new text an old-side line shows next to. */
 export function oldToNewLine(chunks: readonly Chunk[], a: Text, b: Text, oldLine: number): number {
   if (oldLine < 1 || oldLine > a.lines) return Math.min(Math.max(oldLine, 1), b.lines);
@@ -324,7 +335,7 @@ function textOf(doc: Text, line: number, endLine: number): string {
  * line number picks that line and Shift+click extends the pick; "+" in the gutter (on the picked lines when it is one
  * of them) or `c` on picked or selected lines asks for a new comment.
  */
-export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, renderAnchor, onComment }: CodeDiffProps) {
+export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, renderAnchor, onComment, touch = false }: CodeDiffProps) {
   const host = useRef<HTMLDivElement>(null);
   const containers = useRef(new Map<string, HTMLElement>()).current;
   const views = useRef<{ old: EditorView | null; new: EditorView }>(null);
@@ -411,7 +422,9 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
             const n = view.state.doc.lineAt(block.from).number;
             const current = view.state.field(pickedField).picked;
             const shift = (event as MouseEvent).shiftKey;
-            if (shift && current) pick(view, pickRange(current.anchor, n));
+            const inside = !!current && n >= current.line && n <= current.endLine;
+            if (touch && current) pick(view, inside ? null : pickRange(current.anchor, n));
+            else if (shift && current) pick(view, pickRange(current.anchor, n));
             else if (!shift && current && current.line === n && current.endLine === n) pick(view, null);
             else pick(view, pickRange(n, n));
             view.contentDOM.focus({ preventScroll: true });
@@ -443,6 +456,7 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
       EditorView.contentAttributes.of({ tabindex: '0', 'aria-label': `${s === 'old' ? 'Before' : 'After'}: ${path}` }),
       codeTheme,
       diffTheme,
+      touch ? touchTheme : [],
       githubHighlight,
       language.of([]),
       anchorField(container),
@@ -501,7 +515,7 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
       views.current = null;
     };
     // `place` and `container` read refs; anchor changes are placed by the effect below.
-  }, [path, oldText, newText, mode, wholeFile]);
+  }, [path, oldText, newText, mode, wholeFile, touch]);
 
   const anchorKey = anchors.map((a) => `${a.id}:${a.side}:${a.line}`).join('|');
   useEffect(() => {

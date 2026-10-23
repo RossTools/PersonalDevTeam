@@ -76,3 +76,10 @@ workspace on screen, after the session's tab (moving it there if another workspa
 wherever it is, or open it in the project's workspace. Viewed per browser (localStorage, by version). A click on a line number picks
 the line, Shift+click extends the pick, and "+" on a picked line comments on all of them; keys `c` (comment on picked
 or selected lines), `]`/`[` (files), `v` (viewed); `@ui` `SplitPane`, `Comment`/`CommentThread`/`CommentComposer`.
+
+On a phone (PDT-116; the ticket's Changes and a changes tab alike) the changed files are a screen of their own (name,
+folder, comments, viewed, +/−, status), and a file opens its unified diff as the next screen, which adds a history
+entry: Back (the browser's, the top bar's ←) or All files returns to the list. A swipe left or right (or ‹ ›) moves to
+the next or previous file, stopping at either end; swipes that start in a text box or a thread don't count. Threads
+show under their lines; a tap on a line number picks it, a tap on another extends the pick, a tap inside drops it,
+and "+" (shown on the picked lines) opens the new comment in a bottom sheet with the lines quoted.
