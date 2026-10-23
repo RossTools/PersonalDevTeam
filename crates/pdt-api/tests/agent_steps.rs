@@ -145,6 +145,14 @@ async fn personas_are_built_in_versioned_and_diffed() {
     let reviewer = list.as_array().unwrap().iter().find(|p| p["name"] == "Reviewer").unwrap().clone();
     assert_eq!((reviewer["permissionMode"].as_str(), reviewer["builtin"].as_str()), (None, Some("reviewer")));
 
+    // PDT-110: the Personas page lists every pdt-mcp tool from here, with what it does and whether it asks first.
+    let (s, tools) = call(&env.app, "GET", "/api/personas/tools", None).await;
+    assert_eq!(s, StatusCode::OK, "{tools}");
+    let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(names, pdt_core::persona::ALL_TOOLS);
+    let link = tools.as_array().unwrap().iter().find(|t| t["name"] == "link_tickets").unwrap();
+    assert_eq!((link["asks"].as_bool(), link["default"].as_bool()), (Some(true), Some(false)));
+
     let (s, p) = call(
         &env.app,
         "POST",

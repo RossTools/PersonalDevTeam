@@ -86,6 +86,65 @@ pub const PM_TOOLS: [&str; 26] = [
     "discord_webhook",
 ];
 
+/// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
+const TOOL_DOES: [(&str, &str); 28] = [
+    ("get_ticket", "Read the ticket, its comments and attempt"),
+    ("submit_outcome", "Finish the step with an outcome and a summary"),
+    ("ask_user", "Ask you questions (they wait in the Inbox)"),
+    ("add_ticket_comment", "Comment on the ticket"),
+    ("add_review_comment", "Comment on a line of the attempt's changes"),
+    ("update_ticket", "Rewrite its own ticket's title and description"),
+    ("catalog_search", "Search the workflow node catalog"),
+    ("catalog_get", "Read a catalog node"),
+    ("workflow_get", "Read a workflow"),
+    ("workflow_validate", "Check a workflow document"),
+    ("workflow_dry_run", "Try a workflow without running it"),
+    ("workflow_save", "Save a workflow (a new version)"),
+    ("get_overview", "See every project's board, tickets in flight, the Inbox and running sessions"),
+    ("search_tickets", "Search tickets in every project"),
+    ("get_session", "Read a session's state and last messages"),
+    ("list_workflow_runs", "List workflow runs and their steps"),
+    ("search_notes", "Search the PM's notes and journal"),
+    ("save_note", "Save a note"),
+    ("delete_note", "Delete a note"),
+    ("write_journal", "Write the session's journal entry"),
+    ("create_ticket", "Create tickets"),
+    ("edit_ticket", "Edit any ticket"),
+    ("link_tickets", "Link two tickets (blocks, relates to)"),
+    ("unlink_tickets", "Remove a link between tickets"),
+    ("send_to_session", "Message a session"),
+    ("discord_get", "Look at the Discord server: its channels and webhooks"),
+    ("discord_change", "Create, rename, move or archive Discord channels"),
+    ("discord_webhook", "Make a Discord webhook for discord.post steps"),
+];
+
+/// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PersonaTool {
+    pub name: String,
+    /// What it lets the agent do, in a line.
+    pub does: String,
+    /// It asks the user before each call ([`ASKING_TOOLS`]).
+    pub asks: bool,
+    /// In the default set ([`DEFAULT_TOOLS`]).
+    pub default: bool,
+}
+
+/// Every pdt-mcp tool, in [`ALL_TOOLS`]' order, with what it does.
+pub fn tool_list() -> Vec<PersonaTool> {
+    ALL_TOOLS
+        .iter()
+        .map(|&name| PersonaTool {
+            name: name.to_string(),
+            does: TOOL_DOES.iter().find(|(n, _)| *n == name).map(|(_, d)| d.to_string()).unwrap_or_default(),
+            asks: asks(name),
+            default: DEFAULT_TOOLS.contains(&name),
+        })
+        .collect()
+}
+
 /// Whether a call to `tool` needs the user's yes (see [`ASKING_TOOLS`]).
 pub fn asks(tool: &str) -> bool {
     ASKING_TOOLS.contains(&tool)
@@ -521,6 +580,19 @@ pub fn builtin_persona(id: &str) -> Option<&'static BuiltinPersona> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_tool_says_what_it_does() {
+        let names: Vec<&str> = TOOL_DOES.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, ALL_TOOLS, "TOOL_DOES lists ALL_TOOLS, in order");
+        let list = tool_list();
+        assert_eq!(list.len(), ALL_TOOLS.len());
+        assert!(list.iter().all(|t| !t.does.is_empty()));
+        assert!(list.iter().find(|t| t.name == "discord_change").unwrap().asks);
+        assert!(!list.iter().find(|t| t.name == "discord_get").unwrap().asks);
+        let defaults: Vec<&str> = list.iter().filter(|t| t.default).map(|t| t.name.as_str()).collect();
+        assert_eq!(defaults, DEFAULT_TOOLS);
+    }
+
     use super::*;
 
     fn setup() -> PersonaSetup {

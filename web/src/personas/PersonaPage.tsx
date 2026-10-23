@@ -31,14 +31,15 @@ import {
   AGENTS,
   AUTHOR_LABEL,
   DEFAULT_MODE,
-  TOOLS,
   cleanSetup,
   normalTools,
+  orderTools,
   personaKeys,
   sameSetup,
   setupOf,
   shownTools,
   sortPersonas,
+  usePersonaTools,
   usePersonas,
   type ModeChoice,
 } from './model';
@@ -64,9 +65,12 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
   const modeId = useId();
   const [preview, setPreview] = useState<'write' | 'preview'>('write');
   const set = (p: Partial<PersonaSetup>) => onChange({ ...value, ...p });
+  const known = usePersonaTools().data;
   const checked = shownTools(value.tools);
   const toggle = (name: string, on: boolean) =>
-    set({ tools: normalTools(on ? [...checked, name] : checked.filter((t) => t !== name)) });
+    set({ tools: normalTools(orderTools(on ? [...checked, name] : checked.filter((t) => t !== name), known ?? [])) });
+  // Tools the persona has that the server doesn't list stay checked (and saved) until unchecked.
+  const unknown = known ? checked.filter((n) => !known.some((t) => t.name === n)) : [];
   return (
     <>
       <SettingsRow label="Agent" htmlFor={agentId}>
@@ -112,16 +116,28 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
         label="Tools"
         description="PDT's tools its sessions get. The first five are the default set (what a persona that picks none gets)."
       >
-        <ul className="flex flex-col gap-1.5">
-          {TOOLS.map((t) => (
-            <li key={t.name}>
-              <Checkbox checked={checked.includes(t.name)} onChange={(on) => toggle(t.name, on)}>
-                <span className="font-mono text-xs">{t.name}</span>
-                <span className="text-xs text-muted-foreground"> · {t.does}</span>
-              </Checkbox>
-            </li>
-          ))}
-        </ul>
+        {known ? (
+          <ul className="flex flex-col gap-1.5">
+            {known.map((t) => (
+              <li key={t.name}>
+                <Checkbox checked={checked.includes(t.name)} onChange={(on) => toggle(t.name, on)}>
+                  <span className="font-mono text-xs">{t.name}</span>
+                  <span className="text-xs text-muted-foreground"> · {t.does}{t.asks && ' (asks you first)'}</span>
+                </Checkbox>
+              </li>
+            ))}
+            {unknown.map((n) => (
+              <li key={n}>
+                <Checkbox checked onChange={(on) => toggle(n, on)}>
+                  <span className="font-mono text-xs">{n}</span>
+                  <span className="text-xs text-muted-foreground"> · not a tool this PDT has</span>
+                </Checkbox>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Skeleton lines={4} label="Loading the tools" />
+        )}
       </SettingsRow>
       <SettingsRow stacked label="Instructions" description="Markdown, added to its sessions' instructions.">
         <SegmentedControl

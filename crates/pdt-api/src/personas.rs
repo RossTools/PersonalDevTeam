@@ -25,6 +25,11 @@ async fn load(st: &AppState, id: &str) -> Result<Persona, ApiError> {
     st.store.get_persona(id).await?.ok_or_else(|| ApiError::not_found("persona"))
 }
 
+/// `GET /api/personas/tools` (PDT-110): every pdt-mcp tool a persona may pick, with what it does.
+pub(crate) async fn tools() -> Json<Vec<pdt_core::persona::PersonaTool>> {
+    Json(pdt_core::persona::tool_list())
+}
+
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Persona>>, ApiError> {
     ensure_builtins(&st).await;
     Ok(Json(st.store.list_personas().await?))

@@ -2,10 +2,12 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Persona } from '../api/gen/Persona';
+import type { PersonaTool } from '../api/gen/PersonaTool';
 import type { PersonaVersion } from '../api/gen/PersonaVersion';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { PersonaPage } from './PersonaPage';
 import { PersonasList } from './PersonasList';
+import { normalTools } from './model';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -15,6 +17,29 @@ const persona = (id: string, over: Partial<Persona> = {}): Persona => ({
 });
 const version = (v: number, over: Partial<PersonaVersion> = {}): PersonaVersion => ({
   personaId: 'a', version: v, author: 'user', note: '', createdAt: 1, agent: 'claude', model: null, instructions: '', permissionMode: null, tools: [], ...over,
+});
+
+const DEFAULTS = ['get_ticket', 'submit_outcome', 'ask_user', 'add_ticket_comment', 'add_review_comment'];
+const tool = (name: string, asks = false): PersonaTool => ({ name, does: `Does ${name}`, asks, default: DEFAULTS.includes(name) });
+/** The server's tool list (`GET /api/personas/tools`). */
+const TOOLS_ROUTE = {
+  'GET /api/personas/tools': [
+    ...DEFAULTS.map((n) => tool(n)),
+    tool('workflow_get'),
+    tool('create_ticket', true),
+    tool('link_tickets', true),
+    tool('unlink_tickets', true),
+    tool('discord_get'),
+    tool('discord_change', true),
+    tool('discord_webhook', true),
+  ],
+};
+
+describe('normalTools', () => {
+  it('saves the default set as empty and never drops a name it does not know', () => {
+    expect(normalTools([...DEFAULTS].reverse())).toEqual([]);
+    expect(normalTools(['get_ticket', 'brand_new_tool', 'get_ticket'])).toEqual(['get_ticket', 'brand_new_tool']);
+  });
 });
 
 describe('PersonasList', () => {
@@ -40,13 +65,13 @@ describe('PersonasList', () => {
 
 describe('PersonaPage', () => {
   it('asks to choose a persona when none is chosen', () => {
-    stubApi({ 'GET /api/personas': [] });
+    stubApi({ ...TOOLS_ROUTE, 'GET /api/personas': [] });
     renderWithQuery(<PersonaPage personaId={null} onSelect={() => {}} />);
     expect(screen.getByText('Choose a persona')).toBeInTheDocument();
   });
 
   it('creates a persona and selects it', async () => {
-    const calls = stubApi({ 'GET /api/personas': [], 'POST /api/personas': persona('n') });
+    const calls = stubApi({ ...TOOLS_ROUTE, 'GET /api/personas': [], 'POST /api/personas': persona('n') });
     const onSelect = vi.fn();
     renderWithQuery(<PersonaPage personaId="new" onSelect={onSelect} />);
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Writer');
@@ -63,7 +88,7 @@ describe('PersonaPage', () => {
   });
 
   it('renames with PATCH and saves the setup as a new version with a note', async () => {
-    const calls = stubApi({
+    const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { version: 2 })],
       'GET /api/personas/a/versions': [version(2), version(1)],
       'GET /api/personas/a/diff?from=1&to=2': { changed: [], unified: '' },
@@ -90,8 +115,29 @@ describe('PersonaPage', () => {
     }));
   });
 
+  it("lists the server's tools, marks those that ask first, and keeps every tool on an instructions-only save", async () => {
+    const tools = ['get_ticket', 'link_tickets', 'unlink_tickets', 'discord_get', 'discord_change', 'discord_webhook', 'old_tool'];
+    const calls = stubApi({ ...TOOLS_ROUTE,
+      'GET /api/personas': [persona('a', { builtin: 'pm', tools })],
+      'GET /api/personas/a/versions': [version(1)],
+      'GET /api/personas/a/template': new Reply(404, { code: 'not_found', message: 'no' }),
+      'PUT /api/personas/a': persona('a', { version: 2, tools }),
+    });
+    renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
+    const setup = await screen.findByRole('region', { name: 'Setup · version 1' });
+    for (const name of ['link_tickets', 'unlink_tickets', 'discord_get', 'discord_change', 'discord_webhook', 'old_tool']) {
+      expect(await within(setup).findByRole('checkbox', { name: new RegExp(`^${name}\\b`) })).toBeChecked();
+    }
+    expect(within(setup).getByRole('checkbox', { name: /workflow_get/ })).not.toBeChecked();
+    expect(within(setup).getByRole('checkbox', { name: /^link_tickets\b.*Does link_tickets \(asks you first\)$/ })).toBeInTheDocument();
+    expect(within(setup).getByRole('checkbox', { name: /^discord_get\b.*Does discord_get$/ })).toBeInTheDocument();
+    await userEvent.type(within(setup).getByRole('textbox', { name: 'Instructions' }), ' Carefully.');
+    await userEvent.click(within(setup).getByRole('button', { name: 'Save a new version' }));
+    await waitFor(() => expect((calls.find((c) => c.method === 'PUT')?.body as { tools: string[] }).tools).toEqual(tools));
+  });
+
   it('previews the instructions as Markdown', async () => {
-    stubApi({ 'GET /api/personas': [persona('a', { instructions: '**Bold** move' })], 'GET /api/personas/a/versions': [version(1)] });
+    stubApi({ ...TOOLS_ROUTE, 'GET /api/personas': [persona('a', { instructions: '**Bold** move' })], 'GET /api/personas/a/versions': [version(1)] });
     renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
     await userEvent.click(await screen.findByRole('radio', { name: 'Preview' }));
     expect(screen.getByText('Bold').tagName).toBe('STRONG');
@@ -99,7 +145,7 @@ describe('PersonaPage', () => {
   });
 
   it('shows the versions newest first and the diff of the two picked', async () => {
-    const calls = stubApi({
+    const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { version: 3 })],
       'GET /api/personas/a/versions': [version(3, { note: 'stricter', author: 'agent' }), version(2), version(1, { author: 'builtin' })],
       'GET /api/personas/a/diff?from=2&to=3': { changed: ['permissionMode'], unified: '--- v2\n+++ v3\n@@ -1 +1 @@\n-permission: (default)\n+permission: plan\n' },
@@ -124,7 +170,7 @@ describe('PersonaPage', () => {
   });
 
   it("shows how a built-in persona differs from PDT's template and loads it into the form", async () => {
-    const calls = stubApi({
+    const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { builtin: 'pm', version: 2, model: 'opus', instructions: 'Mine.' })],
       'GET /api/personas/a/versions': [version(2), version(1, { author: 'builtin' })],
       'GET /api/personas/a/diff?from=1&to=2': { changed: [], unified: '' },
@@ -148,7 +194,7 @@ describe('PersonaPage', () => {
   });
 
   it('archives a built-in persona and offers no Delete for it', async () => {
-    const calls = stubApi({
+    const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { builtin: 'coder' })],
       'GET /api/personas/a/versions': [version(1, { author: 'builtin' })],
       'PATCH /api/personas/a': persona('a', { builtin: 'coder', archived: true }),
@@ -161,7 +207,7 @@ describe('PersonaPage', () => {
 
   it('deletes a persona after confirming, and toasts a refusal', async () => {
     let refuse = true;
-    const calls = stubApi({
+    const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a'), persona('b', { name: 'Other' })],
       'GET /api/personas/a/versions': [version(1)],
       'DELETE /api/personas/a': () => (refuse ? ((refuse = false), new Reply(409, { code: 'persona_in_use', message: 'Persona a runs in Pipeline' })) : undefined),
