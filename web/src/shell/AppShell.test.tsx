@@ -1262,6 +1262,28 @@ describe('routes (PDT-111)', () => {
     expect(within(bar).getByRole('button', { name: 'Menu' })).toBeInTheDocument();
   });
 
+  it('drills into Files folder by folder on a phone, with ← going up a folder', async () => {
+    stubPhone();
+    const p = `/api/projects/${project.id}`;
+    stubWorkspaces({
+      [`GET ${p}/files?path=`]: [{ name: 'src', path: 'src', dir: true, status: null }],
+      [`GET ${p}/files?path=src`]: [{ name: 'lib', path: 'src/lib', dir: true, status: null }],
+      [`GET ${p}/files?path=src%2Flib`]: [],
+    });
+    at('/files');
+    renderWithQuery(<AppShell />);
+    const bar = screen.getByRole('banner', { name: 'Top bar' });
+    await userEvent.click(await within(await screen.findByRole('grid', { name: 'Files' })).findByRole('row', { name: /src/ }));
+    await waitFor(() => expect(here()).toBe('/files/src/?project=ALP'));
+    expect(within(bar).getByRole('heading', { name: 'src' })).toBeInTheDocument();
+    await userEvent.click(await within(await screen.findByRole('grid', { name: 'Files in src' })).findByRole('row', { name: /lib/ }));
+    await waitFor(() => expect(here()).toBe('/files/src/lib/?project=ALP'));
+    expect(await screen.findByText('This folder is empty.')).toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/files/src/?project=ALP'));
+    expect(await screen.findByRole('grid', { name: 'Files in src' })).toBeInTheDocument();
+  });
+
   it('opens a ticket key linked in a conversation', async () => {
     stubWorkspaces(ticketRoutes);
     at('/tickets');

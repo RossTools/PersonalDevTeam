@@ -174,11 +174,55 @@ describe('board', () => {
     renderWithQuery(<Harness />);
     expect(await screen.findByText('Ticket 1')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'In progress' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('radio', { name: 'In progress' }));
+    await userEvent.click(screen.getByRole('button', { name: /^In progress/ }));
     expect(await screen.findByText('Cache')).toBeInTheDocument();
     expect(screen.queryByText('Ticket 1')).not.toBeInTheDocument();
     // Touch: no native drag.
     expect(await card(/ALP-2/)).toHaveAttribute('draggable', 'false');
+  });
+
+  it('picks the column from chips with counts, or by a swipe sideways, on a phone', async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
+    stub();
+    renderWithQuery(<Harness />);
+    const chips = await screen.findByRole('group', { name: 'Board column' });
+    await waitFor(() => expect(within(chips).getByRole('button', { name: 'To do (2)' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(within(chips).getByRole('button', { name: 'In progress (1)' })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(chips).getByRole('button', { name: 'Done (1)' })).toBeInTheDocument();
+    const board = chips.parentElement!;
+    const swipe = (from: number, to: number, y = 300) => {
+      fireEvent.touchStart(board, { touches: [{ clientX: from, clientY: y }] });
+      fireEvent.touchEnd(board, { changedTouches: [{ clientX: to, clientY: y + 5 }] });
+    };
+    // Left: the next column.
+    swipe(300, 150);
+    expect(await screen.findByText('Cache')).toBeInTheDocument();
+    expect(within(chips).getByRole('button', { name: 'In progress (1)' })).toHaveAttribute('aria-pressed', 'true');
+    // Too short, mostly vertical, or from the screen's edge (the system Back gesture): nothing.
+    swipe(300, 270);
+    fireEvent.touchStart(board, { touches: [{ clientX: 300, clientY: 100 }] });
+    fireEvent.touchEnd(board, { changedTouches: [{ clientX: 220, clientY: 400 }] });
+    swipe(10, 200);
+    expect(within(chips).getByRole('button', { name: 'In progress (1)' })).toHaveAttribute('aria-pressed', 'true');
+    // On the chips (which scroll sideways on their own): the column stays.
+    fireEvent.touchStart(within(chips).getByRole('button', { name: 'Done (1)' }), { touches: [{ clientX: 300, clientY: 140 }] });
+    fireEvent.touchEnd(within(chips).getByRole('button', { name: 'Done (1)' }), { changedTouches: [{ clientX: 100, clientY: 142 }] });
+    expect(within(chips).getByRole('button', { name: 'In progress (1)' })).toHaveAttribute('aria-pressed', 'true');
+    // Right: the previous one.
+    swipe(100, 250);
+    expect(await screen.findByText('Ticket 1')).toBeInTheDocument();
+    expect(within(chips).getByRole('button', { name: 'To do (2)' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it("moves a card to another column from its long-press menu on a phone", async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
+    const calls = stub();
+    renderWithQuery(<Harness />);
+    const c = await card(/ALP-1 Ticket 1/);
+    await userEvent.pointer({ keys: '[MouseRight]', target: within(c).getByRole('button', { name: /Ticket 1/ }) });
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Move to' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'In progress' }));
+    await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')).toMatchObject({ path: '/api/tickets/t1', body: { stage: 'in_progress' } }));
   });
 });
 
@@ -361,7 +405,7 @@ describe('board lanes', () => {
     expect(within(five).getByText('1/3')).toBeInTheDocument();
     expect(within(column('ALP-10 · To do')).getByText('Part 12')).toBeInTheDocument();
     expect(screen.queryByText('Part 11')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('radio', { name: 'In progress' }));
+    await userEvent.click(screen.getByRole('button', { name: /^In progress/ }));
     expect(await within(column('ALP-10 · In progress')).findByText('Part 11')).toBeInTheDocument();
   });
 });

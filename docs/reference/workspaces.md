@@ -32,7 +32,12 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   Escape, choosing, or Back (it adds a history entry, which choosing replaces). Sessions, Inbox, Workflows, Personas,
   Files and Settings show their list column as their top-level screen (`/sessions` is the workspaces and agents);
   choosing an item pushes its route. The PM's earlier sessions are under its ⋯, the Tickets' projects and filters
-  under its title.
+  under its title. ← from a workflow run goes up to the workflow's runs, and from a file or folder to the folder it
+  is in.
+- Workflows, Personas and Files are view-only on phones (PDT-120): Workflows as in [workflows.md](workflows.md); a
+  persona shows its setup (role, agent, model, permission mode, tools, instructions rendered) and versions, with no
+  New persona, forms, Archive or Delete; Files drills down one folder per screen (`/files/src/`), the checkout picker
+  on the top one, and a file opens read-only with its lines wrapped.
 
 ## URLs
 
@@ -51,7 +56,7 @@ its tab, the Inbox picking an item) replace it.
 | `/tickets` (`?view=board`), `/tickets/<key>` | Backlog (or Board), with the ticket peeked at (by key; an id is replaced by the key) |
 | `/workflows/<id>/(outline\|runs\|graph\|text\|versions)`, `/workflows/<id>/runs/<runId>`, `/workflows/templates/<id>` | A workflow's tab, a run, a template |
 | `/personas/<id>` (`new`: the create form) | A persona |
-| `/files/<path>` (`?project=<key>&worktree=<id>`) | A file, in the checkout named (else the current tab's) |
+| `/files/<path>` (`?project=<key>&worktree=<id>`) | A file, in the checkout named (else the current tab's); a path ending in `/` is a folder (its own screen on a phone) |
 | `/settings`, `/settings/host(/<section>)`, `/settings/notifications`, `/settings/connections`, `/settings/projects/<key>(/<section>)` | Settings: the index (This host on desktop, the list of pages on a phone, with Add project) and its pages; a section (its heading, `danger-zone`) is scrolled to on desktop, and is a screen of its own on a phone, where This host's and a project's pages are the list of their sections; ← goes from a section to its page, then to the index |
 
 - Switching to a view shows it as it was last left (its last path); Tickets opens in the browser's last Backlog or

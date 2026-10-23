@@ -1,6 +1,7 @@
 // The runs view (Phase 7d spec §4): every run of the workflow with its trigger and status; a run shows its path on the
 // graph of the version it ran, its steps, and Retry, Resume (an agent step that timed out or stopped), Cancel and a
-// waiting gate's choices.
+// waiting gate's choices. View-only (phones, PDT-120): the list is its own screen, and a run is its steps, each
+// opening to its input and output, with nothing to act on.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
@@ -35,7 +36,7 @@ function waitingGate(s: WorkflowStep): Answer | null {
   return s.status === 'waiting' && w?.answer ? w.answer : null;
 }
 
-function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string; catalog: Catalog }) {
+function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflowId: string; catalog: Catalog; viewOnly: boolean }) {
   const qc = useQueryClient();
   const run = useQuery({
     queryKey: ['workflow-run', id],
@@ -73,7 +74,7 @@ function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string
         <span className="text-meta text-muted-foreground">
           version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${duration(r.endedAt - r.startedAt)}` : ''}
         </span>
-        <span className="ml-auto flex gap-1">
+        {!viewOnly && <span className="ml-auto flex gap-1">
           {resumeNode && (
             <Button size="sm" variant="primary" onClick={() => resume.mutate()} pending={resume.isPending}
               title="Run this agent step again in the same run: same ticket, attempt and session">Resume from {resumeNode}</Button>
@@ -82,22 +83,24 @@ function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string
           {(r.status === 'running' || r.status === 'waiting') && (
             <Button size="sm" variant="secondary" onClick={() => cancel.mutate()} pending={cancel.isPending}>Cancel</Button>
           )}
-        </span>
+        </span>}
       </div>
       {r.error && <Alert tone="error">{r.error}</Alert>}
       {error && <Alert tone="error">{error.message}</Alert>}
-      {d && (
+      {d && !viewOnly && (
         <div className="flex h-72 shrink-0 flex-col rounded-md border border-border">
           <GraphView aria-label="Run path" doc={d} catalog={catalog} selected={selected} onSelect={setSelected} readOnly path={pathOf(d, runSteps(r.steps))} />
         </div>
       )}
       {d && (
-        <StepList doc={d} catalog={catalog} steps={[...r.steps].sort((a, b) => a.seq - b.seq).map((s) => {
+        <StepList doc={d} catalog={catalog} expandable={viewOnly} steps={[...r.steps].sort((a, b) => a.seq - b.seq).map((s) => {
           const gate = waitingGate(s);
           return {
             key: s.id, nodeId: s.nodeId, kind: s.kind, status: STEP_STATUS[s.status], port: s.port, error: s.error,
             input: s.input, output: s.output, attempts: s.attempts,
-            ...(gate ? {
+            ...(gate && viewOnly ? {
+              actions: <p className="rounded-md bg-waiting-soft p-2 text-sm">Waiting for an answer: {gate.question}</p>,
+            } : gate ? {
               actions: (
                 <div className="flex flex-wrap items-center gap-2 rounded-md bg-waiting-soft p-2 text-sm">
                   <span className="min-w-0 flex-1">{gate.question}</span>
@@ -115,15 +118,18 @@ function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string
   );
 }
 
-export function RunsView({ workflowId, catalog, runId, onRunChange }: {
+export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = false }: {
   workflowId: string; catalog: Catalog; runId: string | null; onRunChange: (id: string | null) => void;
+  /** Phones: the list, or the run picked (no graph, nothing to act on). */
+  viewOnly?: boolean;
 }) {
   const runs = useQuery({ queryKey: ['workflow-runs', workflowId], queryFn: () => api.listWorkflowRuns({ workflow: workflowId, limit: 100 }), refetchInterval: 2000 });
   const list = runs.data ?? [];
-  const current = runId ?? list[0]?.id ?? null;
+  const current = viewOnly ? runId : runId ?? list[0]?.id ?? null;
+  if (viewOnly && current) return <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly />;
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <nav aria-label="Runs" className="max-h-56 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0">
+      <nav aria-label="Runs" className={cn('shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0', viewOnly ? 'min-h-0 flex-1' : 'max-h-56')}>
         {runs.error && <Alert tone="error" className="m-2">Runs could not be loaded: {runs.error.message}</Alert>}
         {runs.isSuccess && list.length === 0 && <EmptyState>No runs yet. Dry run it, or enable it and wait for its trigger.</EmptyState>}
         <ul className="flex flex-col p-1">
@@ -144,7 +150,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange }: {
           })}
         </ul>
       </nav>
-      {current ? <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} /> : <div className="flex-1" />}
+      {viewOnly ? null : current ? <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly={false} /> : <div className="flex-1" />}
     </div>
   );
 }

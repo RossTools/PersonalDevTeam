@@ -32,6 +32,9 @@ describe('routes', () => {
     ['/personas/p1', { view: 'personas', personaId: 'p1' }],
     ['/files', { view: 'files', path: null, project: null, worktree: null }],
     ['/files/src/main.rs', { view: 'files', path: 'src/main.rs', project: null, worktree: null }],
+    // A folder (the phone's drill-down) ends in `/`.
+    ['/files/src/', { view: 'files', path: 'src/', project: null, worktree: null }],
+    ['/files/a%20b/c/?project=PDT', { view: 'files', path: 'a b/c/', project: 'PDT', worktree: null }],
     ['/files/a%20b/c%23d.md?project=PDT&worktree=wt', { view: 'files', path: 'a b/c#d.md', project: 'PDT', worktree: 'wt' }],
     ['/settings', { view: 'settings', page: { kind: 'index' } }],
     ['/settings/host', { view: 'settings', page: { kind: 'host', section: null } }],
@@ -65,7 +68,9 @@ describe('routes', () => {
     for (const p of top) expect(isDetail(parseLocation(p)), p).toBe(false);
     const up: [string, string][] = [
       ['/pm/notes', '/pm'], ['/pm/notes/n1', '/pm/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm/earlier'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
-      ['/workflows/wf/runs/r', '/workflows'], ['/personas/p', '/personas'], ['/files/a/b.md?project=PDT', '/files?project=PDT'],
+      ['/workflows/wf/runs/r', '/workflows/wf/runs'], ['/workflows/wf/runs', '/workflows'], ['/workflows/templates/tp', '/workflows'],
+      ['/personas/p', '/personas'],
+      ['/files/a/b.md?project=PDT', '/files/a/?project=PDT'], ['/files/a/b/', '/files/a/'], ['/files/a/', '/files'], ['/files/b.md', '/files'],
       // A Settings section goes up to its page, the page to the list of them.
       ['/settings/projects/PDT/danger-zone', '/settings/projects/PDT'], ['/settings/projects/PDT', '/settings'],
       ['/settings/host/updates', '/settings/host'], ['/settings/host', '/settings'], ['/settings/notifications', '/settings'],

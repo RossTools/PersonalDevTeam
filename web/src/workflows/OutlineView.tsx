@@ -118,7 +118,8 @@ export function OutlineView({ doc, onChange, catalog, check, selected, onSelect,
                 className={cn('ml-auto size-2 shrink-0 rounded-full', issues.some((i) => i.severity === 'error') ? 'bg-failed' : 'bg-waiting')} />
             )}
           </button>
-          <MenuButton label={`Actions for ${title}`} size="sm" entries={() => menu(it.id)} />
+          {/* Read-only, its one entry (Edit) is the row's own tap. */}
+          {edit && <MenuButton label={`Actions for ${title}`} size="sm" entries={() => menu(it.id)} />}
         </div>
         {it.branches.length > 0 && <ul className="ml-4 border-l border-border pl-2">{it.branches.map(branch)}</ul>}
       </li>

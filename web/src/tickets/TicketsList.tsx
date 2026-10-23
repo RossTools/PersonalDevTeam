@@ -23,7 +23,7 @@ function useOpenCounts(projects: Project[]) {
   return new Map(projects.map((p, i) => [p.id, qs[i]?.data]));
 }
 
-function SaveFilterDialog({ onSave, onClose }: { onSave: (name: string) => void; onClose: () => void }) {
+export function SaveFilterDialog({ onSave, onClose }: { onSave: (name: string) => void; onClose: () => void }) {
   const [name, setName] = useState('');
   return (
     <Dialog
