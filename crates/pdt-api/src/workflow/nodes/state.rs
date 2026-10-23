@@ -13,15 +13,26 @@ use ts_rs::TS;
 #[ts(export)]
 pub struct StateSetConfig {
     pub key: String,
+    /// The value (not used with `add`).
+    #[serde(default)]
     #[ts(type = "unknown")]
     pub value: Value,
     /// Only when the key has no value yet (a first run's baseline).
     #[serde(default)]
     #[ts(type = "boolean | string")]
     pub if_missing: Tpl<bool>,
+    /// A counter instead: adds this to the number the key holds (none counts as 0); the output's `value` is the sum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub add: Option<f64>,
 }
 
 pub struct StateSet;
+
+/// A whole number as an integer (`3`, not `3.0`).
+fn number(f: f64) -> Value {
+    if f.fract() == 0.0 && f.abs() < 9e15 { json!(f as i64) } else { json!(f) }
+}
 
 impl NodeKind for StateSet {
     fn spec(&self) -> KindSpec {
@@ -30,7 +41,9 @@ impl NodeKind for StateSet {
             1,
             Category::Action,
             "Remember",
-            "Stores a value in the workflow's state, read back as {{state.<key>}} in later runs.",
+            "Stores a value in the workflow's state, read back as {{state.<key>}} in later runs. With `add`, counts \
+             instead: the key's number plus `add`, also in the output's `value` (a key per attempt, \
+             `tries.{{trigger.attemptId}}`, counts per attempt).",
             &[("out", "Then")],
             false,
         )
@@ -50,6 +63,24 @@ impl NodeKind for StateSet {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: StateSetConfig = parse(&input)?;
+            if let Some(by) = c.add {
+                let value = if cx.dry_run {
+                    let state = cx.st.store.workflow_state(&cx.workflow.id).await.map_err(|e| e.to_string())?;
+                    state.get(&c.key).and_then(Value::as_f64).unwrap_or(0.0) + by
+                } else {
+                    cx.st
+                        .store
+                        .add_workflow_state(&cx.workflow.id, &c.key, by, now_ms())
+                        .await
+                        .map_err(|e| e.to_string())?
+                };
+                let value = number(value);
+                let mut out = json!({"value": value, "quiet": true});
+                if cx.dry_run {
+                    out["would"] = json!(format!("count {} up to {value}", c.key));
+                }
+                return Ok(Outcome::next("out", out));
+            }
             if cx.dry_run {
                 return Ok(Outcome::next("out", json!({"would": format!("set state {} to {}", c.key, c.value)})));
             }

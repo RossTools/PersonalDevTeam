@@ -1,6 +1,6 @@
 //! What enabled workflows tell an attempt's agent about (PDT-83), so its instructions can say so: the event types
-//! whose triggers lead to a `session.send` to the attempt, directly or through `workflow.call`. A trigger's
-//! conditions are not read, so this can name an event a condition then skips.
+//! whose triggers lead to a `session.send` to the attempt or an agent step in its session (`session: reuse`), directly
+//! or through `workflow.call`. A trigger's conditions are not read, so this can name an event a condition then skips.
 
 use crate::workflow::api::{Scope, Workflow};
 use crate::workflow::doc::WorkflowDoc;
@@ -9,6 +9,7 @@ use std::collections::{BTreeSet, HashSet};
 
 const SESSION_SEND: &str = "session.send";
 const WORKFLOW_CALL: &str = "workflow.call";
+const AGENT: &str = "agent";
 
 /// The event types (ids from [`EVENT_TYPES`]) some enabled workflow that applies to `project_id` turns into a message
 /// to an attempt's agent. `all` is every workflow with its current document; a called workflow need not be enabled.
@@ -60,6 +61,10 @@ fn reaches_send<'a>(
         }
         let Some(node) = doc.node(id) else { continue };
         if node.kind == SESSION_SEND && sends_to_attempt(&node.config) {
+            return true;
+        }
+        // An agent step in the attempt's own session (PDT-104: PR notices' fix).
+        if node.kind == AGENT && node.config.get("session").and_then(|s| s.as_str()) == Some("reuse") {
             return true;
         }
         if node.kind == WORKFLOW_CALL
@@ -158,6 +163,15 @@ mod tests {
                 node("other", SESSION_SEND, json!({"session": "s9", "text": "x"})), tell()],
             "edges": [{"from": "t", "to": "move"}, {"from": "s", "to": "other"}]});
         assert!(agent_news(&[wf("a", Scope::Host, None, true, doc)], "p1").is_empty());
+    }
+
+    #[test]
+    fn an_agent_step_in_the_attempts_session_counts() {
+        let doc = json!({"name": "x", "nodes": [
+                node("t", "pr.conflict", json!({})), node("s", "ci.run_passed", json!({})),
+                node("fix", AGENT, json!({"session": "reuse"})), node("review", AGENT, json!({"session": "new"}))],
+            "edges": [{"from": "t", "to": "fix"}, {"from": "s", "to": "review"}]});
+        assert_eq!(agent_news(&[wf("a", Scope::Host, None, true, doc)], "p1"), BTreeSet::from(["pr.conflict"]));
     }
 
     #[test]

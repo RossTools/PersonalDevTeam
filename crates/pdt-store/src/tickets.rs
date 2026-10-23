@@ -97,13 +97,15 @@ pub struct AttemptInfo {
     /// the branch goes with the worktree.
     pub finish_on_merge: bool,
     pub finish_delete_branch: bool,
+    /// Its pull request was set to merge (auto-merge or the merge queue) at some point (PDT-104, sticky).
+    pub merge_requested: bool,
 }
 
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
                               a.ended_at, a.last_head, a.workspace_id FROM attempts a";
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
                                    a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, a.own_commits, \
-                                   a.finish_on_merge, a.finish_delete_branch, t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
+                                   a.finish_on_merge, a.finish_delete_branch, a.merge_requested, t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
                                    w.path AS worktree_path \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
@@ -121,6 +123,7 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
         worktree_path: r.try_get("worktree_path")?,
         finish_on_merge: r.try_get::<i64, _>("finish_on_merge")? != 0,
         finish_delete_branch: r.try_get::<i64, _>("finish_delete_branch")? != 0,
+        merge_requested: r.try_get::<i64, _>("merge_requested")? != 0,
     })
 }
 
@@ -1711,6 +1714,15 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Records that the attempt's pull request was set to merge (never cleared). True when it was news.
+    pub async fn set_attempt_merge_requested(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET merge_requested = 1 WHERE id = ? AND merge_requested = 0")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Remembers the workspace Start made for the attempt.
     pub async fn set_attempt_workspace(&self, id: &str, workspace_id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE attempts SET workspace_id = ? WHERE id = ?")
@@ -2721,6 +2733,12 @@ mod tests {
         let info = store.get_attempt("at1").await.unwrap().unwrap();
         assert_eq!((info.finish_on_merge, info.finish_delete_branch), (false, false));
         assert!(!store.set_attempt_finish("nope", true, false).await.unwrap());
+
+        // Set to merge (PDT-104): sticky, news once.
+        assert!(!info.merge_requested);
+        assert!(store.set_attempt_merge_requested("at1").await.unwrap());
+        assert!(!store.set_attempt_merge_requested("at1").await.unwrap());
+        assert!(store.get_attempt("at1").await.unwrap().unwrap().merge_requested);
 
         // The workspace Start made is remembered, and forgotten when the workspace is deleted.
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);

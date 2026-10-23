@@ -570,8 +570,10 @@ pub(crate) async fn merge_attempt(
         return Err(blocked(problem));
     }
     if let Some(pr) = &p.pr {
-        let finish = input.finish_on_merge.unwrap_or(false);
-        st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
+        // Not given (a merge again, PDT-104): what the earlier merge asked stays.
+        if let Some(finish) = input.finish_on_merge {
+            st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
+        }
         let repo = crate::github::github_repo(&info.repo_path).await.unwrap_or_default();
         let (gh, base, number) = (st.github.clone(), p.base.clone(), pr.number);
         tokio::task::spawn_blocking(move || {
@@ -585,6 +587,7 @@ pub(crate) async fn merge_attempt(
         .await
         .map_err(ApiError::internal)?
         .map_err(|e| conflict("merge_failed", e.to_string()))?;
+        st.store.set_attempt_merge_requested(&info.attempt.id).await?;
         crate::github::refresh_attempt(&st, &info).await;
         return Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None });
     }

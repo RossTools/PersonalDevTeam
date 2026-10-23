@@ -335,9 +335,10 @@ async fn a_dry_run_says_what_the_pr_notices_would_do() {
     assert_eq!(s, StatusCode::OK, "{r}");
     let run = &r["run"];
     assert_eq!(run["triggers"][0], json!({"node": "conflict", "matched": true, "reason": null}));
-    assert_eq!(run["steps"][1]["nodeId"], "tell");
-    assert_eq!(run["steps"][1]["input"]["text"], "[PDT] fix it");
-    assert!(run["steps"][1]["output"]["would"].as_str().unwrap().contains("[PDT] fix it"), "{run}");
+    assert_eq!(run["steps"][1]["nodeId"], "asked", "never set to merge: just the notice");
+    assert_eq!(run["steps"][2]["nodeId"], "tell");
+    assert_eq!(run["steps"][2]["input"]["text"], "[PDT] fix it");
+    assert!(run["steps"][2]["output"]["would"].as_str().unwrap().contains("[PDT] fix it"), "{run}");
     assert!(env.state.store.waiting_session_messages().await.unwrap().is_empty(), "nothing was queued");
 
     // A closed ticket's merge doesn't tell the agent.
@@ -347,6 +348,86 @@ async fn a_dry_run_says_what_the_pr_notices_would_do() {
         call(&env.app, "POST", "/api/workflows/dry-run", Some(json!({"workflowId": id, "event": event}))).await;
     assert_eq!(r["run"]["triggers"][0]["matched"], false, "{r}");
     assert!(r["run"]["status"].is_null());
+}
+
+/// PDT-104: a pull request that was set to merge gets an agent on its failure (unless one is on it already), a CI pass
+/// with auto-merge off merges it again, and after 3 tries a comment instead.
+#[tokio::test]
+async fn a_dry_run_covers_each_case_of_a_pr_set_to_merge() {
+    let env = setup().await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
+    let id = list.as_array().unwrap().iter().find(|w| w["builtin"] == "pr-notices").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let dry = async |kind: &str, extra: Value| {
+        let mut payload = json!({"attemptId": "a1", "ticketId": "t1", "pr": 12,
+                                 "notice": {"key": "k", "text": "[PDT] it failed"}});
+        for (k, v) in extra.as_object().unwrap() {
+            payload[k] = v.clone();
+        }
+        let event = json!({"type": kind, "payload": payload});
+        let (s, r) =
+            call(&env.app, "POST", "/api/workflows/dry-run", Some(json!({"workflowId": id, "event": event}))).await;
+        assert_eq!(s, StatusCode::OK, "{r}");
+        r["run"].clone()
+    };
+    let path = |run: &Value| -> Vec<String> {
+        run["steps"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .map(|s| format!("{}:{}", s["nodeId"].as_str().unwrap(), s["port"].as_str().unwrap_or("-")))
+            .collect()
+    };
+
+    // Never asked to merge: a notice, as before.
+    let run = dry("ci.run_failed", json!({})).await;
+    assert_eq!(path(&run), ["ci:out", "asked:false", "tell:sent"], "{run}");
+
+    // Set to merge: CI failed, a conflict, the queue dropped it, the base moved: the Coder fixes it, then it merges.
+    let fix = ["count:out", "over:false", "fix:submitted", "remerge:queued", "merging:-"];
+    for (kind, node) in
+        [("ci.run_failed", "ci"), ("pr.conflict", "conflict"), ("pr.queue_left", "queue"), ("pr.behind", "behind")]
+    {
+        let run = dry(kind, json!({"mergeRequested": true})).await;
+        let p = path(&run);
+        assert_eq!(p[..3], [format!("{node}:out"), "asked:true".into(), "busy:false".into()], "{kind}: {run}");
+        assert_eq!(p[3..], fix, "{kind}: {run}");
+        let step = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "fix").unwrap();
+        let prompt = step["input"]["prompt"].as_str().unwrap();
+        assert!(prompt.starts_with("[PDT] it failed") && prompt.contains("set to merge"), "{prompt}");
+        assert!(step["output"]["would"].as_str().unwrap().contains("Coder (reused session)"), "{step}");
+    }
+    // An agent is on it already: it hears the news instead of a second step.
+    let run = dry("pr.conflict", json!({"mergeRequested": true, "agentWorking": true})).await;
+    assert_eq!(path(&run), ["conflict:out", "asked:true", "busy:true", "tell:sent"], "{run}");
+
+    // CI passes with auto-merge off: merge again. With it on, in the queue, or an agent still on it: nothing.
+    let run = dry("ci.run_passed", json!({"mergeRequested": true, "notice": null})).await;
+    assert_eq!(path(&run), ["passed:out", "remerge:queued", "merging:-"], "{run}");
+    for extra in [json!({"autoMerge": true}), json!({"inMergeQueue": true}), json!({"agentWorking": true}), json!({})] {
+        let mut e = json!({"mergeRequested": true});
+        for (k, v) in extra.as_object().unwrap() {
+            e[k] = v.clone();
+        }
+        if extra.as_object().unwrap().is_empty() {
+            e["mergeRequested"] = json!(false);
+        }
+        let run = dry("ci.run_passed", e).await;
+        assert!(run["status"].is_null(), "{extra}: {run}");
+    }
+
+    // Out of tries (3 so far): a comment the first time over, then only the notice.
+    let key = "tries.a1";
+    env.state.store.set_workflow_state(&id, key, &json!(3), false, 1).await.unwrap();
+    let run = dry("ci.run_failed", json!({"mergeRequested": true})).await;
+    assert_eq!(path(&run)[3..], ["count:out", "over:true", "first_over:true", "limit_note:out", "tell:sent"], "{run}");
+    env.state.store.set_workflow_state(&id, key, &json!(4), false, 1).await.unwrap();
+    let run = dry("ci.run_failed", json!({"mergeRequested": true})).await;
+    assert_eq!(path(&run)[3..], ["count:out", "over:true", "first_over:false", "tell:sent"], "{run}");
+    assert_eq!(env.state.store.workflow_state(&id).await.unwrap()[key], json!(4), "a dry run counts nothing");
 }
 
 #[tokio::test]

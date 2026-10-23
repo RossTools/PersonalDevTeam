@@ -349,7 +349,16 @@ async fn refresh_one(
         w.by_attempt.insert(info.attempt.id.clone(), now.clone());
     }
     if tell {
-        for e in news_events(info, &now) {
+        let mut info = info.clone();
+        if (now.auto_merge || now.in_merge_queue) && !info.merge_requested {
+            info.merge_requested = true;
+            if let Err(e) = st.store.set_attempt_merge_requested(&info.attempt.id).await {
+                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record that a PR is set to merge");
+            }
+        }
+        let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
+        let info = &info;
+        for e in news_events(info, &now, agent_working) {
             if let Err(x) = st.store.emit_event(&e, now_ms()).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event");
             }
@@ -385,10 +394,22 @@ pub(crate) fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
         .collect()
 }
 
+/// Whether the attempt's open PR is (or was) set to merge and hasn't merged (PDT-104): PDT recorded it (Merge…,
+/// `attempt.merge`, or auto-merge seen on), auto-merge is on, it is queued, or the merge queue itself removed it. A
+/// person taking it out of the queue says not to.
+pub(crate) fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
+    if pr.state != PrState::Open || pr.queue_removal.as_ref().is_some_and(|r| !r.by_queue && !pr.in_merge_queue) {
+        return false;
+    }
+    info.merge_requested || pr.auto_merge || pr.in_merge_queue || pr.queue_removal.as_ref().is_some_and(|r| r.by_queue)
+}
+
 /// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
-pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<NewLogEvent> {
+/// `agent_working`: an agent step works on the attempt now.
+pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_working: bool) -> Vec<NewLogEvent> {
     let a = attempt_ref(info);
     let key = |k: &str| format!("{}:{k}", a.attempt_id);
+    let merge_requested = merge_requested(info, now);
     let pr_event = |n: Notice| PrEvent {
         attempt: a.clone(),
         pr: now.number,
@@ -397,6 +418,8 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
         auto_merge: now.auto_merge,
         in_merge_queue: now.in_merge_queue,
         notice: n,
+        merge_requested,
+        agent_working,
     };
     let mut out = vec![];
     let mut all = notices(now, &info.attempt.branch);
@@ -419,6 +442,10 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
                         runs: ci.map(run_refs).unwrap_or_default(),
                         jobs: n.jobs.clone(),
                         notice: Some(n),
+                        auto_merge: now.auto_merge,
+                        in_merge_queue: now.in_merge_queue,
+                        merge_requested,
+                        agent_working,
                     },
                 )
             }
@@ -447,6 +474,10 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
                 runs: run_refs(ci),
                 jobs: vec![],
                 notice: None,
+                auto_merge: now.auto_merge,
+                in_merge_queue: now.in_merge_queue,
+                merge_requested,
+                agent_working,
             },
         ));
     }

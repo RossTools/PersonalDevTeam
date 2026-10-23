@@ -54,7 +54,12 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     state.conversations.notice_quiet = Duration::ZERO;
     let gh = Arc::new(FakeGithub::default());
     state.github = gh.clone();
+    // pdt-mcp (a fake agent's `mcp:` calls) needs pdtd listening.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    state.listen_port = listener.local_addr().unwrap().port();
     let app = router(state.clone(), None);
+    let served = app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await });
     let (s, p) = call(
         &app,
         "POST",
@@ -89,7 +94,8 @@ fn pr() -> PullRequest {
         base_branch: "main".into(),
         mergeable: Mergeable::Mergeable,
         behind: false,
-        auto_merge: true,
+        // Not set to merge: PR notices only tells the agent (set to merge, it puts an agent on a failure, PDT-104).
+        auto_merge: false,
         in_merge_queue: false,
         queue_position: None,
         queue_removal: None,
@@ -139,7 +145,7 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     let t = ticket(&env).await;
     let p = &t["attempt"]["pr"];
     assert_eq!(p["number"], 12);
-    assert_eq!(p["autoMerge"], true);
+    assert_eq!(p["autoMerge"], false);
     assert_eq!(p["ci"]["state"], "running");
     assert_eq!(t["attempts"][0]["pr"]["number"], 12);
     let (_, list) = call(&env.app, "GET", "/api/tickets", None).await;
@@ -189,27 +195,48 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     env.state.ptys.shutdown().await;
 }
 
+/// PR notices' runs on the ticket, oldest first, with their steps.
+async fn notice_runs(env: &Env) -> Vec<Value> {
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let mut out = vec![];
+    for r in runs.as_array().unwrap().iter().rev().filter(|r| r["workflowName"] == "PR notices") {
+        out.push(call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["id"].as_str().unwrap()), None).await.1);
+    }
+    out
+}
+
+/// A run's steps as `node:port` (`-` while waiting).
+fn path(run: &Value) -> Vec<String> {
+    run["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| format!("{}:{}", s["nodeId"].as_str().unwrap(), s["port"].as_str().unwrap_or("-")))
+        .collect()
+}
+
 #[tokio::test]
-async fn a_removal_from_the_merge_queue_is_told_even_when_never_seen_queued() {
+async fn a_removal_from_the_merge_queue_puts_an_agent_on_it_even_when_never_seen_queued() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
-    // Queued and dropped between two looks (a conflict is found within seconds): only the timeline knows.
+    // Queued and dropped between two looks (a conflict is found within seconds): only the timeline knows. It was set
+    // to merge, so the attempt's agent gets a step to fix it rather than a bare notice (PDT-104).
     let mut removed = pr();
-    removed.auto_merge = false;
     removed.queue_removal =
         Some(QueueRemoval { id: "RFMQE_1".into(), reason: "merge_conflict".into(), by_queue: true });
     env.gh.set_pr(BRANCH, Some(removed.clone()));
     pdt_api::refresh_prs(&env.state).await;
     pdt_api::run_workflows(&env.state).await;
-    let events = pr_events(&env).await;
-    assert_eq!(events.len(), 1, "{events:?}");
-    assert_eq!(events[0]["data"]["notice"], "queue_left");
-    assert_eq!(events[0]["data"]["key"], "queue_removed:RFMQE_1");
-    assert_eq!(events[0]["data"]["told"], true);
-    assert!(events[0]["data"]["text"].as_str().unwrap().contains("it conflicts with main"));
+    let runs = notice_runs(&env).await;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(&path(&runs[0])[..5], ["queue:out", "asked:true", "busy:false", "count:out", "over:false"]);
+    assert_eq!(path(&runs[0])[5], "fix:-", "the agent is on it");
+    let step = env.state.store.active_agent_steps().await.unwrap().pop().unwrap();
+    assert_eq!((step.session_id.as_deref(), step.node_id.as_str()), (Some(env.session.as_str()), "fix"));
+    assert!(pr_events(&env).await.is_empty(), "not a bare notice");
     pdt_api::refresh_prs(&env.state).await;
     pdt_api::run_workflows(&env.state).await;
-    assert_eq!(pr_events(&env).await.len(), 1, "one removal is news once");
+    assert_eq!(notice_runs(&env).await.len(), 1, "one removal is news once");
     env.state.ptys.shutdown().await;
 }
 
@@ -529,4 +556,167 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
     keys.sort();
     assert_eq!(keys, ["comment:2", "comment:501", "review:9"], "not mine, not a bot's, not an approval");
     env.state.ptys.shutdown().await;
+}
+
+/// What a session's agent said (`fake-agent` echoes each message it gets).
+async fn agent_says(env: &Env, session: &str) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+    v.as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["event"]["kind"] == "agent_message")
+        .map(|e| e["event"]["markdown"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Ticks the engine until `done` gives something (up to 20 s).
+async fn tick_until<T, F, Fut>(env: &Env, what: &str, done: F) -> T
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        pdt_api::run_workflows(&env.state).await;
+        if let Some(v) = done().await {
+            return v;
+        }
+        if std::time::Instant::now() > deadline {
+            let said = agent_says(env, &env.session).await;
+            panic!("never saw {what}: {said:#?} {:#?}", notice_runs(env).await.last());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The open agent step of `node`, once it has its session.
+async fn step_of(env: &Env, node: &str) -> String {
+    tick_until(env, &format!("the {node} step"), || async {
+        let steps = env.state.store.active_agent_steps().await.unwrap();
+        steps.into_iter().find(|a| a.node_id == node).and_then(|a| a.session_id)
+    })
+    .await
+}
+
+/// The session submits `outcome` (as `fake-agent` does for a message starting `mcp:`).
+async fn submit(env: &Env, session: &str, outcome: &str) {
+    let text = format!(r#"mcp: submit_outcome {{"outcome": "{outcome}", "summary": "{outcome}, done"}}"#);
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+}
+
+/// The newest PR notices run once it has ended.
+async fn finished_run(env: &Env, n: usize) -> Value {
+    tick_until(env, &format!("PR notices run {n} ending"), || async {
+        let runs = notice_runs(env).await;
+        runs.get(n - 1).filter(|r| !["running", "waiting", "pending"].contains(&r["status"].as_str().unwrap())).cloned()
+    })
+    .await
+}
+
+fn merges(env: &Env) -> usize {
+    env.gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count()
+}
+
+async fn comments(env: &Env) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{}/events?limit=200", env.ticket), None).await;
+    let items = v["items"].as_array().unwrap();
+    items.iter().filter(|e| e["kind"] == "comment").map(|e| e["body"].as_str().unwrap_or("").to_string()).collect()
+}
+
+/// PDT-104: a pull request set to merge that fails gets an agent on it and merges again, with a Reviewer first when
+/// the agent calls the fix large, up to the try limit.
+#[tokio::test]
+async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup_as(tmp.path(), "conversation").await;
+    wait_turns(&env, 1).await;
+    let attempt = ticket(&env).await["attempt"]["id"].as_str().unwrap().to_string();
+
+    // The user merges it (auto-merge on, finish once it merges), then CI fails: the Coder session gets a step.
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/attempts/{attempt}/merge"),
+        Some(json!({"finishOnMerge": true, "by": "user"})),
+    )
+    .await;
+    assert_eq!((s, v["outcome"].as_str()), (StatusCode::OK, Some("queued")), "{v}");
+    assert_eq!(merges(&env), 1);
+    let mut merging = pr();
+    merging.auto_merge = true;
+    env.gh.set_pr(BRANCH, Some(merging.clone()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(step_of(&env, "fix").await, env.session, "the attempt's own session");
+    let said = tick_until(&env, "the fix step reaching the agent", || async {
+        agent_says(&env, &env.session).await.into_iter().find(|m| m.contains("set to merge"))
+    })
+    .await;
+    assert!(said.contains("CI failed on PR #12") && said.contains("`review`"), "{said}");
+    // A small fix: pushed, and auto-merge is still on, so nothing more to do.
+    submit(&env, &env.session, "submitted").await;
+    let r = finished_run(&env, 1).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(path(&r)[5..], ["fix:submitted", "remerge:queued", "merging:-"], "{r}");
+    assert_eq!(merges(&env), 1, "already merging");
+    assert!(pr_events(&env).await.is_empty(), "the step, not a second notice");
+
+    // The merge queue drops it; the agent calls its fix large: a Reviewer first, then the push, then auto-merge on.
+    let mut dropped = pr();
+    dropped.queue_removal = Some(QueueRemoval { id: "Q1".into(), reason: "failed_checks".into(), by_queue: true });
+    env.gh.set_pr(BRANCH, Some(dropped));
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(step_of(&env, "fix").await, env.session);
+    submit(&env, &env.session, "review").await;
+    let reviewer = step_of(&env, "review").await;
+    assert_ne!(reviewer, env.session, "a fresh Reviewer");
+    submit(&env, &reviewer, "approved").await;
+    assert_eq!(step_of(&env, "push").await, env.session);
+    assert_eq!(merges(&env), 1, "not before the push");
+    submit(&env, &env.session, "submitted").await;
+    let r = finished_run(&env, 2).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let p = path(&r);
+    assert_eq!(p[5..], ["fix:review", "review:approved", "push:submitted", "remerge:queued", "merging:-"], "{p:?}");
+    assert_eq!(merges(&env), 2, "auto-merge on again");
+    let info = env.state.store.get_attempt(&attempt).await.unwrap().unwrap();
+    assert!(info.finish_on_merge && info.merge_requested, "the first merge's choice stays");
+
+    // Fixed by hand: CI passes with auto-merge off, and PR notices turns it back on.
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let r = finished_run(&env, 3).await;
+    assert_eq!(path(&r), ["passed:out", "remerge:queued", "merging:-"], "{r}");
+    assert_eq!(merges(&env), 3);
+
+    // The project doesn't let workflows merge: a comment says why.
+    let pid = ticket(&env).await["projectId"].as_str().unwrap().to_string();
+    let body = json!({"agentCredentials": null, "runOverrides": null, "mergeBy": "user"});
+    let (s, v) = call(&env.app, "PUT", &format!("/api/projects/{pid}/settings"), Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    env.gh.set_runs(BRANCH, vec![run(9, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let r = finished_run(&env, 4).await;
+    assert_eq!(path(&r)[1], "remerge:refused", "{r}");
+    assert!(comments(&env).await.iter().any(|c| c.contains("could not turn auto-merge back on for PR #12")));
+
+    // Out of tries: a comment, once, and the notice goes to the agent as before.
+    let wf = notice_runs(&env).await[0]["workflowId"].as_str().unwrap().to_string();
+    env.state.store.set_workflow_state(&wf, &format!("tries.{attempt}"), &json!(3), false, 1).await.unwrap();
+    let mut conflicting = merging.clone();
+    conflicting.mergeable = Mergeable::Conflicting;
+    env.gh.set_pr(BRANCH, Some(conflicting));
+    pdt_api::refresh_prs(&env.state).await;
+    let r = finished_run(&env, 5).await;
+    let p = path(&r);
+    assert_eq!(p[4..8], ["over:true", "first_over:true", "limit_note:out", "tell:sent"], "{p:?}");
+    assert!(comments(&env).await.iter().any(|c| c.contains("after 3 tries")), "{:?}", comments(&env).await);
+    let told = pr_events(&env).await;
+    assert_eq!((told.len(), told[0]["data"]["notice"].as_str()), (1, Some("conflict")), "{told:?}");
 }

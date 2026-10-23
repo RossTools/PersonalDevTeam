@@ -217,7 +217,7 @@ async fn a_started_session_is_told_which_pdt_messages_to_expect() {
     assert!(text.contains("when CI fails on its pull request, the pull request conflicts with `main`"), "{text}");
     assert!(text.contains("the user comments on the ticket") && text.contains("- Merged:"), "{text}");
     assert!(text.contains("don't poll or watch CI in a shell"), "{text}");
-    assert!(!text.contains("moves while it waits"), "Base moved is off: {text}");
+    assert!(text.contains("moves while it waits"), "PR notices handles a PR behind its base (PDT-104): {text}");
 
     // With the workflows that message the agent turned off, nothing is promised.
     let (_, list) = call(&env.app, "GET", &format!("/api/workflows?project={}", env.pid), None).await;
