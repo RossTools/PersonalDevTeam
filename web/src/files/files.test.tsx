@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
-import { FileViewer, FolderTree, useFolderView } from './FolderView';
+import { FileViewer, FolderList, FolderTree, useFolderView } from './FolderView';
 
 vi.mock('./CodeViewer', () => ({ CodeViewer: ({ name, text }: { name: string; text: string }) => <pre data-testid="code" data-name={name}>{text}</pre> }));
 afterEach(() => vi.unstubAllGlobals());
@@ -81,5 +81,31 @@ describe('folder view', () => {
     stubApi({ 'GET /api/projects/p/worktrees': [], 'GET /api/projects/p/files?path=': new Reply(404, { code: 'not_found', message: 'checkout is missing' }) });
     renderWithQuery(<Harness />);
     expect(await screen.findByRole('alert')).toHaveTextContent('checkout is missing');
+  });
+});
+
+/** The phone's screens (PDT-120): a folder path ends in `/`; anything else is a file. */
+function PhoneHarness() {
+  const state = useFolderView([project], null);
+  const file = state.file;
+  if (file && !file.endsWith('/')) return <FileViewer state={state} />;
+  return <FolderList state={state} dir={file ? file.slice(0, -1) : ''} />;
+}
+
+describe('folder list (phones)', () => {
+  it('drills into folders one screen at a time and opens a file', async () => {
+    stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/files?path=': [entry('src', true, 'M'), entry('README.md')],
+      'GET /api/projects/p/files?path=src': [entry('src/main.rs', false, '??')],
+      'GET /api/projects/p/files/content?path=src%2Fmain.rs': { path: 'src/main.rs', size: 13, status: '??', text: 'fn main() {}\n', binary: false, tooLarge: false },
+    });
+    renderWithQuery(<PhoneHarness />);
+    expect(await screen.findByRole('button', { name: 'Place: PDT › Repository' })).toBeInTheDocument();
+    await userEvent.click(await within(await screen.findByRole('grid', { name: 'Files' })).findByRole('row', { name: /src/ }));
+    const folder = await screen.findByRole('grid', { name: 'Files in src' });
+    expect(screen.queryByRole('button', { name: 'Place: PDT › Repository' })).not.toBeInTheDocument();
+    await userEvent.click(within(folder).getByRole('row', { name: /main\.rs/ }));
+    await waitFor(() => expect(screen.getByTestId('code')).toHaveTextContent('fn main() {}'));
   });
 });
