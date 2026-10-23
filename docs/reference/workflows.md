@@ -59,7 +59,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   - **PR notices** (on): `pr.merged`, `attempt.merged` (not `via: closed`) → `session.send` (`text:
     {{trigger.notice.text}}`, `dedupe: {{trigger.notice.key}}`, `timeline: pr`). `ci.run_failed`, `pr.conflict`,
     `pr.queue_left` and `pr.behind` → a condition on `{{trigger.mergeRequested}}` (PDT-104): not set to merge → the
-    same `session.send`; set to merge but `agentWorking` → the `session.send` too (the agent on it hears it); else
+    same `session.send`; set to merge but an agent on it (`attempt.agent_working`, read as the step runs, so a
+    conflict and the queue drop it caused, logged in one look, get one fix) → the `session.send` too; else
     `state.set` `tries.{{trigger.attemptId}}` `add: 1`, and over 3 (`FIX_TRIES`) → a `ticket.comment` the first time
     (4) → the `session.send`; within 3 → `fix` (agent, Coder, `session: reuse`; the prompt is the notice plus "this
     pull request was set to merge…"; outcomes `submitted`: pushed, `review`: a large fix, committed, not pushed) →
@@ -110,6 +111,7 @@ pdt-api `workflow/nodes/`, registered in `catalog.rs` `catalog()`; config types 
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`; Phase 7c) | `merged`, `queued`, `refused` |
+| `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
 | `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |

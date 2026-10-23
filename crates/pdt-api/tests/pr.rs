@@ -229,7 +229,7 @@ async fn a_removal_from_the_merge_queue_puts_an_agent_on_it_even_when_never_seen
     pdt_api::run_workflows(&env.state).await;
     let runs = notice_runs(&env).await;
     assert_eq!(runs.len(), 1, "{runs:?}");
-    assert_eq!(&path(&runs[0])[..5], ["queue:out", "asked:true", "busy:false", "count:out", "over:false"]);
+    assert_eq!(&path(&runs[0])[..5], ["queue:out", "asked:true", "busy:no", "count:out", "over:false"]);
     assert_eq!(path(&runs[0])[5], "fix:-", "the agent is on it");
     let step = env.state.store.active_agent_steps().await.unwrap().pop().unwrap();
     assert_eq!((step.session_id.as_deref(), step.node_id.as_str()), (Some(env.session.as_str()), "fix"));
@@ -719,4 +719,69 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     assert!(comments(&env).await.iter().any(|c| c.contains("after 3 tries")), "{:?}", comments(&env).await);
     let told = pr_events(&env).await;
     assert_eq!((told.len(), told[0]["data"]["notice"].as_str()), (1, Some("conflict")), "{told:?}");
+}
+
+/// A queue drop for a conflict is two events in one look (`pr.conflict` and `pr.queue_left`), both logged before any
+/// run: only one gets a fix step; the other finds the agent on it and tells it. With the Coder session gone, one new
+/// session, not two in the same worktree.
+#[tokio::test]
+async fn a_conflict_and_its_queue_drop_get_one_fix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup_as(tmp.path(), "conversation").await;
+    wait_turns(&env, 1).await;
+    let mut merging = pr();
+    merging.in_merge_queue = true;
+    merging.auto_merge = true;
+    env.gh.set_pr(BRANCH, Some(merging));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/sessions/{}", env.session), None).await;
+    assert!(s.is_success(), "{s}");
+
+    let mut dropped = pr();
+    dropped.mergeable = Mergeable::Conflicting;
+    dropped.queue_removal = Some(QueueRemoval { id: "Q1".into(), reason: "merge_conflict".into(), by_queue: true });
+    env.gh.set_pr(BRANCH, Some(dropped));
+    pdt_api::refresh_prs(&env.state).await;
+    let coder = step_of(&env, "fix").await;
+    assert_ne!(coder, env.session, "a new Coder session");
+    let runs = tick_until(&env, "both runs past the busy check", || async {
+        let runs = notice_runs(&env).await;
+        let checked = runs.iter().filter(|r| path(r).iter().any(|p| p.starts_with("busy:"))).count();
+        (checked == 2).then_some(runs)
+    })
+    .await;
+    let busy: Vec<String> = runs.iter().flat_map(path).filter(|p| p.starts_with("busy:")).collect();
+    assert_eq!(busy.iter().filter(|p| *p == "busy:no").count(), 1, "{busy:?}");
+    assert_eq!(busy.iter().filter(|p| *p == "busy:yes").count(), 1, "{busy:?}");
+    let steps = env.state.store.active_agent_steps().await.unwrap();
+    assert_eq!(steps.iter().filter(|a| a.node_id == "fix").count(), 1, "one fix");
+    let t = ticket(&env).await;
+    let coders =
+        t["sessions"].as_array().unwrap().iter().filter(|s| s["title"].as_str().unwrap().starts_with("Coder")).count();
+    assert_eq!(coders, 1, "{}", t["sessions"]);
+    let wf = runs[0]["workflowId"].as_str().unwrap().to_string();
+    let attempt = t["attempt"]["id"].as_str().unwrap();
+    assert_eq!(env.state.store.workflow_state(&wf).await.unwrap()[&format!("tries.{attempt}")], json!(1), "one try");
+}
+
+/// A person turning auto-merge off: PDT doesn't turn it back on when CI passes.
+#[tokio::test]
+async fn auto_merge_turned_off_by_hand_stays_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let mut merging = pr();
+    merging.auto_merge = true;
+    env.gh.set_pr(BRANCH, Some(merging));
+    pdt_api::refresh_prs(&env.state).await;
+    let attempt = ticket(&env).await["attempt"]["id"].as_str().unwrap().to_string();
+    assert!(env.state.store.get_attempt(&attempt).await.unwrap().unwrap().merge_requested);
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    assert!(!env.state.store.get_attempt(&attempt).await.unwrap().unwrap().merge_requested);
+    pdt_api::run_workflows(&env.state).await;
+    assert!(notice_runs(&env).await.is_empty());
+    assert_eq!(merges(&env), 0);
+    env.state.ptys.shutdown().await;
 }

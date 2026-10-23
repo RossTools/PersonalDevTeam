@@ -187,10 +187,11 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   becomes an agent step (the attempt's Coder session, or a new one when it has ended) that fixes it and pushes, with a
   Reviewer first when the agent calls the fix large; then auto-merge goes back on (`attempt.merge` again), and a CI
   pass with auto-merge off turns it on too. After 3 tries per attempt PR notices comments on the ticket and only tells
-  the agent again. "Set to merge" (`mergeRequested` on the events) is sticky per attempt
+  the agent again. "Set to merge" (`mergeRequested` on the events) is kept per attempt
   (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on, or the poller seeing auto-merge or the
-  merge queue; a merge queue drop counts too, a person dequeuing it does not. Events also carry `agentWorking` (an
-  agent step is open on the attempt), so a second failure while an agent fixes the first is told to it instead.
+  merge queue; a merge queue drop counts too, a person dequeuing it does not, and a person turning auto-merge off
+  (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A failure while an
+  agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.
   Details: [workflows.md](workflows.md) "Workflows".
 - A user's comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments
   to the agent"; an agent's own comments, actor `agent`, are not sent); Start already puts the earlier comments in the

@@ -41,7 +41,7 @@ pub const FIX_TRIES: u32 = 3;
 
 const FIX_PROMPT: &str = "{{trigger.notice.text}}\n\nThis pull request was set to merge (auto-merge or the merge \
 queue), so get it merging again: fix the cause, run the checks, commit and push. Once you push, PDT turns auto-merge \
-back on if it is off; you don't need to.\n\nMost fixes are small (a CI fix, resolving a conflict, merging the base \
+back on if it is off: don't turn it on yourself, whatever the notice above says.\n\nMost fixes are small (a CI fix, resolving a conflict, merging the base \
 in): push and submit `submitted`. If the fix is a large change to the work (new behaviour, a redesign, a big rewrite), \
 commit it but don't push, and submit `review`: a Reviewer looks at it first, then you are asked to push.";
 
@@ -111,12 +111,11 @@ fn pr_notices() -> WorkflowDoc {
         ),
         node(
             "busy",
-            "condition",
+            "attempt.agent_working",
             560,
             150,
             "An agent on it already?",
-            json!({"conditions": [
-            cond("{{trigger.agentWorking}}", "truthy", None)]}),
+            json!({"attempt": "{{trigger.attemptId}}", "known": "{{trigger.agentWorking}}"}),
         ),
         node("count", "state.set", 840, 150, "Count the try", json!({"key": "tries.{{trigger.attemptId}}", "add": 1})),
         node(
@@ -233,8 +232,8 @@ fn pr_notices() -> WorkflowDoc {
         e("passed", "", "remerge"),
         e("asked", "true", "busy"),
         e("asked", "false", "tell"),
-        e("busy", "true", "tell"),
-        e("busy", "false", "count"),
+        e("busy", "yes", "tell"),
+        e("busy", "no", "count"),
         e("count", "", "over"),
         e("over", "true", "first_over"),
         e("over", "false", "fix"),

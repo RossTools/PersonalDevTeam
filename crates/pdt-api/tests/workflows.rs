@@ -393,7 +393,7 @@ async fn a_dry_run_covers_each_case_of_a_pr_set_to_merge() {
     {
         let run = dry(kind, json!({"mergeRequested": true})).await;
         let p = path(&run);
-        assert_eq!(p[..3], [format!("{node}:out"), "asked:true".into(), "busy:false".into()], "{kind}: {run}");
+        assert_eq!(p[..3], [format!("{node}:out"), "asked:true".into(), "busy:no".into()], "{kind}: {run}");
         assert_eq!(p[3..], fix, "{kind}: {run}");
         let step = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "fix").unwrap();
         let prompt = step["input"]["prompt"].as_str().unwrap();
@@ -402,7 +402,7 @@ async fn a_dry_run_covers_each_case_of_a_pr_set_to_merge() {
     }
     // An agent is on it already: it hears the news instead of a second step.
     let run = dry("pr.conflict", json!({"mergeRequested": true, "agentWorking": true})).await;
-    assert_eq!(path(&run), ["conflict:out", "asked:true", "busy:true", "tell:sent"], "{run}");
+    assert_eq!(path(&run), ["conflict:out", "asked:true", "busy:yes", "tell:sent"], "{run}");
 
     // CI passes with auto-merge off: merge again. With it on, in the queue, or an agent still on it: nothing.
     let run = dry("ci.run_passed", json!({"mergeRequested": true, "notice": null})).await;

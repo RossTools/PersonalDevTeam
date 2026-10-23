@@ -1714,9 +1714,18 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Records that the attempt's pull request was set to merge (never cleared). True when it was news.
+    /// Records that the attempt's pull request was set to merge. True when it was news.
     pub async fn set_attempt_merge_requested(&self, id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE attempts SET merge_requested = 1 WHERE id = ? AND merge_requested = 0")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Forgets it (a person turned auto-merge off). True when it was set.
+    pub async fn clear_attempt_merge_requested(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE attempts SET merge_requested = 0 WHERE id = ? AND merge_requested = 1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -2739,6 +2748,8 @@ mod tests {
         assert!(store.set_attempt_merge_requested("at1").await.unwrap());
         assert!(!store.set_attempt_merge_requested("at1").await.unwrap());
         assert!(store.get_attempt("at1").await.unwrap().unwrap().merge_requested);
+        assert!(store.clear_attempt_merge_requested("at1").await.unwrap());
+        assert!(!store.get_attempt("at1").await.unwrap().unwrap().merge_requested);
 
         // The workspace Start made is remembered, and forgotten when the workspace is deleted.
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);
