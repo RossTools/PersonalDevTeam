@@ -871,6 +871,31 @@ describe('phone', () => {
     expect(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Menu' })).toBeInTheDocument();
   });
 
+  it('triages from Review all: the item screen counts its place, ⋯ has its actions, and Back returns to the list', async () => {
+    const q = {
+      id: 'q', kind: 'question', group: 'question', status: 'open', projectId: project.id, ticketId: null, ticketKey: null,
+      ticketTitle: null, attemptId: null, sessionId: 'sess', runId: null, stepId: null, personaId: null, personaName: null,
+      title: 'Which file?', body: { questions: [{ question: 'Which file?', choices: ['a.txt'] }] }, choices: [], resolution: null,
+      createdAt: 1, resolvedAt: null,
+    };
+    stubPhone();
+    stubWorkspaces({ 'GET /api/inbox': { items: [q], total: 1 }, 'POST /api/inbox/q/answer': {}, 'POST /api/notifications/read-all': undefined });
+    window.history.replaceState(null, '', '/inbox');
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Review all (1)' }));
+    expect(here()).toBe('/inbox/q');
+    const top = screen.getByRole('banner', { name: 'Top bar' });
+    expect(await within(top).findByText('Question · 1 of 1')).toBeInTheDocument();
+    await userEvent.click(within(top).getByRole('button', { name: 'Screen actions' }));
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Open session', 'Dismiss']);
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(await screen.findByRole('button', { name: 'a.txt' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Decision' })).getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('All clear')).toBeInTheDocument();
+    await userEvent.click(within(top).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/inbox'));
+  });
+
   it("has the PM's New session, Notes and earlier sessions under ⋯", async () => {
     stubPhone();
     stubAlpha();

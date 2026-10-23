@@ -93,3 +93,22 @@ export function updateSelection(id: string): string {
 export function selectedUpdate(selection: string | null): string | null {
   return selection?.startsWith(UPDATE) ? selection.slice(UPDATE.length) : null;
 }
+
+/** An item's name on its own screen: its kind, or Accept for a gate under Ready to accept. */
+export function itemLabel(item: InboxItem): string {
+  return item.group === 'accept' ? 'Accept' : KIND_LABEL[item.kind];
+}
+
+/** Where `id` stands in list order: "Approval · 2 of 4" (phones, PDT-117). */
+export function triageTitle(items: InboxItem[], id: string): string | null {
+  const order = grouped(items).flatMap((g) => g.items);
+  const at = order.findIndex((i) => i.id === id);
+  return at < 0 ? null : `${itemLabel(order[at])} · ${at + 1} of ${order.length}`;
+}
+
+/** A choice that merges the ticket's work: Merge, and the primary choice of a gate under Ready to accept. */
+export function merges(item: InboxItem, choice: string): boolean {
+  if (item.kind !== 'gate') return false;
+  if (/^merge\b/i.test(choice)) return true;
+  return item.group === 'accept' && item.choices.find((c) => c.id === choice)?.primary === true;
+}
