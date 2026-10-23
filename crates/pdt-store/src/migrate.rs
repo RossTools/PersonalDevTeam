@@ -66,7 +66,32 @@ pub async fn backup_if_pending(pool: &SqlitePool, migrator: &Migrator, backup_di
     std::fs::create_dir_all(backup_dir)?;
     let file = backup_file(backup_dir, jiff::Timestamp::now().as_millisecond());
     sqlx::query("VACUUM INTO ?").bind(file.to_string_lossy().into_owned()).execute(pool).await?;
+    prune_backups(backup_dir, KEEP_BACKUPS);
     Ok(())
+}
+
+/// How many pre-migration backups are kept (the newest).
+pub(crate) const KEEP_BACKUPS: usize = 3;
+
+/// Deletes all but the newest `keep` backups (`pdt-<ms>[-<n>].db`); other files are left alone. Never fails.
+pub(crate) fn prune_backups(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut backups: Vec<((i64, u32), std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| backup_order(&e.file_name().to_string_lossy()).map(|k| (k, e.path())))
+        .collect();
+    backups.sort_by_key(|(k, _)| std::cmp::Reverse(*k));
+    for (_, path) in backups.into_iter().skip(keep) {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// The stamp and counter of a backup's name (`pdt-<ms>.db` is `(ms, 0)`, `pdt-<ms>-<n>.db` is `(ms, n)`).
+fn backup_order(name: &str) -> Option<(i64, u32)> {
+    let stem = name.strip_prefix("pdt-")?.strip_suffix(".db")?;
+    let (ms, n) = stem.split_once('-').unwrap_or((stem, "0"));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(ms) && digits(n)).then(|| Some((ms.parse().ok()?, n.parse().ok()?))).flatten()
 }
 
 /// `pdt-<ms>.db`, or `pdt-<ms>-<n>.db` when that name is taken.
@@ -219,6 +244,54 @@ mod tests {
         assert!(later.is_some());
         s.close().await;
         assert_eq!(backups(&backup_dir), 1, "backed up before the new migration");
+    }
+
+    #[test]
+    fn only_the_newest_backups_are_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let names = ["pdt-9.db", "pdt-10.db", "pdt-10-1.db", "pdt-11.db", "pdt-8.db", "notes.txt", "pdt-x.db"];
+        for n in names {
+            std::fs::write(tmp.path().join(n), "").unwrap();
+        }
+        super::prune_backups(tmp.path(), 3);
+        let mut left: Vec<String> =
+            std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        assert_eq!(left, ["notes.txt", "pdt-10-1.db", "pdt-10.db", "pdt-11.db", "pdt-x.db"]);
+    }
+
+    #[tokio::test]
+    async fn a_backup_prunes_the_old_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("t.db");
+        let backup_dir = tmp.path().join("backups");
+        for stamp in 1..=5 {
+            write(&backup_dir, &format!("pdt-{stamp}.db"), "");
+        }
+        let m1 = tmp.path().join("m1");
+        write(&m1, "0001_a.sql", "CREATE TABLE a (x INTEGER);");
+        let m2 = tmp.path().join("m2");
+        write(&m2, "0001_a.sql", "CREATE TABLE a (x INTEGER);");
+        write(&m2, "0002_b.sql", "CREATE TABLE b (y INTEGER);");
+        Store::open_with(&db, &Migrator::new(m1.as_path()).await.unwrap(), &backup_dir).await.unwrap().close().await;
+        Store::open_with(&db, &Migrator::new(m2.as_path()).await.unwrap(), &backup_dir).await.unwrap().close().await;
+        assert_eq!(backups(&backup_dir), super::KEEP_BACKUPS);
+        assert!(!backup_dir.join("pdt-3.db").exists(), "the oldest went");
+        assert!(backup_dir.join("pdt-5.db").exists());
+    }
+
+    #[tokio::test]
+    async fn a_checkpoint_empties_the_wal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("t.db");
+        let s = Store::open(&db).await.unwrap();
+        let mode: i64 = sqlx::query_scalar("PRAGMA synchronous").fetch_one(&s.pool).await.unwrap();
+        assert_eq!(mode, 1, "NORMAL");
+        let wal = tmp.path().join("t.db-wal");
+        assert!(std::fs::metadata(&wal).unwrap().len() > 0, "the migrations went through the WAL");
+        assert!(s.checkpoint().await.unwrap());
+        assert_eq!(std::fs::metadata(&wal).unwrap().len(), 0);
+        s.close().await;
     }
 
     #[test]

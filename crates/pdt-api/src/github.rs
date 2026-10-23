@@ -26,7 +26,7 @@ pub(crate) struct PrWatch {
     /// The PR of each attempt, as last seen (ended attempts keep their last look; one last seen open is read again for
     /// an hour after the attempt ended).
     by_attempt: HashMap<String, PullRequestStatus>,
-    /// The failed jobs of each run attempt already asked for.
+    /// The failed jobs of each run attempt already asked for, while a watched PR still shows that run.
     jobs: HashMap<(u64, u32), Vec<String>>,
     /// The last error per project, so a broken `gh` is logged once rather than every minute.
     errors: HashMap<String, String>,
@@ -174,6 +174,20 @@ fn watch(st: &AppState) -> std::sync::MutexGuard<'_, PrWatch> {
     st.pr_watch.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+impl PrWatch {
+    /// Forgets the failed jobs of runs no watched PR shows any more (a new push, a merged PR), so `jobs` holds only
+    /// what the next read can use.
+    fn forget_unseen_jobs(&mut self) {
+        let shown: HashSet<(u64, u32)> = self
+            .by_attempt
+            .values()
+            .flat_map(|p| p.ci.iter().chain(p.queue_ci.iter()))
+            .flat_map(|c| c.runs.iter().map(|r| (r.id, r.attempt)))
+            .collect();
+        self.jobs.retain(|k, _| shown.contains(k));
+    }
+}
+
 fn decorate_attempt(w: &PrWatch, a: &mut AttemptSummary) {
     a.pr = w.by_attempt.get(&a.id).cloned();
     let bk = w.buildkite.get(&a.id).cloned();
@@ -241,6 +255,7 @@ pub async fn refresh_prs(st: &AppState) {
         }
     };
     let active_ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
+    watch(st).forget_unseen_jobs();
     let open: Vec<String> = watch(st)
         .by_attempt
         .iter()
@@ -622,6 +637,39 @@ mod tests {
             created_at: format!("2026-10-18T00:00:{id:02}Z"),
             failed_jobs: vec![],
         }
+    }
+
+    #[test]
+    fn only_the_jobs_of_runs_a_watched_pr_shows_are_kept() {
+        let mut w = PrWatch::default();
+        let mut failed = run(1, "b", "h", CiState::Failed);
+        failed.failed_jobs = vec!["test".into()];
+        let status = |runs: Vec<CiRun>| PullRequestStatus {
+            number: 1,
+            url: String::new(),
+            title: String::new(),
+            state: PrState::Open,
+            draft: false,
+            base_branch: "main".into(),
+            head_sha: "h".into(),
+            mergeable: Mergeable::Mergeable,
+            behind: false,
+            auto_merge: false,
+            in_merge_queue: false,
+            queue_position: None,
+            ci: CiStatus::of(&runs, "h"),
+            queue_ci: None,
+            queue_removal: None,
+            checked_at: 0,
+        };
+        w.by_attempt.insert("a".into(), status(vec![failed.clone()]));
+        w.jobs.insert((1, 1), vec!["test".into()]);
+        w.jobs.insert((7, 1), vec!["old push".into()]);
+        w.forget_unseen_jobs();
+        assert_eq!(w.jobs.keys().collect::<Vec<_>>(), [&(1, 1)]);
+        w.by_attempt.insert("a".into(), status(vec![run(2, "b", "h", CiState::Passed)]));
+        w.forget_unseen_jobs();
+        assert!(w.jobs.is_empty(), "the next push's run passed");
     }
 
     #[test]

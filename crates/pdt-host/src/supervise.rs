@@ -97,6 +97,7 @@ pub fn acquire_lock(path: &Path, within: Duration) -> std::io::Result<Option<Fil
 pub fn spawn_pdtd(cfg: &HostConfig) -> std::io::Result<Child> {
     let launch_log = cfg.data_dir.join("logs").join(format!("{}-launch.log", pdt_core::brand::DAEMON_BIN));
     let _ = std::fs::create_dir_all(launch_log.parent().expect("logs dir"));
+    crate::log::roll(&launch_log, crate::log::MAX_LOG_BYTES);
     let out = File::options().create(true).append(true).open(&launch_log)?;
     let mut cmd = Command::new(cfg.pdtd_path());
     for (k, _) in std::env::vars_os() {

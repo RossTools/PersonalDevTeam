@@ -195,6 +195,15 @@ impl Store {
         Ok(r.rows_affected())
     }
 
+    /// Deletes items resolved or closed before `before` (open ones stay however old). Returns how many went.
+    pub async fn prune_inbox_items(&self, before: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query("DELETE FROM inbox_items WHERE status != 'open' AND resolved_at < ?")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+
     /// Lets go of sessions that no longer exist (PDT-93): their open questions close, as nothing can answer them,
     /// and no item points at them any more (so "Open session" is never offered for one). Runs when a session is
     /// deleted and when the store opens (items left by sessions deleted before this).
@@ -385,6 +394,22 @@ mod tests {
         store.open_inbox_item(&item("i3", Some("s1"), 7)).await.unwrap();
         assert_eq!(store.close_inbox_items(None, Some("r1"), 8).await.unwrap(), 2, "the run's items close");
         assert!(store.open_inbox_items(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn old_ended_items_are_pruned_and_open_ones_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        store.open_inbox_item(&item("done", Some("s1"), 1)).await.unwrap();
+        store.open_inbox_item(&item("closed", Some("s2"), 1)).await.unwrap();
+        store.open_inbox_item(&item("open", Some("s3"), 1)).await.unwrap();
+        store.end_inbox_item("done", InboxStatus::Resolved, &json!({}), 10).await.unwrap();
+        store.close_inbox_items(Some("s2"), None, 20).await.unwrap();
+        assert_eq!(store.prune_inbox_items(10).await.unwrap(), 0, "resolved at `before`: kept");
+        assert_eq!(store.prune_inbox_items(15).await.unwrap(), 1);
+        assert!(store.get_inbox_item("done").await.unwrap().is_none());
+        assert_eq!(store.prune_inbox_items(1000).await.unwrap(), 1);
+        assert_eq!(store.open_inbox_items(None).await.unwrap().len(), 1, "the open one stays");
     }
 
     #[tokio::test]

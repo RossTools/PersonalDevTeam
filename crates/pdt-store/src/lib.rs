@@ -18,7 +18,7 @@ mod worktrees;
 
 pub use error::StoreError;
 pub use event_log::{EVENT_RETENTION_MS, EventFilter};
-pub use events::NewEvent;
+pub use events::{NewEvent, RAW_RETENTION_MS};
 pub use host::ProjectSettings;
 pub use notifications::NotificationFilter;
 pub use pm::{NoteFilter, PmSessionRow};
@@ -29,7 +29,7 @@ pub use workspaces::DeleteWorkspace;
 
 use pdt_core::project::Project;
 use sqlx::migrate::Migrator;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
 use std::path::Path;
 
 #[derive(Clone)]
@@ -81,6 +81,9 @@ impl Store {
             .filename(db_path)
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
+            // NORMAL is safe under WAL (a power cut can lose the last commits, never corrupt the file) and saves an
+            // fsync per commit.
+            .synchronous(SqliteSynchronous::Normal)
             .foreign_keys(true);
         // No ping before handing out an idle connection: a local SQLite connection doesn't go stale, and on Windows
         // that ping could stall a checkout indefinitely under load (with idle connections in the pool), hanging the
@@ -89,6 +92,15 @@ impl Store {
         migrate::backup_if_pending(&pool, migrator, backup_dir).await?;
         migrator.run(&pool).await?;
         Ok(Store { pool, host_defaults: Default::default() })
+    }
+
+    /// Copies the WAL into the database and empties it (`wal_checkpoint(TRUNCATE)`). SQLite's own checkpoints can
+    /// keep failing to reset the WAL while readers come and go, so pdtd runs this now and then. Returns whether it
+    /// completed (false when a reader or writer was in the way; the next one tries again).
+    pub async fn checkpoint(&self) -> Result<bool, StoreError> {
+        let (busy, _, _): (i64, i64, i64) =
+            sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)").fetch_one(&self.pool).await?;
+        Ok(busy == 0)
     }
 
     /// Host settings to report until some are stored (e.g. `HostSettings::for_profile`).

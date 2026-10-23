@@ -7,6 +7,9 @@ use sqlx::sqlite::SqliteRow;
 
 const COLUMNS: &str = "seq, pos, ts, item_id, turn_id, body";
 
+/// How long an event's protocol frames (`raw`, read only by the debugging route) are kept; the parsed body stays.
+pub const RAW_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
 fn to_event(r: &SqliteRow) -> Result<ConversationEvent, StoreError> {
     let body: String = r.try_get("body")?;
     let event: AgentEvent =
@@ -167,6 +170,15 @@ impl Store {
         Ok(raw.flatten())
     }
 
+    /// Drops the protocol frames of events last written before `before` (the events stay). Returns how many.
+    pub async fn prune_session_event_raw(&self, before: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query("UPDATE session_events SET raw = NULL WHERE raw IS NOT NULL AND ts < ?")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+
     /// The agent turn ids the log has (for importing only the turns it lacks).
     pub async fn session_turn_ids(&self, session_id: &str) -> Result<std::collections::HashSet<String>, StoreError> {
         let rows: Vec<(String,)> =
@@ -268,6 +280,11 @@ mod tests {
         assert_eq!(store.last_session_event_seq("s1").await.unwrap(), 3);
         assert_eq!(store.last_session_event_seq("nope").await.unwrap(), 0);
         assert_eq!(store.session_event_raw("s1", 3).await.unwrap().as_deref(), Some("{}"));
+        assert_eq!(store.prune_session_event_raw(5).await.unwrap(), 0, "frames written at `before` stay");
+        assert_eq!(store.prune_session_event_raw(6).await.unwrap(), 2);
+        assert_eq!(store.session_event_raw("s1", 3).await.unwrap(), None, "the frames go");
+        assert_eq!(store.list_session_events("s1", 0, 100).await.unwrap().len(), 2, "the events stay");
+        assert_eq!(store.prune_session_event_raw(6).await.unwrap(), 0);
         store.set_session_model("s1", None).await.unwrap();
         store.set_session_permission_mode("s1", pdt_core::conversation::PermissionMode::Bypass).await.unwrap();
         let back = store.get_session("s1").await.unwrap().unwrap();

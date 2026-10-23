@@ -696,7 +696,9 @@ async fn a_merge_refused_for_a_conflict_is_fixed_reviewed_and_merged() {
     until_done(&env, &t).await;
     assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass", "submitted", "approved"]);
     assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "nobody was asked");
-    assert_eq!(std::fs::read_to_string(env.repo.join("a.txt")).unwrap(), "branch\n", "merged into main");
+    // Git on Windows may check the merged file out with CRLF.
+    let merged = std::fs::read_to_string(env.repo.join("a.txt")).unwrap().replace("\r\n", "\n");
+    assert_eq!(merged, "branch\n", "merged into main");
 }
 
 fn pull_request(mergeable: Mergeable) -> PullRequest {

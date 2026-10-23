@@ -253,6 +253,8 @@ of a session's waiting messages in one message; no running agent session → `un
 session (an Inbox answer, a Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart),
 reopening it as typing would. `dedupe` is per attempt (also
 against `pr` timeline keys from before the event log). Resolving writes the timeline record and resumes the step.
+Told and untold messages are deleted 30 days after they were resolved (`maintain_workflows`), except an active
+attempt's, whose `dedupe` keys still count.
 
 ## API
 
@@ -566,7 +568,8 @@ deleted (`409 persona_in_use`).
 `inbox_items` (pdt-store `inbox.rs`, pdt-api `inbox.rs`): `question` (`ask_user`), `gate` (a waiting `gate` node;
 group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c),
 `timed_out` (group Stalled, PDT-123); one
-open item per step and kind. Approvals are
+open item per step and kind. Resolved and closed items are deleted 30 days after they ended (`maintain_workflows`);
+open ones stay however old. Approvals are
 not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
 session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
 accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
