@@ -49,10 +49,12 @@ import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
+import { PhoneInboxList } from '../inbox/PhoneInboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
 import { noteOf, usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
+import { triageTitle } from '../inbox/model';
 import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
 import { useReadAllUpdates, useUpdates } from '../notifications/queries';
@@ -115,6 +117,7 @@ const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ d
 const WorkflowsView = lazy(() => import('../workflows/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
 const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
 const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default: m.InboxView })));
+const PhoneInboxItem = lazy(() => import('../inbox/PhoneInbox').then((m) => ({ default: m.PhoneInboxItem })));
 const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
 const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
 
@@ -181,6 +184,8 @@ export function AppShell() {
   const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
   const autoPick = phone ? inboxId !== null && !inboxShown : !inboxShown;
   const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: autoPick }), [autoPick]);
+  // A phone's item screen moves between items in place, so Back returns to the list.
+  const moveInbox = useCallback((itemId: string) => go({ view: 'inbox', itemId }, { replace: true }), []);
   const plusRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
@@ -634,6 +639,7 @@ export function AppShell() {
       <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
     </Button>
   ) : view === 'tickets' && detail ? peekRef ?? label
+  : view === 'inbox' && detail && inboxId ? (triageTitle(inboxItems, inboxId) ?? label)
   : view === 'sessions' && detail && renamingWorkspace && shownWorkspace ? (
     <InlineRename
       label="Workspace name"
@@ -781,6 +787,10 @@ export function AppShell() {
           <div className="flex-1 flex flex-col min-h-0">
             {phone && view === 'sessions' && !phoneList && overviewOpen ? (
               <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
+            ) : phoneList && view === 'inbox' ? (
+              <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
+                onOpen={(id) => go({ view: 'inbox', itemId: id })}
+                onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
             ) : phoneList ? (
               <div className="flex-1 overflow-auto px-1">
                 {list}
@@ -790,6 +800,9 @@ export function AppShell() {
                     onCreated={(id) => { setCreatingWorkflow(null); setWorkflowTarget({ kind: 'workflow', id }); }} /></Suspense>
                 )}
               </div>
+            ) : view === 'inbox' && phone && inboxId ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PhoneInboxItem items={inboxItems} updates={updates.data?.items ?? []}
+                itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'inbox' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'pm' ? (
