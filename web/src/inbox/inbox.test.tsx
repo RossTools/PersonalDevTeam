@@ -63,7 +63,7 @@ describe('inbox', () => {
     renderWithQuery(<InboxView items={[gate, stalled]} selectedId="g" onSelect={onSelect} />);
     expect(screen.getByRole('button', { name: /ship/ })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Enter' });
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'ship' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'ship' }));
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('st'));
   });
 
@@ -75,7 +75,7 @@ describe('inbox', () => {
     await userEvent.click(screen.getByRole('button', { name: 'a.txt' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Answer 2' }), 'Yes');
     await userEvent.click(send);
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ answers: ['a.txt', 'Yes'] }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ answers: ['a.txt', 'Yes'] }));
   });
 
   it('nudges a stalled step, or takes it over with an outcome', async () => {
@@ -84,10 +84,10 @@ describe('inbox', () => {
     expect(screen.getByText(/Its turn ended without an outcome/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
     await userEvent.click(screen.getByRole('button', { name: 'changes_requested' }));
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'outcome:changes_requested' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'outcome:changes_requested' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Nudge message (optional)' }), 'Finish up.');
     await userEvent.click(screen.getByRole('button', { name: /Nudge/ }));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')[1]?.body).toEqual({ choice: 'nudge', text: 'Finish up.' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'))[1]?.body).toEqual({ choice: 'nudge', text: 'Finish up.' }));
   });
 
   it('moves with j and k, opens the ticket with o and dismisses with e', async () => {
@@ -121,7 +121,7 @@ describe('inbox', () => {
     expect(screen.getByText('diff')).toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'What you did (optional)' }), 'Looks right');
     await userEvent.click(screen.getByRole('button', { name: 'changes_requested' }));
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'outcome:changes_requested', text: 'Looks right' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'outcome:changes_requested', text: 'Looks right' }));
   });
 
   it('opens the ticket\'s changes and runs its branch next to its tab in its own workspace', async () => {
@@ -167,11 +167,43 @@ describe('inbox', () => {
     expect(screen.getByText(/goes on the ticket as your comment/)).toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'Note (optional)' }), 'The button is the wrong colour');
     await userEvent.click(screen.getByRole('button', { name: 'reject' }));
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ choice: 'reject', text: 'The button is the wrong colour' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'reject', text: 'The button is the wrong colour' }));
   });
 
   it('says when nothing waits', () => {
     renderWithQuery(<InboxView items={[]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByText(/Nothing waits on you/)).toBeInTheDocument();
+  });
+});
+
+describe('inbox sections (PDT-108)', () => {
+  it('lists Needs you, then Updates with unread in bold, and marks them all read', async () => {
+    const { notification } = await import('../notifications/fixtures');
+    const waiting = item('session:s1', { kind: 'session', group: 'session', sessionId: 's1', title: 'Fix the build', ticketKey: null });
+    const onReadAll = vi.fn();
+    const onSelect = vi.fn();
+    renderWithQuery(
+      <InboxList items={[waiting]} updates={[notification('u1', { title: 'PDT-7 merged' }), notification('u2', { title: 'Old', readAt: 1 })]}
+        selectedId={null} onSelect={onSelect} onReadAll={onReadAll} onSettings={() => {}} />,
+    );
+    expect(screen.getByRole('heading', { name: 'Needs you' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Sessions waiting' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Updates' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
+    expect(onReadAll).toHaveBeenCalled();
+    await userEvent.click(screen.getByText('PDT-7 merged'));
+    expect(onSelect).toHaveBeenCalledWith('update:u1');
+  });
+
+  it('shows an Update, reads it and opens what it is about', async () => {
+    const { notification } = await import('../notifications/fixtures');
+    const calls = stubApi({ 'POST /api/notifications/u1/read': null, 'GET /api/notifications': { items: [], unreadUpdates: 0 }, 'GET /api/inbox': { items: [], total: 0 } });
+    const onOpenTarget = vi.fn();
+    const u = notification('u1', { title: 'CI failed on PDT-7 #12', body: 'Failed: test (linux)', target: { kind: 'ticket', id: 't', projectId: 'p' } });
+    renderWithQuery(<InboxView items={[]} updates={[u]} selectedId="update:u1" onSelect={() => {}} onOpenTarget={onOpenTarget} />);
+    expect(screen.getByText('Failed: test (linux)')).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/notifications/u1/read')).toBe(true));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
+    expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'ticket', id: 't', projectId: 'p' });
   });
 });

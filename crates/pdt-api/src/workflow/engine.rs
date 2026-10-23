@@ -259,6 +259,9 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
     run.ended_at = Some(now);
     st.store.update_workflow_run(run).await.map_err(err)?;
     tracing::info!(workflow = %run.workflow_name, run = %run.id, status = status.as_str(), error = ?run.error, "workflow run ended");
+    if status == RunStatus::Failed {
+        crate::notifications::run_failed(st, run, run.error.as_deref()).await;
+    }
     if let Some(pid) = &run.parent_step_id
         && let Some(parent) = st.store.get_step(pid).await.map_err(err)?
         && parent.status == StepStatus::Waiting

@@ -23,6 +23,8 @@ pub enum InboxKind {
     Approval,
     /// A manual step (Phase 7c): the user does the stage's work and picks its outcome.
     Manual,
+    /// A session waiting on a permission prompt or a question (not stored: its `session.needs_you` notification).
+    Session,
 }
 
 impl InboxKind {
@@ -34,10 +36,11 @@ impl InboxKind {
             InboxKind::LoopLimit => "loop_limit",
             InboxKind::Approval => "approval",
             InboxKind::Manual => "manual",
+            InboxKind::Session => "session",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [Self::Question, Self::Gate, Self::Stalled, Self::LoopLimit, Self::Approval, Self::Manual]
+        [Self::Question, Self::Gate, Self::Stalled, Self::LoopLimit, Self::Approval, Self::Manual, Self::Session]
             .into_iter()
             .find(|k| k.as_str() == s)
     }
@@ -50,6 +53,8 @@ impl InboxKind {
 pub enum InboxGroup {
     Question,
     Approval,
+    /// Sessions waiting on a permission prompt or a question.
+    Session,
     Stalled,
     LoopLimit,
     Gate,
@@ -58,9 +63,10 @@ pub enum InboxGroup {
 }
 
 impl InboxGroup {
-    pub const ALL: [InboxGroup; 6] = [
+    pub const ALL: [InboxGroup; 7] = [
         InboxGroup::Question,
         InboxGroup::Approval,
+        InboxGroup::Session,
         InboxGroup::Stalled,
         InboxGroup::LoopLimit,
         InboxGroup::Gate,
@@ -70,6 +76,7 @@ impl InboxGroup {
         match self {
             InboxGroup::Question => "question",
             InboxGroup::Approval => "approval",
+            InboxGroup::Session => "session",
             InboxGroup::Stalled => "stalled",
             InboxGroup::LoopLimit => "loop_limit",
             InboxGroup::Gate => "gate",
@@ -83,6 +90,7 @@ impl InboxGroup {
         match self {
             InboxGroup::Question => "Questions",
             InboxGroup::Approval => "Approvals",
+            InboxGroup::Session => "Sessions waiting",
             InboxGroup::Stalled => "Stalled",
             InboxGroup::LoopLimit => "Loop limit",
             InboxGroup::Gate => "Gates",
@@ -198,7 +206,7 @@ pub struct InboxItem {
 #[ts(export)]
 pub struct InboxList {
     pub items: Vec<InboxItem>,
-    /// Open items.
+    /// Open items, sessions waiting included: the Needs-you count the rail badge and the page title show.
     pub total: u32,
 }
 

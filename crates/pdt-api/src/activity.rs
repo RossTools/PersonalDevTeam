@@ -158,6 +158,7 @@ async fn apply_ordered(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiEr
     };
     if prev != now {
         st.store.update_activity(id, Some(now), needs_attention(prev, now).then(now_ms)).await?;
+        crate::notifications::kick(st);
         if now == Activity::Idle {
             // A terminal agent's turn ended: an agent step running in it may have stalled (Phase 7b spec §4.4).
             let (st2, id) = (st.clone(), id.to_string());
@@ -422,9 +423,13 @@ async fn remember_devin_conversation(st: &AppState, s: &Session, conversation: &
 }
 
 pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    if !st.store.mark_viewed(&id, now_ms()).await? {
+    let now = now_ms();
+    if !st.store.mark_viewed(&id, now).await? {
         return Err(ApiError::not_found("session"));
     }
+    // Viewing a session reads its notifications; the sync clears the ones its state no longer calls for.
+    st.store.read_notifications(None, Some(&id), None, now).await?;
+    crate::notifications::kick(&st);
     Ok(StatusCode::NO_CONTENT)
 }
 

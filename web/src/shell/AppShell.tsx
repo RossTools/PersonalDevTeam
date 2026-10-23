@@ -50,7 +50,10 @@ import { PmList } from '../pm/PmList';
 import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
-import { useWorkflowNotifications } from '../common/useWorkflowNotifications';
+import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
+import { useReadAllUpdates, useUpdates } from '../notifications/queries';
+import { useNotificationStream } from '../notifications/useNotificationStream';
+import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { VIEWS, type ViewId } from './views';
 
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
@@ -63,10 +66,13 @@ const LIST_NAME: Record<ViewId, string> = {
 
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
+/** The Settings page of notifications. */
+const NOTIFICATIONS = 'notifications';
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
-/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n sessions need the user; [dev] on a dev instance. */
+/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n things need the user (the Inbox's Needs you); [dev]
+ * on a dev instance. */
 function useAttentionTitle(count: number) {
   useDevTitle(count);
   useReloadOnNewBuild();
@@ -138,7 +144,6 @@ export function AppShell() {
       if (hit) openTicket(hit);
     });
   }, [openTicket]);
-  useWorkflowNotifications(openTicketByKey);
   const pmSessions = pm.data?.sessions;
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     // A PM session has no tab: the PM view shows it.
@@ -290,7 +295,7 @@ export function AppShell() {
     }
   });
 
-  useAttentionTitle(ws.allInfos.filter((i) => i.activity === 'needs_you').length);
+  useAttentionTitle(inbox.data?.total ?? 0);
 
   const label = VIEWS.find((v) => v.id === view)!.label;
   const current = ws.currentInfo;
@@ -317,6 +322,25 @@ export function AppShell() {
     setView('settings');
     setSheetOpen(false);
   };
+
+  // Notifications (PDT-108): the Inbox's Updates, the stream's toasts and desktop notifications, and where a click goes.
+  const updates = useUpdates();
+  const readAllUpdates = useReadAllUpdates();
+  const openTarget = useCallback((t: NotificationTarget) => {
+    switch (t.kind) {
+      case 'session': openSession({ id: t.id, projectId: t.projectId }); break;
+      case 'ticket': openTicket({ id: t.id, projectId: t.projectId }); break;
+      case 'ticket_key': openTicketByKey(t.key); break;
+      case 'inbox': setInboxId(t.id); setView('inbox'); break;
+      case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); setView('workflows'); break;
+      case 'url': window.open(t.url, '_blank', 'noopener'); break;
+      case 'none': break;
+    }
+  }, [openSession, openTicket, openTicketByKey]);
+  const onScreenSession = view === 'sessions' && current?.item.kind === 'session' ? current.item.id : null;
+  const onScreenInbox = view === 'inbox' ? inboxId : null;
+  const onScreen = useMemo(() => ({ session: onScreenSession, inbox: onScreenInbox }), [onScreenSession, onScreenInbox]);
+  useNotificationStream(openTarget, onScreen);
 
   // The palette's items, built only while it is open (the screen re-renders every 2 s).
   const place: Place | null = current
@@ -391,7 +415,9 @@ export function AppShell() {
       />
     </>
   ) : view === 'inbox' ? (
-    <InboxList items={inboxItems} selectedId={inboxId} loading={inbox.isLoading} onSelect={(id) => { setInboxId(id); setSheetOpen(false); }} />
+    <InboxList items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} loading={inbox.isLoading}
+      onSelect={(id) => { setInboxId(id); setSheetOpen(false); }}
+      onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
   ) : view === 'pm' ? (
     <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
   ) : view === 'personas' ? (
@@ -410,8 +436,9 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS ? CONNECTIONS : null)}>
+      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS || id === NOTIFICATIONS ? id : null)}>
         <ListRow id="host" title="This host" current={settingsProjectId === null} />
+        <ListRow id={NOTIFICATIONS} title="Notifications" current={settingsProjectId === NOTIFICATIONS} />
         <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
       </List>
       <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
@@ -443,6 +470,7 @@ export function AppShell() {
         onSearch={phone ? () => setPaletteOpen(true) : undefined}
         top={phone ? undefined : <InstanceBadge stacked />}
         counts={{ inbox: inbox.data?.total ?? 0 }}
+        dots={{ inbox: (updates.data?.unreadUpdates ?? 0) > 0 }}
       />
       {phone ? (
         <Sheet side="left" title={LIST_NAME[view]} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
@@ -520,7 +548,7 @@ export function AppShell() {
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             {view === 'inbox' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} selectedId={inboxId} onSelect={setInboxId} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'pm' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
             ) : view === 'personas' ? (
@@ -533,7 +561,8 @@ export function AppShell() {
               <FileViewer state={folder} />
             ) : view === 'settings' ? (
               settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} />
-                : settingsProjectId === CONNECTIONS ? <ConnectionsPage /> : <HostSettingsPage />
+                : settingsProjectId === CONNECTIONS ? <ConnectionsPage />
+                  : settingsProjectId === NOTIFICATIONS ? <NotificationSettingsPage /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : ws.tab?.worktreeId ? (

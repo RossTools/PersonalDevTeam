@@ -16,6 +16,7 @@ pub mod instance;
 pub mod jira;
 pub mod links;
 pub mod mcp;
+pub mod notification;
 pub mod overlap;
 pub mod parts;
 pub mod persona;

@@ -192,6 +192,29 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(events[1]["data"]["notice"], "conflict");
     assert_eq!(events[1]["data"]["told"], false);
+
+    // Both are Updates in the Inbox (PDT-108); fixing the conflict and CI passing clear them.
+    let updates = |env: &Env| {
+        let app = env.app.clone();
+        async move {
+            let (_, v) = call(&app, "GET", "/api/notifications?section=updates", None).await;
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|n| n["clearedAt"].is_null())
+                .map(|n| n["kind"].clone())
+                .collect::<Vec<_>>()
+        }
+    };
+    let live = updates(&env).await;
+    assert!(live.contains(&json!("pr.ci_failed")) && live.contains(&json!("pr.conflict")), "{live:?}");
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::sync_notifications(&env.state).await;
+    let live = updates(&env).await;
+    assert!(!live.contains(&json!("pr.ci_failed")) && !live.contains(&json!("pr.conflict")), "{live:?}");
     env.state.ptys.shutdown().await;
 }
 

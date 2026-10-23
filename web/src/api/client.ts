@@ -100,6 +100,11 @@ import type { WorkflowPatch } from './gen/WorkflowPatch';
 import type { WorkflowRun } from './gen/WorkflowRun';
 import type { InboxAnswer } from './gen/InboxAnswer';
 import type { InboxList } from './gen/InboxList';
+import type { KindSetting } from './gen/KindSetting';
+import type { NotificationList } from './gen/NotificationList';
+import type { NotificationSection } from './gen/NotificationSection';
+import type { ReadAll } from './gen/ReadAll';
+import type { Show } from './gen/Show';
 import type { NewPersona } from './gen/NewPersona';
 import type { Persona } from './gen/Persona';
 import type { PersonaDiff } from './gen/PersonaDiff';
@@ -393,6 +398,13 @@ export const api = {
   answerInbox: (id: string, a: InboxAnswer) =>
     request<Record<string, unknown>>(`/api/inbox/${enc(id)}/answer`, { method: 'POST', body: JSON.stringify(a) }),
   dismissInbox: (id: string) => request<void>(`/api/inbox/${enc(id)}/dismiss`, { method: 'POST' }),
+  notifications: (q: { section?: NotificationSection; project?: string; unread?: boolean; limit?: number; before?: number } = {}) =>
+    request<NotificationList>(`/api/notifications${queryString(q)}`),
+  readNotification: (id: string) => request<void>(`/api/notifications/${enc(id)}/read`, { method: 'POST' }),
+  readNotifications: (r: ReadAll) => request<void>('/api/notifications/read-all', { method: 'POST', body: JSON.stringify(r) }),
+  notificationSettings: () => request<KindSetting[]>('/api/notifications/settings'),
+  setNotificationSettings: (changes: Record<string, Show | null>) =>
+    request<KindSetting[]>('/api/notifications/settings', { method: 'PATCH', body: JSON.stringify(changes) }),
   listPersonas: () => request<Persona[]>('/api/personas'),
   personaTools: () => request<PersonaTool[]>('/api/personas/tools'),
   createPersona: (p: NewPersona) => request<Persona>('/api/personas', { method: 'POST', body: JSON.stringify(p) }),
