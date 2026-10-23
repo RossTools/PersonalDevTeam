@@ -222,10 +222,26 @@ secret as a bearer token); without `transport`, a URL and no command means `http
 
 ## Engine
 
-- `run_workflows` (pdtd every 2 s; tests call it; serialized by `AppState.engine_lock`): installs the built-ins once,
+- `run_workflows` (pdtd every 2 s; tests call it): installs the built-ins once,
   emits due schedules ("Sensors and webhooks"), matches unprocessed events to enabled workflows' triggers (scope, `projects`, `where`) and starts a run per match
   unless its run key (default `<node>:<event id>`) already ran, wakes steps waiting for that event, advances runnable
-  runs, delivers the outbox, and advances again.
+  runs, delivers the outbox, and advances again. Enabled workflows' parsed documents are cached in memory by
+  workflow, version and `updated_at` for the schedule and matching passes, and the steps waiting for events are read
+  once per batch of events.
+- Locks (PDT-128): `AppState.engine_lock` is held only around state changes: the tick's passes (schedules, events,
+  slots, outbox, sweep), claiming a step (`running`) and writing its result, and the commands (answer, resume, retry,
+  cancel, `submit_outcome`, `ask_user`, a turn's end, Inbox answers). A node's body (an HTTP request, a command,
+  `gh`, starting an agent session: actions and agent steps) runs outside it, holding only its run's lock
+  (`AppState.run_locks`, shared by the runs of one ticket, so those still go one at a time and one's checks see
+  what the other did); flow, gate, wait and condition kinds and `session.send` (quick, and waited on by the
+  engine's own passes) run under it. Runnable runs advance in their own tasks (a ticket's runs one after another in
+  one task), up to 16 tasks at once; a tick waits for them up to `engine_tick_wait` (pdtd: 1 s; tests: 10 min, so a
+  test's tick ends with its runs) and then goes on, and later ticks skip a run whose lock is held. So a hung step
+  holds up only its own ticket's runs: other runs, the outbox, timers and schedules go on. Commands on a run's steps
+  take its lock first (they never see a step half-run, e.g. an agent step whose session is starting), then the
+  engine lock; cancel takes only the engine lock, so it never waits for a hung step, whose result is dropped when it
+  comes (a step's result is written only while it is still `running` with the same attempt). Agent steps start one
+  at a time (`agent_step_start`), so runs side by side can't both take the host's last slot.
 - `workflow_runs` / `workflow_steps`: a run starts with its trigger's step; each step is written before and after it
   runs (`pending` → `running` → `succeeded` / `waiting` / `failed`), so after a restart a `running` step runs again
   and the rest continue. A step's input is its config with references filled in; its output feeds `{{steps.x}}`.

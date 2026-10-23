@@ -162,6 +162,13 @@ pub trait NodeKind: Send + Sync {
     fn default_timeout_ms(&self) -> u64 {
         5 * 60 * 1000
     }
+
+    /// Whether an action's body runs under the engine lock (PDT-128): for a quick one whose wait the engine's own
+    /// passes end (the outbox's delivery), so it is waiting before they look. Other actions and agent steps run
+    /// outside it; flow, gate, wait and condition kinds always run under it.
+    fn in_engine_lock(&self) -> bool {
+        false
+    }
 }
 
 /// Whether an event is in a workflow's scope: a project workflow's own project, any for a host one, none for a

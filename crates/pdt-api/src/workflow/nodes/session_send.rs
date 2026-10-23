@@ -72,6 +72,11 @@ impl NodeKind for SessionSend {
         Ok(())
     }
 
+    /// Its message may be delivered at once: the step is waiting by then.
+    fn in_engine_lock(&self) -> bool {
+        true
+    }
+
     fn default_timeout_ms(&self) -> u64 {
         30_000
     }
