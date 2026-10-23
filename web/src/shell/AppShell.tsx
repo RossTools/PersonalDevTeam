@@ -16,11 +16,12 @@ import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/pal
 import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
 import { newSession, type Choice } from '../sessions/newSession';
-import { ProjectPage } from '../projects/ProjectPage';
+import { PROJECT_SECTIONS, ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
-import { HostSettingsPage } from '../host/HostSettingsPage';
+import { HOST_SECTIONS, HostSettingsPage } from '../host/HostSettingsPage';
+import { sectionLabel } from '../common/SettingsScreens';
 import { ConnectionsPage } from '../connections/ConnectionsPage';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
@@ -403,7 +404,11 @@ export function AppShell() {
   const settingsProjectId = settingsProject?.id
     ?? (settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
   const section = settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
-  useScrollToSection(view === 'settings' ? section : null, settingsProjectId ?? '');
+  // On a phone a section is a screen of its own; on a desktop the page scrolls to it.
+  useScrollToSection(view === 'settings' && !phone ? section : null, settingsProjectId ?? '');
+  const showSection = (slug: string) => {
+    if (settingsPage.kind === 'host' || settingsPage.kind === 'project') go({ view: 'settings', page: { ...settingsPage, section: slug } });
+  };
   const currentProject = ws.projects.find((p) => p.id === current?.projectId) ?? null;
   const worktrees = useQuery({
     queryKey: ['worktrees', currentProject?.id ?? ''],
@@ -578,6 +583,12 @@ export function AppShell() {
             leading={<ProjectKey projectKey={p.key} />} />
         ))}
       </List>
+      {/* A phone's row-sized Add project, under the projects (the heading's ＋ is small for a thumb). */}
+      {phone && (
+        <List aria-label="Add" onAction={() => setAddingProject(true)}>
+          <ListRow id="add-project" title="Add project" leading={<Plus aria-hidden className="size-4 text-muted-foreground" />} />
+        </List>
+      )}
     </nav>
   );
   // The phone's screens (PDT-112): a view's top-level screen (its list, for most views) or a detail screen with ←.
@@ -594,8 +605,18 @@ export function AppShell() {
   : view === 'inbox' && detail && inboxId ? (triageTitle(inboxItems, inboxId) ?? label)
   : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label)
   : view === 'files' && detail && filesRoute?.path ? filesRoute.path.split('/').filter(Boolean).pop() ?? label
+  : view === 'settings' && detail ? settingsTitle()
   : view === 'pm' && detail ? (pmSelection === 'notes' ? 'Notes' : noteOf(pmSelection) ? 'Note' : pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
   : label;
+  function settingsTitle(): string {
+    switch (settingsPage.kind) {
+      case 'host': return (section && sectionLabel(HOST_SECTIONS, section)) || 'This host';
+      case 'project': return (section && sectionLabel(PROJECT_SECTIONS, section)) || (settingsProject?.name ?? settingsPage.key);
+      case 'connections': return 'Connections';
+      case 'notifications': return 'Notifications';
+      case 'index': return label;
+    }
+  }
   const shellActions = (): MenuEntry[] =>
     view === 'pm' ? [
       { label: 'New session…', onSelect: newPmSession },
@@ -758,10 +779,11 @@ export function AppShell() {
               phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} />
             ) : view === 'settings' ? (
               settingsPage.kind === 'project' ? (
-                settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => showProjectSettings(null)} />
+                settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => (phone ? go(viewRoute('settings'), { replace: true }) : showProjectSettings(null))}
+                  drill={phone} section={section} onSection={showSection} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
               ) : settingsPage.kind === 'connections' ? <ConnectionsPage />
-                : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage />
+                : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage drill={phone} section={section} onSection={showSection} />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : ws.tab?.worktreeId ? (

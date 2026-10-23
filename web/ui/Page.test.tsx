@@ -45,6 +45,23 @@ describe('Section', () => {
     expect(footer.className).toContain('border-t');
   });
 
+  it('a form footer with dirty is a sticky Save bar on a phone, shown only while something changed', () => {
+    const { rerender } = render(<Section label="Runs" dirty={false} footer={<button type="submit">Save</button>}><p>Ports</p></Section>);
+    const footer = () => screen.getByRole('region', { name: 'Runs' }).querySelector('[data-slot="section-footer"]')!;
+    expect(footer().className).toContain('max-md:sticky');
+    expect(footer().className).toContain('max-md:hidden');
+    rerender(<Section label="Runs" dirty footer={<button type="submit">Save</button>}><p>Ports</p></Section>);
+    expect(footer().className).toContain('max-md:sticky');
+    expect(footer().className).not.toContain('max-md:hidden');
+    // The card clips its corners without becoming the bar's scroller.
+    expect(screen.getByRole('region', { name: 'Runs' }).querySelector('[data-slot="section-card"]')!.className).toContain('overflow-clip');
+  });
+
+  it('a footer without dirty stays put', () => {
+    render(<Section label="Runs" footer={<button type="submit">Save</button>}><p>Ports</p></Section>);
+    expect(screen.getByRole('region', { name: 'Runs' }).querySelector('[data-slot="section-footer"]')!.className).not.toContain('sticky');
+  });
+
   it('danger variant has a red heading and border', () => {
     render(<Section label="Danger zone" danger><p>Remove project</p></Section>);
     const section = screen.getByRole('region', { name: 'Danger zone' });

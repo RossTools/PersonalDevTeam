@@ -66,13 +66,16 @@ Every settings page (host, project, and whatever comes next) is built the same w
 - **Saving (spec §6.1).** A switch or select saves at once and shows "Saved" beside it. Text fields belong to a
   form: the whole section is the form and its one Save goes in the `footer` (with "Saved" beside it), enabled only
   when dirty. A section saves only its own fields. A lone text field in a section of instant controls (a token, the
-  owner) may carry its Save beside it.
+  owner) may carry its Save beside it. Give a form's `Section` `dirty` too: on a phone its footer is then a Save bar
+  stuck to the bottom of the screen, shown only while something changed.
+- **Phones.** Below `md` a page with sections drills down (`SettingsScreens` in web/src/common): the page lists its
+  sections and each is a screen (and a path) of its own. Text fields and selects in a row take its full width.
 - **Buttons are buttons.** In settings every action is a bordered `secondary` button (or `primary` for Save);
   `ghost` is for toolbars, and `Link` is only for navigating somewhere (a URL, another page), never for an action.
   Section-wide actions that change nothing (Check for updates, Run checks again) go in the section's `actions`.
 - **Destructive actions live in the Danger zone.** Page-wide removals (remove the project, remove the token) go in
   a `Section danger` at the bottom of the page, as `danger` buttons whose label ends in "…" and that confirm
-  (spec §6.2). The one exception is a per-item removal inside a list (a worktree): a secondary button with a trash
+  (spec §6.2); removing a project also asks for its name to be typed (`typeToConfirm`). The one exception is a per-item removal inside a list (a worktree): a secondary button with a trash
   icon, still "…" and confirmed. Never put a destructive button beside a routine one.
 
 ## Tests

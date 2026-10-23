@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { Alert, Button, Field, Input, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
@@ -17,6 +17,7 @@ import type { ProjectSettingsInput } from '../api/gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
 import { CodeViewer } from '../files/LazyCodeViewer';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
+import type { SettingsSection } from '../common/SettingsScreens';
 
 /** The Select's value for "no override: use the host setting" (its empty value would show the placeholder). */
 const HOST = 'host';
@@ -52,6 +53,17 @@ function useSaveProjectSettings(project: Project, current: ProjectSettingsView |
  * merging.
  */
 export function ProjectSettingsPanel({ project }: { project: Project }) {
+  const { notice, sections } = useProjectSettingsSections(project);
+  return (
+    <>
+      {notice}
+      {sections.map((s) => <Fragment key={s.label}>{s.node}</Fragment>)}
+    </>
+  );
+}
+
+/** The panel's sections one by one (a phone shows each on a screen of its own), and a load error to show above them. */
+export function useProjectSettingsSections(project: Project): { notice: ReactNode; sections: SettingsSection[] } {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ['project-settings', project.id], queryFn: () => api.projectSettings(project.id) });
   const openSession = useOpenSession();
@@ -75,17 +87,18 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
       const hint = agents.hint(agentOf(a)!);
       return { label: hint ? `${a} · ${hint}` : a, onSelect: () => setUp(guide, a) };
     });
-  return (
-    <>
-      {settings.isError && <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert>}
-      {!personal && <RunConfiguration project={project} settings={settings.data} setUpEntries={agentEntries('set-up-project')} />}
-      <Instructions project={project} settings={settings.data} writeEntries={agentEntries('set-up-workflow')} />
-      <Agents project={project} settings={settings.data} />
-      {!personal && <Merging project={project} settings={settings.data} />}
-      <Pipeline project={project} settings={settings.data} personal={personal} />
-      {!personal && <Integrations project={project} settings={settings.data} />}
-    </>
-  );
+  const sections: (SettingsSection | false)[] = [
+    !personal && { label: 'Runs on this host', node: <RunConfiguration project={project} settings={settings.data} setUpEntries={agentEntries('set-up-project')} /> },
+    { label: 'Agent instructions', node: <Instructions project={project} settings={settings.data} writeEntries={agentEntries('set-up-workflow')} /> },
+    { label: 'Agents', node: <Agents project={project} settings={settings.data} /> },
+    !personal && { label: 'Review', node: <Merging project={project} settings={settings.data} /> },
+    { label: 'Pipeline and policies', node: <Pipeline project={project} settings={settings.data} personal={personal} /> },
+    !personal && { label: 'Jira and Buildkite', node: <Integrations project={project} settings={settings.data} /> },
+  ];
+  return {
+    notice: settings.isError ? <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert> : null,
+    sections: sections.filter((x): x is SettingsSection => x !== false),
+  };
 }
 
 type Entries = () => { label: string; onSelect: () => void }[];
@@ -118,6 +131,7 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
             <Button size="sm">Set up with an agent</Button>
           </MenuButton>
         }
+        dirty={dirty}
         footer={<SaveFooter label="Save run overrides" dirty={dirty} saved={save.isSuccess} pending={save.isPending} />}
       >
         <SettingsRow stacked label="Repository configuration" description={<span className="font-mono">{config.data?.filePath ?? '.pdt/project.toml'}</span>}>
@@ -170,6 +184,7 @@ function Instructions({ project, settings, writeEntries }: { project: Project; s
             <Button size="sm">Write instructions with an agent</Button>
           </MenuButton>
         }
+        dirty={dirty}
         footer={<SaveFooter label="Save agent instructions" dirty={dirty} saved={save.isSuccess} pending={save.isPending} />}
       >
         <div>
@@ -440,6 +455,7 @@ function Integrations({ project, settings }: { project: Project; settings: Proje
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
       <Section
         label="Jira and Buildkite"
+        dirty={dirty}
         description="For a project whose issues are in Jira and whose CI is Buildkite. Kept on this host, never written to the repository."
         footer={
           <>

@@ -73,6 +73,19 @@ describe('useConfirm', () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
+  it('typeToConfirm keeps the action off until the name is typed', async () => {
+    await userEvent.click(setup({ title: 'Remove Demo?', action: 'Remove project', danger: true, typeToConfirm: 'Demo' }));
+    const action = await screen.findByRole('button', { name: 'Remove project' });
+    expect(action).toBeDisabled();
+    const field = screen.getByRole('textbox', { name: 'Type Demo to confirm' });
+    await userEvent.type(field, 'Dem');
+    expect(action).toBeDisabled();
+    await userEvent.type(field, 'o');
+    expect(action).toBeEnabled();
+    await userEvent.click(action);
+    await waitFor(() => expect(screen.getByLabelText('result')).toHaveTextContent('"ok":true'));
+  });
+
   it('non-danger confirms use the primary action', async () => {
     await userEvent.click(setup({ title: 'Restart the agent?', action: 'Restart' }));
     const b = await screen.findByRole('button', { name: 'Restart' });

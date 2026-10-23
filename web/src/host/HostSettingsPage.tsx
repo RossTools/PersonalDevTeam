@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -10,6 +10,7 @@ import type { SessionMode } from '../api/gen/SessionMode';
 import type { TokenState } from '../api/gen/TokenState';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { FolderField } from '../common/FolderField';
+import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 
@@ -261,6 +262,7 @@ function Runs({ v }: { v: HostSettingsView }) {
       <Section
         label="Runs"
         description="Dev instances and other runs started from a branch."
+        dirty={portsChanged || maxChanged}
         footer={
           <>
             <SavedNote show={save.saved && !portsChanged && !maxChanged} />
@@ -351,6 +353,7 @@ function ProjectsFolder({ v }: { v: HostSettingsView }) {
     <form onSubmit={submit(() => { if (dirty) save.mutate({ projectsDir: dir }); })}>
       <Section
         label="Projects folder"
+        dirty={dirty}
         footer={
           <>
             <SavedNote show={save.saved && !dirty} />
@@ -433,7 +436,17 @@ function DangerZone({ v }: { v: HostSettingsView }) {
   );
 }
 
-export function HostSettingsPage() {
+/** This host's sections, in page order (their `Section` labels): the phone's list of them and its top bar titles. */
+export const HOST_SECTIONS = ['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Checks', 'Danger zone'] as const;
+
+export interface HostSettingsPageProps {
+  /** A phone: one screen per section, the list of them while `section` is null. */
+  drill?: boolean;
+  section?: string | null;
+  onSection?: (slug: string) => void;
+}
+
+export function HostSettingsPage({ drill = false, section = null, onSection }: HostSettingsPageProps = {}) {
   const qc = useQueryClient();
   const view = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
   const whoami = useQuery({ queryKey: ['host-whoami'], queryFn: api.whoami });
@@ -456,15 +469,24 @@ export function HostSettingsPage() {
   }
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
+  const nodes: Record<(typeof HOST_SECTIONS)[number], ReactNode> = {
+    'Updates': <Updates v={v} />,
+    'Remote access': <RemoteAccess v={v} me={me ?? null} />,
+    'Agents': <Agents v={v} />,
+    'Runs': <Runs v={v} />,
+    'Projects folder': <ProjectsFolder v={v} />,
+    'Checks': <Checks />,
+    // Only when there is something to remove.
+    'Danger zone': v.tokenPresent ? <DangerZone v={v} /> : null,
+  };
   return (
-    <Page title="This host" description="Settings for the machine running PDT. Projects have their own pages.">
-      <Updates v={v} />
-      <RemoteAccess v={v} me={me ?? null} />
-      <Agents v={v} />
-      <Runs v={v} />
-      <ProjectsFolder v={v} />
-      <Checks />
-      <DangerZone v={v} />
-    </Page>
+    <SettingsScreens
+      title="This host"
+      description="Settings for the machine running PDT. Projects have their own pages."
+      sections={HOST_SECTIONS.filter((l) => nodes[l] !== null).map((label) => ({ label, node: nodes[label] }))}
+      drill={drill}
+      section={section}
+      onSection={onSection}
+    />
   );
 }

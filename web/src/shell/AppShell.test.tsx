@@ -837,19 +837,58 @@ describe('phone', () => {
   it('goes up from a detail screen opened from a link, and drills into Settings from its list', async () => {
     stubPhone();
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
-    window.history.replaceState(null, '', '/settings/projects/ALP');
+    window.history.replaceState(null, '', '/settings/projects/ALP/project');
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
+    const topBar = screen.getByRole('banner', { name: 'Top bar' });
+    // A section is a screen of its own, titled by it.
     expect(await within(main).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+    expect(within(main).queryByRole('region', { name: 'Danger zone' })).not.toBeInTheDocument();
+    expect(topBar).toHaveTextContent('Project');
+    // ← walks out: the project's sections, then the Settings list.
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(here()).toBe('/settings/projects/ALP');
+    const sections = await within(main).findByRole('grid', { name: 'Sections' });
+    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
+      'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Jira and Buildkite', 'Danger zone',
+    ]);
+    expect(topBar).toHaveTextContent('Alpha');
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(here()).toBe('/settings');
     const list = await within(main).findByRole('navigation', { name: 'Settings sections' });
-    expect(within(list).getAllByRole('row').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Connections', 'Notifications']));
+    expect(within(list).getAllByRole('row').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Connections', 'Notifications', 'Add project']));
+    // Drilling in pushes a screen per level, and Back pops them.
     await userEvent.click(within(list).getByRole('row', { name: /Alpha/ }));
     expect(here()).toBe('/settings/projects/ALP');
-    expect(await within(main).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+    await userEvent.click(within(await within(main).findByRole('grid', { name: 'Sections' })).getByRole('row', { name: /Danger zone/ }));
+    expect(here()).toBe('/settings/projects/ALP/danger-zone');
+    expect(await within(main).findByRole('button', { name: 'Remove project…' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/settings/projects/ALP'));
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/settings'));
+  });
+
+  it('shows each of this host\'s sections on its own screen on a phone', async () => {
+    stubPhone();
+    stubWorkspaces({});
+    window.history.replaceState(null, '', '/settings/host');
+    renderWithQuery(<AppShell />);
+    const main = screen.getByRole('main');
+    const sections = await within(main).findByRole('grid', { name: 'Sections' });
+    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual(['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Checks', 'Danger zone']);
+    await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
+    expect(here()).toBe('/settings/host/runs');
+    expect(screen.getByRole('banner', { name: 'Top bar' })).toHaveTextContent('Runs');
+    const runs = await within(main).findByRole('region', { name: 'Runs' });
+    expect(within(main).queryByRole('region', { name: 'Updates' })).not.toBeInTheDocument();
+    // The Save bar shows only once something changed.
+    const bar = runs.querySelector('[data-slot="section-footer"]')!;
+    expect(bar).toHaveAttribute('data-dirty', 'false');
+    await userEvent.type(within(runs).getByRole('spinbutton', { name: /Max concurrent runs/ }), '0');
+    expect(bar).toHaveAttribute('data-dirty', 'true');
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/settings/host'));
   });
 
   it('shows the Inbox as a list; an item opens as its own screen, and ← returns to the list', async () => {
