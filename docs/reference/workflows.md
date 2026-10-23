@@ -155,6 +155,10 @@ notify itself forever.
 - `discord.post`: the connection's secret is the webhook URL. Content over 2000 characters goes as several messages
   (cut at line breaks), embeds with the first; mentions are never parsed; a 429 waits `retry_after` (up to 4 tries).
   Output `{messageIds}`.
+- A failed request (no answer: DNS, TLS, a refused or reset connection) never shows its URL: reqwest's message ends
+  with it, and a URL can carry the secret (a Discord webhook's token, a `query` key), so every outbound call's error
+  goes through `send_error` (`workflow/nodes/http.rs`), which drops the URL and keeps the causes, before it becomes the
+  step's error, the run's failure, a notification or a log line.
 - Jira actions (`workflow/nodes/jira.rs`, client in `jira.rs`) sign in with the connection's email and API token
   (basic auth, REST v3); text goes as ADF (a paragraph per blank-line-separated block, line breaks kept).
   `jira.import` makes a Draft ticket (title the summary, description the issue's text) linked to the issue, or leaves
@@ -327,8 +331,9 @@ another kind). A config field holding a connection's name says its kind in its s
   bad_signature`; body up to 1 MiB. The identity guard lets `/api/hooks/*` through (tailnet machines have no user
   login) except over Funnel; the Host guard still applies. `webhook.received` (key `webhook:<name>:<delivery>` from
   `X-GitHub-Delivery`, `Idempotency-Key` or `X-Request-Id`, else new; a repeat answers `200 {duplicate: true}`, else
-  `202 {eventId}`), payload `hook`, `method`, `query`, `headers` (`content-type`, `user-agent`, `x-*` but the
-  signature), `body` (JSON, else text).
+  `202 {eventId}`), payload `hook`, `method`, `query`, `headers` (`content-type`, `user-agent`, `x-*` but
+  credentials: any name with `auth`, `token`, `secret`, `signature`, `password`, `credential`, `cookie`, or ending in
+  `key` but `idempotency-key`), `body` (JSON, else text).
 - **Jira** (`jira.rs` `refresh_jira`, pdtd every 60 s): each project whose settings link Jira (a `jira` connection,
   a JQL scope, the done transition) is searched with `POST /rest/api/3/search/jql`, `(<scope>) AND updated >= "-<n>m"
   ORDER BY updated ASC` (relative, since JQL dates are in the Jira user's zone; n covers the time since the last look

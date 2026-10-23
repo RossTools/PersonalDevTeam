@@ -5,7 +5,7 @@
 //! each once (its key names the builds and their retries), so the built-in PR notices tell the agent.
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::nodes::http::{client, read_body};
+use crate::workflow::nodes::http::{client, read_body, send_error};
 use pdt_core::buildkite::{API_URL, BUILDKITE, failed_notice, run_ids, runs_of};
 use pdt_core::pr::{CiRun, CiState, CiStatus, PrState, PullRequestStatus};
 use pdt_core::workflow::api::NewLogEvent;
@@ -57,7 +57,7 @@ impl BuildkiteClient {
         if let Some(b) = body {
             req = req.json(b);
         }
-        let resp = req.send().await.map_err(|e| format!("Buildkite {method} {url}: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("Buildkite {method} {url}: {}", send_error(e)))?;
         let status = resp.status().as_u16();
         let bytes = read_body(resp, 8 * 1024 * 1024).await?;
         let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);

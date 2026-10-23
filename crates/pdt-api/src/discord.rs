@@ -1,11 +1,12 @@
 //! A Discord server through a bot (PDT-98): a small client for Discord's REST API (no gateway) with a `discord_bot`
 //! connection's token, the PM's tools (`discord_get`, `discord_change`, `discord_webhook`) and the
-//! `discord.channel.ensure` node kind. Webhook URLs (their tokens) go to the secret store and never into a result.
+//! `discord.channel.ensure` node kind. Webhook URLs (their tokens) go to the secret store and never into a result or
+//! an error (`send_error` drops the URL from a failed request).
 
 use crate::routes::AppState;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use crate::workflow::nodes::discord::DISCORD_WEBHOOK;
-use crate::workflow::nodes::http::{client, read_body};
+use crate::workflow::nodes::http::{client, read_body, send_error};
 use crate::workflow::routes::{ConnectionInput, ConnectionSecret};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -92,7 +93,7 @@ impl Bot {
             if let Some(b) = &body {
                 req = req.json(b);
             }
-            let resp = req.send().await.map_err(|e| format!("Discord: {e}"))?;
+            let resp = req.send().await.map_err(|e| format!("Discord: {}", send_error(e)))?;
             let status = resp.status().as_u16();
             let bytes = read_body(resp, 1024 * 1024).await?;
             let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
