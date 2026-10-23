@@ -7,8 +7,10 @@ import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Workflow } from '../api/gen/Workflow';
 import { scopeLabel } from './scope';
+import type { WorkflowTab } from './WorkflowPage';
 
-export type WorkflowTarget = { kind: 'workflow' | 'template'; id: string } | null;
+/** What the Workflows view shows: a workflow (on a tab, a run of it), a template, or nothing yet. */
+export type WorkflowTarget = { kind: 'workflow'; id: string; tab?: WorkflowTab; runId?: string } | { kind: 'template'; id: string } | null;
 
 const heading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 

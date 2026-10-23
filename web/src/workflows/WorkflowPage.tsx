@@ -77,24 +77,41 @@ export interface WorkflowPageProps {
   projects: Project[];
   /** Another workflow or a template to show (Duplicate, Save as template); null after Delete. */
   onOpen: (target: { kind: 'workflow' | 'template'; id: string } | null) => void;
+  /** The tab and run shown, when something else holds them (the app's route, PDT-111); without it the page keeps its own. */
+  view?: WorkflowPageView;
 }
 
-export function WorkflowPage({ id, catalog, projects, onOpen }: WorkflowPageProps) {
+export interface WorkflowPageView {
+  /** Unset: the default (Outline on a phone, Graph otherwise). */
+  tab?: WorkflowTab;
+  runId: string | null;
+  onChange: (tab: WorkflowTab, runId: string | null) => void;
+}
+
+export function WorkflowPage({ id, catalog, projects, onOpen, view }: WorkflowPageProps) {
   // Polled, so a proposal or a save made elsewhere shows (the draft is never replaced while it has changes).
   const w = useQuery({ queryKey: ['workflow', id], queryFn: () => api.getWorkflow(id), refetchInterval: 5000 });
   if (w.error) return <Alert tone="error" className="m-3">The workflow could not be loaded: {w.error.message}</Alert>;
   if (!w.data) return <Skeleton lines={8} className="p-4" />;
-  return <Loaded w={w.data} catalog={catalog} projects={projects} onOpen={onOpen} />;
+  return <Loaded w={w.data} catalog={catalog} projects={projects} onOpen={onOpen} view={view} />;
 }
 
-function Loaded({ w, catalog, projects, onOpen }: { w: WorkflowDetail } & Omit<WorkflowPageProps, 'id'>) {
+function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & Omit<WorkflowPageProps, 'id'>) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const phone = useMediaQuery(PHONE_QUERY);
-  const [tab, setTab] = useState<WorkflowTab>(phone ? 'outline' : 'graph');
+  const [ownTab, setOwnTab] = useState<WorkflowTab | undefined>(undefined);
+  const [ownRunId, setOwnRunId] = useState<string | null>(null);
+  const tab: WorkflowTab = (view ? view.tab : ownTab) ?? (phone ? 'outline' : 'graph');
+  const runId = view ? view.runId : ownRunId;
+  const show = (t: WorkflowTab, r: string | null) => {
+    if (view) view.onChange(t, r);
+    else { setOwnTab(t); setOwnRunId(r); }
+  };
+  const setTab = (t: WorkflowTab) => show(t, t === 'runs' ? runId : null);
+  const setRunId = (r: string | null) => show('runs', r);
   const [selected, setSelected] = useState<string | null>(null);
   const [dryRun, setDryRun] = useState(false);
-  const [runId, setRunId] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [templating, setTemplating] = useState(false);
   const readOnly = w.source === 'repo';
@@ -119,7 +136,7 @@ function Loaded({ w, catalog, projects, onOpen }: { w: WorkflowDetail } & Omit<W
     mutationFn: () => api.runWorkflow(w.id, {}),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
-      if (r.runId) { setRunId(r.runId); setTab('runs'); } else toast.info('A run with that key already ran');
+      if (r.runId) setRunId(r.runId); else toast.info('A run with that key already ran');
     },
     onError: (e) => toast.error(e.message),
   });

@@ -10,8 +10,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   elsewhere moves it), and closing that tab stops and removes it (`DELETE /api/tabs/{id}`; the UI asks first while it
   runs; ticket and changes tabs only close).
 - New sessions/runs open a tab at the end of their project workspace unless the request has
-  `tab: {workspaceId, position}`. The workspace and tab on screen are per browser (localStorage); workspaces and tabs
-  are shared.
+  `tab: {workspaceId, position}`. The workspace and tab on screen are in the URL (`/sessions/<workspace>/<tab>`, see
+  "URLs" below), and per browser (localStorage) for when the URL doesn't say; workspaces and tabs are shared.
 - The Sessions sidebar is herdr-style (web/src/workspaces/Sidebar.tsx): workspaces on top, then Tickets (the
   workspaces a ticket's Start made, `Workspace.ticket` from `attempts.workspace_id`: ticket title, key chip that opens
   it, PR badge, agent state; reordered and moved up/down within their own section), agent sessions below; tabs,
@@ -23,8 +23,43 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 - The desktop rail (web/src/shell/IconRail.tsx) is icons only, with tooltips on the right; the toggle at its bottom
   expands it to show each view's name beside its icon (badges beside the names, no tooltips) and collapses it again.
   The state is per browser (localStorage `pdt.rail.expanded`).
-- On phones (< 768px) the list column is a left sheet opened from the workspace name; the rail is Sessions, Tickets,
-  Search (palette), Settings (Files is in the palette's Go to).
+- On phones (< 768px, PDT-112) there is no rail: a top bar has ☰ on a view's top-level screen and ← (Back, or up to
+  the view when the screen was opened from a link) on a detail screen, the title, 🔔 Needs you (the Inbox count, opens
+  the Inbox), ⌕ (the command palette) and ⋯ (the screen's actions: the shell's, plus any a screen adds with
+  `useTopBarActions`). ☰ opens the drawer (web/src/shell/PhoneDrawer.tsx): the project (the Tickets view's), the views
+  in the rail's order with the Inbox count, the workspaces folding open to their tabs (folded, a workspace shows its
+  loudest state), the agents, and Settings with the host's connection state. It closes on a tap outside, a swipe left,
+  Escape, choosing, or Back (it adds a history entry, which choosing replaces). Sessions, Inbox, Workflows, Personas,
+  Files and Settings show their list column as their top-level screen (`/sessions` is the workspaces and agents);
+  choosing an item pushes its route. The PM's earlier sessions are under its ⋯, the Tickets' projects and filters
+  under its title.
+
+## URLs
+
+What is on screen is in the URL path (web/src/shell/route.ts, router.ts), so browser Back/Forward walk through what
+was opened and a reload (or a link) opens the same screen. Selecting a view, a workspace or tab, a ticket peek, an
+Inbox item, a PM session, a workflow tab or run, a persona, a file or a Settings page pushes a history entry (a click
+that switches view and selects in one go makes one entry); fill-ins (the tab after a closed one, `/sessions` naming
+its tab, the Inbox picking an item) replace it.
+
+| Path | Shows |
+|---|---|
+| `/` | The PM on phones, Sessions otherwise |
+| `/pm`, `/pm/<sessionId>`, `/pm/notes` | The PM's current session, an earlier one, the notes |
+| `/sessions`, `/sessions/<workspaceId>/<tabId>` | A workspace and tab (`/sessions` alone: the browser's last choice) |
+| `/inbox`, `/inbox/<itemId>` | The Inbox, an item |
+| `/tickets` (`?view=board`), `/tickets/<key>` | Backlog (or Board), with the ticket peeked at (by key; an id is replaced by the key) |
+| `/workflows/<id>/(outline\|runs\|graph\|text\|versions)`, `/workflows/<id>/runs/<runId>`, `/workflows/templates/<id>` | A workflow's tab, a run, a template |
+| `/personas/<id>` (`new`: the create form) | A persona |
+| `/files/<path>` (`?project=<key>&worktree=<id>`) | A file, in the checkout named (else the current tab's) |
+| `/settings`, `/settings/host(/<section>)`, `/settings/notifications`, `/settings/connections`, `/settings/projects/<key>(/<section>)` | Settings: the index (This host on desktop, the list of pages on a phone) and its pages; a section (its heading, `danger-zone`) is scrolled to |
+
+- Switching to a view shows it as it was last left (its last path); Tickets opens in the browser's last Backlog or
+  Board. localStorage keeps only what a path doesn't say.
+- pdtd serves index.html for every path outside `/api` and the built files; the Vite dev server does the same for
+  the paths above (web/vite.config.ts).
+- Ticket keys of the host's projects in Markdown (conversations, ticket descriptions) link to `/tickets/<key>`; clicks
+  on links to the app's own paths navigate in place (modified clicks open a new tab).
 
 ## Projects and git (workspaces spec §6)
 

@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type InfiniteData, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { Check, ChevronDown, Plus } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -12,6 +12,7 @@ import type { Project } from '../api/gen/Project';
 import type { TicketPage } from '../api/gen/TicketPage';
 import type { TicketSort } from '../api/gen/TicketSort';
 import type { TicketStage } from '../api/gen/TicketStage';
+import type { Ticket } from '../api/gen/Ticket';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PriorityIcon, PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
@@ -29,7 +30,7 @@ import { ImportJiraDialog } from './ImportJiraDialog';
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
-import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketPages } from './queries';
+import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
 import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
 
@@ -234,7 +235,9 @@ function QuickAdd({ projectId, before, phone, onDetails }: { projectId: string; 
 // Peek
 
 /** The ticket in a side sheet (full screen on phones): its Overview in short, Open for the tab, ⋯ for the rest. */
-function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onClose: () => void; phone: boolean }) {
+function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }: {
+  ticketId: string | null; open: boolean; missing: boolean; onClose: () => void; onLoaded: (t: Ticket) => void; phone: boolean;
+}) {
   const q = useTicket(ticketId);
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -243,6 +246,9 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
   const t = q.data;
   const [making, setMaking] = useState(false);
   useCheckMerge(t);
+  useEffect(() => {
+    if (t) onLoaded(t);
+  }, [t, onLoaded]);
   return (
     <>
     {making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />}
@@ -250,7 +256,7 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
       side="right"
       title={t ? `${t.key} · ${t.title}` : 'Ticket'}
       hideTitle
-      open={ticketId !== null}
+      open={shown}
       // On desktop the backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on
       // a backlog row or a board card or lane, which shows that ticket instead.
       modal={phone}
@@ -277,7 +283,7 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
       )}
     >
       {!t ? (
-        q.isPending ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
+        q.isPending && !missing ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
       ) : (
         // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
         <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
@@ -314,10 +320,18 @@ export interface TicketsViewProps {
   projects: Project[];
   /** Opens the full New ticket form (in this project, with this title). */
   onNewTicket: (projectId: string | null, title?: string) => void;
+  /** The ticket peeked at, by key or id, when something else holds it (the app's route, PDT-111). */
+  peek?: TicketPeekState;
+}
+
+export interface TicketPeekState {
+  ticket: string | null;
+  /** `replace`: the same ticket, named by its key instead of its id. */
+  onChange: (ref: string | null, opts?: { replace?: boolean }) => void;
 }
 
 /** The Tickets view's work area: header (Backlog | Board, New ticket), filters or bulk actions, the paged backlog, the peek. */
-export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps) {
+export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsViewProps) {
   const phone = useMediaQuery(PHONE_QUERY);
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -339,7 +353,14 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
   useClearToStartToasts(mode === 'backlog' ? items : []);
   const labels = useLabels(project?.id ?? null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [peekId, setPeekId] = useState<string | null>(null);
+  const [ownPeek, setOwnPeek] = useState<string | null>(null);
+  const peekRef = peek ? peek.ticket : ownPeek;
+  const setPeekId = useCallback((ref: string | null) => (peek ? peek.onChange(ref) : setOwnPeek(ref)), [peek]);
+  const { id: peekId, missing: peekMissing } = useTicketId(peekRef);
+  // Peeked at by id (a row, a card): the path names it by its key once it has loaded.
+  const peekLoaded = useCallback((t: Ticket) => {
+    if (peek && peek.ticket && peek.ticket !== t.key && (peek.ticket === t.id || peek.ticket.toUpperCase() === t.key)) peek.onChange(t.key, { replace: true });
+  }, [peek]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { openMenu, menu } = useMenuAt();
   const rankable = canRank(project?.id ?? null, filters);
@@ -402,7 +423,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
 
   const rowMenu = (t: TicketSummary) => (at: { x: number; y: number }) =>
     openMenu(at, `Ticket ${t.key}`, () =>
-      ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => setPeekId((p) => (p === t.id ? null : p)) }),
+      ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => { if (peekId === t.id) setPeekId(null); } }),
     );
 
   const stageOptions = STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }));
@@ -559,7 +580,7 @@ export function TicketsView({ backlog, projects, onNewTicket }: TicketsViewProps
       )}
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>
       {menu}
-      <TicketPeek ticketId={peekId} onClose={() => setPeekId(null)} phone={phone} />
+      <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />
     </div>
   );
 }

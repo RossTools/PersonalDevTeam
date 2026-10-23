@@ -29,3 +29,8 @@ if (typeof window !== 'undefined') {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
 }
+
+// The app keeps what is on screen in the path (PDT-111): every test starts at `/`.
+afterEach(() => {
+  if (typeof window !== 'undefined') window.history.replaceState(null, '', '/');
+});

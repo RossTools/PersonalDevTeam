@@ -1,12 +1,30 @@
 import { defineConfig } from 'vitest/config';
+import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import optimizeLocales from '@react-aria/optimize-locales-plugin';
 import { fileURLToPath } from 'node:url';
 
+/** The app's top-level paths (web/src/shell/route.ts). */
+const APP_PATHS = /^\/(pm|sessions|inbox|tickets|workflows|personas|files|settings)(\/|\?|$)/;
+
+/**
+ * Serves index.html for the app's paths, as pdtd does (PDT-111): Vite's own fallback would treat `/files/src/main.ts`
+ * as a module to transform.
+ */
+const appPathFallback: Plugin = {
+  name: 'pdt-app-path-fallback',
+  configureServer(server) {
+    server.middlewares.use((req, _res, next) => {
+      if (req.method === 'GET' && req.url && APP_PATHS.test(req.url) && req.headers.accept?.includes('text/html')) req.url = '/';
+      next();
+    });
+  },
+};
+
 export default defineConfig({
   // React Aria ships strings for ~30 languages; PDT's UI is English only.
-  plugins: [react(), tailwindcss(), { ...optimizeLocales.vite({ locales: ['en-US'] }), enforce: 'pre' }],
+  plugins: [appPathFallback, react(), tailwindcss(), { ...optimizeLocales.vite({ locales: ['en-US'] }), enforce: 'pre' }],
   resolve: { alias: { '@ui': fileURLToPath(new URL('./ui', import.meta.url)) } },
   // Dev server talks to the *dev* daemon (PDT_PROFILE=dev → port 7421).
   server: { proxy: { '/api': { target: 'http://127.0.0.1:7421', ws: true } } },

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { File, FileQuestion, Folder, FolderOpen } from 'lucide-react';
 import { Alert, Chip, EmptyState, MenuButton, SegmentedControl, Skeleton, TreeView, ViewHeader, type TreeChildren, type TreeNode } from '@ui';
@@ -12,20 +12,42 @@ import { PlacePicker, type Place } from '../common/PlacePicker';
 import { CodeViewer } from './LazyCodeViewer';
 
 /** The folder view's state: which checkout, which folders are open, which file is shown. */
-export function useFolderView(projects: Project[], initial: Place | null) {
-  const [picked, setPicked] = useState<Place | null>(null);
+/**
+ * The checkout picked and the file shown, when something else holds them (the app keeps them in its route, PDT-111);
+ * without it the view keeps its own.
+ */
+export interface FolderSelection {
+  picked: Place | null;
+  file: string | null;
+  onChange: (picked: Place | null, file: string | null) => void;
+}
+
+export function useFolderView(projects: Project[], initial: Place | null, held?: FolderSelection) {
+  const [ownPicked, setOwnPicked] = useState<Place | null>(null);
+  const [ownFile, setOwnFile] = useState<string | null>(null);
+  const picked = held ? held.picked : ownPicked;
+  const file = held ? held.file : ownFile;
+  const change = (p: Place | null, f: string | null) => {
+    if (held) held.onChange(p, f);
+    else { setOwnPicked(p); setOwnFile(f); }
+  };
   const place = picked ?? initial ?? (projects[0] ? { projectId: projects[0].id, worktreeId: null } : null);
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const [file, setFile] = useState<string | null>(null);
+  // A file shown from a link or a reload: its folders open, so it is in the tree.
+  useEffect(() => {
+    const parents = file?.split('/').slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join('/')) ?? [];
+    if (parents.some((p) => !open.has(p))) setOpen((s) => new Set([...s, ...parents]));
+    // Only when the file changes: folders closed by hand stay closed.
+  }, [file]);
   return {
     projects,
     place,
-    pick: (p: Place) => { setPicked(p); setOpen(new Set()); setFile(null); },
+    pick: (p: Place) => { change(p, null); setOpen(new Set()); },
     open,
     setOpen,
     toggle: (path: string) => setOpen((s) => { const n = new Set(s); if (n.has(path)) n.delete(path); else n.add(path); return n; }),
     file,
-    setFile,
+    setFile: (f: string | null) => change(picked, f),
   };
 }
 

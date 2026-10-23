@@ -19,7 +19,8 @@ export function WorkflowsView({ target, onOpen, projects, creating, onCreate }: 
   const catalog = useQuery({ queryKey: ['workflow-catalog'], queryFn: () => api.workflowCatalog(), staleTime: Infinity });
   const body = catalog.error ? <Alert tone="error" className="m-3">The node catalog could not be loaded: {catalog.error.message}</Alert>
     : !catalog.data ? <Skeleton lines={8} className="p-4" />
-      : target?.kind === 'workflow' ? <WorkflowPage key={target.id} id={target.id} catalog={catalog.data} projects={projects} onOpen={onOpen} />
+      : target?.kind === 'workflow' ? <WorkflowPage key={target.id} id={target.id} catalog={catalog.data} projects={projects} onOpen={onOpen}
+          view={{ tab: target.tab, runId: target.runId ?? null, onChange: (tab, runId) => onOpen({ kind: 'workflow', id: target.id, tab, ...(runId ? { runId } : {}) }) }} />
         : target?.kind === 'template' ? <TemplatePage key={target.id} id={target.id} catalog={catalog.data} onUse={(templateId) => onCreate({ templateId })} onDeleted={() => onOpen(null)} />
           : (
             <EmptyState action={<Button variant="primary" onClick={() => onCreate({})}>New workflow</Button>}>

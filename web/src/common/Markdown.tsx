@@ -1,13 +1,15 @@
-import { memo } from 'react';
+import { memo, useContext, useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSanitize from 'rehype-sanitize';
 import { cn } from '@ui/lib/utils';
+import { TicketKeysContext } from './ticketKeys';
 
 interface MdNode {
   type: string;
   value?: string;
+  url?: string;
   children?: MdNode[];
 }
 
@@ -20,7 +22,35 @@ function remarkHtmlAsText() {
   return (tree: MdNode) => walk(tree);
 }
 
-const isExternal = (href: string | undefined) => !!href && !href.startsWith('#');
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Turns ticket keys of the given projects in text into links (not inside links or code, which are not text nodes). */
+export function remarkTicketKeys(keys: readonly string[]) {
+  const re = new RegExp(`\\b(?:${keys.map(escapeRe).join('|')})-\\d+\\b`, 'g');
+  const split = (value: string): MdNode[] => {
+    const out: MdNode[] = [];
+    let at = 0;
+    for (const m of value.matchAll(re)) {
+      if (m.index > at) out.push({ type: 'text', value: value.slice(at, m.index) });
+      out.push({ type: 'link', url: `/tickets/${m[0]}`, children: [{ type: 'text', value: m[0] }] });
+      at = m.index + m[0].length;
+    }
+    if (at < value.length) out.push({ type: 'text', value: value.slice(at) });
+    return out;
+  };
+  const walk = (node: MdNode) => {
+    if (!node.children || node.type === 'link' || node.type === 'linkReference') return;
+    node.children = node.children.flatMap((c) => {
+      if (c.type === 'text' && c.value) return split(c.value);
+      walk(c);
+      return [c];
+    });
+  };
+  return () => (tree: MdNode) => walk(tree);
+}
+
+/** A link that leaves the app (a new tab), not one of its own paths or an anchor. */
+const isExternal = (href: string | undefined) => !!href && !href.startsWith('#') && !(href.startsWith('/') && !href.startsWith('//'));
 
 // Sized for a ticket body: headings step from text-base down to text-xs, never page-title large.
 const components: Components = {
@@ -87,12 +117,19 @@ export interface MarkdownProps {
 
 /**
  * Renders user-written Markdown (ticket descriptions, comments). Raw HTML is never rendered: it shows as the text it
- * was written as, and rehype-sanitize (GitHub's schema) strips anything unsafe that remains (`javascript:` links). Links open in a new tab.
+ * was written as, and rehype-sanitize (GitHub's schema) strips anything unsafe that remains (`javascript:` links). Links open in a new tab,
+ * except the app's own paths (ticket keys, PDT-111), which the app navigates to.
  */
 export const Markdown = memo(function Markdown({ children, breaks, className }: MarkdownProps) {
+  const keys = useContext(TicketKeysContext);
+  const keyList = keys.join(' ');
+  const remarkPlugins = useMemo(() => {
+    const base = breaks ? withBreaks : plugins;
+    return keyList ? [...base, remarkTicketKeys(keyList.split(' '))] : base;
+  }, [breaks, keyList]);
   return (
     <div data-slot="markdown" className={cn('min-w-0 text-sm leading-relaxed break-words text-foreground', className)}>
-      <ReactMarkdown remarkPlugins={breaks ? withBreaks : plugins} rehypePlugins={[rehypeSanitize]} components={components}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={[rehypeSanitize]} components={components}>
         {children}
       </ReactMarkdown>
     </div>
