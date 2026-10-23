@@ -706,6 +706,17 @@ describe('settings page', () => {
 });
 
 describe('phone', () => {
+  // `/` opens the PM on a phone; these start in Sessions.
+  beforeEach(() => window.history.replaceState(null, '', '/sessions'));
+
+  it('opens the PM at /', async () => {
+    window.history.replaceState(null, '', '/');
+    stubPhone();
+    stubAlpha();
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(window.location.pathname).toBe('/pm'));
+  });
+
   it('puts the list column in a sheet opened by the workspace name, closed by choosing a workspace', async () => {
     stubPhone();
     stubWorkspaces();
@@ -942,5 +953,127 @@ describe('tickets', () => {
     await userEvent.click(within(chooser).getByRole('menuitem', { name: 'Ticket…' }));
     await userEvent.click(await within(chooser).findByRole('menuitem', { name: /ALP-1 · Fix login/ }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/workspaces/wa/tabs')?.body).toEqual({ ticketId: 't1', position: 1 }));
+  });
+});
+
+describe('routes (PDT-111)', () => {
+  const fixLogin = ticket(1, { projectId: project.id, title: 'Fix login' });
+  const ticketRoutes = {
+    'GET /api/tickets/t1': fixLogin,
+    'GET /api/tickets/t1/events': { items: [], nextCursor: null },
+    [`GET /api/projects/${project.id}/labels`]: [],
+    'GET /api/tickets': page([summary(1, { projectId: project.id, title: 'Fix login' })]),
+  };
+  const at = (path: string) => window.history.replaceState(null, '', path);
+  const here = () => window.location.pathname + window.location.search;
+  const back = () => act(() => window.history.back());
+
+  it('fills in the workspace and tab at / and /sessions', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/sessions/wa/ta'));
+  });
+
+  it('opens the workspace and tab in the path on reload, and Back/Forward walk the tabs chosen', async () => {
+    stubWorkspaces();
+    at('/sessions/wa/tb');
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('tab', { name: /Claude A/ }));
+    expect(here()).toBe('/sessions/wa/ta');
+    await userEvent.click(within(screen.getByRole('region', { name: 'Workspaces' })).getByRole('row', { name: /Release/ }));
+    expect(here()).toBe('/sessions/wr');
+    await back();
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Claude A/ })).toHaveAttribute('aria-selected', 'true'));
+    await back();
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true'));
+    await act(() => window.history.forward());
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Claude A/ })).toHaveAttribute('aria-selected', 'true'));
+    // Remembered for when a path doesn't say.
+    expect(JSON.parse(localStorage.getItem('pdt.workspaces.current')!).tabs.wa).toBe('ta');
+  });
+
+  it('puts the view in the path, and Back returns to the one before, as it was', async () => {
+    stubWorkspaces(ticketRoutes);
+    at('/sessions/wa/tb');
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Codex B/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Tickets' }));
+    expect(here()).toBe('/tickets');
+    await userEvent.click(await screen.findByRole('radio', { name: 'Board' }));
+    expect(here()).toBe('/tickets?view=board');
+    await userEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+    expect(here()).toBe('/sessions/wa/tb');
+    // Tickets opens as it was left.
+    await userEvent.click(screen.getByRole('button', { name: 'Tickets' }));
+    expect(here()).toBe('/tickets?view=board');
+    await back();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page'));
+    await back();
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Board' })).toBeChecked());
+    await back();
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Backlog' })).toBeChecked());
+  });
+
+  it('peeks at the ticket in /tickets/KEY, and names a peeked row by its key', async () => {
+    stubWorkspaces(ticketRoutes);
+    at('/tickets/ALP-1');
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(here()).toBe('/tickets'));
+    await userEvent.click(await screen.findByRole('row', { name: /Fix login/ }));
+    await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
+    expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+  });
+
+  it('opens a ticket key linked in a conversation', async () => {
+    stubWorkspaces(ticketRoutes);
+    at('/tickets');
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Fix login/ });
+    // A link as Markdown renders it (an app path, no target).
+    const a = document.createElement('a');
+    a.href = '/tickets/ALP-1';
+    a.textContent = 'ALP-1';
+    document.body.append(a);
+    await userEvent.click(a);
+    a.remove();
+    expect(here()).toBe('/tickets/ALP-1');
+    expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+  });
+
+  it('opens Settings pages from their paths, and puts the page chosen in the path', async () => {
+    stubWorkspaces({
+      'GET /api/connections': [],
+      [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null },
+      [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null },
+    });
+    at('/settings/projects/ALP');
+    renderWithQuery(<AppShell />);
+    const main = screen.getByRole('main');
+    expect(await within(main).findByRole('region', { name: 'Project' })).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    await userEvent.click(within(nav).getByRole('row', { name: /Connections/ }));
+    expect(here()).toBe('/settings/connections');
+    expect(await within(main).findByRole('region', { name: 'Discord webhooks' })).toBeInTheDocument();
+    await userEvent.click(within(nav).getByRole('row', { name: /This host/ }));
+    expect(here()).toBe('/settings/host');
+    await back();
+    expect(await within(main).findByRole('region', { name: 'Discord webhooks' })).toBeInTheDocument();
+  });
+
+  it('shows the file in /files/<path>', async () => {
+    stubWorkspaces({
+      [`GET /api/projects/${project.id}/files?path=`]: [{ name: 'docs', path: 'docs', dir: true, status: null }],
+      [`GET /api/projects/${project.id}/files?path=docs`]: [{ name: 'notes.txt', path: 'docs/notes.txt', dir: false, status: null }],
+      [`GET /api/projects/${project.id}/files/content?path=docs%2Fnotes.txt`]: { path: 'docs/notes.txt', size: 3, status: null, text: 'hi\n', binary: false, tooLarge: false },
+    });
+    at('/files/docs/notes.txt?project=ALP');
+    renderWithQuery(<AppShell />);
+    expect(await within(screen.getByRole('main')).findByRole('heading', { name: 'docs/notes.txt' })).toBeInTheDocument();
+    // Its folder opens, so the file shows in the tree.
+    expect(await screen.findByRole('row', { name: /notes\.txt/ })).toHaveAttribute('aria-selected', 'true');
   });
 });

@@ -16,7 +16,7 @@ import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
 import { newSession, type Choice } from '../sessions/newSession';
 import { ProjectPage } from '../projects/ProjectPage';
-import { FileViewer, FolderTree, useFolderView } from '../files/FolderView';
+import { FileViewer, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
@@ -27,6 +27,7 @@ import { invalidateTickets } from '../tickets/queries';
 import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
+import type { Workspace } from '../api/gen/Workspace';
 import { looksLikeKey } from '../tickets/model';
 import { useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
@@ -52,6 +53,11 @@ import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
 import { useWorkflowNotifications } from '../common/useWorkflowNotifications';
 import { VIEWS, type ViewId } from './views';
+import { TicketKeysContext } from '../common/ticketKeys';
+import type { TicketPeekState } from '../tickets/TicketsView';
+import type { TicketsMode } from '../tickets/useBacklog';
+import { parseLocation, routePath, sectionSlug, viewRoute, type Route, type SettingsPage } from './route';
+import { currentLocation, navigate, useAppLinks, useLocation } from './router';
 
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
@@ -63,6 +69,24 @@ const LIST_NAME: Record<ViewId, string> = {
 
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
+
+const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
+
+/** Brings a Settings section (named in the path) into view once the page has drawn it. */
+function useScrollToSection(section: string | null, page: string) {
+  useEffect(() => {
+    if (!section) return;
+    let tries = 0;
+    let timer = 0;
+    const find = () => {
+      const hit = [...document.querySelectorAll('main section')].find((s) => sectionSlug(s.querySelector('h3')?.textContent ?? '') === section);
+      if (hit) hit.scrollIntoView?.({ block: 'start' });
+      else if (tries++ < 50) timer = window.setTimeout(find, 100);
+    };
+    find();
+    return () => window.clearTimeout(timer);
+  }, [section, page]);
+}
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
@@ -85,12 +109,26 @@ const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ 
 const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
 
 export function AppShell() {
-  const [view, setView] = useState<ViewId>('sessions');
+  // What is on screen comes from the path (PDT-111): selecting things navigates, and Back/Forward and reload restore
+  // them. Where a path doesn't say (a workspace's last tab, Backlog or Board), the browser's stored choice does.
+  const loc = useLocation();
+  const route = useMemo(() => parseLocation(loc), [loc]);
+  const phone = useMediaQuery(PHONE_QUERY);
+  const defaultView: ViewId = phone ? 'pm' : 'sessions';
+  const view: ViewId = route.view ?? defaultView;
+  // The path each view showed last, so coming back to a view shows what it did (as when this was React state).
+  const lastPath = useRef<Partial<Record<ViewId, string>>>({});
+  useEffect(() => {
+    if (route.view) lastPath.current[route.view] = loc;
+  }, [route.view, loc]);
+  useAppLinks();
+  // The Workflows view: the workflow or template shown (with its tab and run).
+  const workflowTarget: WorkflowTarget = route.view === 'workflows' ? route.target : null;
+  const setWorkflowTarget = useCallback((target: WorkflowTarget) => go({ view: 'workflows', target }), []);
+  const settingsPage: SettingsPage = route.view === 'settings' ? route.page : { kind: 'host', section: null };
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
-  const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
-  // The Workflows view: the workflow or template shown, and the New workflow dialog.
-  const [workflowTarget, setWorkflowTarget] = useState<WorkflowTarget>(null);
+  // The New workflow dialog.
   const [creatingWorkflow, setCreatingWorkflow] = useState<{ templateId?: string } | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
@@ -105,33 +143,81 @@ export function AppShell() {
   // Phones: the list column is a sheet from the left, opened from the header.
   const [sheetOpen, setSheetOpen] = useState(false);
   // The Inbox's selected item.
-  const [inboxId, setInboxId] = useState<string | null>(null);
+  const inboxId = route.view === 'inbox' ? route.itemId : null;
   // The Personas view's persona (`new`: the create form).
-  const [personaId, setPersonaId] = useState<string | null>(null);
-  // The PM view's session or the notes.
-  const [pmSelection, setPmSelection] = useState<PmSelection>('current');
+  const personaId = route.view === 'personas' ? route.personaId : null;
+  const setPersonaId = useCallback((personaId: string | null) => go({ view: 'personas', personaId }), []);
   const pm = usePm();
+  // The PM view's session or the notes (the current session's own id reads as the current one).
+  const pmRoute: PmSelection = route.view === 'pm' ? route.pm : 'current';
+  const pmSelection: PmSelection = pmRoute === pm.data?.current?.id ? 'current' : pmRoute;
+  const setPmSelection = useCallback((pm: PmSelection) => go({ view: 'pm', pm }), []);
   const refreshPm = useRefreshPm();
   const confirm = useConfirm();
   const inbox = useInbox();
   const inboxItems = inbox.data?.items ?? [];
-  const phone = useMediaQuery(PHONE_QUERY);
+  // The Inbox picks an item by itself when none is shown (or the one shown has gone): that replaces the path.
+  const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
+  const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: !inboxShown }), [inboxShown]);
   const plusRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
-  const ws = useWorkspaces();
+  // A tab chosen in the Sessions view goes in the path; the one after a closed tab replaces it (and only there).
+  const onChoose = useCallback((workspaceId: string, tabId: string | null, { replace }: { replace: boolean }) => {
+    if (replace && (parseLocation(currentLocation()).view ?? defaultView) !== 'sessions') return;
+    go({ view: 'sessions', workspaceId, tabId }, { replace });
+  }, [defaultView]);
+  const ws = useWorkspaces({
+    workspaceId: route.view === 'sessions' ? route.workspaceId : null,
+    tabId: route.view === 'sessions' ? route.tabId : null,
+    onChoose,
+  });
+  // The path names the workspace and tab on screen (`/sessions` alone, or a tab that has gone, is filled in).
+  const wsId = ws.workspace?.id ?? null;
+  const tabId = ws.tab?.id ?? null;
+  useEffect(() => {
+    if (route.view !== 'sessions' || !wsId) return;
+    if (route.workspaceId !== wsId || route.tabId !== tabId) go({ view: 'sessions', workspaceId: wsId, tabId }, { replace: true });
+  }, [route, wsId, tabId]);
+  // `/` shows the default view: the PM on a phone, Sessions otherwise.
+  useEffect(() => {
+    if (route.view === null) go(viewRoute(defaultView), { replace: true });
+  }, [route.view, defaultView]);
   // A ticket workspace whose attempt merged: its banner shows above every tab (PDT-71) while the ticket is open, or
   // Done with its worktree still there (the banner checks that, PDT-97).
   const wsTicket = ws.workspace?.ticket;
   const mergedTicketId = wsTicket && wsTicket.attemptState === 'merged' && wsTicket.stage !== 'wont_do' ? wsTicket.id : null;
-  const backlog = useBacklog();
+  const stored = useBacklog();
+  // Backlog or Board: the path says (`?view=board`); the stored choice is what the Tickets view opens with.
+  const ticketsRoute = route.view === 'tickets' ? route : null;
+  const mode: TicketsMode = ticketsRoute ? (ticketsRoute.board ? 'board' : 'backlog') : stored.mode;
+  useEffect(() => {
+    if (stored.mode !== mode) stored.setMode(mode);
+  }, [stored.mode, mode, stored.setMode]);
+  const peekRef = ticketsRoute?.ticket ?? null;
+  const backlog = {
+    ...stored,
+    mode,
+    setMode: (m: TicketsMode) => go({ view: 'tickets', board: m === 'board', ticket: peekRef }),
+  };
+  const peek: TicketPeekState = useMemo(() => ({
+    ticket: peekRef,
+    onChange: (ticket, opts) => go({ view: 'tickets', board: mode === 'board', ticket }, opts),
+  }), [peekRef, mode]);
+  /** Shows a view as it was last (a view's own path the first time). */
+  const setView = useCallback((v: ViewId) => {
+    if ((parseLocation(currentLocation()).view ?? defaultView) === v) return;
+    if (v === 'sessions') navigate('/sessions');
+    else if (v === 'tickets') go({ view: 'tickets', board: stored.mode === 'board', ticket: null });
+    else navigate(lastPath.current[v] ?? routePath(viewRoute(v)));
+  }, [defaultView, stored.mode]);
   // The view changes once the tab is there: one that can't open (its ticket or session is gone) leaves the user where
   // they were with the error, not on whatever tab was current (PDT-93).
   const openTicket = useCallback((t: { id: string; projectId: string }) => {
     void runAction(async () => {
       if (await ws.focusItem({ kind: 'ticket', id: t.id }, t.projectId)) setView('sessions');
     });
-  }, [ws.focusItem]);
+  }, [ws.focusItem, setView]);
   const openTicketByKey = useCallback((key: string) => {
     void runAction(async () => {
       const hit = (await api.listTickets({ q: key, limit: 1 })).items[0];
@@ -144,13 +230,12 @@ export function AppShell() {
     // A PM session has no tab: the PM view shows it.
     if (pmSessions?.some((x) => x.session.id === s.id)) {
       setPmSelection(pm.data?.current?.id === s.id ? 'current' : s.id);
-      setView('pm');
       return;
     }
     void runAction(async () => {
       if (await ws.focusItem({ kind: 'session', id: s.id }, s.projectId)) setView('sessions');
     });
-  }, [ws.focusItem, pmSessions, pm.data?.current?.id]);
+  }, [ws.focusItem, pmSessions, pm.data?.current?.id, setPmSelection, setView]);
   // A new PM session ends the current one (it writes no journal), so it asks first.
   const newPmSession = useCallback(() => {
     setView('pm');
@@ -170,14 +255,14 @@ export function AppShell() {
       await refreshPm();
       setPmSelection('current');
     });
-  }, [pm.data?.current, confirm, refreshPm]);
+  }, [pm.data?.current, confirm, refreshPm, setView, setPmSelection]);
   // After a ticket's tab, in the workspace that has it (its Start workspace).
   const placementNear = useCallback((ticketId: string): TabPlacement | undefined => {
     const hit = findTab(ws.workspaces, { kind: 'ticket', id: ticketId });
     return hit ? { workspaceId: hit.workspace.id, position: hit.tab.position + 1 } : undefined;
   }, [ws.workspaces]);
+  // Opening a tab shows Sessions: the tab's selection navigates there.
   const openChanges = useCallback((w: { id: string; projectId: string }, opts?: OpenChangesOptions) => {
-    setView('sessions');
     const item = { kind: 'changes', id: w.id } as const;
     const near = opts?.ticketId ? placementNear(opts.ticketId) : undefined;
     const here = opts?.here ? ws.workspace : near ? ws.workspaces.find((x) => x.id === near.workspaceId) : undefined;
@@ -188,14 +273,12 @@ export function AppShell() {
     else void runAction(() => ws.focusItem(item, w.projectId));
   }, [ws.focusItem, ws.openIn, ws.selectTab, ws.workspace, ws.workspaces, ws.tab, placementNear]);
   const openRun = useCallback((r: { id: string; projectId: string }) => {
-    setView('sessions');
     void runAction(async () => {
       await ws.refresh();
       await ws.focusItem({ kind: 'run', id: r.id }, r.projectId);
     });
   }, [ws.focusItem, ws.refresh]);
   const openNear = useCallback((item: Item, projectId: string, ticketId: string) => {
-    setView('sessions');
     const existing = findTab(ws.workspaces, item);
     const near = placementNear(ticketId);
     if (existing) ws.selectTab(existing.tab);
@@ -220,7 +303,6 @@ export function AppShell() {
     const projectId = r.ticket.projectId;
     void qc.invalidateQueries({ queryKey: ['sessions', projectId] });
     void qc.invalidateQueries({ queryKey: ['worktrees', projectId] });
-    setView('sessions');
     void runAction(async () => {
       await ws.refresh();
       // Started without a session: the ticket's tab.
@@ -251,8 +333,7 @@ export function AppShell() {
       return;
     }
     if (a.type === 'backlog' || a.type === 'board') {
-      setView('tickets');
-      backlog.setMode(a.type);
+      go({ view: 'tickets', board: a.type === 'board', ticket: null });
       return;
     }
     if (a.type === 'inbox') {
@@ -294,7 +375,11 @@ export function AppShell() {
 
   const label = VIEWS.find((v) => v.id === view)!.label;
   const current = ws.currentInfo;
-  const settingsProject = ws.projects.find((p) => p.id === settingsProjectId) ?? null;
+  const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
+  // The Settings list's current row: a project's id, connections, or null (this host).
+  const settingsProjectId = settingsProject?.id ?? (settingsPage.kind === 'connections' ? CONNECTIONS : null);
+  const section = settingsPage.kind === 'notifications' ? 'notifications' : settingsPage.kind === 'connections' ? null : settingsPage.section;
+  useScrollToSection(view === 'settings' ? section : null, settingsProjectId ?? '');
   const currentProject = ws.projects.find((p) => p.id === current?.projectId) ?? null;
   const worktrees = useQuery({
     queryKey: ['worktrees', currentProject?.id ?? ''],
@@ -304,7 +389,19 @@ export function AppShell() {
   const worktreeBranch = current?.worktreeId ? worktrees.data?.find((w) => w.id === current.worktreeId)?.branch : undefined;
   const branch = current?.run?.branch ?? worktreeBranch ?? null;
   const branchLink = currentProject?.githubRepo && branch ? branchUrl(currentProject.githubRepo, branch) : null;
-  const folder = useFolderView(ws.projects, current ? { projectId: current.projectId, worktreeId: current.worktreeId } : null);
+  // The Files view: the file in the path, in the checkout the path names (a project key and worktree) or the
+  // current tab's.
+  const filesRoute = route.view === 'files' ? route : null;
+  const filesProject = filesRoute?.project ? ws.projects.find((p) => p.key === filesRoute.project) : undefined;
+  const folder: FolderViewState = useFolderView(ws.projects, current ? { projectId: current.projectId, worktreeId: current.worktreeId } : null, {
+    picked: filesProject ? { projectId: filesProject.id, worktreeId: filesRoute?.worktree ?? null } : null,
+    file: filesRoute?.path ?? null,
+    onChange: (picked, file) => {
+      // A file's path names its checkout, so a reload shows the same file even if the current tab changes.
+      const at = picked ?? (file ? folder.place : null);
+      go({ view: 'files', path: file, project: at ? ws.projects.find((p) => p.id === at.projectId)?.key ?? null : null, worktree: at?.worktreeId ?? null });
+    },
+  });
   const bottomProject = ws.projects.find((p) => p.id === (current?.projectId ?? ws.workspace?.projectId)) ?? ws.projects[0] ?? null;
 
   // Choosing a file closes the phone sheet.
@@ -312,9 +409,10 @@ export function AppShell() {
     if (folder.file) setSheetOpen(false);
   }, [folder.file]);
 
+  /** Settings for a project (by id), connections, or this host (null). */
   const showProjectSettings = (id: string | null) => {
-    setSettingsProjectId(id);
-    setView('settings');
+    const key = ws.projects.find((p) => p.id === id)?.key;
+    go({ view: 'settings', page: id === CONNECTIONS ? { kind: 'connections' } : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null } });
     setSheetOpen(false);
   };
 
@@ -325,13 +423,12 @@ export function AppShell() {
   // New tickets go in the backlog's project in the Tickets view, else the current workspace's project.
   const ticketProjectId = view === 'tickets' ? backlog.projectId : place?.projectId ?? backlog.projectId;
   const handlers: PaletteHandlers = {
-    selectWorkspace: (id) => { setView('sessions'); ws.selectWorkspace(id); },
-    selectTab: (t) => { setView('sessions'); ws.selectTab(t); },
-    focusItem: (item, projectId) => { setView('sessions'); void runAction(() => ws.focusItem(item, projectId)); },
+    selectWorkspace: (id) => ws.selectWorkspace(id),
+    selectTab: (t) => ws.selectTab(t),
+    focusItem: (item, projectId) => void runAction(() => ws.focusItem(item, projectId)),
     projectSettings: (id) => showProjectSettings(id),
     hostSettings: () => showProjectSettings(null),
     newSession: (kind, at) => {
-      setView('sessions');
       const w = ws.workspace;
       // Like the new-tab chooser: right after the current tab.
       const tab = w ? { workspaceId: w.id, position: ws.tab ? ws.tab.position + 1 : w.tabs.length } : undefined;
@@ -343,7 +440,7 @@ export function AppShell() {
       });
     },
     openChooser: () => { setView('sessions'); setChooserOpen(true); },
-    renameTab: (t) => { setView('sessions'); ws.selectTab(t); setRenamingTabId(t.id); },
+    renameTab: (t) => { ws.selectTab(t); setRenamingTabId(t.id); },
     closeTab: (t) => void runAction(() => ws.closeTab(t)),
     moveTab: (t, workspaceId) => void runAction(() => ws.moveTab(t, workspaceId)),
     moveTabToNewWorkspace: (t, name) => void runAction(async () => {
@@ -429,8 +526,11 @@ export function AppShell() {
     </nav>
   );
   const openList = () => setSheetOpen(true);
+  const projectKeyList = ws.projects.map((p) => p.key).join(' ');
+  const projectKeys = useMemo(() => (projectKeyList ? projectKeyList.split(' ') : []), [projectKeyList]);
 
   return (
+    <TicketKeysContext.Provider value={projectKeys}>
     <OpenTicketContext.Provider value={openTicket}>
     <OpenSessionContext.Provider value={openSession}>
     <OpenChangesContext.Provider value={openChanges}>
@@ -504,15 +604,14 @@ export function AppShell() {
             onClose={() => setAddingProject(false)}
             onAdded={(p) => {
               if (view === 'settings') {
-                setSettingsProjectId(p.id);
+                go({ view: 'settings', page: { kind: 'project', key: p.key, section: null } });
                 return;
               }
               // Show the new project's workspace once the list includes it.
               void runAction(async () => {
-                const all = await api.listWorkspaces();
-                const home = all.find((w) => w.projectId === p.id);
-                if (home) ws.selectWorkspace(home.id);
                 await ws.refresh();
+                const home = qc.getQueryData<Workspace[]>(['workspaces'])?.find((w) => w.projectId === p.id);
+                if (home) ws.selectWorkspace(home.id);
               });
             }}
           />
@@ -526,14 +625,16 @@ export function AppShell() {
             ) : view === 'personas' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
             ) : view === 'tickets' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketsView backlog={backlog} projects={ws.projects} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketsView backlog={backlog} projects={ws.projects} peek={peek} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></Suspense>
             ) : view === 'workflows' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></Suspense>
             ) : view === 'files' ? (
               <FileViewer state={folder} />
             ) : view === 'settings' ? (
-              settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => setSettingsProjectId(null)} />
-                : settingsProjectId === CONNECTIONS ? <ConnectionsPage /> : <HostSettingsPage />
+              settingsPage.kind === 'project' ? (
+                settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => showProjectSettings(null)} />
+                  : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
+              ) : settingsPage.kind === 'connections' ? <ConnectionsPage /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : ws.tab?.worktreeId ? (
@@ -572,5 +673,6 @@ export function AppShell() {
     </OpenChangesContext.Provider>
     </OpenSessionContext.Provider>
     </OpenTicketContext.Provider>
+    </TicketKeysContext.Provider>
   );
 }

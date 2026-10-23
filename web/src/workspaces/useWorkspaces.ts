@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConfirm, type Status } from '@ui';
 import { api } from '../api/client';
@@ -85,6 +85,17 @@ export function changesInfo(w: Worktree, polledAt: number): ItemInfo {
   };
 }
 
+/**
+ * The workspace and tab a route names (PDT-111), and how a selection reaches the route. A route's choice wins over the
+ * stored one (and is stored, for when a route doesn't say); `replace` is for a selection the user didn't make (the tab
+ * after a closed one).
+ */
+export interface RoutedChoice {
+  workspaceId: string | null;
+  tabId: string | null;
+  onChoose: (workspaceId: string, tabId: string | null, opts: { replace: boolean }) => void;
+}
+
 /** How often a ticket tab's title is refreshed (the open ticket's own view polls every 2 s). */
 const TICKET_TAB_POLL = 5000;
 
@@ -92,7 +103,7 @@ const TICKET_TAB_POLL = 5000;
  * Workspaces, the per-device choice of workspace and tab, every project's sessions and runs (the same queries the
  * tree uses), and the tab actions.
  */
-export function useWorkspaces() {
+export function useWorkspaces(routed?: RoutedChoice) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
@@ -148,7 +159,7 @@ export function useWorkspaces() {
   );
   const allInfos = useMemo(() => [...infos.values()], [infos]);
 
-  const [choice, setChoiceState] = useState<CurrentChoice>(loadChoice);
+  const [stored, setChoiceState] = useState<CurrentChoice>(loadChoice);
   const setChoice = useCallback((f: (c: CurrentChoice) => CurrentChoice) => {
     setChoiceState((c) => {
       const next = f(c);
@@ -156,13 +167,30 @@ export function useWorkspaces() {
       return next;
     });
   }, []);
+  const routedWs = routed?.workspaceId ?? null;
+  const routedTab = routed?.tabId ?? null;
+  const choice: CurrentChoice = useMemo(
+    () => (routedWs ? { workspaceId: routedWs, tabs: routedTab ? { ...stored.tabs, [routedWs]: routedTab } : stored.tabs } : stored),
+    [routedWs, routedTab, stored],
+  );
+  // The route's choice is remembered for the next time a route doesn't name one.
+  useEffect(() => {
+    if (routedWs && (stored.workspaceId !== routedWs || (routedTab && stored.tabs[routedWs] !== routedTab))) setChoice(() => choice);
+  }, [routedWs, routedTab, stored, choice, setChoice]);
+  const onChoose = useRef(routed?.onChoose);
+  onChoose.current = routed?.onChoose;
+  const choiceRef = useRef(choice);
+  choiceRef.current = choice;
   const { workspace, tab } = resolveCurrent(workspaces, choice);
 
-  const selectWorkspace = useCallback((id: string) => setChoice((c) => ({ ...c, workspaceId: id })), [setChoice]);
-  const selectTab = useCallback(
-    (t: Tab) => setChoice((c) => ({ workspaceId: t.workspaceId, tabs: { ...c.tabs, [t.workspaceId]: t.id } })),
-    [setChoice],
-  );
+  const selectWorkspace = useCallback((id: string) => {
+    setChoice((c) => ({ ...c, workspaceId: id }));
+    onChoose.current?.(id, choiceRef.current.tabs[id] ?? null, { replace: false });
+  }, [setChoice]);
+  const selectTab = useCallback((t: Tab) => {
+    setChoice((c) => ({ workspaceId: t.workspaceId, tabs: { ...c.tabs, [t.workspaceId]: t.id } }));
+    onChoose.current?.(t.workspaceId, t.id, { replace: false });
+  }, [setChoice]);
   const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['workspaces'] }), [qc]);
 
   /** Shows an item: its tab wherever it is, else a new tab in its project's workspace. False when it has no home. */
@@ -220,6 +248,7 @@ export function useWorkspaces() {
         const i = w.tabs.findIndex((x) => x.id === t.id);
         const neighbour = w.tabs[i + 1] ?? w.tabs[i - 1];
         setChoice((c) => ({ ...c, tabs: { ...c.tabs, [w.id]: neighbour?.id ?? '' } }));
+        onChoose.current?.(w.id, neighbour?.id ?? null, { replace: true });
       }
       await api.closeTab(t.id);
       await refresh();
@@ -265,7 +294,7 @@ export function useWorkspaces() {
 
   return {
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projects: projectList, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, ticketInfos,
+    projects: projectList, projectsLoaded: projects.isSuccess, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, ticketInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
     currentInfo: tab ? info(itemOf(tab)) : null,
   };

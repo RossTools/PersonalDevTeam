@@ -165,9 +165,14 @@ async fn unknown_api_route_is_json_404_and_spa_falls_back_to_index() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["code"], "not_found");
 
-    let (status, body) = call(&app, "GET", "/board/deep/link", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("PDT"));
+    // The web app's own paths (web/src/shell/route.ts), a file path among them.
+    for uri in
+        ["/board/deep/link", "/tickets/PDT-12?view=board", "/files/src/main.rs", "/settings/projects/PDT/worktrees"]
+    {
+        let (status, body) = call(&app, "GET", uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert!(body.contains("PDT"), "{uri}");
+    }
 
     // Path traversal must never serve files outside web_dir.
     std::fs::write(tmp.path().join("Cargo.toml"), "[package]\n[workspace]\n").unwrap();

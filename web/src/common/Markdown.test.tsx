@@ -1,8 +1,28 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Markdown } from './Markdown';
+import { TicketKeysContext } from './ticketKeys';
 
 describe('Markdown', () => {
+  it("links its projects' ticket keys to the ticket's path, not in code or links, and not other keys", () => {
+    render(
+      <TicketKeysContext.Provider value={['ALP', 'PDT']}>
+        <Markdown>{'Fixes ALP-12 (see PDT-3, [the plan](https://x.test/PDT-4)); not `ALP-5`, UTF-8 or XALP-6.'}</Markdown>
+      </TicketKeysContext.Provider>,
+    );
+    const links = screen.getAllByRole('link');
+    expect(links.map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('target')])).toEqual([
+      ['ALP-12', '/tickets/ALP-12', null],
+      ['PDT-3', '/tickets/PDT-3', null],
+      ['the plan', 'https://x.test/PDT-4', '_blank'],
+    ]);
+  });
+
+  it('links no ticket keys without the projects', () => {
+    render(<Markdown>{'Fixes ALP-12'}</Markdown>);
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
   it('renders a GitHub table', () => {
     render(<Markdown>{'| Stage | Count |\n|---|---|\n| Draft | 3 |\n| Ready | 5 |'}</Markdown>);
     const table = screen.getByRole('table');

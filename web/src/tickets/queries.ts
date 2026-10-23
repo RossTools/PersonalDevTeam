@@ -47,6 +47,26 @@ export function useTicketPages(q: TicketQuery, enabled = true) {
   });
 }
 
+/** A ticket key (`PDT-12`), as a path names a ticket by (an id otherwise). */
+export const isTicketKey = (ref: string) => /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(ref);
+
+/**
+ * The id of the ticket a path names, by key or id (PDT-111). Null while a key is being looked up, or when no ticket has
+ * it (`missing`).
+ */
+export function useTicketId(ref: string | null): { id: string | null; missing: boolean } {
+  const byKey = !!ref && isTicketKey(ref);
+  const q = useQuery({
+    queryKey: ['ticket-by-key', ref?.toUpperCase() ?? ''],
+    queryFn: async () => (await api.listTickets({ q: ref!, limit: 5 })).items.find((t) => t.key.toUpperCase() === ref!.toUpperCase())?.id ?? null,
+    enabled: byKey,
+    staleTime: Infinity,
+  });
+  if (!ref) return { id: null, missing: false };
+  if (!byKey) return { id: ref, missing: false };
+  return { id: q.data ?? null, missing: (q.isSuccess && q.data === null) || q.isError };
+}
+
 export function useTicket(id: string | null) {
   return useQuery({
     queryKey: ticketKeys.one(id ?? ''),
