@@ -100,6 +100,19 @@ describe('List and ListRow', () => {
     expect(onMenu).toHaveBeenCalledWith({ x: 5, y: 6 });
   });
 
+  it('a long press that opened the menu does not also act on the row (iOS sends no click after it)', () => {
+    vi.useFakeTimers();
+    const onAction = vi.fn();
+    render(<List aria-label="Agents" onAction={onAction}><ListRow id="a" title="Alpha" onMenu={() => {}} /></List>);
+    const row = screen.getByRole('row', { name: 'Alpha' });
+    const touch = { pointerType: 'touch', pointerId: 1, button: 0, width: 1, height: 1, clientX: 5, clientY: 6 };
+    fireEvent.pointerDown(row, touch);
+    act(() => vi.advanceTimersByTime(600));
+    fireEvent.pointerUp(row, touch);
+    act(() => vi.advanceTimersByTime(1000));
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
   it('a short tap does not open the menu', () => {
     vi.useFakeTimers();
     const onMenu = vi.fn();
