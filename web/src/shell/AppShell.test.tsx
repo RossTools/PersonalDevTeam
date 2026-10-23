@@ -810,6 +810,19 @@ describe('phone', () => {
     expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
   });
 
+  it("creates a workspace from the drawer's ＋, closing the drawer", async () => {
+    stubPhone();
+    const calls = stubWorkspaces({ 'POST /api/workspaces': { id: 'wn', name: 'Spike', projectId: null, position: 2, createdAt: 3, tabs: [] } });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    const d = await openDrawer();
+    const section = within(within(d).getByRole('region', { name: 'Workspaces' }));
+    await userEvent.click(section.getByRole('button', { name: 'New workspace' }));
+    await userEvent.type(section.getByRole('textbox', { name: 'New workspace name' }), 'Spike{Enter}');
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces', body: { name: 'Spike' } }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument());
+  });
+
   it('puts the terminal panel and New tab under ⋯ in a workspace', async () => {
     stubPhone();
     stubWorkspaces();
@@ -1122,6 +1135,30 @@ describe('routes (PDT-111)', () => {
     await userEvent.click(await screen.findByRole('row', { name: /Fix login/ }));
     await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
     expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+  });
+
+  it('shows a ticket as a detail screen on a phone, where ← and Back agree', async () => {
+    stubPhone();
+    stubWorkspaces(ticketRoutes);
+    at('/tickets');
+    renderWithQuery(<AppShell />);
+    const bar = screen.getByRole('banner', { name: 'Top bar' });
+    await userEvent.click(await screen.findByRole('row', { name: /Fix login/ }));
+    await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
+    // Under the top bar, in place of the list, not a sheet over it.
+    expect(await within(screen.getByRole('main')).findByRole('region', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('row', { name: /Fix login/ })).not.toBeInTheDocument();
+    expect(within(bar).getByRole('heading', { name: 'ALP-1' })).toBeInTheDocument();
+    // ← goes Back: Forward returns to the ticket.
+    await userEvent.click(within(bar).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/tickets'));
+    expect(await screen.findByRole('row', { name: /Fix login/ })).toBeInTheDocument();
+    await act(() => window.history.forward());
+    await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
+    await back();
+    await waitFor(() => expect(here()).toBe('/tickets'));
+    expect(within(bar).getByRole('button', { name: 'Menu' })).toBeInTheDocument();
   });
 
   it('opens a ticket key linked in a conversation', async () => {
