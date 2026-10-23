@@ -65,11 +65,15 @@ export function runInfo(r: Run, polledAt: number): ItemInfo {
   };
 }
 
-/** A ticket tab: titled `PDT-42 · title`, no agent state (the tab shows a ticket icon). */
+/**
+ * A ticket tab: titled `PDT-42 · title`, no agent state (the tab shows a ticket icon). Its place is its active
+ * attempt's worktree, so a new session or run from it (and the folder view) defaults to the ticket's branch.
+ */
 export function ticketInfo(t: Ticket, polledAt: number): ItemInfo {
+  const worktreeId = t.attempt?.state === 'active' ? t.attempt.worktreeId : null;
   return {
     item: { kind: 'ticket', id: t.id }, title: `${t.key} · ${t.title}`, status: 'idle', activity: null, unseen: false,
-    projectId: t.projectId, worktreeId: null, ticket: t, polledAt,
+    projectId: t.projectId, worktreeId, ticket: t, polledAt,
   };
 }
 

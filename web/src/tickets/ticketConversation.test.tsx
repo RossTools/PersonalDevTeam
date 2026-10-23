@@ -20,7 +20,7 @@ const session = (id: string, over: Partial<Session> = {}): Session => ({
   mode: 'conversation', model: null, permissionMode: 'ask', persona: null, ...over,
 });
 
-const row = (s: Session) => ({ id: s.id, title: s.title, status: s.status, agent: s.agent, attemptId: 'a1', mode: s.mode });
+const row = (s: Session) => ({ id: s.id, title: s.title, status: s.status, agent: s.agent, attemptId: 'a1', persona: null, mode: s.mode });
 
 const caps = { conversation: true, permissionModes: ['ask'], models: [], commands: [] };
 

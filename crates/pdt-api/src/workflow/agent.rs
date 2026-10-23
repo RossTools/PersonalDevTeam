@@ -255,12 +255,12 @@ async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: &Target) -> Option<
     sessions.into_iter().rev().find(|s| s.attempt_id.as_deref() == Some(attempt.attempt.id.as_str()) && alive(s))
 }
 
-/// Where a step's new session opens its tab: one that becomes the attempt's session (an auto-started ticket's Coder)
-/// at the end of the workspace its Start made (the project's workspace when it has none or it is gone), as the
-/// session of a ticket the user starts would; None (no tab) for the rest.
-async fn step_tab(st: &AppState, t: &Target, attempt_id: Option<&str>) -> Option<Option<TabPlacement>> {
-    let attempt = t.attempt.as_ref().filter(|a| attempt_id == Some(a.attempt.id.as_str()))?;
-    let workspace = match &attempt.attempt.workspace_id {
+/// Where a step's new session on a ticket opens its tab (Coder, Reviewer, QA, Refiner alike): at the end of the
+/// workspace the attempt's Start made, so after the ticket's tab and the sessions before it; the project's workspace
+/// when there is no attempt (Refine) or its workspace is gone. None (no tab) for a step with no ticket.
+async fn step_tab(st: &AppState, t: &Target) -> Option<Option<TabPlacement>> {
+    t.ticket.as_ref()?;
+    let workspace = match t.attempt.as_ref().and_then(|a| a.attempt.workspace_id.as_ref()) {
         Some(id) => st.store.get_workspace(id).await.ok().flatten(),
         None => None,
     };
@@ -290,7 +290,7 @@ async fn new_session(
         Some((_, key, _)) => format!("{} · {key}", persona.name),
         None => persona.name.clone(),
     };
-    let tab = step_tab(st, t, attempt_id.as_deref()).await;
+    let tab = step_tab(st, t).await;
     let req = crate::sessions::CreateSession {
         valid: ValidSession {
             project_id: project.id.clone(),
@@ -306,7 +306,10 @@ async fn new_session(
         },
         title: Some(title),
         attempt_id,
-        ticket_key: t.ticket.as_ref().map(|x| x.1.clone()),
+        ticket: t
+            .ticket
+            .as_ref()
+            .map(|(id, key, _)| pdt_core::ticket::SessionTicket { id: id.clone(), key: key.clone() }),
         tab,
         persona: Some(SessionPersona {
             id: persona.id.clone(),

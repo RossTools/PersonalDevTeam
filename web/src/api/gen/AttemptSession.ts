@@ -4,9 +4,17 @@ import type { SessionMode } from "./SessionMode";
 import type { SessionStatus } from "./SessionStatus";
 
 /**
- * A session of one of a ticket's attempts.
+ * A session of a ticket: one of its attempts', or one a workflow step started on it (a Reviewer, QA or Refiner).
  */
-export type AttemptSession = { id: string, title: string, status: SessionStatus, agent: AgentKind | null, attemptId: string, 
+export type AttemptSession = { id: string, title: string, status: SessionStatus, agent: AgentKind | null, 
+/**
+ * None for a step's session that isn't the attempt's own (PR notices go to the attempt's).
+ */
+attemptId: string | null, 
+/**
+ * The persona it runs, if a workflow step started it.
+ */
+persona: string | null, 
 /**
  * A conversation or the agent's terminal (the ticket tab's Conversation shows conversations).
  */

@@ -263,7 +263,7 @@ pub(crate) async fn start_ticket(
         },
         title: Some(started_session_title(&ticket.summary.title)),
         attempt_id: Some(attempt_id.clone()),
-        ticket_key: Some(key.clone()),
+        ticket: Some(pdt_core::ticket::SessionTicket { id: ticket.summary.id.clone(), key: key.clone() }),
         tab: None,
         persona: None,
         cwd: personal.clone(),

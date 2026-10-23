@@ -405,11 +405,15 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
 
 - **Session.** `new` (default; Reviewer, QA, Refiner): a fresh conversation of the persona's agent and model in the
   attempt's worktree (else the project's main checkout, or a Personal project's ticket folder), recording the persona
-  and version (`sessions.persona_id`, `persona_version`, `step_id`), with no tab and no attempt (so PR notices still go
-  to the attempt's own session). `reuse` (Coder): the session this node used earlier in the run, else the attempt's
-  running agent session, else a new one that becomes the attempt's (and opens its tab at the end of the attempt's Start
-  workspace, else the project's, as a session the user's Start makes would: an auto-started ticket's Coder, PDT-103);
-  a reused session gets the step through the outbox
+  and version (`sessions.persona_id`, `persona_version`, `step_id`), with no attempt (so PR notices still go to the
+  attempt's own session) but linked to the ticket (`sessions.ticket_id`, PDT-105): it is titled `<Persona> · <KEY>`,
+  carries the ticket like an attempt's session and is in the ticket's `sessions` (with `persona`, `attemptId` null).
+  `reuse` (Coder): the session this node used earlier in the run, else the attempt's running agent session, else a new
+  one that becomes the attempt's. Every new session a step starts on a ticket opens its tab at the end of the
+  attempt's Start workspace (after the ticket's tab and the sessions before it: Coder, Reviewer, QA), else the
+  project's workspace (a Refiner before any attempt, or the workspace is gone), as a session the user's Start makes
+  would (PDT-103, PDT-105); each pass's new session opens its own tab, and earlier passes' stay like other ended
+  sessions. A step with no ticket opens no tab. A reused session gets the step through the outbox
   (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
   On a later pass in the same session (sent back by Review, QA or a rejection) it gets only why it is back (the
   sending step's outcome and summary, or the user's gate choice and note: pdt-core `next_pass_message`) and the
