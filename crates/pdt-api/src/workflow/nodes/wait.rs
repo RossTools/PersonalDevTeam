@@ -36,6 +36,9 @@ pub struct WaitConfig {
     pub event: Option<EventWait>,
     #[ts(type = "number | null")]
     pub timeout_ms: Option<u64>,
+    /// The ticket's pipeline stage while it waits (the Board's column).
+    #[ts(optional)]
+    pub pipeline_stage: Option<pdt_core::ticket::PipelineStage>,
 }
 
 pub struct Wait;
@@ -71,6 +74,7 @@ impl NodeKind for Wait {
                 let port = if c.event.is_some() { "event" } else { "done" };
                 return Ok(Outcome::next(port, json!({"would": "wait"})));
             }
+            crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
             let now = now_ms();
             if let Some(e) = c.event {
                 let until = c.timeout_ms.map(|ms| now + i64::try_from(ms).unwrap_or(i64::MAX / 2));

@@ -513,8 +513,8 @@ pub(crate) async fn merge_preview(
     Ok(Json(preview(&st, &info).await?))
 }
 
-fn blocked(problem: MergeProblem) -> ApiError {
-    let why = match problem {
+fn why_blocked(problem: MergeProblem) -> &'static str {
+    match problem {
         MergeProblem::Inactive => "this attempt has ended",
         MergeProblem::Dirty => "the worktree has uncommitted changes; commit or discard them first",
         MergeProblem::Conflict => "the merge conflicts; merge the base branch into the branch first",
@@ -523,8 +523,26 @@ fn blocked(problem: MergeProblem) -> ApiError {
         MergeProblem::PrNotMergeable => "GitHub can't merge the pull request (a draft, or it conflicts)",
         MergeProblem::PrQueued => "auto-merge is already on for the pull request",
         MergeProblem::NoPr => "this project merges through pull requests, and the branch has no open one yet",
-    };
-    conflict("merge_blocked", why)
+    }
+}
+
+/// Why a merge didn't happen: the project's policy, or something in its way. `fixable`: the attempt's agent can clear
+/// it with a commit (a conflict, uncommitted changes in the worktree), so a workflow can send it back to be fixed.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Refusal {
+    pub code: &'static str,
+    pub reason: String,
+    pub fixable: bool,
+}
+
+impl Refusal {
+    fn blocked(problem: MergeProblem, fixable: bool) -> Self {
+        Self { code: "merge_blocked", reason: why_blocked(problem).into(), fixable }
+    }
+
+    fn into_error(self) -> ApiError {
+        conflict(self.code, self.reason)
+    }
 }
 
 /// `POST /api/attempts/{id}/merge`: merges locally (the attempt ends as merged) or turns on auto-merge for its PR.
@@ -545,17 +563,28 @@ pub(crate) async fn merge(
         None | Some("agent") => Merger::Automated,
         Some(other) => return Err(invalid(format!("by is user or agent, not {other}"))),
     };
-    Ok(Json(merge_attempt(&st, &id, &input, merger).await?))
+    merge_attempt(&st, &id, &input, merger).await?.map(Json).map_err(Refusal::into_error)
+}
+
+/// Records that the attempt's pull request was set to merge, and what to do once it merges (not given, a merge again
+/// (PDT-104): what the earlier merge asked stays).
+async fn record_merge(st: &AppState, info: &AttemptInfo, input: &MergeRequest) -> Result<(), ApiError> {
+    if let Some(finish) = input.finish_on_merge {
+        st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
+    }
+    st.store.set_attempt_merge_requested(&info.attempt.id).await?;
+    Ok(())
 }
 
 /// The Merge command (the route, and the `attempt.merge` node as an automated merger): the project's policy, then
-/// what would stop the merge, then the merge.
+/// what would stop the merge, then the merge. A refusal is `Ok(Err(_))`. A refusal never records the request to merge
+/// (PDT-124): set to merge, PR notices would turn auto-merge on once CI passes, also for a fix nobody reviewed.
 pub(crate) async fn merge_attempt(
     st: &AppState,
     id: &str,
     input: &MergeRequest,
     merger: Merger,
-) -> Result<MergeResult, ApiError> {
+) -> Result<Result<MergeResult, Refusal>, ApiError> {
     let st = st.clone();
     let info = load_attempt(&st, id).await?;
     let policy = st.store.get_project_settings(&info.project_id).await?.policy;
@@ -563,17 +592,35 @@ pub(crate) async fn merge_attempt(
     let labels = ticket.as_ref().map(|t| t.labels.as_slice()).unwrap_or_default();
     let approved = merger == Merger::Automated && policy.needs_approval(labels) && approved_at_head(&st, &info).await?;
     if let Err(refusal) = may_merge(&policy, merger, approved, labels) {
-        return Err(conflict(refusal.code(), refusal.message(&policy)));
+        let reason = refusal.message(&policy).into();
+        return Ok(Err(Refusal { code: refusal.code(), reason, fixable: false }));
     }
     let p = preview(&st, &info).await?;
-    if let Some(problem) = p.problem {
-        return Err(blocked(problem));
+    let automated = merger == Merger::Automated;
+    match p.problem {
+        None => {}
+        // Already set to merge (a person, or PR notices, got there first): for a workflow that is what it asked.
+        Some(MergeProblem::PrQueued) if automated => {
+            record_merge(&st, &info, input).await?;
+            return Ok(Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
+        }
+        Some(MergeProblem::PrNotMergeable) => {
+            let draft = crate::github::watched_pr(&st, &info.attempt.id).is_none_or(|pr| pr.draft);
+            if draft {
+                let reason = "the pull request is a draft; mark it ready for review first".into();
+                return Ok(Err(Refusal { code: "merge_blocked", reason, fixable: false }));
+            }
+            let reason = "the pull request conflicts with its base; merge the base branch in, resolve the conflicts \
+                          and push"
+                .into();
+            return Ok(Err(Refusal { code: "merge_blocked", reason, fixable: true }));
+        }
+        Some(problem) => {
+            let fixable = matches!(problem, MergeProblem::Conflict | MergeProblem::Dirty);
+            return Ok(Err(Refusal::blocked(problem, fixable)));
+        }
     }
     if let Some(pr) = &p.pr {
-        // Not given (a merge again, PDT-104): what the earlier merge asked stays.
-        if let Some(finish) = input.finish_on_merge {
-            st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
-        }
         let repo = crate::github::github_repo(&info.repo_path).await.unwrap_or_default();
         let (gh, base, number) = (st.github.clone(), p.base.clone(), pr.number);
         tokio::task::spawn_blocking(move || {
@@ -587,9 +634,9 @@ pub(crate) async fn merge_attempt(
         .await
         .map_err(ApiError::internal)?
         .map_err(|e| conflict("merge_failed", e.to_string()))?;
-        st.store.set_attempt_merge_requested(&info.attempt.id).await?;
+        record_merge(&st, &info, input).await?;
         crate::github::refresh_attempt(&st, &info).await;
-        return Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None });
+        return Ok(Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
     }
     let (key, title) = ticket.map(|t| (t.key, t.title)).unwrap_or_default();
     let repo = PathBuf::from(&info.repo_path);
@@ -602,9 +649,9 @@ pub(crate) async fn merge_attempt(
         .map_err(|e| conflict("merge_failed", e.to_string()))?;
     let commit = match outcome {
         pdt_git::MergeOutcome::Merged { commit } => commit,
-        pdt_git::MergeOutcome::Conflict { .. } => return Err(blocked(MergeProblem::Conflict)),
-        pdt_git::MergeOutcome::BaseDirty { .. } => return Err(blocked(MergeProblem::BaseDirty)),
-        pdt_git::MergeOutcome::Nothing => return Err(blocked(MergeProblem::Nothing)),
+        pdt_git::MergeOutcome::Conflict { .. } => return Ok(Err(Refusal::blocked(MergeProblem::Conflict, true))),
+        pdt_git::MergeOutcome::BaseDirty { .. } => return Ok(Err(Refusal::blocked(MergeProblem::BaseDirty, false))),
+        pdt_git::MergeOutcome::Nothing => return Ok(Err(Refusal::blocked(MergeProblem::Nothing, false))),
     };
     let repo = PathBuf::from(&info.repo_path);
     let branch_ref = format!("refs/heads/{}", info.attempt.branch);
@@ -615,7 +662,7 @@ pub(crate) async fn merge_attempt(
     let via = Some(pdt_core::workflow::events::MergeVia::MergedHere);
     let actor = if merger == Merger::User { Actor::User } else { Actor::System };
     st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, via, pr, now_ms()).await?;
-    Ok(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) })
+    Ok(Ok(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
 }
 
 /// `POST /api/attempts/{id}/ask-agent`: asks the coder session to clear what stops the merge: merge the base in and

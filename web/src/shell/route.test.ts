@@ -71,7 +71,9 @@ describe('routes', () => {
       ['/workflows/wf/runs/r', '/workflows/wf/runs'], ['/workflows/wf/runs', '/workflows'], ['/workflows/templates/tp', '/workflows'],
       ['/personas/p', '/personas'],
       ['/files/a/b.md?project=PDT', '/files/a/?project=PDT'], ['/files/a/b/', '/files/a/'], ['/files/a/', '/files'], ['/files/b.md', '/files'],
-      ['/settings/projects/PDT/danger-zone', '/settings'], ['/settings/notifications', '/settings'],
+      // A Settings section goes up to its page, the page to the list of them.
+      ['/settings/projects/PDT/danger-zone', '/settings/projects/PDT'], ['/settings/projects/PDT', '/settings'],
+      ['/settings/host/updates', '/settings/host'], ['/settings/host', '/settings'], ['/settings/notifications', '/settings'],
     ];
     for (const [p, to] of up) {
       expect(isDetail(parseLocation(p)), p).toBe(true);

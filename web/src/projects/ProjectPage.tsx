@@ -1,14 +1,15 @@
 import { useEffect, useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Input, Link, Page, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Alert, Badge, Button, EmptyState, Input, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { branchOptions } from '../common/branchOptions';
 import { useAction } from '../common/useAction';
-import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
+import { useProjectSettingsSections } from '../runs/ProjectSettingsPanel';
+import { SettingsScreens, type SettingsSection } from '../common/SettingsScreens';
 import { repoUrl } from './github';
 import { useOpenChanges } from '../review/open';
 
@@ -47,6 +48,7 @@ function Identity({ project }: { project: Project }) {
     <form onSubmit={(e) => { e.preventDefault(); if (changed) save.mutate(); }}>
       <Section
         label="Project"
+        dirty={changed}
         footer={
           <>
             {save.isSuccess && !changed && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
@@ -192,6 +194,7 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
       body: 'PDT forgets the project; its sessions and runs stop. Files on disk stay.',
       action: 'Remove project',
       danger: true,
+      typeToConfirm: project.name,
     });
     if (!ok) return;
     await api.deleteProject(project.id);
@@ -208,17 +211,41 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
   );
 }
 
+/** A project's sections, in page order (their `Section` labels): its top bar titles on a phone. */
+export const PROJECT_SECTIONS = [
+  'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Jira and Buildkite', 'Danger zone',
+] as const;
+
+export interface ProjectPageProps {
+  project: Project;
+  onRemoved: () => void;
+  /** A phone: one screen per section, the list of them while `section` is null. */
+  drill?: boolean;
+  section?: string | null;
+  onSection?: (slug: string) => void;
+}
+
 /**
  * A project's page in Settings: identity, worktrees, run settings on this host, removal. A Personal project (no
  * repository) has no worktrees, runs or merging.
  */
-export function ProjectPage({ project, onRemoved }: { project: Project; onRemoved: () => void }) {
+export function ProjectPage({ project, onRemoved, drill = false, section = null, onSection }: ProjectPageProps) {
+  const panel = useProjectSettingsSections(project);
+  const sections: SettingsSection[] = [
+    { label: 'Project', node: <Identity key={`${project.name}:${project.key}:${project.baseBranch}`} project={project} /> },
+    ...(project.kind !== 'personal' ? [{ label: 'Worktrees', node: <Worktrees project={project} /> }] : []),
+    ...panel.sections,
+    { label: 'Danger zone', node: <RemoveProject project={project} onRemoved={onRemoved} /> },
+  ];
   return (
-    <Page title={project.name} actions={<ProjectKey projectKey={project.key} />}>
-      <Identity key={`${project.name}:${project.key}:${project.baseBranch}`} project={project} />
-      {project.kind !== 'personal' && <Worktrees project={project} />}
-      <ProjectSettingsPanel project={project} />
-      <RemoveProject project={project} onRemoved={onRemoved} />
-    </Page>
+    <SettingsScreens
+      title={project.name}
+      actions={<ProjectKey projectKey={project.key} />}
+      notice={panel.notice}
+      sections={sections}
+      drill={drill}
+      section={section}
+      onSection={onSection}
+    />
   );
 }

@@ -119,6 +119,9 @@ describe('ProjectPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Remove project…' }));
     const ask = await screen.findByRole('alertdialog', { name: 'Remove PDT?' });
     expect(ask).toHaveTextContent(/Files on disk stay/);
+    // Removing waits for the project's name to be typed.
+    expect(within(ask).getByRole('button', { name: 'Remove project' })).toBeDisabled();
+    await userEvent.type(within(ask).getByRole('textbox', { name: 'Type PDT to confirm' }), 'PDT');
     await userEvent.click(within(ask).getByRole('button', { name: 'Remove project' }));
     await waitFor(() => expect(onRemoved).toHaveBeenCalled());
     expect(calls).toContainEqual({ method: 'DELETE', path: '/api/projects/p', body: undefined });

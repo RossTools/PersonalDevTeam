@@ -171,6 +171,10 @@ export function upRoute(r: Route): Route {
   if (r.view === 'workflows' && r.target?.kind === 'workflow' && r.target.runId) return { view: 'workflows', target: { kind: 'workflow', id: r.target.id, tab: 'runs' } };
   // A file or folder goes up to the folder it is in.
   if (r.view === 'files') return { ...r, path: parentFolder(r.path) };
+  // A Settings section (a phone's screen of its own) goes up to its page.
+  if (r.view === 'settings' && (r.page.kind === 'host' || r.page.kind === 'project') && r.page.section !== null) {
+    return { view: 'settings', page: { ...r.page, section: null } };
+  }
   return viewRoute(r.view);
 }
 

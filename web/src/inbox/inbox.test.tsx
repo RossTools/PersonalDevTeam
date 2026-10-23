@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
+import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
 import { OpenTicketContext } from '../tickets/actions';
 import { OpenChangesContext } from '../review/open';
 import { ticket } from '../tickets/fixtures';
@@ -176,6 +177,22 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/projects/p/runs')?.body)
       .toEqual({ worktreeId: 'w1', name: 'web', kind: 'run', tab: { workspaceId: 'ws7', position: 3 } }));
     await waitFor(() => expect(openRun).toHaveBeenCalledWith({ id: 'r9', projectId: 'p' }));
+  });
+
+  it('offers the attempt\'s pull request on a blocked merge', async () => {
+    const blocked = item('b', { group: 'gate', ticketId: 't1', attemptId: 'a1', title: 'Merge blocked on PDT-7: a draft', choices: [{ id: 'merge_again', title: 'Merge again', primary: true }, { id: 'stop', title: 'Stop', primary: false }] });
+    const pr: PullRequestStatus = {
+      number: 12, url: 'https://github.com/o/r/pull/12', title: 'Ship it', state: 'open', draft: false, baseBranch: 'main', headSha: 'abc',
+      mergeable: 'conflicting', behind: false, autoMerge: false, inMergeQueue: false, queuePosition: null, ci: null, queueCi: null, checkedAt: 1,
+    };
+    const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: null, state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, ci: null, pr };
+    stubApi({ 'GET /api/tickets/t1': ticket(1, { attempts: [attempt], sessions: [] }), 'GET /api/inbox': { items: [], total: 0 } });
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    renderWithQuery(<InboxView items={[blocked]} selectedId="b" onSelect={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Open PR' }));
+    expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/12', '_blank', 'noopener');
+    expect(screen.getByRole('button', { name: /Merge again/ })).toBeInTheDocument();
+    open.mockRestore();
   });
 
   it('sends a note with a gate\'s choice', async () => {
