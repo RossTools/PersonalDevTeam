@@ -1,0 +1,242 @@
+//! Notifications (PDT-108): rows made from sessions' state and the Inbox, cleared when their cause goes away, the
+//! per-kind settings and the stream.
+
+mod common;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use common::call;
+use http_body_util::BodyExt;
+use pdt_core::activity::Activity;
+use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+use serde_json::{Value, json};
+use std::path::Path;
+use std::time::Duration;
+use tower::ServiceExt;
+
+async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
+    let repo = tmp.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    common::git(&repo, &["init", "-q", "-b", "main"]);
+    let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
+    let state = pdt_api::AppState::new(store.clone(), tmp.join("data"));
+    let app = pdt_api::router(state.clone(), None);
+    let (_, p) =
+        call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
+    store
+        .insert_session(&Session {
+            id: "c1".into(),
+            project_id: p["id"].as_str().unwrap().into(),
+            worktree_id: None,
+            kind: SessionKind::AgentTui,
+            agent: Some(AgentKind::Claude),
+            bypass_permissions: false,
+            title: "Fix the build".into(),
+            cwd: repo.to_string_lossy().into(),
+            status: SessionStatus::Running,
+            exit_code: None,
+            created_at: 1,
+            ended_at: None,
+            external_session_id: None,
+            fresh_started_at: None,
+            activity: Some(Activity::Idle),
+            attention_at: None,
+            last_viewed_at: None,
+            unseen: false,
+            attempt_id: None,
+            ticket: None,
+            mode: pdt_core::conversation::SessionMode::Terminal,
+            model: None,
+            permission_mode: None,
+            persona: None,
+        })
+        .await
+        .unwrap();
+    (app, state)
+}
+
+async fn needs_you(app: &axum::Router) {
+    let r = json!({"source": "claude", "event": "Notification", "notificationType": "permission_prompt"});
+    assert_eq!(call(app, "POST", "/api/sessions/c1/activity", Some(r)).await.0, StatusCode::NO_CONTENT);
+}
+
+async fn list(app: &axum::Router, section: &str) -> Vec<Value> {
+    let (_, v) = call(app, "GET", &format!("/api/notifications?section={section}"), None).await;
+    v["items"].as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn a_waiting_session_notifies_until_it_is_viewed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    needs_you(&app).await;
+    pdt_api::sync_notifications(&st).await;
+    let rows = list(&app, "needs_you").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (&rows[0]["kind"], &rows[0]["show"], &rows[0]["title"], &rows[0]["dedupeKey"]),
+        (&json!("session.needs_you"), &json!("desktop"), &json!("Fix the build"), &json!("session:c1:needs_you"))
+    );
+    assert_eq!(rows[0]["target"]["kind"], "session");
+    let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;
+    assert_eq!(
+        (&inbox["total"], &inbox["items"][0]["id"], &inbox["items"][0]["group"]),
+        (&json!(1), &json!("session:c1"), &json!("session"))
+    );
+    pdt_api::sync_notifications(&st).await;
+    assert_eq!(list(&app, "needs_you").await.len(), 1, "one row per cause");
+
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    call(&app, "POST", "/api/sessions/c1/view", None).await;
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "needs_you").await.is_empty(), "viewed: cleared");
+    assert_eq!(call(&app, "GET", "/api/inbox", None).await.1["total"], 0);
+
+    // Turned down to the dot: no Inbox entry.
+    let (s, _) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"session.needs_you": "dot"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    call(&app, "POST", "/api/sessions/c1/activity", Some(json!({"source": "claude", "event": "UserPromptSubmit"})))
+        .await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    needs_you(&app).await;
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "needs_you").await.is_empty());
+    // Back to Inbox: the Inbox entry, still no desktop notification.
+    call(&app, "PATCH", "/api/notifications/settings", Some(json!({"session.needs_you": "inbox"}))).await;
+    pdt_api::sync_notifications(&st).await;
+    let rows = list(&app, "needs_you").await;
+    assert_eq!((rows.len(), &rows[0]["show"]), (1, &json!("inbox")));
+}
+
+#[tokio::test]
+async fn a_turn_left_unseen_is_an_update_only_above_the_dot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    let long_ago = jiff::Timestamp::now().as_millisecond() - 60_000;
+    st.store.update_activity("c1", Some(Activity::Idle), Some(long_ago)).await.unwrap();
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "updates").await.is_empty(), "the dot by default");
+    call(&app, "PATCH", "/api/notifications/settings", Some(json!({"session.turn_ended": "inbox"}))).await;
+    pdt_api::sync_notifications(&st).await;
+    let rows = list(&app, "updates").await;
+    assert_eq!((rows.len(), &rows[0]["kind"]), (1, &json!("session.turn_ended")));
+    let (_, v) = call(&app, "GET", "/api/notifications?section=updates", None).await;
+    assert_eq!(v["unreadUpdates"], 1);
+    let id = rows[0]["id"].as_str().unwrap();
+    assert_eq!(call(&app, "POST", &format!("/api/notifications/{id}/read"), None).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(call(&app, "GET", "/api/notifications", None).await.1["unreadUpdates"], 0);
+    assert_eq!(call(&app, "POST", "/api/notifications/nope/read", None).await.0, StatusCode::NOT_FOUND);
+    let (s, _) = call(&app, "POST", "/api/notifications/read-all", Some(json!({"section": "updates"}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn settings_list_every_kind_and_keep_inbox_kinds_findable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _) = setup(tmp.path()).await;
+    let (_, kinds) = call(&app, "GET", "/api/notifications/settings", None).await;
+    let kinds = kinds.as_array().unwrap();
+    assert_eq!(kinds.len(), 15);
+    let gate = kinds.iter().find(|k| k["kind"] == "inbox.gate").unwrap();
+    assert_eq!((&gate["show"], &gate["allowed"]), (&json!("toast"), &json!(["inbox", "toast", "desktop"])));
+    let (s, e) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"inbox.gate": "off"}))).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
+    let (s, _) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"nope": "off"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (_, v) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"pr.merged": "desktop"}))).await;
+    assert_eq!(v.as_array().unwrap().iter().find(|k| k["kind"] == "pr.merged").unwrap()["show"], "desktop");
+    let (_, v) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"pr.merged": null}))).await;
+    assert_eq!(v.as_array().unwrap().iter().find(|k| k["kind"] == "pr.merged").unwrap()["show"], "inbox");
+}
+
+/// Reads the stream until `want` shows up in what it sent.
+async fn read_until(body: &mut Body, want: &str) -> String {
+    let mut seen = String::new();
+    let found = tokio::time::timeout(Duration::from_secs(5), async {
+        while !seen.contains(want) {
+            match body.frame().await {
+                Some(Ok(f)) => {
+                    if let Some(d) = f.data_ref() {
+                        seen.push_str(&String::from_utf8_lossy(d));
+                    }
+                }
+                _ => break,
+            }
+        }
+    })
+    .await;
+    assert!(found.is_ok() && seen.contains(want), "never saw {want:?} in {seen:?}");
+    seen
+}
+
+#[tokio::test]
+async fn the_stream_sends_new_rows_and_what_a_reconnect_missed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    let req = Request::get("/api/notifications/stream").body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(res.headers()["content-type"].to_str().unwrap().starts_with("text/event-stream"));
+    let mut body = res.into_body();
+    needs_you(&app).await;
+    pdt_api::sync_notifications(&st).await;
+    let got = read_until(&mut body, "session.needs_you").await;
+    assert!(got.contains("event: created") && got.contains("id: 1"), "{got}");
+
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    call(&app, "POST", "/api/sessions/c1/view", None).await;
+    pdt_api::sync_notifications(&st).await;
+    read_until(&mut body, "event: cleared").await;
+
+    // A reconnect from before both changes gets the row as it is now.
+    let req = Request::get("/api/notifications/stream").header("last-event-id", "0").body(Body::empty()).unwrap();
+    let mut body = app.clone().oneshot(req).await.unwrap().into_body();
+    let got = read_until(&mut body, "id: 2").await;
+    assert!(got.contains("event: cleared"), "{got}");
+}
+
+#[tokio::test]
+async fn an_open_inbox_item_notifies_until_it_is_answered() {
+    use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    let item = InboxItem {
+        id: "g1".into(),
+        kind: InboxKind::Gate,
+        group: InboxGroup::Accept,
+        status: InboxStatus::Open,
+        project_id: None,
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        title: "Accept the work?".into(),
+        body: json!({}),
+        choices: vec![InboxChoice::new("yes", "Accept", true)],
+        resolution: Value::Null,
+        created_at: 1,
+        resolved_at: None,
+    };
+    st.store.open_inbox_item(&item).await.unwrap();
+    pdt_api::sync_notifications(&st).await;
+    let rows = list(&app, "needs_you").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (&rows[0]["kind"], &rows[0]["show"], &rows[0]["body"], &rows[0]["target"], &rows[0]["inboxItemId"]),
+        (
+            &json!("inbox.gate"),
+            &json!("toast"),
+            &json!("Ready to accept"),
+            &json!({"kind": "inbox", "id": "g1"}),
+            &json!("g1")
+        )
+    );
+    st.store.end_inbox_item("g1", InboxStatus::Resolved, &json!({"choice": "yes"}), 2).await.unwrap();
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "needs_you").await.is_empty(), "answered: cleared");
+}

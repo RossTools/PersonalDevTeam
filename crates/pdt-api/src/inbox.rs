@@ -22,6 +22,7 @@ pub(crate) struct ListQuery {
 pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Result<Json<InboxList>, ApiError> {
     let mut items = st.store.open_inbox_items(q.project.as_deref()).await?;
     items.extend(approvals(&st, q.project.as_deref()).await?);
+    items.extend(sessions_waiting(&st, q.project.as_deref()).await?);
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
@@ -29,7 +30,7 @@ pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>)
 }
 
 /// Ticket keys and titles, persona names.
-async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(), ApiError> {
+pub(crate) async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(), ApiError> {
     let mut tickets: HashMap<String, Option<(String, String)>> = HashMap::new();
     let mut personas: HashMap<String, Option<String>> = HashMap::new();
     for i in items.iter_mut() {
@@ -53,8 +54,52 @@ async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(), ApiError
     Ok(())
 }
 
+/// Sessions waiting on a permission prompt or a question, as items: their live `session.needs_you` notifications
+/// (PDT-108), so viewing a session or turning the kind down takes it out. A conversation with an open approval is
+/// listed under Approvals instead (the Notifier makes no row for it).
+async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
+    let f = pdt_store::NotificationFilter {
+        section: Some(pdt_core::notification::Section::NeedsYou),
+        project_id: project.map(String::from),
+        live: true,
+        limit: 500,
+        ..Default::default()
+    };
+    let mut out = vec![];
+    for n in st.store.list_notifications(&f).await? {
+        if n.kind != pdt_core::notification::NotificationKind::SessionNeedsYou {
+            continue;
+        }
+        let Some(sid) = n.session_id.clone() else { continue };
+        let Some(s) = st.store.get_session(&sid).await? else { continue };
+        out.push(InboxItem {
+            id: format!("session:{sid}"),
+            kind: InboxKind::Session,
+            group: InboxGroup::Session,
+            status: InboxStatus::Open,
+            project_id: Some(s.project_id.clone()),
+            ticket_id: s.ticket.as_ref().map(|t| t.id.clone()),
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: s.attempt_id.clone(),
+            session_id: Some(sid),
+            run_id: None,
+            step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
+            persona_id: s.persona.as_ref().map(|p| p.id.clone()),
+            persona_name: None,
+            title: s.title.clone(),
+            body: json!({"sessionTitle": s.title, "agent": s.agent, "mode": s.mode, "notificationId": n.id}),
+            choices: vec![],
+            resolution: Value::Null,
+            created_at: n.created_at,
+            resolved_at: None,
+        });
+    }
+    Ok(out)
+}
+
 /// The open permission requests of live conversations, as items.
-async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
+pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
     let mut out = vec![];
     for (sid, ids) in crate::conversations::open_requests(st) {
         let Some(s) = st.store.get_session(&sid).await? else { continue };
@@ -130,6 +175,9 @@ pub(crate) async fn answer(
     if id.starts_with("approval:") {
         return Err(bad("answer a permission request in its session"));
     }
+    if id.starts_with("session:") {
+        return Err(bad("answer the session in its tab"));
+    }
     let item = load(&st, &id).await?;
     if let Some(c) = &a.choice
         && item.kind != InboxKind::Question
@@ -142,6 +190,7 @@ pub(crate) async fn answer(
         ));
     }
     let r = crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?;
+    crate::notifications::kick(&st);
     Ok(Json(r))
 }
 
@@ -152,5 +201,6 @@ pub(crate) async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) 
         return Err(bad("only questions and stalled steps can be dismissed; answer this one"));
     }
     st.store.end_inbox_item(&id, InboxStatus::Closed, &json!({"dismissed": true}), now_ms()).await?;
+    crate::notifications::kick(&st);
     Ok(StatusCode::NO_CONTENT)
 }

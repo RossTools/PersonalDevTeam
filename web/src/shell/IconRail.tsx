@@ -10,22 +10,25 @@ const item = 'size-9 pointer-coarse:size-11';
  * badge on desktop); `onSearch` makes it the phone rail: the Search item (opens the command palette) and only the views
  * meant for phones.
  */
-export function IconRail({ active, onSelect, onSearch, top, counts }: {
+export function IconRail({ active, onSelect, onSearch, top, counts, dots }: {
   active: ViewId;
   onSelect: (v: ViewId) => void;
   onSearch?: () => void;
   top?: ReactNode;
   /** A count badge on a view's item (the Inbox's open items). */
   counts?: Partial<Record<ViewId, number>>;
+  /** A dot on a view's item with no count to show (the Inbox's unread Updates). */
+  dots?: Partial<Record<ViewId, boolean>>;
 }) {
   // Beside the column on desktop, so it never covers the next button; above the bar on phones.
   const tooltipPlacement = onSearch ? 'top' : 'right';
   const view = ({ id, label, icon: Icon }: (typeof VIEWS)[number]) => {
     const n = counts?.[id] ?? 0;
+    const dot = n === 0 && !!dots?.[id];
     return (
       <IconButton
         key={id}
-        label={n > 0 ? `${label} (${n})` : label}
+        label={n > 0 ? `${label} (${n})` : dot ? `${label} (new updates)` : label}
         tooltipPlacement={tooltipPlacement}
         aria-current={active === id ? 'page' : undefined}
         onClick={() => onSelect(id)}
@@ -37,6 +40,7 @@ export function IconRail({ active, onSelect, onSearch, top, counts }: {
             {n > 99 ? '99+' : n}
           </span>
         )}
+        {dot && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-primary" />}
       </IconButton>
     );
   };

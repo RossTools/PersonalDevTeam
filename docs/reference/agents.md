@@ -128,6 +128,10 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `--chain` (pdt-agents `hooks.rs`). Terminal Codex also reads its OSC 7501 status, with screen heuristics for older
   CLIs (docs/superpowers/notes/phase-2-agent-signals.md).
 - The user's own settings are never edited.
+- `attention_at` is set when a session becomes idle or needs the user; it is **unseen** until `last_viewed_at`
+  (`POST /api/sessions/{id}/view`, any device) passes it. Unseen and needs-you sessions make notifications
+  (`session.needs_you`, `session.turn_ended` after 30 s; [workflows.md](workflows.md#notifications)); viewing one
+  clears and reads them.
 
 ## Terminals
 

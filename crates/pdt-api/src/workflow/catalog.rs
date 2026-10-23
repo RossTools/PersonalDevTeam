@@ -361,8 +361,8 @@ mod tests {
             assert!(s.config_schema.is_object(), "{}", s.id);
             assert!(!s.title.is_empty() && !s.description.is_empty(), "{}", s.id);
         }
-        use pdt_core::workflow::events::{EVENT_TYPES, NOT_TRIGGERS};
-        for t in EVENT_TYPES.iter().filter(|t| !NOT_TRIGGERS.contains(&t.id)) {
+        use pdt_core::workflow::events::EVENT_TYPES;
+        for t in EVENT_TYPES {
             let kinds: Vec<_> = catalog()
                 .specs()
                 .into_iter()

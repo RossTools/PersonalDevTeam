@@ -23,7 +23,6 @@ pub const PR_REVIEWED: &str = "pr.reviewed";
 pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
 pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
-pub const PDT_NOTIFIED: &str = "pdt.notified";
 pub const JIRA_ISSUE_CREATED: &str = "jira.issue.created";
 pub const JIRA_ISSUE_UPDATED: &str = "jira.issue.updated";
 pub const JIRA_ISSUE_TRANSITIONED: &str = "jira.issue.transitioned";
@@ -32,9 +31,6 @@ pub const JIRA_ISSUE_COMMENTED: &str = "jira.issue.commented";
 /// Event types whose trigger kind has a config of its own (pdt-api `workflow/nodes/`), not the plain event trigger:
 /// a schedule, a webhook and GitHub issues (`repos`).
 pub const OWN_TRIGGERS: &[&str] = &[SCHEDULE_FIRED, WEBHOOK_RECEIVED, GITHUB_ISSUE_OPENED];
-
-/// Event types no workflow can trigger on: `notify`'s own record (a workflow on it could notify itself forever).
-pub const NOT_TRIGGERS: &[&str] = &[PDT_NOTIFIED];
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
@@ -167,12 +163,6 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Webhook",
         description: "Another machine posted to this host's webhook address (POST /api/hooks/<name>), with its secret.",
         schema: schema_of::<WebhookReceived>,
-    },
-    EventType {
-        id: PDT_NOTIFIED,
-        title: "Notification",
-        description: "A workflow's notify step: shown in PDT as a notification.",
-        schema: schema_of::<Notified>,
     },
     EventType {
         id: JIRA_ISSUE_CREATED,
@@ -500,22 +490,6 @@ pub struct WebhookReceived {
     /// Parsed JSON, else the text.
     #[ts(type = "unknown")]
     pub body: serde_json::Value,
-}
-
-/// `pdt.notified`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct Notified {
-    pub title: String,
-    pub body: String,
-    /// `info`, `warning` or `error`.
-    pub level: String,
-    /// A ticket key or a URL.
-    pub link: Option<String>,
-    pub workflow_id: String,
-    pub workflow_name: String,
-    pub run_id: String,
 }
 
 /// `ticket.refine_requested`.

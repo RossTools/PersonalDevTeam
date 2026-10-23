@@ -6,6 +6,7 @@ import type { InboxKind } from '../api/gen/InboxKind';
 export const GROUPS: { id: InboxGroup; title: string }[] = [
   { id: 'question', title: 'Questions' },
   { id: 'approval', title: 'Approvals' },
+  { id: 'session', title: 'Sessions waiting' },
   { id: 'stalled', title: 'Stalled' },
   { id: 'loop_limit', title: 'Loop limit' },
   { id: 'gate', title: 'Gates' },
@@ -14,6 +15,7 @@ export const GROUPS: { id: InboxGroup; title: string }[] = [
 
 export const KIND_LABEL: Record<InboxKind, string> = {
   question: 'Question', approval: 'Approval', stalled: 'Stalled', loop_limit: 'Loop limit', gate: 'Gate', manual: 'Your turn',
+  session: 'Session waiting',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -77,4 +79,16 @@ export function primary(item: InboxItem): string | null {
 /** Whether `e` dismisses it (questions and stalled steps; the step keeps waiting). */
 export function dismissable(item: InboxItem): boolean {
   return item.kind === 'question' || item.kind === 'stalled';
+}
+
+/** An Update's id in the Inbox's selection (Needs-you items use their own ids). */
+export const UPDATE = 'update:';
+
+export function updateSelection(id: string): string {
+  return `${UPDATE}${id}`;
+}
+
+/** The notification an Inbox selection names, if it is an Update. */
+export function selectedUpdate(selection: string | null): string | null {
+  return selection?.startsWith(UPDATE) ? selection.slice(UPDATE.length) : null;
 }
