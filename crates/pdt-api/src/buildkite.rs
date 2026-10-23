@@ -19,6 +19,8 @@ pub(crate) struct BuildkiteClient {
     base: String,
     org: String,
     token: String,
+    /// The longest one call may take (`AppState::sensor_timeout`).
+    timeout: std::time::Duration,
 }
 
 impl BuildkiteClient {
@@ -36,7 +38,7 @@ impl BuildkiteClient {
             "" => API_URL.to_string(),
             u => u.to_string(),
         };
-        Ok(BuildkiteClient { base, org, token })
+        Ok(BuildkiteClient { base, org, token, timeout: st.sensor_timeout })
     }
 
     fn pipeline_url(&self, pipeline: &str) -> String {
@@ -50,7 +52,7 @@ impl BuildkiteClient {
         query: &[(&str, &str)],
         body: Option<&Value>,
     ) -> Result<Value, String> {
-        let mut req = client().request(method.clone(), url).bearer_auth(&self.token);
+        let mut req = client().request(method.clone(), url).bearer_auth(&self.token).timeout(self.timeout);
         if !query.is_empty() {
             req = req.query(query);
         }

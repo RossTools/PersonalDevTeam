@@ -6,11 +6,15 @@ mod seed;
 mod shutdown;
 
 use anyhow::Context;
+use pdt_api::loops::{Start, run_every};
 use pdt_api::{
-    AppState, apply_remote_access, check_merges, maintain_workflows, plan_resume_interrupted, refresh_buildkite,
-    refresh_issues, refresh_jira, refresh_overlaps, refresh_prs, resume_runs, router, run_activity_ticker,
-    run_workflows, sweep_gone_runs, with_host_guard,
+    AppState, apply_remote_access, plan_resume_interrupted, poll_pass, refresh_overlaps, resume_runs, router,
+    run_activity_ticker, run_workflows, with_host_guard,
 };
+use std::time::Duration;
+
+/// How often the poll (PRs and CI, merges, issues, Jira, workflow upkeep) runs.
+const POLL_EVERY: Duration = Duration::from_secs(60);
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
 
@@ -133,72 +137,41 @@ async fn run() -> anyhow::Result<()> {
     );
     // One background task, in order (ruling F4): remote access first, so resumed runs get tailnet links and their
     // ports' mappings are this process's (an old port can then be unmapped when a run moves); then the runs and
-    // sessions the previous pdtd left; then the sweep for runs whose branch or worktree is gone, every 60 s.
-    // With remote access off this runs no tailscale command; `serve --bg` mappings persist across restarts, so with
-    // it on this re-adds the allowlist entry and reports the state.
+    // sessions the previous pdtd left; then the 60 s poll (`poll_pass`: gone runs, PRs and CI, merges, issues, Jira,
+    // workflow upkeep). With remote access off this runs no tailscale command; `serve --bg` mappings persist across
+    // restarts, so with it on this re-adds the allowlist entry and reports the state.
+    // Every loop's passes are contained (a panic ends the pass, not the loop) and recorded for /api/health (PDT-127).
+    state.loops.register("poll", POLL_EVERY, Some(pdt_api::loops::POLL_STALE_AFTER.as_millis() as i64));
     {
         let st = state.clone();
         tokio::spawn(async move {
-            let r = apply_remote_access(&st).await;
-            tracing::info!(enabled = r.enabled, active = r.active, error = ?r.error, "remote access applied");
-            let runs = resume_runs(&st).await;
-            if runs > 0 {
-                tracing::info!(runs, "resumed runs from the previous daemon");
-            }
-            if !plan.is_empty() {
-                let resumed = plan.start(&st).await;
-                tracing::info!(sessions = resumed, "resumed sessions from the previous run");
-            }
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
-            loop {
-                tick.tick().await;
-                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
+            let startup = st.clone();
+            pdt_api::loops::contain("the startup resume", None, async move {
+                let st = startup;
+                let r = apply_remote_access(&st).await;
+                tracing::info!(enabled = r.enabled, active = r.active, error = ?r.error, "remote access applied");
+                let runs = resume_runs(&st).await;
+                if runs > 0 {
+                    tracing::info!(runs, "resumed runs from the previous daemon");
                 }
-                sweep_gone_runs(&st).await;
-                // Ticket attempts' pull requests and CI (PDT-25), then attempts whose branch was merged (tickets
-                // spec §6).
-                refresh_prs(&st).await;
-                refresh_buildkite(&st).await;
-                check_merges(&st).await;
-                // New issues in repos workflows watch, and linked projects' Jira issues (Phase 7e).
-                refresh_issues(&st).await;
-                refresh_jira(&st).await;
-                // Workflows kept in repos, and pruning old events and runs (Phase 7a).
-                maintain_workflows(&st).await;
-            }
+                if !plan.is_empty() {
+                    let resumed = plan.start(&st).await;
+                    tracing::info!(sessions = resumed, "resumed sessions from the previous run");
+                }
+            })
+            .await;
+            run_every(st, "poll", POLL_EVERY, Start::Now, poll_pass).await;
         });
     }
     // Each active attempt's changed files and the overlaps they make, every 30 s (tickets spec §7).
-    {
-        let st = state.clone();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-            loop {
-                tick.tick().await;
-                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
-                }
-                refresh_overlaps(&st).await;
-            }
-        });
-    }
+    tokio::spawn(run_every(state.clone(), "overlaps", Duration::from_secs(30), Start::Now, |st| async move {
+        refresh_overlaps(&st).await
+    }));
     // The workflow engine (Phase 7a): new events start runs, runs go on, messages wait for their agent session to be
     // idle. Built-in workflows (PR notices, finishing merged tickets) are installed on the first tick.
-    {
-        let st = state.clone();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                tick.tick().await;
-                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
-                }
-                run_workflows(&st).await;
-            }
-        });
-    }
+    tokio::spawn(run_every(state.clone(), "engine", Duration::from_secs(2), Start::Now, |st| async move {
+        run_workflows(&st).await
+    }));
     // Time-based activity signals (no output while working, a Claude hook that never came).
     tokio::spawn(run_activity_ticker(state.clone()));
     tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
@@ -230,7 +203,18 @@ async fn run() -> anyhow::Result<()> {
         });
     }
     // Hourly update checks (and the auto-when-idle install); returns at once unless pdt-host supervises this pdtd.
-    tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    // A panic in it is logged and it starts again a minute later.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            while pdt_api::loops::contain("the update loop", None, pdt_api::run_update_loop(st.clone())).await
+                == pdt_api::loops::Ended::Panicked
+                && !st.shutting_down.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+        });
+    }
     shutdown::serve(listener, app, state).await?;
     store.close().await;
     tracing::info!("stopped");

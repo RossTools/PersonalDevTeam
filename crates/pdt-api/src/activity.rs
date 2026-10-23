@@ -334,31 +334,36 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
 
 /// Applies time-based signals (`tick`) to every tracked session every `activity_tick`, until shutdown.
 pub async fn run_activity_ticker(st: AppState) {
-    let mut every = tokio::time::interval(st.activity_tick);
-    loop {
-        every.tick().await;
-        if st.shutting_down.load(Ordering::SeqCst) {
-            return;
-        }
-        let due: Vec<(String, Signal)> = {
-            let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
-            let now = now_ms();
-            map.iter_mut()
-                .filter_map(|(id, t)| {
-                    if t.program_status_seen {
-                        return None;
-                    }
-                    let sig = tick_with(t.activity, &t.watch, t.agent == AgentKind::Claude, now, &st.activity_timing)?;
-                    if sig == Signal::HookMissing {
-                        t.watch.enter_at_ms = None;
-                    }
-                    Some((id.clone(), sig))
-                })
-                .collect()
-        };
-        for (id, sig) in due {
-            let _ = apply(&st, &id, sig).await;
-        }
+    let every = st.activity_tick;
+    crate::loops::run_every(
+        st,
+        "activity",
+        every,
+        crate::loops::Start::Now,
+        |st| async move { activity_pass(&st).await },
+    )
+    .await
+}
+
+async fn activity_pass(st: &AppState) {
+    let due: Vec<(String, Signal)> = {
+        let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        map.iter_mut()
+            .filter_map(|(id, t)| {
+                if t.program_status_seen {
+                    return None;
+                }
+                let sig = tick_with(t.activity, &t.watch, t.agent == AgentKind::Claude, now, &st.activity_timing)?;
+                if sig == Signal::HookMissing {
+                    t.watch.enter_at_ms = None;
+                }
+                Some((id.clone(), sig))
+            })
+            .collect()
+    };
+    for (id, sig) in due {
+        let _ = apply(st, &id, sig).await;
     }
 }
 

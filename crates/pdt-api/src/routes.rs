@@ -123,6 +123,13 @@ pub struct AppState {
     pub pm_rotate_age_ms: i64,
     /// Makes and clears notifications (PDT-108), and streams them.
     pub notifier: std::sync::Arc<crate::notifications::Notifier>,
+    /// The background loops' last passes (PDT-127), for `/api/health` and `host.loop_stale`.
+    pub loops: std::sync::Arc<crate::loops::Loops>,
+    /// The longest one member of the 60 s poll may take (tests shorten it).
+    pub poll_part_limit: std::time::Duration,
+    /// The longest one call of a sensor (Jira, Buildkite) to its service may take, connecting included (tests
+    /// shorten it). A half-open connection then fails the call instead of holding up the poll.
+    pub sensor_timeout: std::time::Duration,
 }
 
 impl AppState {
@@ -183,6 +190,9 @@ impl AppState {
             personas_installed: Default::default(),
             pm_rotate_age_ms: pdt_core::pm::ROTATE_AGE_MS,
             notifier: Default::default(),
+            loops: Default::default(),
+            poll_part_limit: crate::loops::POLL_PART_LIMIT,
+            sensor_timeout: std::time::Duration::from_secs(30),
         }
     }
 }
@@ -263,6 +273,8 @@ pub struct Health {
     /// A short hash of the index.html pdtd serves now, or null without a web dir. Every dev build reports the same
     /// `version`, so the UI reloads itself when this changes (a dev instance restarted with a rebuilt web/dist).
     pub web_build: Option<String>,
+    /// pdtd's background loops (PDT-127): each one's last finished pass and whether it is stale.
+    pub loops: Vec<pdt_core::liveness::LoopHealth>,
 }
 
 /// Asks pdtd to stop gracefully (running sessions become `interrupted`). Guarded by the Host/Origin checks.
@@ -469,6 +481,7 @@ async fn health(State(st): State<AppState>, index: Option<PathBuf>) -> Json<Heal
         port: i.port,
         dev: i.dev,
         web_build,
+        loops: st.loops.health(now_ms()),
     })
 }
 

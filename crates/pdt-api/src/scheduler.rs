@@ -159,13 +159,10 @@ pub async fn schedule_tickets(st: &AppState) {
 
 /// pdtd's scheduler loop.
 pub async fn run_scheduler(st: AppState) {
-    loop {
-        tokio::time::sleep(SCHEDULE_EVERY).await;
-        if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-            return;
-        }
-        schedule_tickets(&st).await;
-    }
+    crate::loops::run_every(st, "scheduler", SCHEDULE_EVERY, crate::loops::Start::AfterOnePeriod, |st| async move {
+        schedule_tickets(&st).await
+    })
+    .await
 }
 
 /// Who owns each ticket's current workflow step, by ticket id (Phase 7c spec §7): a persona's session at work, a
