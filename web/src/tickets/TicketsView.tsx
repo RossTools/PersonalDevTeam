@@ -199,7 +199,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
 
 /** `before`: the first row of a flat rank-ordered list, so the new ticket shows up where it was typed (without it the
  *  server puts it at the top of Draft, which may be far down). */
-function QuickAdd({ projectId, before, phone, onDetails }: { projectId: string; before?: string; phone: boolean; onDetails: (title: string) => void }) {
+function QuickAdd({ projectId, before, onDetails }: { projectId: string; before?: string; onDetails: (title: string) => void }) {
   const qc = useQueryClient();
   const [title, setTitle] = useState('');
   const [pending, setPending] = useState(false);
@@ -226,7 +226,7 @@ function QuickAdd({ projectId, before, phone, onDetails }: { projectId: string; 
       <Plus aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <Input
         aria-label="New ticket title"
-        placeholder={phone ? 'New ticket title' : 'New ticket title… Enter to add, Shift+Enter for details'}
+        placeholder="New ticket title… Enter to add, Shift+Enter for details"
         value={title}
         disabled={pending}
         maxLength={200}
@@ -567,7 +567,8 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         {...(pages.hasNextPage ? { onEndReached: () => void pages.fetchNextPage() } : {})}
         loadingMore={pages.isFetchingNextPage}
         renderEmpty={empty}
-        className="min-h-0 flex-1"
+        // Phones: room under the last row for the floating ＋.
+        className={cn('min-h-0 flex-1', phone && 'pb-20')}
       >
         {(t) => (
           <DataListRow
@@ -641,8 +642,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
                 search={filters.q}
                 onSearchChange={(q) => backlog.setFilters({ q })}
                 searchLabel="Search tickets"
-                // Phones: the view options wrap with the chips instead of pinning to the end.
-                trailing={phone ? undefined : viewOptions}
+                trailing={viewOptions}
               >
                 <MultiChip<TicketStage>
                   label="Stage"
@@ -653,11 +653,10 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
                 <ChoiceChip label="Blocked" yes="Blocked" no="Unblocked" value={filters.blocked} onChange={(blocked) => backlog.setFilters({ blocked })} />
                 <ChoiceChip label="Overlap" yes="With overlap" no="No overlap" value={filters.conflicts} onChange={(conflicts) => backlog.setFilters({ conflicts })} />
-                {phone && viewOptions}
               </FilterBar>
             )}
           </div>
-          {project && <QuickAdd projectId={project.id} phone={phone} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
+          {project && <QuickAdd projectId={project.id} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
         </>
       )}
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>

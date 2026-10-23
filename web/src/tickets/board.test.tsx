@@ -204,6 +204,10 @@ describe('board', () => {
     fireEvent.touchEnd(board, { changedTouches: [{ clientX: 220, clientY: 400 }] });
     swipe(10, 200);
     expect(within(chips).getByRole('button', { name: 'In progress (1)' })).toHaveAttribute('aria-pressed', 'true');
+    // On the chips (which scroll sideways on their own): the column stays.
+    fireEvent.touchStart(within(chips).getByRole('button', { name: 'Done (1)' }), { touches: [{ clientX: 300, clientY: 140 }] });
+    fireEvent.touchEnd(within(chips).getByRole('button', { name: 'Done (1)' }), { changedTouches: [{ clientX: 100, clientY: 142 }] });
+    expect(within(chips).getByRole('button', { name: 'In progress (1)' })).toHaveAttribute('aria-pressed', 'true');
     // Right: the previous one.
     swipe(100, 250);
     expect(await screen.findByText('Ticket 1')).toBeInTheDocument();

@@ -2,7 +2,7 @@
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
 // first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
 // work (Phase 7c), In progress splits into its stages: Code, Review, QA and Accept.
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type TouchEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type Ref, type TouchEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -300,7 +300,8 @@ function Cell({ label, stage, items, lane, env, height, children }: {
       )}
     >
       {children}
-      <div className={cn('px-2 pb-2', height !== 'auto' && 'min-h-0 flex-1 overflow-auto')}>
+      {/* Phones: room under the last card for the floating ＋. */}
+      <div className={cn('px-2 pb-2', height !== 'auto' && 'min-h-0 flex-1 overflow-auto', env.phone && height === 'fill' && 'pb-20')}>
         {items.length > 0 && (
           <ul aria-label={`${label} tickets`} className="flex flex-col gap-2 pt-2">
             {items.map((t) => (
@@ -407,18 +408,24 @@ const EDGE_PX = 24;
  * Phones: the board's columns as a row of chips with their counts, scrolling sideways when they don't fit; the chosen
  * one is kept in view.
  */
-export function ColumnChips({ columns, counts, value, onChange }: {
+export function ColumnChips({ ref, columns, counts, value, onChange }: {
+  ref?: Ref<HTMLDivElement>;
   columns: DisplayColumn[];
   counts: Record<string, number | undefined>;
   value: string;
   onChange: (id: string) => void;
 }) {
-  const strip = useRef<HTMLDivElement>(null);
+  const strip = useRef<HTMLDivElement | null>(null);
+  const setStrip = (el: HTMLDivElement | null) => {
+    strip.current = el;
+    if (typeof ref === 'function') ref(el);
+    else if (ref) ref.current = el;
+  };
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [value]);
   return (
-    <div ref={strip} role="group" aria-label="Board column" className="-mx-2 flex shrink-0 gap-1.5 overflow-x-auto px-2 pb-0.5 md:-mx-3 md:px-3">
+    <div ref={setStrip} role="group" aria-label="Board column" className="-mx-2 flex shrink-0 gap-1.5 overflow-x-auto px-2 pb-0.5 md:-mx-3 md:px-3">
       {columns.map((c) => {
         const n = counts[c.id];
         const on = c.id === value;
@@ -509,9 +516,12 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
 
   // Phones: a swipe sideways shows the next or previous column.
   const swipe = useRef<{ x: number; y: number } | null>(null);
+  const chips = useRef<HTMLDivElement>(null);
   const onTouchStart = (e: TouchEvent) => {
     const t = e.touches[0];
-    swipe.current = e.touches.length === 1 && t && t.clientX > EDGE_PX ? { x: t.clientX, y: t.clientY } : null;
+    // The chips scroll sideways on their own: a swipe there scrolls them, it doesn't change column.
+    const onChips = chips.current?.contains(e.target as Node) ?? false;
+    swipe.current = e.touches.length === 1 && t && t.clientX > EDGE_PX && !onChips ? { x: t.clientX, y: t.clientY } : null;
   };
   const onTouchEnd = (e: TouchEvent) => {
     const from = swipe.current;
@@ -532,6 +542,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
     >
       {phone && (
         <ColumnChips
+          ref={chips}
           columns={all}
           counts={Object.fromEntries(all.map((c) => [c.id, columnCount(c)]))}
           value={current.id}
@@ -548,8 +559,9 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
           ))}
         </div>
       ) : phone ? (
-        // One column: the first lane's cards, then a heading per parent with its parts in this column.
-        <div className="min-h-0 flex-1 overflow-auto">
+        // One column: the first lane's cards, then a heading per parent with its parts in this column (room at the
+        // end for the floating ＋).
+        <div className="min-h-0 flex-1 overflow-auto pb-20">
           {columns.map((c) => (
             <div key={c.id} className="flex flex-col">
               <Cell label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
