@@ -31,13 +31,15 @@ function writeExpanded(expanded: boolean) {
  * badge on desktop); `onSearch` makes it the phone rail: the Search item (opens the command palette) and only the views
  * meant for phones. On desktop a toggle at the bottom expands the column to show each view's name beside its icon.
  */
-export function IconRail({ active, onSelect, onSearch, top, counts }: {
+export function IconRail({ active, onSelect, onSearch, top, counts, dots }: {
   active: ViewId;
   onSelect: (v: ViewId) => void;
   onSearch?: () => void;
   top?: ReactNode;
   /** A count badge on a view's item (the Inbox's open items). */
   counts?: Partial<Record<ViewId, number>>;
+  /** A dot on a view's item with no count to show (the Inbox's unread Updates). */
+  dots?: Partial<Record<ViewId, boolean>>;
 }) {
   const [expandedPref, setExpandedPref] = useState(readExpanded);
   const expanded = !onSearch && expandedPref;
@@ -49,7 +51,8 @@ export function IconRail({ active, onSelect, onSearch, top, counts }: {
   const tooltipPlacement = onSearch ? 'top' : 'right';
   const view = ({ id, label, icon: Icon }: (typeof VIEWS)[number]) => {
     const n = counts?.[id] ?? 0;
-    const name = n > 0 ? `${label} (${n})` : label;
+    const dot = n === 0 && !!dots?.[id];
+    const name = n > 0 ? `${label} (${n})` : dot ? `${label} (new updates)` : label;
     const shown = n > 99 ? '99+' : n;
     const current = active === id ? 'page' : undefined;
     const tone = active === id ? 'bg-accent text-foreground' : 'text-muted-foreground';
@@ -63,6 +66,7 @@ export function IconRail({ active, onSelect, onSearch, top, counts }: {
               {shown}
             </span>
           )}
+          {dot && <span aria-hidden className="size-2 rounded-full bg-primary" />}
         </Button>
       );
     }
@@ -81,6 +85,7 @@ export function IconRail({ active, onSelect, onSearch, top, counts }: {
             {shown}
           </span>
         )}
+        {dot && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-primary" />}
       </IconButton>
     );
   };

@@ -3,6 +3,8 @@ import { ApprovalCard, Button, DiffViewer, EmptyState, Kbd, Textarea, ViewHeader
 import { api, ApiError } from '../api/client';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
+import type { Notification } from '../api/gen/Notification';
+import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { Markdown } from '../common/Markdown';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
@@ -13,7 +15,8 @@ import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
-import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, step } from './model';
+import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, selectedUpdate, step } from './model';
+import { useReadNotification } from '../notifications/queries';
 import { useRefreshInbox } from './useInbox';
 
 /** Keys typed into a field, or with a dialog or menu open, are not the Inbox's. */
@@ -27,14 +30,19 @@ function foreign(e: KeyboardEvent): boolean {
 /**
  * The Inbox's work area (UX spec §8.4): the selected item and its decision, with the ticket's key and title and a
  * way to its ticket and session. Triage keys: `j`/`k` move, Enter takes the primary action, `o` opens the ticket,
- * `e` dismisses where that makes sense; answering moves to the next item.
+ * `e` dismisses where that makes sense; answering moves to the next item. An Update (PDT-108) shows what it says and
+ * opens what it is about.
  */
-export function InboxView({ items, selectedId, onSelect }: {
+export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTarget }: {
   items: InboxItem[];
+  updates?: Notification[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  onOpenTarget?: (t: NotificationTarget) => void;
 }) {
-  const item = items.find((i) => i.id === selectedId) ?? null;
+  const updateId = selectedUpdate(selectedId);
+  const update = updateId ? updates.find((u) => u.id === updateId) ?? null : null;
+  const item = updateId ? null : items.find((i) => i.id === selectedId) ?? null;
   const refresh = useRefreshInbox();
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
@@ -46,8 +54,13 @@ export function InboxView({ items, selectedId, onSelect }: {
 
   // An item that went away (answered elsewhere): show the first one left.
   useEffect(() => {
-    if (!item && items.length > 0) onSelect(step(items, null, 1));
-  }, [item, items, onSelect]);
+    if (!item && !updateId && items.length > 0) onSelect(step(items, null, 1));
+  }, [item, updateId, items, onSelect]);
+  // Opening an item reads its notifications.
+  const itemId = item && !item.id.startsWith('session:') ? item.id : null;
+  useEffect(() => {
+    if (itemId) void api.readNotifications({ inboxItemId: itemId }).catch(() => {});
+  }, [itemId]);
   useEffect(() => {
     setTakingOver(false);
     setNudge('');
@@ -92,6 +105,10 @@ export function InboxView({ items, selectedId, onSelect }: {
     if (p && item.kind === 'manual') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
     // A gate's note (the same box) goes with its choice, and a resumed step's to its session.
     if (p && (item.kind === 'gate' || item.kind === 'timed_out')) return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
+    if (item.kind === 'session') {
+      if (item.sessionId && item.projectId) openSession({ id: item.sessionId, projectId: item.projectId });
+      return;
+    }
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
 
@@ -118,6 +135,9 @@ export function InboxView({ items, selectedId, onSelect }: {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  if (updateId) {
+    return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} /> : <EmptyState>This update is gone.</EmptyState>;
+  }
   if (!item) {
     return <EmptyState>{items.length === 0 ? 'Nothing waits on you. Questions, approvals and gates from agents and workflows show up here.' : 'Choose an item.'}</EmptyState>;
   }
@@ -137,7 +157,7 @@ export function InboxView({ items, selectedId, onSelect }: {
                 Open ticket <Kbd>o</Kbd>
               </Button>
             )}
-            {item.sessionId && item.projectId && (
+            {item.sessionId && item.projectId && item.kind !== 'session' && (
               <Button variant="ghost" size="sm" onClick={() => openSession({ id: item.sessionId!, projectId: item.projectId! })}>
                 Open session
               </Button>
@@ -159,6 +179,17 @@ export function InboxView({ items, selectedId, onSelect }: {
             onSend={sendAnswers}
             busy={busy}
           />
+        )}
+        {item.kind === 'session' && (
+          <section aria-label="Session waiting" className="flex flex-col gap-3">
+            <p className="text-sm">
+              {typeof item.body.sessionTitle === 'string' ? item.body.sessionTitle : 'This session'} waits on a permission
+              prompt or a question. Answer it in the session; looking at it takes it out of the Inbox.
+            </p>
+            <div>
+              <Button variant="primary" onClick={doPrimary}>Open session <Kbd>↵</Kbd></Button>
+            </div>
+          </section>
         )}
         {item.kind === 'approval' && <Approval item={item} onAnswered={() => { onSelect(after(items, item.id)); void refresh(); }} />}
         {item.kind === 'stalled' && (
@@ -246,6 +277,33 @@ export function InboxView({ items, selectedId, onSelect }: {
             <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice, ...(nudge.trim() ? { text: nudge } : {}) })} />
           </section>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** An Update: what it says, read once it is open, and a way to what it is about. */
+function UpdateView({ update, onOpenTarget }: { update: Notification; onOpenTarget?: (t: NotificationTarget) => void }) {
+  const read = useReadNotification();
+  const unread = update.readAt === null;
+  const { mutate } = read;
+  useEffect(() => {
+    if (unread) mutate(update.id);
+  }, [unread, update.id, mutate]);
+  const open = update.target.kind !== 'none' && onOpenTarget ? () => onOpenTarget(update.target) : null;
+  const meta = [update.severity === 'error' ? 'Error' : update.severity === 'warning' ? 'Warning' : null,
+    relativeTime(update.createdAt), update.clearedAt !== null ? 'resolved' : null].filter(Boolean).join(' · ');
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ViewHeader
+        title={update.title}
+        titleTooltip={update.title}
+        meta={<span className="text-meta text-muted-foreground">{meta}</span>}
+        actions={open ? <Button variant="ghost" size="sm" onClick={open}>Open</Button> : undefined}
+      />
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+        {update.body && <p className="text-sm whitespace-pre-wrap">{update.body}</p>}
+        {open && <div><Button variant="primary" onClick={open}>Open</Button></div>}
       </div>
     </div>
   );

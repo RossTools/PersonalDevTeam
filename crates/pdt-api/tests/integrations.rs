@@ -353,7 +353,7 @@ async fn a_discord_channel_is_made_only_when_missing() {
 // ---- notify ----
 
 #[tokio::test]
-async fn notify_records_a_notification_event() {
+async fn notify_makes_a_workflow_notification() {
     let env = setup().await;
     let wf = create(
         &env,
@@ -363,15 +363,27 @@ async fn notify_records_a_notification_event() {
     .await;
     let r = run_now(&env, &wf, json!({"n": 7})).await;
     assert_eq!(r["status"], "succeeded", "{r}");
-    let (_, events) = call(&env.app, "GET", "/api/events?type=pdt.notified", None).await;
-    let e = &events.as_array().unwrap()[0];
+    let (_, list) = call(&env.app, "GET", "/api/notifications?section=updates", None).await;
+    let n = &list["items"][0];
     assert_eq!(
-        (&e["payload"]["title"], &e["payload"]["level"], &e["payload"]["link"], &e["payload"]["workflowId"]),
-        (&json!("Build 7 broke"), &json!("error"), &json!("PDT-1"), &json!(wf))
+        (&n["kind"], &n["title"], &n["severity"], &n["show"], &n["target"]),
+        (
+            &json!("workflow.notify"),
+            &json!("Build 7 broke"),
+            &json!("error"),
+            &json!("toast"),
+            &json!({"kind": "ticket_key", "key": "PDT-1"})
+        )
     );
-    // Not something a workflow can start on.
-    let (_, cat) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
-    assert!(!cat.as_array().unwrap().iter().any(|k| k["id"] == "pdt.notified"));
+    assert!(n["body"].as_str().unwrap().starts_with("see logs · From "), "{n}");
+    assert_eq!(list["unreadUpdates"], 1);
+    // Turned off: the step makes nothing.
+    let (s, _) = call(&env.app, "PATCH", "/api/notifications/settings", Some(json!({"workflow.notify": "off"}))).await;
+    assert_eq!(s, StatusCode::OK, "patch answers with the settings");
+    let r = run_now(&env, &wf, json!({"n": 8})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let (_, list) = call(&env.app, "GET", "/api/notifications?section=updates", None).await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
 }
 
 // ---- schedule ----

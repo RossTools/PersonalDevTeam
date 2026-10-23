@@ -578,6 +578,7 @@ async fn refresh_activity(st: &AppState, c: &Arc<Conv>) {
     if let Err(e) = st.store.update_activity(&c.id, Some(next), attention).await {
         tracing::warn!(session = %c.id, error = %e, "could not record conversation activity");
     }
+    crate::notifications::kick(st);
     c.push_state();
 }
 

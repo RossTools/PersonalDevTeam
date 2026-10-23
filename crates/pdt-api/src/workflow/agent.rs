@@ -937,6 +937,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
             Err(format!("{choice} is not a choice here"))
         }
         InboxKind::Approval => Err("answer an approval in its session".into()),
+        InboxKind::Session => Err("answer the session in its tab".into()),
     }
 }
 

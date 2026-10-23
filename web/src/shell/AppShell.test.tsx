@@ -183,7 +183,8 @@ describe('workspaces', () => {
   });
 
   it('shows the workspace tabs with their status and the current tab', async () => {
-    stubWorkspaces();
+    // The title counts the Inbox's Needs you (PDT-108).
+    stubWorkspaces({ 'GET /api/inbox': { items: [], total: 1 } });
     renderWithQuery(<AppShell />);
     const tabs = await screen.findByRole('tablist', { name: 'Tabs' });
     await within(tabs).findByRole('tab', { name: /Claude A/ });

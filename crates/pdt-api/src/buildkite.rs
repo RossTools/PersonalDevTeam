@@ -213,8 +213,10 @@ async fn refresh_attempt(
     let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == PrState::Open);
     let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
     for e in ci_events(info, &ci, pr.as_ref(), &head, agent_working) {
-        if let Err(x) = st.store.emit_event(&e, now_ms()).await {
-            tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a Buildkite event");
+        match st.store.emit_event(&e, now_ms()).await {
+            Ok(Some(logged)) => crate::notifications::on_event(st, &logged).await,
+            Ok(None) => {}
+            Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a Buildkite event"),
         }
     }
     Ok(())

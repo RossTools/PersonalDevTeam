@@ -6,6 +6,6 @@ import type { InboxItem } from "./InboxItem";
  */
 export type InboxList = { items: Array<InboxItem>, 
 /**
- * Open items.
+ * Open items, sessions waiting included: the Needs-you count the rail badge and the page title show.
  */
 total: number, };
