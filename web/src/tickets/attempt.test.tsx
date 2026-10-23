@@ -17,8 +17,8 @@ const attempt = (over: Partial<AttemptSummary> = {}): AttemptSummary => ({
 });
 
 const sessions = [
-  { id: 's1', title: 'Claude · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: 'a1', mode: 'terminal' as const },
-  { id: 's0', title: 'Codex · ALP-1', status: 'finished' as const, agent: 'codex' as const, attemptId: 'a0', mode: 'terminal' as const },
+  { id: 's1', title: 'Claude · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: 'a1', persona: null, mode: 'terminal' as const },
+  { id: 's0', title: 'Codex · ALP-1', status: 'finished' as const, agent: 'codex' as const, attemptId: 'a0', persona: null, mode: 'terminal' as const },
 ];
 
 const active = ticket(1, { title: 'Fix login', stage: 'in_progress', attempt: attempt(), attempts: [attempt()], sessions });
@@ -72,6 +72,17 @@ describe('ticket attempt', () => {
     await userEvent.click(within(list).getByRole('button', { name: /Claude · ALP-1/ }));
     expect(onSession).toHaveBeenCalledWith({ id: 's1', projectId: project.id });
     expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument();
+  });
+
+  it("lists a workflow step's sessions on the ticket before there is an attempt", async () => {
+    const refiner = { id: 's7', title: 'Refiner · ALP-1', status: 'running' as const, agent: 'claude' as const, attemptId: null, persona: 'Refiner', mode: 'conversation' as const };
+    stub(ticket(1, { stage: 'draft', sessions: [refiner] }));
+    const onSession = vi.fn();
+    view({ onSession });
+    const section = await screen.findByRole('region', { name: 'Sessions' });
+    await userEvent.click(within(section).getByRole('button', { name: /Refiner · ALP-1/ }));
+    expect(onSession).toHaveBeenCalledWith({ id: 's7', projectId: project.id });
+    expect(screen.queryByRole('region', { name: 'Attempt' })).not.toBeInTheDocument();
   });
 
   it('abandons the active attempt after confirming', async () => {

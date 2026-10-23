@@ -223,7 +223,8 @@ pub struct ExternalLink {
     pub url: String,
 }
 
-/// The ticket a session works on (through its attempt), for the sidebar and tab titles.
+/// The ticket a session works on (through its attempt, else the ticket a workflow step started it on), for the sidebar
+/// and tab titles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -233,7 +234,7 @@ pub struct SessionTicket {
     pub key: String,
 }
 
-/// A session of one of a ticket's attempts.
+/// A session of a ticket: one of its attempts', or one a workflow step started on it (a Reviewer, QA or Refiner).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -242,7 +243,10 @@ pub struct AttemptSession {
     pub title: String,
     pub status: crate::session::SessionStatus,
     pub agent: Option<crate::session::AgentKind>,
-    pub attempt_id: String,
+    /// None for a step's session that isn't the attempt's own (PR notices go to the attempt's).
+    pub attempt_id: Option<String>,
+    /// The persona it runs, if a workflow step started it.
+    pub persona: Option<String>,
     /// A conversation or the agent's terminal (the ticket tab's Conversation shows conversations).
     pub mode: crate::conversation::SessionMode,
 }

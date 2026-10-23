@@ -6,7 +6,7 @@ use pdt_core::ticket::{SessionTicket, format_key};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-/// Sessions with their attempt's ticket (id and key), for `WHERE s.…` clauses.
+/// Sessions with their ticket (id and key: the attempt's, else the one they were started on), for `WHERE s.…` clauses.
 const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent, s.bypass_permissions, s.title, s.cwd, \
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
                       s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
@@ -14,7 +14,7 @@ const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent,
                       t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
-                      LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN projects p ON p.id = t.project_id \
+                      LEFT JOIN tickets t ON t.id = COALESCE(a.ticket_id, s.ticket_id) LEFT JOIN projects p ON p.id = t.project_id \
                       LEFT JOIN personas pe ON pe.id = s.persona_id";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
@@ -88,8 +88,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
              external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id, mode, model, \
-             permission_mode, persona_id, persona_version, step_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             permission_mode, persona_id, persona_version, step_id, ticket_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -115,6 +115,7 @@ impl Store {
         .bind(s.persona.as_ref().map(|p| p.id.clone()))
         .bind(s.persona.as_ref().map(|p| i64::from(p.version)))
         .bind(s.persona.as_ref().and_then(|p| p.step_id.clone()))
+        .bind(s.ticket.as_ref().map(|t| t.id.clone()))
         .execute(&self.pool)
         .await?;
         Ok(())

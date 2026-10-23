@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '../api/gen/Session';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext, StartTicketContext } from './actions';
-import { agentLine, boardSplits, displayColumns, DONE_WINDOW_MS, inColumn } from './Board';
+import { agentLine, boardSplits, cardActivity, displayColumns, DONE_WINDOW_MS, inColumn } from './Board';
 import { COLLAPSED_KEY } from './BoardLanes';
 import { event, page, params, project, summary, ticket } from './fixtures';
 import { TicketsView } from './TicketsView';
@@ -179,6 +179,19 @@ describe('board', () => {
     expect(screen.queryByText('Ticket 1')).not.toBeInTheDocument();
     // Touch: no native drag.
     expect(await card(/ALP-2/)).toHaveAttribute('draggable', 'false');
+  });
+});
+
+describe('card activity', () => {
+  it("rolls up the attempt's sessions and the ones steps started on the ticket, not an earlier attempt's", () => {
+    const card = { id: 't2', attempt };
+    const idle = { ...agent, activity: 'idle' as const };
+    // A Reviewer's session belongs to the ticket without the attempt.
+    const reviewer = { ...agent, id: 's2', title: 'Reviewer · ALP-2', attemptId: null, activity: 'needs_you' as const };
+    const old = { ...agent, id: 's0', attemptId: 'a0', activity: 'needs_you' as const };
+    expect(cardActivity(card, [idle, old])).toEqual(cardActivity(card, [idle]));
+    expect(cardActivity(card, [idle, reviewer])).toEqual(cardActivity(card, [reviewer]));
+    expect(cardActivity(card, [idle, reviewer])).not.toEqual(cardActivity(card, [idle]));
   });
 });
 

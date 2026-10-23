@@ -1135,8 +1135,9 @@ impl Store {
         .map(to_attempt)
         .collect::<Result<Vec<_>, _>>()?;
         let sessions = sqlx::query(
-            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id, s.mode FROM sessions s \
-             JOIN attempts a ON a.id = s.attempt_id WHERE a.ticket_id = ? ORDER BY s.created_at DESC, s.id DESC",
+            "SELECT s.id, s.title, s.status, s.agent, s.attempt_id, s.mode, pe.name AS persona FROM sessions s \
+             LEFT JOIN attempts a ON a.id = s.attempt_id LEFT JOIN personas pe ON pe.id = s.persona_id WHERE COALESCE(a.ticket_id, s.ticket_id) = ? \
+             ORDER BY s.created_at DESC, s.id DESC",
         )
         .bind(id)
         .fetch_all(&mut *conn)
@@ -1152,6 +1153,7 @@ impl Store {
                 status: SessionStatus::parse(&status).ok_or_else(|| corrupt("session status", &status))?,
                 agent: agent.map(|a| AgentKind::parse(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
                 attempt_id: r.try_get("attempt_id")?,
+                persona: r.try_get("persona")?,
                 mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("session mode", &mode))?,
             })
         })
@@ -2812,7 +2814,19 @@ mod tests {
         let ticket = store.get_ticket("a").await.unwrap().unwrap();
         let ids: Vec<&str> = ticket.sessions.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["s2", "s1"], "newest first");
-        assert_eq!(ticket.sessions[0].attempt_id, "at1");
+        assert_eq!(ticket.sessions[0].attempt_id.as_deref(), Some("at1"));
+
+        // A workflow step's session on the ticket that isn't the attempt's (a Reviewer) belongs to the ticket too.
+        let mut reviewer = agent_session("rev", None, 4);
+        reviewer.ticket = Some(pdt_core::ticket::SessionTicket { id: "a".into(), key: String::new() });
+        store.insert_session(&reviewer).await.unwrap();
+        let s = store.get_session("rev").await.unwrap().unwrap();
+        assert_eq!((s.attempt_id, s.ticket.map(|t| t.key)), (None, Some("PX-1".into())));
+        let ticket = store.get_ticket("a").await.unwrap().unwrap();
+        let ids: Vec<(&str, Option<&str>)> =
+            ticket.sessions.iter().map(|s| (s.id.as_str(), s.attempt_id.as_deref())).collect();
+        assert_eq!(ids, [("rev", None), ("s2", Some("at1")), ("s1", Some("at1"))]);
+        store.delete_session("rev").await.unwrap();
 
         // A chat joins an attempt once; a session with one keeps it.
         assert!(store.set_session_attempt("plain", "at1").await.unwrap());
