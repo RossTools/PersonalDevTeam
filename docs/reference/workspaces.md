@@ -111,7 +111,8 @@ its tab, the Inbox picking an item) replace it.
 
 - Worktrees live inside the repo at `.worktrees/<branch with / replaced by ->` (listed in .git/info/exclude; pdt-core
   `worktree.rs`), so `feature/x` lives in `.worktrees/feature-x`. Folders there made with plain git are adopted.
-- `DELETE /api/worktrees/{id}` refuses while busy (`worktree_busy`) or dirty without `force` (`worktree_dirty`); the
+- `DELETE /api/worktrees/{id}` refuses while busy (`worktree_busy`), while a ticket's active attempt works in it
+  (`worktree_attempt`: finish the ticket or abandon the attempt first) or dirty without `force` (`worktree_dirty`); the
   project's Settings page and the merge banner use it.
 - A folder there that is not a git worktree for that branch makes Run on that branch fail with
   `worktree_path_taken` (also a branch whose folder name another branch already took, e.g. `a/b` and `a-b`).

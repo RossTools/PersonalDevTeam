@@ -714,6 +714,7 @@ fn pull_request(mergeable: Mergeable) -> PullRequest {
         in_merge_queue: false,
         queue_position: None,
         queue_removal: None,
+        created_at: None,
     }
 }
 

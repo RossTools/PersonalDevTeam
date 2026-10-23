@@ -73,6 +73,15 @@ async fn event_kinds(env: &Env, id: &str) -> Vec<String> {
     v["items"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect()
 }
 
+/// The event log's types for a ticket (what workflows see), oldest first.
+async fn logged(env: &Env, id: &str) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/events?ticket={id}"), None).await;
+    let mut kinds: Vec<String> =
+        v.as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap().to_string()).collect();
+    kinds.reverse();
+    kinds
+}
+
 async fn workspaces(env: &Env) -> Vec<Value> {
     call(&env.app, "GET", "/api/workspaces", None).await.1.as_array().unwrap().clone()
 }
@@ -373,6 +382,11 @@ async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
     assert_eq!(event_kinds(&env, &id).await, ["created"]);
     let wt = env.repo.join(".worktrees").join("pdt-PDT-1-retry-me");
     assert!(wt.is_dir(), "the worktree is kept");
+    // No workflow ever saw it: an `attempt.started` for an attempt that is gone fails the Pipeline's Coder step.
+    assert!(!logged(&env, &id).await.contains(&"attempt.started".to_string()), "{:?}", logged(&env, &id).await);
+    pdt_api::run_workflows(&env.state).await;
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={id}"), None).await;
+    assert_eq!(runs, json!([]));
 
     env.state.platform.claude_program = good;
     env.app = router(env.state.clone(), None);
@@ -380,6 +394,7 @@ async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
     assert_eq!(r["attempt"]["state"], "active");
     let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
     assert_eq!(wts.as_array().unwrap().len(), 1, "the kept worktree is reused: {wts}");
+    assert_eq!(logged(&env, &id).await, ["ticket.stage_changed", "attempt.started"], "logged once it started");
     env.state.ptys.shutdown().await;
 }
 
@@ -402,9 +417,17 @@ async fn abandon_ends_the_attempt_and_keeps_the_worktree() {
     assert_eq!(event_kinds(&env, &id).await.iter().filter(|k| *k == "abandoned").count(), 1);
     let (st, _) = call(&env.app, "POST", "/api/attempts/nope/abandon", None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+    // An active attempt's worktree is not removed from under it.
+    let r = started(&env, &id, json!({"agent": "claude", "noSession": true})).await;
+    let wt = s(&r["attempt"]["worktreeId"]).to_string();
+    let (st, v) = call(&env.app, "DELETE", &format!("/api/worktrees/{wt}"), None).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "worktree_attempt"), "{v}");
+    assert!(env.repo.join(".worktrees").join("pdt-PDT-1-give-up").is_dir());
+    let aid = s(&r["attempt"]["id"]).to_string();
+    call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
     // A new attempt can start, on the same worktree.
     let r = started(&env, &id, json!({"agent": "claude"})).await;
-    assert_eq!(r["ticket"]["attempts"].as_array().unwrap().len(), 2);
+    assert_eq!(r["ticket"]["attempts"].as_array().unwrap().len(), 3);
     env.state.ptys.shutdown().await;
 }
 
@@ -513,11 +536,17 @@ async fn closing_a_ticket_ends_its_attempt() {
     // Unmerged work: abandoned.
     let a = ticket(&env, json!({"title": "Drop"})).await;
     started(&env, &a, json!({"agent": "claude"})).await;
+    // A close the PATCH refuses ends nothing.
+    let bad = json!({"stage": "done", "waiting": true});
+    let (st, v) = call(&env.app, "PATCH", &format!("/api/tickets/{a}"), Some(bad)).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    let t = get_ticket(&env, &a).await;
+    assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("in_progress", "active"));
     let (st, t) = call(&env.app, "PATCH", &format!("/api/tickets/{a}"), Some(json!({"stage": "wont_do"}))).await;
     assert_eq!(st, StatusCode::OK, "{t}");
     assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("wont_do", "abandoned"));
     let kinds = event_kinds(&env, &a).await;
-    assert_eq!(kinds[kinds.len() - 2..], ["abandoned".to_string(), "moved".to_string()]);
+    assert_eq!(kinds[kinds.len() - 2..], ["moved".to_string(), "abandoned".to_string()]);
 
     // Merged work: merged.
     let b = ticket(&env, json!({"title": "Ship"})).await;

@@ -418,6 +418,7 @@ async fn with_an_open_pr_merge_turns_on_auto_merge() {
         in_merge_queue: false,
         queue_position: None,
         queue_removal: None,
+        created_at: None,
     };
     env.gh.set_pr(&env.branch, Some(pr.clone()));
     pdt_api::refresh_prs(&env.state).await;
@@ -536,6 +537,7 @@ async fn queue_with_finish(env: &Env) -> PullRequest {
         in_merge_queue: false,
         queue_position: None,
         queue_removal: None,
+        created_at: None,
     };
     env.gh.set_pr(&env.branch, Some(pr.clone()));
     pdt_api::refresh_prs(&env.state).await;
