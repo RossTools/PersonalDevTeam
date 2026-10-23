@@ -35,6 +35,20 @@ describe('ProjectPage', () => {
     expect(screen.getByRole('link', { name: /o\/pdt on GitHub/ })).toHaveAttribute('href', 'https://github.com/o/pdt');
   });
 
+  it('says Saved once the saved project comes back (the form starts over with it)', async () => {
+    const saved = { ...project, key: 'CORE' };
+    const calls = stubApi({ ...base, 'PATCH /api/projects/p': saved });
+    const { rerender } = renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    const form = screen.getByRole('region', { name: 'Project' });
+    const key = within(form).getByRole('textbox', { name: 'Project key' });
+    await userEvent.clear(key);
+    await userEvent.type(key, 'core');
+    await userEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    rerender(<ProjectPage project={saved} onRemoved={() => {}} />);
+    expect(within(screen.getByRole('region', { name: 'Project' })).getByText('Saved')).toBeInTheDocument();
+  });
+
   it('changes the base branch to a local or origin branch', async () => {
     const calls = stubApi({ ...base, 'PATCH /api/projects/p': { ...project, baseBranch: 'release' } });
     renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);

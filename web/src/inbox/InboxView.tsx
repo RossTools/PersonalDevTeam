@@ -18,11 +18,15 @@ import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, selecte
 import { useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
-/** Keys typed into a field, or with a dialog or menu open, are not the Inbox's. */
+/**
+ * Keys typed into a field, or with a dialog or menu open, are not the Inbox's; nor is Enter on a focused button or
+ * link, which presses that (Reject, Dismiss, …), not the primary decision.
+ */
 function foreign(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
   if (e.ctrlKey || e.metaKey || e.altKey) return true;
   if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return true;
+  if (e.key === 'Enter' && t?.closest?.('button, a[href], [role=button], [role=link], [role=radio], [role=checkbox], [role=switch], [role=option], [role=menuitem], [role=tab]')) return true;
   return !!document.querySelector('[role=dialog], [role=menu], [role=listbox]');
 }
 

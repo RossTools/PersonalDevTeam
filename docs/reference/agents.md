@@ -92,7 +92,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 - **PDT's tools.** pdt-mcp with the PM's set (pdt-core `PM_TOOLS`): `get_overview` (projects with open tickets per
   stage, tickets in progress with branch/PR/CI/agent in words, the Inbox, running agent sessions), `search_tickets`,
   `get_ticket`, `get_session` (state, open requests, last messages),
-  `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, the catalog and workflow tools
+  `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, `list_todos` (the user's todo
+  list, read-only: the PM never changes it), the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
   attempt, as the API; `parent` takes a key or id, `""` detaches), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
@@ -182,7 +183,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 - Reconnect: a terminal that connects while the startup auto-resume has yet to get to its session waits (up to 30 s)
   and attaches once it starts. The WebSocket for an existing session with no PTY otherwise upgrades, sends
   `{"type":"not_running"}` and closes; the browser then shows "Session ended." and reattaches when the session list
-  shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s).
+  shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s). Input is never queued
+  while it is not connected: typed keys are dropped and the terminal says "Not connected: input not sent" until it
+  reconnects, and Compose keeps the prompt and says it was not sent.
 
 ## Restart and resume
 

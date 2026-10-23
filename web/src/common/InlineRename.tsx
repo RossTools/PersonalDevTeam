@@ -6,6 +6,8 @@ export interface InlineRenameProps {
   label: string;
   /** The current name ('' for a new one). */
   initial?: string;
+  /** The text to start with, when not `initial` (e.g. what was typed before a failed save). */
+  draft?: string;
   placeholder?: string;
   maxLength?: number;
   /** Called with the trimmed name on Enter or blur, when it is non-empty and differs from `initial`. */
@@ -20,8 +22,8 @@ export interface InlineRenameProps {
  * A text field that edits a name in place: focused with its text selected; Enter or blur commits, Escape cancels.
  * Finishes once (blur after Enter does nothing).
  */
-export function InlineRename({ label, initial = '', placeholder, maxLength = 100, onCommit, onCancel, size = 'sm', className }: InlineRenameProps) {
-  const [value, setValue] = useState(initial);
+export function InlineRename({ label, initial = '', draft, placeholder, maxLength = 100, onCommit, onCancel, size = 'sm', className }: InlineRenameProps) {
+  const [value, setValue] = useState(draft ?? initial);
   const done = useRef(false);
   const finish = (save: boolean) => {
     if (done.current) return;

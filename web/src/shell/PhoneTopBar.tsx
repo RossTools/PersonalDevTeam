@@ -1,6 +1,6 @@
-// The phone's top bar (PDT-112): ☰ or ←, the screen's title, 🔔 Needs you, ⌕ Search, ⋯ the screen's actions.
+// The phone's top bar (PDT-112): ☰ or ←, the screen's title, 🔔 Needs you, ⌕ Search, ☑ Todos, ⋯ the screen's actions.
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
-import { ArrowLeft, Bell, Menu, Search } from 'lucide-react';
+import { ArrowLeft, Bell, ListChecks, Menu, Search } from 'lucide-react';
 import { Button, IconButton, MenuButton, type MenuEntry } from '@ui';
 import { InstanceBadge } from './InstanceBadge';
 
@@ -56,7 +56,7 @@ export function useTopBarEdit(edit: TopBarEdit | null) {
   useEffect(() => (on ? () => set(null) : undefined), [on, set]);
 }
 
-export function PhoneTopBar({ detail, onMenu, menuOpen, onBack, title, needsYou, onInbox, onSearch, actions, edit }: {
+export function PhoneTopBar({ detail, onMenu, menuOpen, onBack, title, needsYou, onInbox, onSearch, onTodos, actions, edit }: {
   /** A detail screen: ← (Back) instead of ☰. */
   detail: boolean;
   onMenu: () => void;
@@ -67,6 +67,8 @@ export function PhoneTopBar({ detail, onMenu, menuOpen, onBack, title, needsYou,
   needsYou: number;
   onInbox: () => void;
   onSearch: () => void;
+  /** Opens the todo list (the desktop's right panel) in a sheet. */
+  onTodos?: () => void;
   /** ⋯ entries: the shell's for this screen, then the screen's own. */
   actions: TopBarActions | null;
   /** An edit on the screen: Cancel and Save take the bar's ends. */
@@ -100,6 +102,7 @@ export function PhoneTopBar({ detail, onMenu, menuOpen, onBack, title, needsYou,
         )}
       </IconButton>
       <IconButton label="Search" noTooltip onClick={onSearch} className="size-11 text-muted-foreground"><Search aria-hidden /></IconButton>
+      {onTodos && <IconButton label="Todos" noTooltip aria-haspopup="dialog" onClick={onTodos} className="size-11 text-muted-foreground"><ListChecks aria-hidden /></IconButton>}
       {actions && <MenuButton label="Screen actions" entries={actions} className="size-11" />}
     </header>
   );

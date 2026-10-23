@@ -191,6 +191,17 @@ struct SearchNotes {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ListTodos {
+    /// A project's key or id: only its todos. Every todo when left out.
+    #[serde(default)]
+    project: Option<String>,
+    /// Only done todos (true) or open ones (false); both when left out.
+    #[serde(default)]
+    done: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SaveNote {
     /// The note to replace; a new note when left out.
     #[serde(default)]
@@ -307,7 +318,7 @@ struct Def {
 }
 
 /// Tools that change nothing.
-const READ_ONLY: [&str; 12] = [
+const READ_ONLY: [&str; 13] = [
     "get_ticket",
     "catalog_search",
     "catalog_get",
@@ -319,6 +330,7 @@ const READ_ONLY: [&str; 12] = [
     "get_session",
     "list_workflow_runs",
     "search_notes",
+    "list_todos",
     "discord_get",
 ];
 
@@ -467,6 +479,13 @@ fn defs() -> Vec<Def> {
             description: "This session's journal entry, which the next PM session's briefing includes. Write it when \
                           PDT says the session is ending.",
             schema: schema::<WriteJournal>,
+        },
+        Def {
+            name: "list_todos",
+            title: "List todos",
+            description: "The user's own todo list (open ones in their order, then done ones): title, done, project, \
+                          linked ticket and dates. Read-only: the user edits it in PDT.",
+            schema: schema::<ListTodos>,
         },
         Def {
             name: "create_ticket",
@@ -803,6 +822,23 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 })
                 .collect();
             Ok(json!({"notes": notes}))
+        }
+        "list_todos" => {
+            let a: ListTodos = args(a)?;
+            let f = crate::todos::filter(st, a.project.as_deref(), a.done).await.map_err(api)?;
+            let todos: Vec<Value> = st
+                .store
+                .list_todos(&f)
+                .await
+                .map_err(store)?
+                .into_iter()
+                .map(|t| {
+                    json!({"id": t.id, "title": t.title, "done": t.done, "project": t.project_key,
+                           "ticket": t.ticket_key, "ticketTitle": t.ticket_title, "createdAt": t.created_at,
+                           "updatedAt": t.updated_at, "doneAt": t.done_at})
+                })
+                .collect();
+            Ok(json!({"todos": todos}))
         }
         "save_note" => {
             let a: SaveNote = args(a)?;

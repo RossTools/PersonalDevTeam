@@ -69,6 +69,11 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
 
   const files = changes.data?.files ?? [];
   const file = files.find((f) => f.path === selected) ?? files[0] ?? null;
+  // The file shown first stays shown when another file comes before it (an agent adds one), instead of switching under
+  // the user (and dropping a comment being written).
+  useEffect(() => {
+    if (file && selected !== file.path && !files.some((f) => f.path === selected)) setSelected(file.path);
+  }, [file, selected, files]);
   useEffect(() => setComposer(null), [file?.path]);
   const threads = useMemo(() => threadsOf(comments.data ?? []), [comments.data]);
   const threadCounts = useMemo(() => {
@@ -282,6 +287,8 @@ function FilePane({ worktreeId, file, threads, mode, narrow, phone, onMode, whol
   const [rendered, setRendered] = useState(false);
   const refresh = () => invalidateReview(qc, worktreeId);
   const act = (f: () => Promise<unknown>) => runAction(async () => { await f(); refresh(); });
+  // For a typed comment, reply or edit: a failure rejects, so the composer keeps the text and shows why.
+  const save = async (f: () => Promise<unknown>) => { await f(); refresh(); };
 
   // Where each thread is now; the ones whose lines are gone are outdated.
   const placed = useMemo(() => {
@@ -314,8 +321,8 @@ function FilePane({ worktreeId, file, threads, mode, narrow, phone, onMode, whol
       renderBody={(text) => <Markdown>{text}</Markdown>}
       onResolve={(resolved) => void act(() => api.updateReviewComment(th.root.id, { resolved }))}
       onReply={(text) =>
-        act(() => api.createReviewComment(worktreeId, { path: th.root.path, side: th.root.side, line: th.root.line, lineText: '', body: text, parentId: th.root.id }))}
-      onEdit={(id, text) => act(() => api.updateReviewComment(id, { body: text }))}
+        save(() => api.createReviewComment(worktreeId, { path: th.root.path, side: th.root.side, line: th.root.line, lineText: '', body: text, parentId: th.root.id }))}
+      onEdit={(id, text) => save(() => api.updateReviewComment(id, { body: text }))}
       onDelete={(id) => void act(() => api.deleteReviewComment(id))}
     />
   );
@@ -327,12 +334,9 @@ function FilePane({ worktreeId, file, threads, mode, narrow, phone, onMode, whol
       autoFocus
       placeholder={phone ? 'Leave a comment (Markdown).' : 'Leave a comment (Markdown). Ctrl+Enter to save.'}
       onSubmit={async (text) => {
-        const res = await runAction(() =>
-          api.createReviewComment(worktreeId, { path: file.path, side: r.side, line: r.line, endLine: r.endLine, lineText: r.lineText, body: text }));
-        if (res) {
-          onComposer(null);
-          refresh();
-        }
+        await api.createReviewComment(worktreeId, { path: file.path, side: r.side, line: r.line, endLine: r.endLine, lineText: r.lineText, body: text });
+        onComposer(null);
+        refresh();
       }}
       onCancel={() => onComposer(null)}
     />

@@ -11,7 +11,7 @@ const h = vi.hoisted(() => ({
     selected: unknown[]; scrolled: number[]; lines: string[]; focus(): void;
   },
   clipboard: null as null | { readText(s: string): string; writeText(s: string, t: string): Promise<void> },
-  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; resizes: string[]; disposed: boolean; connected: boolean; retries: number },
+  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; open: boolean; resizes: string[]; disposed: boolean; connected: boolean; retries: number },
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -84,7 +84,12 @@ vi.mock('./ptySocket', () => ({
       h.sock = this;
     }
     connect() { this.connected = true; }
-    send(d: string) { this.sent.push(d); }
+    open = true;
+    send(d: string) {
+      if (!this.open) return false;
+      this.sent.push(d);
+      return true;
+    }
     resizes: string[] = [];
     resize(cols: number, rows: number) { this.resizes.push(`${cols}x${rows}`); }
     retry() { this.retries++; }
@@ -314,6 +319,30 @@ describe('TerminalView', () => {
     await waitFor(() => expect(box).toHaveValue(''));
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('keeps a composed prompt and says why when the terminal is not connected', async () => {
+    render(<TerminalView sessionId="s1" composing />);
+    h.sock!.open = false;
+    act(() => (h.sock!.handlers.onStatus as (s: string) => void)('reconnecting'));
+    const box = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(box, { target: { value: 'fix it' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(await screen.findByText(/prompt was not sent/)).toBeInTheDocument();
+    expect(box).toHaveValue('fix it');
+    expect(h.sock!.sent).toEqual([]);
+  });
+
+  it('marks typing that was dropped while reconnecting until it reconnects', () => {
+    render(<TerminalView sessionId="s1" sessionStatus="running" />);
+    h.sock!.open = false;
+    act(() => (h.sock!.handlers.onStatus as (s: string) => void)('reconnecting'));
+    expect(screen.getByText('Reconnecting…')).toBeInTheDocument();
+    act(() => h.term!.dataCb!('x'));
+    expect(screen.getByText('Not connected: input not sent')).toBeInTheDocument();
+    h.sock!.open = true;
+    act(() => (h.sock!.handlers.onStatus as (s: string) => void)('open'));
+    expect(screen.queryByText(/input not sent/)).not.toBeInTheDocument();
   });
 
   it('copies OSC 52 text to the clipboard but never reveals the clipboard', async () => {

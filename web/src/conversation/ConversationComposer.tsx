@@ -10,7 +10,7 @@ import { actionError } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { softKeyboardOpen } from '../common/viewport';
 import { isMac } from '../palette/useMetaK';
-import { loadDraft, saveDraft } from './drafts';
+import { loadDraft, loadImageDrafts, saveDraft, saveImageDrafts, type ImageDraft } from './drafts';
 import { applyCompletion, commandSuggestions, completionAt, type LimitWarning } from './completion';
 
 /** Image types the agents take (and PDT stores). */
@@ -210,10 +210,17 @@ export function ConversationComposer({
   };
 
   // ---- images ----
-  const [drafts, setDrafts] = useState<Draft[]>([]);
+  // Uploaded ones are kept with the text's draft, so they are still attached when the box comes back.
+  const [drafts, setDrafts] = useState<Draft[]>(() => (draftKey ? loadImageDrafts(draftKey) : []));
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
-  useEffect(() => () => draftsRef.current.forEach((d) => URL.revokeObjectURL(d.url)), []);
+  useEffect(() => {
+    if (draftKey) saveImageDrafts(draftKey, drafts.filter((d): d is ImageDraft => !!d.id && !d.error));
+  }, [draftKey, drafts]);
+  useEffect(
+    () => () => draftsRef.current.forEach((d) => { if (!draftKey || !d.id || d.error) URL.revokeObjectURL(d.url); }),
+    [draftKey],
+  );
   const addFiles = (list: File[]) => {
     if (!onUpload) return;
     const room = MAX_IMAGES - drafts.length;

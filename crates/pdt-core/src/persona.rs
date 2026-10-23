@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 28] = [
+pub const ALL_TOOLS: [&str; 29] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -33,6 +33,7 @@ pub const ALL_TOOLS: [&str; 28] = [
     "save_note",
     "delete_note",
     "write_journal",
+    "list_todos",
     "create_ticket",
     "edit_ticket",
     "link_tickets",
@@ -57,7 +58,7 @@ pub const ASKING_TOOLS: [&str; 7] = [
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 26] = [
+pub const PM_TOOLS: [&str; 27] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -76,6 +77,7 @@ pub const PM_TOOLS: [&str; 26] = [
     "save_note",
     "delete_note",
     "write_journal",
+    "list_todos",
     "create_ticket",
     "edit_ticket",
     "link_tickets",
@@ -87,7 +89,7 @@ pub const PM_TOOLS: [&str; 26] = [
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 28] = [
+const TOOL_DOES: [(&str, &str); 29] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
@@ -108,6 +110,7 @@ const TOOL_DOES: [(&str, &str); 28] = [
     ("save_note", "Save a note"),
     ("delete_note", "Delete a note"),
     ("write_journal", "Write the session's journal entry"),
+    ("list_todos", "Read your todo list"),
     ("create_ticket", "Create tickets"),
     ("edit_ticket", "Edit any ticket"),
     ("link_tickets", "Link two tickets (blocks, relates to)"),
@@ -567,6 +570,8 @@ instead of editing or committing in a checkout.\n\
 - Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
 with `save_note` (pin what every session should see); look things up with `search_notes`. When PDT tells you the \
 session is ending, write your journal with `write_journal`.\n\
+- Todos: the user keeps their own todo list in PDT's right panel; read it with `list_todos` (by project, open or \
+done) when planning or asked what is on their plate. You can't change it: suggest the change instead.\n\
 - Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` creates, renames, \
 moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it as a \
 `discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \

@@ -87,6 +87,23 @@ describe('PersonaPage', () => {
     });
   });
 
+  it('says Saved after a rename, once the renamed persona comes back', async () => {
+    let current = persona('a', { version: 2 });
+    stubApi({ ...TOOLS_ROUTE,
+      'GET /api/personas': () => [current],
+      'GET /api/personas/a/versions': [version(2), version(1)],
+      'GET /api/personas/a/diff?from=1&to=2': { changed: [], unified: '' },
+      'PATCH /api/personas/a': (c: Call) => (current = { ...current, ...(c.body as object) }),
+    });
+    renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
+    const name = within(await screen.findByRole('region', { name: 'Persona' })).getByRole('textbox', { name: 'Name' });
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Builder');
+    await userEvent.click(within(screen.getByRole('region', { name: 'Persona' })).getByRole('button', { name: 'Save persona' }));
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Persona' })).getByRole('textbox', { name: 'Name' })).toHaveValue('Builder'));
+    expect(await within(screen.getByRole('region', { name: 'Persona' })).findByText('Saved')).toBeInTheDocument();
+  });
+
   it('renames with PATCH and saves the setup as a new version with a note', async () => {
     const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { version: 2 })],

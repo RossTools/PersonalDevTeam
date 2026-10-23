@@ -1,10 +1,10 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, useConfirm,
+  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm,
   type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
@@ -54,28 +54,46 @@ export function OverviewSection({ title, actions, children, className }: { title
 // ---------------------------------------------------------------------------------------------------------------
 // Title
 
-/** The title with a pencil: edits in place (Enter or leaving the field saves, Escape cancels). */
+/**
+ * The title with a pencil: edits in place (Enter or leaving the field saves, Escape cancels). The new title shows
+ * while it saves; if saving fails, the editor opens again with what was typed.
+ */
 export function TicketTitle({ ticket, className }: { ticket: Pick<Ticket, 'id' | 'title'>; className?: string }) {
   const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [save] = useAction((title: string) => patchTicket(qc, ticket.id, { title }));
-  if (editing) {
+  // The text being edited (the title, or what was typed before a failed save), or null when not editing.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const save = async (title: string) => {
+    setDraft(null);
+    setSaving(title);
+    try {
+      await patchTicket(qc, ticket.id, { title });
+    } catch (e) {
+      toast.error(actionError(e));
+      setDraft(title);
+    } finally {
+      setSaving(null);
+    }
+  };
+  if (draft !== null) {
     return (
       <InlineRename
         label="Title"
         initial={ticket.title}
+        draft={draft}
         maxLength={200}
         size="sm"
         className={cn('w-full min-w-48', className)}
-        onCommit={(t) => { setEditing(false); void save(t); }}
-        onCancel={() => setEditing(false)}
+        onCommit={(t) => void save(t)}
+        onCancel={() => setDraft(null)}
       />
     );
   }
+  const shown = saving ?? ticket.title;
   return (
     <span className={cn('group/title flex min-w-0 items-center gap-1', className)}>
-      <span className="min-w-0 truncate" title={ticket.title} onDoubleClick={() => setEditing(true)}>{ticket.title}</span>
-      <IconButton label="Edit title" size="sm" noTooltip className="size-5 shrink-0" onClick={() => setEditing(true)}>
+      <span className="min-w-0 truncate" title={shown} onDoubleClick={() => setDraft(ticket.title)}>{shown}</span>
+      <IconButton label="Edit title" size="sm" noTooltip disabled={saving !== null} className="size-5 shrink-0" onClick={() => setDraft(ticket.title)}>
         <Pencil aria-hidden />
       </IconButton>
     </span>
@@ -85,22 +103,51 @@ export function TicketTitle({ ticket, className }: { ticket: Pick<Ticket, 'id' |
 // ---------------------------------------------------------------------------------------------------------------
 // Description
 
-/** The description as Markdown; Edit switches to a text box with a Preview toggle, saved with Save. */
-export function TicketDescription({ ticket }: { ticket: Pick<Ticket, 'id' | 'description'> }) {
+/**
+ * The description as Markdown; Edit switches to a text box with a Preview toggle, saved with Save. The edit is
+ * measured against the description it started from, not the live one the poll brings, so a change made meanwhile (an
+ * agent's rewrite) is shown as a warning instead of being silently overwritten. `onDirtyChange` tells the parent
+ * whether there is an unsaved edit (the peek asks before closing over one).
+ */
+export function TicketDescription({ ticket, onDirtyChange }: {
+  ticket: Pick<Ticket, 'id' | 'description'>;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<string | null>(null);
+  // What is typed, and the description it was started from.
+  const [edit, setEdit] = useState<{ draft: string; base: string } | null>(null);
   const [mode, setMode] = useState<'write' | 'preview'>('write');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const editing = draft !== null;
-  const dirty = editing && draft !== ticket.description;
+  const editing = edit !== null;
+  const draft = edit?.draft ?? '';
+  const dirty = editing && edit.draft !== edit.base;
+  const changedElsewhere = editing && edit.base !== ticket.description;
+  const setDraft = (d: string) => setEdit((e) => (e ? { ...e, draft: d } : e));
+  const begin = () => {
+    setEdit({ draft: ticket.description, base: ticket.description });
+    setMode('write');
+  };
+  const close = () => {
+    setEdit(null);
+    setError(null);
+  };
+  // Nothing typed yet: follow the description as it changes.
+  const live = ticket.description;
+  useEffect(() => {
+    if (!dirty && changedElsewhere) setEdit({ draft: live, base: live });
+  }, [dirty, changedElsewhere, live]);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const save = async () => {
     if (!dirty) return;
     setPending(true);
     setError(null);
     try {
       await patchTicket(qc, ticket.id, { description: draft });
-      setDraft(null);
+      setEdit(null);
     } catch (e) {
       setError(actionError(e));
     } finally {
@@ -111,7 +158,7 @@ export function TicketDescription({ ticket }: { ticket: Pick<Ticket, 'id' | 'des
     <OverviewSection
       title="Description"
       actions={!editing && (
-        <Button variant="ghost" size="sm" compact onClick={() => { setDraft(ticket.description); setMode('write'); }}>
+        <Button variant="ghost" size="sm" compact onClick={begin}>
           <Pencil aria-hidden /> Edit
         </Button>
       )}
@@ -136,7 +183,7 @@ export function TicketDescription({ ticket }: { ticket: Pick<Ticket, 'id' | 'des
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void save(); }
-                if (e.key === 'Escape' && !dirty) { e.preventDefault(); setDraft(null); }
+                if (e.key === 'Escape' && !dirty) { e.preventDefault(); close(); }
               }}
               className="min-h-40 resize-y"
             />
@@ -145,10 +192,19 @@ export function TicketDescription({ ticket }: { ticket: Pick<Ticket, 'id' | 'des
               {draft.trim() ? <Markdown breaks>{draft}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
             </div>
           )}
+          {changedElsewhere && (
+            <Alert
+              tone="warning"
+              action={<Button size="sm" variant="secondary" onClick={begin}>Load the new version</Button>}
+            >
+              The description changed while you were editing it. Save replaces that change with yours; loading the new
+              version drops your edit.
+            </Alert>
+          )}
           {error && <Alert tone="error">{error}</Alert>}
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-meta text-muted-foreground pointer-coarse:hidden">Markdown. ⌘/Ctrl+Enter saves.</span>
-            <Button variant="ghost" onClick={() => { setDraft(null); setError(null); }}>Cancel</Button>
+            <Button variant="ghost" onClick={close}>Cancel</Button>
             <Button type="submit" variant="primary" pending={pending} disabled={!dirty}>Save</Button>
           </div>
         </form>

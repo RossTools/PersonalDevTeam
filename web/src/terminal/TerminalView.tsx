@@ -76,6 +76,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   const sockRef = useRef<PtySocket | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const [status, setStatus] = useState<PtyStatus>('connecting');
+  // Input was typed while the socket was not connected and so never reached the PTY; shown until it reconnects.
+  const [dropped, setDropped] = useState(false);
   const fontSize = useTerminalFontSize();
   const fontSizeRef = useRef(fontSize);
   fontSizeRef.current = fontSize;
@@ -162,15 +164,21 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       },
       // A negative code is unknown (a detached run's processes outlived the one PDT started).
       onExit: (code) => term.write(`\r\n\x1b[2m[process exited${code >= 0 ? ` with code ${code}` : ''}]\x1b[0m\r\n`),
-      onStatus: setStatus,
+      onStatus: (s) => {
+        setStatus(s);
+        if (s === 'open') setDropped(false);
+      },
     });
     sockRef.current = sock;
+    const sendBytes = (d: string) => {
+      if (!sock.send(d)) setDropped(true);
+    };
     // Input typed into the terminal (or pasted) goes through the key bar's armed key first.
     const sendInput = (d: string) => {
       const r = applyPending(pendingRef.current, d);
       if (r.pending !== pendingRef.current) setPendingRef.current(r.pending);
       if (r.prefixKey !== undefined) runPrefixKey(r.prefixKey);
-      if (r.send !== undefined) sock.send(r.send);
+      if (r.send !== undefined) sendBytes(r.send);
     };
     // Refits at most once per frame, and tells the PTY only when the grid really changed: a resize the PTY sees
     // makes the program redraw, and a redraw must never feed back into another layout change.
@@ -217,7 +225,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       // Handle keydown only; keypress and keyup of the same key are swallowed so xterm doesn't also send `\r`.
       if (e.type === 'keydown') {
         e.preventDefault();
-        if (!replaying()) sock.send(NEWLINE);
+        if (!replaying()) sendBytes(NEWLINE);
       }
       return false;
     });
@@ -271,11 +279,14 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   const refocus = () => {
     if (!keyboardHidden.current) termRef.current?.focus();
   };
+  const sendBytes = (d: string) => {
+    if (!sockRef.current?.send(d)) setDropped(true);
+  };
   // Send a key bar key's bytes to the PTY, through the armed key.
   const sendKey = (seq: string) => {
     const r = pressBarKey(pendingRef.current, seq);
     setPending(r.pending);
-    if (r.send !== undefined) sockRef.current?.send(r.send);
+    if (r.send !== undefined) sendBytes(r.send);
     refocus();
   };
   const onCtrl = () => {
@@ -285,7 +296,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   const onPrefix = () => {
     const r = tapPrefix(pendingRef.current);
     setPending(r.pending);
-    if (r.send !== undefined) sockRef.current?.send(r.send);
+    if (r.send !== undefined) sendBytes(r.send);
     refocus();
   };
   const toggleKeyboard = () => {
@@ -325,10 +336,12 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     },
   }));
 
+  // Throws when the prompt was not sent, so the Composer keeps the text and shows why.
   const sendPrompt = (text: string) => {
     const term = termRef.current;
-    if (!term) return;
-    sockRef.current?.send(promptSequence(text, term.modes.bracketedPasteMode));
+    if (!term || !sockRef.current?.send(promptSequence(text, term.modes.bracketedPasteMode))) {
+      throw new Error('Not connected to the terminal, so the prompt was not sent. Send it again once it reconnects.');
+    }
   };
 
   // Safety net: if the terminal is ended or exited but the latest poll says the session is running, reattach. It is
@@ -353,7 +366,11 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
         <div className={`absolute inset-0 overflow-hidden p-1${dimmed ? ' opacity-60' : ''}`} data-dimmed={dimmed || undefined}>
           <div ref={host} data-testid="terminal" className="h-full w-full" />
         </div>
-        {status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>}
+        {dropped && (status === 'reconnecting' || status === 'connecting') ? (
+          <p role="status" className="absolute right-2 top-1 text-xs text-failed">Not connected: input not sent</p>
+        ) : (
+          status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>
+        )}
         {status === 'ended' && !dimmed && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
         {touchSelection && (
           <div role="toolbar" aria-label="Selection" className="absolute left-1/2 top-2 flex -translate-x-1/2 gap-1 rounded-pdt border border-border bg-surface p-1 shadow-popover">

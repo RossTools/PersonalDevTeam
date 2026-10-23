@@ -112,6 +112,18 @@ describe('AppShell', () => {
   });
 
 
+  it('has the right panel beside the main area, opened by the strip and closed by its button or the prefix key', async () => {
+    stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/todos': [] });
+    renderWithQuery(<AppShell />);
+    const panel = screen.getByRole('complementary', { name: 'Right panel' });
+    await userEvent.click(within(panel).getByRole('button', { name: 'Open the todo list' }));
+    expect(await within(panel).findByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Collapse the right panel' }));
+    expect(within(panel).queryByRole('textbox')).not.toBeInTheDocument();
+    await userEvent.keyboard('{Control>}]{/Control}t');
+    expect(await within(screen.getByRole('complementary', { name: 'Right panel' })).findByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
+  });
+
   it('shows the empty state when the project workspace has no tabs', async () => {
     stubAlpha();
     renderWithQuery(<AppShell />);
@@ -498,9 +510,13 @@ describe('workspaces', () => {
   it('toasts when a tab action fails', async () => {
     stubWorkspaces({ 'DELETE /api/tabs/tb': new Reply(500, { code: 'internal', message: 'Tab store is locked' }) });
     renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('tab', { name: /Codex B/ }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true'));
     await userEvent.click(await screen.findByRole('button', { name: 'Close Codex B' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop and close' }));
     expect(await screen.findByText('Tab store is locked')).toBeInTheDocument();
+    // The tab that failed to close is still the one shown.
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
     fireEvent.contextMenu(screen.getByRole('tab', { name: /Claude A/ }));
     stubWorkspaces({ 'PATCH /api/tabs/ta': new Reply(409, { code: 'conflict', message: 'Workspace is gone' }) });
     await userEvent.click(within(screen.getByRole('menu', { name: 'Tab Claude A' })).getByRole('menuitem', { name: 'Release' }));
@@ -740,6 +756,33 @@ describe('phone', () => {
     await userEvent.keyboard('{Escape}');
     await userEvent.click(await within(bar).findByRole('button', { name: 'Needs you (3)' }));
     expect(here()).toBe('/inbox');
+  });
+
+  it('opens the todo list in a sheet from the top bar, with no right panel', async () => {
+    stubPhone();
+    stubWorkspaces({ 'GET /api/todos': [{ id: 'a', title: 'Call Sam', position: 0, done: false, projectId: null, ticketId: null,
+      createdAt: 1, updatedAt: 1, doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null }] });
+    renderWithQuery(<AppShell />);
+    expect(screen.queryByRole('complementary', { name: 'Right panel' })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Todos and notes' });
+    expect(await within(sheet).findByText('Call Sam')).toBeInTheDocument();
+    expect(within(sheet).getByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
+  });
+
+  it('opens one of my notes from the Notes tab of the phone sheet', async () => {
+    stubPhone();
+    stubWorkspaces({
+      'GET /api/todos': [],
+      'GET /api/pm/notes': [{ id: 'n1', projectId: null, kind: 'user', title: 'Dark mode', body: '', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 }],
+    });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Todos and notes' });
+    await userEvent.click(within(sheet).getByRole('tab', { name: 'Notes' }));
+    await userEvent.click(await within(sheet).findByRole('button', { name: /Dark mode/ }));
+    expect(here()).toBe('/pm/notes/n1');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Todos and notes' })).not.toBeInTheDocument());
   });
 
   it("lists the views in the drawer in the rail's order, with the Inbox count, Settings and the host's state", async () => {

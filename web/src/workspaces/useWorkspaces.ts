@@ -243,6 +243,8 @@ export function useWorkspaces(routed?: RoutedChoice) {
         });
         if (!ok) return;
       }
+      // Closed first: a close that fails leaves the tab where it was, still selected.
+      await api.closeTab(t.id);
       const w = workspaces.find((x) => x.id === t.workspaceId);
       if (w && tab?.id === t.id) {
         const i = w.tabs.findIndex((x) => x.id === t.id);
@@ -250,7 +252,6 @@ export function useWorkspaces(routed?: RoutedChoice) {
         setChoice((c) => ({ ...c, tabs: { ...c.tabs, [w.id]: neighbour?.id ?? '' } }));
         onChoose.current?.(w.id, neighbour?.id ?? null, { replace: true });
       }
-      await api.closeTab(t.id);
       await refresh();
       if (t.sessionId) void qc.invalidateQueries({ queryKey: ['sessions'] });
       if (t.runId) void qc.invalidateQueries({ queryKey: ['runs'] });

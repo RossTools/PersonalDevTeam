@@ -28,6 +28,9 @@ import type { Run } from './gen/Run';
 import type { RunConfigView } from './gen/RunConfigView';
 import type { Attachment } from './gen/Attachment';
 import type { Session } from './gen/Session';
+import type { NewTodo } from './gen/NewTodo';
+import type { Todo } from './gen/Todo';
+import type { TodoPatch } from './gen/TodoPatch';
 import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
 import type { UpdateStatus } from './gen/UpdateStatus';
@@ -432,4 +435,11 @@ export const api = {
   patchPmNote: (id: string, p: NotePatch) =>
     request<PmNote>(`/api/pm/notes/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
   deletePmNote: (id: string) => request<void>(`/api/pm/notes/${enc(id)}`, { method: 'DELETE' }),
+  /** The user's todo list (PDT-125): open ones in their order, then done ones (latest first). */
+  todos: {
+    list: (q: { project?: string; done?: boolean } = {}) => request<Todo[]>(`/api/todos${queryString(q)}`),
+    create: (t: NewTodo) => request<Todo>('/api/todos', { method: 'POST', body: JSON.stringify(t) }),
+    patch: (id: string, p: TodoPatch) => request<Todo>(`/api/todos/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+    remove: (id: string) => request<void>(`/api/todos/${enc(id)}`, { method: 'DELETE' }),
+  },
 };
