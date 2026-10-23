@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::workflow::api::{Scope, WorkflowDetail};
+use pdt_core::workflow::api::{Author, Scope, Source, Workflow, WorkflowDetail};
 use pdt_core::workflow::doc::WorkflowDoc;
 use pdt_core::workflow::template::{Template, TemplateParam, check_params, fill, param_values, placeholder_values};
 use serde::{Deserialize, Serialize};
@@ -458,7 +458,110 @@ pub(crate) async fn instantiate(
     let note = format!("from the template {}", t.name);
     let w =
         create_workflow(&st, &doc, i.scope, i.project_id, false, &note, pdt_core::workflow::api::Author::User).await?;
+    if t.builtin {
+        let record = json!({"id": t.id, "params": values});
+        st.store.set_workflow_state(&w.workflow.id, TEMPLATE_STATE, &record, false, now_ms()).await?;
+    }
     Ok((StatusCode::CREATED, Json(w)))
+}
+
+/// Where a workflow made from one of PDT's templates keeps which one and its params (`{id, params}`), so it can
+/// follow newer versions of the template (PDT-124).
+pub const TEMPLATE_STATE: &str = "_pdt.template";
+
+/// The params `doc` was filled in with from `template`: the value at each place where the template has exactly
+/// `{{params.<id>}}` (by node id, then the path in its config). Params it never finds are left out.
+pub(crate) fn unfill(template: &WorkflowDoc, doc: &WorkflowDoc) -> Map<String, Value> {
+    fn walk(t: &Value, d: &Value, out: &mut Map<String, Value>) {
+        match (t, d) {
+            (Value::String(s), _) => {
+                if let Some(id) = s.strip_prefix("{{params.").and_then(|r| r.strip_suffix("}}"))
+                    && !id.contains(['{', '}'])
+                {
+                    out.entry(id.to_string()).or_insert_with(|| d.clone());
+                }
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                for (k, v) in a {
+                    if let Some(w) = b.get(k) {
+                        walk(v, w, out);
+                    }
+                }
+            }
+            (Value::Array(a), Value::Array(b)) => a.iter().zip(b).for_each(|(v, w)| walk(v, w, out)),
+            _ => {}
+        }
+    }
+    let mut out = Map::new();
+    for n in &template.nodes {
+        if let Some(m) = doc.node(&n.id) {
+            walk(&n.config, &m.config, &mut out);
+        }
+    }
+    out
+}
+
+/// A Pipeline made before workflows recorded their template: still its first version, written when it was
+/// instantiated, with the Pipeline's triggers and merge.
+async fn legacy_pipeline(st: &AppState, w: &Workflow, doc: &WorkflowDoc) -> Result<bool, pdt_store::StoreError> {
+    let versions = st.store.list_workflow_versions(&w.id).await?;
+    let first = versions.iter().find(|v| v.version == 1);
+    let kinds = [
+        ("refine_requested", "ticket.refine_requested"),
+        ("started", "attempt.started"),
+        ("merge", "attempt.merge"),
+        ("wait_merge", "wait"),
+    ];
+    Ok(first.is_some_and(|v| v.note == "from the template Pipeline")
+        && kinds.iter().all(|(id, kind)| doc.node(id).is_some_and(|n| n.kind == *kind)))
+}
+
+/// Moves each workflow made from one of PDT's templates, and never changed since, to the template's current version
+/// (with its params), as an untouched built-in follows its template (PDT-124). One the user (or an agent) saved a
+/// version of is left alone. Runs once per pdtd, with the built-ins.
+pub(crate) async fn follow_templates(st: &AppState) -> Result<(), pdt_store::StoreError> {
+    let templates = builtin_templates();
+    for w in st.store.list_workflows(None).await? {
+        if w.builtin.is_some() || w.source != Source::Host {
+            continue;
+        }
+        let Some(current) = st.store.workflow_doc(&w.id, w.version).await? else { continue };
+        let untouched = match st.store.current_version_author(&w.id).await? {
+            Some(Author::Builtin) => true,
+            Some(Author::User) => w.version == 1,
+            _ => false,
+        };
+        if !untouched {
+            continue;
+        }
+        let state = st.store.workflow_state(&w.id).await?;
+        let (id, given) = match state.get(TEMPLATE_STATE) {
+            Some(r) => {
+                (r["id"].as_str().unwrap_or_default().to_string(), r["params"].as_object().cloned().unwrap_or_default())
+            }
+            None if legacy_pipeline(st, &w, &current).await? => {
+                let t = templates.iter().find(|t| t.id == format!("{BUILTIN_PREFIX}{}", super::pipeline::ID));
+                (t.map(|t| t.id.clone()).unwrap_or_default(), t.map(|t| unfill(&t.doc, &current)).unwrap_or_default())
+            }
+            None => continue,
+        };
+        let Some(t) = templates.iter().find(|t| t.id == id) else { continue };
+        let Ok(values) = param_values(&t.params, &given) else { continue };
+        let Ok(mut doc) = fill(&t.doc, &values) else { continue };
+        doc.name = current.name.clone();
+        let now = now_ms();
+        if !state.contains_key(TEMPLATE_STATE) {
+            st.store
+                .set_workflow_state(&w.id, TEMPLATE_STATE, &json!({"id": t.id, "params": values}), false, now)
+                .await?;
+        }
+        if doc != current && checked(&doc).is_ok() {
+            let note = format!("updated by PDT to the newer template {}", t.name);
+            st.store.save_workflow_version(&w.id, &doc, Author::Builtin, &note, now).await?;
+            tracing::info!(workflow = %w.name, template = %t.id, "a workflow followed its template");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -482,5 +585,16 @@ mod tests {
         for id in ["github-issues-discord", "issue-triage", "health-watchdog", "brief-follow-ups", "email-processing"] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
+    }
+
+    #[test]
+    fn a_filled_in_pipeline_gives_back_its_params() {
+        let t = builtin_templates().into_iter().find(|t| t.id == "builtin:pipeline").unwrap();
+        let given = serde_json::json!({"coder": "Builder", "accept": "auto", "autoAcceptLabels": ["agentic"],
+                                       "loopLimit": 5, "afterRefine": "ready"});
+        let values = param_values(&t.params, given.as_object().unwrap()).unwrap();
+        let doc = fill(&t.doc, &values).unwrap();
+        assert_eq!(unfill(&t.doc, &doc), values, "every param is found");
+        assert_eq!(fill(&t.doc, &unfill(&t.doc, &doc)).unwrap(), doc);
     }
 }

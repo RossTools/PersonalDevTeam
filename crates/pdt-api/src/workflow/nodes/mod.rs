@@ -25,3 +25,15 @@ pub mod ticket;
 pub mod trigger;
 pub mod wait;
 pub mod webhook;
+
+/// Sets the run's ticket's pipeline stage (the Board's column) when a step that has one starts.
+pub(crate) async fn set_stage(
+    cx: &crate::workflow::catalog::StepCx<'_>,
+    stage: Option<pdt_core::ticket::PipelineStage>,
+) {
+    if let (Some(stage), Some(ticket)) = (stage, &cx.run.ticket_id)
+        && let Err(e) = cx.st.store.set_pipeline_stage(ticket, Some(stage)).await
+    {
+        tracing::warn!(ticket = %ticket, error = %e, "could not set the ticket's pipeline stage");
+    }
+}

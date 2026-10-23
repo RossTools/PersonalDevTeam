@@ -20,6 +20,17 @@ branch when the project works with them.";
 const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: the branch's diff against its base. \
 Put each finding on its line (`comments` in `submit_outcome`).";
 
+const FIX_PROMPT: &str = "QA passed, but the merge was refused: {{steps.merge.reason}}. Clear it on the branch: \
+merge the base branch in and resolve the conflicts (or commit what the worktree has uncommitted), run the project's \
+checks, commit and push. Change nothing else. A Reviewer looks at the fix before PDT merges again.";
+
+const FIX_REVIEW_PROMPT: &str = "QA passed on this attempt, then its merge was refused (a conflict, or uncommitted \
+changes) and the Coder fixed that. Review the fix: the commits since your earlier review, and the branch's diff \
+against its base, against the ticket. Put each finding on its line (`comments` in `submit_outcome`).";
+
+/// How long a merge may wait (for a person, or for someone to clear what blocks it) before the Inbox asks again.
+const MERGE_WAIT_MS: i64 = 3 * 24 * 60 * 60 * 1000;
+
 const QA_PROMPT: &str = "Check that this attempt's change works: run the project's tests and try each point of the \
 ticket's \"Done when\".";
 
@@ -70,6 +81,11 @@ fn node(id: &str, kind: &str, x: i32, y: i32, title: &str, config: Value) -> Val
 
 fn edge(from: &str, port: &str, to: &str) -> Value {
     if port.is_empty() { json!({"from": from, "to": to}) } else { json!({"from": from, "port": port, "to": to}) }
+}
+
+/// This run's attempt merging (by anyone, anywhere).
+fn merged_event() -> Value {
+    json!({"type": "attempt.merged", "where": [{"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}]})
 }
 
 pub fn doc() -> WorkflowDoc {
@@ -197,7 +213,53 @@ pub fn doc() -> WorkflowDoc {
             2100,
             400,
             "Merge",
-            json!({"attempt": "{{trigger.attemptId}}", "finishOnMerge": true}),
+            json!({"attempt": "{{trigger.attemptId}}", "finishOnMerge": true, "pipelineStage": "merge"}),
+        ),
+        // A refused merge: the Coder fixes what an agent can (then a Reviewer checks the fix); anything else asks you.
+        node(
+            "fixable",
+            "condition",
+            2100,
+            250,
+            "Can the Coder fix it?",
+            json!({"conditions": [{"left": "{{steps.merge.fixable}}", "op": "truthy"}]}),
+        ),
+        node(
+            "fix",
+            "agent",
+            2400,
+            100,
+            "Fix the merge",
+            json!({
+            "persona": "{{params.coder}}", "prompt": FIX_PROMPT, "session": "reuse",
+            "owner": "{{params.codeBy}}", "pipelineStage": "code", "loopLimit": "{{params.loopLimit}}",
+            "outcomes": [{"id": "submitted", "description": "the fix is committed and pushed"}]}),
+        ),
+        node(
+            "fix_review",
+            "agent",
+            2700,
+            100,
+            "Review the fix",
+            json!({
+            "persona": "{{params.reviewer}}", "prompt": FIX_REVIEW_PROMPT, "session": "new",
+            "owner": "{{params.reviewBy}}", "pipelineStage": "review",
+            "outcomes": [
+                {"id": "approved", "description": "the fix can merge as is"},
+                {"id": "changes_requested", "description": "something must change first"},
+            ]}),
+        ),
+        node(
+            "blocked",
+            "gate",
+            2400,
+            250,
+            "Merge blocked",
+            json!({
+            "question": "Merge blocked on {{trigger.ticketKey}}: {{steps.merge.reason}}. Clear it (or merge it \
+                         yourself), then merge again.",
+            "choices": ["merge_again", "stop"], "approve": "merge_again", "pipelineStage": "merge_blocked",
+            "timeoutMs": MERGE_WAIT_MS, "event": merged_event()}),
         ),
         node(
             "finish",
@@ -213,9 +275,18 @@ pub fn doc() -> WorkflowDoc {
             2100,
             560,
             "Wait for the merge",
+            json!({"event": merged_event(), "timeoutMs": MERGE_WAIT_MS, "pipelineStage": "merge"}),
+        ),
+        node(
+            "not_merged",
+            "gate",
+            2400,
+            560,
+            "Still not merged",
             json!({
-            "event": {"type": "attempt.merged",
-                      "where": [{"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}]}}),
+            "question": "{{trigger.ticketKey}} passed and is waiting for someone to merge it.",
+            "choices": ["keep_waiting", "merge", "stop"], "approve": "merge", "pipelineStage": "merge",
+            "event": merged_event()}),
         ),
         node("done", "end", 2700, 400, "Done", Value::Null),
         // An agent step out of time or stopped at its loop limit.
@@ -269,19 +340,40 @@ pub fn doc() -> WorkflowDoc {
         edge("merge_mode", "default", "wait_merge"),
         edge("merge", "merged", "finish"),
         edge("merge", "queued", "done"),
-        edge("merge", "refused", "wait_merge"),
+        edge("merge", "refused", "fixable"),
+        edge("fixable", "true", "fix"),
+        edge("fixable", "false", "blocked"),
+        edge("fix", "submitted", "fix_review"),
+        edge("fix", "timeout", "stopped"),
+        edge("fix", "stopped", "stopped"),
+        edge("fix_review", "approved", "merge"),
+        edge("fix_review", "changes_requested", "fix"),
+        edge("fix_review", "timeout", "stopped"),
+        edge("fix_review", "stopped", "stopped"),
+        edge("blocked", "merge_again", "merge"),
+        edge("blocked", "stop", "left"),
+        edge("blocked", "event", "done"),
+        edge("blocked", "timeout", "stopped"),
+        edge("blocked", "unanswered", "stopped"),
         edge("finish", "finished", "done"),
         edge("finish", "blocked", "done"),
         edge("wait_merge", "event", "done"),
-        edge("wait_merge", "timeout", "stopped"),
+        edge("wait_merge", "timeout", "not_merged"),
+        edge("not_merged", "keep_waiting", "wait_merge"),
+        edge("not_merged", "merge", "merge"),
+        edge("not_merged", "stop", "left"),
+        edge("not_merged", "event", "done"),
+        edge("not_merged", "timeout", "stopped"),
+        edge("not_merged", "unanswered", "stopped"),
         edge("stopped", "", "stopped_end"),
     ];
     serde_json::from_value(json!({
         "name": "Pipeline",
         "description": "Draft → Refine → Ready → Code → Review → QA → Accept → Done. Refine (on a ticket) runs the \
                         Refiner; starting a ticket runs the Coder, then a fresh Reviewer and QA, sending it back to the \
-                        Coder on changes or a failure; then you accept and the run merges. Any stage can be yours \
-                        instead of an agent's.",
+                        Coder on changes or a failure; then you accept and the run merges. A merge refused for a \
+                        conflict goes back to the Coder and a Reviewer; one refused for anything else asks you in the \
+                        Inbox. Any stage can be yours instead of an agent's.",
         "nodes": nodes,
         "edges": edges,
         "settings": {"maxSteps": 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},

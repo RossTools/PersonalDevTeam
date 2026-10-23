@@ -314,8 +314,15 @@ pub enum PipelineStage {
     Review,
     Qa,
     Accept,
+    /// Merging: the run merges it or waits for the merge (PDT-124).
+    Merge,
+    /// The merge was refused for something no agent can fix: the Inbox asks the user.
+    MergeBlocked,
 }
-str_enum!(PipelineStage { Refine => "refine", Code => "code", Review => "review", Qa => "qa", Accept => "accept" });
+str_enum!(PipelineStage {
+    Refine => "refine", Code => "code", Review => "review", Qa => "qa", Accept => "accept", Merge => "merge",
+    MergeBlocked => "merge_blocked"
+});
 
 /// The state of whoever works on a ticket in a workflow now (Phase 7c spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -1,7 +1,7 @@
 // The Tickets view's Board: committed work in three columns (To do, In progress, Done in the last two weeks). Ready
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
 // first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
-// work (Phase 7c), In progress splits into its stages: Code, Review, QA and Accept.
+// work (Phase 7c), In progress splits into its stages: Code, Review, QA, Accept and Merge.
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type Ref, type TouchEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
@@ -43,7 +43,7 @@ export interface DisplayColumn {
   id: string;
   stage: BoardStage;
   title: string;
-  pipeline?: Exclude<PipelineStage, 'refine'>;
+  pipeline?: Exclude<PipelineStage, 'refine' | 'merge_blocked'>;
 }
 
 export const PIPELINE_COLUMNS: DisplayColumn[] = [
@@ -51,10 +51,12 @@ export const PIPELINE_COLUMNS: DisplayColumn[] = [
   { id: 'review', stage: 'in_progress', title: 'Review', pipeline: 'review' },
   { id: 'qa', stage: 'in_progress', title: 'QA', pipeline: 'qa' },
   { id: 'accept', stage: 'in_progress', title: 'Accept', pipeline: 'accept' },
+  { id: 'merge', stage: 'in_progress', title: 'Merge', pipeline: 'merge' },
 ];
 
 /** A pipeline stage's name (rows and cards). */
-export const PIPELINE_LABEL: Record<PipelineStage, string> = { refine: 'Refine', code: 'Code', review: 'Review', qa: 'QA', accept: 'Accept' };
+export const PIPELINE_LABEL: Record<PipelineStage, string> = { refine: 'Refine', code: 'Code', review: 'Review', qa: 'QA', accept: 'Accept',
+  merge: 'Merge', merge_blocked: 'Merge blocked' };
 
 /** In progress splits into the pipeline's stages once any card in it has one. */
 export function boardSplits(inProgress: Pick<TicketSummary, 'pipelineStage'>[]): boolean {
@@ -67,10 +69,14 @@ export function displayColumns(split: boolean): DisplayColumn[] {
   return split ? [plain[0], ...PIPELINE_COLUMNS, plain[2]] : plain;
 }
 
-/** Whether a card of the column's stage shows in it: a card with no pipeline stage shows under Code. */
+/**
+ * Whether a card of the column's stage shows in it: a card with no pipeline stage shows under Code, a blocked merge
+ * under Merge (its badge says so).
+ */
 export function inColumn(t: Pick<TicketSummary, 'pipelineStage'>, c: DisplayColumn): boolean {
   if (!c.pipeline) return true;
-  const at = t.pipelineStage && t.pipelineStage !== 'refine' ? t.pipelineStage : 'code';
+  const at = t.pipelineStage === 'merge_blocked' ? 'merge'
+    : t.pipelineStage && t.pipelineStage !== 'refine' ? t.pipelineStage : 'code';
   return at === c.pipeline;
 }
 
