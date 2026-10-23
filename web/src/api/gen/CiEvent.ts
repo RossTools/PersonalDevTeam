@@ -21,7 +21,24 @@ jobs: Array<string>,
 /**
  * The message PDT tells the agent (failures only).
  */
-notice: Notice | null, projectId: string, ticketId: string, 
+notice: Notice | null, 
+/**
+ * The pull request's auto-merge is on (false without one).
+ */
+autoMerge: boolean, 
+/**
+ * The pull request is in the merge queue.
+ */
+inMergeQueue: boolean, 
+/**
+ * The pull request was set to merge (Merge…, `attempt.merge`, auto-merge or the merge queue) and hasn't merged
+ * (PDT-104): PR notices gets it merging again.
+ */
+mergeRequested: boolean, 
+/**
+ * An agent step is working on the attempt (a workflow already has an agent on it).
+ */
+agentWorking: boolean, projectId: string, ticketId: string, 
 /**
  * `PDT-42`.
  */

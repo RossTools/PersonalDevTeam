@@ -673,6 +673,37 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Adds `by` to a number in the state (none, or not a number, counts as 0) and returns the new value.
+    pub async fn add_workflow_state(&self, workflow_id: &str, key: &str, by: f64, now: i64) -> Result<f64, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let old: Option<String> =
+            sqlx::query_scalar("SELECT value FROM workflow_state WHERE workflow_id = ? AND key = ?")
+                .bind(workflow_id)
+                .bind(key)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let old = old.and_then(|v| serde_json::from_str::<Value>(&v).ok()).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let new = old + by;
+        let value = serde_json::Number::from_f64(new).map(Value::Number).unwrap_or(Value::Null);
+        // Whole numbers stay integers (`3`, not `3.0`).
+        let value = match value.as_f64() {
+            Some(f) if f.fract() == 0.0 && f.abs() < 9e15 => Value::from(f as i64),
+            _ => value,
+        };
+        sqlx::query(
+            "INSERT INTO workflow_state (workflow_id, key, value, updated_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT (workflow_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(workflow_id)
+        .bind(key)
+        .bind(value.to_string())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(new)
+    }
+
     // ---- session outbox ----
 
     /// Queues a message; a step's message is queued once (a re-run step finds its own).
@@ -1098,6 +1129,11 @@ mod tests {
         assert!(!store.set_workflow_state("w", "seen", &json!([2]), true, 2).await.unwrap(), "baseline kept");
         store.set_workflow_state("w", "seen", &json!([3]), false, 3).await.unwrap();
         assert_eq!(store.workflow_state("w").await.unwrap()["seen"], json!([3]));
+        // A counter (PDT-104): from nothing, and a non-number counts as 0.
+        assert_eq!(store.add_workflow_state("w", "n", 1.0, 4).await.unwrap(), 1.0);
+        assert_eq!(store.add_workflow_state("w", "n", 2.0, 5).await.unwrap(), 3.0);
+        assert_eq!(store.workflow_state("w").await.unwrap()["n"], json!(3));
+        assert_eq!(store.add_workflow_state("w", "seen", 1.0, 6).await.unwrap(), 1.0);
 
         let m = SessionMessage {
             id: "m".into(),

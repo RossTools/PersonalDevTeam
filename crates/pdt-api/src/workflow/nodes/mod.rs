@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod arr;
+pub mod attempt;
 pub mod brief;
 pub mod buildkite;
 pub mod call;

@@ -74,7 +74,8 @@ sees the branch merged) or the person.
 PDT reacts to what happens (CI results, pull request news, merges, comments) through workflows: a trigger on an
 event, then conditions, gates, waits and actions. Messages that start with `[PDT]` in your session come from a
 workflow the person enabled, for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge
-queue, merged); each says what happened and what to do. A session started on a ticket is told in its instructions
+queue, merged); each says what happened and what to do. When the pull request was set to merge, PR notices sends
+the failure as a workflow step instead: fix it, push, and finish with `submit_outcome` (PDT turns auto-merge back on). A session started on a ticket is told in its instructions
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
 shell. Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
 `{"doc": …, "note": "what and why", "propose": true}`. It is validated like a save but doesn't take effect: the person

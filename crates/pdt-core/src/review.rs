@@ -282,7 +282,8 @@ pub struct MergeRequest {
     #[ts(optional)]
     pub style: Option<MergeStyle>,
     /// A pull request only: once GitHub merges it, move the ticket to Done and remove the worktree and the workspace
-    /// Start made (PDT-75). A local merge finishes in the web right away.
+    /// Start made (PDT-75). A local merge finishes in the web right away. Absent: what an earlier merge of the
+    /// attempt asked stays (none: don't finish).
     #[serde(default)]
     #[ts(optional)]
     pub finish_on_merge: Option<bool>,
