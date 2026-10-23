@@ -379,6 +379,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             axum::routing::post(crate::mcp::post).get(crate::mcp::not_allowed).delete(crate::mcp::not_allowed),
         )
         .route("/personas", get(crate::personas::list).post(crate::personas::create))
+        .route("/personas/tools", get(crate::personas::tools))
         .route(
             "/personas/{id}",
             get(crate::personas::get_one)

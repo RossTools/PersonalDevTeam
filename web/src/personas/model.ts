@@ -5,12 +5,14 @@ import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { Persona } from '../api/gen/Persona';
 import type { PersonaAuthor } from '../api/gen/PersonaAuthor';
 import type { PersonaSetup } from '../api/gen/PersonaSetup';
+import type { PersonaTool } from '../api/gen/PersonaTool';
 
 export const personaKeys = {
   all: ['personas'] as const,
   versions: (id: string) => ['personas', id, 'versions'] as const,
   diff: (id: string, from: number, to: number) => ['personas', id, 'diff', from, to] as const,
   template: (id: string, version: number) => ['personas', id, 'template', version] as const,
+  tools: ['personas', 'tools'] as const,
 };
 
 /** Every persona with its current version (archived ones too). */
@@ -23,44 +25,30 @@ export const AGENTS: AgentKind[] = ['claude', 'codex', 'devin'];
 
 export const AUTHOR_LABEL: Record<PersonaAuthor, string> = { user: 'You', builtin: 'PDT (built in)', agent: 'An agent' };
 
-/** The pdt-mcp tools a persona may list, in pdt-mcp's order, with what each lets the agent do. */
-export const TOOLS: { name: string; does: string }[] = [
-  { name: 'get_ticket', does: 'Read the ticket, its comments and attempt' },
-  { name: 'submit_outcome', does: 'Finish the step with an outcome and a summary' },
-  { name: 'ask_user', does: 'Ask you questions (they wait in the Inbox)' },
-  { name: 'add_ticket_comment', does: 'Comment on the ticket' },
-  { name: 'add_review_comment', does: "Comment on a line of the attempt's changes" },
-  { name: 'update_ticket', does: "Rewrite its own ticket's title and description" },
-  { name: 'catalog_search', does: "Search the workflow node catalog" },
-  { name: 'catalog_get', does: 'Read a catalog node' },
-  { name: 'workflow_get', does: 'Read a workflow' },
-  { name: 'workflow_validate', does: 'Check a workflow document' },
-  { name: 'workflow_dry_run', does: 'Try a workflow without running it' },
-  { name: 'workflow_save', does: 'Save a workflow (a new version)' },
-  { name: 'get_overview', does: "See every project's board, tickets in flight, the Inbox and running sessions" },
-  { name: 'search_tickets', does: 'Search tickets in every project' },
-  { name: 'get_session', does: "Read a session's state and last messages" },
-  { name: 'list_workflow_runs', does: 'List workflow runs and their steps' },
-  { name: 'search_notes', does: "Search the PM's notes and journal" },
-  { name: 'save_note', does: 'Save a note' },
-  { name: 'delete_note', does: 'Delete a note' },
-  { name: 'write_journal', does: "Write the session's journal entry" },
-  { name: 'create_ticket', does: 'Create tickets (asks you first)' },
-  { name: 'edit_ticket', does: 'Edit any ticket (asks you first)' },
-  { name: 'send_to_session', does: 'Message a session (asks you first)' },
-];
-/** What an empty tool list means: the first five. */
-export const DEFAULT_TOOLS = TOOLS.slice(0, 5).map((t) => t.name);
+/** Every pdt-mcp tool a persona may pick, from the server (`ALL_TOOLS`), in pdt-mcp's order. */
+export function usePersonaTools() {
+  return useQuery({ queryKey: personaKeys.tools, queryFn: api.personaTools, staleTime: Infinity });
+}
+
+/** What an empty tool list means (pdt-core `DEFAULT_TOOLS`). */
+export const DEFAULT_TOOLS = ['get_ticket', 'submit_outcome', 'ask_user', 'add_ticket_comment', 'add_review_comment'];
 
 /** A tool list as checked on screen: an empty one is the default set. */
 export const shownTools = (tools: string[]) => (tools.length ? tools : DEFAULT_TOOLS);
 
-/** The tool list to save: the default set (in any order) is saved as empty, so it follows PDT's default. */
+/** The tool list to save, without repeats: the default set (in any order) is saved as empty, so it follows PDT's
+ *  default. It never drops a name, even one this page doesn't know (PDT-110). */
 export function normalTools(tools: string[]): string[] {
-  const ordered = TOOLS.map((t) => t.name).filter((n) => tools.includes(n));
-  const isDefault = ordered.length === DEFAULT_TOOLS.length && DEFAULT_TOOLS.every((n) => ordered.includes(n));
-  return isDefault ? [] : ordered;
+  const unique = [...new Set(tools)];
+  const isDefault = unique.length === DEFAULT_TOOLS.length && DEFAULT_TOOLS.every((n) => unique.includes(n));
+  return isDefault ? [] : unique;
 }
+
+/** `tools` in the order of `known` (the server's list), names it doesn't list kept at the end. */
+export const orderTools = (tools: string[], known: PersonaTool[]) => [
+  ...known.map((t) => t.name).filter((n) => tools.includes(n)),
+  ...tools.filter((n) => !known.some((t) => t.name === n)),
+];
 
 /** The Select's value for "no mode of its own": the project's override, else the host default. */
 export const DEFAULT_MODE = 'default';
@@ -89,7 +77,7 @@ export function sameSetup(a: PersonaSetup, b: PersonaSetup): boolean {
     (a.model ?? '') === (b.model ?? '') &&
     a.instructions === b.instructions &&
     a.permissionMode === b.permissionMode &&
-    normalTools(a.tools).join(',') === normalTools(b.tools).join(',')
+    [...normalTools(a.tools)].sort().join(',') === [...normalTools(b.tools)].sort().join(',')
   );
 }
 

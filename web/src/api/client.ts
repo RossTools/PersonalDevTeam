@@ -104,6 +104,7 @@ import type { NewPersona } from './gen/NewPersona';
 import type { Persona } from './gen/Persona';
 import type { PersonaDiff } from './gen/PersonaDiff';
 import type { PersonaTemplate } from './gen/PersonaTemplate';
+import type { PersonaTool } from './gen/PersonaTool';
 import type { PersonaPatch } from './gen/PersonaPatch';
 import type { PersonaVersion } from './gen/PersonaVersion';
 import type { SavePersona } from './gen/SavePersona';
@@ -393,6 +394,7 @@ export const api = {
     request<Record<string, unknown>>(`/api/inbox/${enc(id)}/answer`, { method: 'POST', body: JSON.stringify(a) }),
   dismissInbox: (id: string) => request<void>(`/api/inbox/${enc(id)}/dismiss`, { method: 'POST' }),
   listPersonas: () => request<Persona[]>('/api/personas'),
+  personaTools: () => request<PersonaTool[]>('/api/personas/tools'),
   createPersona: (p: NewPersona) => request<Persona>('/api/personas', { method: 'POST', body: JSON.stringify(p) }),
   /** A new version. */
   savePersona: (id: string, p: SavePersona) =>

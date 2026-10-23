@@ -465,6 +465,9 @@ deleted (`409 persona_in_use`).
 - `GET /api/personas/{id}/template` (`404 not_builtin` otherwise) → `{setup, diff}`: the current template and the
   current version's diff to it. The persona page shows it for a built-in that differs (the fields, **Show the
   changes**) and **Load PDT's template** fills the setup form with it to review and save as a version.
+- `GET /api/personas/tools` (PDT-110) → every pdt-mcp tool (pdt-core `ALL_TOOLS`, in order) as `{name, does, asks,
+  default}`: the persona page's tool list, so a new tool shows there with no web change. Saving keeps every tool the
+  persona has, a name the server doesn't list included (shown checked, to uncheck).
 
 ## Pipeline, policies and scheduling (Phase 7c)
 
