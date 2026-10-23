@@ -765,9 +765,24 @@ describe('phone', () => {
     renderWithQuery(<AppShell />);
     expect(screen.queryByRole('complementary', { name: 'Right panel' })).not.toBeInTheDocument();
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Todos' });
+    const sheet = await screen.findByRole('dialog', { name: 'Todos and notes' });
     expect(await within(sheet).findByText('Call Sam')).toBeInTheDocument();
     expect(within(sheet).getByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
+  });
+
+  it('opens one of my notes from the Notes tab of the phone sheet', async () => {
+    stubPhone();
+    stubWorkspaces({
+      'GET /api/todos': [],
+      'GET /api/pm/notes': [{ id: 'n1', projectId: null, kind: 'user', title: 'Dark mode', body: '', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 }],
+    });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Todos and notes' });
+    await userEvent.click(within(sheet).getByRole('tab', { name: 'Notes' }));
+    await userEvent.click(await within(sheet).findByRole('button', { name: /Dark mode/ }));
+    expect(here()).toBe('/pm/notes/n1');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Todos and notes' })).not.toBeInTheDocument());
   });
 
   it("lists the views in the drawer in the rail's order, with the Inbox count, Settings and the host's state", async () => {

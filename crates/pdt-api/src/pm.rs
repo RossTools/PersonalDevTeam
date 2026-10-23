@@ -473,8 +473,12 @@ fn bad(m: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
 }
 
-/// A note made by the user or the PM.
+/// A note made by the user or the PM: the PM's (`note`) unless it is the user's own (`user`).
 pub(crate) async fn add_note(st: &AppState, input: NewNote) -> Result<PmNote, ApiError> {
+    let kind = match input.kind.unwrap_or_default() {
+        NoteKind::Journal => return Err(bad("journal entries are written by a PM session as it rotates")),
+        k => k,
+    };
     let title = pm::valid_title(&input.title).map_err(bad)?;
     let body = pm::valid_body(&input.body).map_err(bad)?;
     let project_id = match input.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
@@ -485,7 +489,7 @@ pub(crate) async fn add_note(st: &AppState, input: NewNote) -> Result<PmNote, Ap
     let n = PmNote {
         id: uuid::Uuid::now_v7().to_string(),
         project_id,
-        kind: NoteKind::Note,
+        kind,
         title,
         body,
         pinned: input.pinned.unwrap_or(false),
@@ -529,6 +533,11 @@ pub(crate) async fn create_note(
 ) -> Result<(StatusCode, Json<PmNote>), ApiError> {
     let Json(input) = payload?;
     Ok((StatusCode::CREATED, Json(add_note(&st, input).await?)))
+}
+
+/// `GET /api/pm/notes/{id}`.
+pub(crate) async fn get_note(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<PmNote>, ApiError> {
+    Ok(Json(st.store.get_note(&id).await?.ok_or_else(|| ApiError::not_found("note"))?))
 }
 
 /// `PATCH /api/pm/notes/{id}`.

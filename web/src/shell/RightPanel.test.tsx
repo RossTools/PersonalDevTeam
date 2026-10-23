@@ -11,15 +11,19 @@ const todo = (id: string, done = false): Todo => ({
 });
 
 /** The panel as AppShell holds it: its open state from storage, ⌘. toggling it. */
-function Harness() {
+function Harness({ onOpenNote = () => {} }: { onOpenNote?: (id: string) => void }) {
   const [open, setOpen] = useRightPanelOpen();
   useRightPanelKey(() => setOpen((o) => !o));
-  return <RightPanel open={open} onOpenChange={setOpen} projectId={null} projects={[]} />;
+  return <RightPanel open={open} onOpenChange={setOpen} projectId={null} projects={[]} onOpenNote={onOpenNote} />;
 }
 
 beforeEach(() => {
   localStorage.clear();
-  stubApi({ 'GET /api/todos': [todo('a'), todo('b'), todo('c', true)] });
+  stubApi({
+    'GET /api/todos': [todo('a'), todo('b'), todo('c', true)],
+    'GET /api/pm/notes': [{ id: 'n1', projectId: null, kind: 'user', title: 'Dark mode', body: '', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 }],
+    'GET /api/projects': [],
+  });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -64,5 +68,17 @@ describe('RightPanel', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Open the todo list/ }));
     await waitFor(() => expect(screen.getByRole('separator')).toHaveAttribute('aria-valuenow', String(RIGHT_PANEL_WIDTH.default)));
     vi.restoreAllMocks();
+  });
+
+  it('has a Notes tab beside Todos that opens one of my notes', async () => {
+    localStorage.setItem(RIGHT_PANEL_OPEN_KEY, 'true');
+    const onOpenNote = vi.fn();
+    renderWithQuery(<Harness onOpenNote={onOpenNote} />);
+    const tabs = within(panel()).getAllByRole('tab').map((t) => t.textContent);
+    expect(tabs).toEqual(['Todos', 'Notes']);
+    await userEvent.click(within(panel()).getByRole('tab', { name: 'Notes' }));
+    expect(within(panel()).getByRole('textbox', { name: 'Note title' })).toBeInTheDocument();
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Dark mode/ }));
+    expect(onOpenNote).toHaveBeenCalledWith('n1');
   });
 });
