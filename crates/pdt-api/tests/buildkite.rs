@@ -227,6 +227,7 @@ async fn a_pr_shows_both_providers() {
             in_merge_queue: false,
             queue_position: None,
             queue_removal: None,
+            created_at: None,
         }),
     );
     env.gh.set_runs(

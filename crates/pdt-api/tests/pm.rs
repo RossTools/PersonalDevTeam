@@ -422,6 +422,56 @@ async fn notes_are_checked_and_edited() {
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn the_users_own_notes_are_found_by_the_pm_but_never_briefed_or_written_by_it() {
+    let env = setup(None).await;
+    let (s, v) = call(&env.app, "POST", "/api/pm/notes", Some(json!({"title": "x", "kind": "journal"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "only rotation writes journal entries: {v}");
+    let (s, mine) = call(
+        &env.app,
+        "POST",
+        "/api/pm/notes",
+        Some(json!({"title": "Dark mode idea", "body": "A toggle in Settings.", "kind": "user", "pinned": true,
+                    "project": "PX"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{mine}");
+    assert_eq!(mine["kind"], "user");
+    let id = mine["id"].as_str().unwrap().to_string();
+    call(&env.app, "POST", "/api/pm/notes", Some(json!({"title": "The PM's own", "pinned": true}))).await;
+
+    let (_, listed) = call(&env.app, "GET", "/api/pm/notes?kind=user", None).await;
+    let titles: Vec<&str> = listed.as_array().unwrap().iter().map(|n| n["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["Dark mode idea"]);
+    let (s, n) = call(&env.app, "GET", &format!("/api/pm/notes/{id}"), None).await;
+    assert_eq!((s, n["title"].as_str()), (StatusCode::OK, Some("Dark mode idea")));
+    let (s, n) = call(&env.app, "PATCH", &format!("/api/pm/notes/{id}"), Some(json!({"body": "Follow the OS."}))).await;
+    assert_eq!((s, n["kind"].as_str(), n["body"].as_str()), (StatusCode::OK, Some("user"), Some("Follow the OS.")));
+
+    let pm = start_pm(&env, "hello").await;
+    wait_said(&env, &pm, 1).await;
+    let text = instructions(&env, &pm);
+    assert!(text.contains("The PM's own"), "{text}");
+    assert!(!text.contains("Dark mode idea"), "the user's notes are never briefed, even pinned:\n{text}");
+
+    let said = ask(&env, &pm, r#"mcp: search_notes {"query": "dark mode"}"#).await;
+    assert!(said.contains("Dark mode idea") && said.contains("\"writtenBy\": \"the user\""), "{said}");
+    let said = ask(&env, &pm, &format!(r#"mcp: save_note {{"id": "{id}", "title": "Mine now"}}"#)).await;
+    assert!(said.contains("the user's own") && !said.contains("\"saved\""), "{said}");
+    let said = ask(&env, &pm, &format!(r#"mcp: delete_note {{"id": "{id}"}}"#)).await;
+    assert!(said.contains("the user's own") && !said.contains("\"deleted\""), "{said}");
+    let said = ask(&env, &pm, r#"mcp: save_note {"title": "Made by the PM"}"#).await;
+    assert!(said.contains("\"saved\": true"), "{said}");
+    let (_, listed) = call(&env.app, "GET", "/api/pm/notes?kind=user", None).await;
+    assert_eq!((listed[0]["title"].as_str(), listed.as_array().unwrap().len()), (Some("Dark mode idea"), 1));
+    call(&env.app, "POST", &format!("/api/sessions/{pm}/kill"), None).await;
+
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/pm/notes/{id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "the user deletes their own");
+    let (s, _) = call(&env.app, "GET", &format!("/api/pm/notes/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
 fn issue(n: u64, title: &str, body: &str) -> pdt_github::Issue {
     pdt_github::Issue {
         number: n,

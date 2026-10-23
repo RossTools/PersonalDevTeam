@@ -747,8 +747,15 @@ export function AppShell() {
             onProject={stored.setProjectId}
             onRenameTab={setRenamingTabId}
           />
-          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
-            <RightPanelContent projectId={todoProjectId} projects={ws.projects} />
+          <Sheet side="right" title="Todos and notes" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
+            <RightPanelContent
+              projectId={todoProjectId}
+              projects={ws.projects}
+              onOpenNote={(id) => {
+                setPmSelection(`note:${id}`);
+                setTodosSheetOpen(false);
+              }}
+            />
           </Sheet>
           {pickerSheet && (
             <Sheet side="left" title="Projects and filters" hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
@@ -897,7 +904,7 @@ export function AppShell() {
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
-      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} />}
+      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} onOpenNote={(id) => setPmSelection(`note:${id}`)} />}
     </div>
     </TopBarEditContext.Provider>
     </TopBarActionsContext.Provider>

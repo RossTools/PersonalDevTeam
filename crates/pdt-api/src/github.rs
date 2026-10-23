@@ -324,8 +324,9 @@ async fn refresh_one(
     let cached_queue = queue_runs.get(repo).cloned();
     let known_jobs = watch(st).jobs.clone();
     let (gh, repo_s, branch) = (st.github.clone(), repo.to_string(), info.attempt.branch.clone());
+    let since = info.attempt.created_at;
     let read = tokio::task::spawn_blocking(move || {
-        read_pr(gh.as_ref(), &repo_s, &branch, was_queued, cached_queue, &known_jobs)
+        read_pr(gh.as_ref(), &repo_s, &branch, since, was_queued, cached_queue, &known_jobs)
     })
     .await;
     let read = match read {
@@ -521,18 +522,25 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
 
 type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
 
-/// The PR of `branch` with its CI and merge-queue CI, failed jobs filled in (from `known` where already asked).
+/// The PR of `branch` for the attempt started at `since` (ms) with its CI and merge-queue CI, failed jobs filled in
+/// (from `known` where already asked). A closed or merged PR opened before the attempt started is an earlier
+/// attempt's on the same branch name, not this one's; an open one is the branch's, whoever opened it.
 /// Merge-queue runs are read only while the PR is queued, just left the queue (`was_queued`) or was removed from it
 /// for failed checks and not handled yet, once per repo.
 fn read_pr(
     gh: &dyn GithubApi,
     repo: &str,
     branch: &str,
+    since: i64,
     was_queued: bool,
     queue_cache: Option<Vec<CiRun>>,
     known: &HashMap<(u64, u32), Vec<String>>,
 ) -> Result<Read, GhError> {
-    let Some(pr) = gh.pull_request(repo, branch)? else { return Ok((None, None, HashMap::new())) };
+    let pr = gh.pull_request(repo, branch)?;
+    // gh gives the newest open PR, else the newest: when that one is too old, every other is too.
+    let Some(pr) = pr.filter(|p| p.state == PrState::Open || p.created_at.is_none_or(|c| c >= since)) else {
+        return Ok((None, None, HashMap::new()));
+    };
     let mut fetched_jobs = HashMap::new();
     let mut fill = |ci: &mut CiStatus| {
         for r in ci.runs.iter_mut().filter(|r| r.state == CiState::Failed) {
@@ -622,6 +630,7 @@ mod tests {
             in_merge_queue: queued,
             queue_position: queued.then_some(1),
             queue_removal: None,
+            created_at: None,
         }
     }
 
@@ -675,11 +684,11 @@ mod tests {
     #[test]
     fn reads_ci_and_failed_jobs_once() {
         let gh = FakeGithub::default();
-        assert_eq!(read_pr(&gh, "o/r", "b", false, None, &HashMap::new()).unwrap().0, None);
+        assert_eq!(read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap().0, None);
         gh.set_pr("b", Some(pr(false)));
         gh.set_runs("b", vec![run(1, "b", "h", CiState::Failed), run(2, "b", "old", CiState::Passed)]);
         gh.set_jobs(1, &["test (linux)"]);
-        let (status, queue, jobs) = read_pr(&gh, "o/r", "b", false, None, &HashMap::new()).unwrap();
+        let (status, queue, jobs) = read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap();
         let status = status.unwrap();
         let ci = status.ci.unwrap();
         assert_eq!(ci.state, CiState::Failed);
@@ -688,7 +697,7 @@ mod tests {
         assert!(status.queue_ci.is_none());
         // Known jobs are not asked for again.
         gh.calls.lock().unwrap().clear();
-        read_pr(&gh, "o/r", "b", false, None, &jobs).unwrap();
+        read_pr(&gh, "o/r", "b", 0, false, None, &jobs).unwrap();
         assert_eq!(*gh.calls.lock().unwrap(), vec!["pr o/r b".to_string(), "runs o/r b".to_string()]);
     }
 
@@ -701,13 +710,13 @@ mod tests {
             run(6, "gh-readonly-queue/main/pr-12-bbb", "q2", CiState::Running),
             run(7, "gh-readonly-queue/main/pr-120-ccc", "q3", CiState::Failed),
         ];
-        let (status, queue, _) = read_pr(&gh, "o/r", "b", false, None, &HashMap::new()).unwrap();
+        let (status, queue, _) = read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap();
         let q = status.unwrap().queue_ci.unwrap();
         assert_eq!((q.state, q.url.as_str()), (CiState::Running, "r6"));
         assert_eq!(queue.unwrap().len(), 3, "handed back for the repo's other attempts");
         // A repo's runs read for one attempt are reused for the next.
         gh.calls.lock().unwrap().clear();
-        let (_, queue, _) = read_pr(&gh, "o/r", "b", false, Some(vec![]), &HashMap::new()).unwrap();
+        let (_, queue, _) = read_pr(&gh, "o/r", "b", 0, false, Some(vec![]), &HashMap::new()).unwrap();
         assert_eq!(queue, None);
         assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")));
     }
@@ -752,10 +761,27 @@ mod tests {
         let mut p = pr(false);
         p.state = PrState::Merged;
         gh.set_pr("b", Some(p));
-        let (status, ..) = read_pr(&gh, "o/r", "b", true, None, &HashMap::new()).unwrap();
+        let (status, ..) = read_pr(&gh, "o/r", "b", 0, true, None, &HashMap::new()).unwrap();
         let status = status.unwrap();
         assert!(status.ci.is_none());
         assert_eq!(notices(&status, "b")[0].kind, NoticeKind::Merged);
         assert_eq!(gh.calls.lock().unwrap().len(), 1);
+    }
+
+    /// A ticket started again on its old branch name: the earlier attempt's merged PR is not this attempt's, an open
+    /// one or one opened since is.
+    #[test]
+    fn a_pr_closed_before_the_attempt_started_is_not_its() {
+        let gh = FakeGithub::default();
+        let mut p = pr(false);
+        p.state = PrState::Merged;
+        p.created_at = Some(100);
+        gh.set_pr("b", Some(p.clone()));
+        let read = |since| read_pr(&gh, "o/r", "b", since, false, None, &HashMap::new()).unwrap().0;
+        assert_eq!(read(200), None, "an earlier attempt's");
+        assert_eq!(read(100).map(|s| s.number), Some(12), "opened as this attempt started");
+        p.state = PrState::Open;
+        gh.set_pr("b", Some(p));
+        assert_eq!(read(200).map(|s| s.number), Some(12), "still open: the branch's PR");
     }
 }

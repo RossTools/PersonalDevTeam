@@ -133,10 +133,14 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   then the Reviewer's and QA's); the `started`
   event has `auto: true`. A failed start is logged and skipped until the ticket changes; a start with its own session
   waits for a slot under the host's cap.
+- A Start whose session cannot be made is undone: the attempt and its timeline events go and the ticket's stage and
+  pipeline stage are as they were (the worktree stays, for the next Start to adopt). Workflows only hear of a Start
+  (`ticket.stage_changed`, `attempt.started`) once its session exists, so an undone one runs none.
 - `noSession: true` (PDT-72; the Start dialog's "No session") starts no agent session: the branch, worktree, attempt
   and only the ticket's tab (still in its new workspace with `newWorkspace`); the result's `session` is `null`.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as
-  merged, to Won't do as merged if detected, else abandoned.
+  merged, to Won't do as merged if detected, else abandoned, once the move went through (a PATCH or bulk move that is
+  refused ends nothing; a bulk move ends each ticket's attempt on its own).
 - **Personal projects** (Phase 7b, [workspaces.md](workspaces.md#projects-and-git-workspaces-spec-6)): Start makes no
   branch or worktree. The attempt has an empty branch and no worktree, and the session runs in the ticket's folder
   `<project folder>/<KEY>-<n>` (made on Start, kept across attempts: it is the work's output); the prompt says to work
@@ -162,11 +166,13 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 - Finishing is one server command, `POST /api/tickets/{id}/finish {stopRunning, discardChanges, deleteBranch,
   keepWorktree}` (pdt-api `finish.rs`, PDT-76). It checks first and changes nothing when something would be lost:
   `outcome: blocked` with `blocked {sessions, runs, dirty}` for sessions or runs still going (unless `stopRunning`)
-  or uncommitted changes (unless `discardChanges`). Otherwise it moves the ticket to Done, stops every session and run
+  or uncommitted changes (unless `discardChanges`). Otherwise it moves the ticket to Done, ends its active attempt (as merged, `via: closed`), cancels the
+  ticket's workflow runs still going (but the run finishing it and the runs that called that one; error "cancelled:
+  the ticket was finished"), stops every session and run
   in the worktree, the attempt's sessions and everything in the workspace Start made for the ticket
   (`attempts.workspace_id`), removes the worktree (and the branch with `deleteBranch`; `branchNote` when it stayed),
   closes the ticket's tab elsewhere, deletes that workspace with its tabs, and pulls the base branch (`pull`).
-  `keepWorktree` only moves to Done and pulls (`outcome: kept`). The route runs it in a task of its own, so it
+  `keepWorktree` only moves to Done (ending the attempt and cancelling the runs as above) and pulls (`outcome: kept`). The route runs it in a task of its own, so it
   completes when the caller goes away first (PDT-97: an agent finishing its own ticket is stopped by it).
 - A merged attempt shows the banner "Move to Done and remove the worktree" (once Done with the worktree still there,
   kept or left behind, "Remove the worktree"; web/src/tickets/actions.ts
@@ -195,6 +201,9 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   cannot read check runs) and, while queued or just out of the queue, `gh run list --event merge_group` gives the runs
   on `gh-readonly-queue/<base>/pr-<n>-…`; failed job names come from `gh run view --json jobs` (cached per run
   attempt).
+- The PR is the branch's newest open one, else its newest, but a closed or merged PR opened before the attempt started
+  (`createdAt`) is not the attempt's: a ticket reopened and started again on its old branch name has no PR (no merge
+  from it, no news) until one is opened for it. A PR still open on the branch is the branch's, whoever opened it.
 - The result is in memory and on every ticket response as `attempt.pr` (Attempt section: `PrDetails`; board card:
   `PrBadge`, web/src/tickets/PullRequest.tsx). An attempt that ended while its PR was last seen open has the PR read
   again each tick for an hour after (no news), and the web shows a merged attempt's still-open PR as Merged (PDT-59:

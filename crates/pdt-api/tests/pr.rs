@@ -99,6 +99,7 @@ fn pr() -> PullRequest {
         in_merge_queue: false,
         queue_position: None,
         queue_removal: None,
+        created_at: None,
     }
 }
 
@@ -127,6 +128,33 @@ async fn pr_events(env: &Env) -> Vec<Value> {
 
 fn screen(env: &Env) -> String {
     String::from_utf8_lossy(&env.state.ptys.attach(&env.session).unwrap().scrollback).into_owned()
+}
+
+/// A ticket started again on its old branch name (reopened after its PR merged) does not take that PR for the new
+/// attempt's: no merged banner, no merge detected, nothing told to the agent, until a PR is opened for it.
+#[tokio::test]
+async fn a_new_attempt_on_a_reused_branch_has_no_pr_until_one_is_opened() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let mut old = pr();
+    old.state = PrState::Merged;
+    old.created_at = Some(1);
+    old.head_sha = pdt_git::rev_parse(&env.repo, "main").unwrap();
+    env.gh.set_pr(BRANCH, Some(old));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    let t = ticket(&env).await;
+    assert!(t["attempt"]["pr"].is_null(), "{t}");
+    assert_eq!(t["attempt"]["state"], "active");
+    assert!(pr_events(&env).await.is_empty());
+
+    let mut new = pr();
+    new.number = 13;
+    env.gh.set_pr(BRANCH, Some(new));
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(ticket(&env).await["attempt"]["pr"]["number"], 13);
+    env.state.ptys.shutdown().await;
 }
 
 #[tokio::test]

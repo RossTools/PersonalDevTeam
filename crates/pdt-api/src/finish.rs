@@ -159,11 +159,43 @@ async fn plan(st: &AppState, info: &AttemptInfo) -> Result<Plan, ApiError> {
     Ok(Plan { running, remove, runs, workspace, dirty })
 }
 
+/// Moves the ticket to Done, then ends its active attempt (as merged: Done says the work landed) and cancels its open
+/// workflow runs but `by`'s own: nothing works on a Done ticket, holds a slot under the caps or keeps an agent step
+/// waiting on a session finishing removes.
 async fn move_to_done(st: &AppState, ticket_id: &str, by: Option<&By>) -> Result<(), ApiError> {
     let actor = if by.is_some() { Actor::System } else { Actor::User };
     let data = by.map(By::data);
     st.store.move_ticket_by(ticket_id, TicketStage::Done, actor, data.as_ref(), now_ms()).await?;
+    if let Err(e) = crate::start::end_for_close(st, ticket_id, TicketStage::Done, actor).await {
+        tracing::warn!(ticket = %ticket_id, error = %e.message(), "could not end the finished ticket's attempt");
+    }
+    cancel_runs(st, ticket_id, by).await;
     Ok(())
+}
+
+/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it. Each cancel takes the
+/// engine lock: a `ticket.finish` step's body runs outside it (PDT-128).
+async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
+    let filter = pdt_store::RunFilter { ticket_id: Some(ticket_id.to_string()), limit: 500, ..Default::default() };
+    let runs = match st.store.list_workflow_runs(&filter).await {
+        Ok(r) => r,
+        Err(e) => return tracing::warn!(ticket = %ticket_id, error = %e, "could not list the ticket's workflow runs"),
+    };
+    let mut keep = HashSet::new();
+    let mut next = by.map(|b| b.run_id.clone());
+    while let Some(id) = next.filter(|id| keep.insert(id.clone())) {
+        next = st.store.get_workflow_run(&id).await.ok().flatten().and_then(|r| r.parent_run_id);
+    }
+    for run in runs.iter().filter(|r| !r.status.is_finished() && !keep.contains(&r.id)) {
+        let why = "cancelled: the ticket was finished";
+        let done = {
+            let _engine = st.engine_lock.lock().await;
+            crate::workflow::engine::cancel_because(st, &run.id, why).await
+        };
+        if let Err(e) = done {
+            tracing::warn!(ticket = %ticket_id, run = %run.id, error = %e, "could not cancel the finished ticket's run");
+        }
+    }
 }
 
 async fn pull(st: &AppState, project_id: &str, branch: Option<String>) -> Option<PullResult> {
@@ -270,15 +302,16 @@ pub(crate) async fn finish_ticket(
         }
     }
 
-    if let Some(w) = &p.workspace {
-        // A ticket tab left elsewhere closes too; the workspace goes with every tab in it.
-        if let Ok(all) = st.store.list_workspaces().await {
-            for tab in all.iter().flat_map(|w| &w.tabs) {
-                if tab.workspace_id != w.id && tab.ticket_id.as_deref() == Some(ticket_id) {
-                    let _ = st.store.close_tab(&tab.id).await;
-                }
+    // The ticket's tabs elsewhere close; the workspace Start made goes with every tab in it.
+    let own = p.workspace.as_ref().map(|w| w.id.as_str());
+    if let Ok(all) = st.store.list_workspaces().await {
+        for tab in all.iter().flat_map(|w| &w.tabs) {
+            if Some(tab.workspace_id.as_str()) != own && tab.ticket_id.as_deref() == Some(ticket_id) {
+                let _ = st.store.close_tab(&tab.id).await;
             }
         }
+    }
+    if let Some(w) = &p.workspace {
         match st.store.delete_workspace(&w.id, true).await {
             Ok(r) => result.workspace_removed = r == pdt_store::DeleteWorkspace::Deleted,
             Err(e) => tracing::warn!(ticket = %key, error = %e, "could not delete the ticket's workspace"),

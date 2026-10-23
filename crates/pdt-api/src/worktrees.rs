@@ -112,11 +112,17 @@ pub(crate) async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Removes a worktree (see `remove`): 409 `worktree_busy` while a session or run uses it, `worktree_dirty` with
-/// uncommitted changes unless `force`, `branch_not_deleted` when only the branch stayed.
+/// Removes a worktree (see `remove`): 409 `worktree_busy` while a session or run uses it, `worktree_attempt` while a
+/// ticket's active attempt works in it, `worktree_dirty` with uncommitted changes unless `force`,
+/// `branch_not_deleted` when only the branch stayed.
 pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete_branch: bool) -> Result<(), ApiError> {
     let id = id.to_string();
     let wt = st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    let attempts = st.store.list_active_attempts().await?;
+    if let Some(a) = attempts.iter().find(|a| a.attempt.worktree_id.as_deref() == Some(id.as_str())) {
+        let msg = format!("{} works in this worktree; finish the ticket or abandon its attempt first", a.ticket_key);
+        return Err(conflict("worktree_attempt", &msg));
+    }
     let project = st.store.get_project(&wt.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let sessions: Vec<_> = st
         .store

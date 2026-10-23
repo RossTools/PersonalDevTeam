@@ -817,11 +817,16 @@ pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> R<()> {
 
 /// `cancel_run` for a caller that holds the engine lock.
 pub(crate) async fn cancel_locked(st: &AppState, run_id: &str) -> R<()> {
+    cancel_because(st, run_id, "cancelled").await
+}
+
+/// `cancel_locked` with why (the run's error).
+pub(crate) async fn cancel_because(st: &AppState, run_id: &str, why: &str) -> R<()> {
     let mut run = st.store.get_workflow_run(run_id).await.map_err(err)?.ok_or("no such run")?;
     if run.status.is_finished() {
         return Err("the run has ended".into());
     }
-    finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some("cancelled".into())).await
+    finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some(why.into())).await
 }
 
 /// Answers a waiting gate with `choice`. The user's `text` with it (why they rejected, what to change) goes on the

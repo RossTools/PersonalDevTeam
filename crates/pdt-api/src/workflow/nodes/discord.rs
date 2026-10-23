@@ -1,7 +1,7 @@
 //! `discord.post` (Phase 7e spec §3.3): posts to a Discord channel through a webhook (a `discord_webhook` connection
 //! whose secret is the webhook URL). Long messages are split at line breaks; a rate limit waits and tries again.
 
-use super::http::{client, read_body};
+use super::http::{client, read_body, send_error};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -127,7 +127,13 @@ async fn post(url: &str, thread: Option<&str>, body: &Value) -> Result<String, S
         query.push(("thread_id", t.to_string()));
     }
     for _ in 0..TRIES {
-        let resp = client().post(url).query(&query).json(body).send().await.map_err(|e| format!("Discord: {e}"))?;
+        let resp = client()
+            .post(url)
+            .query(&query)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("Discord: {}", send_error(e)))?;
         let status = resp.status().as_u16();
         let bytes = read_body(resp, 64 * 1024).await?;
         let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
