@@ -150,7 +150,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   (`POST /api/sessions/{id}/view`, any device) passes it. Unseen and needs-you sessions make notifications
   (`session.needs_you`, `session.turn_ended` after 30 s; [workflows.md](workflows.md#notifications)); viewing one
   clears and reads them. An open session's pane posts the view when it opens, when the tab becomes visible and when
-  a poll finds the session unseen (not on every poll).
+  a poll finds attention it hasn't cleared yet (a newer `attentionAt` while unseen; not on every poll).
 
 ## Terminals
 

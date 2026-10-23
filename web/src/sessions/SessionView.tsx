@@ -80,7 +80,7 @@ function useStoredView(sessionId: string): [ConvView, (v: ConvView) => void] {
 function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch, projectKey, conv }: SessionViewProps & {
   conv: ConversationData | null;
 }) {
-  useViewTracking(session.id, session.unseen);
+  useViewTracking(session.id, session.unseen ? session.attentionAt ?? 0 : null);
   // The terminal's reattach check runs on every poll of the project's sessions (they hold this session).
   const polledAt = usePolledAt(['sessions', session.projectId]);
   const qc = useQueryClient();
