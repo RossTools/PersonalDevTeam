@@ -23,7 +23,11 @@ export interface ConversationModel {
   ready: boolean;
 }
 
-export type ConversationAction = { type: 'open' } | { type: 'message'; msg: ConversationServerMessage };
+export type ConversationAction =
+  | { type: 'open' }
+  | { type: 'message'; msg: ConversationServerMessage }
+  /** Many messages at once (a connection's replay): one new model, not one per message. */
+  | { type: 'batch'; msgs: ConversationServerMessage[] };
 
 export const emptyModel = (): ConversationModel => ({ rows: {}, maxSeq: 0, streams: {}, replayed: null, state: null, ready: false });
 
@@ -40,6 +44,7 @@ function withoutStream(streams: Streams, itemId: string, keepOutput: boolean): S
 
 export function reduce(m: ConversationModel, a: ConversationAction): ConversationModel {
   if (a.type === 'open') return { ...m, replayed: {}, ready: false };
+  if (a.type === 'batch') return reduceBatch(m, a.msgs);
   const msg = a.msg;
   switch (msg.type) {
     case 'event': {
@@ -85,6 +90,33 @@ export function reduce(m: ConversationModel, a: ConversationAction): Conversatio
       return { ...m, streams, replayed: null, ready: true };
     }
   }
+}
+
+/**
+ * `msgs` applied in order, as `reduce` would one by one, but copying the rows once: a replay of n events is O(n), not
+ * O(n²).
+ */
+function reduceBatch(m: ConversationModel, msgs: ConversationServerMessage[]): ConversationModel {
+  let cur = m;
+  // Ours to change once copied; `reduce` keeps it as is for every other message.
+  let rows: Record<string, ConversationEvent> | null = null;
+  for (const msg of msgs) {
+    if (msg.type !== 'event') {
+      cur = reduce(cur, { type: 'message', msg });
+      continue;
+    }
+    const e = msg.event;
+    const key = rowKey(e);
+    const old = cur.rows[key];
+    if (old && old.seq >= e.seq) continue;
+    if (!rows) rows = { ...cur.rows };
+    rows[key] = e;
+    const streams = e.itemId
+      ? withoutStream(cur.streams, e.itemId, e.event.kind === 'tool_call' && e.event.status === 'running')
+      : cur.streams;
+    cur = { ...cur, rows, maxSeq: Math.max(cur.maxSeq, e.seq), streams };
+  }
+  return cur;
 }
 
 /** The rows in conversation order (`pos`; seq breaks ties). */

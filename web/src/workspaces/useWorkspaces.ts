@@ -13,6 +13,7 @@ import type { Workspace } from '../api/gen/Workspace';
 import type { Worktree } from '../api/gen/Worktree';
 import { isActive, runDot } from '../runs/runState';
 import { toDot } from '../sessions/status';
+import { useSameList } from '../common/useSameList';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
 const STORAGE_KEY = 'pdt.workspaces.current';
@@ -47,21 +48,19 @@ export interface ItemInfo {
   session?: Session;
   run?: Run;
   ticket?: Ticket;
-  /** When the list holding it was last polled (passed to the terminal views). */
-  polledAt: number;
 }
 
-export function sessionInfo(s: Session, polledAt: number): ItemInfo {
+export function sessionInfo(s: Session): ItemInfo {
   return {
     item: { kind: 'session', id: s.id }, title: s.title, status: toDot(s.status), activity: s.activity, unseen: s.unseen,
-    projectId: s.projectId, worktreeId: s.worktreeId, session: s, polledAt,
+    projectId: s.projectId, worktreeId: s.worktreeId, session: s,
   };
 }
 
-export function runInfo(r: Run, polledAt: number): ItemInfo {
+export function runInfo(r: Run): ItemInfo {
   return {
     item: { kind: 'run', id: r.id }, title: `${r.kind === 'test' ? 'Test ' : ''}${r.name} · ${r.branch}`,
-    status: runDot(r.state), activity: null, unseen: false, projectId: r.projectId, worktreeId: r.worktreeId, run: r, polledAt,
+    status: runDot(r.state), activity: null, unseen: false, projectId: r.projectId, worktreeId: r.worktreeId, run: r,
   };
 }
 
@@ -69,19 +68,19 @@ export function runInfo(r: Run, polledAt: number): ItemInfo {
  * A ticket tab: titled `PDT-42 · title`, no agent state (the tab shows a ticket icon). Its place is its active
  * attempt's worktree, so a new session or run from it (and the folder view) defaults to the ticket's branch.
  */
-export function ticketInfo(t: Ticket, polledAt: number): ItemInfo {
+export function ticketInfo(t: Ticket): ItemInfo {
   const worktreeId = t.attempt?.state === 'active' ? t.attempt.worktreeId : null;
   return {
     item: { kind: 'ticket', id: t.id }, title: `${t.key} · ${t.title}`, status: 'idle', activity: null, unseen: false,
-    projectId: t.projectId, worktreeId, ticket: t, polledAt,
+    projectId: t.projectId, worktreeId, ticket: t,
   };
 }
 
 /** A changes tab: titled `Changes · <branch>`. */
-export function changesInfo(w: Worktree, polledAt: number): ItemInfo {
+export function changesInfo(w: Worktree): ItemInfo {
   return {
     item: { kind: 'changes', id: w.id }, title: `Changes · ${w.branch}`, status: 'idle', activity: null, unseen: false,
-    projectId: w.projectId, worktreeId: w.id, polledAt,
+    projectId: w.projectId, worktreeId: w.id,
   };
 }
 
@@ -117,13 +116,16 @@ export function useWorkspaces(routed?: RoutedChoice) {
     queries: projectList.map((p) => ({ queryKey: ['runs', p.id], queryFn: () => api.listRuns(p.id), refetchInterval: 2000 })),
   });
 
+  // Query data keeps its identity while polls bring nothing new, so these change only when something did (reading
+  // `dataUpdatedAt` would make every consumer re-render on every poll, PDT-136).
+  const sessionData = useSameList(sessionQs.map((q) => q.data));
+  const runData = useSameList(runQs.map((q) => q.data));
   const infos = useMemo(() => {
     const m = new Map<string, ItemInfo>();
-    for (const q of sessionQs) for (const s of q.data ?? []) m.set(`session:${s.id}`, sessionInfo(s, q.dataUpdatedAt));
-    for (const q of runQs) for (const r of q.data ?? []) m.set(`run:${r.id}`, runInfo(r, q.dataUpdatedAt));
+    for (const d of sessionData) for (const s of d ?? []) m.set(`session:${s.id}`, sessionInfo(s));
+    for (const d of runData) for (const r of d ?? []) m.set(`run:${r.id}`, runInfo(r));
     return m;
-    // The query result arrays are new objects on every render; their data timestamps say when anything changed.
-  }, [sessionQs.map((q) => q.dataUpdatedAt).join(), runQs.map((q) => q.dataUpdatedAt).join()]);
+  }, [sessionData, runData]);
   // Ticket tabs: one query per ticket on a tab (shared with the ticket's own view, ['ticket', id]).
   const ticketIds = useMemo(
     () => [...new Set(workspaces.flatMap((w) => w.tabs.flatMap((t) => (t.ticketId ? [t.ticketId] : []))))].sort(),
@@ -132,11 +134,8 @@ export function useWorkspaces(routed?: RoutedChoice) {
   const ticketQs = useQueries({
     queries: ticketIds.map((id) => ({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id), refetchInterval: TICKET_TAB_POLL })),
   });
-  const ticketInfos = useMemo(
-    () => ticketQs.flatMap((q) => (q.data ? [ticketInfo(q.data, q.dataUpdatedAt)] : [])),
-    // As above: the timestamps say when anything changed.
-    [ticketQs.map((q) => q.dataUpdatedAt).join()],
-  );
+  const ticketData = useSameList(ticketQs.map((q) => q.data));
+  const ticketInfos = useMemo(() => ticketData.flatMap((t) => (t ? [ticketInfo(t)] : [])), [ticketData]);
   // Changes tabs: their worktrees, from the projects' worktree lists (read only while such a tab exists).
   const hasChangesTab = workspaces.some((w) => w.tabs.some((t) => t.worktreeId));
   const worktreeQs = useQueries({
@@ -144,10 +143,8 @@ export function useWorkspaces(routed?: RoutedChoice) {
       queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id), enabled: hasChangesTab, staleTime: 30_000,
     })),
   });
-  const changesInfos = useMemo(
-    () => worktreeQs.flatMap((q) => (q.data ?? []).map((w) => changesInfo(w, q.dataUpdatedAt))),
-    [worktreeQs.map((q) => q.dataUpdatedAt).join()],
-  );
+  const worktreeData = useSameList(worktreeQs.map((q) => q.data));
+  const changesInfos = useMemo(() => worktreeData.flatMap((d) => (d ?? []).map(changesInfo)), [worktreeData]);
   const info = useCallback(
     (item: Item) =>
       item.kind === 'ticket'

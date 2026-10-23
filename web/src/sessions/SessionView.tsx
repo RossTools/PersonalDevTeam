@@ -20,12 +20,12 @@ import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
+import { usePolledAt } from '../common/usePolledAt';
 import { useOpenChanges } from '../review/open';
 import { ChangesButton } from '../review/ChangesButton';
 
 export interface SessionViewProps {
   session: Session;
-  polledAt?: number;
   onRemoved: () => void;
   /** The session's branch on GitHub, when known. */
   branchLink?: string | null;
@@ -77,10 +77,12 @@ function useStoredView(sessionId: string): [ConvView, (v: ConvView) => void] {
   return [view, set];
 }
 
-function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, baseBranch, projectKey, conv }: SessionViewProps & {
+function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch, projectKey, conv }: SessionViewProps & {
   conv: ConversationData | null;
 }) {
-  useViewTracking(session.id, polledAt);
+  useViewTracking(session.id, session.unseen ? session.attentionAt ?? 0 : null);
+  // The terminal's reattach check runs on every poll of the project's sessions (they hold this session).
+  const polledAt = usePolledAt(['sessions', session.projectId]);
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [composing, setComposing] = useState(false);

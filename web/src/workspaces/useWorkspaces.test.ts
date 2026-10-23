@@ -10,8 +10,8 @@ const attempt = (over: Partial<AttemptSummary> = {}): AttemptSummary => ({
 
 describe('ticketInfo', () => {
   it("places a ticket tab in its active attempt's worktree, else the main checkout", () => {
-    expect(ticketInfo(ticket(1, { attempt: attempt() }), 0).worktreeId).toBe('w1');
-    expect(ticketInfo(ticket(1, { attempt: attempt({ state: 'merged' }) }), 0).worktreeId).toBeNull();
-    expect(ticketInfo(ticket(1, { attempt: null }), 0).worktreeId).toBeNull();
+    expect(ticketInfo(ticket(1, { attempt: attempt() })).worktreeId).toBe('w1');
+    expect(ticketInfo(ticket(1, { attempt: attempt({ state: 'merged' }) })).worktreeId).toBeNull();
+    expect(ticketInfo(ticket(1, { attempt: null })).worktreeId).toBeNull();
   });
 });

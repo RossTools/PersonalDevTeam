@@ -20,7 +20,8 @@ Start too).
 - API:
   - `GET /api/sessions/{id}/events`: JSON (stored events after `after`, up to `limit`; or with `last=N` the newest N,
     oldest first), or the WebSocket stream when upgraded (stored events after `after`, `state`, partial deltas,
-    `ready`, then live).
+    `ready`, then live). The UI holds a connection's replay until `ready` and applies it in one go (one render for
+    thousands of events); a list block re-renders only when its own rows or streamed text change.
   - `POST …/messages {text, delivery: next|now}`, `POST …/requests/{requestId} {answer}` (409 `request_closed`),
     `POST …/interrupt`.
   - `PATCH /api/sessions/{id}` (`title`, `model`, `permissionMode`), `GET /api/agents/{agent}/capabilities`.

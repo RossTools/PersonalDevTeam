@@ -53,7 +53,7 @@ function handlers(): PaletteHandlers {
 function ctx(over: Partial<PaletteContext> = {}): PaletteContext {
   return {
     workspaces,
-    infos: [...sessions.map((s) => sessionInfo(s, 0)), runInfo(run, 0)],
+    infos: [...sessions.map((s) => sessionInfo(s)), runInfo(run)],
     projects: [project('p1', 'PersonalDevTeam', 'PDT'), project('p2', 'Demo', 'DEMO')],
     tab: workspaces[0].tabs[0],
     place: { projectId: 'p1', worktreeId: 'wt1' },
@@ -189,7 +189,7 @@ describe('paletteItems', () => {
     const c = ctx();
     byId(paletteItems(c), 'needs-you').run!();
     expect(c.handlers.selectTab).toHaveBeenCalledWith(workspaces[1].tabs[0]);
-    const calm = ctx({ infos: sessions.filter((s) => s.id !== 's2').map((s) => sessionInfo(s, 0)) });
+    const calm = ctx({ infos: sessions.filter((s) => s.id !== 's2').map((s) => sessionInfo(s)) });
     expect(ids(paletteItems(calm))).not.toContain('needs-you');
   });
 
@@ -251,14 +251,14 @@ describe('paletteItems', () => {
   it('labels a ticket tab with its key and title', () => {
     const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
     const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
-    const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t, 0)] }));
+    const items = paletteItems(ctx({ workspaces: w, infos: [ticketInfo(t)] }));
     expect(byId(items, 'tab:tk').label).toBe('PDT-42 · Fix login');
   });
 
   it('starts the ticket on screen, and picks a ticket to start', () => {
     const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
     const t = { ...summary, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
-    const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)], ticketProjectId: 'p1' });
+    const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t)], ticketProjectId: 'p1' });
     const items = paletteItems(c);
     const here = byId(items, 'tickets:start-open');
     expect(here.label).toBe('Start PDT-42');
@@ -271,7 +271,7 @@ describe('paletteItems', () => {
     expect(c.handlers.startTicket).toHaveBeenCalledWith(summary, false);
     // Not for a ticket already being worked on, nor without a ticket tab on screen.
     const busy = { ...t, stage: 'in_progress' as const };
-    expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(busy, 0)] })))).not.toContain('tickets:start-open');
+    expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(busy)] })))).not.toContain('tickets:start-open');
     expect(ids(paletteItems(ctx()))).not.toContain('tickets:start-open');
   });
 
@@ -279,7 +279,7 @@ describe('paletteItems', () => {
     const w: Workspace[] = [{ ...workspaces[0], tabs: [{ id: 'tk', workspaceId: 'w1', position: 0, sessionId: null, runId: null, ticketId: summary.id, worktreeId: null }] }];
     const parts = { total: 2, done: 0, merged: 0, review: 0, progress: 0, todo: 2, backlog: 0, segments: ['todo' as const, 'todo' as const] };
     const t = { ...summary, parts, description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-42-fix-login', sessions: [], overlaps: [], partList: [] };
-    const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t, 0)] });
+    const c = ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(t)] });
     const items = paletteItems(c);
     expect(ids(items)).not.toContain('tickets:start-open');
     const next = byId(items, 'tickets:start-next-part');
@@ -287,7 +287,7 @@ describe('paletteItems', () => {
     next.run!();
     expect(c.handlers.startNextPart).toHaveBeenCalledWith(t);
     const closed = { ...t, stage: 'done' as const };
-    expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(closed, 0)] })))).not.toContain('tickets:start-next-part');
+    expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(closed)] })))).not.toContain('tickets:start-next-part');
   });
 });
 

@@ -79,6 +79,42 @@ export function buildBlocks(rows: ConversationEvent[], turnRunning: boolean): Bl
   return blocks;
 }
 
+function sameNode(a: RowNode, b: RowNode): boolean {
+  return a.row === b.row && a.children.length === b.children.length && a.children.every((c, i) => sameNode(c, b.children[i]));
+}
+
+function sameBlock(a: Block, b: Block): boolean {
+  if (a.type === 'row' && b.type === 'row') return a.key === b.key && sameNode(a.node, b.node);
+  if (a.type === 'group' && b.type === 'group') {
+    return a.key === b.key && a.nodes.length === b.nodes.length && a.nodes.every((n, i) => sameNode(n, b.nodes[i]));
+  }
+  return false;
+}
+
+/**
+ * `next`, with each block that shows the same rows as one in `prev` replaced by that one: a new or updated row makes
+ * new objects for its own block only, so the others' views can skip rendering.
+ */
+export function reuseBlocks(prev: Block[], next: Block[]): Block[] {
+  const old = new Map(prev.map((b) => [b.key, b]));
+  return next.map((b) => {
+    const o = old.get(b.key);
+    return o && sameBlock(o, b) ? o : b;
+  });
+}
+
+/** The item ids a block shows (their streamed text is the block's). */
+export function blockItemIds(b: Block): string[] {
+  const out: string[] = [];
+  const walk = (n: RowNode) => {
+    if (n.row.itemId) out.push(n.row.itemId);
+    n.children.forEach(walk);
+  };
+  if (b.type === 'row') walk(b.node);
+  else b.nodes.forEach(walk);
+  return out;
+}
+
 /** The tool call a working turn is busy with: the last running top-level call, if any. */
 export function currentTool(rows: ConversationEvent[]): ConversationEvent | null {
   for (let i = rows.length - 1; i >= 0; i--) {

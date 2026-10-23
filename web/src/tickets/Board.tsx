@@ -2,7 +2,7 @@
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
 // first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
 // work (Phase 7c), In progress splits into its stages: Code, Review, QA, Accept and Merge.
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type Ref, type TouchEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type Ref, type TouchEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -128,7 +128,8 @@ const coarsePointer = () => typeof window !== 'undefined' && !!window.matchMedia
 
 /**
  * The most urgent state of the sessions working on a ticket's active attempt (null when none): its own, and the ones
- * workflow steps started on the ticket (Reviewer, QA), which have no attempt.
+ * workflow steps started on the ticket (Reviewer, QA), which have no attempt. `sessions` may be every session, or
+ * just the ticket's (`sessionsByTicket`).
  */
 export function cardActivity(t: Pick<TicketSummary, 'id' | 'attempt'>, sessions: Session[]): AgentStateValue | null {
   if (!t.attempt) return null;
@@ -136,6 +137,21 @@ export function cardActivity(t: Pick<TicketSummary, 'id' | 'attempt'>, sessions:
     && s.kind === 'agent_tui');
   return rollup(mine.map((s) => itemState({ session: s, unseen: s.unseen })));
 }
+
+/** The sessions on a ticket, by ticket id: one pass over every session instead of one per card. */
+export function sessionsByTicket(sessions: Session[]): Map<string, Session[]> {
+  const m = new Map<string, Session[]>();
+  for (const s of sessions) {
+    if (!s.ticket) continue;
+    const list = m.get(s.ticket.id);
+    if (list) list.push(s);
+    else m.set(s.ticket.id, [s]);
+  }
+  return m;
+}
+
+const sameActivity = (a: AgentStateValue | null | undefined, b: AgentStateValue | null | undefined) =>
+  a === b || (!!a && !!b && a.dot === b.dot && a.pulse === b.pulse && a.label === b.label && a.tone === b.tone && a.unseen === b.unseen);
 
 export interface BoardCardProps {
   ticket: TicketSummary;
@@ -248,11 +264,36 @@ function useCollapsed(): [Set<string>, (id: string) => void] {
 
 /** What every cell needs to show and move cards. */
 interface CellEnv {
-  sessions: Session[];
+  /** The sessions on each ticket (the activity dots). */
+  sessions: Map<string, Session[]>;
+  /** The rest keeps its identity from render to render, so a card re-renders only when its ticket or dot changes. */
+  cards: CardEnv;
+}
+
+interface CardEnv {
   onPeek: (id: string) => void;
   entries: (t: TicketSummary) => () => MenuEntry[];
   phone: boolean;
 }
+
+/**
+ * A card in a cell. The board re-renders on every poll that changes anything; a card whose ticket (the same object
+ * while its data is unchanged) and dot are the same skips it (PDT-136).
+ */
+const CellCard = memo(
+  function CellCard({ ticket: t, activity, env }: { ticket: TicketSummary; activity: AgentStateValue | null; env: CardEnv }) {
+    return (
+      <BoardCard
+        ticket={t}
+        activity={activity}
+        onOpen={() => env.onPeek(t.id)}
+        entries={env.entries(t)}
+        draggable={!env.phone && !coarsePointer()}
+      />
+    );
+  },
+  (a, b) => a.ticket === b.ticket && a.env === b.env && sameActivity(a.activity, b.activity),
+);
 
 /**
  * One lane's column: its cards, and a drop target for cards of the same lane (a card dropped from another lane is
@@ -277,7 +318,7 @@ function Cell({ label, stage, items, lane, env, height, children }: {
 }) {
   const qc = useQueryClient();
   const [over, setOver] = useState(false);
-  const dropTarget = !env.phone;
+  const dropTarget = !env.cards.phone;
   const onDragOver = (e: DragEvent) => {
     if (!dropTarget || !Array.from(e.dataTransfer?.types ?? []).includes('text/plain')) return;
     e.preventDefault();
@@ -307,18 +348,11 @@ function Cell({ label, stage, items, lane, env, height, children }: {
     >
       {children}
       {/* Phones: room under the last card for the floating ＋. */}
-      <div className={cn('px-2 pb-2', height !== 'auto' && 'min-h-0 flex-1 overflow-auto', env.phone && height === 'fill' && 'pb-20')}>
+      <div className={cn('px-2 pb-2', height !== 'auto' && 'min-h-0 flex-1 overflow-auto', env.cards.phone && height === 'fill' && 'pb-20')}>
         {items.length > 0 && (
           <ul aria-label={`${label} tickets`} className="flex flex-col gap-2 pt-2">
             {items.map((t) => (
-              <BoardCard
-                key={t.id}
-                ticket={t}
-                activity={cardActivity(t, env.sessions)}
-                onOpen={() => env.onPeek(t.id)}
-                entries={env.entries(t)}
-                draggable={!env.phone && !coarsePointer()}
-              />
+              <CellCard key={t.id} ticket={t} activity={cardActivity(t, env.sessions.get(t.id) ?? [])} env={env.cards} />
             ))}
           </ul>
         )}
@@ -481,17 +515,23 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
   const lanes = useMemo(() => buildLanes(items, parents), [items.todo, items.in_progress, items.done, parents]);
   useClearToStartToasts(useMemo(() => [...items.todo, ...items.in_progress, ...items.done], [items.todo, items.in_progress, items.done]));
 
-  const env: CellEnv = {
-    sessions,
+  const byTicket = useMemo(() => sessionsByTicket(sessions), [sessions]);
+  // The menu reads the latest hooks' values when it opens; the cards' env stays the same object.
+  const menuDeps = useRef({ qc, confirm, open, start });
+  menuDeps.current = { qc, confirm, open, start };
+  const cardEnv = useMemo<CardEnv>(() => ({
     onPeek,
     phone,
-    entries: (t) => () =>
-      ticketMenu({
-        qc, confirm, ticket: t,
-        onOpen: () => open(t),
-        ...(canStart(t) ? { onStart: () => start(t) } : {}),
-      }),
-  };
+    entries: (t) => () => {
+      const d = menuDeps.current;
+      return ticketMenu({
+        qc: d.qc, confirm: d.confirm, ticket: t,
+        onOpen: () => d.open(t),
+        ...(canStart(t) ? { onStart: () => d.start(t) } : {}),
+      });
+    },
+  }), [onPeek, phone]);
+  const env: CellEnv = { sessions: byTicket, cards: cardEnv };
   const all = displayColumns(boardSplits([...items.in_progress, ...lanes.flatMap((l) => l.items.in_progress)]));
   // Phones: one column; In progress's id falls back to Code when it splits (and back).
   const current = all.find((c) => c.id === shown) ?? all.find((c) => c.stage === shown || c.id === 'in_progress') ?? all[0];

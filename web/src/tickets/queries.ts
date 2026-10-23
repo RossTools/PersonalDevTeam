@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { keepPreviousData, useInfiniteQuery, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useSameList } from '../common/useSameList';
 import type { Session } from '../api/gen/Session';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketQuery } from '../api/gen/TicketQuery';
 
 /** How often what's on screen refetches (like sessions). */
 export const POLL = 2000;
+
+/**
+ * A paged query's poll: TanStack refetches every loaded page, so past two pages (a long scroll back) it polls every
+ * 15 s, so that a 1,000-row list isn't ten requests every 2 s.
+ */
+export const pagedPoll = (query: { state: { data?: { pages: unknown[] } } }) => ((query.state.data?.pages.length ?? 0) > 2 ? 15_000 : POLL);
 
 export const ticketKeys = {
   /** Every list of tickets (backlog pages, counts, pickers). */
@@ -40,9 +47,7 @@ export function useTicketPages(q: TicketQuery, enabled = true) {
     queryFn: ({ pageParam }) => api.listTickets({ ...q, ...(pageParam ? { cursor: pageParam } : {}) }),
     initialPageParam: '' as string,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
-    // TanStack refetches every loaded page; past two pages (long scroll-backs) poll less often so a 1,000-row backlog
-    // isn't ten requests every 2 s.
-    refetchInterval: (query) => ((query.state.data?.pages.length ?? 0) > 2 ? 15_000 : POLL),
+    refetchInterval: pagedPoll,
     placeholderData: keepPreviousData,
   });
 }
@@ -114,9 +119,10 @@ export function useAllSessions(): Session[] {
   const qs = useQueries({
     queries: (projects.data ?? []).map((p) => ({ queryKey: ['sessions', p.id], queryFn: () => api.listSessions(p.id), refetchInterval: POLL })),
   });
-  const stamp = qs.map((q) => q.dataUpdatedAt).join();
-  // The result arrays are new on every render; their timestamps say when anything changed.
-  return useMemo(() => qs.flatMap((q) => q.data ?? []), [stamp]);
+  // The result arrays are new on every render; their data keeps its identity until a poll brings something new.
+  // (Reading `dataUpdatedAt` here would re-render every caller on every poll.)
+  const data = useSameList(qs.map((q) => q.data));
+  return useMemo(() => data.flatMap((d) => d ?? []), [data]);
 }
 
 /**

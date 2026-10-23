@@ -24,7 +24,7 @@ import { actionError, useAction } from '../common/useAction';
 import { moveTicket, patchTicket, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
-import { invalidateTickets, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
+import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
@@ -508,7 +508,7 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
     queryFn: ({ pageParam }) => api.ticketEvents(ticketId, { newestFirst: true, limit: EVENT_PAGE, ...(pageParam ? { cursor: pageParam } : {}) }),
     initialPageParam: '' as string,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
-    refetchInterval: POLL,
+    refetchInterval: pagedPoll,
     enabled: recent === undefined,
   });
   const short = useQuery({
