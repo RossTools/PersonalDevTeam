@@ -10,6 +10,7 @@ import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
+import { useKeyboardBox } from '../common/viewport';
 import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
 import { useMetaK } from '../palette/useMetaK';
@@ -46,10 +47,12 @@ import { BottomPanel } from './BottomPanel';
 import { IconRail } from './IconRail';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
+import { PhoneInboxList } from '../inbox/PhoneInboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
-import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
+import { noteOf, usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
+import { triageTitle } from '../inbox/model';
 import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
 import { useReadAllUpdates, useUpdates } from '../notifications/queries';
@@ -112,6 +115,7 @@ const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ d
 const WorkflowsView = lazy(() => import('../workflows/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
 const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
 const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default: m.InboxView })));
+const PhoneInboxItem = lazy(() => import('../inbox/PhoneInbox').then((m) => ({ default: m.PhoneInboxItem })));
 const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
 const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
 
@@ -122,6 +126,8 @@ export function AppShell() {
   const route = useMemo(() => parseLocation(loc), [loc]);
   const phone = useMediaQuery(PHONE_QUERY);
   const defaultView: ViewId = phone ? 'pm' : 'sessions';
+  // While a phone's on-screen keyboard is up, the shell fits the part above it, so a composer stays in view.
+  const keyboardBox = useKeyboardBox(phone);
   const view: ViewId = route.view ?? defaultView;
   // The path each view showed last, so coming back to a view shows what it did (as when this was React state).
   const lastPath = useRef<Partial<Record<ViewId, string>>>({});
@@ -171,6 +177,8 @@ export function AppShell() {
   const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
   const autoPick = phone ? inboxId !== null && !inboxShown : !inboxShown;
   const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: autoPick }), [autoPick]);
+  // A phone's item screen moves between items in place, so Back returns to the list.
+  const moveInbox = useCallback((itemId: string) => go({ view: 'inbox', itemId }, { replace: true }), []);
   const plusRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
@@ -215,8 +223,11 @@ export function AppShell() {
   };
   const peek: TicketPeekState = useMemo(() => ({
     ticket: peekRef,
-    onChange: (ticket, opts) => go({ view: 'tickets', board: mode === 'board', ticket }, opts),
-  }), [peekRef, mode]);
+    // On a phone the ticket is a detail screen, so closing it is ← (Back), not a new entry.
+    onChange: (ticket, opts) => (phone && ticket === null && peekRef !== null
+      ? goBack(routePath({ view: 'tickets', board: mode === 'board', ticket: null }))
+      : go({ view: 'tickets', board: mode === 'board', ticket }, opts)),
+  }), [peekRef, mode, phone]);
   /** Shows a view as it was last (a view's own path the first time). */
   const setView = useCallback((v: ViewId) => {
     if ((parseLocation(currentLocation()).view ?? defaultView) === v) return;
@@ -568,19 +579,23 @@ export function AppShell() {
   // The phone's screens (PDT-112): a view's top-level screen (its list, for most views) or a detail screen with ←.
   const detail = isDetail(route);
   const phoneList = phone && !detail && PHONE_LIST_SCREENS.includes(view);
-  const pickerSheet = phone && (view === 'pm' || view === 'tickets');
+  const pickerSheet = phone && view === 'tickets';
   const ticketsProject = ws.projects.find((p) => p.id === backlog.projectId);
   const phoneTitle: ReactNode = view === 'tickets' && !detail ? (
     <Button variant="ghost" size="sm" aria-label="Projects and filters" aria-haspopup="dialog" onClick={() => setSheetOpen(true)} className="min-w-0 font-medium">
       <span className="truncate">{ticketsProject ? `${label} · ${ticketsProject.key}` : label}</span>
       <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
     </Button>
-  ) : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label) : label;
+  ) : view === 'tickets' && detail ? peekRef ?? label
+  : view === 'inbox' && detail && inboxId ? (triageTitle(inboxItems, inboxId) ?? label)
+  : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label)
+  : view === 'pm' && detail ? (pmSelection === 'notes' ? 'Notes' : noteOf(pmSelection) ? 'Note' : pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
+  : label;
   const shellActions = (): MenuEntry[] =>
     view === 'pm' ? [
       { label: 'New session…', onSelect: newPmSession },
       { label: 'Notes', onSelect: () => setPmSelection('notes') },
-      { label: 'Earlier sessions…', onSelect: () => setSheetOpen(true) },
+      { label: 'Earlier sessions', onSelect: () => setPmSelection('earlier') },
     ] : view === 'sessions' && detail ? [
       { label: 'New tab', onSelect: () => setChooserOpen(true) },
       { label: bottomOpen ? 'Hide terminal panel' : 'Terminal panel', onSelect: () => setBottomOpen((o) => !o) },
@@ -600,7 +615,10 @@ export function AppShell() {
     <TicketTabsContext.Provider value={ticketTabs}>
     <StartTicketContext.Provider value={startTicket}>
     <TopBarActionsContext.Provider value={setScreenActions}>
-    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground md:flex-row">
+    <div
+      className="flex h-full flex-col overflow-hidden bg-background text-foreground md:flex-row"
+      style={keyboardBox ? { position: 'fixed', left: 0, right: 0, top: keyboardBox.top, height: keyboardBox.height } : undefined}
+    >
       {phone ? (
         <>
           <PhoneTopBar
@@ -627,7 +645,7 @@ export function AppShell() {
             onRenameTab={setRenamingTabId}
           />
           {pickerSheet && (
-            <Sheet side="left" title={view === 'pm' ? 'PM sessions and notes' : 'Projects and filters'} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
+            <Sheet side="left" title="Projects and filters" hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
               <div className="-mx-2">{list}</div>
             </Sheet>
           )}
@@ -705,7 +723,11 @@ export function AppShell() {
         )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {phoneList ? (
+            {phoneList && view === 'inbox' ? (
+              <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
+                onOpen={(id) => go({ view: 'inbox', itemId: id })}
+                onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
+            ) : phoneList ? (
               <div className="flex-1 overflow-auto px-1">
                 {list}
                 {view === 'workflows' && creatingWorkflow && (
@@ -714,10 +736,13 @@ export function AppShell() {
                     onCreated={(id) => { setCreatingWorkflow(null); setWorkflowTarget({ kind: 'workflow', id }); }} /></Suspense>
                 )}
               </div>
+            ) : view === 'inbox' && phone && inboxId ? (
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PhoneInboxItem items={inboxItems} updates={updates.data?.items ?? []}
+                itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'inbox' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'pm' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} onBack={() => goBack(routePath(upRoute(route)))} /></Suspense>
             ) : view === 'personas' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
             ) : view === 'tickets' ? (

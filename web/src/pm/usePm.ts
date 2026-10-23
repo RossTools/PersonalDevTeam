@@ -13,8 +13,14 @@ export function useRefreshPm() {
   return () => Promise.all([qc.invalidateQueries({ queryKey: ['pm'] }), qc.invalidateQueries({ queryKey: ['pm-notes'] })]);
 }
 
-/** What the PM view shows: the current session, the notes, or an earlier session (its id). */
-export type PmSelection = 'current' | 'notes' | (string & {});
+/**
+ * What the PM view shows: the current session, the notes, one note (`note:<id>`), the list of earlier sessions, or an
+ * earlier session (its id).
+ */
+export type PmSelection = 'current' | 'notes' | 'earlier' | `note:${string}` | (string & {});
+
+/** The note a selection shows, if it is one. */
+export const noteOf = (s: PmSelection): string | null => (s.startsWith('note:') ? s.slice(5) : null);
 
 export const REASON_LABEL: Record<RotateReason, string> = {
   context: 'its context filled up',

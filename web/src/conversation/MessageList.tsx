@@ -175,18 +175,24 @@ function resolvedText(ev: Ev<'request'>): string {
   }
 }
 
+/** The DOM id of an open request's card, for the pinned approval bar's Review. */
+export const requestAnchor = (requestId: string) => `request-${requestId}`;
+
 function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: boolean; onAnswer: MessageListProps['onAnswer'] }) {
   const { agent } = useContext(ListCtx);
   if (ev.state === 'open') {
     const plan = ev.requestKind === 'plan' ? planOf(ev.input) : null;
+    const args = ev.requestKind === 'approval' && !ev.diff ? inputText(ev.tool, ev.input) : '';
     return (
       <ApprovalCard
+        id={requestAnchor(ev.id)}
         kind={ev.requestKind}
         title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : approvalTitle(ev.tool)}
         subject={ev.requestKind === 'approval' && !ev.diff ? ev.title || undefined : undefined}
         preview={ev.diff ? <DiffViewer diff={ev.diff} /> : undefined}
         planAcceptEdits={agent === 'claude'}
         description={ev.description}
+        details={args && args !== '{}' && args !== ev.title ? <ToolOutput>{args}</ToolOutput> : undefined}
         canAlways={ev.canAlways}
         questions={ev.requestKind === 'question' ? questionsOf(ev.input) : undefined}
         plan={plan ? <Markdown>{plan}</Markdown> : undefined}

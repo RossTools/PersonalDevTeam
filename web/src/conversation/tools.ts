@@ -62,8 +62,19 @@ function category(tool: string): Category {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** "Ran 3 commands, edited 2 files": what a run of tool calls did (files counted once each). */
+/** A tool's own name: `mcp__pdt__search_tickets` → `search_tickets`. */
+export function shortTool(tool: string): string {
+  return /^mcp__.+?__(.+)$/.exec(tool)?.[1] ?? tool;
+}
+
+/**
+ * "Ran 3 commands, edited 2 files": what a run of tool calls did (files counted once each). Calls of one tool that
+ * fits no category read "search_tickets · 2 calls".
+ */
 export function summarizeTools(calls: { tool: string; title: string }[]): string {
+  if (calls.length > 0 && calls.every((c) => c.tool === calls[0].tool) && category(calls[0].tool) === 'other') {
+    return `${shortTool(calls[0].tool)} · ${plural(calls.length, 'call', 'calls')}`;
+  }
   const counts: Record<Category, number> = { command: 0, edit: 0, read: 0, search: 0, web: 0, agent: 0, other: 0 };
   const files: Partial<Record<Category, Set<string>>> = {};
   for (const c of calls) {

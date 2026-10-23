@@ -314,6 +314,47 @@ describe('ConversationComposer', () => {
     expect(p.onInterrupt).toHaveBeenCalledTimes(2);
   });
 
+  describe('on a phone', () => {
+    const stubPhone = (keyboard: boolean) => {
+      vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width'), media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+      // The on-screen keyboard leaves the visual viewport much shorter than the layout one; a hardware keyboard doesn't.
+      vi.stubGlobal('visualViewport', { height: keyboard ? 400 : 800, scale: 1, offsetTop: 0, addEventListener: () => {}, removeEventListener: () => {} });
+      vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(800);
+    };
+    afterEach(() => vi.restoreAllMocks());
+
+    it('Enter adds a line on the on-screen keyboard and ⬆ sends', async () => {
+      stubPhone(true);
+      const p = setup();
+      const box = screen.getByRole('textbox', { name: 'Message' });
+      await userEvent.type(box, 'one{Enter}two');
+      expect(p.onSend).not.toHaveBeenCalled();
+      expect(box).toHaveValue('one\ntwo');
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+      expect(p.onSend).toHaveBeenCalledWith('one\ntwo', undefined);
+    });
+
+    it('a hardware keyboard keeps Enter to send', async () => {
+      stubPhone(false);
+      const p = setup();
+      await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hi{Enter}');
+      expect(p.onSend).toHaveBeenCalledWith('hi', undefined);
+    });
+
+    it('⬆ is Stop while the agent works and the box is empty; text queues', async () => {
+      stubPhone(true);
+      const p = setup({ turnRunning: true });
+      expect(screen.queryByRole('button', { name: 'Queue' })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /Stop/ }));
+      expect(p.onInterrupt).toHaveBeenCalledTimes(1);
+      await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'later');
+      expect(screen.queryByRole('button', { name: /Stop/ })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Queue' }));
+      expect(p.onSend).toHaveBeenCalledWith('later', 'next');
+      expect(screen.getByRole('status')).toHaveTextContent('working');
+    });
+  });
+
   it('Escape does nothing when idle; shows why the agent stopped', async () => {
     const p = setup({ stopped: 'exit 1: out of memory' });
     await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), '{Escape}');
@@ -396,9 +437,37 @@ describe('ConversationView', () => {
       server().send({ type: 'state', state: idle });
       server().send({ type: 'ready' });
     });
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Allow' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/requests/r1')?.body).toEqual({ answer: { type: 'approve', always: false } }));
     expect(await screen.findByText('That request was already answered or has expired.')).toBeInTheDocument();
+  });
+
+  it('pins a bar over the composer while a request is open; Review jumps to its card', async () => {
+    stubApi({ 'GET /api/agents/claude/capabilities': caps });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    const request = (seq: number, state: 'open' | 'answered') =>
+      ev(seq, {
+        kind: 'request', id: 'r1', requestKind: 'approval', tool: 'mcp__pdt__create_ticket', title: 'New ticket in PDT: Fix it',
+        input: { project: 'PDT', title: 'Fix it' }, canAlways: false, state, ...(state === 'answered' ? { answer: { type: 'approve', always: false } } : {}),
+      }, { itemId: 'req' });
+    act(() => {
+      server().open();
+      server().send({ type: 'event', event: ev(1, { kind: 'user_message', text: 'File it', images: [], source: 'pdt' }) });
+      server().send({ type: 'event', event: request(2, 'open') });
+      server().send({ type: 'state', state: { ...idle, turnRunning: true } });
+      server().send({ type: 'ready' });
+    });
+    const bar = screen.getByRole('region', { name: 'Open request' });
+    expect(bar).toHaveTextContent('wants create_ticket');
+    const card = screen.getByRole('region', { name: 'Use pdt: create_ticket?' });
+    // The arguments' summary, with all of them behind the ▾.
+    expect(within(card).getByText('New ticket in PDT: Fix it')).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole('button', { name: 'All arguments' }));
+    expect(within(card).getByText(/"project": "PDT"/)).toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Review' }));
+    expect(card).toHaveFocus();
+    act(() => server().send({ type: 'event', event: request(3, 'answered') }));
+    expect(screen.queryByRole('region', { name: 'Open request' })).not.toBeInTheDocument();
   });
 
   it('interrupts and changes the permission mode', async () => {

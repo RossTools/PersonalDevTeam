@@ -6,7 +6,7 @@ import type { PmState } from '../api/gen/PmState';
 import type { Session } from '../api/gen/Session';
 import { project } from '../tickets/fixtures';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { NotesPage } from './NotesPage';
+import { NotePage, NotesPage } from './NotesPage';
 import { PmList } from './PmList';
 import { PmView } from './PmView';
 import { firstLine } from './usePm';
@@ -88,5 +88,26 @@ describe('the PM', () => {
     await userEvent.click(screen.getByRole('switch', { name: /Pinned/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Add note' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ title: 'Deploys', body: 'Keys in the vault.', pinned: true }));
+  });
+
+  it('opens a note from the list when it can (phones), and shows all of it with Edit', async () => {
+    const calls = stubApi({
+      'GET /api/pm/notes': [note('a', { title: 'Work hours', body: 'Nine to five.\n\nNot on Fridays.' })],
+      'GET /api/projects': [project],
+      'PATCH /api/pm/notes/a': note('a'),
+    });
+    const onOpen = vi.fn();
+    const list = renderWithQuery(<NotesPage onOpen={onOpen} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Work hours/ }));
+    expect(onOpen).toHaveBeenCalledWith('a');
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    list.unmount();
+    renderWithQuery(<NotePage id="a" onGone={() => {}} />);
+    expect(await screen.findByText('Not on Fridays.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Title' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Title' }), 'Hours');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toMatchObject({ title: 'Hours' }));
   });
 });

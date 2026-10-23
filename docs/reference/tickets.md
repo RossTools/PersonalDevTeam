@@ -32,9 +32,17 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
   adds a Draft above the first row when the list is a flat rank order; Shift+Enter opens the full form), filters
   (saved filters per browser in localStorage), bulk bar, rank by drag or Alt+↑/↓; a row opens the peek sheet
-  (non-modal on desktop, full screen on phones), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
+  (non-modal on desktop; on phones a detail screen under the top bar, whose ← is Back), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
   progress / Done (closed in the last 14 days, `closedAfter`); cards drag between columns on desktop, phones show one
   column at a time.
+- Phones (PDT-118): the top bar's title (`Tickets · <KEY> ▾`) opens the projects and saved filters; under it
+  Backlog | Board, ⌕ (shows the search box) and ⚲ (the filters in a bottom sheet, with Save filter; the button shows
+  how many are set). Rows are two lines: key and title, then the agent's state, the pipeline stage (or stage),
+  badges, labels and priority. No drag on touch: rows rank and cards move from their long-press menu. The row menu's
+  Select starts bulk mode (checkboxes, a tap toggles, `BulkActionBar` docked at the bottom), which ends once nothing
+  is selected. A floating ＋ (the app's only floating button) opens New ticket; Import from Jira is under ⋯. The
+  Board picks its column from scrolling chips with counts (the desktop's columns, pipeline stages included) or a
+  swipe sideways (not from the screen's left edge, the system Back gesture).
 - **Pipeline stage** (Phase 7c): `pipelineStage` (`refine | code | review | qa | accept | merge | merge_blocked`,
   `tickets.pipeline_stage`)
   is where a pipeline workflow has the ticket: `refine` while Draft or Ready, the others while In progress. Agent

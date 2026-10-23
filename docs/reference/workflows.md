@@ -588,6 +588,16 @@ opens its tab right after the ticket's tab in the workspace that has it (its Sta
 `TicketTabsContext`, `openChanges` with `ticketId`), moving an existing changes tab there (a session or run tab that
 exists is shown where it is), and switches to it.
 
+On a phone (PDT-117, web/src/inbox/PhoneInboxList.tsx and PhoneInbox.tsx) `/inbox` is the list: **Needs you** (its
+count) | **Updates** (a dot while any is unread), and **Review all (n)** at the bottom opens the first item.
+`/inbox/<item>` shows one item (the top bar says "Approval · 2 of 4"): its ticket and step in brief, the kind's content
+(it scrolls) and its decisions in a bar fixed at the bottom, 48px, primary on the right (Question: the choices as big
+rows, Send; Approval: Deny · Always · Allow; Stalled: Take over (its outcomes in a bottom sheet) · Nudge; a loop limit's,
+gate's, manual step's or timed-out step's own choices; Session waiting: Open session); more than three choices fold
+into **More ▾** (a bottom sheet). A decision shows the next item in place (Back returns to the list), "All clear" after
+the last; a horizontal swipe moves between items without answering. ⋯ has Open session, Open ticket and Dismiss.
+Merge, and the primary choice under Ready to accept, ask first: the PR and its CI, the diff size and View changes.
+
 ## Notifications
 
 PDT-108 (spec: the ticket). pdtd makes each notification once, in `notifications` (pdt-store `notifications.rs`), and

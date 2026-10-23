@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApprovalCard, Button, DiffViewer, EmptyState, Kbd, Textarea, ViewHeader, relativeTime, toast, type ApprovalAnswer } from '@ui';
 import { api, ApiError } from '../api/client';
-import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
@@ -17,7 +16,7 @@ import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, selectedUpdate, step } from './model';
 import { useReadNotification } from '../notifications/queries';
-import { useRefreshInbox } from './useInbox';
+import { useAnswer } from './useAnswer';
 
 /** Keys typed into a field, or with a dialog or menu open, are not the Inbox's. */
 function foreign(e: KeyboardEvent): boolean {
@@ -43,10 +42,9 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
   const updateId = selectedUpdate(selectedId);
   const update = updateId ? updates.find((u) => u.id === updateId) ?? null : null;
   const item = updateId ? null : items.find((i) => i.id === selectedId) ?? null;
-  const refresh = useRefreshInbox();
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
-  const [busy, setBusy] = useState(false);
+  const { busy, answer, dismiss, refresh } = useAnswer(item, (done) => onSelect(after(items, done.id)));
   // Questions: one answer per question, kept per item while it is on screen.
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [nudge, setNudge] = useState('');
@@ -66,31 +64,6 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
     setNudge('');
   }, [selectedId]);
 
-  const answer = async (a: InboxAnswer) => {
-    if (!item) return;
-    setBusy(true);
-    try {
-      await api.answerInbox(item.id, a);
-      onSelect(after(items, item.id));
-      await refresh();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) toast.info(err.message);
-      else toast.error(actionError(err));
-      await refresh();
-    } finally {
-      setBusy(false);
-    }
-  };
-  const dismiss = async () => {
-    if (!item || !dismissable(item)) return;
-    try {
-      await api.dismissInbox(item.id);
-      onSelect(after(items, item.id));
-      await refresh();
-    } catch (err) {
-      toast.error(actionError(err));
-    }
-  };
   const questionAnswers = item ? answers[item.id] ?? [] : [];
   const sendAnswers = () => void answer({ answers: questionAnswers });
   const doPrimary = () => {
@@ -283,7 +256,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
 }
 
 /** An Update: what it says, read once it is open, and a way to what it is about. */
-function UpdateView({ update, onOpenTarget }: { update: Notification; onOpenTarget?: (t: NotificationTarget) => void }) {
+export function UpdateView({ update, onOpenTarget }: { update: Notification; onOpenTarget?: (t: NotificationTarget) => void }) {
   const read = useReadNotification();
   const unread = update.readAt === null;
   const { mutate } = read;
@@ -367,22 +340,25 @@ function Questions({ item, answers, onChange, onSend, busy }: {
   );
 }
 
+/** Answers an approval item's permission request in its session; `onAnswered` once it went through. */
+export async function answerApproval(item: InboxItem, a: ApprovalAnswer, onAnswered: () => void) {
+  const requestId = typeof item.body.requestId === 'string' ? item.body.requestId : '';
+  try {
+    await api.answerRequest(item.sessionId!, requestId, a);
+    onAnswered();
+  } catch (err) {
+    if (err instanceof ApiError && err.code === 'request_closed') toast.info('That request was already answered or has expired.');
+    else toast.error(actionError(err));
+  }
+}
+
 /** An agent's open permission request, answered in its session. */
 function Approval({ item, onAnswered }: { item: InboxItem; onAnswered: () => void }) {
   const tool = typeof item.body.tool === 'string' ? item.body.tool : 'tool';
-  const requestId = typeof item.body.requestId === 'string' ? item.body.requestId : '';
   const diff = typeof item.body.diff === 'string' ? item.body.diff : null;
   const description = typeof item.body.description === 'string' ? item.body.description : undefined;
   const questions = requestQuestions(item.body.input);
-  const onAnswer = async (a: ApprovalAnswer) => {
-    try {
-      await api.answerRequest(item.sessionId!, requestId, a);
-      onAnswered();
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'request_closed') toast.info('That request was already answered or has expired.');
-      else toast.error(actionError(err));
-    }
-  };
+  const onAnswer = (a: ApprovalAnswer) => answerApproval(item, a, onAnswered);
   return (
     <ApprovalCard
       kind={questions.length > 0 ? 'question' : 'approval'}

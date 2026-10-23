@@ -22,8 +22,11 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
+import { AgentDot } from '../common/AgentState';
+import { useTopBarActions } from '../shell/PhoneTopBar';
 import { AttemptSection, MergedBanner } from './Attempt';
-import { Board } from './Board';
+import { agentLine, Board, PIPELINE_LABEL } from './Board';
+import { NewTicketFab, PhoneToolbar } from './PhoneTickets';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { ImportJiraDialog } from './ImportJiraDialog';
@@ -166,11 +169,15 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
           <span className={cn('min-w-0 flex-1 truncate', isClosed(t.stage) && 'text-muted-foreground line-through')}>{t.title}</span>
         </div>
         <div className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-          <span>{STAGE_LABEL[t.stage]}</span>
-          <span aria-hidden>·</span>
-          <PriorityIcon priority={t.priority} />
+          {t.agent && (() => {
+            const line = agentLine(t.agent);
+            return <><AgentDot state={line.dot} /><span className="max-w-32 shrink-0 truncate">{line.text}</span><span aria-hidden>·</span></>;
+          })()}
+          <span className="shrink-0">{t.pipelineStage && t.stage === 'in_progress' ? PIPELINE_LABEL[t.pipelineStage] : STAGE_LABEL[t.stage]}</span>
           {badges}
-          <LabelChips labels={t.labels} className="overflow-hidden" />
+          <LabelChips labels={t.labels} className="min-w-0 overflow-hidden" />
+          <span className="flex-1" />
+          <PriorityIcon priority={t.priority} />
         </div>
       </div>
     );
@@ -192,7 +199,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
 
 /** `before`: the first row of a flat rank-ordered list, so the new ticket shows up where it was typed (without it the
  *  server puts it at the top of Draft, which may be far down). */
-function QuickAdd({ projectId, before, phone, onDetails }: { projectId: string; before?: string; phone: boolean; onDetails: (title: string) => void }) {
+function QuickAdd({ projectId, before, onDetails }: { projectId: string; before?: string; onDetails: (title: string) => void }) {
   const qc = useQueryClient();
   const [title, setTitle] = useState('');
   const [pending, setPending] = useState(false);
@@ -219,7 +226,7 @@ function QuickAdd({ projectId, before, phone, onDetails }: { projectId: string; 
       <Plus aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <Input
         aria-label="New ticket title"
-        placeholder={phone ? 'New ticket title' : 'New ticket title… Enter to add, Shift+Enter for details'}
+        placeholder="New ticket title… Enter to add, Shift+Enter for details"
         value={title}
         disabled={pending}
         maxLength={200}
@@ -249,64 +256,82 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
   useEffect(() => {
     if (t) onLoaded(t);
   }, [t, onLoaded]);
+  const title = t ? `${t.key} · ${t.title}` : 'Ticket';
+  const actions = t && (
+    <>
+      <MenuButton
+        label="Ticket actions"
+        placement="top end"
+        entries={() => [
+          ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
+          { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
+          ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
+          { separator: true },
+          { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
+        ]}
+      />
+      {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
+      {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
+      {/* On a phone the route changes to the tab, so the peek goes with it: closing it too would go Back over that. */}
+      <Button variant="primary" onClick={() => { if (!phone) onClose(); open(t); }}>Open</Button>
+    </>
+  );
+  const body = (
+    !t ? (
+      q.isPending && !missing ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
+    ) : (
+      // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
+      <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
+        <div className={cn('flex flex-col gap-2', !phone && 'pr-8')}>
+          <span className="flex items-center gap-1 self-start">
+            {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} />}
+            <TicketKey ticketKey={t.key} />
+          </span>
+          <TicketTitle ticket={t} className="text-base font-semibold" />
+          <StageStepper stage={t.stage} compact />
+          <TicketBadges ticket={t} className="flex-wrap" />
+          {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
+          <MergedBanner ticket={t} className="rounded-md border" />
+        </div>
+        <TicketDetails ticket={t} />
+        <AttemptSection ticket={t} compact />
+        {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
+        <TicketDescription key={t.id} ticket={t} />
+        <PartsSection ticket={t} />
+        <TicketLinks ticket={t} />
+        <TicketTimeline ticketId={t.id} recent={5} />
+      </div>
+    )
+  );
+  const makeParts = making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />;
+  // On a phone the ticket is a detail screen under the top bar (← is Back), not a sheet over it (PDT-112).
+  if (phone) {
+    if (!shown) return makeParts || null;
+    return (
+      <section aria-label={title} className="flex min-h-0 flex-1 flex-col">
+        {makeParts}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{body}</div>
+        {actions && <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">{actions}</div>}
+      </section>
+    );
+  }
   return (
     <>
-    {making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />}
+    {makeParts}
     <Sheet
       side="right"
-      title={t ? `${t.key} · ${t.title}` : 'Ticket'}
+      title={title}
       hideTitle
       open={shown}
-      // On desktop the backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on
-      // a backlog row or a board card or lane, which shows that ticket instead.
-      modal={phone}
+      // The backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on a backlog
+      // row or a board card or lane, which shows that ticket instead.
+      modal={false}
       keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}
       onOpenChange={(o) => !o && onClose()}
-      className={phone ? 'w-full max-w-full' : 'w-[32rem] max-w-[90vw]'}
-      footer={t && (
-        <>
-          <MenuButton
-            label="Ticket actions"
-            placement="top end"
-            entries={() => [
-              ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-              { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
-              ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
-              { separator: true },
-              { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
-            ]}
-          />
-          {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
-          {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
-          <Button variant="primary" onClick={() => { onClose(); open(t); }}>Open</Button>
-        </>
-      )}
+      className="w-[32rem] max-w-[90vw]"
+      footer={actions}
     >
-      {!t ? (
-        q.isPending && !missing ? <Skeleton lines={4} label="Loading ticket" /> : <p className="text-sm text-muted-foreground">{q.error?.message ?? 'Ticket not found.'}</p>
-      ) : (
-        // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
-        <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
-          <div className="flex flex-col gap-2 pr-8">
-            <span className="flex items-center gap-1 self-start">
-              {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} />}
-              <TicketKey ticketKey={t.key} />
-            </span>
-            <TicketTitle ticket={t} className="text-base font-semibold" />
-            <StageStepper stage={t.stage} compact />
-            <TicketBadges ticket={t} className="flex-wrap" />
-            {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
-            <MergedBanner ticket={t} className="rounded-md border" />
-          </div>
-          <TicketDetails ticket={t} />
-          <AttemptSection ticket={t} compact />
-          {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
-          <TicketDescription key={t.id} ticket={t} />
-          <PartsSection ticket={t} />
-          <TicketLinks ticket={t} />
-          <TicketTimeline ticketId={t.id} recent={5} />
-        </div>
-      )}
+      {body}
     </Sheet>
     </>
   );
@@ -353,6 +378,8 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   useClearToStartToasts(mode === 'backlog' ? items : []);
   const labels = useLabels(project?.id ?? null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  // Phones: rows get checkboxes only in bulk mode (a row's menu → Select), which ends once nothing is selected.
+  const [selecting, setSelecting] = useState(false);
   const [ownPeek, setOwnPeek] = useState<string | null>(null);
   const peekRef = peek ? peek.ticket : ownPeek;
   const setPeekId = useCallback((ref: string | null) => (peek ? peek.onChange(ref) : setOwnPeek(ref)), [peek]);
@@ -368,6 +395,11 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   // Only rows still in the list count as selected (a refetch may have dropped some).
   const selected = useMemo(() => items.filter((t) => selection.has(t.id)), [items, selection]);
   const selectedIds = selected.map((t) => t.id);
+  const bulkMode = !phone || selecting;
+  useEffect(() => {
+    if (selecting && selected.length === 0) setSelecting(false);
+  }, [selecting, selected.length]);
+  const clearSelection = () => { setSelection(new Set()); setSelecting(false); };
   const allLabels = useMemo(
     () => [...new Set([...(labels.data ?? []), ...items.flatMap((t) => t.labels)])].sort(),
     [labels.data, items],
@@ -386,7 +418,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     void runAction(async () => {
       await api.bulkTickets({ ids: selectedIds, action, ...(value !== undefined ? { value } : {}) });
       invalidateTickets(qc, selectedIds);
-      if (!keep) setSelection(new Set());
+      if (!keep) clearSelection();
     });
   const bulkDelete = () =>
     void runAction(async () => {
@@ -399,7 +431,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       });
       if (!ok) return;
       await api.bulkTickets({ ids: selectedIds, action: 'delete' });
-      setSelection(new Set());
+      clearSelection();
       invalidateTickets(qc);
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
     });
@@ -422,9 +454,12 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   };
 
   const rowMenu = (t: TicketSummary) => (at: { x: number; y: number }) =>
-    openMenu(at, `Ticket ${t.key}`, () =>
-      ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => { if (peekId === t.id) setPeekId(null); } }),
-    );
+    openMenu(at, `Ticket ${t.key}`, () => [
+      ...(phone && !selecting
+        ? [{ label: 'Select', onSelect: () => { setSelection(new Set([t.id])); setSelecting(true); } }, { separator: true } as MenuEntry]
+        : []),
+      ...ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => { if (peekId === t.id) setPeekId(null); } }),
+    ]);
 
   const stageOptions = STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }));
   const priorityOptions = PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }));
@@ -450,6 +485,50 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     </>
   );
 
+  const priorityEntries = () => PRIORITIES.map((p): MenuEntry => ({ label: PRIORITY_LABEL[p], onSelect: () => bulk('priority', p) }));
+  // Phones: the moves under one menu, labels and Delete under ⋯, so the bar fits a narrow screen.
+  const bulkBar = phone ? (
+    <BulkActionBar count={selected.length} onClear={clearSelection}
+      className="h-auto min-h-12 border-t border-border pb-[env(safe-area-inset-bottom)]">
+      <MenuButton
+        label="Move"
+        placement="top start"
+        entries={() => [
+          { label: 'Move to Ready', onSelect: () => bulk('stage', 'ready') },
+          { label: 'Move to To do', onSelect: () => bulk('stage', 'todo') },
+          { label: 'Move to top', onSelect: () => bulk('top') },
+        ]}
+      >
+        <Button size="sm" compact variant="ghost">Move <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <MenuButton label="Set priority" placement="top start" entries={priorityEntries}>
+        <Button size="sm" compact variant="ghost">Priority <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <MenuButton
+        label="More bulk actions"
+        placement="top end"
+        entries={() => [{ submenu: 'Label', entries: labelEntries() }, { separator: true }, { label: 'Delete…', danger: true, onSelect: bulkDelete }]}
+      />
+    </BulkActionBar>
+  ) : (
+    <BulkActionBar count={selected.length} noun={selected.length === 1 ? 'ticket' : 'tickets'} onClear={clearSelection}>
+      <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'ready')}>Move to Ready</Button>
+      <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'todo')}>Move to To do</Button>
+      <MenuButton label="Set priority" placement="bottom start" entries={priorityEntries}>
+        <Button size="sm" compact variant="ghost">Priority <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <MenuButton label="Labels" placement="bottom start" entries={labelEntries}>
+        <Button size="sm" compact variant="ghost">Label <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <Button size="sm" compact variant="ghost" onClick={() => bulk('top')}>Move to top</Button>
+      <Button size="sm" compact variant="ghost" className="text-destructive" onClick={bulkDelete}>Delete…</Button>
+    </BulkActionBar>
+  );
+
+  // Phones: Import from Jira under the top bar's ⋯ (the list screen only).
+  const jira = phone && peekRef === null && !!project && !!settings.data?.jira;
+  useTopBarActions(jira ? () => [{ label: 'Import from Jira…', onSelect: () => setImporting(true) }] : null);
+
   let body: ReactNode;
   if (projects.length === 0) {
     body = <EmptyState>Add a project in Settings to start writing tickets.</EmptyState>;
@@ -465,17 +544,18 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     body = (
       <DataList<TicketSummary>
         // React Aria's GridList can't gain or lose drag and drop in place: a new list when ranking turns on or off.
-        key={rankable ? 'ranked' : 'plain'}
+        key={rankable && !phone ? 'ranked' : 'plain'}
         aria-label="Tickets"
         striped
         {...(sections ? { sections } : { items })}
-        dependencies={[phone, rankable]}
+        dependencies={[phone, rankable, bulkMode]}
         rowHeight={phone ? 56 : 36}
-        selectable
+        selectable={bulkMode}
         selectedKeys={selection}
         onSelectionChange={setSelection}
         onAction={setPeekId}
-        {...(rankable
+        // Phones rank from the row's menu (Move to top / bottom): no drag on touch.
+        {...(rankable && !phone
           ? {
               dragKind: 'ticket',
               onMove: (m) => moveRows(m.ids, m.before ?? m.after!, m.before ? 'before' : 'after'),
@@ -487,7 +567,8 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         {...(pages.hasNextPage ? { onEndReached: () => void pages.fetchNextPage() } : {})}
         loadingMore={pages.isFetchingNextPage}
         renderEmpty={empty}
-        className="min-h-0 flex-1"
+        // Phones: room under the last row for the floating ＋.
+        className={cn('min-h-0 flex-1', phone && 'pb-20')}
       >
         {(t) => (
           <DataListRow
@@ -503,6 +584,25 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     );
   }
 
+  const ticketPeek = <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />;
+  // On a phone a peeked ticket is its own screen, in place of the list.
+  if (phone && peekRef !== null) return <div className="flex min-h-0 flex-1 flex-col">{ticketPeek}</div>;
+  if (phone) {
+    return (
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {projects.length > 0 && <PhoneToolbar backlog={backlog} labels={allLabels} />}
+        <div className="flex min-h-0 flex-1 flex-col">{body}</div>
+        {mode === 'backlog' && selected.length > 0 ? (
+          bulkBar
+        ) : (
+          projects.length > 0 && <NewTicketFab onClick={() => onNewTicket(project?.id ?? null)} />
+        )}
+        {importing && project && <ImportJiraDialog projectId={project.id} onClose={() => setImporting(false)} />}
+        {menu}
+        {ticketPeek}
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader
@@ -537,30 +637,12 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       {mode === 'backlog' && projects.length > 0 && (
         <>
           <div className="shrink-0 border-b border-border">
-            {selected.length > 0 ? (
-              <BulkActionBar count={selected.length} noun={selected.length === 1 ? 'ticket' : 'tickets'} onClear={() => setSelection(new Set())}>
-                <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'ready')}>Move to Ready</Button>
-                <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'todo')}>Move to To do</Button>
-                <MenuButton
-                  label="Set priority"
-                  placement="bottom start"
-                  entries={() => PRIORITIES.map((p) => ({ label: PRIORITY_LABEL[p], onSelect: () => bulk('priority', p) }))}
-                >
-                  <Button size="sm" compact variant="ghost">Priority <ChevronDown aria-hidden /></Button>
-                </MenuButton>
-                <MenuButton label="Labels" placement="bottom start" entries={labelEntries}>
-                  <Button size="sm" compact variant="ghost">Label <ChevronDown aria-hidden /></Button>
-                </MenuButton>
-                <Button size="sm" compact variant="ghost" onClick={() => bulk('top')}>Move to top</Button>
-                <Button size="sm" compact variant="ghost" className="text-destructive" onClick={bulkDelete}>Delete…</Button>
-              </BulkActionBar>
-            ) : (
+            {selected.length > 0 ? bulkBar : (
               <FilterBar
                 search={filters.q}
                 onSearchChange={(q) => backlog.setFilters({ q })}
                 searchLabel="Search tickets"
-                // Phones: the view options wrap with the chips instead of pinning to the end.
-                trailing={phone ? undefined : viewOptions}
+                trailing={viewOptions}
               >
                 <MultiChip<TicketStage>
                   label="Stage"
@@ -571,16 +653,15 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
                 <ChoiceChip label="Blocked" yes="Blocked" no="Unblocked" value={filters.blocked} onChange={(blocked) => backlog.setFilters({ blocked })} />
                 <ChoiceChip label="Overlap" yes="With overlap" no="No overlap" value={filters.conflicts} onChange={(conflicts) => backlog.setFilters({ conflicts })} />
-                {phone && viewOptions}
               </FilterBar>
             )}
           </div>
-          {project && <QuickAdd projectId={project.id} phone={phone} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
+          {project && <QuickAdd projectId={project.id} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
         </>
       )}
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>
       {menu}
-      <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />
+      {ticketPeek}
     </div>
   );
 }

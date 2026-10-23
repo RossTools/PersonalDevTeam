@@ -13,6 +13,7 @@ import { ConversationComposer } from './ConversationComposer';
 import type { EventsSocketLike } from './eventsSocket';
 import { KIND_LABEL } from '../common/SessionKindIcon';
 import { MessageList } from './MessageList';
+import { PinnedApprovalBar } from './PinnedApprovalBar';
 import { useConversation, type ConversationData } from './useConversation';
 
 /** What Continue sends after an interrupted turn. */
@@ -132,6 +133,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
       {conv.status === 'reconnecting' && (
         <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">Reconnecting…</p>
       )}
+      <PinnedApprovalBar rows={conv.rows} />
       {readOnly ?? <ConversationComposer
         key={session.id}
         draftKey={session.id}
