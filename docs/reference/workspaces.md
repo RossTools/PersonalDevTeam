@@ -47,8 +47,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   cards with the tab's state and a live snippet: an open question (the Inbox's question or approval for the session,
   else the conversation's open request), else the agent's last line (`GET /api/sessions/{id}/events?last=20`), and
   the branch's `+added −removed`. A tap opens the tab, a long press has the tab's menu, Back closes it. A session's
-  header is one line (state, title, branch chip) with Changes, Conversation/Terminal, Compose, Stop, Restart, Make
-  ticket and Remove under its ⋯; a run's is one line with its state, Stop and Restart under ⋯.
+  header is one line (state, title, branch chip) with Changes, Conversation/Terminal, Paste, Compose, Font size (a
+  terminal's, [agents.md](agents.md) "Terminals"), Stop, Restart, Make ticket and Remove under its ⋯; a run's is one line with its state, Stop and Restart under ⋯.
 
 ## URLs
 

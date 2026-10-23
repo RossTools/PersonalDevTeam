@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -7,6 +7,8 @@ const h = vi.hoisted(() => ({
     cols: number; rows: number; fontFamilySets: unknown[];
     keyHandler: ((e: KeyboardEvent) => boolean) | null; modes: { bracketedPasteMode: boolean };
     selectionCb: (() => void) | null; selection: string; opts: Record<string, unknown>;
+    options: Record<string, unknown>; textarea: HTMLTextAreaElement; focusCount: number; blurCount: number;
+    selected: unknown[]; scrolled: number[]; lines: string[]; focus(): void;
   },
   clipboard: null as null | { readText(s: string): string; writeText(s: string, t: string): Promise<void> },
   sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; resizes: string[]; disposed: boolean; connected: boolean; retries: number },
@@ -38,8 +40,20 @@ vi.mock('@xterm/xterm', () => ({
     hasSelection() { return this.selection !== ''; }
     getSelection() { return this.selection; }
     loadAddon() {}
-    open() {}
-    focus() {}
+    textarea = document.createElement('textarea');
+    open(el: HTMLElement) { el.appendChild(this.textarea); }
+    focusCount = 0;
+    blurCount = 0;
+    focus() { this.focusCount++; this.textarea.focus(); }
+    blur() { this.blurCount++; this.textarea.blur(); }
+    paste(text: string) { this.dataCb?.(`\x1b[200~${text}\x1b[201~`); }
+    selected: unknown[] = [];
+    select(col: number, row: number, len: number) { this.selected.push([col, row, len]); this.selection = 'web/src/main.tsx'; }
+    clearSelection() { this.selection = ''; }
+    scrolled: number[] = [];
+    scrollLines(n: number) { this.scrolled.push(n); }
+    lines: string[] = [];
+    buffer = { active: { viewportY: 100, getLine: (y: number) => ({ translateToString: () => this.lines[y - 100] ?? '' }) } };
     callbacks: (() => void)[] = [];
     write(d: unknown, cb?: () => void) { this.written.push(d); if (cb) this.callbacks.push(cb); }
     /** Simulates xterm finishing parsing everything written so far. */
@@ -78,7 +92,10 @@ vi.mock('./ptySocket', () => ({
   },
 }));
 
-import { TerminalView } from './TerminalView';
+import { createRef } from 'react';
+import { TerminalView, type TerminalHandle } from './TerminalView';
+import { setTerminalFontSize } from './fontSize';
+import { usePrefixKeys } from '../workspaces/keys';
 
 describe('TerminalView sizing', () => {
   it('refits once per frame, tells the PTY only real size changes, and remeasures once the font loads', async () => {
@@ -161,6 +178,119 @@ describe('TerminalView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Up' }));
     fireEvent.click(screen.getByRole('button', { name: 'Control C' }));
     expect(h.sock!.sent).toEqual(['\x1b', '\x1b[A', '\x03']);
+  });
+
+  describe('key bar', () => {
+    it('has a sticky Ctrl that applies to the next key typed or tapped', () => {
+      render(<TerminalView sessionId="s1" />);
+      const ctrl = screen.getByRole('button', { name: 'Control' });
+      fireEvent.click(ctrl);
+      expect(ctrl).toHaveAttribute('aria-pressed', 'true');
+      act(() => h.term!.dataCb!('r'));
+      expect(ctrl).toHaveAttribute('aria-pressed', 'false');
+      act(() => h.term!.dataCb!('r'));
+      fireEvent.click(ctrl);
+      act(() => h.term!.dataCb!('C'));
+      fireEvent.click(ctrl);
+      fireEvent.click(screen.getByRole('button', { name: 'Up' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Escape' }));
+      expect(h.sock!.sent).toEqual(['\x12', 'r', '\x03', '\x1b[1;5A', '\x1b']);
+    });
+
+    it('tapping Ctrl twice lets go of it', () => {
+      render(<TerminalView sessionId="s1" />);
+      const ctrl = screen.getByRole('button', { name: 'Control' });
+      fireEvent.click(ctrl);
+      fireEvent.click(ctrl);
+      expect(ctrl).toHaveAttribute('aria-pressed', 'false');
+      act(() => h.term!.dataCb!('r'));
+      expect(h.sock!.sent).toEqual(['r']);
+    });
+
+    it('⌃] runs the next typed key as a PDT shortcut, and sends Ctrl+] when tapped twice', () => {
+      const onAction = vi.fn();
+      renderHook(() => usePrefixKeys(onAction));
+      render(<TerminalView sessionId="s1" />);
+      const prefix = screen.getByRole('button', { name: 'PDT prefix (Control ])' });
+      fireEvent.click(prefix);
+      expect(prefix).toHaveAttribute('aria-pressed', 'true');
+      act(() => h.term!.dataCb!('n'));
+      expect(onAction).toHaveBeenCalledWith({ type: 'next' });
+      expect(h.sock!.sent).toEqual([]);
+      fireEvent.click(prefix);
+      fireEvent.click(prefix);
+      expect(h.sock!.sent).toEqual(['\x1d']);
+    });
+
+    it('⌨ hides and shows the keyboard, and keys leave it hidden', () => {
+      render(<TerminalView sessionId="s1" />);
+      act(() => h.term!.focus());
+      const kb = screen.getByRole('button', { name: 'Hide keyboard' });
+      fireEvent.click(kb);
+      expect(h.term!.blurCount).toBe(1);
+      expect(screen.getByRole('button', { name: 'Show keyboard' })).toBeInTheDocument();
+      const focusCount = h.term!.focusCount;
+      fireEvent.click(screen.getByRole('button', { name: 'Tab' }));
+      expect(h.term!.focusCount).toBe(focusCount);
+      fireEvent.click(screen.getByRole('button', { name: 'Show keyboard' }));
+      expect(h.term!.focusCount).toBe(focusCount + 1);
+      expect(screen.getByRole('button', { name: 'Hide keyboard' })).toBeInTheDocument();
+    });
+  });
+
+  it('pastes the clipboard as a paste through the handle', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { readText: vi.fn().mockResolvedValue('hi') }, configurable: true });
+    const handle = createRef<TerminalHandle>();
+    render(<TerminalView sessionId="s1" handle={handle} />);
+    act(() => handle.current!.paste());
+    await waitFor(() => expect(h.sock!.sent).toEqual(['\x1b[200~hi\x1b[201~']));
+  });
+
+  it('keeps the font size picked, in every terminal', () => {
+    render(<TerminalView sessionId="s1" />);
+    expect(h.term!.opts.fontSize).toBe(13);
+    act(() => setTerminalFontSize(16));
+    expect(h.term!.options.fontSize).toBe(16);
+    render(<TerminalView sessionId="s2" />);
+    expect(h.term!.opts.fontSize).toBe(16);
+    act(() => setTerminalFontSize(13));
+    expect(localStorage.getItem('pdt.terminal.fontSize')).toBeNull();
+  });
+
+  describe('touch', () => {
+    const at = (x: number, y: number) => ({ touches: [{ clientX: x, clientY: y }] as unknown as TouchList });
+    const setup = () => {
+      render(<TerminalView sessionId="s1" />);
+      const el = screen.getByTestId('terminal');
+      // 80x24 cells of 10x20 px.
+      el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 480, right: 800, bottom: 480, x: 0, y: 0, toJSON() {} });
+      return el;
+    };
+
+    it('scrolls the scrollback a line per cell height', () => {
+      const el = setup();
+      fireEvent.touchStart(el, at(100, 100));
+      fireEvent.touchMove(el, at(100, 145));
+      fireEvent.touchMove(el, at(100, 165));
+      fireEvent.touchEnd(el, { touches: [] });
+      expect(h.term!.scrolled).toEqual([-2, -1]);
+    });
+
+    it('a long press selects the word under the finger and offers Copy', async () => {
+      vi.useFakeTimers();
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      const el = setup();
+      h.term!.lines = ['', 'see web/src/main.tsx now'];
+      fireEvent.touchStart(el, at(85, 25)); // column 8, row 1
+      act(() => vi.advanceTimersByTime(500));
+      expect(h.term!.selected).toEqual([[4, 101, 16]]);
+      fireEvent.touchEnd(el, { touches: [] });
+      vi.useRealTimers();
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('web/src/main.tsx'));
+      expect(screen.queryByRole('toolbar', { name: 'Selection' })).not.toBeInTheDocument();
+    });
   });
 
   it('sends Shift+Enter as a line break instead of Enter', () => {

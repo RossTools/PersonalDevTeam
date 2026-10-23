@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, MenuButton, SegmentedControl, toast, useConfirm, ViewHeader, type MenuEntry } from '@ui';
 import { api, ApiError } from '../api/client';
@@ -14,7 +14,8 @@ import { ConversationPane } from '../conversation/ConversationView';
 import type { EventsSocketLike } from '../conversation/eventsSocket';
 import { useConversation, type ConversationData } from '../conversation/useConversation';
 import { branchUrl, repoUrl } from '../projects/github';
-import { TerminalView } from '../terminal/TerminalView';
+import { TerminalView, type TerminalHandle } from '../terminal/TerminalView';
+import { FONT_SIZES, setTerminalFontSize, useTerminalFontSize } from '../terminal/fontSize';
 import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
 import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
@@ -232,7 +233,8 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
     if (ok) await remove();
   };
 
-  const entries = (): MenuEntry[] => [
+  // On a phone, Compose sits with the terminal's other actions (terminalEntries).
+  const entries = (compose = true): MenuEntry[] => [
     // Devin cannot draft on the side without touching the conversation (the server says draft_unsupported).
     ...(scratch && session.agent !== 'devin' ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
     ...(conversation
@@ -244,7 +246,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
       : [
           ...(running
             ? [
-                { label: 'Compose', onSelect: () => setComposing((c) => !c) },
+                ...(compose ? [{ label: 'Compose', onSelect: () => setComposing((c) => !c) }] : []),
                 { label: 'Stop', onSelect: () => void askStop(), disabled: busy },
               ]
             : []),
@@ -259,6 +261,21 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
 
   // Phones (PDT-114): the header is one line (state, title, branch) and every action is under its ⋯.
   const phone = useMediaQuery(PHONE_QUERY);
+  // The terminal's own actions (PDT-115): Paste and Font size, beside Compose.
+  const terminal = useRef<TerminalHandle>(null);
+  const fontSize = useTerminalFontSize();
+  const terminalShown = showTerminal || !conv;
+  const terminalEntries = (): MenuEntry[] => terminalShown
+    ? [
+        ...(running ? [{ label: 'Paste', onSelect: () => terminal.current?.paste() }] : []),
+        ...(running && !conversation ? [{ label: 'Compose', onSelect: () => setComposing((c) => !c) }] : []),
+        {
+          submenu: `Font size (${fontSize})`,
+          entries: FONT_SIZES.map((n) => ({ label: n === fontSize ? `${n} ✓` : String(n), onSelect: () => setTerminalFontSize(n) })),
+        },
+        { separator: true } as const,
+      ]
+    : [];
   const phoneEntries = (): MenuEntry[] => [
     ...(session.worktreeId ? [{ label: 'Changes', onSelect: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }, { here: true }) }] : []),
     ...(oneAtATime
@@ -276,7 +293,8 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         }]
       : []),
     ...(session.worktreeId || oneAtATime || switchable ? [{ separator: true } as const] : []),
-    ...entries(),
+    ...terminalEntries(),
+    ...entries(false),
   ];
 
   return (
@@ -365,14 +383,14 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
             {ended && !conversation && (
               <Button variant="primary" size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>{restartLabel}</Button>
             )}
-            <MenuButton label="Session actions" size="sm" placement="bottom end" entries={entries} />
+            <MenuButton label="Session actions" size="sm" placement="bottom end" entries={() => entries()} />
           </>
         }
       />
       )}
       {showTerminal ? (
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <TerminalView key={`${session.id}:tui`} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
+          <TerminalView key={`${session.id}:tui`} handle={terminal} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
         </div>
       ) : conv ? (
         <ConversationPane
@@ -389,6 +407,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
         <div className="relative flex min-h-0 flex-1 flex-col">
           <TerminalView
             key={session.id}
+            handle={terminal}
             sessionId={session.id}
             sessionStatus={session.status}
             polledAt={polledAt}

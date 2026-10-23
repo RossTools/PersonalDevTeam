@@ -59,7 +59,7 @@ describe('SessionView header', () => {
     await userEvent.click(within(h).getByRole('button', { name: 'Session actions' }));
     const menu = await screen.findByRole('menu', { name: 'Session actions' });
     expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent))
-      .toEqual(['Changes', 'Show as conversation', 'Compose', 'Stop', 'Restart', 'Copy path', 'Remove…']);
+      .toEqual(['Changes', 'Show as conversation', 'Paste', 'Compose', 'Font size (13)', 'Stop', 'Restart', 'Copy path', 'Remove…']);
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'Show as conversation' }));
     // The agent is working: switching asks first, as the desktop switch does.
     await userEvent.click(await screen.findByRole('button', { name: 'Close terminal and switch' }));

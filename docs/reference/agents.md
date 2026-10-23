@@ -162,6 +162,14 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `FORCE_HYPERLINK=1`) open on Cmd/Ctrl+click or a tap, and hovering a wrapped OSC 8 link underlines all its rows
   (web/src/terminal/linkSpan.ts reads xterm's undocumented cell `extended.urlId`); Option+drag selects while the
   program owns the mouse.
+- On touch devices (PDT-115, web/src/terminal/keyBar.ts) a key bar sits under the terminal, above the on-screen
+  keyboard: `Esc Tab Ctrl ^C ↑ ↓ ← → ⌃] ⌨`, scrolling sideways when it doesn't fit and never taking focus. Ctrl is
+  sticky: tapped, it applies to the next key typed or tapped (Ctrl+R, Ctrl+arrow), then lets go; tapped again it
+  lets go. ⌃] is PDT's prefix: the next typed key runs its shortcut (`runPrefixKey`), and ⌃] twice sends Ctrl+] to
+  the program. ⌨ puts the keyboard away (keys then leave it down) and brings it back. A drag scrolls the scrollback; a
+  long press selects the word under the finger, dragging extends it, and a Copy bar copies it. On a phone the
+  session's ⋯ has Paste (the clipboard as a bracketed paste), Compose and Font size, which is kept in the browser
+  (`localStorage` `pdt.terminal.fontSize`) and applies to every terminal.
 - Reconnect: a terminal that connects while the startup auto-resume has yet to get to its session waits (up to 30 s)
   and attaches once it starts. The WebSocket for an existing session with no PTY otherwise upgrades, sends
   `{"type":"not_running"}` and closes; the browser then shows "Session ended." and reattaches when the session list
