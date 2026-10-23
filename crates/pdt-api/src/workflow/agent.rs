@@ -15,6 +15,7 @@ use pdt_core::workflow::agent::{
     next_pass_message, nudge_message, step_section,
 };
 use pdt_core::workflow::api::{Step, StepStatus};
+use pdt_core::workspace::TabPlacement;
 use pdt_store::SessionMessage;
 use serde_json::{Value, json};
 
@@ -254,6 +255,18 @@ async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: &Target) -> Option<
     sessions.into_iter().rev().find(|s| s.attempt_id.as_deref() == Some(attempt.attempt.id.as_str()) && alive(s))
 }
 
+/// Where a step's new session opens its tab: one that becomes the attempt's session (an auto-started ticket's Coder)
+/// at the end of the workspace its Start made (the project's workspace when it has none or it is gone), as the
+/// session of a ticket the user starts would; None (no tab) for the rest.
+async fn step_tab(st: &AppState, t: &Target, attempt_id: Option<&str>) -> Option<Option<TabPlacement>> {
+    let attempt = t.attempt.as_ref().filter(|a| attempt_id == Some(a.attempt.id.as_str()))?;
+    let workspace = match &attempt.attempt.workspace_id {
+        Some(id) => st.store.get_workspace(id).await.ok().flatten(),
+        None => None,
+    };
+    Some(workspace.map(|w| TabPlacement { workspace_id: w.id, position: None }))
+}
+
 /// A new conversation for the persona (spec §4.2), its first message the step's.
 async fn new_session(
     st: &AppState,
@@ -277,6 +290,7 @@ async fn new_session(
         Some((_, key, _)) => format!("{} · {key}", persona.name),
         None => persona.name.clone(),
     };
+    let tab = step_tab(st, t, attempt_id.as_deref()).await;
     let req = crate::sessions::CreateSession {
         valid: ValidSession {
             project_id: project.id.clone(),
@@ -293,7 +307,7 @@ async fn new_session(
         title: Some(title),
         attempt_id,
         ticket_key: t.ticket.as_ref().map(|x| x.1.clone()),
-        tab: None,
+        tab,
         persona: Some(SessionPersona {
             id: persona.id.clone(),
             name: persona.name.clone(),

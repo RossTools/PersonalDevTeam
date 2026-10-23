@@ -330,7 +330,9 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   attempt's worktree (else the project's main checkout, or a Personal project's ticket folder), recording the persona
   and version (`sessions.persona_id`, `persona_version`, `step_id`), with no tab and no attempt (so PR notices still go
   to the attempt's own session). `reuse` (Coder): the session this node used earlier in the run, else the attempt's
-  running agent session, else a new one that becomes the attempt's; a reused session gets the step through the outbox
+  running agent session, else a new one that becomes the attempt's (and opens its tab at the end of the attempt's Start
+  workspace, else the project's, as a session the user's Start makes would: an auto-started ticket's Coder, PDT-103);
+  a reused session gets the step through the outbox
   (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
   On a later pass in the same session (sent back by Review, QA or a rejection) it gets only why it is back (the
   sending step's outcome and summary, or the user's gate choice and note: pdt-core `next_pass_message`) and the

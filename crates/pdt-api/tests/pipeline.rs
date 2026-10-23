@@ -234,6 +234,28 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
 }
 
 #[tokio::test]
+async fn an_auto_started_tickets_step_sessions_open_as_tabs_in_its_workspace() {
+    let env = setup().await;
+    let t = ticket(&env, "Tabbed").await;
+    pipeline(&env, json!({}), &[("refine", "ready"), ("code", "submitted"), ("review", "approved"), ("qa", "pass")])
+        .await;
+    settings(&env, json!({"autoStart": "todo"})).await;
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/refine"), Some(json!({"by": "user"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    inbox_item(&env, "gate", &t).await;
+
+    // Auto-start made the ticket's workspace with only its tab; the Coder's session (the attempt's) opened after it.
+    let v = get_ticket(&env, &t).await;
+    let workspace = v["attempts"][0]["workspaceId"].as_str().expect("auto-start made a workspace").to_string();
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let w = list.as_array().unwrap().iter().find(|w| w["id"] == workspace).unwrap().clone();
+    let coder = v["sessions"].as_array().unwrap().iter().find(|s| s["title"] == "Coder · PX-1").unwrap().clone();
+    let tabs: Vec<(&Value, &Value)> =
+        w["tabs"].as_array().unwrap().iter().map(|tab| (&tab["ticketId"], &tab["sessionId"])).collect();
+    assert_eq!(tabs, [(&json!(t), &Value::Null), (&Value::Null, &coder["id"])], "{w}");
+}
+
+#[tokio::test]
 async fn a_strict_project_is_other_parameters_and_policies() {
     let env = setup().await;
     let t = ticket(&env, "Strict work").await;
