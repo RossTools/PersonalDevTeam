@@ -36,7 +36,7 @@ async fn run() -> anyhow::Result<()> {
     let listener = config::bind(cfg.port).await?;
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating data dir {}", cfg.data_dir.display()))?;
     let _lock = lock::lock_data_dir(&cfg.data_dir)?;
-    let _log_guard = logging::init(&cfg.data_dir.join("logs"))?;
+    let _log_guard = logging::init(&cfg.data_dir.join("logs"), !cfg.supervised)?;
     if let Ok(p) = std::env::var("PDT_PROFILE")
         && !matches!(p.trim(), "" | "dev" | "stable")
     {

@@ -9,8 +9,17 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   the macOS bundle layout; crates/pdtd/src/config.rs).
 - Data lives in `<local data dir>/pdt` (stable) or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir
   (pdt-host keeps its own `pdt-host.lock`).
-- Logs: `<data dir>/logs/pdtd.<date>.log` and `pdt-host.log`; a spawned pdt-host's and pdtd's startup output goes to
-  `<data dir>/logs/pdtd-launch.log`; on macOS launchd's output goes to `pdt-host.launchd.log`.
+- Logs: `<data dir>/logs/pdtd.<date>.log` (daily, 14 kept) and `pdt-host.log`; a spawned pdt-host's and pdtd's
+  startup output goes to `<data dir>/logs/pdtd-launch.log`; on macOS launchd's output goes to `pdt-host.launchd.log`.
+  pdtd logs to stderr too unless pdt-host started it (`PDT_SUPERVISED=1`), so `pdtd-launch.log` holds only what is
+  written before logging starts and panics. pdt-host moves `pdt-host.log` and `pdtd-launch.log` to `<name>.1`
+  (replacing the one before) once they pass 5 MB.
+- Database (`<data dir>/pdt.db`, SQLite in WAL mode, `synchronous=NORMAL`): before applying a pending migration pdtd
+  copies it to `<data dir>/backups/pdt-<ms>.db` (`VACUUM INTO`) and keeps the newest 3 copies. Every 10 minutes
+  `maintain_workflows` empties the WAL (`wal_checkpoint(TRUNCATE)`), so it cannot grow between restarts while
+  readers keep SQLite's own checkpoints from resetting it. Housekeeping prunes events, finished workflow runs,
+  resolved outbox messages, ended Inbox items and notifications after 30 days, and conversation frames after 7
+  ([workflows.md](workflows.md), [conversations.md](conversations.md)).
 - `/api/health` reports `status`, `name`, `version`, `profile` (`dev`/`stable`), `port`, `dev` (dev profile or a
   non-stable port) and `webBuild` (the first 12 hex digits of the served index.html's SHA-256, read per request; null
   without a web dir). The UI shows a `DEV · <port>` badge in the rail and a `[dev]` title prefix when `dev` is true.

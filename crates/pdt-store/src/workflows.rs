@@ -778,6 +778,19 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Deletes messages resolved before `before`, except those of an active attempt (its `dedupe` keys still count).
+    /// Returns how many went.
+    pub async fn prune_session_messages(&self, before: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query(
+            "DELETE FROM session_messages WHERE status != 'waiting' AND resolved_at < ? AND (attempt_id IS NULL OR \
+             attempt_id NOT IN (SELECT id FROM attempts WHERE state = 'active'))",
+        )
+        .bind(before)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
+    }
+
     // ---- templates ----
 
     pub async fn insert_template(&self, t: &Template) -> Result<(), StoreError> {
@@ -1161,6 +1174,31 @@ mod tests {
         assert!(!store.resolve_session_message("m", None, 6).await.unwrap());
         let got = store.get_session_message("m").await.unwrap().unwrap();
         assert_eq!((got.status.as_str(), got.told_session.as_deref()), ("told", Some("sess")));
+        let waiting = SessionMessage { id: "w".into(), step_id: Some("s2".into()), ..m.clone() };
+        store.queue_session_message(&waiting).await.unwrap();
+        // An active attempt's messages stay: their dedupe keys still keep a notice from being sent twice.
+        for sql in [
+            "INSERT INTO tickets (id, seq, project_id, number, title, stage, priority, rank, created_at, updated_at) \
+             VALUES ('tk', 1, 'p', 1, 't', 'in_progress', 'medium', 'a', 1, 1)",
+            "INSERT INTO attempts (id, ticket_id, branch, base_branch, base_commit, state, created_at) \
+             VALUES ('live', 'tk', 'b', 'main', 'abc', 'active', 1)",
+        ] {
+            sqlx::query(sql).execute(&store.pool).await.unwrap();
+        }
+        let live = SessionMessage {
+            id: "l".into(),
+            attempt_id: Some("live".into()),
+            step_id: Some("s3".into()),
+            status: "told".into(),
+            resolved_at: Some(5),
+            ..m.clone()
+        };
+        store.queue_session_message(&live).await.unwrap();
+        assert_eq!(store.prune_session_messages(5).await.unwrap(), 0, "resolved at `before`: kept");
+        assert_eq!(store.prune_session_messages(100).await.unwrap(), 1, "the told one goes, the waiting one stays");
+        assert!(store.get_session_message("m").await.unwrap().is_none());
+        assert!(store.get_session_message("w").await.unwrap().is_some());
+        assert!(store.get_session_message("l").await.unwrap().is_some(), "the active attempt's stays");
 
         let c = Connection {
             id: "c".into(),

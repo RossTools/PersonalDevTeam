@@ -15,7 +15,8 @@ Start too).
   fixture in crates/pdt-core/tests/fixtures/claude).
 - pdt-api `conversations.rs` owns each session's runtime: events go to `session_events` (an item that changes keeps
   its row and `pos` but gets a new `seq`; display order is `pos`), streaming text goes only to live viewers as
-  deltas, activity is derived from events.
+  deltas, activity is derived from events. Each event also keeps the protocol frame(s) it came from (`raw`, capped at
+  64 KB, for debugging; never served) for 7 days: `maintain_workflows` then clears `raw` and the event stays (PDT-134).
 - API:
   - `GET /api/sessions/{id}/events`: JSON (stored events after `after`, up to `limit`; or with `last=N` the newest N,
     oldest first), or the WebSocket stream when upgraded (stored events after `after`, `state`, partial deltas,
