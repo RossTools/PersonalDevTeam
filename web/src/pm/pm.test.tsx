@@ -55,6 +55,22 @@ describe('the PM', () => {
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ text: "What's in flight?" });
   });
 
+  it('keeps the start box’s unsent text when the page goes and comes back; starting clears it', async () => {
+    stubApi({ 'GET /api/pm': ended, 'POST /api/pm/sessions': session('s2', 2) });
+    const first = renderWithQuery(<PmView selection="current" onSelect={() => {}} onNew={() => {}} />);
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Ask the PM' }), 'half a thought');
+    first.unmount();
+    const onSelect = vi.fn();
+    const second = renderWithQuery(<PmView selection="current" onSelect={onSelect} onNew={() => {}} />);
+    const box = await screen.findByRole('textbox', { name: 'Ask the PM' });
+    expect(box).toHaveValue('half a thought');
+    await userEvent.type(box, '{Enter}');
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('current'));
+    second.unmount();
+    renderWithQuery(<PmView selection="current" onSelect={() => {}} onNew={() => {}} />);
+    expect(await screen.findByRole('textbox', { name: 'Ask the PM' })).toHaveValue('');
+  });
+
   it('lists notes and adds one', async () => {
     const calls = stubApi({
       'GET /api/pm/notes': [note('a', { title: 'Work hours', pinned: true, body: 'Nine to five.' }), note('b', { projectId: project.id })],

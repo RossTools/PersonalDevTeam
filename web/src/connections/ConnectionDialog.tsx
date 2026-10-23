@@ -46,9 +46,9 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
         : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : fieldsConfig(k?.fields ?? [], settings);
-      // Keeps what PDT put there (a webhook the PM made records its channel); a kind with its own settings is what
-      // the form says, so a cleared setting goes.
-      const config = k?.fields ? own : { ...connection?.config, ...own };
+      // Keeps what PDT put there (a webhook the PM made records its channel), but not a setting the form left empty.
+      const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
+      const config = { ...kept, ...own };
       const body = { name: name.trim(), kind, url: askUrl ? url.trim() : '', config };
       let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
       if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
@@ -61,8 +61,9 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
     },
   });
   const needsSecret = !connection?.hasSecret && kind !== 'http' && !k?.secretOptional;
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || url.trim() !== '')
-    && (!k?.discordBot || /^\d+$/.test(guildId.trim()));
+  const fieldsFilled = (k?.fields ?? []).every((f) => f.optional || !fieldShown(f, settings) || (settings[f.key] ?? '').trim() !== '');
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || k?.urlOptional || url.trim() !== '')
+    && (!k?.discordBot || /^\d+$/.test(guildId.trim())) && fieldsFilled;
   return (
     <Dialog
       open
@@ -93,7 +94,7 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
           </Field>
         ))}
         {askUrl && (
-          <Field label="Address" hint={k?.auth ? "The service's base URL; a request's path is added to it." : undefined}>
+          <Field label="Address" hint={k?.urlHint ?? (k?.auth ? "The service's base URL; a request's path is added to it." : undefined)}>
             <Input aria-label="Address" placeholder={k?.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
         )}

@@ -3,4 +3,8 @@
 /**
  * `ticket.stage_changed`.
  */
-export type TicketStageChanged = { projectId: string, ticketId: string, ticketKey: string, from: string, to: string, actor: string, };
+export type TicketStageChanged = { projectId: string, ticketId: string, ticketKey: string, from: string, to: string, actor: string, 
+/**
+ * The Jira issue the ticket is linked to, if any (`ABC-123`).
+ */
+jiraKey: string | null, };

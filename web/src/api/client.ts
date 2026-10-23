@@ -21,6 +21,7 @@ import type { Project } from './gen/Project';
 import type { PullBranch } from './gen/PullBranch';
 import type { PullResult } from './gen/PullResult';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
+import type { JiraImportResult } from './gen/JiraImportResult';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
@@ -249,6 +250,9 @@ export const api = {
   listTickets: (q: TicketQuery = {}) => request<TicketPage>(`/api/tickets${queryString(q)}`),
   createTicket: (projectId: string, t: NewTicket) =>
     request<Ticket>(`/api/projects/${enc(projectId)}/tickets`, { method: 'POST', body: JSON.stringify(t) }),
+  /** One Jira issue as a ticket linked to it (or the ticket that already links it). */
+  importJiraIssue: (projectId: string, key: string) =>
+    request<JiraImportResult>(`/api/projects/${enc(projectId)}/jira/import`, { method: 'POST', body: JSON.stringify({ key }) }),
   getTicket: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}`),
   updateTicket: (id: string, p: TicketPatch) =>
     request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),

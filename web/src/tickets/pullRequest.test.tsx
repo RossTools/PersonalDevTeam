@@ -27,7 +27,7 @@ const pr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
 
 const attempt = (p: PullRequestStatus | null): AttemptSummary => ({
   id: 'a1', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: 'w1', state: 'active', createdAt: 1, endedAt: null,
-  lastHead: null, workspaceId: null, pr: p,
+  lastHead: null, workspaceId: null, ci: null, pr: p,
 });
 
 describe('pull request status', () => {

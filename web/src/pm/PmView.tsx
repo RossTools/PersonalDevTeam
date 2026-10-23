@@ -1,11 +1,15 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BriefcaseBusiness } from 'lucide-react';
 import { Button, EmptyState, PromptBox, Skeleton, ViewHeader, relativeTime } from '@ui';
 import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { useAction } from '../common/useAction';
 import { ConversationView } from '../conversation/ConversationView';
+import { loadDraft, saveDraft } from '../conversation/drafts';
 import { REASON_LABEL, usePm, useRefreshPm, type PmSelection } from './usePm';
+
+/** The start box's unsent text, kept like a conversation's (it has no session yet). */
+export const PM_START_DRAFT = 'pm-start';
 
 const NotesPage = lazy(() => import('./NotesPage').then((m) => ({ default: m.NotesPage })));
 
@@ -73,9 +77,10 @@ function Ended({ journal, onCurrent }: { journal: string | null; onCurrent: () =
   );
 }
 
-/** No current session: the first message starts one (its briefing is made then). */
+/** No current session: the first message starts one (its briefing is made then). Unsent text is kept. */
 function PmStart({ onStarted }: { onStarted: (s: Session) => void }) {
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => loadDraft(PM_START_DRAFT));
+  useEffect(() => saveDraft(PM_START_DRAFT, text), [text]);
   const refresh = useRefreshPm();
   const [start, starting] = useAction(async () => {
     const s = await api.startPm(text.trim());

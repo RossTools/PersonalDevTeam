@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod arr;
 pub mod brief;
+pub mod buildkite;
 pub mod call;
 pub mod command;
 pub mod condition;
@@ -10,6 +11,7 @@ pub mod discord;
 pub mod end;
 pub mod gate;
 pub mod http;
+pub mod jira;
 pub mod mcp_tool;
 pub mod merge;
 pub mod notify;

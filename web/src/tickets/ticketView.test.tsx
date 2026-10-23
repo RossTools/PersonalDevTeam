@@ -50,7 +50,7 @@ const patches = (calls: Call[]) => calls.filter((c) => c.method === 'PATCH').map
 
 describe('ticket tab', () => {
   it('opens on the section last shown for that ticket, with the diff size on Changes', async () => {
-    const attempt = { id: 'a1', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr: null };
+    const attempt = { id: 'a1', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, ci: null, pr: null };
     const active = { ...base, stage: 'in_progress' as const, attempt, attempts: [attempt] };
     const changes = {
       worktreeId: 'w1', branch: attempt.branch, base: 'main', mergeBase: 'abc', head: 'def', dirty: false, attemptId: 'a1', ticketId: 't1',

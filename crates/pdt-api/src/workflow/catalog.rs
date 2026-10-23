@@ -336,6 +336,12 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(brief::Archive));
         kinds.push(Box::new(brief::Read));
         kinds.push(Box::new(mcp_tool::McpToolKind));
+        kinds.push(Box::new(jira::JiraImport));
+        kinds.push(Box::new(jira::JiraCreate));
+        kinds.push(Box::new(jira::JiraTransition));
+        kinds.push(Box::new(jira::JiraComment));
+        kinds.push(Box::new(buildkite::Retry));
+        kinds.push(Box::new(buildkite::TriggerBuild));
         kinds.push(Box::new(merge::Merge));
         Catalog::new(kinds)
     })

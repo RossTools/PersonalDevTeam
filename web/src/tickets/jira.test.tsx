@@ -1,0 +1,98 @@
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Connection } from '../api/gen/Connection';
+import type { Project } from '../api/gen/Project';
+import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
+import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { OpenTicketContext } from './actions';
+import { ExternalKeys } from './ExternalKeys';
+import { ImportJiraDialog } from './ImportJiraDialog';
+import { CiBadge } from './PullRequest';
+
+vi.mock('../files/CodeViewer', () => ({ CodeViewer: ({ text }: { text: string }) => <pre>{text}</pre> }));
+
+const project: Project = { id: 'p', name: 'Work', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'WRK', githubRepo: null, kind: 'repo' };
+const conn = (name: string, kind: string): Connection => ({ id: `c-${name}`, name, kind, url: '', config: {}, hasSecret: true, createdAt: 0, updatedAt: 0 });
+const config = { filePath: '/r/.pdt/project.toml', file: '', overrides: null, error: null, effective: { runs: [], tests: [] } };
+
+describe('Jira and Buildkite', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a Jira connection asks for the site, email and API token', async () => {
+    const created = { ...conn('work', 'jira'), hasSecret: false };
+    const calls = stubApi({ 'POST /api/connections': created, 'PUT /api/connections/c-work/secret': created });
+    renderWithQuery(<ConnectionDialog kind="jira" onClose={() => {}} />);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Create and manage API tokens/)).toBeTruthy();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'work');
+    await userEvent.type(within(dialog).getByLabelText('Address'), 'https://acme.atlassian.net');
+    await userEvent.type(within(dialog).getByLabelText('API token'), 'tok');
+    const save = within(dialog).getByRole('button', { name: 'Save' });
+    expect(save.hasAttribute('disabled') || save.getAttribute('aria-disabled') === 'true').toBe(true);
+    await userEvent.type(within(dialog).getByLabelText('Email'), 'me@acme.com');
+    await userEvent.click(save);
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'work', kind: 'jira', url: 'https://acme.atlassian.net', config: { email: 'me@acme.com' } });
+  });
+
+  it('links the project to Jira and Buildkite in its settings', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, jira: null, buildkite: null },
+      'GET /api/projects/p/run-config': config,
+      'GET /api/connections': [conn('work-jira', 'jira'), conn('bk', 'buildkite'), conn('alerts', 'discord_webhook')],
+      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'subscription', agentInstructions: null, jira: null, buildkite: null, ...(c.body as object) }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    await userEvent.click(await screen.findByRole('button', { name: /Jira connection/ }));
+    const options = within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent);
+    expect(options).toEqual(['work-jira']);
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'work-jira' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Jira issues' }), 'project = ABC');
+    await userEvent.click(screen.getByRole('button', { name: /Buildkite connection/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'bk' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Pipelines' }), 'app, app-e2e');
+    await userEvent.click(screen.getByRole('button', { name: 'Save Jira and Buildkite' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({
+      agentCredentials: null, runOverrides: null,
+      jira: { connection: 'work-jira', scope: 'project = ABC', done: 'Done' },
+      buildkite: { connection: 'bk', pipelines: ['app', 'app-e2e'] },
+    });
+  });
+
+  it('imports an issue by key and opens its ticket, or says why not', async () => {
+    const ticket = { id: 't9', projectId: 'p' };
+    let first = true;
+    const calls = stubApi({
+      'POST /api/projects/p/jira/import': () => {
+        if (first) { first = false; return new Reply(404, { code: 'jira_issue_not_found', message: 'Jira has no issue ABC-404' }); }
+        return { ticket, existed: false };
+      },
+    });
+    const open = vi.fn();
+    const onClose = vi.fn();
+    renderWithQuery(<OpenTicketContext.Provider value={open}><ImportJiraDialog projectId="p" onClose={onClose} /></OpenTicketContext.Provider>);
+    const box = await screen.findByRole('textbox', { name: 'Issue key' });
+    await userEvent.type(box, 'ABC-404{Enter}');
+    expect(await screen.findByText('Jira has no issue ABC-404')).toBeTruthy();
+    await userEvent.clear(box);
+    await userEvent.type(box, ' abc-9 ');
+    await userEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(open).toHaveBeenCalledWith(ticket));
+    expect(onClose).toHaveBeenCalled();
+    expect(calls.filter((c) => c.method === 'POST').map((c) => c.body)).toEqual([{ key: 'ABC-404' }, { key: 'abc-9' }]);
+  });
+
+  it("shows a ticket's Jira key, as a link where it can, and a branch's own CI", () => {
+    const links = [{ system: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1' }];
+    const { unmount } = renderWithQuery(<ExternalKeys links={links} linked />);
+    expect(screen.getByRole('link', { name: /ABC-1/ }).getAttribute('href')).toBe(links[0].url);
+    unmount();
+    renderWithQuery(<><ExternalKeys links={links} /><CiBadge ci={{ state: 'failed', url: 'u', runs: [{ id: 3, attempt: 1, workflow: 'app', state: 'failed', url: 'u', failedJobs: ['test'] }] }} /></>);
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('ABC-1')).toBeTruthy();
+    expect(screen.getByText('CI failed').closest('[title]')?.getAttribute('title')).toBe('Failed: test');
+  });
+});

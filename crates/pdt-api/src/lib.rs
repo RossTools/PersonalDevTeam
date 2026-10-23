@@ -1,5 +1,6 @@
 mod activity;
 mod attachments;
+mod buildkite;
 mod checks;
 mod conversations;
 mod discord;
@@ -15,6 +16,7 @@ mod host;
 mod host_guard;
 mod identity_guard;
 mod inbox;
+mod jira;
 mod mcp;
 mod mcp_client;
 mod overlap;
@@ -42,6 +44,7 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::run_activity_ticker;
+pub use buildkite::refresh_buildkite;
 pub use checks::{HostChecks, run_host_checks};
 pub use conversations::{
     IDLE_PARK, park_idle_conversations, recover_conversations, run_conversation_ticker, shutdown_conversations,
@@ -55,6 +58,7 @@ pub async fn shutdown_mcp(st: &AppState) {
     st.mcp.shutdown().await;
 }
 pub use host_guard::{AllowedHosts, with_host_guard};
+pub use jira::refresh_jira;
 pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, apply_remote_access};
 pub use routes::{AppState, Health, router};

@@ -187,6 +187,33 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   to the agent"; an agent's own comments, actor `agent`, are not sent); Start already puts the earlier comments in the
   first prompt.
 
+## Jira and Buildkite (Phase 7e-2, PDT-85)
+
+For a work project whose issues are in Jira Cloud and whose CI is Buildkite. pdt-core `jira.rs`, `buildkite.rs`;
+pdt-api `jira.rs`, `buildkite.rs`; the sensors and actions are in [workflows.md](workflows.md) "Sensors and webhooks".
+
+- **The link** is host settings, not `.pdt/project.toml` (work repos may not take a `.pdt/` folder): the project's
+  settings page, section Jira and Buildkite, names a `jira` connection, a JQL scope (`project = ABC`) and the done
+  transition or status (default `Done`), and a `buildkite` connection with the pipelines (slugs) that build its
+  branches. API: `GET/PUT /api/projects/{id}/settings` `jira` `{connection, scope, done}` and `buildkite`
+  `{connection, pipelines}`; left out keeps them, a `connection` of `""` unlinks, a connection of another kind is
+  `400`.
+- **Linked tickets**: `ticket_links_external (ticket_id, system 'jira', connection_id, key, url)`, unique per
+  `(system, connection_id, key)`, gone with the ticket. Every ticket response has `external: [{system, key, url}]`;
+  the Board card shows the key, the ticket page links it to the issue.
+- **Incoming**: the built-in "Import assigned Jira issues" makes a Draft ticket of each new or updated issue in the
+  scope that is assigned to the user and has no ticket. Linking is the dedupe (the ticket and its link are made in one
+  transaction), so an issue is never imported twice. Not a sync: later changes in Jira only become events.
+- **Import by key**: Tickets → Import from Jira… (shown when the project links Jira), or `POST
+  /api/projects/{id}/jira/import {key}`: any issue, assigned or not → `201 {ticket, existed: false}`, or `200 {ticket,
+  existed: true}` with the ticket that already links it; `400` for a key not like `ABC-123`, `404
+  jira_issue_not_found`, `409 jira_not_linked`, `502 jira_failed`.
+- **Outgoing**: moving a linked ticket to Done moves its issue (built-in "Done moves the Jira issue", the project's
+  done mapping). Other changes stay in PDT unless a workflow says otherwise (`jira.comment`, `jira.transition`).
+- **Buildkite CI** shows on the attempt like GitHub's: with an open PR at the same head, in `attempt.pr.ci` (the PR
+  badge rolls up both providers); without a PR, as `attempt.ci` (board card `CiBadge`, Attempt section `CiDetails`).
+  Failures are `ci.run_failed` with `provider: buildkite`, so "PR notices" tells the agent.
+
 ## Areas and overlap (Phase 4c)
 
 Tickets spec §7; the config format is in docs/run-config.md "Areas".

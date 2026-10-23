@@ -21,11 +21,14 @@ export interface ConnectionKind {
   auth?: boolean;
   /** The secret may be left out. */
   secretOptional?: boolean;
-  /** An example address. */
+  /** The address's example and hint, when it isn't a plain base URL. */
   urlPlaceholder?: string;
+  urlHint?: string;
+  /** The address may be left empty (then PDT uses the service's own). */
+  urlOptional?: boolean;
   /** Asks for an address only when this setting has this value. */
   urlWhen?: { key: string; value: string };
-  /** Its own settings (kept in the connection's config). */
+  /** Settings of its own, kept in the connection's config. */
   fields?: ConfigField[];
   /** Asks for a Discord server and its bot's application (a Discord bot). */
   discordBot?: boolean;
@@ -42,11 +45,13 @@ export interface ConfigField {
   options?: { value: string; label: string }[];
   /** Shown only when another setting has this value. */
   when?: { key: string; value: string };
+  /** May be left empty (otherwise a shown setting is required). */
+  optional?: boolean;
 }
 
 const arrFields = (folder: string): ConfigField[] => [
-  { key: 'qualityProfile', label: 'Quality profile', hint: 'Used when a step adds without naming one: a profile’s name or id. Empty: the first profile.', placeholder: 'HD-1080p' },
-  { key: 'rootFolder', label: 'Root folder', hint: 'Where adds go unless a step says. Empty: the first root folder.', placeholder: folder },
+  { key: 'qualityProfile', label: 'Quality profile', hint: 'Used when a step adds without naming one: a profile’s name or id. Empty: the first profile.', placeholder: 'HD-1080p', optional: true },
+  { key: 'rootFolder', label: 'Root folder', hint: 'Where adds go unless a step says. Empty: the first root folder.', placeholder: folder, optional: true },
 ];
 
 export const CONNECTION_KINDS: ConnectionKind[] = [
@@ -81,6 +86,33 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     secretLabel: 'Shared secret',
     secretHint: 'The sender sends it as Authorization: Bearer <secret>, or signs with it like GitHub (X-Hub-Signature-256).',
     generate: true,
+  },
+  {
+    id: 'jira',
+    label: 'Jira Cloud',
+    plural: 'Jira Cloud sites',
+    setup: 'A Jira Cloud site a project links to in its settings: issues assigned to you become tickets, and Done moves the issue.',
+    description: 'A Jira Cloud site (projects link to it; Jira actions).',
+    url: true,
+    urlPlaceholder: 'https://your-site.atlassian.net',
+    urlHint: 'Your Jira Cloud site.',
+    fields: [{ key: 'email', label: 'Email', placeholder: 'you@work.com', hint: 'The Atlassian account’s email; PDT signs in as it.' }],
+    secretLabel: 'API token',
+    secretHint: 'At id.atlassian.com → Security → Create and manage API tokens → Create API token.',
+  },
+  {
+    id: 'buildkite',
+    label: 'Buildkite',
+    plural: 'Buildkite organizations',
+    setup: 'A Buildkite organization whose pipelines build a project’s branches (named in the project’s settings).',
+    description: 'A Buildkite organization (CI of tickets’ branches; Buildkite actions).',
+    url: true,
+    urlOptional: true,
+    urlPlaceholder: 'https://api.buildkite.com',
+    urlHint: 'Leave empty for Buildkite’s own API.',
+    fields: [{ key: 'org', label: 'Organization', placeholder: 'acme', hint: 'Its slug, as in buildkite.com/<organization>.' }],
+    secretLabel: 'API token',
+    secretHint: 'In Buildkite: Personal Settings → API Access Tokens → New API Access Token, with Read Builds (and Write Builds to retry or start builds).',
   },
   {
     id: 'http',
@@ -143,9 +175,9 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     fields: [
       { key: 'transport', label: 'Runs as', type: 'choice', options: [{ value: 'stdio', label: 'A program PDT starts (stdio)' }, { value: 'http', label: 'An address (HTTP)' }] },
       { key: 'command', label: 'Program', placeholder: 'npx', hint: 'Found on PATH, or a full path. On Windows, a .cmd (npx) needs cmd with /c first.', when: { key: 'transport', value: 'stdio' } },
-      { key: 'args', label: 'Arguments', type: 'lines', placeholder: '-y\n@modelcontextprotocol/server-filesystem\n/Users/me/notes', hint: 'One per line.', when: { key: 'transport', value: 'stdio' } },
-      { key: 'env', label: 'Environment', type: 'env', placeholder: 'LOG_LEVEL=warn', hint: 'NAME=value, one per line.', when: { key: 'transport', value: 'stdio' } },
-      { key: 'secretEnv', label: 'Secret’s variable', placeholder: 'API_TOKEN', hint: 'The environment variable the secret is passed in.', when: { key: 'transport', value: 'stdio' } },
+      { key: 'args', label: 'Arguments', type: 'lines', placeholder: '-y\n@modelcontextprotocol/server-filesystem\n/Users/me/notes', hint: 'One per line.', when: { key: 'transport', value: 'stdio' }, optional: true },
+      { key: 'env', label: 'Environment', type: 'env', placeholder: 'LOG_LEVEL=warn', hint: 'NAME=value, one per line.', when: { key: 'transport', value: 'stdio' }, optional: true },
+      { key: 'secretEnv', label: 'Secret’s variable', placeholder: 'API_TOKEN', hint: 'The environment variable the secret is passed in.', when: { key: 'transport', value: 'stdio' }, optional: true },
     ],
   },
 ];
