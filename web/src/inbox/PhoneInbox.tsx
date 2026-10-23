@@ -133,8 +133,8 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   useEffect(() => {
     if (readId) void api.readNotifications({ inboxItemId: readId }).catch(() => {});
   }, [readId]);
-  // An item answered elsewhere: show the first one left.
-  const gone = !updateId && !item && !loading && live.length > 0 && !done.has(itemId);
+  // An item answered elsewhere, or one answered here when another has come in since: show the first one left.
+  const gone = !updateId && !item && !loading && live.length > 0;
   const firstLeft = gone ? step(live, null, 1) : null;
   useEffect(() => {
     if (firstLeft) onMove(firstLeft);
@@ -356,7 +356,7 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
       {bar}
       {confirming && (
         <MergeConfirm item={item} choice={confirming} busy={busy} onCancel={() => setConfirming(null)}
-          onConfirm={() => { setConfirming(null); withNote(confirming); }} />
+          onConfirm={() => void onAnswer({ choice: confirming, ...(note.trim() ? { text: note } : {}) }).finally(() => setConfirming(null))} />
       )}
     </>
   );

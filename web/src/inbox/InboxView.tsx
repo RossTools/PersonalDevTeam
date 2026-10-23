@@ -379,7 +379,7 @@ function Approval({ item, onAnswered }: { item: InboxItem; onAnswered: () => voi
  * The ticket's work, next to its tab in the workspace that has it (its Start workspace): its coder session (to talk to
  * it), Open changes, and Run… over the runs and tests its worktree's configuration offers.
  */
-export function TicketWork({ item }: { item: InboxItem }) {
+function TicketWork({ item }: { item: InboxItem }) {
   const openChanges = useOpenChanges();
   const tabs = useTicketTabs();
   const ticket = useTicket(item.ticketId);

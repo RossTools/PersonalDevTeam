@@ -1,5 +1,6 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
@@ -221,6 +222,24 @@ describe('phone triage', () => {
     await userEvent.click(within(await screen.findByRole('dialog', { name: 'Merge PDT-7?' })).getByRole('button', { name: 'Merge' }));
     await waitFor(() => expect(answered(calls)).toEqual({ choice: 'merge' }));
     expect(await screen.findByText('All clear')).toBeInTheDocument();
+  });
+
+  it('opens an item that comes in while All clear shows', async () => {
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 }, 'POST /api/notifications/read-all': undefined, 'POST /api/inbox/m/answer': {} });
+    let setItems: (items: InboxItem[]) => void = () => {};
+    function Harness() {
+      const [items, set] = useState<InboxItem[]>([manual]);
+      const [id, setId] = useState('m');
+      setItems = set;
+      return <PhoneInboxItem items={items} updates={[]} itemId={id} onMove={setId} onList={() => {}} />;
+    }
+    renderWithQuery(<Harness />);
+    await userEvent.click(bar().getByRole('button', { name: 'Passed' }));
+    expect(await screen.findByText('All clear')).toBeInTheDocument();
+    // The poll still lists the answered item next to a new one.
+    act(() => setItems([manual, stalled]));
+    expect(await screen.findByText('Reviewer stalled')).toBeInTheDocument();
+    expect(barLabels()).toEqual(['Take over', 'Nudge']);
   });
 
   it('reaches All clear after the last item, and Back to Inbox goes to the list', async () => {
