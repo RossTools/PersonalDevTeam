@@ -4,7 +4,43 @@ use sqlx::migrate::Migrator;
 use std::collections::HashSet;
 use std::path::Path;
 
+/// Every migration in crates/pdt-store/migrations, embedded at build time (build.rs rebuilds when the folder changes).
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// The last numbered migration (`0028_…`). Every later one is named by its UTC creation time, `YYYYMMDDHHMMSS_<what>.sql`,
+/// so two branches cut from the same main never pick the same name.
+#[cfg(test)]
+const LAST_NUMBERED: i64 = 28;
+
+/// What is wrong with a migrations folder's file names: each must be `<version>_<what>.sql`, the version a number up to
+/// [`LAST_NUMBERED`] or a UTC timestamp `YYYYMMDDHHMMSS`, and no two files may share a version (sqlx would refuse the
+/// second, or apply one and skip the other).
+#[cfg(test)]
+fn name_problems<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut seen: std::collections::HashMap<i64, &str> = std::collections::HashMap::new();
+    for name in names {
+        let Some((version, what)) = name.split_once('_').filter(|(_, w)| w.ends_with(".sql") && w.len() > 4) else {
+            problems.push(format!("{name}: not <version>_<what>.sql"));
+            continue;
+        };
+        let Some(v) = version.parse::<i64>().ok().filter(|_| version.bytes().all(|b| b.is_ascii_digit())) else {
+            problems.push(format!("{name}: the version is not a number"));
+            continue;
+        };
+        let numbered = version.len() == 4 && v <= LAST_NUMBERED;
+        let stamped = version.len() == 14 && jiff::civil::DateTime::strptime("%Y%m%d%H%M%S", version).is_ok();
+        if !numbered && !stamped {
+            problems.push(format!(
+                "{name}: name it by its UTC creation time, YYYYMMDDHHMMSS_{what} (`date -u +%Y%m%d%H%M%S`)"
+            ));
+        }
+        if let Some(other) = seen.insert(v, name) {
+            problems.push(format!("{name}: version {v} is also {other}'s"));
+        }
+    }
+    problems
+}
 
 async fn applied_versions(pool: &SqlitePool) -> Result<HashSet<i64>, StoreError> {
     let table: Option<(String,)> =
@@ -86,6 +122,103 @@ mod tests {
         let s = Store::open_with(&db, &Migrator::new(m2.as_path()).await.unwrap(), &backup_dir).await.unwrap();
         s.close().await;
         assert_eq!(backups(&backup_dir), 1, "one backup before applying 0002");
+    }
+
+    /// The CI check: a duplicate or misnamed migration fails `cargo test`.
+    #[test]
+    fn the_migrations_folder_is_well_named() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let names: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        let problems = super::name_problems(names.iter().map(String::as_str));
+        assert!(problems.is_empty(), "crates/pdt-store/migrations:\n{}", problems.join("\n"));
+        assert_eq!(super::MIGRATOR.iter().count(), names.len(), "sqlx embeds every file");
+    }
+
+    #[test]
+    fn names_take_old_numbers_or_timestamps() {
+        let ok =
+            ["0001_projects.sql", "0028_merge_requested.sql", "20261022143000_add_x.sql", "20261022143001_add_y.sql"];
+        assert!(super::name_problems(ok).is_empty());
+        for bad in [
+            "0029_next_number.sql",
+            "20261322143000_bad_month.sql",
+            "2026102214300_too_short.sql",
+            "20261022143000.sql",
+            "notes.sql",
+            "x1_a.sql",
+            "20261022143000_a.txt",
+        ] {
+            assert_eq!(super::name_problems([bad]).len(), 1, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_duplicate_version_is_a_problem() {
+        let problems =
+            super::name_problems(["20261022143000_a.sql", "20261022143000_b.sql", "0005_runs.sql", "05_again.sql"]);
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems[0].contains("20261022143000_b.sql") && problems[0].contains("20261022143000_a.sql"));
+    }
+
+    /// Two branches cut from the same main each add a migration; whichever merges second carries the older timestamp
+    /// or the newer one. Either way a database that already has the other one applies it.
+    #[tokio::test]
+    async fn a_migration_older_than_the_last_applied_still_applies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let backup_dir = tmp.path().join("backups");
+        let base = [("0001_a.sql", "CREATE TABLE a (x INTEGER);")];
+        let one = ("20261022100000_one.sql", "CREATE TABLE one (x INTEGER);");
+        let two = ("20261022110000_two.sql", "CREATE TABLE two (x INTEGER);");
+        for (first, second) in [(one, two), (two, one)] {
+            let db = tmp.path().join(format!("{}.db", first.0));
+            let before = tmp.path().join(format!("before-{}", first.0));
+            let after = tmp.path().join(format!("after-{}", first.0));
+            for (n, sql) in base.iter().chain([&first]) {
+                write(&before, n, sql);
+            }
+            for (n, sql) in base.iter().chain([&first, &second]) {
+                write(&after, n, sql);
+            }
+            let s = Store::open_with(&db, &Migrator::new(before.as_path()).await.unwrap(), &backup_dir).await.unwrap();
+            s.close().await;
+            let s = Store::open_with(&db, &Migrator::new(after.as_path()).await.unwrap(), &backup_dir).await.unwrap();
+            let tables: Vec<(String,)> = sqlx::query_as(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('a', 'one', 'two') ORDER BY name",
+            )
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+            assert_eq!(tables, [("a".into(),), ("one".into(),), ("two".into(),)], "{} then {}", first.0, second.0);
+            s.close().await;
+        }
+    }
+
+    /// An existing database, migrated by the numbered migrations alone, takes a timestamped one with no manual step.
+    #[tokio::test]
+    async fn an_existing_database_takes_a_timestamped_migration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("t.db");
+        let backup_dir = tmp.path().join("backups");
+        let s = Store::open_with(&db, &super::MIGRATOR, &backup_dir).await.unwrap();
+        s.close().await;
+        let next = tmp.path().join("next");
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let e = e.unwrap();
+            std::fs::create_dir_all(&next).unwrap();
+            std::fs::copy(e.path(), next.join(e.file_name())).unwrap();
+        }
+        write(&next, "29991231235959_later.sql", "CREATE TABLE later (x INTEGER);");
+        let s = Store::open_with(&db, &Migrator::new(next.as_path()).await.unwrap(), &backup_dir).await.unwrap();
+        let later: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'later'")
+                .fetch_optional(&s.pool)
+                .await
+                .unwrap();
+        assert!(later.is_some());
+        s.close().await;
+        assert_eq!(backups(&backup_dir), 1, "backed up before the new migration");
     }
 
     #[test]
