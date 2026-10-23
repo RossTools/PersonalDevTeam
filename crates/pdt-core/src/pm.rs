@@ -266,7 +266,7 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
     let field = |k: &str| input.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
     match tool {
         "create_ticket" => field("project").map(|p| AskTarget::Project(p.into())),
-        "edit_ticket" => field("ticket").map(|t| AskTarget::Ticket(t.into())),
+        "edit_ticket" | "link_tickets" | "unlink_tickets" => field("ticket").map(|t| AskTarget::Ticket(t.into())),
         "send_to_session" => field("session").map(|s| AskTarget::Session(s.into())),
         "discord_change" | "discord_webhook" => Some(AskTarget::Connection(field("connection").map(String::from))),
         _ => None,
@@ -617,6 +617,8 @@ mod tests {
         let t = |tool: &str, v: Value| ask_target(tool, &v);
         assert_eq!(t("mcp__pdt__create_ticket", json!({"project": "PDT"})), Some(AskTarget::Project("PDT".into())));
         assert_eq!(t("edit_ticket", json!({"ticket": " PDT-4 "})), Some(AskTarget::Ticket("PDT-4".into())));
+        assert_eq!(t("link_tickets", json!({"ticket": "PDT-5"})), Some(AskTarget::Ticket("PDT-5".into())));
+        assert_eq!(t("mcp__pdt__unlink_tickets", json!({"ticket": "PDT-5"})), Some(AskTarget::Ticket("PDT-5".into())));
         assert_eq!(t("send_to_session", json!({"session": "s1"})), Some(AskTarget::Session("s1".into())));
         assert_eq!(t("create_ticket", json!({})), None);
         assert_eq!(
