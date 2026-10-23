@@ -469,6 +469,11 @@ async fn advance_all(st: &AppState) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
+        // A run advanced before it may have ended it (finishing a ticket cancels the ticket's other runs).
+        let run = match st.store.get_workflow_run(&run.id).await {
+            Ok(Some(r)) if !r.status.is_finished() => r,
+            _ => continue,
+        };
         let id = run.id.clone();
         if let Err(e) = advance(st, run).await {
             tracing::warn!(run = %id, error = %e, "a workflow run could not go on");
@@ -622,11 +627,16 @@ pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> R<()> {
 
 /// `cancel_run` for a caller that holds the engine lock.
 pub(crate) async fn cancel_locked(st: &AppState, run_id: &str) -> R<()> {
+    cancel_because(st, run_id, "cancelled").await
+}
+
+/// `cancel_locked` with why (the run's error).
+pub(crate) async fn cancel_because(st: &AppState, run_id: &str, why: &str) -> R<()> {
     let mut run = st.store.get_workflow_run(run_id).await.map_err(err)?.ok_or("no such run")?;
     if run.status.is_finished() {
         return Err("the run has ended".into());
     }
-    finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some("cancelled".into())).await
+    finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some(why.into())).await
 }
 
 /// Answers a waiting gate.

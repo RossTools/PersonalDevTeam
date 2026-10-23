@@ -75,6 +75,7 @@ pub struct StartedAttempt {
     pub attempt: AttemptSummary,
     pub ticket_id: String,
     prev_stage: TicketStage,
+    prev_pipeline_stage: Option<PipelineStage>,
     prev_updated_at: i64,
     event_ids: Vec<String>,
 }
@@ -1545,8 +1546,11 @@ impl Store {
         if has_active_attempt(&mut tx, ticket_id).await? {
             return Err(TicketError::Active(key));
         }
-        let (prev_updated_at,): (i64,) =
-            sqlx::query_as("SELECT updated_at FROM tickets WHERE id = ?").bind(ticket_id).fetch_one(&mut *tx).await?;
+        let (prev_updated_at, prev_pipeline_stage): (i64, Option<String>) =
+            sqlx::query_as("SELECT updated_at, pipeline_stage FROM tickets WHERE id = ?")
+                .bind(ticket_id)
+                .fetch_one(&mut *tx)
+                .await?;
         // Events made from here on (in this transaction) are this start's, for `undo_start`.
         let marker = uuid::Uuid::now_v7().to_string();
         let inserted = sqlx::query(
@@ -1583,6 +1587,11 @@ impl Store {
             .bind(&marker)
             .fetch_all(&mut *tx)
             .await?;
+        // Their event-log copies wait for `announce_start` (once the session exists): a workflow that fired on
+        // `attempt.started` for a Start that is then undone would run for an attempt that is gone.
+        for (e,) in &event_ids {
+            sqlx::query("DELETE FROM events WHERE key = ? AND source = 'tickets'").bind(e).execute(&mut *tx).await?;
+        }
         let row = sqlx::query(sqlx::AssertSqlSafe(format!("{ATTEMPT_SELECT} WHERE a.id = ?")))
             .bind(id)
             .fetch_one(&mut *tx)
@@ -1593,21 +1602,49 @@ impl Store {
             attempt,
             ticket_id: ticket_id.to_string(),
             prev_stage: stage,
+            prev_pipeline_stage: prev_pipeline_stage.as_deref().and_then(PipelineStage::parse),
             prev_updated_at,
             event_ids: event_ids.into_iter().map(|(e,)| e).collect(),
         })
     }
 
+    /// Logs a `start_attempt`'s events (`ticket.stage_changed`, `attempt.started`) for workflows, once Start has
+    /// what it makes (its session): until then a failed Start can still be undone without a workflow having seen it.
+    pub async fn announce_start(&self, started: &StartedAttempt, now: i64) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        for e in &started.event_ids {
+            let row = sqlx::query(
+                "SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE id = ?",
+            )
+            .bind(e)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some(ev) = row.as_ref().map(to_event).transpose()? else { continue };
+            let row = crate::event_log::TimelineRow {
+                id: &ev.id,
+                ticket_id: &ev.ticket_id,
+                kind: ev.kind,
+                actor: ev.actor,
+                body: ev.body.as_deref(),
+                data: ev.data.as_ref(),
+            };
+            crate::event_log::mirror_timeline(&mut tx, row, now).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Takes back a `start_attempt` whose session could not be made: the attempt, its events and the stage change go;
-    /// the ticket is as it was (the worktree is the caller's).
+    /// the ticket is as it was, pipeline stage too (the worktree is the caller's).
     pub async fn undo_start(&self, started: &StartedAttempt) -> Result<(), StoreError> {
         let mut tx = self.write_tx().await?;
         sqlx::query("DELETE FROM attempts WHERE id = ?").bind(&started.attempt.id).execute(&mut *tx).await?;
         for e in &started.event_ids {
             sqlx::query("DELETE FROM ticket_events WHERE id = ?").bind(e).execute(&mut *tx).await?;
         }
-        sqlx::query("UPDATE tickets SET stage = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE tickets SET stage = ?, pipeline_stage = ?, updated_at = ? WHERE id = ?")
             .bind(started.prev_stage.as_str())
+            .bind(started.prev_pipeline_stage.map(PipelineStage::as_str))
             .bind(started.prev_updated_at)
             .bind(&started.ticket_id)
             .execute(&mut *tx)
@@ -2723,6 +2760,12 @@ mod tests {
         let page = store.list_events("a", None, 10, true).await.unwrap().unwrap();
         let data = page.items[0].data.clone().unwrap();
         assert_eq!((data["attemptId"].as_str(), data["forced"].as_bool()), (Some("at1"), Some(true)));
+        // Workflows see none of it until Start announces it (its session exists).
+        let log = |store: Store| async move {
+            let f = crate::EventFilter { ticket_id: Some("a".into()), limit: 50, ..Default::default() };
+            store.list_log_events(&f).await.unwrap().into_iter().map(|e| e.kind).collect::<Vec<_>>()
+        };
+        assert_eq!(log(store.clone()).await, Vec::<String>::new());
 
         // One active attempt per ticket.
         let again = store.start_attempt("at2", "a", None, "b", "main", "abc", json!({}), 6).await;
@@ -2732,12 +2775,23 @@ mod tests {
             Err(TicketError::NotFound("ticket"))
         ));
 
-        // Undo puts everything back.
+        // Undo puts everything back, the pipeline stage too.
         store.undo_start(&started).await.unwrap();
         let t = store.get_ticket("a").await.unwrap().unwrap();
         assert_eq!((t.summary.stage, t.summary.updated_at), (TicketStage::Ready, before.summary.updated_at));
         assert!(t.attempts.is_empty());
         assert_eq!(events(&store, "a").await, [EventKind::Created]);
+        assert_eq!(log(store.clone()).await, Vec::<String>::new(), "no workflow ever saw the undone start");
+        store.set_pipeline_stage("a", Some(PipelineStage::Code)).await.unwrap();
+        let started = store.start_attempt("at3", "a", None, "b", "main", "abc", json!({}), 7).await.unwrap();
+        assert_eq!(store.get_ticket_summary("a").await.unwrap().unwrap().pipeline_stage, None);
+        store.undo_start(&started).await.unwrap();
+        assert_eq!(store.get_ticket_summary("a").await.unwrap().unwrap().pipeline_stage, Some(PipelineStage::Code));
+
+        // Announced, the start is in the log.
+        let started = store.start_attempt("at4", "a", None, "b", "main", "abc", json!({}), 8).await.unwrap();
+        store.announce_start(&started, 9).await.unwrap();
+        assert_eq!(log(store.clone()).await, ["ticket.stage_changed", "attempt.started"]);
 
         // A ticket already in progress gets no `moved` event.
         add(&store, "b", ValidNewTicket { stage: TicketStage::InProgress, ..new("B") }).await;
@@ -2750,7 +2804,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         add(&store, "a", ValidNewTicket { labels: vec!["automerge".into(), "docs".into()], ..new("A") }).await;
-        store.start_attempt("at1", "a", None, "br", "main", "abc", json!({}), 5).await.unwrap();
+        let started = store.start_attempt("at1", "a", None, "br", "main", "abc", json!({}), 5).await.unwrap();
+        store.announce_start(&started, 5).await.unwrap();
         let active = store.list_active_attempts().await.unwrap();
         assert_eq!(active.len(), 1);
         let info = &active[0];

@@ -899,15 +899,15 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             if valid == Default::default() {
                 return Err("give at least one field to change".into());
             }
-            if let Some(stage) = valid.stage.filter(|s| s.is_closed()) {
-                crate::start::end_for_close(st, &id, stage).await.map_err(api)?;
-            }
             let t = st
                 .store
                 .patch_ticket_by(&id, &valid, Actor::Agent, now_ms())
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
+            if let Some(stage) = valid.stage.filter(|s| s.is_closed()) {
+                crate::start::end_for_close(st, &id, stage, Actor::Agent).await.map_err(api)?;
+            }
             Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
                       "parent": t.summary.parent.map(|p| p.key)}))
         }
