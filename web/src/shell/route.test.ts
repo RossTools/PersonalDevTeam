@@ -66,7 +66,9 @@ describe('routes', () => {
     const up: [string, string][] = [
       ['/pm/notes', '/pm'], ['/pm/notes/n1', '/pm/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm/earlier'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
       ['/workflows/wf/runs/r', '/workflows'], ['/personas/p', '/personas'], ['/files/a/b.md?project=PDT', '/files?project=PDT'],
-      ['/settings/projects/PDT/danger-zone', '/settings'], ['/settings/notifications', '/settings'],
+      // A Settings section goes up to its page, the page to the list of them.
+      ['/settings/projects/PDT/danger-zone', '/settings/projects/PDT'], ['/settings/projects/PDT', '/settings'],
+      ['/settings/host/updates', '/settings/host'], ['/settings/host', '/settings'], ['/settings/notifications', '/settings'],
     ];
     for (const [p, to] of up) {
       expect(isDetail(parseLocation(p)), p).toBe(true);

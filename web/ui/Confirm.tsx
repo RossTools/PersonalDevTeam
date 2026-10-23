@@ -9,6 +9,7 @@ import {
   AlertDialogTitle,
 } from './primitives/alert-dialog';
 import { Button } from './Button';
+import { Input } from './Input';
 
 export interface ConfirmOptions {
   title: ReactNode;
@@ -22,6 +23,8 @@ export interface ConfirmOptions {
   cancel?: string;
   /** An extra choice, e.g. "Also delete the branch". */
   checkbox?: { label: ReactNode; defaultChecked?: boolean };
+  /** A name the user types before the action is enabled (removing a project): for what cannot be undone. */
+  typeToConfirm?: string;
 }
 
 export interface ConfirmResult {
@@ -49,6 +52,7 @@ interface Pending {
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [checked, setChecked] = useState(false);
+  const [typed, setTyped] = useState('');
   const current = useRef<Pending | null>(null);
   // Kept after closing so the dialog keeps its text while it animates out.
   const last = useRef<ConfirmOptions | null>(null);
@@ -70,12 +74,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         last.current = options;
         current.current = p;
         setChecked(options.checkbox?.defaultChecked ?? false);
+        setTyped('');
         setPending(p);
       }),
     [],
   );
 
   const o = pending?.options ?? last.current;
+  const typedOk = !o?.typeToConfirm || typed.trim() === o.typeToConfirm;
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}
@@ -113,13 +119,20 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 {o.checkbox.label}
               </AriaCheckbox>
             )}
+            {o.typeToConfirm && (
+              <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+                <span>Type <span className="font-mono text-foreground">{o.typeToConfirm}</span> to confirm.</span>
+                <Input aria-label={`Type ${o.typeToConfirm} to confirm`} value={typed} onChange={(e) => setTyped(e.target.value)} />
+              </label>
+            )}
             <AlertDialogFooter>
-              <Button variant="secondary" autoFocus={o.danger} onClick={() => finish(false, checked)}>
+              <Button variant="secondary" autoFocus={o.danger && !o.typeToConfirm} onClick={() => finish(false, checked)}>
                 {o.cancel ?? 'Cancel'}
               </Button>
               <Button
                 variant={o.danger ? 'danger' : 'primary'}
                 autoFocus={!o.danger}
+                disabled={!typedOk}
                 onClick={() => finish(true, checked)}
               >
                 {o.action}

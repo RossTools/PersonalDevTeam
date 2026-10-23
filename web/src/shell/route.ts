@@ -161,6 +161,10 @@ export function upRoute(r: Route): Route {
   if (r.view === 'pm' && r.pm !== 'current' && r.pm !== 'notes' && r.pm !== 'earlier') return { view: 'pm', pm: 'earlier' };
   // A file goes up to the checkout it is in.
   if (r.view === 'files') return { ...r, path: null };
+  // A Settings section (a phone's screen of its own) goes up to its page.
+  if (r.view === 'settings' && (r.page.kind === 'host' || r.page.kind === 'project') && r.page.section !== null) {
+    return { view: 'settings', page: { ...r.page, section: null } };
+  }
   return viewRoute(r.view);
 }
 

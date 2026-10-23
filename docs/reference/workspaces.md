@@ -52,7 +52,7 @@ its tab, the Inbox picking an item) replace it.
 | `/workflows/<id>/(outline\|runs\|graph\|text\|versions)`, `/workflows/<id>/runs/<runId>`, `/workflows/templates/<id>` | A workflow's tab, a run, a template |
 | `/personas/<id>` (`new`: the create form) | A persona |
 | `/files/<path>` (`?project=<key>&worktree=<id>`) | A file, in the checkout named (else the current tab's) |
-| `/settings`, `/settings/host(/<section>)`, `/settings/notifications`, `/settings/connections`, `/settings/projects/<key>(/<section>)` | Settings: the index (This host on desktop, the list of pages on a phone) and its pages; a section (its heading, `danger-zone`) is scrolled to |
+| `/settings`, `/settings/host(/<section>)`, `/settings/notifications`, `/settings/connections`, `/settings/projects/<key>(/<section>)` | Settings: the index (This host on desktop, the list of pages on a phone, with Add project) and its pages; a section (its heading, `danger-zone`) is scrolled to on desktop, and is a screen of its own on a phone, where This host's and a project's pages are the list of their sections; ← goes from a section to its page, then to the index |
 
 - Switching to a view shows it as it was last left (its last path); Tickets opens in the browser's last Backlog or
   Board. localStorage keeps only what a path doesn't say.

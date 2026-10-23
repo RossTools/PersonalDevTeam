@@ -43,6 +43,11 @@ export interface SectionProps {
   actions?: ReactNode;
   /** Bottom of the card, right-aligned: a form section's Save (with its "Saved" note). */
   footer?: ReactNode;
+  /**
+   * For a form's `footer`: whether something changed. On a phone the footer is then a Save bar that sticks to the
+   * bottom of the screen, shown only while something changed.
+   */
+  dirty?: boolean;
   /** The Danger zone: red heading and border. The only place for page-wide destructive actions. */
   danger?: boolean;
   /**
@@ -54,7 +59,7 @@ export interface SectionProps {
 }
 
 /** A group on a `Page`: heading and description, then a card of rows split by lines, then an optional footer. */
-export function Section({ label, description, actions, footer, danger = false, children, className }: SectionProps) {
+export function Section({ label, description, actions, footer, dirty, danger = false, children, className }: SectionProps) {
   const id = useId();
   return (
     <section aria-labelledby={id} className={cn('flex flex-col gap-2', className)}>
@@ -70,7 +75,8 @@ export function Section({ label, description, actions, footer, danger = false, c
       <div
         data-slot="section-card"
         className={cn(
-          'flex flex-col overflow-hidden rounded-lg border bg-card',
+          // clip, not hidden: a hidden overflow would be the sticky Save bar's scroller.
+          'flex flex-col overflow-clip rounded-lg border bg-card',
           danger ? 'border-destructive/40' : 'border-border',
         )}
       >
@@ -82,9 +88,12 @@ export function Section({ label, description, actions, footer, danger = false, c
         {footer != null && (
           <div
             data-slot="section-footer"
+            data-dirty={dirty === undefined ? undefined : String(dirty)}
             className={cn(
               'flex flex-wrap items-center justify-end gap-2 bg-muted/40 px-4 py-2',
               children != null && (danger ? 'border-t border-destructive/20' : 'border-t border-border'),
+              dirty !== undefined && 'max-md:sticky max-md:bottom-0 max-md:bg-card max-md:py-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))]',
+              dirty === false && 'max-md:hidden',
             )}
           >
             {footer}
@@ -106,6 +115,9 @@ export interface SettingsRowProps {
   children: ReactNode;
   className?: string;
 }
+
+/** On a phone (the row stacked) text fields and selects take the row's width, whatever width they ask for. */
+const phoneFields = 'max-sm:*:data-[slot=input]:grow max-sm:*:data-[slot=input]:basis-32 max-sm:*:data-[slot=select]:grow max-sm:*:data-[slot=select]:basis-32';
 
 /** One setting: label and description on the left, the control on the right; stacked on a phone. */
 export function SettingsRow({ label, description, htmlFor, stacked = false, children, className }: SettingsRowProps) {
@@ -131,7 +143,7 @@ export function SettingsRow({ label, description, htmlFor, stacked = false, chil
         )}
         {description != null && <div id={descId} className="text-xs text-muted-foreground">{description}</div>}
       </div>
-      <div className={cn('flex min-w-0 flex-wrap items-center gap-2', stacked ? 'flex-col items-stretch' : 'sm:justify-end')}>
+      <div className={cn('flex min-w-0 flex-wrap items-center gap-2', stacked ? 'flex-col items-stretch' : 'sm:justify-end', phoneFields)}>
         {children}
       </div>
     </div>
