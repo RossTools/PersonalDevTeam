@@ -37,6 +37,10 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [guildId, setGuildId] = useState(str(connection?.config.guildId));
   const [appId, setAppId] = useState(str(connection?.config.applicationId));
   const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
+  // A new connection made by an earlier Save whose secret step failed: Save again updates it instead of making a
+  // second one with the same name.
+  const [made, setMade] = useState<Connection | null>(null);
+  const existing = connection ?? made;
   const k = kindOf(kind);
   const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(id))); };
   const askUrl = !!k?.url || (!!k?.urlWhen && settings[k.urlWhen.key] === k.urlWhen.value);
@@ -50,8 +54,16 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
       const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
       const config = { ...kept, ...own };
       const body = { name: name.trim(), kind, url: askUrl ? url.trim() : '', config };
-      let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
-      if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
+      let c = existing ? await api.updateConnection(existing.id, body) : await api.createConnection(body);
+      if (!connection) setMade(c);
+      if (secret.trim()) {
+        try {
+          c = await api.setConnectionSecret(c.id, secret.trim());
+        } catch (e) {
+          void qc.invalidateQueries({ queryKey: connectionsKey });
+          throw new Error(`${body.name} was saved, but not its secret: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       return c;
     },
     onSuccess: (c) => {
@@ -60,7 +72,7 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
       onClose();
     },
   });
-  const needsSecret = !connection?.hasSecret && kind !== 'http' && !k?.secretOptional;
+  const needsSecret = !existing?.hasSecret && kind !== 'http' && !k?.secretOptional;
   const fieldsFilled = (k?.fields ?? []).every((f) => f.optional || !fieldShown(f, settings) || (settings[f.key] ?? '').trim() !== '');
   const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || k?.urlOptional || url.trim() !== '')
     && (!k?.discordBot || /^\d+$/.test(guildId.trim())) && fieldsFilled;
@@ -80,7 +92,7 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
             aria-label="Kind"
             options={CONNECTION_KINDS.map((x) => ({ value: x.id, label: x.label }))}
             value={kind}
-            disabled={!!connection || !!fixedKind}
+            disabled={!!existing || !!fixedKind}
             onChange={pickKind}
           />
         </Field>

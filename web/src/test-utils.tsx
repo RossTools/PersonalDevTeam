@@ -16,7 +16,7 @@ export function renderWithQuery(ui: ReactNode) {
     </QueryClientProvider>
   );
   const result = render(wrap(ui));
-  return { ...result, rerender: (node: ReactNode) => result.rerender(wrap(node)) };
+  return { ...result, qc, rerender: (node: ReactNode) => result.rerender(wrap(node)) };
 }
 
 /** A stub route value that answers with a specific status and JSON body. */

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, RotateCcw } from 'lucide-react';
+import { Alert } from './Alert';
 import { Badge } from './Badge';
 import { Button } from './Button';
 import { Textarea } from './Textarea';
@@ -11,7 +12,10 @@ export interface CommentComposerProps {
   initial?: string;
   /** The submit button's label ("Comment", "Reply", "Save"). */
   action: string;
-  /** Resolves when saved; the composer clears (and stays for another) unless `onCancel` closes it. */
+  /**
+   * Resolves when saved; the composer clears (and stays for another) unless `onCancel` closes it. On a rejection the
+   * text stays and the error shows.
+   */
   onSubmit: (text: string) => Promise<unknown> | void;
   onCancel?: () => void;
   autoFocus?: boolean;
@@ -19,10 +23,14 @@ export interface CommentComposerProps {
   className?: string;
 }
 
-/** A text area with submit (also Ctrl/⌘+Enter) and Cancel (also Escape). Blank text can't be submitted. */
+/**
+ * A text area with submit (also Ctrl/⌘+Enter) and Cancel (also Escape). Blank text can't be submitted; a failed
+ * submit keeps the text and shows why.
+ */
 export function CommentComposer({ label, initial = '', action, onSubmit, onCancel, autoFocus, placeholder, className }: CommentComposerProps) {
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -30,15 +38,19 @@ export function CommentComposer({ label, initial = '', action, onSubmit, onCance
   const submit = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
+    setError(null);
     try {
       await onSubmit(text.trim());
       setText('');
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'Something went wrong');
     } finally {
       setBusy(false);
     }
   };
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
+      {error && <Alert tone="error">{error}</Alert>}
       <Textarea
         ref={ref}
         aria-label={label}

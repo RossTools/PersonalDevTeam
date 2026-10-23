@@ -17,7 +17,14 @@ import { useOpenChanges } from '../review/open';
  * Name, key and base branch: one form, one Save (spec §6.1). Folder and GitHub link below. A Personal project has no
  * repository, so no base branch either.
  */
-function Identity({ project }: { project: Project }) {
+/** What Identity is keyed on: a change from elsewhere starts the form over. */
+const identityKey = (p: Pick<Project, 'name' | 'key' | 'baseBranch'>) => `${p.name}:${p.key}:${p.baseBranch}`;
+
+/**
+ * Name, key and base branch. A save remounts the form (it is keyed on them), so whether it was just saved comes from
+ * the parent: `savedAs` is the key the last save led to.
+ */
+function Identity({ project, savedAs, onSaved }: { project: Project; savedAs: string | null; onSaved: (key: string) => void }) {
   const personal = project.kind === 'personal';
   const qc = useQueryClient();
   const errorId = useId();
@@ -32,7 +39,8 @@ function Identity({ project }: { project: Project }) {
       ...(key.trim().toUpperCase() !== project.key ? { key } : {}),
       ...(base !== project.baseBranch ? { baseBranch: base } : {}),
     }),
-    onSuccess: () => {
+    onSuccess: (p) => {
+      onSaved(identityKey(p));
       void qc.invalidateQueries({ queryKey: ['projects'] });
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
     },
@@ -51,7 +59,7 @@ function Identity({ project }: { project: Project }) {
         dirty={changed}
         footer={
           <>
-            {save.isSuccess && !changed && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
+            {(save.isSuccess || savedAs === identityKey(project)) && !changed && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
             <Button type="submit" size="sm" variant="primary" disabled={!changed} pending={save.isPending}>Save</Button>
           </>
         }
@@ -231,8 +239,9 @@ export interface ProjectPageProps {
  */
 export function ProjectPage({ project, onRemoved, drill = false, section = null, onSection }: ProjectPageProps) {
   const panel = useProjectSettingsSections(project);
+  const [savedAs, setSavedAs] = useState<string | null>(null);
   const sections: SettingsSection[] = [
-    { label: 'Project', node: <Identity key={`${project.name}:${project.key}:${project.baseBranch}`} project={project} /> },
+    { label: 'Project', node: <Identity key={identityKey(project)} project={project} savedAs={savedAs} onSaved={setSavedAs} /> },
     ...(project.kind !== 'personal' ? [{ label: 'Worktrees', node: <Worktrees project={project} /> }] : []),
     ...panel.sections,
     { label: 'Danger zone', node: <RemoveProject project={project} onRemoved={onRemoved} /> },

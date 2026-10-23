@@ -68,6 +68,33 @@ describe('inbox', () => {
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('st'));
   });
 
+  it('Enter on a focused non-primary button presses that button, not the primary decision', async () => {
+    const calls = stubApi({ 'POST /api/inbox/g/answer': (c: Call) => c.body, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[gate]} selectedId="g" onSelect={() => {}} />);
+    const hold = screen.getByRole('button', { name: /hold/ });
+    hold.focus();
+    // The Inbox's window listener sees the keydown before the button's press (React Aria presses on keyup).
+    fireEvent.keyDown(hold, { key: 'Enter' }); await new Promise((r) => setTimeout(r, 50)); expect(calls.filter((c) => c.path.endsWith('/answer'))).toEqual([]);
+    await userEvent.click(hold);
+    const answers = () => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'));
+    await waitFor(() => expect(answers()).toHaveLength(1));
+    expect(answers()[0].body).toEqual({ choice: 'hold' });
+  });
+
+  it('Enter on a focused link follows it and does not take the primary decision', async () => {
+    const manual = item('m', {
+      kind: 'manual', group: 'gate', title: 'Your turn', body: { prompt: 'Read [the spec](https://example.com/spec) first.' },
+      choices: [{ id: 'done', title: 'done', primary: true }, { id: 'failed', title: 'failed', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/m/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[manual]} selectedId="m" onSelect={() => {}} />);
+    const link = screen.getByRole('link', { name: 'the spec' });
+    link.focus();
+    fireEvent.keyDown(link, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.filter((c) => c.path.endsWith('/answer'))).toEqual([]);
+  });
+
   it('sends the answers to an agent\'s questions', async () => {
     const calls = stubApi({ 'POST /api/inbox/q/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[question]} selectedId="q" onSelect={() => {}} />);

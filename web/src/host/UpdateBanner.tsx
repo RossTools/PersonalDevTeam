@@ -53,6 +53,7 @@ export function UpdateBanner() {
         >
           {r.message}
           {r.outcome !== 'installed' && r.log && <> · <code className="text-muted-foreground" title={r.log}>{r.log}</code></>}
+          {dismiss.isError && <span role="alert" className="text-destructive" title={dismiss.error.message}> · {dismiss.error.message}</span>}
         </Banner>
       )}
       {s.state === 'available' && s.latest && (

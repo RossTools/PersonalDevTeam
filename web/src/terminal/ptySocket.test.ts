@@ -272,10 +272,13 @@ describe('PtySocket', () => {
     expect(sockets).toHaveLength(1);
   });
 
-  it('drops input while disconnected', () => {
+  it('drops input while disconnected and says so', () => {
     const { sock, sockets } = setup();
     sock.connect();
-    sock.send('x');
+    expect(sock.send('x')).toBe(false);
     expect(sockets[0].sent).toEqual([]);
+    sockets[0].open();
+    expect(sock.send('y')).toBe(true);
+    expect(sockets[0].sent).toHaveLength(1);
   });
 });

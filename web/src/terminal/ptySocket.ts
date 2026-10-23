@@ -193,8 +193,14 @@ export class PtySocket {
     this.connect();
   }
 
-  send(text: string): void {
-    if (this.sock?.readyState === OPEN) this.sock.send(this.encoder.encode(text));
+  /**
+   * Sends input to the PTY. Returns false when it was not sent (not connected: connecting or reconnecting, exited or
+   * ended); input is never queued, since keys typed blind could land in whatever the program shows after a reconnect.
+   */
+  send(text: string): boolean {
+    if (this.sock?.readyState !== OPEN) return false;
+    this.sock.send(this.encoder.encode(text));
+    return true;
   }
 
   resize(cols: number, rows: number): void {
