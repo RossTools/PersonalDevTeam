@@ -56,6 +56,7 @@ impl NodeKind for EventTrigger {
             output_schema: serde_json::to_value((self.0.schema)()).unwrap_or(Value::Null),
             ports: ports(&[("out", "Then")]),
             dynamic_ports: false,
+            preset: None,
         }
     }
 

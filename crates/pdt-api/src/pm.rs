@@ -116,7 +116,7 @@ async fn new_session(st: &AppState, first: Option<String>) -> Result<Session, Ap
         },
         title: Some(p.name.clone()),
         attempt_id: None,
-        ticket_key: None,
+        ticket: None,
         tab: None,
         persona: Some(SessionPersona { id: p.id.clone(), name: p.name.clone(), version: p.version, step_id: None }),
         cwd: Some(work_folder(st, &project.repo_path).await?),

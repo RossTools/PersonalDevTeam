@@ -85,6 +85,7 @@ import type { KindSpec } from './gen/KindSpec';
 import type { LogEvent } from './gen/LogEvent';
 import type { Connection } from './gen/Connection';
 import type { ConnectionInput } from './gen/ConnectionInput';
+import type { McpTools } from './gen/McpTools';
 import type { NewWorkflow } from './gen/NewWorkflow';
 import type { SaveWorkflow } from './gen/SaveWorkflow';
 import type { Started } from './gen/Started';
@@ -319,6 +320,10 @@ export const api = {
   deleteConnection: (id: string) => request<void>(`/api/connections/${enc(id)}`, { method: 'DELETE' }),
   setConnectionSecret: (id: string, secret: string) =>
     request<Connection>(`/api/connections/${enc(id)}/secret`, { method: 'PUT', body: JSON.stringify({ secret }) }),
+  /** An MCP server's tools as last listed (null before the first listing). */
+  connectionTools: (id: string) => request<McpTools | null>(`/api/connections/${enc(id)}/tools`),
+  /** Lists an MCP server's tools now. */
+  refreshConnectionTools: (id: string) => request<McpTools>(`/api/connections/${enc(id)}/tools`, { method: 'POST' }),
   listWorkflowTemplates: () => request<WorkflowTemplate[]>('/api/workflow-templates'),
   getWorkflowTemplate: (id: string) => request<WorkflowTemplate>(`/api/workflow-templates/${enc(id)}`),
   createWorkflowTemplate: (t: TemplateInput) =>

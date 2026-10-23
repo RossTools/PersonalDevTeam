@@ -30,16 +30,20 @@ function sessionState(s: AttemptSession, live: Session | undefined) {
   return agentState({ kind: 'agent_tui', status: s.status });
 }
 
-/** The latest attempt: branch, state, its sessions (click opens the tab), and Abandon… while it is active. */
+/**
+ * The latest attempt: branch, state, its sessions (click opens the tab), and Abandon… while it is active. With no
+ * attempt, the sessions workflow steps started on the ticket (a Refiner's), if any.
+ */
 export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket; compact?: boolean }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const openSession = useOpenSession();
-  const all = useAllSessions();
   const [abandon, abandoning] = useAction(() => abandonAttempt(confirm, qc, t, t.attempt!));
   const a = t.attempt;
-  if (!a) return null;
-  const sessions = compact ? t.sessions.filter((s) => s.attemptId === a.id) : t.sessions;
+  if (!a) {
+    return t.sessions.length > 0 ? <OverviewSection title="Sessions"><SessionList ticket={t} sessions={t.sessions} /></OverviewSection> : null;
+  }
+  // Compact: this attempt's sessions and the steps' ones on the ticket (no attempt), not earlier attempts'.
+  const sessions = compact ? t.sessions.filter((s) => s.attemptId === null || s.attemptId === a.id) : t.sessions;
   return (
     <OverviewSection
       title="Attempt"
@@ -55,33 +59,42 @@ export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket;
       {!a.pr && a.ci && <CiDetails ci={a.ci} />}
       {!compact && <p className="text-meta text-muted-foreground">Base {a.baseBranch}{t.attempts.length > 1 && ` · attempt ${t.attempts.length}`}</p>}
       {sessions.length > 0 ? (
-        <ul aria-label="Sessions" className="flex flex-col gap-0.5">
-          {sessions.map((s) => {
-            const live = all.find((x) => x.id === s.id);
-            const state = sessionState(s, live);
-            return (
-              <li key={s.id}>
-                <button
-                  type="button"
-                  onClick={() => openSession({ id: s.id, projectId: t.projectId })}
-                  className={cn(
-                    'flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left text-xs outline-none hover:bg-muted',
-                    'focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch',
-                  )}
-                >
-                  <AgentDot state={state} />
-                  <SessionKindIcon session={live ?? { kind: 'agent_tui', agent: s.agent }} />
-                  <span className={cn('min-w-0 flex-1 truncate', live?.unseen && 'font-semibold')}>{live?.title ?? s.title}</span>
-                  {state.label && <span className="shrink-0 text-meta text-muted-foreground">{state.label}</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <SessionList ticket={t} sessions={sessions} />
       ) : (
         <p className="text-xs text-muted-foreground">No sessions.</p>
       )}
     </OverviewSection>
+  );
+}
+
+/** A ticket's sessions, each opening its tab on click. */
+function SessionList({ ticket: t, sessions }: { ticket: Ticket; sessions: AttemptSession[] }) {
+  const openSession = useOpenSession();
+  const all = useAllSessions();
+  return (
+    <ul aria-label="Sessions" className="flex flex-col gap-0.5">
+      {sessions.map((s) => {
+        const live = all.find((x) => x.id === s.id);
+        const state = sessionState(s, live);
+        return (
+          <li key={s.id}>
+            <button
+              type="button"
+              onClick={() => openSession({ id: s.id, projectId: t.projectId })}
+              className={cn(
+                'flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left text-xs outline-none hover:bg-muted',
+                'focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch',
+              )}
+            >
+              <AgentDot state={state} />
+              <SessionKindIcon session={live ?? { kind: 'agent_tui', agent: s.agent }} />
+              <span className={cn('min-w-0 flex-1 truncate', live?.unseen && 'font-semibold')}>{live?.title ?? s.title}</span>
+              {state.label && <span className="shrink-0 text-meta text-muted-foreground">{state.label}</span>}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

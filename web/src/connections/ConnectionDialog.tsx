@@ -2,14 +2,21 @@
 // never shown again; leaving it empty when editing keeps the one there is.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, Link, Select, Switch } from '@ui';
+import { Alert, Button, Dialog, Field, Input, Link, Select, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { AUTH_MODES, CONNECTION_KINDS, discordInviteUrl, hookUrl, kindOf, randomSecret } from './kinds';
+import {
+  AUTH_MODES, CONNECTION_KINDS, discordInviteUrl, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, type ConnectionKind,
+} from './kinds';
 
 export const connectionsKey = ['connections'] as const;
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/** Each setting of a kind as text, from a connection's config (a choice starts at its first option). */
+function settingsText(k: ConnectionKind | undefined, config: Record<string, unknown> = {}): Record<string, string> {
+  return Object.fromEntries((k?.fields ?? []).map((f) => [f.key, fieldText(f, config[f.key]) || (f.type === 'choice' ? f.options?.[0]?.value ?? '' : '')]));
+}
 
 export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved }: {
   /** Editing this one; else a new one. */
@@ -26,22 +33,23 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
-  const [fields, setFields] = useState<Record<string, string>>(() =>
-    Object.fromEntries(Object.entries(connection?.config ?? {}).map(([key, v]) => [key, str(v)])));
+  const [settings, setSettings] = useState(() => settingsText(kindOf(kind), connection?.config));
   const [guildId, setGuildId] = useState(str(connection?.config.guildId));
   const [appId, setAppId] = useState(str(connection?.config.applicationId));
   const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
   const k = kindOf(kind);
+  const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(id))); };
+  const askUrl = !!k?.url || (!!k?.urlWhen && settings[k.urlWhen.key] === k.urlWhen.value);
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
     mutationFn: async () => {
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
-        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : {};
-      for (const f of k?.fields ?? []) own[f.key] = (fields[f.key] ?? '').trim();
-      // Keeps what PDT put there (a webhook the PM made records its channel).
-      const config = { ...connection?.config, ...own };
-      const body = { name: name.trim(), kind, url: k?.url ? url.trim() : '', config };
+        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : fieldsConfig(k?.fields ?? [], settings);
+      // Keeps what PDT put there (a webhook the PM made records its channel), but not a setting the form left empty.
+      const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
+      const config = { ...kept, ...own };
+      const body = { name: name.trim(), kind, url: askUrl ? url.trim() : '', config };
       let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
       if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
       return c;
@@ -52,9 +60,9 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
       onClose();
     },
   });
-  const needsSecret = !connection?.hasSecret && kind !== 'http';
-  const fieldsFilled = (k?.fields ?? []).every((f) => (fields[f.key] ?? '').trim() !== '');
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || k.urlOptional || url.trim() !== '')
+  const needsSecret = !connection?.hasSecret && kind !== 'http' && !k?.secretOptional;
+  const fieldsFilled = (k?.fields ?? []).every((f) => f.optional || !fieldShown(f, settings) || (settings[f.key] ?? '').trim() !== '');
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || k?.urlOptional || url.trim() !== '')
     && (!k?.discordBot || /^\d+$/.test(guildId.trim())) && fieldsFilled;
   return (
     <Dialog
@@ -73,20 +81,30 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
             options={CONNECTION_KINDS.map((x) => ({ value: x.id, label: x.label }))}
             value={kind}
             disabled={!!connection || !!fixedKind}
-            onChange={setKind}
+            onChange={pickKind}
           />
         </Field>
         <Field label="Name" hint="How workflows refer to it, e.g. alerts or home-server.">
           <Input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {k?.url && (
-          <Field label="Address" hint={k.urlHint ?? "The service's base URL; a request's path is added to it."}>
-            <Input aria-label="Address" placeholder={k.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
+        {k?.fields?.filter((f) => f.type === 'choice').map((f) => (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            <Select className="w-full" aria-label={f.label} options={f.options ?? []} value={settings[f.key] ?? ''}
+              onChange={(v) => setSettings((s) => ({ ...s, [f.key]: v }))} />
+          </Field>
+        ))}
+        {askUrl && (
+          <Field label="Address" hint={k?.urlHint ?? (k?.auth ? "The service's base URL; a request's path is added to it." : undefined)}>
+            <Input aria-label="Address" placeholder={k?.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
         )}
-        {k?.fields?.map((f) => (
+        {k?.fields?.filter((f) => f.type !== 'choice' && fieldShown(f, settings)).map((f) => (
           <Field key={f.key} label={f.label} hint={f.hint}>
-            <Input aria-label={f.label} placeholder={f.placeholder} value={fields[f.key] ?? ''} onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })} />
+            {f.type === 'lines' || f.type === 'env'
+              ? <Textarea mono aria-label={f.label} rows={3} placeholder={f.placeholder} value={settings[f.key] ?? ''}
+                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />
+              : <Input aria-label={f.label} placeholder={f.placeholder} value={settings[f.key] ?? ''}
+                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />}
           </Field>
         ))}
         {k?.discordBot && (

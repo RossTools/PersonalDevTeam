@@ -234,7 +234,7 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
 }
 
 #[tokio::test]
-async fn an_auto_started_tickets_step_sessions_open_as_tabs_in_its_workspace() {
+async fn every_step_session_on_a_ticket_opens_a_tab_and_belongs_to_the_ticket() {
     let env = setup().await;
     let t = ticket(&env, "Tabbed").await;
     pipeline(&env, json!({}), &[("refine", "ready"), ("code", "submitted"), ("review", "approved"), ("qa", "pass")])
@@ -244,15 +244,51 @@ async fn an_auto_started_tickets_step_sessions_open_as_tabs_in_its_workspace() {
     assert_eq!(s, StatusCode::OK, "{v}");
     inbox_item(&env, "gate", &t).await;
 
-    // Auto-start made the ticket's workspace with only its tab; the Coder's session (the attempt's) opened after it.
+    // The ticket lists every step's session, each with its persona and the ticket's key; only the Coder's is the
+    // attempt's (PR notices go to it).
     let v = get_ticket(&env, &t).await;
+    let attempt = v["attempts"][0]["id"].clone();
+    let session = |title: &str| {
+        v["sessions"].as_array().unwrap().iter().find(|s| s["title"] == title).unwrap_or_else(|| panic!("{title}: {v}"))
+    };
+    let [refiner, coder, reviewer, qa] =
+        ["Refiner · PX-1", "Coder · PX-1", "Reviewer · PX-1", "QA · PX-1"].map(|title| session(title).clone());
+    let tagged: Vec<(&Value, &Value)> =
+        [&refiner, &coder, &reviewer, &qa].iter().map(|s| (&s["persona"], &s["attemptId"])).collect();
+    assert_eq!(
+        tagged,
+        [
+            (&json!("Refiner"), &Value::Null),
+            (&json!("Coder"), &attempt),
+            (&json!("Reviewer"), &Value::Null),
+            (&json!("QA"), &Value::Null)
+        ]
+    );
+    let (_, all) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
+    let on_ticket = all.as_array().unwrap().iter().filter(|s| s["ticket"]["key"] == "PX-1").count();
+    assert_eq!(on_ticket, 4, "{all}");
+
+    // Auto-start made the ticket's workspace with its tab; the Coder's, Reviewer's and QA's sessions opened after it,
+    // in that order. The Refiner ran before there was an attempt: its tab is in the project's workspace.
     let workspace = v["attempts"][0]["workspaceId"].as_str().expect("auto-start made a workspace").to_string();
     let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
-    let w = list.as_array().unwrap().iter().find(|w| w["id"] == workspace).unwrap().clone();
-    let coder = v["sessions"].as_array().unwrap().iter().find(|s| s["title"] == "Coder · PX-1").unwrap().clone();
+    let list = list.as_array().unwrap();
+    let w = list.iter().find(|w| w["id"] == workspace).unwrap();
     let tabs: Vec<(&Value, &Value)> =
         w["tabs"].as_array().unwrap().iter().map(|tab| (&tab["ticketId"], &tab["sessionId"])).collect();
-    assert_eq!(tabs, [(&json!(t), &Value::Null), (&Value::Null, &coder["id"])], "{w}");
+    assert_eq!(
+        tabs,
+        [
+            (&json!(t), &Value::Null),
+            (&Value::Null, &coder["id"]),
+            (&Value::Null, &reviewer["id"]),
+            (&Value::Null, &qa["id"])
+        ],
+        "{w}"
+    );
+    let project = list.iter().find(|w| w["projectId"] == env.project.as_str()).unwrap();
+    let in_project: Vec<&Value> = project["tabs"].as_array().unwrap().iter().map(|tab| &tab["sessionId"]).collect();
+    assert_eq!(in_project, [&refiner["id"]], "{project}");
 }
 
 #[tokio::test]

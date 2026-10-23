@@ -88,6 +88,46 @@ describe('connections', () => {
     expect(within(section('Discord bots')).getByText('None yet.')).toBeTruthy();
   });
 
+  it('adds an MCP server that PDT starts, with its arguments and environment, and needs no secret', async () => {
+    const created = conn('notes', 'mcp', false);
+    const calls = stubApi({ 'GET /api/connections': [], 'POST /api/connections': created });
+    renderWithQuery(<ConnectionsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Add mcp server' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByLabelText('Address')).toBeNull();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'notes');
+    await userEvent.type(within(dialog).getByLabelText('Program'), 'npx');
+    await userEvent.type(within(dialog).getByLabelText('Arguments'), '-y{Enter}notes-server{Enter}/tmp/notes');
+    await userEvent.type(within(dialog).getByLabelText('Environment'), 'LOG=warn{Enter}A=b=c');
+    await userEvent.type(within(dialog).getByLabelText('Secret’s variable'), 'NOTES_TOKEN');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      name: 'notes', kind: 'mcp', url: '',
+      config: { transport: 'stdio', command: 'npx', args: ['-y', 'notes-server', '/tmp/notes'], env: { LOG: 'warn', A: 'b=c' }, secretEnv: 'NOTES_TOKEN' },
+    });
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it("shows an MCP server's tools, or why they could not be listed, and lists them again", async () => {
+    const tools = (names: string[], error: string | null) => ({
+      server: 'notes', error, listedAt: 1, triedAt: 1,
+      tools: names.map((name) => ({ name, title: null, description: '', inputSchema: {}, outputSchema: null })),
+    });
+    const calls = stubApi({
+      'GET /api/connections': [conn('notes', 'mcp', false)],
+      'GET /api/connections/c-notes/tools': tools(['search', 'read'], 'notes: listing its tools took too long'),
+      'POST /api/connections/c-notes/tools': tools(['search', 'read', 'write'], null),
+    });
+    renderWithQuery(<ConnectionsPage />);
+    expect(await screen.findByText('2 tools: search, read')).toBeTruthy();
+    expect(screen.getByText(/took too long/)).toBeTruthy();
+    expect(screen.queryByText('No secret')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'List again' }));
+    expect(await screen.findByText('3 tools: search, read, write')).toBeTruthy();
+    expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/tools'))).toBe(true);
+  });
+
   it("a template's connection param offers the connections of its kind", async () => {
     stubApi({ 'GET /api/connections': [conn('alerts', 'discord_webhook'), conn('deploys', 'webhook')] });
     const onChange = vi.fn();

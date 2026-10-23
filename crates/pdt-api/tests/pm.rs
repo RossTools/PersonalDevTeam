@@ -305,7 +305,7 @@ async fn an_old_session_writes_its_journal_and_ends() {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
-        // The session is done before its "(no journal)" is written: wait for both.
+        // The row is marked done just before the stand-in journal is written.
         if pm["current"].is_null() && !pm["sessions"][0]["journal"].is_null() {
             let s = &pm["sessions"][0];
             assert_eq!((s["rotation"].as_str(), s["reason"].as_str()), (Some("done"), Some("age")));
@@ -393,7 +393,13 @@ async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
     let req = open_request(&env, &session).await;
     let url = format!("/api/sessions/{session}/requests/{req}");
     call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
-    assert!(wait_said(&env, &session, n + 1).await.pop().unwrap().contains("\"created\": true"));
+    // Waits for the tool's answer itself: a nudge after the first turn can add another message meanwhile.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !wait_said(&env, &session, n + 1).await[n..].iter().any(|m| m.contains("\"created\": true")) {
+        assert!(Instant::now() < deadline, "create_ticket never answered");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert_eq!(ticket_titles(&env).await, ["Fix the login", "Login fails on Safari"]);
     send(&env, &session, r#"mcp: submit_outcome {"outcome": "drafted", "summary": "Drafted PX-2."}"#).await;
     let deadline = Instant::now() + Duration::from_secs(20);

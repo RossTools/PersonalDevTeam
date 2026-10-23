@@ -88,7 +88,21 @@ export function defaultConfig(schema: Schema, root: Schema = schema): Record<str
   return Object.fromEntries(required.filter((k) => k in props).map((k) => [k, emptyValue(props[k], root)]));
 }
 
+/** A new node of `kind`; an entry that presets another kind (an MCP tool's) makes that kind's node, titled after it. */
 export function newNode(doc: WorkflowDoc, kind: KindSpec, position?: { x: number; y: number }): Node {
+  const preset = kind.preset;
+  if (preset) {
+    const args = ((kind.configSchema.properties ?? {}) as Record<string, Schema>).arguments;
+    const tool = typeof preset.config.tool === 'string' ? preset.config.tool : preset.kind;
+    return {
+      id: freshId(doc, tool),
+      kind: preset.kind,
+      version: kind.version,
+      title: kind.title,
+      config: { ...preset.config, ...(args ? { arguments: defaultConfig(args) } : {}) },
+      ...(position ? { position } : {}),
+    } as Node;
+  }
   return {
     id: freshId(doc, kind.id),
     kind: kind.id,
@@ -96,6 +110,16 @@ export function newNode(doc: WorkflowDoc, kind: KindSpec, position?: { x: number
     config: defaultConfig(kind.configSchema),
     ...(position ? { position } : {}),
   } as Node;
+}
+
+/** The schema of a node's settings: its kind's, or for an MCP tool node, its tool's entry (the tool's arguments). */
+export function configSchemaOf(catalog: Catalog, node: Node): Record<string, unknown> | undefined {
+  const c = (node.config ?? {}) as Record<string, unknown>;
+  if (node.kind === 'mcp.tool' && typeof c.server === 'string' && typeof c.tool === 'string') {
+    const entry = kindOf(catalog, `mcp:${c.server}/${c.tool}`);
+    if (entry) return entry.configSchema;
+  }
+  return kindOf(catalog, node.kind)?.configSchema;
 }
 
 export function connect(doc: WorkflowDoc, e: Edge): WorkflowDoc {
