@@ -248,8 +248,13 @@ function QuickAdd({ projectId, before, onDetails }: { projectId: string; before?
 // Peek
 
 /** The ticket in a side sheet: its Overview in short, Open for the tab, ⋯ for the rest. A phone shows `PhoneTicket` instead. */
-function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }: {
-  ticketId: string | null; open: boolean; missing: boolean; onClose: () => void; onLoaded: (t: Ticket) => void; phone: boolean;
+function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirtyChange, onLoaded, phone }: {
+  ticketId: string | null; open: boolean; missing: boolean;
+  /** Closes it, asking first over an unsaved description edit; resolves false when the user keeps editing. */
+  onClose: () => Promise<boolean>;
+  onDeleted: () => void;
+  onDirtyChange: (dirty: boolean) => void;
+  onLoaded: (t: Ticket) => void; phone: boolean;
 }) {
   const q = useTicket(ticketId);
   const qc = useQueryClient();
@@ -258,16 +263,6 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
   const start = useStartTicket();
   const t = q.data;
   const [making, setMaking] = useState(false);
-  // An unsaved description edit: closing the peek (a click outside, ×, Escape) asks before dropping it.
-  const editing = useRef(false);
-  const onDirtyChange = useCallback((d: boolean) => { editing.current = d; }, []);
-  const close = async () => {
-    if (editing.current) {
-      const { ok } = await confirm({ title: 'Discard your edit?', body: "The description you're editing hasn't been saved.", action: 'Discard', cancel: 'Keep editing' });
-      if (!ok) return;
-    }
-    onClose();
-  };
   useCheckMerge(t);
   useEffect(() => {
     if (t) onLoaded(t);
@@ -283,12 +278,12 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
           { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
           ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
           { separator: true },
-          { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onClose(); }) },
+          { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onDeleted(); }) },
         ]}
       />
       {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
       {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
-      <Button variant="primary" onClick={() => { onClose(); open(t); }}>Open</Button>
+      <Button variant="primary" onClick={() => void onClose().then((ok) => { if (ok) open(t); })}>Open</Button>
     </>
   );
   const body = (
@@ -323,7 +318,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
   if (phone) {
     if (!shown) return null;
     // Keyed by ticket: its edit, folds and section are its own.
-    return t ? <PhoneTicket key={t.id} ticket={t} onDeleted={onClose} /> : <div className="px-4 py-3">{body}</div>;
+    return t ? <PhoneTicket key={t.id} ticket={t} onDeleted={onDeleted} /> : <div className="px-4 py-3">{body}</div>;
   }
   return (
     <>
@@ -337,7 +332,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
       // row or a board card or lane, which shows that ticket instead.
       modal={false}
       keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}
-      onOpenChange={(o) => { if (!o) void close(); }}
+      onOpenChange={(o) => { if (!o) void onClose(); }}
       className="w-[32rem] max-w-[90vw]"
       footer={actions}
     >
@@ -394,6 +389,19 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   const peekRef = peek ? peek.ticket : ownPeek;
   const setPeekId = useCallback((ref: string | null) => (peek ? peek.onChange(ref) : setOwnPeek(ref)), [peek]);
   const { id: peekId, missing: peekMissing } = useTicketId(peekRef);
+  // An unsaved description edit in the peek: showing another ticket (a row, a card) or closing it asks first.
+  const peekEditing = useRef(false);
+  const onPeekDirty = useCallback((d: boolean) => { peekEditing.current = d; }, []);
+  const switchPeek = useCallback(async (ref: string | null) => {
+    // The same ticket (by key or id) keeps the edit.
+    if (ref !== peekRef && ref !== peekId && peekEditing.current) {
+      const { ok } = await confirm({ title: 'Discard your edit?', body: "The description you're editing hasn't been saved.", action: 'Discard', cancel: 'Keep editing' });
+      if (!ok) return false;
+    }
+    setPeekId(ref);
+    return true;
+  }, [peekRef, peekId, confirm, setPeekId]);
+  const peekTo = useCallback((ref: string | null) => void switchPeek(ref), [switchPeek]);
   // Peeked at by id (a row, a card): the path names it by its key once it has loaded.
   const peekLoaded = useCallback((t: Ticket) => {
     if (peek && peek.ticket && peek.ticket !== t.key && (peek.ticket === t.id || peek.ticket.toUpperCase() === t.key)) peek.onChange(t.key, { replace: true });
@@ -543,7 +551,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   if (projects.length === 0) {
     body = <EmptyState>Add a project in Settings to start writing tickets.</EmptyState>;
   } else if (mode === 'board') {
-    body = <Board projectId={project?.id ?? null} onPeek={setPeekId} phone={phone} />;
+    body = <Board projectId={project?.id ?? null} onPeek={peekTo} phone={phone} />;
   } else if (pages.isPending) {
     body = <div className="p-3"><Skeleton lines={3} label="Loading tickets" /></div>;
   } else if (pages.isError && !pages.data) {
@@ -563,7 +571,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         selectable={bulkMode}
         selectedKeys={selection}
         onSelectionChange={setSelection}
-        onAction={setPeekId}
+        onAction={peekTo}
         // Phones rank from the row's menu (Move to top / bottom): no drag on touch.
         {...(rankable && !phone
           ? {
@@ -594,7 +602,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     );
   }
 
-  const ticketPeek = <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />;
+  const ticketPeek = <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => switchPeek(null)} onDeleted={() => setPeekId(null)} onDirtyChange={onPeekDirty} onLoaded={peekLoaded} phone={phone} />;
   // On a phone a peeked ticket is its own screen, in place of the list.
   if (phone && peekRef !== null) return <div className="flex min-h-0 flex-1 flex-col">{ticketPeek}</div>;
   if (phone) {

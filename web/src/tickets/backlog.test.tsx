@@ -241,6 +241,28 @@ describe('backlog', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'ALP-1 · Ticket 1' })).not.toBeInTheDocument());
   });
 
+  it('asks before another row replaces the peek over an unsaved description edit', async () => {
+    stub({ 'GET /api/tickets/t2': ticket(2), 'GET /api/tickets/t2/events': { items: [], nextCursor: null } });
+    renderWithQuery(<Harness />);
+    const grid = await screen.findByRole('grid', { name: 'Tickets' });
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-1 / }));
+    const sheet = await screen.findByRole('dialog', { name: 'ALP-1 · Ticket 1' });
+    await userEvent.click(within(within(sheet).getByRole('region', { name: 'Description' })).getByRole('button', { name: 'Edit' }));
+    await userEvent.type(within(sheet).getByRole('textbox', { name: 'Description' }), ' more');
+    // The same row keeps the edit without asking.
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-1 / }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-2 / }));
+    const ask = await screen.findByRole('alertdialog');
+    await userEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('dialog', { name: 'ALP-1 · Ticket 1' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('textbox', { name: 'Description' })).toHaveValue('**Bold** text more');
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-2 / }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByRole('dialog', { name: 'ALP-2 · Ticket 2' })).toBeInTheDocument();
+  });
+
   it('opens a row menu on right-click with Open, Move to, Priority and Delete', async () => {
     const onOpen = vi.fn();
     stub();
