@@ -29,7 +29,7 @@ import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
 } from './TicketParts';
 
-type HubTab = 'overview' | 'conversation' | 'changes';
+export type HubTab = 'overview' | 'conversation' | 'changes';
 
 const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -40,7 +40,7 @@ const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
 const SECTION_KEY = (ticketId: string) => `pdt.ticket.section.${ticketId}`;
 
 /** The section last shown for a ticket on this browser (Overview the first time). */
-function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
+export function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
   const [tab, setTab] = useState<HubTab>(() => {
     try {
       const v = localStorage.getItem(SECTION_KEY(ticketId));
@@ -61,7 +61,7 @@ function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
 }
 
 /** Overview · Conversation · Changes (with the branch's diff size). */
-function HubTabs({ value, onChange, diff }: {
+export function HubTabs({ value, onChange, diff }: {
   value: HubTab;
   onChange: (t: HubTab) => void;
   diff?: { added: number; removed: number; files: number } | null;
@@ -169,6 +169,26 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   );
 }
 
+/** The Conversation (the ticket's agent sessions) or the Changes (its attempt's diff and review). */
+export function HubPanel({ ticket: t, tab }: { ticket: Ticket; tab: 'conversation' | 'changes' }) {
+  if (tab === 'conversation') {
+    return (
+      <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
+        <TicketConversation ticket={t} />
+      </div>
+    );
+  }
+  return (
+    <div role="tabpanel" aria-labelledby="ticket-tab-changes" className="flex min-h-0 flex-1 flex-col">
+      {t.attempt?.worktreeId ? (
+        <ChangesView key={t.attempt.worktreeId} worktreeId={t.attempt.worktreeId} ticket={t} />
+      ) : (
+        <EmptyState>{t.attempt ? 'The worktree of this attempt is gone.' : 'Start the ticket to see its changes here.'}</EmptyState>
+      )}
+    </div>
+  );
+}
+
 /** A ticket tab: header, the section tabs, then the Overview (description and activity; details and links aside) or
  * the Conversation (its agent sessions) or the Changes (its attempt's diff and review). */
 /** `mergedBanner` false: the shell already shows it above the ticket's workspace. */
@@ -192,18 +212,8 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       {mergedBanner && <MergedBanner ticket={t} />}
       <HubTabs value={tab} onChange={setTab} diff={diff} />
-      {tab === 'conversation' ? (
-        <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
-          <TicketConversation ticket={t} />
-        </div>
-      ) : tab === 'changes' ? (
-        <div role="tabpanel" aria-labelledby="ticket-tab-changes" className="flex min-h-0 flex-1 flex-col">
-          {t.attempt?.worktreeId ? (
-            <ChangesView key={t.attempt.worktreeId} worktreeId={t.attempt.worktreeId} ticket={t} />
-          ) : (
-            <EmptyState>{t.attempt ? 'The worktree of this attempt is gone.' : 'Start the ticket to see its changes here.'}</EmptyState>
-          )}
-        </div>
+      {tab !== 'overview' ? (
+        <HubPanel ticket={t} tab={tab} />
       ) : (
         <div role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">

@@ -1262,6 +1262,22 @@ describe('routes (PDT-111)', () => {
     expect(within(bar).getByRole('button', { name: 'Menu' })).toBeInTheDocument();
   });
 
+  it("puts Cancel and Save in a phone's top bar while the ticket's title is edited", async () => {
+    stubPhone();
+    const calls = stubWorkspaces({ ...ticketRoutes, 'PATCH /api/tickets/t1': { ...fixLogin, title: 'Fix login now' }, 'GET /api/inbox': { items: [], total: 0 } });
+    at('/tickets/ALP-1');
+    renderWithQuery(<AppShell />);
+    const bar = screen.getByRole('banner', { name: 'Top bar' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit title: Fix login' }));
+    expect(within(bar).queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Title' }), ' now');
+    await userEvent.click(within(bar).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ title: 'Fix login now' }));
+    // Saved: the bar is the screen's again, and ← goes back to the list.
+    await userEvent.click(await within(bar).findByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/tickets'));
+  });
+
   it('drills into Files folder by folder on a phone, with ← going up a folder', async () => {
     stubPhone();
     const p = `/api/projects/${project.id}`;

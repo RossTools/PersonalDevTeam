@@ -27,6 +27,7 @@ import { useTopBarActions } from '../shell/PhoneTopBar';
 import { AttemptSection, MergedBanner } from './Attempt';
 import { agentLine, Board, PIPELINE_LABEL } from './Board';
 import { NewTicketFab, PhoneToolbar } from './PhoneTickets';
+import { PhoneTicket } from './PhoneTicket';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { ImportJiraDialog } from './ImportJiraDialog';
@@ -241,7 +242,7 @@ function QuickAdd({ projectId, before, onDetails }: { projectId: string; before?
 // ---------------------------------------------------------------------------------------------------------------
 // Peek
 
-/** The ticket in a side sheet (full screen on phones): its Overview in short, Open for the tab, ⋯ for the rest. */
+/** The ticket in a side sheet: its Overview in short, Open for the tab, ⋯ for the rest. A phone shows `PhoneTicket` instead. */
 function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }: {
   ticketId: string | null; open: boolean; missing: boolean; onClose: () => void; onLoaded: (t: Ticket) => void; phone: boolean;
 }) {
@@ -272,8 +273,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
       />
       {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
       {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
-      {/* On a phone the route changes to the tab, so the peek goes with it: closing it too would go Back over that. */}
-      <Button variant="primary" onClick={() => { if (!phone) onClose(); open(t); }}>Open</Button>
+      <Button variant="primary" onClick={() => { onClose(); open(t); }}>Open</Button>
     </>
   );
   const body = (
@@ -282,7 +282,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
     ) : (
       // Sections divided by rules, so the sheet reads as blocks rather than one floating column.
       <div className="flex flex-col divide-y divide-border *:py-4 *:first:pt-1 *:last:pb-1">
-        <div className={cn('flex flex-col gap-2', !phone && 'pr-8')}>
+        <div className="flex flex-col gap-2 pr-8">
           <span className="flex items-center gap-1 self-start">
             {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} />}
             <TicketKey ticketKey={t.key} />
@@ -304,16 +304,11 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
     )
   );
   const makeParts = making && t && <MakePartsDialog ticket={t} onClose={() => setMaking(false)} />;
-  // On a phone the ticket is a detail screen under the top bar (← is Back), not a sheet over it (PDT-112).
+  // On a phone the ticket is its own screen under the top bar (← is Back), not a sheet over it (PDT-112, PDT-119).
   if (phone) {
-    if (!shown) return makeParts || null;
-    return (
-      <section aria-label={title} className="flex min-h-0 flex-1 flex-col">
-        {makeParts}
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{body}</div>
-        {actions && <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">{actions}</div>}
-      </section>
-    );
+    if (!shown) return null;
+    // Keyed by ticket: its edit, folds and section are its own.
+    return t ? <PhoneTicket key={t.id} ticket={t} onDeleted={onClose} /> : <div className="px-4 py-3">{body}</div>;
   }
   return (
     <>

@@ -1,5 +1,5 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -31,14 +31,21 @@ import { TicketPicker } from './TicketPicker';
 
 const sectionHeading = 'text-2xs font-medium tracking-wider text-muted-foreground uppercase';
 
+/** True inside a folding section that already names the block (the phone's ticket screen): its own heading hides. */
+export const FoldedSectionContext = createContext(false);
+
 /** A titled block of the Overview ("Details", "Links"). */
 export function OverviewSection({ title, actions, children, className }: { title: string; actions?: ReactNode; children: ReactNode; className?: string }) {
+  const folded = useContext(FoldedSectionContext);
   return (
     <section aria-label={title} className={cn('flex flex-col gap-2', className)}>
-      <div className="flex min-h-6 items-center gap-2">
-        <h3 className={cn(sectionHeading, 'flex-1')}>{title}</h3>
-        {actions}
-      </div>
+      {folded && !actions ? <h3 className="sr-only">{title}</h3> : (
+        <div className="flex min-h-6 items-center gap-2">
+          <h3 className={cn(sectionHeading, 'flex-1', folded && 'sr-only')}>{title}</h3>
+          {folded && <span className="flex-1" />}
+          {actions}
+        </div>
+      )}
       {children}
     </section>
   );
