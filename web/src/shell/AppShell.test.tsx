@@ -20,7 +20,7 @@ const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell'
 const hostTool = { found: true, ok: true, detail: 'ok' };
 const hostRoutes = {
   'GET /api/host/settings': {
-    settings: { remoteAccess: true, ownerLogin: 'me@example.com', updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 }, maxConcurrentRuns: 4, agentCredentials: 'subscription' },
+    settings: { remoteAccess: true, ownerLogin: 'me@example.com', updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 }, maxConcurrentRuns: 4, agentCredentials: 'subscription', defaultAgent: 'claude', defaultSessionMode: 'conversation' },
     ownerFromEnv: null,
     tokenPresent: true,
     tokenError: null,
@@ -823,15 +823,117 @@ describe('phone', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument());
   });
 
-  it('puts the terminal panel and New tab under ⋯ in a workspace', async () => {
+  const topBar = () => screen.getByRole('banner', { name: 'Top bar' });
+  const topMenu = async () => {
+    await userEvent.click(within(topBar()).getByRole('button', { name: 'Screen actions' }));
+    return screen.findByRole('menu', { name: 'Screen actions' });
+  };
+
+  it("puts a workspace's actions and the terminal panel under ⋯; the tab strip has ⧉ instead of ‹ ›", async () => {
     stubPhone();
     stubWorkspaces();
     window.history.replaceState(null, '', '/sessions/wa/ta');
     renderWithQuery(<AppShell />);
     await screen.findByRole('tab', { name: /Claude A/ });
     expect(screen.queryByRole('button', { name: 'Toggle terminal panel' })).not.toBeInTheDocument();
-    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Screen actions' }));
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New tab', 'Terminal panel']);
+    expect(screen.queryByRole('button', { name: 'Previous tab' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next tab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Tab overview' })).toBeInTheDocument();
+    // A project's own workspace can't be renamed or closed.
+    expect(within(await topMenu()).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New tab', 'Tab overview', 'Terminal panel']);
+  });
+
+  it('renames a free-form workspace in the top bar, and closes it back to /sessions', async () => {
+    stubPhone();
+    const calls = stubWorkspaces({ 'PATCH /api/workspaces/wr': {}, 'DELETE /api/workspaces/wr': undefined });
+    window.history.replaceState(null, '', '/sessions');
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await within(screen.getByRole('main')).findByRole('row', { name: /Release/ }));
+    await waitFor(() => expect(here()).toBe('/sessions/wr'));
+    let menu = await topMenu();
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New tab', 'Tab overview', 'Rename', 'Terminal panel', 'Close workspace…']);
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Rename' }));
+    const field = within(topBar()).getByRole('textbox', { name: 'Workspace name' });
+    await userEvent.clear(field);
+    await userEvent.type(field, 'Ship it{Enter}');
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/workspaces/wr', body: { name: 'Ship it' } }));
+    menu = await topMenu();
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Close workspace…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Close workspace' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/workspaces/wr')).toBe(true));
+    await waitFor(() => expect(here()).toBe('/sessions'));
+  });
+
+  it('has New workspace and New conversation under ⋯ on /sessions, with 56px rows', async () => {
+    stubPhone();
+    const created = sess('n', 'Claude', { kind: 'agent_tui', agent: 'claude', mode: 'conversation' });
+    // The session's tab exists once it is opened.
+    let opened = false;
+    const alpha = (tabs: unknown[]) => ({ id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs });
+    const release = { id: 'wr', name: 'Release', projectId: null, position: 1, createdAt: 2, tabs: [] };
+    const calls = stubWorkspaces({
+      'GET /api/workspaces': () => [alpha([tabOf('ta', 'wa', 'a', 0), tabOf('tb', 'wa', 'b', 1), ...(opened ? [tabOf('tn', 'wa', 'n', 2)] : [])]), release],
+      'POST /api/sessions': created,
+      'POST /api/workspaces/wa/tabs': () => { opened = true; return tabOf('tn', 'wa', 'n', 2); },
+    });
+    renderWithQuery(<AppShell />);
+    const main = screen.getByRole('main');
+    expect(await within(main).findByRole('row', { name: /Alpha/ })).toHaveClass('min-h-14');
+    let menu = await topMenu();
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New workspace', 'New conversation']);
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'New workspace' }));
+    expect(within(main).getByRole('textbox', { name: 'New workspace name' })).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    menu = await topMenu();
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'New conversation' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/sessions')?.body)
+      .toMatchObject({ projectId: project.id, kind: 'agent_tui', agent: 'claude', mode: 'conversation' }));
+    await waitFor(() => expect(here()).toBe('/sessions/wa/tn'));
+  });
+
+  it('opens the tab overview from ⧉: cards with a live snippet; a tap opens the tab, Back closes it', async () => {
+    const question = {
+      id: 'q', kind: 'question', group: 'question', status: 'open', projectId: project.id, ticketId: null, ticketKey: null,
+      ticketTitle: null, attemptId: null, sessionId: 'b', runId: null, stepId: null, personaId: null, personaName: null,
+      title: 'Which file?', body: {}, choices: [], resolution: null, createdAt: 1, resolvedAt: null,
+    };
+    const reply = { seq: 3, pos: 3, ts: 1, event: { kind: 'agent_message', id: 'm', markdown: 'Looking now.\n\n- Tests **pass**', phase: 'final' } };
+    stubPhone();
+    stubWorkspaces({
+      [`GET /api/projects/${project.id}/sessions`]: [
+        sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working', mode: 'conversation' }),
+        sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', activity: 'needs_you', unseen: true }),
+      ],
+      'GET /api/sessions/a/events': [reply],
+      'GET /api/inbox': { items: [question], total: 1 },
+    });
+    window.history.replaceState(null, '', '/sessions/wa/ta');
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Tab overview' }));
+    const overview = await screen.findByRole('region', { name: 'Tab overview' });
+    const cardA = within(overview).getByRole('button', { name: /Claude A/ });
+    expect(cardA).toHaveAttribute('aria-current', 'true');
+    expect(await within(cardA).findByText('Tests pass')).toBeInTheDocument();
+    const cardB = within(overview).getByRole('button', { name: /Codex B/ });
+    expect(within(cardB).getByText('Needs you')).toBeInTheDocument();
+    expect(await within(cardB).findByText('? Which file?')).toBeInTheDocument();
+    // Long press (right-click) has the tab's menu.
+    await userEvent.pointer({ keys: '[MouseRight]', target: cardB });
+    const menu = await screen.findByRole('menu', { name: 'Tab Codex B' });
+    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Close tab' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    // Back closes the overview, staying on the tab.
+    await act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Tab overview' })).not.toBeInTheDocument());
+    expect(here()).toBe('/sessions/wa/ta');
+    // A tap opens a tab.
+    await userEvent.click(screen.getByRole('button', { name: 'Tab overview' }));
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Tab overview' })).getByRole('button', { name: /Codex B/ }));
+    await waitFor(() => expect(here()).toBe('/sessions/wa/tb'));
+    expect(screen.queryByRole('region', { name: 'Tab overview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('goes up from a detail screen opened from a link, and drills into Settings from its list', async () => {

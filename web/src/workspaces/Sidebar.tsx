@@ -62,17 +62,30 @@ export function agentSecondary(branch: string | null, workspaceName: string | nu
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** herdr's left panel: workspaces on top, every agent below with its state and where it is. */
-export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
+/** A phone's rows: 56px tall, and moved from their menus rather than dragged. */
+const TOUCH_ROW = 'min-h-14';
+
+/**
+ * herdr's left panel: workspaces on top, every agent below with its state and where it is. `touch` is the phone's
+ * full-screen version (`/sessions`): taller rows, no dragging. `adding`/`onAddingChange` control the New workspace
+ * field from outside (the phone's ⋯).
+ */
+export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = false, adding: addingProp, onAddingChange }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
   /** Opens a project's page in Settings. */
   onProjectSettings: (projectId: string) => void;
   /** Called after a workspace or an agent is chosen (the phone sheet closes). */
   onChoose?: () => void;
+  touch?: boolean;
+  adding?: boolean;
+  onAddingChange?: (adding: boolean) => void;
 }) {
   const { openMenu, menu } = useMenuAt();
-  const [adding, setAdding] = useState(false);
+  const [addingState, setAddingState] = useState(false);
+  const adding = addingProp ?? addingState;
+  const setAdding = onAddingChange ?? setAddingState;
+  const drag = (group: Workspace[]) => (touch ? {} : { dragKind: 'workspace', acceptKinds: ['workspace', ...DROP_KINDS], onDrop: onDropIn(group) });
   const [renamingId, setRenamingId] = useState<string | null>(null);
 
   const openTicket = useOpenTicket();
@@ -121,9 +134,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
             id="workspace-list"
             aria-label="Workspaces"
             onAction={(id) => { ws.selectWorkspace(id); onChoose?.(); }}
-            dragKind="workspace"
-            acceptKinds={['workspace', ...DROP_KINDS]}
-            onDrop={onDropIn(general)}
+            {...drag(general)}
           >
             {general.map((w) => {
               const state = workspaceState(ws, w);
@@ -134,6 +145,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                   id={w.id}
                   textValue={w.name}
                   current={ws.workspace?.id === w.id}
+                  className={touch ? TOUCH_ROW : undefined}
                   title={nameOrRename(w)}
                   leading={state ? <AgentDot state={state} unseenDot={false} /> : <span className="inline-block size-2" />}
                   trailing={
@@ -168,9 +180,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
               id="ticket-workspace-list"
               aria-label="Ticket workspaces"
               onAction={(id) => { ws.selectWorkspace(id); onChoose?.(); }}
-              dragKind="workspace"
-              acceptKinds={['workspace', ...DROP_KINDS]}
-              onDrop={onDropIn(tickets)}
+              {...drag(tickets)}
             >
               {tickets.map((w) => {
                 const t = w.ticket!;
@@ -181,6 +191,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
                     id={w.id}
                     textValue={`${t.key} ${t.title}`}
                     current={ws.workspace?.id === w.id}
+                    className={touch ? TOUCH_ROW : undefined}
                     title={renamingId === w.id ? nameOrRename(w) : t.title}
                     leading={state ? <AgentDot state={state} unseenDot={false} /> : <span className="inline-block size-2" />}
                     trailing={state && state.label !== 'Idle' ? <AgentLabel state={state} /> : undefined}
@@ -200,18 +211,20 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
           </div>
         </section>
       )}
-      <AgentsSection ws={ws} onRenameTab={onRenameTab} onChoose={onChoose} />
+      <AgentsSection ws={ws} onRenameTab={onRenameTab} onChoose={onChoose} touch={touch} />
       {menu}
     </div>
   );
 }
 
 /** Every agent session with its state and where it is (the Sessions sidebar, the phone drawer). */
-export function AgentsSection({ ws, onRenameTab, onChoose }: {
+export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
   /** Called after an agent is chosen (the phone drawer closes). */
   onChoose?: () => void;
+  /** 56px rows (the phone's `/sessions`). */
+  touch?: boolean;
 }) {
   const { openMenu, menu } = useMenuAt();
   const agents = ws.allInfos
@@ -263,6 +276,7 @@ export function AgentsSection({ ws, onRenameTab, onChoose }: {
                 }
                 bold={info.unseen}
                 current={!!ws.tab && where?.tab.id === ws.tab.id}
+                className={touch ? TOUCH_ROW : undefined}
                 leading={
                   <span className="flex items-center gap-1.5">
                     <AgentDot state={state} unseenDot={false} />

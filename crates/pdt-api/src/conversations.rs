@@ -1206,6 +1206,9 @@ pub(crate) struct EventsQuery {
     after: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
+    /// The newest `last` events instead (oldest first); `after` and `limit` are ignored.
+    #[serde(default)]
+    last: Option<i64>,
 }
 
 /// `GET /api/sessions/{id}/events`: the stored events (JSON), or the live stream (WebSocket upgrade).
@@ -1221,6 +1224,9 @@ pub(crate) async fn events(
         Ok(ws) => {
             let c = conv(&st, &session).await?;
             Ok(ws.on_upgrade(move |socket| stream(st, c, socket, after)).into_response())
+        }
+        Err(_) if let Some(last) = q.last => {
+            Ok(Json(st.store.recent_session_events(&id, last.clamp(1, PAGE)).await?).into_response())
         }
         Err(_) => {
             let limit = q.limit.unwrap_or(PAGE).clamp(1, PAGE * 2);

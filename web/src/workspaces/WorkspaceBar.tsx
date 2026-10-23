@@ -1,6 +1,6 @@
 import { useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, FileDiff, Plus, Ticket, X } from 'lucide-react';
+import { FileDiff, LayoutGrid, Plus, Ticket, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { ContextMenu, IconButton, Kbd } from '@ui';
 import { api } from '../api/client';
@@ -100,14 +100,16 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
 }
 
 /**
- * The current workspace's name and tab strip. `hideName` leaves the name out (phones: the top bar shows it); `plusRef`
- * is the "+" button, which the new-tab chooser anchors to.
+ * The current workspace's name and tab strip; a sideways swipe moves to the next or previous tab. `hideName` leaves
+ * the name out (phones: the top bar shows it); `plusRef` is the "+" button, which the new-tab chooser anchors to;
+ * `onOverview` adds ⧉, the tab overview (phones).
  */
-export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, trailing, hideName = false, plusRef }: {
+export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, onOverview, trailing, hideName = false, plusRef }: {
   ws: WorkspacesApi;
   renamingTabId: string | null;
   setRenamingTabId: (id: string | null) => void;
   onNewTab: () => void;
+  onOverview?: () => void;
   trailing?: ReactNode;
   hideName?: boolean;
   plusRef?: Ref<HTMLButtonElement>;
@@ -147,7 +149,6 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
       }}
     >
       {!hideName && <span className="max-w-32 shrink-0 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? 'No workspace'}</span>}
-      <IconButton label="Previous tab" size="sm" className="md:hidden" onClick={() => step(-1)}><ChevronLeft aria-hidden /></IconButton>
       <div
         ref={strip}
         role="tablist"
@@ -172,7 +173,7 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, tr
           <Plus aria-hidden />
         </IconButton>
       </div>
-      <IconButton label="Next tab" size="sm" className="md:hidden" onClick={() => step(1)}><ChevronRight aria-hidden /></IconButton>
+      {onOverview && <IconButton label="Tab overview" noTooltip disabled={!w} onClick={onOverview}><LayoutGrid aria-hidden /></IconButton>}
       {trailing}
     </div>
   );

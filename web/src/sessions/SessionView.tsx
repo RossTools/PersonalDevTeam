@@ -9,6 +9,7 @@ import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { KIND_LABEL, SessionKindIcon } from '../common/SessionKindIcon';
 import { actionError, useAction } from '../common/useAction';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { ConversationPane } from '../conversation/ConversationView';
 import type { EventsSocketLike } from '../conversation/eventsSocket';
 import { useConversation, type ConversationData } from '../conversation/useConversation';
@@ -256,6 +257,28 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
     { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true },
   ];
 
+  // Phones (PDT-114): the header is one line (state, title, branch) and every action is under its ⋯.
+  const phone = useMediaQuery(PHONE_QUERY);
+  const phoneEntries = (): MenuEntry[] => [
+    ...(session.worktreeId ? [{ label: 'Changes', onSelect: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }, { here: true }) }] : []),
+    ...(oneAtATime
+      ? [{
+          label: session.mode === 'conversation' ? 'Show as terminal' : 'Show as conversation',
+          onSelect: () => void switchMode(session.mode === 'conversation' ? 'terminal' : 'conversation'),
+          disabled: switching !== null || busy,
+        }]
+      : []),
+    ...(switchable
+      ? [{
+          label: showTerminal ? 'Show as conversation' : 'Show as terminal',
+          onSelect: () => pickView(showTerminal ? 'conversation' : 'terminal'),
+          disabled: openingTerminal || (!showTerminal && !hasTurn && !terminalOpen),
+        }]
+      : []),
+    ...(session.worktreeId || oneAtATime || switchable ? [{ separator: true } as const] : []),
+    ...entries(),
+  ];
+
   return (
     <div className="flex flex-1 flex-col min-h-0">
       {makingTicket && (
@@ -266,6 +289,22 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
           onCreated={(t) => toast.success(`Created ${t.key}`)}
         />
       )}
+      {phone ? (
+        <ViewHeader
+          aria-label="Session"
+          className="flex-nowrap"
+          leading={
+            <span className="flex items-center gap-1.5">
+              <AgentDot state={state} />
+              <AgentLabel state={state} className="shrink-0" />
+            </span>
+          }
+          title={session.title}
+          titleTooltip={`${session.title} · ${session.cwd}`}
+          meta={theBranch ? <BranchChip branch={theBranch} repo={theRepo} base={theBase} className="min-w-0" /> : undefined}
+          actions={<MenuButton label="Session actions" placement="bottom end" entries={phoneEntries}/>}
+        />
+      ) : (
       <ViewHeader
         leading={
           <span className="flex items-center gap-1.5">
@@ -330,6 +369,7 @@ function SessionBody({ session, polledAt, onRemoved, branchLink, branch, repo, b
           </>
         }
       />
+      )}
       {showTerminal ? (
         <div className="relative flex min-h-0 flex-1 flex-col">
           <TerminalView key={`${session.id}:tui`} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />

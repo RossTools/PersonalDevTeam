@@ -39,6 +39,33 @@ async function choose(item: string | RegExp) {
 }
 
 describe('SessionView header', () => {
+  it('is one line on a phone (state, title, branch) with every action under ⋯', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width'), media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+    const calls = stubApi({
+      'GET /api/projects': [project],
+      'GET /api/projects/p/worktrees': [worktree],
+      'GET /api/worktrees/w/changes': { worktreeId: 'w', branch: 'feature/x', base: 'main', mergeBase: 'm', head: 'h', dirty: false, files: [], attemptId: null, ticketId: null, attemptActive: false, approved: false },
+      'POST /api/sessions/s1/view': undefined,
+      'POST /api/sessions/s1/mode': session({}),
+    });
+    renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', title: 'Claude', worktreeId: 'w', activity: 'working' })} onRemoved={() => {}} />);
+    const h = screen.getByRole('banner', { name: 'Session' });
+    expect(within(h).getByText('Working')).toBeInTheDocument();
+    expect(within(h).getByRole('heading', { name: 'Claude' })).toBeInTheDocument();
+    expect(await within(h).findByText('feature/x')).toBeInTheDocument();
+    // Only ⋯: Changes, the view switch, Stop and Restart moved under it.
+    expect(within(h).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Session actions']);
+    expect(within(h).queryByRole('radiogroup')).not.toBeInTheDocument();
+    await userEvent.click(within(h).getByRole('button', { name: 'Session actions' }));
+    const menu = await screen.findByRole('menu', { name: 'Session actions' });
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent))
+      .toEqual(['Changes', 'Show as conversation', 'Compose', 'Stop', 'Restart', 'Copy path', 'Remove…']);
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Show as conversation' }));
+    // The agent is working: switching asks first, as the desktop switch does.
+    await userEvent.click(await screen.findByRole('button', { name: 'Close terminal and switch' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions/s1/mode' && (c.body as { mode: string }).mode === 'conversation')).toBe(true));
+  });
+
   it('shows the dot, title, project key for the main checkout and the label; the path only in the tooltip', async () => {
     stubApi({ 'GET /api/projects': [project], 'POST /api/sessions/s1/view': undefined });
     renderWithQuery(<SessionView session={session({ kind: 'agent_tui', agent: 'claude', title: 'Claude', activity: 'needs_you', unseen: true })} onRemoved={() => {}} />);

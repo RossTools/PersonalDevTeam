@@ -17,8 +17,9 @@ Start too).
   its row and `pos` but gets a new `seq`; display order is `pos`), streaming text goes only to live viewers as
   deltas, activity is derived from events.
 - API:
-  - `GET /api/sessions/{id}/events`: JSON, or the WebSocket stream when upgraded (stored events after `after`,
-    `state`, partial deltas, `ready`, then live).
+  - `GET /api/sessions/{id}/events`: JSON (stored events after `after`, up to `limit`; or with `last=N` the newest N,
+    oldest first), or the WebSocket stream when upgraded (stored events after `after`, `state`, partial deltas,
+    `ready`, then live).
   - `POST …/messages {text, delivery: next|now}`, `POST …/requests/{requestId} {answer}` (409 `request_closed`),
     `POST …/interrupt`.
   - `PATCH /api/sessions/{id}` (`title`, `model`, `permissionMode`), `GET /api/agents/{agent}/capabilities`.
