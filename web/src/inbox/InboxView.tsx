@@ -388,7 +388,7 @@ function Approval({ item, onAnswered }: { item: InboxItem; onAnswered: () => voi
 /** Ready to accept: the attempt's changes, from its ticket. */
 /**
  * The ticket's work, next to its tab in the workspace that has it (its Start workspace): its coder session (to talk to
- * it), Open changes, and Run… over the runs and tests its worktree's configuration offers.
+ * it), Open changes, Open PR (on GitHub), and Run… over the runs and tests its worktree's configuration offers.
  */
 function TicketWork({ item }: { item: InboxItem }) {
   const openChanges = useOpenChanges();
@@ -403,7 +403,8 @@ function TicketWork({ item }: { item: InboxItem }) {
   const mine = (t?.sessions ?? []).filter((x) => attempt && x.attemptId === attempt.id);
   const coder = mine.find((x) => x.status === 'running') ?? mine[0];
   const start = useStartRun(projectId, (id) => tabs.openRun({ id, projectId }));
-  if (!item.ticketId || !item.projectId || (!worktreeId && !coder)) return null;
+  const pr = attempt?.pr ?? null;
+  if (!item.ticketId || !item.projectId || (!worktreeId && !coder && !pr)) return null;
   const run = (choice: string) => {
     const tab = tabs.placementNear(item.ticketId!);
     if (!worktreeId) return;
@@ -420,6 +421,11 @@ function TicketWork({ item }: { item: InboxItem }) {
       {worktreeId && (
         <Button variant="secondary" size="sm" onClick={() => openChanges({ id: worktreeId, projectId }, { ticketId: item.ticketId! })}>
           Open changes
+        </Button>
+      )}
+      {pr && (
+        <Button variant="secondary" size="sm" title={`#${pr.number} ${pr.title}`} onClick={() => window.open(pr.url, '_blank', 'noopener')}>
+          Open PR
         </Button>
       )}
       {worktreeId && choices.length > 0 && (

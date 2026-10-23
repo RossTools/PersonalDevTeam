@@ -170,8 +170,8 @@ pub fn next_pass_message(reason: Option<&str>, outcomes: &[OutcomeSpec]) -> Stri
     out
 }
 
-/// Why a step is back, from the step that sent it back: an agent's outcome and summary, or the user's choice at a gate
-/// and their note.
+/// Why a step is back, from the step that sent it back: an agent's outcome and summary, the user's choice at a gate
+/// and their note, or a refused merge's reason.
 pub fn back_because(kind: &str, port: &str, output: &serde_json::Value) -> Option<String> {
     let text = |k: &str| output.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty());
     match kind {
@@ -186,6 +186,10 @@ pub fn back_because(kind: &str, port: &str, output: &serde_json::Value) -> Optio
         "gate" => Some(match text("text") {
             Some(t) => format!("The user chose `{port}`: {t}"),
             None => format!("The user chose `{port}`."),
+        }),
+        "attempt.merge" if port == "refused" => Some(match text("reason") {
+            Some(r) => format!("The merge was refused: {r}."),
+            None => "The merge was refused.".into(),
         }),
         _ => None,
     }
@@ -269,6 +273,12 @@ mod tests {
             "The user answered `changes_requested`: Add a test."
         );
         assert_eq!(back_because("switch", "x", &serde_json::Value::Null), None);
+        let refused = serde_json::json!({"code": "merge_blocked", "reason": "the pull request conflicts"});
+        assert_eq!(
+            back_because("attempt.merge", "refused", &refused).unwrap(),
+            "The merge was refused: the pull request conflicts."
+        );
+        assert_eq!(back_because("attempt.merge", "queued", &serde_json::Value::Null), None);
         assert!(!next_pass_message(None, &outs()).contains("\n\n\n"));
     }
 

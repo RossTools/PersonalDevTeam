@@ -3,4 +3,4 @@
 /**
  * A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
  */
-export type PipelineStage = "refine" | "code" | "review" | "qa" | "accept";
+export type PipelineStage = "refine" | "code" | "review" | "qa" | "accept" | "merge" | "merge_blocked";

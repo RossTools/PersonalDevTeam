@@ -35,13 +35,15 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   (non-modal on desktop, full screen on phones), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
   progress / Done (closed in the last 14 days, `closedAfter`); cards drag between columns on desktop, phones show one
   column at a time.
-- **Pipeline stage** (Phase 7c): `pipelineStage` (`refine | code | review | qa | accept`, `tickets.pipeline_stage`)
+- **Pipeline stage** (Phase 7c): `pipelineStage` (`refine | code | review | qa | accept | merge | merge_blocked`,
+  `tickets.pipeline_stage`)
   is where a pipeline workflow has the ticket: `refine` while Draft or Ready, the others while In progress. Agent
-  steps and gates with a `pipelineStage` set it when they start; any change of stage clears it. Every ticket response
+  steps, gates, waits and `attempt.merge` with a `pipelineStage` set it when they start; any change of stage clears it. Every ticket response
   also carries `agent` (`TicketAgent`, computed in memory by pdt-api `scheduler::ticket_agents`): who owns its
   workflow step now (`persona`, `sessionId`, `busy` while its session runs a turn) and `state` `working | asking |
   stalled | yours` (a manual step or a gate) `| queued` (waiting for a slot). The backlog shows a Refining badge; the
-  Board splits In progress into Code | Review | QA | Accept once any In progress card has a stage (none: Code), and
+  Board splits In progress into Code | Review | QA | Accept | Merge once any In progress card has a stage (none:
+  Code; `merge_blocked` under Merge, with a Merge blocked badge), and
   each card shows the owner line ("Reviewer · working", "Your turn", "… · waiting for a slot").
 - **Refine**: `POST /api/tickets/{id}/refine` (`{by: "user"}` from the web; ticket menu and the ticket tab's menu) on
   a Draft or Ready ticket (else 409 `ticket_not_refinable`) sets `pipelineStage: refine` and logs
@@ -194,7 +196,8 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   Reviewer first when the agent calls the fix large; then auto-merge goes back on (`attempt.merge` again), and a CI
   pass with auto-merge off turns it on too. After 3 tries per attempt PR notices comments on the ticket and only tells
   the agent again. "Set to merge" (`mergeRequested` on the events) is kept per attempt
-  (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on, or the poller seeing auto-merge or the
+  (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on (or a workflow's merge refused because
+  the PR conflicts, PDT-124), or the poller seeing auto-merge or the
   merge queue; a merge queue drop counts too, a person dequeuing it does not, and a person turning auto-merge off
   (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A failure while an
   agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.

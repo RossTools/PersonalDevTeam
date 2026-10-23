@@ -1,6 +1,6 @@
 //! `attempt.merge`: the Merge command as an automated merger (Phase 7c spec §5). The project's policy decides whether
 //! a workflow may merge; what stops a merge (a conflict, a draft PR, no PR in a project that merges through them) and
-//! a policy refusal leave by `refused`.
+//! a policy refusal leave by `refused`, saying whether the attempt's agent can fix it (`fixable`, PDT-124).
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::policy::Merger;
@@ -33,6 +33,10 @@ pub struct MergeConfig {
     /// Merging again after a failure (PDT-104): `finishOnMerge` and `deleteBranch` stay as the first merge asked.
     #[serde(default)]
     pub again: bool,
+    /// The ticket's pipeline stage while it merges (the Board's column).
+    #[serde(default)]
+    #[ts(optional)]
+    pub pipeline_stage: Option<pdt_core::ticket::PipelineStage>,
 }
 
 fn yes() -> Tpl<bool> {
@@ -58,7 +62,9 @@ impl NodeKind for Merge {
             "Merges the attempt as Merge… does: turns on auto-merge for its pull request (`queued`), or merges it \
              locally (`merged`). The project's policy may not let a workflow merge, or may need a person's approval \
              first; that, and anything that stops the merge, leaves by `refused`. With `again` (after a fix), a pull \
-             request already set to merge counts as `queued`, and the first merge's finishing choice stays.",
+             request already set to merge counts as `queued`, and the first merge's finishing choice stays. A refusal \
+             says `fixable` when the attempt's agent can clear it with a commit (a conflict, uncommitted changes); a \
+             workflow's merge refused for a pull request that conflicts is still recorded as set to merge.",
             &[("merged", "Merged"), ("queued", "Auto-merge on"), ("refused", "Refused")],
             false,
         )
@@ -80,6 +86,7 @@ impl NodeKind for Merge {
             {
                 return Ok(Outcome::next("queued", json!({"outcome": MergeOutcome::Queued, "already": true})));
             }
+            crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
             let req = MergeRequest {
                 style: Some(c.style),
                 finish_on_merge: (!c.again).then(|| c.finish_on_merge.or(true)),
@@ -87,12 +94,12 @@ impl NodeKind for Merge {
                 by: None,
             };
             match crate::review::merge_attempt(cx.st, &c.attempt, &req, Merger::Automated).await {
-                Ok(r) => {
+                Ok(Ok(r)) => {
                     let port = if r.outcome == MergeOutcome::Merged { "merged" } else { "queued" };
                     Ok(Outcome::next(port, json!({"outcome": r.outcome, "commit": r.commit})))
                 }
-                Err(e) if e.status() == axum::http::StatusCode::CONFLICT && e.code() != "merge_failed" => {
-                    Ok(Outcome::next("refused", json!({"code": e.code(), "reason": e.message()})))
+                Ok(Err(r)) => {
+                    Ok(Outcome::next("refused", json!({"code": r.code, "reason": r.reason, "fixable": r.fixable})))
                 }
                 Err(e) => Err(e.message().to_string()),
             }

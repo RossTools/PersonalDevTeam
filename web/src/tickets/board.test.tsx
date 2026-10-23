@@ -229,8 +229,11 @@ describe('board pipeline stages', () => {
   it('places cards and words their owner', () => {
     expect(boardSplits([{ pipelineStage: null }, { pipelineStage: 'refine' }])).toBe(false);
     expect(boardSplits([{ pipelineStage: 'qa' }])).toBe(true);
-    expect(displayColumns(true).map((c) => c.title)).toEqual(['To do', 'Code', 'Review', 'QA', 'Accept', 'Done']);
-    const [, code, review] = displayColumns(true);
+    expect(displayColumns(true).map((c) => c.title)).toEqual(['To do', 'Code', 'Review', 'QA', 'Accept', 'Merge', 'Done']);
+    const [, code, review, , , merge] = displayColumns(true);
+    expect(inColumn({ pipelineStage: 'merge' }, merge)).toBe(true);
+    expect(inColumn({ pipelineStage: 'merge_blocked' }, merge)).toBe(true);
+    expect(inColumn({ pipelineStage: 'merge_blocked' }, code)).toBe(false);
     expect(inColumn({ pipelineStage: null }, code)).toBe(true);
     expect(inColumn({ pipelineStage: 'review' }, code)).toBe(false);
     expect(inColumn({ pipelineStage: 'review' }, review)).toBe(true);
