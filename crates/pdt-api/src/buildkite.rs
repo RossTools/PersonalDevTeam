@@ -7,7 +7,7 @@
 use crate::routes::{AppState, now_ms};
 use crate::workflow::nodes::http::{client, read_body};
 use pdt_core::buildkite::{API_URL, BUILDKITE, failed_notice, run_ids, runs_of};
-use pdt_core::pr::{CiRun, CiState, CiStatus, PrState};
+use pdt_core::pr::{CiRun, CiState, CiStatus, PrState, PullRequestStatus};
 use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::events::{self as ev, CiEvent};
 use pdt_store::AttemptInfo;
@@ -118,8 +118,18 @@ async fn head_of(st: &AppState, info: &AttemptInfo) -> Option<String> {
 }
 
 /// The `ci.*` events of an attempt's Buildkite CI (each once: its key names the builds and their retries).
-pub(crate) fn ci_events(info: &AttemptInfo, ci: &CiStatus, pr: Option<u32>, head: &str) -> Vec<NewLogEvent> {
+/// `pr`: the attempt's open pull request; `agent_working`: an agent step works on the attempt now.
+pub(crate) fn ci_events(
+    info: &AttemptInfo,
+    ci: &CiStatus,
+    pr: Option<&PullRequestStatus>,
+    head: &str,
+    agent_working: bool,
+) -> Vec<NewLogEvent> {
     let a = crate::github::attempt_ref(info);
+    let merge_requested = pr.is_some_and(|p| crate::github::merge_requested(info, p));
+    let (auto_merge, in_merge_queue) = pr.map(|p| (p.auto_merge, p.in_merge_queue)).unwrap_or_default();
+    let pr = pr.map(|p| p.number);
     let event = |notice, jobs| CiEvent {
         attempt: a.clone(),
         provider: ev::BUILDKITE.into(),
@@ -129,6 +139,10 @@ pub(crate) fn ci_events(info: &AttemptInfo, ci: &CiStatus, pr: Option<u32>, head
         runs: crate::github::run_refs(ci),
         jobs,
         notice,
+        auto_merge,
+        in_merge_queue,
+        merge_requested,
+        agent_working,
     };
     match ci.state {
         CiState::Failed => failed_notice(ci, &info.attempt.branch, pr, head)
@@ -196,8 +210,9 @@ async fn refresh_attempt(
     let ci = CiStatus::of(&runs, &head);
     crate::github::set_buildkite(st, &info.attempt.id, ci.clone());
     let Some(ci) = ci else { return Ok(()) };
-    let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == PrState::Open).map(|p| p.number);
-    for e in ci_events(info, &ci, pr, &head) {
+    let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == PrState::Open);
+    let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
+    for e in ci_events(info, &ci, pr.as_ref(), &head, agent_working) {
         if let Err(x) = st.store.emit_event(&e, now_ms()).await {
             tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a Buildkite event");
         }

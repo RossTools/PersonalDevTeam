@@ -257,6 +257,19 @@ pub struct CiEvent {
     pub jobs: Vec<String>,
     /// The message PDT tells the agent (failures only).
     pub notice: Option<Notice>,
+    /// The pull request's auto-merge is on (false without one).
+    #[serde(default)]
+    pub auto_merge: bool,
+    /// The pull request is in the merge queue.
+    #[serde(default)]
+    pub in_merge_queue: bool,
+    /// The pull request was set to merge (Merge…, `attempt.merge`, auto-merge or the merge queue) and hasn't merged
+    /// (PDT-104): PR notices gets it merging again.
+    #[serde(default)]
+    pub merge_requested: bool,
+    /// An agent step is working on the attempt (a workflow already has an agent on it).
+    #[serde(default)]
+    pub agent_working: bool,
 }
 
 /// `pr.*`.
@@ -273,6 +286,13 @@ pub struct PrEvent {
     pub auto_merge: bool,
     pub in_merge_queue: bool,
     pub notice: Notice,
+    /// The pull request was set to merge (Merge…, `attempt.merge`, auto-merge or the merge queue) and hasn't merged
+    /// (PDT-104): PR notices gets it merging again.
+    #[serde(default)]
+    pub merge_requested: bool,
+    /// An agent step is working on the attempt (a workflow already has an agent on it).
+    #[serde(default)]
+    pub agent_working: bool,
 }
 
 /// How an attempt came to be merged.

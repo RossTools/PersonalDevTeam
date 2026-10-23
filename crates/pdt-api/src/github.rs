@@ -349,7 +349,21 @@ async fn refresh_one(
         w.by_attempt.insert(info.attempt.id.clone(), now.clone());
     }
     if tell {
-        for e in news_events(info, &now) {
+        let mut info = info.clone();
+        if (now.auto_merge || now.in_merge_queue) && !info.merge_requested {
+            info.merge_requested = true;
+            if let Err(e) = st.store.set_attempt_merge_requested(&info.attempt.id).await {
+                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record that a PR is set to merge");
+            }
+        } else if info.merge_requested && turned_off_by_hand(prev.as_ref(), &now) {
+            info.merge_requested = false;
+            if let Err(e) = st.store.clear_attempt_merge_requested(&info.attempt.id).await {
+                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not forget that a PR was set to merge");
+            }
+        }
+        let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
+        let info = &info;
+        for e in news_events(info, &now, agent_working) {
             if let Err(x) = st.store.emit_event(&e, now_ms()).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event");
             }
@@ -385,10 +399,35 @@ pub(crate) fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
         .collect()
 }
 
+/// Whether someone turned the open PR's auto-merge off since the last look: it was on (or queued) and now isn't, and
+/// the merge queue didn't drop it (a new removal by the queue). CI failing and conflicts leave auto-merge on.
+pub(crate) fn turned_off_by_hand(prev: Option<&PullRequestStatus>, now: &PullRequestStatus) -> bool {
+    let Some(prev) = prev else { return false };
+    let removal = |p: &PullRequestStatus| p.queue_removal.as_ref().map(|r| r.id.clone());
+    let dropped_by_queue = now.queue_removal.as_ref().is_some_and(|r| r.by_queue) && removal(now) != removal(prev);
+    now.state == PrState::Open
+        && (prev.auto_merge || prev.in_merge_queue)
+        && !now.auto_merge
+        && !now.in_merge_queue
+        && !dropped_by_queue
+}
+
+/// Whether the attempt's open PR is (or was) set to merge and hasn't merged (PDT-104): PDT recorded it (Merge…,
+/// `attempt.merge`, or auto-merge seen on), auto-merge is on, it is queued, or the merge queue itself removed it. A
+/// person taking it out of the queue says not to.
+pub(crate) fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
+    if pr.state != PrState::Open || pr.queue_removal.as_ref().is_some_and(|r| !r.by_queue && !pr.in_merge_queue) {
+        return false;
+    }
+    info.merge_requested || pr.auto_merge || pr.in_merge_queue || pr.queue_removal.as_ref().is_some_and(|r| r.by_queue)
+}
+
 /// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
-pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<NewLogEvent> {
+/// `agent_working`: an agent step works on the attempt now.
+pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_working: bool) -> Vec<NewLogEvent> {
     let a = attempt_ref(info);
     let key = |k: &str| format!("{}:{k}", a.attempt_id);
+    let merge_requested = merge_requested(info, now);
     let pr_event = |n: Notice| PrEvent {
         attempt: a.clone(),
         pr: now.number,
@@ -397,6 +436,8 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
         auto_merge: now.auto_merge,
         in_merge_queue: now.in_merge_queue,
         notice: n,
+        merge_requested,
+        agent_working,
     };
     let mut out = vec![];
     let mut all = notices(now, &info.attempt.branch);
@@ -419,6 +460,10 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
                         runs: ci.map(run_refs).unwrap_or_default(),
                         jobs: n.jobs.clone(),
                         notice: Some(n),
+                        auto_merge: now.auto_merge,
+                        in_merge_queue: now.in_merge_queue,
+                        merge_requested,
+                        agent_working,
                     },
                 )
             }
@@ -447,6 +492,10 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus) -> Vec<Ne
                 runs: run_refs(ci),
                 jobs: vec![],
                 notice: None,
+                auto_merge: now.auto_merge,
+                in_merge_queue: now.in_merge_queue,
+                merge_requested,
+                agent_working,
             },
         ));
     }
@@ -611,6 +660,40 @@ mod tests {
         let (_, queue, _) = read_pr(&gh, "o/r", "b", false, Some(vec![]), &HashMap::new()).unwrap();
         assert_eq!(queue, None);
         assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")));
+    }
+
+    #[test]
+    fn auto_merge_turned_off_by_a_person_is_not_a_queue_drop() {
+        let status = |auto: bool, queued: bool, removal: Option<&str>| PullRequestStatus {
+            number: 12,
+            url: "u".into(),
+            title: "t".into(),
+            state: PrState::Open,
+            draft: false,
+            base_branch: "main".into(),
+            head_sha: "h".into(),
+            mergeable: Mergeable::Mergeable,
+            behind: false,
+            auto_merge: auto,
+            in_merge_queue: queued,
+            queue_position: None,
+            ci: None,
+            queue_ci: None,
+            queue_removal: removal.map(|id| pdt_core::pr::QueueRemoval {
+                id: id.into(),
+                reason: "failed_checks".into(),
+                by_queue: true,
+            }),
+            checked_at: 0,
+        };
+        let on = status(true, false, None);
+        assert!(turned_off_by_hand(Some(&on), &status(false, false, None)));
+        assert!(!turned_off_by_hand(Some(&on), &status(true, false, None)), "still on");
+        assert!(!turned_off_by_hand(None, &status(false, false, None)), "nothing to compare");
+        assert!(!turned_off_by_hand(Some(&status(false, true, None)), &status(false, false, Some("q1"))), "dropped");
+        let old_drop = status(false, true, Some("q1"));
+        assert!(turned_off_by_hand(Some(&old_drop), &status(false, false, Some("q1"))), "an old drop isn't news");
+        assert!(!turned_off_by_hand(Some(&status(false, false, None)), &status(false, false, None)), "was off");
     }
 
     #[test]
