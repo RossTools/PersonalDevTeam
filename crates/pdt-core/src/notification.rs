@@ -220,7 +220,7 @@ impl NotificationKind {
             K::InboxApproval => "A conversation asks to use a tool.",
             K::InboxGate => "A workflow waits at a gate, or work is ready to accept.",
             K::InboxManual => "A manual step waits for you.",
-            K::InboxStalled => "An agent step ended its turns without an outcome.",
+            K::InboxStalled => "An agent step ended its turns, or timed out, without an outcome.",
             K::InboxLoopLimit => "An agent step reached its loop limit.",
             K::SessionTurnEnded => "A session finished its turn and you haven't looked yet.",
             K::SessionExited => "A session's agent exited on its own (not your Stop).",
@@ -238,7 +238,7 @@ impl NotificationKind {
         match (kind, group) {
             (InboxKind::Question, _) => K::InboxQuestion,
             (InboxKind::Approval, _) => K::InboxApproval,
-            (InboxKind::Stalled, _) => K::InboxStalled,
+            (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
             (InboxKind::Manual, _) => K::InboxManual,
             (InboxKind::Gate | InboxKind::Session, _) => K::InboxGate,

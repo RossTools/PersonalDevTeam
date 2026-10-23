@@ -2,7 +2,12 @@
 import type { WorkflowRunStatus } from "./WorkflowRunStatus";
 import type { WorkflowStep } from "./WorkflowStep";
 
-export type WorkflowRunDetail = { steps: Array<WorkflowStep>, id: string, workflowId: string, workflowName: string, 
+export type WorkflowRunDetail = { steps: Array<WorkflowStep>, 
+/**
+ * The agent step the run can be resumed from (`POST /api/workflow-runs/{id}/resume`, PDT-123): its latest
+ * agent step, when that one ended by `timeout` or `stopped`.
+ */
+resumeFrom: string | null, id: string, workflowId: string, workflowName: string, 
 /**
  * The workflow version it runs.
  */
