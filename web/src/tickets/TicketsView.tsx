@@ -293,7 +293,7 @@ function TicketPeek({ ticketId, onClose, phone }: { ticketId: string | null; onC
             <MergedBanner ticket={t} className="rounded-md border" />
           </div>
           <TicketDetails ticket={t} />
-          {t.attempt && <AttemptSection ticket={t} compact />}
+          <AttemptSection ticket={t} compact />
           {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
           <TicketDescription key={t.id} ticket={t} />
           <PartsSection ticket={t} />

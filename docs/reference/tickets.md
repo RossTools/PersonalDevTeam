@@ -26,6 +26,8 @@ web/src/tickets. Review and merge are in [review.md](review.md).
     comments. So an agent's comment never passes for the user's, and workflows that react to the user's comments
     (below) don't fire on it.
 - A workspace tab holds a session, a run, a ticket (`workspace_tabs.ticket_id`) or a worktree's changes, exactly one.
+  A ticket tab's place is its active attempt's worktree (else the main checkout): a new session or run from it (the
+  new-tab chooser, palette, Run) and the folder view default to the ticket's branch.
 - Web: the Tickets view (rail item, Ctrl+] l) is the backlog (Draft and Ready unless the Stage filter says
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
   adds a Draft above the first row when the list is a flat rank order; Shift+Enter opens the full form), filters
@@ -92,7 +94,10 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   note saying how many) and a newest comment too long for the room is cut. On Windows, when the agent is a `.cmd` shim run through cmd.exe, the
   prompt goes to `<data dir>/sessions/<id>/prompt.md` and the agent gets a short prompt naming that file.
 - Tabs: the ticket tab, then the session tab after it (or both in a new free-form workspace `<KEY>-<n>`). Sessions
-  carry `ticket {id, key}` (sidebar and tab chips). Session titles never name the agent (a new session is titled with
+  carry `ticket {id, key}` (sidebar and tab chips): their attempt's, else the ticket a workflow step started them on
+  (`sessions.ticket_id`: a Reviewer, QA or Refiner, which has no attempt). A ticket's `sessions` lists both kinds,
+  newest first (`attemptId` null for a step's, `persona` for any step's); the overview's Attempt section lists them
+  (a Sessions section before any attempt) and the board card's dot rolls up the attempt's and the steps'. Session titles never name the agent (a new session is titled with
   its branch, or the project for the main checkout); tabs, agent rows, the palette and the attempt list show it with
   `SessionKindIcon` (web/src/common).
 - The project's running-attempt cap (project settings `maxRunningAttempts`, Phase 7c): with that many active
@@ -103,7 +108,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   ticket by rank (then Ready with `ready`), skipping parents, tickets that ever had an attempt, blocked ones, `conflict`
   overlaps and waiting tickets that aren't clear (pdt-core `policy::pick_next`). It starts in a new workspace with the
   host's default agent, view and ticket permission mode, or with no session when an enabled workflow for the project
-  has an `attempt.started` trigger (the Pipeline's Coder step starts one, its tab after the ticket's); the `started`
+  has an `attempt.started` trigger (the Pipeline's Coder step starts one, its tab after the ticket's,
+  then the Reviewer's and QA's); the `started`
   event has `auto: true`. A failed start is logged and skipped until the ticket changes; a start with its own session
   waits for a slot under the host's cap.
 - `noSession: true` (PDT-72; the Start dialog's "No session") starts no agent session: the branch, worktree, attempt

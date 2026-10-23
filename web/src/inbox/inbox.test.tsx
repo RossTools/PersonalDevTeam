@@ -129,8 +129,8 @@ describe('inbox', () => {
     const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: 'w1', state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: 'ws7', ci: null, pr: null };
     const calls = stubApi({
       'GET /api/tickets/t1': ticket(1, { attempts: [attempt], sessions: [
-        { id: 'old', title: 'Coder · PDT-7', status: 'finished', agent: 'claude', attemptId: 'a1', mode: 'conversation' },
-        { id: 's5', title: 'Coder · PDT-7', status: 'running', agent: 'claude', attemptId: 'a1', mode: 'conversation' },
+        { id: 'old', title: 'Coder · PDT-7', status: 'finished', agent: 'claude', attemptId: 'a1', persona: 'Coder', mode: 'conversation' },
+        { id: 's5', title: 'Coder · PDT-7', status: 'running', agent: 'claude', attemptId: 'a1', persona: 'Coder', mode: 'conversation' },
       ] }),
       'GET /api/projects/p/run-config': { filePath: null, file: null, overrides: null, error: null,
         effective: { runs: [{ name: 'web', setup: null, command: 'x', web: true, data: true, env: {} }], tests: [] } },

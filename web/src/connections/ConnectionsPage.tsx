@@ -1,19 +1,38 @@
 // Settings → Connections (Phase 7e): the services workflows use by name, a section per kind (a Discord channel's
 // webhook, a bot that lets the PM manage a Discord server, an incoming webhook and its secret, an HTTP service and its
-// token). Secrets stay in the OS keychain.
+// token, Radarr, Sonarr, Plex, MCP servers and their tools). Secrets stay in the OS keychain.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Page, Section, Skeleton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from './ConnectionDialog';
-import { CONNECTION_KINDS, hookUrl } from './kinds';
+import { CONNECTION_KINDS, hookUrl, kindOf } from './kinds';
+
+/** An MCP server's tools: how many (their names on hover), or why listing them failed; List again asks it now. */
+function McpToolsLine({ c }: { c: Connection }) {
+  const qc = useQueryClient();
+  const key = ['connection-tools', c.id];
+  const tools = useQuery({ queryKey: key, queryFn: () => api.connectionTools(c.id), refetchInterval: 10_000 });
+  const relist = useMutation({ mutationFn: () => api.refreshConnectionTools(c.id), onSuccess: (t) => qc.setQueryData(key, t) });
+  const t = tools.data;
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2 pl-2 text-xs text-muted-foreground">
+      {!t && <span>{tools.isLoading ? 'Loading tools…' : 'Tools not listed yet.'}</span>}
+      {t && t.listedAt !== null && (
+        <span title={t.tools.map((x) => x.name).join(', ')}>{t.tools.length === 1 ? '1 tool' : `${t.tools.length} tools`}: {t.tools.slice(0, 6).map((x) => x.name).join(', ')}{t.tools.length > 6 ? ', …' : ''}</span>
+      )}
+      {t?.error && <span className="text-destructive">{t.error}</span>}
+      <Button size="sm" variant="ghost" pending={relist.isPending} onClick={() => relist.mutate()}>List again</Button>
+    </div>
+  );
+}
 
 function Row({ c, onEdit, onDelete }: { c: Connection; onEdit: () => void; onDelete: () => void }) {
   return (
     <div className="flex flex-wrap items-center gap-2 py-1">
       <span className="min-w-0 truncate text-sm font-medium">{c.name}</span>
-      {!c.hasSecret && c.kind !== 'http' && <Badge tone="waiting">No secret</Badge>}
+      {!c.hasSecret && c.kind !== 'http' && !kindOf(c.kind)?.secretOptional && <Badge tone="waiting">No secret</Badge>}
       {c.kind === 'webhook' && <code className="min-w-0 truncate text-xs text-muted-foreground">{hookUrl(c.name)}</code>}
       {c.kind === 'discord_webhook' && typeof c.config.channel === 'string' && <span className="text-xs text-muted-foreground">#{c.config.channel}</span>}
       {c.kind === 'discord_bot' && typeof c.config.guildId === 'string' && <span className="text-xs text-muted-foreground">Server {c.config.guildId}</span>}
@@ -22,6 +41,7 @@ function Row({ c, onEdit, onDelete }: { c: Connection; onEdit: () => void; onDel
       <span className="flex-1" />
       <Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>
       <Button size="sm" variant="secondary" onClick={onDelete}>Delete</Button>
+      {c.kind === 'mcp' && <McpToolsLine c={c} />}
     </div>
   );
 }

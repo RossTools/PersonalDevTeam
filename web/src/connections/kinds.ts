@@ -19,16 +19,40 @@ export interface ConnectionKind {
   generate?: boolean;
   /** Asks how the secret is sent (an HTTP service). */
   auth?: boolean;
+  /** The secret may be left out. */
+  secretOptional?: boolean;
   /** The address's example and hint, when it isn't a plain base URL. */
   urlPlaceholder?: string;
   urlHint?: string;
   /** The address may be left empty (then PDT uses the service's own). */
   urlOptional?: boolean;
+  /** Asks for an address only when this setting has this value. */
+  urlWhen?: { key: string; value: string };
   /** Settings of its own, kept in the connection's config. */
-  fields?: { key: string; label: string; placeholder?: string; hint?: string }[];
+  fields?: ConfigField[];
   /** Asks for a Discord server and its bot's application (a Discord bot). */
   discordBot?: boolean;
 }
+
+/** One setting of a connection kind. */
+export interface ConfigField {
+  key: string;
+  label: string;
+  hint?: string;
+  placeholder?: string;
+  /** `text` (default); `lines`: a list, one per line; `env`: NAME=value lines; `choice`: one of `options`. */
+  type?: 'text' | 'lines' | 'env' | 'choice';
+  options?: { value: string; label: string }[];
+  /** Shown only when another setting has this value. */
+  when?: { key: string; value: string };
+  /** May be left empty (otherwise a shown setting is required). */
+  optional?: boolean;
+}
+
+const arrFields = (folder: string): ConfigField[] => [
+  { key: 'qualityProfile', label: 'Quality profile', hint: 'Used when a step adds without naming one: a profile’s name or id. Empty: the first profile.', placeholder: 'HD-1080p', optional: true },
+  { key: 'rootFolder', label: 'Root folder', hint: 'Where adds go unless a step says. Empty: the first root folder.', placeholder: folder, optional: true },
+];
 
 export const CONNECTION_KINDS: ConnectionKind[] = [
   {
@@ -101,7 +125,87 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     secretHint: 'Sent only to this address, the way “Send it as” says.',
     auth: true,
   },
+  {
+    id: 'radarr',
+    label: 'Radarr',
+    plural: 'Radarr',
+    setup: 'A Radarr that Search, Add and queue steps use for films.',
+    description: 'Films: search, add, what’s downloading (the Radarr actions).',
+    url: true,
+    urlPlaceholder: 'http://192.168.1.10:7878',
+    secretLabel: 'API key',
+    secretHint: 'In Radarr: Settings → General → Security → API Key.',
+    fields: arrFields('/movies'),
+  },
+  {
+    id: 'sonarr',
+    label: 'Sonarr',
+    plural: 'Sonarr',
+    setup: 'A Sonarr that Search, Add and queue steps use for series.',
+    description: 'Series: search, add, what’s downloading (the Sonarr actions).',
+    url: true,
+    urlPlaceholder: 'http://192.168.1.10:8989',
+    secretLabel: 'API key',
+    secretHint: 'In Sonarr: Settings → General → Security → API Key.',
+    fields: arrFields('/tv'),
+  },
+  {
+    id: 'plex',
+    label: 'Plex server',
+    plural: 'Plex servers',
+    setup: 'A Plex Media Server that Search, Recently added and Refresh steps use.',
+    description: 'A Plex library: search, what’s new, refresh (the Plex actions).',
+    url: true,
+    urlPlaceholder: 'http://192.168.1.10:32400',
+    secretLabel: 'Plex token',
+    secretHint: 'In Plex Web: an item’s ⋯ → Get Info → View XML; the address that opens ends in X-Plex-Token=<token>.',
+  },
+  {
+    id: 'mcp',
+    label: 'MCP server',
+    plural: 'MCP servers',
+    setup: 'A Model Context Protocol server whose tools workflows call (each tool is an action in the catalog). PDT starts a program’s server when it is first used and stops it after 5 minutes idle.',
+    description: 'An MCP server: its tools become workflow actions.',
+    url: false,
+    urlPlaceholder: 'https://example.com/mcp',
+    urlWhen: { key: 'transport', value: 'http' },
+    secretLabel: 'Secret',
+    secretHint: 'Optional. A program gets it in the environment variable named below; an HTTP server gets it as a bearer token.',
+    secretOptional: true,
+    fields: [
+      { key: 'transport', label: 'Runs as', type: 'choice', options: [{ value: 'stdio', label: 'A program PDT starts (stdio)' }, { value: 'http', label: 'An address (HTTP)' }] },
+      { key: 'command', label: 'Program', placeholder: 'npx', hint: 'Found on PATH, or a full path. On Windows, a .cmd (npx) needs cmd with /c first.', when: { key: 'transport', value: 'stdio' } },
+      { key: 'args', label: 'Arguments', type: 'lines', placeholder: '-y\n@modelcontextprotocol/server-filesystem\n/Users/me/notes', hint: 'One per line.', when: { key: 'transport', value: 'stdio' }, optional: true },
+      { key: 'env', label: 'Environment', type: 'env', placeholder: 'LOG_LEVEL=warn', hint: 'NAME=value, one per line.', when: { key: 'transport', value: 'stdio' }, optional: true },
+      { key: 'secretEnv', label: 'Secret’s variable', placeholder: 'API_TOKEN', hint: 'The environment variable the secret is passed in.', when: { key: 'transport', value: 'stdio' }, optional: true },
+    ],
+  },
 ];
+
+/** A setting's value as the dialog edits it (text). */
+export function fieldText(f: ConfigField, v: unknown): string {
+  if (f.type === 'lines') return Array.isArray(v) ? v.join('\n') : '';
+  if (f.type === 'env') return v && typeof v === 'object' ? Object.entries(v).map(([k, x]) => `${k}=${String(x)}`).join('\n') : '';
+  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
+}
+
+/** Whether a setting is shown, given the others' text. */
+export const fieldShown = (f: { when?: { key: string; value: string } }, text: Record<string, string>) => !f.when || text[f.when.key] === f.when.value;
+
+/** The config the settings' text makes (empty and hidden settings left out). */
+export function fieldsConfig(fields: ConfigField[], text: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of fields) {
+    if (!fieldShown(f, text)) continue;
+    const t = (text[f.key] ?? '').trim();
+    if (!t) continue;
+    if (f.type === 'lines') out[f.key] = t.split('\n').map((l) => l.trim()).filter(Boolean);
+    else if (f.type === 'env') {
+      out[f.key] = Object.fromEntries(t.split('\n').map((l) => l.trim()).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1)]));
+    } else out[f.key] = t;
+  }
+  return out;
+}
 
 export const kindOf = (id: string): ConnectionKind | undefined => CONNECTION_KINDS.find((k) => k.id === id);
 

@@ -3,7 +3,7 @@
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{Category, catalog};
+use crate::workflow::catalog::Category;
 use axum::Json;
 use axum::extract::State;
 use pdt_core::inbox::Question;
@@ -349,7 +349,8 @@ fn defs() -> Vec<Def> {
             name: "catalog_search",
             title: "Search the node catalog",
             description: "Lists workflow node kinds (triggers, conditions, actions, gates, waits) matching the \
-                          words: id, title, category, description. catalog_get gives one kind's schemas.",
+                          words: id, title, category, description. MCP servers' tools are listed too, as \
+                          `mcp:<server>/<tool>` (a `preset` mcp.tool node). catalog_get gives one kind's schemas.",
             schema: schema::<CatalogSearch>,
         },
         Def {
@@ -570,8 +571,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: CatalogSearch = args(a)?;
             let words: Vec<String> =
                 a.query.unwrap_or_default().to_lowercase().split_whitespace().map(String::from).collect();
-            let kinds: Vec<Value> = catalog()
-                .specs()
+            let kinds: Vec<Value> = crate::workflow::catalog::listed(st)
                 .into_iter()
                 .filter(|k| a.category.is_none_or(|c| c == k.category))
                 .filter(|k| {
@@ -584,7 +584,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         "catalog_get" => {
             let a: CatalogGet = args(a)?;
-            let k = catalog().spec(&a.id).ok_or_else(|| format!("no node kind is called {}", a.id))?;
+            let k = crate::workflow::catalog::listed_spec(st, &a.id)
+                .ok_or_else(|| format!("no node kind is called {}", a.id))?;
             serde_json::to_value(k).map_err(|e| e.to_string())
         }
         "workflow_get" => {
@@ -612,7 +613,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         "workflow_validate" => {
             let a: crate::workflow::routes::ValidateRequest = args(a)?;
-            let Json(issues) = crate::workflow::routes::validate_doc(Ok(Json(a))).await.map_err(api)?;
+            let Json(issues) =
+                crate::workflow::routes::validate_doc(State(st.clone()), Ok(Json(a))).await.map_err(api)?;
             Ok(json!({"issues": issues}))
         }
         "workflow_dry_run" => {

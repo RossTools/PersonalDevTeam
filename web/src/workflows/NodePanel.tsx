@@ -7,7 +7,7 @@ import type { Node } from '../api/gen/Node';
 import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import {
-  ERROR_PORT, connect, idProblem, issuesOf, kindOf, nodeTitle, referencePaths, removeNode, renameNode, updateNode, type Catalog,
+  ERROR_PORT, configSchemaOf, connect, idProblem, issuesOf, kindOf, nodeTitle, referencePaths, removeNode, renameNode, updateNode, type Catalog,
 } from './model';
 import { SchemaForm } from './SchemaForm';
 
@@ -80,7 +80,7 @@ export function NodePanel({ doc, node, catalog, check, onChange, onSelect, onClo
           <>
             <h4 className="pt-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase">Settings</h4>
             <SchemaForm
-              schema={kind.configSchema}
+              schema={configSchemaOf(catalog, node) ?? kind.configSchema}
               value={(node.config ?? {}) as Record<string, unknown>}
               onChange={(config) => set((n) => ({ ...n, config }))}
               refs={referencePaths(doc, catalog, node.id)}

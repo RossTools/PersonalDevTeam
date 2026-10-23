@@ -10,7 +10,7 @@ use pdt_core::session::{
     AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
     default_title, is_scrubbed, launch, prompt_arg, shim_prompt,
 };
-use pdt_core::ticket::AttemptState;
+use pdt_core::ticket::{AttemptState, SessionTicket};
 use pdt_core::workspace::TabPlacement;
 use pdt_store::Store;
 use std::collections::HashSet;
@@ -40,7 +40,7 @@ pub(crate) async fn create(
         valid,
         title: None,
         attempt_id: None,
-        ticket_key: None,
+        ticket: None,
         tab: Some(input.tab),
         persona: None,
         cwd: None,
@@ -54,8 +54,9 @@ pub(crate) struct CreateSession {
     /// The default title (`<Kind> · <branch or project>`) when None.
     pub title: Option<String>,
     pub attempt_id: Option<String>,
-    /// The attempt's ticket key, for the short prompt a Windows `.cmd` shim gets.
-    pub ticket_key: Option<String>,
+    /// The ticket it works on (stored with it, so a step's session without the attempt still belongs to the ticket);
+    /// its key is also for the short prompt a Windows `.cmd` shim gets.
+    pub ticket: Option<SessionTicket>,
     /// Some: open the session's tab there (None inside: the end of its project's workspace). None: the caller opens it.
     pub tab: Option<Option<TabPlacement>>,
     /// The persona (and agent step) the session runs (Phase 7b).
@@ -107,7 +108,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         last_viewed_at: None,
         unseen: false,
         attempt_id: req.attempt_id,
-        ticket: None,
+        ticket: req.ticket.clone(),
         mode: valid.mode,
         model: valid.model.clone(),
         permission_mode: valid.permission_mode,
@@ -130,7 +131,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         }
         return load(st, &session.id).await;
     }
-    let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket_key });
+    let prompt = valid.initial_prompt.map(|text| InitialPrompt { text, ticket_key: req.ticket.map(|t| t.key) });
     let mcp = crate::mcp::server_for(st, &session).await;
     let started = match agent_instructions(st, &session).await {
         Ok(instructions) => start_pty(

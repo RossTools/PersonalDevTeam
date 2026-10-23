@@ -117,10 +117,14 @@ export const CARD_DRAG_KIND = 'ticket';
 
 const coarsePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
-/** The most urgent state of the sessions working on a ticket's active attempt (null when none). */
+/**
+ * The most urgent state of the sessions working on a ticket's active attempt (null when none): its own, and the ones
+ * workflow steps started on the ticket (Reviewer, QA), which have no attempt.
+ */
 export function cardActivity(t: Pick<TicketSummary, 'id' | 'attempt'>, sessions: Session[]): AgentStateValue | null {
   if (!t.attempt) return null;
-  const mine = sessions.filter((s) => s.ticket?.id === t.id && s.attemptId === t.attempt!.id && s.kind === 'agent_tui');
+  const mine = sessions.filter((s) => s.ticket?.id === t.id && (s.attemptId === null || s.attemptId === t.attempt!.id)
+    && s.kind === 'agent_tui');
   return rollup(mine.map((s) => itemState({ session: s, unseen: s.unseen })));
 }
 

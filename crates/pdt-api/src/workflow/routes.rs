@@ -52,14 +52,21 @@ pub(crate) async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> 
     st.store.get_workflow(id).await?.ok_or_else(|| ApiError::not_found("workflow"))
 }
 
+/// A document's issues, with warnings about its MCP tool nodes from their servers' cached tools.
+pub(crate) fn validate_with_tools(st: &AppState, doc: &WorkflowDoc) -> Vec<Issue> {
+    let mut issues = validate(doc, catalog());
+    issues.extend(super::nodes::mcp_tool::tool_issues(doc, |s| st.mcp.cached(s)));
+    issues
+}
+
 pub(crate) async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
     let doc = st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
-    let issues = validate(&doc, catalog());
+    let issues = validate_with_tools(st, &doc);
     Ok(WorkflowDetail { workflow: w, doc, issues })
 }
 
-pub(crate) async fn get_catalog() -> Json<Vec<KindSpec>> {
-    Json(catalog().specs())
+pub(crate) async fn get_catalog(State(st): State<AppState>) -> Json<Vec<KindSpec>> {
+    Json(super::catalog::listed(&st))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -352,18 +359,20 @@ pub struct WorkflowCheck {
 
 /// `POST /api/workflows/check`.
 pub(crate) async fn check_doc(
+    State(st): State<AppState>,
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<WorkflowCheck>, ApiError> {
     let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
     let ports = doc.nodes.iter().filter_map(|n| Some((n.id.clone(), catalog().node_ports(n)?))).collect();
-    Ok(Json(WorkflowCheck { issues: validate(&doc, catalog()), ports }))
+    Ok(Json(WorkflowCheck { issues: validate_with_tools(&st, &doc), ports }))
 }
 
 pub(crate) async fn validate_doc(
+    State(st): State<AppState>,
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<Vec<Issue>>, ApiError> {
     let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
-    Ok(Json(validate(&doc, catalog())))
+    Ok(Json(validate_with_tools(&st, &doc)))
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
@@ -429,7 +438,7 @@ pub(crate) async fn dry_run(
         }
         (None, None) => return Err(invalid("give event or eventId")),
     };
-    let issues = validate(&doc, catalog());
+    let issues = validate_with_tools(&st, &doc);
     if !is_valid(&issues) {
         return Ok(Json(DryRunResult { issues, run: None }));
     }
@@ -602,6 +611,7 @@ pub(crate) async fn create_connection(
         }
         other => other.into(),
     })?;
+    crate::mcp_client::connection_changed(&st, Some(&conn)).await;
     Ok((StatusCode::CREATED, Json(conn)))
 }
 
@@ -646,6 +656,7 @@ pub(crate) async fn patch_connection(
         }
         other => other.into(),
     })?;
+    crate::mcp_client::connection_changed(&st, Some(&c)).await;
     Ok(Json(c))
 }
 
@@ -661,6 +672,7 @@ pub(crate) async fn delete_connection(
         .map_err(ApiError::internal)?
         .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
     st.store.delete_connection(&id).await?;
+    crate::mcp_client::connection_changed(&st, None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -691,6 +703,7 @@ pub(crate) async fn put_secret(
     c.has_secret = true;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await?;
+    crate::mcp_client::connection_changed(&st, Some(&c)).await;
     Ok(Json(c))
 }
 
@@ -708,7 +721,34 @@ pub(crate) async fn delete_secret(
     c.has_secret = false;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await?;
+    crate::mcp_client::connection_changed(&st, Some(&c)).await;
     Ok(Json(c))
+}
+
+/// `GET /api/connections/{id}/tools`: an `mcp` connection's tools as last listed (null before the first listing).
+pub(crate) async fn connection_tools(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Option<crate::mcp_client::McpTools>>, ApiError> {
+    let c = mcp_connection(&st, &id).await?;
+    Ok(Json(st.mcp.cached(&c.name)))
+}
+
+/// `POST /api/connections/{id}/tools`: lists an `mcp` connection's tools now (starting its server if need be).
+pub(crate) async fn refresh_connection_tools(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::mcp_client::McpTools>, ApiError> {
+    let c = mcp_connection(&st, &id).await?;
+    Ok(Json(st.mcp.refresh(&st, &c.name).await))
+}
+
+async fn mcp_connection(st: &AppState, id: &str) -> Result<Connection, ApiError> {
+    let c = load_connection(st, id).await?;
+    if c.kind != crate::mcp_client::MCP {
+        return Err(conflict("not_mcp", format!("{} is a {} connection, not an MCP server", c.name, c.kind)));
+    }
+    Ok(c)
 }
 
 /// A connection and its secret by name, for node kinds that call external services (7e).
@@ -760,4 +800,5 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/connections", get(list_connections).post(create_connection))
         .route("/connections/{id}", get(get_connection).patch(patch_connection).delete(delete_connection))
         .route("/connections/{id}/secret", put(put_secret).delete(delete_secret))
+        .route("/connections/{id}/tools", get(connection_tools).post(refresh_connection_tools))
 }

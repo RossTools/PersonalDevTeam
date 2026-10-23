@@ -14,10 +14,11 @@ pub(crate) mod templates;
 
 use crate::routes::{AppState, now_ms};
 
-/// Housekeeping pdtd runs every minute: reads `.pdt/workflows/` in each project's repo and prunes old events and
-/// finished runs.
+/// Housekeeping pdtd runs every minute: reads `.pdt/workflows/` in each project's repo, stops idle MCP servers and
+/// lists stale ones' tools again, and prunes old events and finished runs.
 pub async fn maintain_workflows(st: &AppState) {
     repo::sync_all(st).await;
+    crate::mcp_client::maintain(st).await;
     let now = now_ms();
     if let Err(e) = st.store.prune_events(now - pdt_store::EVENT_RETENTION_MS).await {
         tracing::warn!(error = %e, "could not prune old events");

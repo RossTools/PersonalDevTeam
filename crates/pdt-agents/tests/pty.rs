@@ -1,3 +1,6 @@
+#[path = "../../../test-support/port_blocks.rs"]
+mod port_blocks;
+
 use pdt_agents::{Attachment, PtyError, PtyEvent, PtyManager, SpawnSpec};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -116,7 +119,8 @@ async fn kill_ends_the_process() {
 /// its port (Review Focus 2).
 #[tokio::test]
 async fn kill_ends_the_whole_process_tree() {
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    // A claimed port, not a random free one: another test's socket could take that before node listens on it.
+    let port = port_blocks::claim(31000, 100, 1);
     // node starts the server as its own child, like dev servers do. On Windows that child is detached from the
     // console, so closing the pseudo console does not end it: only a tree kill does.
     let dir = tempfile::tempdir().unwrap();
