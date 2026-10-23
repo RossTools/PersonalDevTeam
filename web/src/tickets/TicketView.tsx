@@ -24,6 +24,7 @@ import { MergeDialog } from '../review/MergeDialog';
 import { useOpenChanges } from '../review/open';
 import { useDiffSize } from '../review/queries';
 import { useCheckMerge, useTicket } from './queries';
+import { ExternalKeys } from './ExternalKeys';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
 } from './TicketParts';
@@ -108,6 +109,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
         <span className="flex items-center gap-1">
           {ticket.parent && <ParentChip parent={ticket.parent} projectId={ticket.projectId} className="hidden sm:inline-flex" />}
           <TicketKey ticketKey={ticket.key} />
+          <ExternalKeys links={ticket.external} linked />
         </span>
       }
       title={<TicketTitle ticket={ticket} />}

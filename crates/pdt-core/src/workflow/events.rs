@@ -24,6 +24,10 @@ pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
 pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
 pub const PDT_NOTIFIED: &str = "pdt.notified";
+pub const JIRA_ISSUE_CREATED: &str = "jira.issue.created";
+pub const JIRA_ISSUE_UPDATED: &str = "jira.issue.updated";
+pub const JIRA_ISSUE_TRANSITIONED: &str = "jira.issue.transitioned";
+pub const JIRA_ISSUE_COMMENTED: &str = "jira.issue.commented";
 
 /// Event types whose trigger kind has a config of its own (pdt-api `workflow/nodes/`), not the plain event trigger:
 /// a schedule, a webhook and GitHub issues (`repos`).
@@ -36,6 +40,9 @@ pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
 /// The CI provider of GitHub Actions runs.
 pub const GITHUB_ACTIONS: &str = "github_actions";
+
+/// The CI provider of Buildkite builds.
+pub const BUILDKITE: &str = crate::buildkite::BUILDKITE;
 
 /// One event type: its id, what it means and its payload's schema.
 pub struct EventType {
@@ -54,13 +61,14 @@ pub const EVENT_TYPES: &[EventType] = &[
     EventType {
         id: CI_RUN_FAILED,
         title: "CI failed",
-        description: "CI failed on the head commit of an attempt's pull request (once per set of failed runs).",
+        description: "CI failed on the head commit of an attempt's pull request, or of its branch on Buildkite (once per \
+                      set of failed runs).",
         schema: schema_of::<CiEvent>,
     },
     EventType {
         id: CI_RUN_PASSED,
         title: "CI passed",
-        description: "Every CI run on the head commit of an attempt's pull request passed.",
+        description: "Every CI run on the head commit of an attempt's pull request (or its branch on Buildkite) passed.",
         schema: schema_of::<CiEvent>,
     },
     EventType {
@@ -167,6 +175,31 @@ pub const EVENT_TYPES: &[EventType] = &[
         schema: schema_of::<Notified>,
     },
     EventType {
+        id: JIRA_ISSUE_CREATED,
+        title: "Jira issue created",
+        description: "A new issue in a project's Jira scope (checked every minute; linking a project only records where \
+                      it is).",
+        schema: schema_of::<JiraIssueCreated>,
+    },
+    EventType {
+        id: JIRA_ISSUE_UPDATED,
+        title: "Jira issue updated",
+        description: "Someone changed fields of an issue in a project's Jira scope (`changed` names them).",
+        schema: schema_of::<JiraIssueUpdated>,
+    },
+    EventType {
+        id: JIRA_ISSUE_TRANSITIONED,
+        title: "Jira issue transitioned",
+        description: "An issue in a project's Jira scope moved to another status.",
+        schema: schema_of::<JiraIssueTransitioned>,
+    },
+    EventType {
+        id: JIRA_ISSUE_COMMENTED,
+        title: "Jira issue commented",
+        description: "Someone commented on an issue in a project's Jira scope.",
+        schema: schema_of::<JiraIssueCommented>,
+    },
+    EventType {
         id: TICKET_REFINE_REQUESTED,
         title: "Refine requested",
         description: "Someone asked for a Draft or Ready ticket to be refined (Refine on the ticket).",
@@ -213,7 +246,7 @@ pub struct CiEvent {
     #[serde(flatten)]
     #[ts(flatten)]
     pub attempt: AttemptRef,
-    /// `github_actions` (Buildkite and others later).
+    /// `github_actions` or `buildkite`.
     pub provider: String,
     pub pr: Option<u32>,
     pub head_sha: String,
@@ -291,6 +324,9 @@ pub struct TicketStageChanged {
     pub from: String,
     pub to: String,
     pub actor: String,
+    /// The Jira issue the ticket is linked to, if any (`ABC-123`).
+    #[serde(default)]
+    pub jira_key: Option<String>,
 }
 
 /// `ticket.commented`.
@@ -475,6 +511,83 @@ pub struct TicketRefineRequested {
     pub stage: String,
     /// `user` or `agent`.
     pub actor: String,
+}
+
+/// The issue every `jira.issue.*` event is about.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct JiraIssueRef {
+    /// The PDT project whose Jira scope it is in.
+    pub project_id: String,
+    /// The `jira` connection's name.
+    pub connection: String,
+    /// `ABC-123`.
+    pub key: String,
+    pub url: String,
+    pub summary: String,
+    /// Text (from Jira's rich text).
+    pub description: String,
+    pub status: String,
+    pub assignee: Option<String>,
+    /// Assigned to the account the connection uses (the user).
+    pub assigned_to_me: bool,
+    pub reporter: Option<String>,
+    pub issue_type: String,
+    pub priority: Option<String>,
+    pub labels: Vec<String>,
+    /// The PDT ticket linked to it, if any.
+    pub ticket_id: Option<String>,
+}
+
+/// `jira.issue.created`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct JiraIssueCreated {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub issue: JiraIssueRef,
+}
+
+/// `jira.issue.updated`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct JiraIssueUpdated {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub issue: JiraIssueRef,
+    /// The fields that changed, as Jira names them (`assignee`, `status`, `priority`, …).
+    pub changed: Vec<String>,
+}
+
+/// `jira.issue.transitioned`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct JiraIssueTransitioned {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub issue: JiraIssueRef,
+    pub from: String,
+    pub to: String,
+}
+
+/// `jira.issue.commented`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct JiraIssueCommented {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub issue: JiraIssueRef,
+    pub comment_id: String,
+    pub author: String,
+    /// Text (from Jira's rich text).
+    pub body: String,
+    /// Written by the account the connection uses (the user).
+    pub by_me: bool,
 }
 
 #[cfg(test)]

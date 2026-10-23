@@ -266,6 +266,7 @@ pub(crate) mod tests {
             parts: None,
             pipeline_stage: None,
             agent: None,
+            external: vec![],
         }
     }
 
@@ -288,6 +289,7 @@ pub(crate) mod tests {
                 last_head: None,
                 workspace_id: None,
                 pr: None,
+                ci: None,
             }),
             ..ticket("started", TicketStage::Todo)
         };

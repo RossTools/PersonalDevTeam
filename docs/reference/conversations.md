@@ -75,7 +75,8 @@ Start too).
   never echoed, so the mapper shows it when its turn starts); Codex's `/compact` and `/review [instructions]` run
   `thread/compact/start` / `review/start`.
 - Unsent text is kept per session in sessionStorage (web/src/conversation/drafts.ts), so clicking away from a
-  conversation and back keeps it; sending clears it.
+  conversation and back keeps it (and a reload of the tab); sending clears it. The PM's start box (no session yet)
+  keeps its text the same way, under `pm-start`.
 - `ConversationState.billing` ("Claude plan" / "API key" from `apiKeySource`; Codex from `account/read`'s account
   type only) shows in the composer, with a rate-limit line from 80 % (web `limitWarning`).
 

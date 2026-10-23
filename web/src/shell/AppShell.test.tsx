@@ -700,7 +700,7 @@ describe('settings page', () => {
     const main = screen.getByRole('main');
     await within(main).findByRole('region', { name: 'Project' });
     expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Danger zone']);
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Jira and Buildkite', 'Danger zone']);
     expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
   });
 });
@@ -802,7 +802,7 @@ describe('tickets', () => {
     localStorage.clear();
     const mergedAttempt = {
       id: 'at', branch: 'pdt/ALP-1-fix-login', baseBranch: 'main', worktreeId: null, state: 'merged', createdAt: 1, endedAt: 2,
-      lastHead: null, workspaceId: 'wt', pr: null,
+      lastHead: null, workspaceId: 'wt', ci: null, pr: null,
     };
     const merged = { ...fixLogin, stage: 'in_progress', attempt: mergedAttempt, attempts: [mergedAttempt] };
     const workspaces = [

@@ -256,6 +256,8 @@ pub enum AskTarget {
     /// A ticket id or key.
     Ticket(String),
     Session(String),
+    /// A `discord_bot` connection's name (None: the only one).
+    Connection(Option<String>),
 }
 
 /// The target of an asking tool's input, from its arguments (Claude's tool name `mcp__pdt__<tool>` or the bare name).
@@ -266,6 +268,7 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
         "create_ticket" => field("project").map(|p| AskTarget::Project(p.into())),
         "edit_ticket" => field("ticket").map(|t| AskTarget::Ticket(t.into())),
         "send_to_session" => field("session").map(|s| AskTarget::Session(s.into())),
+        "discord_change" | "discord_webhook" => Some(AskTarget::Connection(field("connection").map(String::from))),
         _ => None,
     }
 }
@@ -563,7 +566,8 @@ pub fn instructions(ctx: &PmContext) -> String {
     if !asking.is_empty() {
         out.push_str(&format!(
             "- These act for the user, so each call waits for their yes (they see the call and its arguments) unless \
-             the project lets you act without asking: {asking}. A refusal is an answer: don't retry it unchanged.\n"
+             the project (for Discord, the bot connection) lets you act without asking: {asking}. A refusal is an \
+             answer: don't retry it unchanged.\n"
         ));
     }
     out.push_str(&format!(
@@ -615,6 +619,11 @@ mod tests {
         assert_eq!(t("edit_ticket", json!({"ticket": " PDT-4 "})), Some(AskTarget::Ticket("PDT-4".into())));
         assert_eq!(t("send_to_session", json!({"session": "s1"})), Some(AskTarget::Session("s1".into())));
         assert_eq!(t("create_ticket", json!({})), None);
+        assert_eq!(
+            t("discord_change", json!({"connection": "home"})),
+            Some(AskTarget::Connection(Some("home".into())))
+        );
+        assert_eq!(t("mcp__pdt__discord_webhook", json!({})), Some(AskTarget::Connection(None)));
         assert_eq!(t("get_ticket", json!({"ticket": "PDT-4"})), None);
     }
 
@@ -638,6 +647,7 @@ mod tests {
             last_head: None,
             workspace_id: None,
             pr: Some(pr),
+            ci: None,
         });
         t.agent = Some(TicketAgent {
             persona: Some("Coder".into()),
@@ -724,7 +734,7 @@ mod tests {
             briefing: "# Briefing\n",
         });
         assert!(text.contains("are how you see and change PDT: `get_overview`."), "{text}");
-        assert!(text.contains("unless the project lets you act without asking: `create_ticket`."), "{text}");
+        assert!(text.contains("lets you act without asking: `create_ticket`."), "{text}");
         assert!(text.contains("## Your role\n\nYou are the PM.\n\n# Briefing\n"), "{text}");
         for want in
             ["from the work folder `/w`", "search and read the web", "install tools", "127.0.0.1:7421/api/guides"]

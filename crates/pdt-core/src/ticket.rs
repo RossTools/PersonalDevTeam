@@ -206,6 +206,21 @@ pub struct AttemptSummary {
     /// Its pull request on GitHub as pdtd last saw it (active attempts of projects on GitHub; kept in memory).
     #[serde(default)]
     pub pr: Option<crate::pr::PullRequestStatus>,
+    /// CI of its branch without a pull request (Buildkite builds branches; with a PR it is in `pr.ci`). In memory.
+    #[serde(default)]
+    pub ci: Option<crate::pr::CiStatus>,
+}
+
+/// An issue in another tracker that a ticket is linked to (Phase 7e: Jira).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ExternalLink {
+    /// `jira`.
+    pub system: String,
+    /// `ABC-123`.
+    pub key: String,
+    pub url: String,
 }
 
 /// The ticket a session works on (through its attempt), for the sidebar and tab titles.
@@ -280,6 +295,9 @@ pub struct TicketSummary {
     /// Who works on it now in a workflow and in what state (filled in by the API, in memory).
     #[serde(default)]
     pub agent: Option<TicketAgent>,
+    /// The issues in other trackers it is linked to (a Jira issue it was imported from).
+    #[serde(default)]
+    pub external: Vec<ExternalLink>,
 }
 
 /// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
@@ -1159,6 +1177,7 @@ mod tests {
             parts: None,
             pipeline_stage: None,
             agent: None,
+            external: vec![],
         };
         let t = Ticket {
             summary: s,

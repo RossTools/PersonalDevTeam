@@ -2,10 +2,10 @@
 // never shown again; leaving it empty when editing keeps the one there is.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, Select } from '@ui';
+import { Alert, Button, Dialog, Field, Input, Link, Select, Switch } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { AUTH_MODES, CONNECTION_KINDS, hookUrl, kindOf, randomSecret } from './kinds';
+import { AUTH_MODES, CONNECTION_KINDS, discordInviteUrl, hookUrl, kindOf, randomSecret } from './kinds';
 
 export const connectionsKey = ['connections'] as const;
 
@@ -26,11 +26,21 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
+  const [fields, setFields] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(connection?.config ?? {}).map(([key, v]) => [key, str(v)])));
+  const [guildId, setGuildId] = useState(str(connection?.config.guildId));
+  const [appId, setAppId] = useState(str(connection?.config.applicationId));
+  const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
   const k = kindOf(kind);
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
     mutationFn: async () => {
-      const config: Record<string, unknown> = k?.auth ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) } : {};
+      const own: Record<string, unknown> = k?.auth
+        ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
+        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : {};
+      for (const f of k?.fields ?? []) own[f.key] = (fields[f.key] ?? '').trim();
+      // Keeps what PDT put there (a webhook the PM made records its channel).
+      const config = { ...connection?.config, ...own };
       const body = { name: name.trim(), kind, url: k?.url ? url.trim() : '', config };
       let c = connection ? await api.updateConnection(connection.id, body) : await api.createConnection(body);
       if (secret.trim()) c = await api.setConnectionSecret(c.id, secret.trim());
@@ -43,7 +53,9 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
     },
   });
   const needsSecret = !connection?.hasSecret && kind !== 'http';
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || url.trim() !== '');
+  const fieldsFilled = (k?.fields ?? []).every((f) => (fields[f.key] ?? '').trim() !== '');
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!k?.url || k.urlOptional || url.trim() !== '')
+    && (!k?.discordBot || /^\d+$/.test(guildId.trim())) && fieldsFilled;
   return (
     <Dialog
       open
@@ -68,9 +80,31 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
           <Input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {k?.url && (
-          <Field label="Address" hint="The service's base URL; a request's path is added to it.">
-            <Input aria-label="Address" placeholder="http://192.168.1.10:7878/api" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <Field label="Address" hint={k.urlHint ?? "The service's base URL; a request's path is added to it."}>
+            <Input aria-label="Address" placeholder={k.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
+        )}
+        {k?.fields?.map((f) => (
+          <Field key={f.key} label={f.label} hint={f.hint}>
+            <Input aria-label={f.label} placeholder={f.placeholder} value={fields[f.key] ?? ''} onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })} />
+          </Field>
+        ))}
+        {k?.discordBot && (
+          <>
+            <Field label="Server ID" hint="In Discord, turn on Developer Mode (Settings → Advanced), then right-click the server → Copy Server ID.">
+              <Input aria-label="Server ID" inputMode="numeric" value={guildId} onChange={(e) => setGuildId(e.target.value)} />
+            </Field>
+            <Field label="Application ID" hint="Developer Portal → your application → General Information. Used only to make the invite link.">
+              <Input aria-label="Application ID" inputMode="numeric" value={appId} onChange={(e) => setAppId(e.target.value)} />
+            </Field>
+            {/^\d+$/.test(appId.trim()) && (
+              <Alert tone="info" title="Invite the bot">
+                <Link href={discordInviteUrl(appId.trim())} external className="break-all text-xs">{discordInviteUrl(appId.trim())}</Link>
+                <div className="text-xs text-muted-foreground">Open it, pick the server, and keep the permissions it asks for.</div>
+              </Alert>
+            )}
+            <Switch checked={pmActs} onChange={setPmActs}>The PM changes this server without asking</Switch>
+          </>
         )}
         {k?.auth && (
           <Field label="Send it as">

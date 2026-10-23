@@ -9,9 +9,10 @@ use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
 use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
-    Actor, AttemptSession, AttemptState, AttemptSummary, EventKind, EventPage, LinkDirection, LinkKind, LinkedTicket,
-    MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge, Ticket, TicketEvent, TicketFilter,
-    TicketPage, TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch, format_key, parse_key,
+    Actor, AttemptSession, AttemptState, AttemptSummary, EventKind, EventPage, ExternalLink, LinkDirection, LinkKind,
+    LinkedTicket, MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge, Ticket, TicketEvent,
+    TicketFilter, TicketPage, TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch,
+    format_key, parse_key,
 };
 use serde_json::json;
 use sqlx::sqlite::SqliteRow;
@@ -215,6 +216,7 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         parts: None,
         pipeline_stage: r.try_get::<Option<String>, _>("pipeline_stage")?.as_deref().and_then(PipelineStage::parse),
         agent: None,
+        external: vec![],
     })
 }
 
@@ -231,6 +233,7 @@ fn to_attempt(r: &SqliteRow) -> Result<AttemptSummary, StoreError> {
         last_head: r.try_get("last_head")?,
         workspace_id: r.try_get("workspace_id")?,
         pr: None,
+        ci: None,
     })
 }
 
@@ -279,10 +282,23 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
             }
         }
     }
+    let mut external: HashMap<String, Vec<ExternalLink>> = HashMap::new();
+    for chunk in ids.chunks(500) {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "SELECT ticket_id, system, key, url FROM ticket_links_external WHERE ticket_id IN ",
+        );
+        push_in(&mut qb, chunk);
+        qb.push(" ORDER BY ticket_id, system, key");
+        for r in qb.build().fetch_all(&mut *conn).await? {
+            let link = ExternalLink { system: r.try_get(1)?, key: r.try_get(2)?, url: r.try_get(3)? };
+            external.entry(r.try_get(0)?).or_default().push(link);
+        }
+    }
     for t in items.iter_mut() {
         t.labels = labels.remove(&t.id).unwrap_or_default();
         t.areas = areas.remove(&t.id).unwrap_or_default();
         t.attempt = attempts.remove(&t.id);
+        t.external = external.remove(&t.id).unwrap_or_default();
     }
     Ok(())
 }
@@ -867,7 +883,97 @@ async fn has_parts(conn: &mut SqliteConnection, id: &str) -> Result<bool, StoreE
     Ok(n > 0)
 }
 
+/// A ticket's link to an issue in another tracker, as stored (with the connection it is read through).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredExternalLink {
+    pub ticket_id: String,
+    pub system: String,
+    pub connection_id: String,
+    pub key: String,
+    pub url: String,
+}
+
 impl Store {
+    /// Adds a ticket linked to an external issue (`link.ticket_id` is ignored), in one transaction. `Ok(Err(id))`
+    /// when a ticket already links that issue (nothing is made): linking is the dedupe, so an issue is never imported
+    /// twice.
+    pub async fn create_linked_ticket(
+        &self,
+        id: &str,
+        project_id: &str,
+        t: &ValidNewTicket,
+        link: &StoredExternalLink,
+        now: i64,
+    ) -> TResult<Result<Ticket, String>> {
+        let mut tx = self.write_tx().await?;
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT ticket_id FROM ticket_links_external WHERE system = ? AND connection_id = ? AND key = ?",
+        )
+        .bind(&link.system)
+        .bind(&link.connection_id)
+        .bind(&link.key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((other,)) = existing {
+            return Ok(Err(other));
+        }
+        insert_ticket(&mut tx, id, project_id, t, now).await?;
+        sqlx::query(
+            "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(&link.system)
+        .bind(&link.connection_id)
+        .bind(&link.key)
+        .bind(&link.url)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Ok(self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))?))
+    }
+
+    /// The ticket linked to an external issue.
+    pub async fn ticket_for_external(
+        &self,
+        system: &str,
+        connection_id: &str,
+        key: &str,
+    ) -> Result<Option<String>, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT ticket_id FROM ticket_links_external WHERE system = ? AND connection_id = ? AND key = ?",
+        )
+        .bind(system)
+        .bind(connection_id)
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(t,)| t))
+    }
+
+    /// A ticket's links to issues of `system`.
+    pub async fn external_links(&self, ticket_id: &str, system: &str) -> Result<Vec<StoredExternalLink>, StoreError> {
+        let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+            "SELECT ticket_id, system, connection_id, key, url FROM ticket_links_external \
+             WHERE ticket_id = ? AND system = ? ORDER BY key",
+        )
+        .bind(ticket_id)
+        .bind(system)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(ticket_id, system, connection_id, key, url)| StoredExternalLink {
+                ticket_id,
+                system,
+                connection_id,
+                key,
+                url,
+            })
+            .collect())
+    }
+
     /// Adds a ticket with the project's next number, at the top of its stage (or where `before`/`after` say), with a
     /// `created` event. NotFound("project") if there is no such project.
     pub async fn create_ticket(&self, id: &str, project_id: &str, t: &ValidNewTicket, now: i64) -> TResult<Ticket> {
@@ -2029,6 +2135,33 @@ mod tests {
 
     async fn events(store: &Store, id: &str) -> Vec<EventKind> {
         store.list_events(id, None, 100, false).await.unwrap().unwrap().items.into_iter().map(|e| e.kind).collect()
+    }
+
+    #[tokio::test]
+    async fn an_external_issue_links_to_one_ticket() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let link = StoredExternalLink {
+            ticket_id: String::new(),
+            system: "jira".into(),
+            connection_id: "c".into(),
+            key: "ABC-1".into(),
+            url: "https://s/browse/ABC-1".into(),
+        };
+        let t = store.create_linked_ticket("t1", "p", &new("Fix"), &link, 1).await.unwrap().unwrap();
+        assert_eq!(
+            t.summary.external,
+            [ExternalLink { system: "jira".into(), key: "ABC-1".into(), url: link.url.clone() }]
+        );
+        assert_eq!(store.create_linked_ticket("t2", "p", &new("Again"), &link, 2).await.unwrap(), Err("t1".into()));
+        assert!(store.get_ticket("t2").await.unwrap().is_none(), "nothing made the second time");
+        assert_eq!(store.ticket_for_external("jira", "c", "ABC-1").await.unwrap().as_deref(), Some("t1"));
+        assert_eq!(store.ticket_for_external("jira", "other", "ABC-1").await.unwrap(), None);
+        assert_eq!(store.external_links("t1", "jira").await.unwrap()[0].connection_id, "c");
+        let page = store.query_tickets(&filter(in_project())).await.unwrap();
+        assert_eq!(page.items[0].external[0].key, "ABC-1", "lists carry the link too");
+        store.delete_ticket("t1").await.unwrap();
+        assert_eq!(store.ticket_for_external("jira", "c", "ABC-1").await.unwrap(), None, "gone with its ticket");
     }
 
     #[tokio::test]

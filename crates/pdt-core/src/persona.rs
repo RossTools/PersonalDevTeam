@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 23] = [
+pub const ALL_TOOLS: [&str; 26] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -36,14 +36,19 @@ pub const ALL_TOOLS: [&str; 23] = [
     "create_ticket",
     "edit_ticket",
     "send_to_session",
+    "discord_get",
+    "discord_change",
+    "discord_webhook",
 ];
 
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
-/// card) unless the project's policy lets the PM act, so they are never in Claude's `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 3] = ["create_ticket", "edit_ticket", "send_to_session"];
+/// card) unless the project's policy (for Discord, the bot connection) lets the PM act, so they are never in Claude's
+/// `--allowedTools`.
+pub const ASKING_TOOLS: [&str; 5] =
+    ["create_ticket", "edit_ticket", "send_to_session", "discord_change", "discord_webhook"];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 21] = [
+pub const PM_TOOLS: [&str; 24] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -65,6 +70,9 @@ pub const PM_TOOLS: [&str; 21] = [
     "create_ticket",
     "edit_ticket",
     "send_to_session",
+    "discord_get",
+    "discord_change",
+    "discord_webhook",
 ];
 
 /// Whether a call to `tool` needs the user's yes (see [`ASKING_TOOLS`]).
@@ -485,6 +493,10 @@ instead of editing or committing in a checkout.\n\
 - Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
 with `save_note` (pin what every session should see); look things up with `search_notes`. When PDT tells you the \
 session is ending, write your journal with `write_journal`.\n\
+- Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` creates, renames, \
+moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it as a \
+`discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \
+user's yes unless the bot connection lets you act; say what you will change first.
 - In a workflow step, finish with `submit_outcome` and one of the step's outcomes.\n\
 - Be brief: short answers, lists over prose.\n";
 
