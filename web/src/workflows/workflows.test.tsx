@@ -109,6 +109,8 @@ describe('workflow page on a phone', () => {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole('switch', { name: 'Enabled' })).not.toBeInTheDocument();
+    // Read-only on a phone is not "in the repo": this one lives in PDT.
+    expect(screen.queryByText('In the repo')).not.toBeInTheDocument();
     // A step opens read-only.
     await userEvent.click(within(steps).getByText('Tell the agent'));
     const sheet = await screen.findByRole('dialog');

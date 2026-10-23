@@ -197,7 +197,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
             <span>{scopeLabel(w, projects)}</span>
             <span>v{w.version}</span>
             {w.builtin && <Badge tone="neutral">Built in</Badge>}
-            {readOnly && <Badge tone="neutral">In the repo</Badge>}
+            {w.source === 'repo' && <Badge tone="neutral">In the repo</Badge>}
             {issueCount > 0 && <Badge tone="failed">{issueCount === 1 ? '1 error' : `${issueCount} errors`}</Badge>}
           </>
         }
