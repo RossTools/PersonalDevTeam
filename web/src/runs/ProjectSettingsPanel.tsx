@@ -29,16 +29,21 @@ type SetupGuide = 'set-up-project' | 'set-up-workflow';
 const SETUP_AGENTS = ['Claude', 'Codex', 'Devin'] as const;
 type SetupAgent = (typeof SETUP_AGENTS)[number];
 
-/** Saves the project's settings: the fields given, and the stored value of every other one. */
+/**
+ * Saves the project's settings: the fields given, and the stored value of every other one. Refuses until the settings
+ * have loaded: the PUT always replaces `agentCredentials` and `runOverrides`, so saving without them would clear them.
+ */
 function useSaveProjectSettings(project: Project, current: ProjectSettingsView | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (p: Partial<ProjectSettingsInput>) =>
-      api.saveProjectSettings(project.id, {
-        agentCredentials: current?.agentCredentials ?? null,
-        runOverrides: current?.runOverrides ?? null,
+    mutationFn: async (p: Partial<ProjectSettingsInput>) => {
+      if (!current) throw new Error("The project's settings have not loaded, so nothing was saved. Try again once they have.");
+      return api.saveProjectSettings(project.id, {
+        agentCredentials: current.agentCredentials,
+        runOverrides: current.runOverrides,
         ...p,
-      }),
+      });
+    },
     onSuccess: (v) => {
       qc.setQueryData(['project-settings', project.id], v);
       void qc.invalidateQueries({ queryKey: ['run-config', project.id] });
@@ -158,6 +163,7 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
             rows={10}
             spellCheck={false}
             value={overrides}
+            disabled={!settings}
             onChange={(e) => { setOverrides(e.target.value); save.reset(); }}
             className="text-xs"
           />
@@ -194,6 +200,7 @@ function Instructions({ project, settings, writeEntries }: { project: Project; s
             spellCheck={false}
             placeholder={'How agents should work here, e.g.:\n- Make a branch and worktree through PDT for every change.\n- Run `make check` before pushing.'}
             value={text}
+            disabled={!settings}
             onChange={(e) => { setText(e.target.value); save.reset(); }}
             className="text-xs"
           />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type InfiniteData, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { Check, ChevronDown, Plus } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -17,7 +17,7 @@ import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PriorityIcon, PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
-import { runAction } from '../common/useAction';
+import { actionError, runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
@@ -137,14 +137,19 @@ export function movedPages(data: InfiniteData<TicketPage>, ids: string[], target
 }
 
 async function rankMove(qc: QueryClient, key: QueryKey, ids: string[], target: string, place: 'before' | 'after') {
+  // A poll in flight would land the old order over the optimistic one.
+  await qc.cancelQueries({ queryKey: key });
   const previous = qc.getQueryData<InfiniteData<TicketPage>>(key);
   if (previous) qc.setQueryData(key, movedPages(previous, ids, target, place));
+  let moved = 0;
   try {
     // The first goes next to the target; the rest follow it in order.
     await api.rankTicket(ids[0], place === 'before' ? { before: target } : { after: target });
-    for (let i = 1; i < ids.length; i++) await api.rankTicket(ids[i], { after: ids[i - 1] });
+    for (moved = 1; moved < ids.length; moved++) await api.rankTicket(ids[moved], { after: ids[moved - 1] });
   } catch (e) {
     if (previous) qc.setQueryData(key, previous);
+    // One request per ticket: say when some moved (the refetch below shows where they are).
+    if (moved > 0) throw new Error(`Moved ${moved} of ${ids.length} tickets: ${actionError(e)}`);
     throw e;
   } finally {
     invalidateTickets(qc);
@@ -253,6 +258,16 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
   const start = useStartTicket();
   const t = q.data;
   const [making, setMaking] = useState(false);
+  // An unsaved description edit: closing the peek (a click outside, ×, Escape) asks before dropping it.
+  const editing = useRef(false);
+  const onDirtyChange = useCallback((d: boolean) => { editing.current = d; }, []);
+  const close = async () => {
+    if (editing.current) {
+      const { ok } = await confirm({ title: 'Discard your edit?', body: "The description you're editing hasn't been saved.", action: 'Discard', cancel: 'Keep editing' });
+      if (!ok) return;
+    }
+    onClose();
+  };
   useCheckMerge(t);
   useEffect(() => {
     if (t) onLoaded(t);
@@ -296,7 +311,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
         <TicketDetails ticket={t} />
         <AttemptSection ticket={t} compact />
         {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
-        <TicketDescription key={t.id} ticket={t} />
+        <TicketDescription key={t.id} ticket={t} onDirtyChange={onDirtyChange} />
         <PartsSection ticket={t} />
         <TicketLinks ticket={t} />
         <TicketTimeline ticketId={t.id} recent={5} />
@@ -322,7 +337,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onLoaded, phone }
       // row or a board card or lane, which shows that ticket instead.
       modal={false}
       keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => { if (!o) void close(); }}
       className="w-[32rem] max-w-[90vw]"
       footer={actions}
     >

@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import type { Connection } from '../api/gen/Connection';
 import { ParamsForm } from '../workflows/NewWorkflowDialog';
 import { ConnectionsPage } from './ConnectionsPage';
@@ -33,6 +33,31 @@ describe('connections', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'alerts', kind: 'discord_webhook', url: '', config: {} });
     expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ secret: 'https://discord.com/api/webhooks/1/abc' });
+  });
+
+  it('recovers when the secret could not be saved: the row shows, and Save again updates it', async () => {
+    const created = conn('alerts', 'discord_webhook', false);
+    let secretFails = true;
+    const calls = stubApi({
+      'GET /api/connections': () => (calls.some((c) => c.method === 'POST') ? [created] : []),
+      'POST /api/connections': created,
+      'PATCH /api/connections/c-alerts': created,
+      'PUT /api/connections/c-alerts/secret': () => {
+        if (secretFails) { secretFails = false; return new Reply(500, { code: 'keychain', message: 'keychain locked' }); }
+        return { ...created, hasSecret: true };
+      },
+    });
+    renderWithQuery(<ConnectionsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Add discord webhook' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'alerts');
+    await userEvent.type(within(dialog).getByLabelText('Webhook URL'), 'https://discord.com/api/webhooks/1/abc');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await within(dialog).findByText('alerts was saved, but not its secret: keychain locked')).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/connections')).toHaveLength(1);
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
   });
 
   it('sets up a Discord bot: its server, an invite link, and whether the PM acts without asking', async () => {

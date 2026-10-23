@@ -498,9 +498,13 @@ describe('workspaces', () => {
   it('toasts when a tab action fails', async () => {
     stubWorkspaces({ 'DELETE /api/tabs/tb': new Reply(500, { code: 'internal', message: 'Tab store is locked' }) });
     renderWithQuery(<AppShell />);
+    await userEvent.click(await screen.findByRole('tab', { name: /Codex B/ }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true'));
     await userEvent.click(await screen.findByRole('button', { name: 'Close Codex B' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop and close' }));
     expect(await screen.findByText('Tab store is locked')).toBeInTheDocument();
+    // The tab that failed to close is still the one shown.
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
     fireEvent.contextMenu(screen.getByRole('tab', { name: /Claude A/ }));
     stubWorkspaces({ 'PATCH /api/tabs/ta': new Reply(409, { code: 'conflict', message: 'Workspace is gone' }) });
     await userEvent.click(within(screen.getByRole('menu', { name: 'Tab Claude A' })).getByRole('menuitem', { name: 'Release' }));

@@ -23,6 +23,7 @@ function McpToolsLine({ c }: { c: Connection }) {
         <span title={t.tools.map((x) => x.name).join(', ')}>{t.tools.length === 1 ? '1 tool' : `${t.tools.length} tools`}: {t.tools.slice(0, 6).map((x) => x.name).join(', ')}{t.tools.length > 6 ? ', …' : ''}</span>
       )}
       {t?.error && <span className="text-destructive">{t.error}</span>}
+      {relist.isError && <span role="alert" className="text-destructive">{relist.error.message}</span>}
       <Button size="sm" variant="ghost" pending={relist.isPending} onClick={() => relist.mutate()}>List again</Button>
     </div>
   );

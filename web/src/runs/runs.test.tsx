@@ -338,6 +338,19 @@ describe('ProjectSettingsPanel', () => {
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, agentInstructions: 'Use make. Then test.' });
   });
 
+  it('keeps the forms read-only and PUTs nothing while the settings have not loaded', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/settings': new Reply(503, { code: 'unavailable', message: 'restarting' }),
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => c.body,
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    expect(await screen.findByText(/Project settings could not be loaded/)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Agent instructions' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Host overrides (TOML)' })).toBeDisabled();
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(0);
+  });
+
   it('starts an agent session in the main checkout with a built-in set-up prompt', async () => {
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null },

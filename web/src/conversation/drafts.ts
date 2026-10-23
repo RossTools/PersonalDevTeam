@@ -25,3 +25,26 @@ export function saveDraft(sessionId: string, text: string) {
     // Blocked: remembered for this page only.
   }
 }
+
+/** An image attached to an unsent message, uploaded already (`id`), with its preview's object URL. */
+export interface ImageDraft {
+  key: string;
+  name: string;
+  url: string;
+  id: string;
+}
+
+/**
+ * Uploaded images of unsent messages per session, kept with the text for as long as the page is open (an object URL
+ * does not outlive the page, so these are not stored).
+ */
+const images = new Map<string, ImageDraft[]>();
+
+export function loadImageDrafts(sessionId: string): ImageDraft[] {
+  return images.get(sessionId) ?? [];
+}
+
+export function saveImageDrafts(sessionId: string, list: ImageDraft[]) {
+  if (list.length) images.set(sessionId, list);
+  else images.delete(sessionId);
+}

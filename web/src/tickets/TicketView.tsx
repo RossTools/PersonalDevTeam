@@ -156,7 +156,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
               {
                 label: 'Delete…',
                 danger: true,
-                onSelect: () => void deleteTicket(confirm, qc, ticket).then((ok) => { if (ok) onDeleted?.(); }),
+                onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, ticket)) onDeleted?.(); }),
               },
             ]}
           />

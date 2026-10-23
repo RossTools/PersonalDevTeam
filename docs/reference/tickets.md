@@ -32,7 +32,9 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
   adds a Draft above the first row when the list is a flat rank order; Shift+Enter opens the full form), filters
   (saved filters per browser in localStorage), bulk bar, rank by drag or Alt+↑/↓; a row opens the peek sheet
-  (non-modal on desktop; on phones the full ticket screen below, whose ← is Back), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
+  (non-modal on desktop, closed by a click elsewhere, which asks first over an unsaved description edit; on phones the
+  full ticket screen below, whose ← is Back), Open makes a ticket tab. A description edit is measured against the
+  text it started from: a change made meanwhile (an agent's rewrite) shows a warning, with Load the new version. The Board (Ctrl+] b) shows To do / In
   progress / Done (closed in the last 14 days, `closedAfter`); cards drag between columns on desktop, phones show one
   column at a time.
 - Phones (PDT-118): the top bar's title (`Tickets · <KEY> ▾`) opens the projects and saved filters; under it

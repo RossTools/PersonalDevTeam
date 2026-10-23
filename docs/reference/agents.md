@@ -173,7 +173,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 - Reconnect: a terminal that connects while the startup auto-resume has yet to get to its session waits (up to 30 s)
   and attaches once it starts. The WebSocket for an existing session with no PTY otherwise upgrades, sends
   `{"type":"not_running"}` and closes; the browser then shows "Session ended." and reattaches when the session list
-  shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s).
+  shows it `running` again. Otherwise the browser retries forever (backoff capped at 5 s). Input is never queued
+  while it is not connected: typed keys are dropped and the terminal says "Not connected: input not sent" until it
+  reconnects, and Compose keeps the prompt and says it was not sent.
 
 ## Restart and resume
 

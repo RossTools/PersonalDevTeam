@@ -1,10 +1,11 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext } from './actions';
 import { event, page, project, summary, ticket } from './fixtures';
 import { NewTicketDialog } from './NewTicketDialog';
+import { ticketKeys } from './queries';
 import { TicketView } from './TicketView';
 
 beforeEach(() => localStorage.clear());
@@ -114,6 +115,38 @@ describe('ticket tab', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument());
   });
 
+  it('opens the title editor again with what was typed when saving fails', async () => {
+    stub({ 'PATCH /api/tickets/t1': new Reply(500, { code: 'internal', message: 'database is locked' }) });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit title' }));
+    const input = screen.getByRole('textbox', { name: 'Title' });
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Fix the login{Enter}');
+    expect(await screen.findByText('database is locked')).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveValue('Fix the login');
+  });
+
+  it('warns when the description changes while it is edited, instead of overwriting it silently', async () => {
+    const calls = stub();
+    const { qc } = renderWithQuery(<TicketView ticketId="t1" />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const box = screen.getByRole('textbox', { name: 'Description' });
+    // Untouched, the edit follows a change made elsewhere.
+    act(() => qc.setQueryData(ticketKeys.one('t1'), { ...base, description: 'Agent v1' }));
+    await waitFor(() => expect(box).toHaveValue('Agent v1'));
+    expect(screen.queryByText(/changed while you were editing/)).not.toBeInTheDocument();
+    await userEvent.type(box, ' and mine');
+    act(() => qc.setQueryData(ticketKeys.one('t1'), { ...base, description: 'Agent v2' }));
+    expect(await screen.findByText(/changed while you were editing/)).toBeInTheDocument();
+    // Escape doesn't drop the typed edit.
+    await userEvent.type(box, '{Escape}');
+    expect(box).toHaveValue('Agent v1 and mine');
+    await userEvent.click(screen.getByRole('button', { name: 'Load the new version' }));
+    expect(box).toHaveValue('Agent v2');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(patches(calls)).toEqual([]);
+  });
+
   it('changes the stage from Details (the header has no stage shortcut)', async () => {
     const calls = stub();
     view();
@@ -198,6 +231,16 @@ describe('ticket tab', () => {
     const dialog = await screen.findByRole('alertdialog', { name: 'Delete ALP-1?' });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Delete ticket' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tickets/t1')).toBe(true));
+  });
+
+  it('says why a delete from ⋯ failed', async () => {
+    stub({ 'DELETE /api/tickets/t1': new Reply(409, { code: 'conflict', message: 'The ticket has an active attempt' }) });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete ALP-1?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Delete ticket' }));
+    expect(await screen.findByText('The ticket has an active attempt')).toBeInTheDocument();
   });
 });
 

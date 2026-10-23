@@ -295,6 +295,30 @@ describe('ConversationComposer', () => {
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
   });
 
+  it('keeps uploaded images with the unsent text when the box unmounts and comes back', async () => {
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:kept'), revokeObjectURL }));
+    const props: ConversationComposerProps = {
+      turnRunning: false, onSend: vi.fn(async () => {}), onInterrupt: vi.fn(), models: [], model: null, onModel: vi.fn(),
+      permissionModes: [], permissionMode: 'ask', onPermissionMode: vi.fn(), draftKey: 'draft-img',
+      onUpload: vi.fn(async () => ({ id: 'att-9' })) as unknown as ConversationComposerProps['onUpload'],
+    };
+    const first = render(<ConversationComposer {...props} />);
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await userEvent.type(box, 'look');
+    await userEvent.paste({ files: [new File(['x'], 'shot.png', { type: 'image/png' })] } as unknown as string);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
+    first.unmount();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    render(<ConversationComposer {...props} />);
+    expect(screen.getByRole('img', { name: 'shot.png' })).toHaveAttribute('src', 'blob:kept');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), '{Enter}');
+    expect(props.onSend).toHaveBeenCalledWith('look', undefined, ['att-9']);
+    cleanup();
+    render(<ConversationComposer {...props} />);
+    expect(screen.queryByRole('img', { name: 'shot.png' })).not.toBeInTheDocument();
+  });
+
   it('Enter sends; Shift+Enter adds a line', async () => {
     const p = setup();
     await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'one{Shift>}{Enter}{/Shift}two{Enter}');

@@ -60,7 +60,8 @@ export function useTicketId(ref: string | null): { id: string | null; missing: b
     queryKey: ['ticket-by-key', ref?.toUpperCase() ?? ''],
     queryFn: async () => (await api.listTickets({ q: ref!, limit: 5 })).items.find((t) => t.key.toUpperCase() === ref!.toUpperCase())?.id ?? null,
     enabled: byKey,
-    staleTime: Infinity,
+    // A key's ticket never changes, but a miss can (the ticket is made later, or the lookup ran before it synced).
+    staleTime: (q) => (q.state.data ? Infinity : 0),
   });
   if (!ref) return { id: null, missing: false };
   if (!byKey) return { id: ref, missing: false };

@@ -222,8 +222,14 @@ function NewPersonaForm({ onSelect }: { onSelect: (id: string) => void }) {
 // ---------------------------------------------------------------------------------------------------------------
 // An existing persona
 
-/** Name, role and description: one form, PATCH on Save. */
-function Identity({ persona }: { persona: Persona }) {
+/** What Identity is keyed on: a change from elsewhere starts the form over. */
+const identityKey = (p: Pick<Persona, 'id' | 'name' | 'role' | 'description'>) => `${p.id}:${p.name}:${p.role}:${p.description}`;
+
+/**
+ * Name, role and description: one form, PATCH on Save. A save remounts it (it is keyed on these), so whether it was
+ * just saved comes from the parent: `savedAs` is the key the last save led to.
+ */
+function Identity({ persona, savedAs, onSaved }: { persona: Persona; savedAs: string | null; onSaved: (key: string) => void }) {
   const qc = useQueryClient();
   const nameId = useId();
   const roleId = useId();
@@ -231,7 +237,7 @@ function Identity({ persona }: { persona: Persona }) {
   const [name, setName] = useState(persona.name);
   const [role, setRole] = useState(persona.role);
   const [description, setDescription] = useState(persona.description);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(savedAs === identityKey(persona));
   const dirty = name.trim() !== persona.name || role.trim() !== persona.role || description !== persona.description;
   const [save, saving] = useAction(async () => {
     await api.patchPersona(persona.id, {
@@ -239,6 +245,7 @@ function Identity({ persona }: { persona: Persona }) {
       ...(role.trim() !== persona.role ? { role: role.trim() } : {}),
       ...(description !== persona.description ? { description } : {}),
     });
+    onSaved(identityKey({ id: persona.id, name: name.trim(), role: role.trim(), description }));
     await qc.invalidateQueries({ queryKey: personaKeys.all });
     setSaved(true);
   });
@@ -415,6 +422,7 @@ function Delete({ persona, onDeleted }: { persona: Persona; onDeleted: () => voi
 }
 
 function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSelect: (id: string) => void; others: Persona[] }) {
+  const [savedAs, setSavedAs] = useState<string | null>(null);
   return (
     <Page
       title={persona.name}
@@ -426,7 +434,7 @@ function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSele
         </>
       }
     >
-      <Identity key={`${persona.id}:${persona.name}:${persona.role}:${persona.description}`} persona={persona} />
+      <Identity key={identityKey(persona)} persona={persona} savedAs={savedAs} onSaved={setSavedAs} />
       <Setup key={`${persona.id}:${persona.version}`} persona={persona} />
       <Versions key={persona.id} persona={persona} />
       <Archive persona={persona} />

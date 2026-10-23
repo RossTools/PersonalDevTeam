@@ -42,9 +42,35 @@ describe('CommentComposer', () => {
     await userEvent.type(box, '{Escape}');
     expect(onCancel).toHaveBeenCalled();
   });
+
+  it('keeps the text and shows the error when saving fails', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('daemon unreachable'));
+    render(<CommentComposer label="Comment" action="Comment" onSubmit={onSubmit} />);
+    const box = screen.getByRole('textbox', { name: 'Comment' });
+    await userEvent.type(box, 'Use **bold** here');
+    await userEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    expect(await screen.findByText('daemon unreachable')).toBeInTheDocument();
+    expect(box).toHaveValue('Use **bold** here');
+  });
 });
 
 describe('CommentThread', () => {
+  it('keeps a reply and an edit open with their text when they fail', async () => {
+    const fail = vi.fn().mockRejectedValue(new Error('nope'));
+    render(<CommentThread comments={[{ id: 'a', author: 'You', body: 'Draft', draft: true }]} onReply={fail} onEdit={fail} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Reply' }), 'Third');
+    await userEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    expect(await screen.findByText('nope')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Reply' })).toHaveValue('Third');
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const edit = screen.getByRole('textbox', { name: 'Edit comment' });
+    await userEvent.type(edit, ' more');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findAllByText('nope')).toHaveLength(2);
+    expect(edit).toHaveValue('Draft more');
+  });
+
   const comments = [
     { id: 'a', author: 'You', body: 'First', draft: false },
     { id: 'b', author: 'You', body: 'Second', draft: true },

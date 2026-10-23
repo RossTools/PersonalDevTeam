@@ -223,6 +223,24 @@ describe('backlog', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
+  it('asks before a click elsewhere closes the peek over an unsaved description edit', async () => {
+    stub();
+    renderWithQuery(<Harness />);
+    const grid = await screen.findByRole('grid', { name: 'Tickets' });
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-1 / }));
+    const sheet = await screen.findByRole('dialog', { name: 'ALP-1 · Ticket 1' });
+    await userEvent.click(within(within(sheet).getByRole('region', { name: 'Description' })).getByRole('button', { name: 'Edit' }));
+    await userEvent.type(within(sheet).getByRole('textbox', { name: 'Description' }), ' more');
+    await userEvent.click(grid);
+    const ask = await screen.findByRole('alertdialog');
+    await userEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(within(sheet).getByRole('textbox', { name: 'Description' })).toHaveValue('**Bold** text more');
+    await userEvent.click(grid);
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'ALP-1 · Ticket 1' })).not.toBeInTheDocument());
+  });
+
   it('opens a row menu on right-click with Open, Move to, Priority and Delete', async () => {
     const onOpen = vi.fn();
     stub();

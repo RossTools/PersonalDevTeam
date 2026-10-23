@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ import { ChangesView } from './ChangesView';
 import { MergeDialog } from './MergeDialog';
 import { ChangesButton } from './ChangesButton';
 import { OpenChangesContext } from './open';
+import { changesKey } from './queries';
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
@@ -129,6 +130,21 @@ describe('ChangesView', () => {
     expect(screen.queryByRole('button', { name: /^Approve/ })).not.toBeInTheDocument();
   });
 
+  it('keeps showing the first file when another one comes before it', async () => {
+    stub();
+    const { qc } = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const tree = await findTree();
+    const row = (name: string) => within(tree).getByText(name).closest('[role="row"]')!;
+    await waitFor(() => expect(row('README.md')).toHaveAttribute('aria-selected', 'true'));
+    const c = changes();
+    act(() => qc.setQueryData(changesKey('w1'), {
+      ...c, files: [{ path: 'AUTHORS', oldPath: null, status: 'added', untracked: true, binary: false, added: 1, removed: 0, version: ':a' }, ...c.files],
+    }));
+    await within(tree).findByText('AUTHORS');
+    expect(row('README.md')).toHaveAttribute('aria-selected', 'true');
+    expect(row('AUTHORS')).not.toHaveAttribute('aria-selected', 'true');
+  });
+
   it('offers no Approve or Merge for a worktree without an active attempt', async () => {
     stub({}, changes({ attemptId: null, ticketId: null, attemptActive: false }));
     renderWithQuery(<ChangesView worktreeId="w1" />);
@@ -216,6 +232,20 @@ describe('ChangesView on a phone', () => {
     expect(calls.find((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')?.body)
       .toMatchObject({ path: 'src/login.ts', side: 'new', line: 3, endLine: 3, lineText: 'c', body: 'Why c?' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Comment on line 3' })).not.toBeInTheDocument());
+  });
+
+  it('keeps a reply that failed to save, with the error', async () => {
+    stub({ 'POST /api/worktrees/w1/comments': new Reply(500, { code: 'internal', message: 'database is locked' }) }, changes(),
+      [comment({ line: 2, endLine: 2, lineText: 'B', body: 'Rename this' })]);
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    await userEvent.click(within(await findTree()).getByText('login.ts'));
+    expect(await screen.findByText('Rename this')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    const box = screen.getByRole('textbox', { name: 'Reply' });
+    await userEvent.type(box, 'Use `login()`');
+    await userEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    expect(await screen.findByText('database is locked')).toBeInTheDocument();
+    expect(box).toHaveValue('Use `login()`');
   });
 });
 
