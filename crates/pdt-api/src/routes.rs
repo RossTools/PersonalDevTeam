@@ -117,6 +117,8 @@ pub struct AppState {
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// MCP servers PDT is a client of (Phase 7e-3): their live clients and cached tools.
+    pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How old a PM session gets before it rotates (PDT-81; tests shorten it).
     pub pm_rotate_age_ms: i64,
 }
@@ -173,6 +175,7 @@ impl AppState {
             conversations: Default::default(),
             engine_lock: Default::default(),
             auto_start_failed: Default::default(),
+            mcp: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             personas_installed: Default::default(),

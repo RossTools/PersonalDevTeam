@@ -18,6 +18,7 @@ mod identity_guard;
 mod inbox;
 mod jira;
 mod mcp;
+mod mcp_client;
 mod overlap;
 mod parts;
 mod personas;
@@ -51,6 +52,11 @@ pub use conversations::{
 pub use error::ApiErrorBody;
 pub use github::refresh_prs;
 pub use github_issues::refresh_issues;
+
+/// Stops the MCP servers workflows use (pdtd is stopping).
+pub async fn shutdown_mcp(st: &AppState) {
+    st.mcp.shutdown().await;
+}
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use jira::refresh_jira;
 pub use overlap::refresh_overlaps;

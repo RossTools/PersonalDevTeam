@@ -38,6 +38,16 @@ pub struct PortSpec {
     pub title: String,
 }
 
+/// What adding a catalog entry makes: a node of `kind` with `config` (an MCP tool's entry is an `mcp.tool` node).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct KindPreset {
+    pub kind: String,
+    #[ts(type = "Record<string, unknown>")]
+    pub config: Value,
+}
+
 /// One kind as the catalog lists it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +68,10 @@ pub struct KindSpec {
     /// The ports every node of the kind has; with `dynamicPorts`, more come from its config (cases, choices).
     pub ports: Vec<PortSpec>,
     pub dynamic_ports: bool,
+    /// An entry that is a preset of another kind (`mcp:<server>/<tool>`): adding it adds that kind's node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preset: Option<KindPreset>,
 }
 
 /// What a node's execution came to.
@@ -196,6 +210,7 @@ pub fn spec<C: JsonSchema, O: JsonSchema>(
         output_schema: schema_of::<O>(),
         ports: ports(port_list),
         dynamic_ports,
+        preset: None,
     }
 }
 
@@ -272,6 +287,20 @@ impl Kinds for Catalog {
     }
 }
 
+/// The catalog as the API lists it: every kind, then an entry per cached MCP tool (`mcp:<server>/<tool>`).
+pub fn listed(st: &AppState) -> Vec<KindSpec> {
+    let mut all = catalog().specs();
+    if let Some(base) = catalog().spec(super::nodes::mcp_tool::KIND) {
+        all.extend(super::nodes::mcp_tool::tool_entries(base, &st.mcp.all_cached()));
+    }
+    all
+}
+
+/// A kind or MCP tool entry by id, as [`listed`] has it.
+pub fn listed_spec(st: &AppState, id: &str) -> Option<KindSpec> {
+    catalog().spec(id).cloned().or_else(|| listed(st).into_iter().find(|k| k.id == id))
+}
+
 /// Every kind PDT knows. Adding one: a module in `nodes/` and a line here.
 pub fn catalog() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
@@ -300,6 +329,13 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(discord::Discord));
         kinds.push(Box::new(crate::discord::EnsureChannel));
         kinds.push(Box::new(notify::Notify));
+        kinds.extend(arr::kinds());
+        kinds.push(Box::new(plex::Search));
+        kinds.push(Box::new(plex::RecentlyAdded));
+        kinds.push(Box::new(plex::Refresh));
+        kinds.push(Box::new(brief::Archive));
+        kinds.push(Box::new(brief::Read));
+        kinds.push(Box::new(mcp_tool::McpToolKind));
         kinds.push(Box::new(jira::JiraImport));
         kinds.push(Box::new(jira::JiraCreate));
         kinds.push(Box::new(jira::JiraTransition));
@@ -342,6 +378,10 @@ mod tests {
         let prop = |kind: &str, field: &str| catalog().spec(kind).unwrap().config_schema["properties"][field].clone();
         assert_eq!(prop("discord.post", "connection")["x-connection-kind"], "discord_webhook");
         assert_eq!(prop("webhook", "hook")["x-connection-kind"], "webhook");
+        assert_eq!(prop("plex.search", "connection")["x-connection-kind"], "plex");
+        assert_eq!(prop("radarr.add", "connection")["x-connection-kind"], "radarr");
+        assert_eq!(prop("sonarr.queue", "connection")["x-connection-kind"], "sonarr");
+        assert_eq!(prop("mcp.tool", "server")["x-connection-kind"], "mcp");
         assert_eq!(prop("discord.channel.ensure", "connection")["x-connection-kind"], "discord_bot");
         assert_eq!(
             prop("http.request", "connection")["x-connection-kind"],

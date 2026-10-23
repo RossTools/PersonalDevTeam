@@ -8,6 +8,7 @@ pub mod cond;
 pub mod diff;
 pub mod doc;
 pub mod events;
+pub mod mcp;
 pub mod news;
 pub mod refs;
 pub mod schedule;

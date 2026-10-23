@@ -132,6 +132,62 @@ pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result
     Ok(out)
 }
 
+/// A connection of `kind` and its secret, for kinds made for one service (Radarr, Plex, …).
+pub(crate) async fn service(
+    st: &crate::routes::AppState,
+    name: &str,
+    kind: &str,
+) -> Result<(Connection, String), String> {
+    if name.trim().is_empty() {
+        return Err(format!("connection is empty: name a {kind} connection"));
+    }
+    let (conn, secret) = crate::workflow::routes::connection_with_secret(st, name.trim()).await?;
+    if conn.kind != kind {
+        return Err(format!("{} is a {} connection, not {kind}", conn.name, conn.kind));
+    }
+    if conn.url.trim().is_empty() {
+        return Err(format!("{} has no address", conn.name));
+    }
+    let secret = secret.filter(|s| !s.is_empty()).ok_or_else(|| format!("{} has no secret", conn.name))?;
+    Ok((conn, secret))
+}
+
+/// One JSON call to a service: `path` under its `base` URL, with `headers` (its key); a status other than 2xx is an
+/// error naming `who`, the status and the start of the answer. An empty answer is null.
+pub(crate) async fn call_json(
+    who: &str,
+    method: reqwest::Method,
+    base: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    query: &[(&str, String)],
+    body: Option<&Value>,
+) -> Result<Value, String> {
+    let url = full_url(Some(base), path);
+    let mut req = client().request(method.clone(), &url).header("accept", "application/json");
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    if !query.is_empty() {
+        req = req.query(query);
+    }
+    if let Some(b) = body {
+        req = req.json(b);
+    }
+    let resp = req.send().await.map_err(|e| format!("{who}: {method} {path}: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_body(resp, BODY_CAP).await?;
+    let text = String::from_utf8_lossy(&bytes);
+    if !(200..300).contains(&status) {
+        let start: String = text.chars().take(300).collect();
+        return Err(format!("{who} answered {status} to {method} {path}: {start}"));
+    }
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&text).map_err(|e| format!("{who}: {method} {path} did not answer JSON: {e}"))
+}
+
 pub struct Http;
 
 impl NodeKind for Http {
