@@ -213,6 +213,9 @@ export const api = {
   /** A conversation's stored events after `after`, oldest first. */
   listSessionEvents: (id: string, q: { after?: number; limit?: number } = {}) =>
     request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString(q)}`),
+  /** A conversation's newest `last` stored events, oldest first. */
+  lastSessionEvents: (id: string, last: number) =>
+    request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString({ last })}`),
   /** Sends a message to a conversation (reopening it when parked or ended); it is pending until the agent takes it. */
   sendMessage: (id: string, m: SendMessage) =>
     request<PendingMessage>(`/api/sessions/${enc(id)}/messages`, { method: 'POST', body: JSON.stringify(m) }),

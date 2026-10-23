@@ -15,7 +15,7 @@ import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
 import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
-import { newSession, type Choice } from '../sessions/newSession';
+import { choiceFor, newSession, type Choice } from '../sessions/newSession';
 import { PROJECT_SECTIONS, ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
@@ -41,6 +41,8 @@ import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
 import { findTab, nextNeedingYou, type Item } from '../workspaces/model';
 import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { NewTabChooser } from '../workspaces/NewTabChooser';
+import { TabOverview } from '../workspaces/TabOverview';
+import { InlineRename } from '../common/InlineRename';
 import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar } from '../workspaces/WorkspaceBar';
@@ -146,6 +148,11 @@ export function AppShell() {
   const [creatingWorkflow, setCreatingWorkflow] = useState<{ templateId?: string } | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  // Phones: the tab overview (⧉), the workspace being renamed in the top bar, and the New workspace field on
+  // `/sessions` (from ⋯).
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [renamingWorkspace, setRenamingWorkspace] = useState(false);
+  const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -542,6 +549,9 @@ export function AppShell() {
         onRenameTab={setRenamingTabId}
         onProjectSettings={showProjectSettings}
         onChoose={() => setSheetOpen(false)}
+        touch={phone}
+        adding={addingWorkspace}
+        onAddingChange={setAddingWorkspace}
       />
     </>
   ) : view === 'inbox' ? (
@@ -596,8 +606,50 @@ export function AppShell() {
   // The phone's screens (PDT-112): a view's top-level screen (its list, for most views) or a detail screen with ←.
   const detail = isDetail(route);
   const phoneList = phone && !detail && PHONE_LIST_SCREENS.includes(view);
+  // The overview and a rename in the top bar belong to the workspace screen they were opened on.
+  const workspaceScreen = view === 'sessions' && detail ? wsId : null;
+  useEffect(() => {
+    setOverviewOpen(false);
+    setRenamingWorkspace(false);
+  }, [workspaceScreen]);
   const pickerSheet = phone && view === 'tickets';
   const ticketsProject = ws.projects.find((p) => p.id === backlog.projectId);
+  // A workspace screen's ⋯ (phones): its tabs, its ticket, and (a free-form or ticket workspace) Rename and Close.
+  const shownWorkspace = ws.workspace;
+  const workspaceActions = (): MenuEntry[] => {
+    const w = shownWorkspace;
+    const free = !!w && w.projectId === null;
+    return [
+      { label: 'New tab', onSelect: () => setChooserOpen(true), disabled: !w },
+      { label: 'Tab overview', onSelect: () => setOverviewOpen(true), disabled: !w },
+      ...(w?.ticket ? [{ label: `Open ticket ${w.ticket.key}`, onSelect: () => go({ view: 'tickets', board: false, ticket: w.ticket!.key }) }] : []),
+      ...(free ? [{ label: 'Rename', onSelect: () => setRenamingWorkspace(true) }] : []),
+      { label: bottomOpen ? 'Hide terminal panel' : 'Terminal panel', onSelect: () => setBottomOpen((o) => !o) },
+      ...(free ? [{ separator: true } as const, { label: 'Close workspace…', danger: true, onSelect: () => closeWorkspace(w) }] : []),
+    ];
+  };
+  // Closing a workspace keeps its tabs: they go back to their projects' workspaces.
+  const closeWorkspace = (w: Workspace) => void runAction(async () => {
+    const { ok } = await confirm({
+      title: `Close ${w.name}?`,
+      body: 'Its tabs move back to their projects’ workspaces; nothing is stopped.',
+      action: 'Close workspace',
+    });
+    if (!ok) return;
+    await ws.deleteWorkspace(w.id);
+    goBack(routePath(viewRoute('sessions')));
+  });
+  // A conversation with the host's default agent, in the drawer's project (else the first), in its main checkout.
+  const newConversation = () => {
+    const projectId = ws.projects.find((p) => p.id === stored.projectId)?.id ?? ws.projects[0]?.id;
+    if (!projectId) return;
+    void runAction(async () => {
+      const s = await api.createSession(newSession(projectId, null, choiceFor(defaults.agent, 'conversation'), { permissionMode: defaults.sessionPermissionMode }));
+      void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
+      await ws.refresh();
+      await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);
+    });
+  };
   const phoneTitle: ReactNode = view === 'tickets' && !detail ? (
     <Button variant="ghost" size="sm" aria-label="Projects and filters" aria-haspopup="dialog" onClick={() => setSheetOpen(true)} className="min-w-0 font-medium">
       <span className="truncate">{ticketsProject ? `${label} · ${ticketsProject.key}` : label}</span>
@@ -605,7 +657,15 @@ export function AppShell() {
     </Button>
   ) : view === 'tickets' && detail ? peekRef ?? label
   : view === 'inbox' && detail && inboxId ? (triageTitle(inboxItems, inboxId) ?? label)
-  : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label)
+  : view === 'sessions' && detail && renamingWorkspace && shownWorkspace ? (
+    <InlineRename
+      label="Workspace name"
+      initial={shownWorkspace.name}
+      className="w-full"
+      onCommit={(name) => { setRenamingWorkspace(false); void runAction(() => ws.renameWorkspace(shownWorkspace.id, name)); }}
+      onCancel={() => setRenamingWorkspace(false)}
+    />
+  ) : view === 'sessions' && detail ? (shownWorkspace?.ticket ? `${shownWorkspace.ticket.key} ${shownWorkspace.ticket.title}` : shownWorkspace?.name ?? label)
   : view === 'files' && detail && filesRoute?.path ? filesRoute.path.split('/').filter(Boolean).pop() ?? label
   : view === 'settings' && detail ? settingsTitle()
   : view === 'pm' && detail ? (pmSelection === 'notes' ? 'Notes' : noteOf(pmSelection) ? 'Note' : pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
@@ -624,11 +684,12 @@ export function AppShell() {
       { label: 'New session…', onSelect: newPmSession },
       { label: 'Notes', onSelect: () => setPmSelection('notes') },
       { label: 'Earlier sessions', onSelect: () => setPmSelection('earlier') },
-    ] : view === 'sessions' && detail ? [
-      { label: 'New tab', onSelect: () => setChooserOpen(true) },
-      { label: bottomOpen ? 'Hide terminal panel' : 'Terminal panel', onSelect: () => setBottomOpen((o) => !o) },
+    ] : view === 'sessions' && detail ? workspaceActions()
+    : view === 'sessions' ? [
+      { label: 'New workspace', onSelect: () => setAddingWorkspace(true) },
+      { label: 'New conversation', onSelect: newConversation, disabled: ws.projects.length === 0 },
     ] : [];
-  const hasShellActions = view === 'pm' || (view === 'sessions' && detail);
+  const hasShellActions = view === 'pm' || view === 'sessions';
   const phoneActions: TopBarActions | null = hasShellActions || screenActions
     ? () => [...shellActions(), ...(screenActions?.entries() ?? [])]
     : null;
@@ -702,6 +763,7 @@ export function AppShell() {
             renamingTabId={renamingTabId}
             setRenamingTabId={setRenamingTabId}
             onNewTab={() => setChooserOpen(true)}
+            {...(phone ? { onOverview: () => setOverviewOpen(true) } : {})}
             plusRef={plusRef}
             hideName={phone}
             // On a phone the terminal panel is under ⋯.
@@ -753,7 +815,9 @@ export function AppShell() {
         )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {phoneList && view === 'inbox' ? (
+            {phone && view === 'sessions' && !phoneList && overviewOpen ? (
+              <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
+            ) : phoneList && view === 'inbox' ? (
               <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
                 onOpen={(id) => go({ view: 'inbox', itemId: id })}
                 onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />

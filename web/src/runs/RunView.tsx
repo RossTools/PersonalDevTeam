@@ -7,6 +7,7 @@ import { agentState, AgentDot } from '../common/AgentState';
 import { BranchChip } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { useAction } from '../common/useAction';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { TerminalView } from '../terminal/TerminalView';
 import { runPtyUrl } from '../terminal/ptySocket';
 import { isActive, runLabel } from './runState';
@@ -91,8 +92,34 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
       : []),
   ];
 
+  // Phones (PDT-114): a one-line header with the run's state; Stop, Restart and the rest under ⋯.
+  const phone = useMediaQuery(PHONE_QUERY);
+  const phoneEntries = (): MenuEntry[] => [
+    ...(active ? [{ label: 'Stop', onSelect: () => void stop(), disabled: busy }] : []),
+    { label: 'Restart', onSelect: () => void restart(), disabled: busy },
+    ...(run.url && run.state === 'ready' ? [{ label: 'Open', onSelect: () => void window.open(run.url!, '_blank', 'noopener,noreferrer') }] : []),
+    ...entries(),
+  ];
+  const state = `${runLabel(run.state)}${run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}`;
+
   return (
     <div className="flex flex-1 flex-col min-h-0">
+      {phone ? (
+        <ViewHeader
+          aria-label="Run"
+          className="flex-nowrap"
+          leading={
+            <span className="flex items-center gap-1.5">
+              <AgentDot state={agentState({ kind: 'run', status: run.state })} />
+              <span className="shrink-0 text-xs text-muted-foreground">{state}</span>
+            </span>
+          }
+          title={name}
+          titleTooltip={`${name} · ${run.branch}`}
+          meta={<BranchChip branch={run.branch} repo={theRepo} base={theBase} className="min-w-0" />}
+          actions={<MenuButton label="Run actions" placement="bottom end" entries={phoneEntries} />}
+        />
+      ) : (
       <ViewHeader
         leading={<AgentDot state={agentState({ kind: 'run', status: run.state })} />}
         title={name}
@@ -100,7 +127,7 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
         meta={
           <>
             <BranchChip branch={run.branch} repo={theRepo} base={theBase} className="min-w-0" />
-            <span className="shrink-0">{runLabel(run.state)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}</span>
+            <span className="shrink-0">{state}</span>
             {run.url && run.state === 'ready' ? (
               <Link href={run.url} external className="min-w-0 truncate">{run.url}</Link>
             ) : (
@@ -118,6 +145,7 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
           </>
         }
       />
+      )}
       {run.error && <div className="px-3 py-1.5"><Alert tone="error">{run.error}</Alert></div>}
       <div className="flex border-b border-border px-2 py-1">
         <SegmentedControl<Step>

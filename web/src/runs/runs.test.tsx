@@ -89,6 +89,23 @@ describe('RunView', () => {
     expect(within(screen.getByRole('banner')).getByRole('button', { name: 'Restart' })).toBeInTheDocument();
   });
 
+  it("has a one-line header with the run's state on a phone, Stop and Restart under ⋯", async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width'), media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+    const calls = stubApi({ 'GET /api/projects': [project], 'POST /api/runs/r1/stop': undefined });
+    renderWithQuery(<RunView run={run({ branch: 'feature/x' })} onRemoved={() => {}} />);
+    const h = screen.getByRole('banner', { name: 'Run' });
+    expect(within(h).getByText('ready')).toBeInTheDocument();
+    expect(within(h).getByRole('heading', { name: 'web' })).toBeInTheDocument();
+    expect(within(h).queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+    await userEvent.click(within(h).getByRole('button', { name: 'Run actions' }));
+    const menu = await screen.findByRole('menu', { name: 'Run actions' });
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(expect.arrayContaining(['Stop', 'Restart']));
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Stop' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/runs/r1/stop')).toBe(true));
+    // The log is still below the header.
+    expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+  });
+
   it('says a detached run keeps running when PDT restarts, on its Output only', async () => {
     stubApi({});
     renderWithQuery(<RunView run={run({ detached: true })} onRemoved={() => {}} />);

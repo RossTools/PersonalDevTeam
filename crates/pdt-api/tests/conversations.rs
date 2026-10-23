@@ -130,6 +130,10 @@ async fn a_new_claude_tab_is_a_conversation_that_streams_replies() {
     assert_eq!(all[1]["event"]["text"], "hello there");
     assert_eq!(all[2]["event"]["phase"], "final");
     assert_eq!(agent_text(&all), ["echo: hello there"]);
+    // `last`: the newest events, oldest first (the phone's tab overview shows the agent's last line).
+    let (_, tail) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?last=3"), None).await;
+    let kinds: Vec<&str> = tail.as_array().unwrap().iter().map(|e| e["event"]["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["agent_message", "usage", "turn"], "{tail:#}");
     wait_activity(&env, id, "idle").await;
     let s = session(&env, id).await;
     assert!(s["unseen"].as_bool().unwrap(), "a finished turn wants attention");

@@ -38,6 +38,17 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   persona shows its setup (role, agent, model, permission mode, tools, instructions rendered) and versions, with no
   New persona, forms, Archive or Delete; Files drills down one folder per screen (`/files/src/`), the checkout picker
   on the top one, and a file opens read-only with its lines wrapped.
+- Sessions on a phone (PDT-114): `/sessions` is the Sidebar full screen with 56px rows and no dragging (long press
+  opens the same menus); its ⋯ has New workspace and New conversation (the host's default agent, in the drawer's
+  project or the first, main checkout). A workspace opens on its last tab; its ⋯ has New tab, Tab overview, Open ticket
+  (a ticket workspace: its ticket screen), Rename (in the top bar) and Close workspace (both for free-form and ticket
+  workspaces; closing asks, moves the tabs back to their projects, and goes Back), and the terminal panel. The tab
+  strip swipes between tabs and has ⧉ (no ‹ ›): the tab overview (web/src/workspaces/TabOverview.tsx), a grid of
+  cards with the tab's state and a live snippet: an open question (the Inbox's question or approval for the session,
+  else the conversation's open request), else the agent's last line (`GET /api/sessions/{id}/events?last=20`), and
+  the branch's `+added −removed`. A tap opens the tab, a long press has the tab's menu, Back closes it. A session's
+  header is one line (state, title, branch chip) with Changes, Conversation/Terminal, Compose, Stop, Restart, Make
+  ticket and Remove under its ⋯; a run's is one line with its state, Stop and Restart under ⋯.
 
 ## URLs
 
