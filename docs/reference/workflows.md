@@ -282,6 +282,15 @@ PM persona, `{{params.persona}}`, with outcomes `drafted` (it made a draft ticke
 the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
+A workflow made from a built-in template records it and its params in its state (`_pdt.template`: `{id, params}`).
+On the engine's first tick (with the built-ins), each such workflow still untouched (its current version is the one
+instantiating wrote, or one PDT wrote) moves to the template's current document filled with those params (its name
+kept; a version authored `builtin`, "updated by PDT to the newer template …"); one the user or an agent saved a
+version of is left alone (PDT-124). A Pipeline made before templates were recorded (version 1, noted "from the
+template Pipeline", with the Pipeline's triggers and merge) is recognised, and its params are read back from the
+document (the value at each place the template has exactly `{{params.<id>}}`; defaults for the rest). A waiting run
+goes on with the version it started on.
+
 Connections: kinds the actions know are `discord_webhook` (secret: the webhook URL; one the PM made has
 `config.webhookId`, `channelId`, `channel` and `bot`), `discord_bot` (secret: the bot token; `config.guildId`, checked
 on save, `applicationId` for the invite link, `pmActs`; `url` empty means Discord's API, tests point it at a fake),
@@ -497,7 +506,7 @@ deleted (`409 persona_in_use`).
 ## Pipeline, policies and scheduling (Phase 7c)
 
 - **The Pipeline template** (`builtin:pipeline`, pdt-api `workflow/pipeline.rs`): instantiated per project (off until
-  enabled). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
+  enabled); an untouched instance follows newer versions of it (Templates, above). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
   `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
   | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (new) → QA
   (new); `changes_requested` and `fail` go back to Code; `pass` → a switch on `{{params.accept}}`: `user` → a
