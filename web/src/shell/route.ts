@@ -1,5 +1,5 @@
 // The app's URL paths (PDT-111): what each one shows, and the path for a screen. Pure: router.ts does the history.
-import type { PmSelection } from '../pm/usePm';
+import { noteOf, type PmSelection } from '../pm/usePm';
 import type { WorkflowTab } from '../workflows/WorkflowPage';
 import type { WorkflowTarget } from '../workflows/WorkflowsList';
 import type { ViewId } from './views';
@@ -47,7 +47,7 @@ export function parseRoute(pathname: string, search = ''): Route {
   const [head, a = null, b = null, c = null] = seg;
   switch (head) {
     case 'pm':
-      return { view: 'pm', pm: a ?? 'current' };
+      return { view: 'pm', pm: a === 'notes' && b ? `note:${b}` : a ?? 'current' };
     case 'sessions':
       return { view: 'sessions', workspaceId: a, tabId: a ? b : null };
     case 'inbox':
@@ -81,8 +81,10 @@ export function routePath(r: Route): string {
   switch (r.view) {
     case null:
       return '/';
-    case 'pm':
-      return r.pm === 'current' ? '/pm' : `/pm/${enc(r.pm)}`;
+    case 'pm': {
+      const note = noteOf(r.pm);
+      return r.pm === 'current' ? '/pm' : note ? `/pm/notes/${enc(note)}` : `/pm/${enc(r.pm)}`;
+    }
     case 'sessions':
       return r.workspaceId ? `/sessions/${enc(r.workspaceId)}${r.tabId ? `/${enc(r.tabId)}` : ''}` : '/sessions';
     case 'inbox':
@@ -154,6 +156,9 @@ export function isDetail(r: Route): boolean {
 export function upRoute(r: Route): Route {
   if (r.view === null) return r;
   if (r.view === 'tickets') return { ...r, ticket: null };
+  // A note goes up to the notes, an earlier session to the list of them.
+  if (r.view === 'pm' && noteOf(r.pm)) return { view: 'pm', pm: 'notes' };
+  if (r.view === 'pm' && r.pm !== 'current' && r.pm !== 'notes' && r.pm !== 'earlier') return { view: 'pm', pm: 'earlier' };
   // A file goes up to the checkout it is in.
   if (r.view === 'files') return { ...r, path: null };
   return viewRoute(r.view);

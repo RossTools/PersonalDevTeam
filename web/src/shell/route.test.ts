@@ -8,6 +8,8 @@ describe('routes', () => {
     ['/pm', { view: 'pm', pm: 'current' }],
     ['/pm/s1', { view: 'pm', pm: 's1' }],
     ['/pm/notes', { view: 'pm', pm: 'notes' }],
+    ['/pm/notes/n1', { view: 'pm', pm: 'note:n1' }],
+    ['/pm/earlier', { view: 'pm', pm: 'earlier' }],
     ['/sessions', { view: 'sessions', workspaceId: null, tabId: null }],
     ['/sessions/w1', { view: 'sessions', workspaceId: 'w1', tabId: null }],
     ['/sessions/w1/t1', { view: 'sessions', workspaceId: 'w1', tabId: 't1' }],
@@ -62,7 +64,7 @@ describe('routes', () => {
     const top = ['/pm', '/sessions', '/inbox', '/tickets?view=board', '/workflows', '/personas', '/files?project=PDT', '/settings', '/'];
     for (const p of top) expect(isDetail(parseLocation(p)), p).toBe(false);
     const up: [string, string][] = [
-      ['/pm/notes', '/pm'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
+      ['/pm/notes', '/pm'], ['/pm/notes/n1', '/pm/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm/earlier'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
       ['/workflows/wf/runs/r', '/workflows'], ['/personas/p', '/personas'], ['/files/a/b.md?project=PDT', '/files?project=PDT'],
       ['/settings/projects/PDT/danger-zone', '/settings'], ['/settings/notifications', '/settings'],
     ];

@@ -10,6 +10,7 @@ import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
+import { useKeyboardBox } from '../common/viewport';
 import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
 import { useMetaK } from '../palette/useMetaK';
@@ -50,7 +51,7 @@ import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
-import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
+import { noteOf, usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
@@ -124,6 +125,8 @@ export function AppShell() {
   const route = useMemo(() => parseLocation(loc), [loc]);
   const phone = useMediaQuery(PHONE_QUERY);
   const defaultView: ViewId = phone ? 'pm' : 'sessions';
+  // While a phone's on-screen keyboard is up, the shell fits the part above it, so a composer stays in view.
+  const keyboardBox = useKeyboardBox(phone);
   const view: ViewId = route.view ?? defaultView;
   // The path each view showed last, so coming back to a view shows what it did (as when this was React state).
   const lastPath = useRef<Partial<Record<ViewId, string>>>({});
@@ -587,7 +590,7 @@ export function AppShell() {
     setOverviewOpen(false);
     setRenamingWorkspace(false);
   }, [workspaceScreen]);
-  const pickerSheet = phone && (view === 'pm' || view === 'tickets');
+  const pickerSheet = phone && view === 'tickets';
   const ticketsProject = ws.projects.find((p) => p.id === backlog.projectId);
   // A workspace screen's ⋯ (phones): its tabs, its ticket, and (a free-form or ticket workspace) Rename and Close.
   const shownWorkspace = ws.workspace;
@@ -639,12 +642,14 @@ export function AppShell() {
       onCommit={(name) => { setRenamingWorkspace(false); void runAction(() => ws.renameWorkspace(shownWorkspace.id, name)); }}
       onCancel={() => setRenamingWorkspace(false)}
     />
-  ) : view === 'sessions' && detail ? (shownWorkspace?.ticket ? `${shownWorkspace.ticket.key} ${shownWorkspace.ticket.title}` : shownWorkspace?.name ?? label) : label;
+  ) : view === 'sessions' && detail ? (shownWorkspace?.ticket ? `${shownWorkspace.ticket.key} ${shownWorkspace.ticket.title}` : shownWorkspace?.name ?? label)
+  : view === 'pm' && detail ? (pmSelection === 'notes' ? 'Notes' : noteOf(pmSelection) ? 'Note' : pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
+  : label;
   const shellActions = (): MenuEntry[] =>
     view === 'pm' ? [
       { label: 'New session…', onSelect: newPmSession },
       { label: 'Notes', onSelect: () => setPmSelection('notes') },
-      { label: 'Earlier sessions…', onSelect: () => setSheetOpen(true) },
+      { label: 'Earlier sessions', onSelect: () => setPmSelection('earlier') },
     ] : view === 'sessions' && detail ? workspaceActions()
     : view === 'sessions' ? [
       { label: 'New workspace', onSelect: () => setAddingWorkspace(true) },
@@ -665,7 +670,10 @@ export function AppShell() {
     <TicketTabsContext.Provider value={ticketTabs}>
     <StartTicketContext.Provider value={startTicket}>
     <TopBarActionsContext.Provider value={setScreenActions}>
-    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground md:flex-row">
+    <div
+      className="flex h-full flex-col overflow-hidden bg-background text-foreground md:flex-row"
+      style={keyboardBox ? { position: 'fixed', left: 0, right: 0, top: keyboardBox.top, height: keyboardBox.height } : undefined}
+    >
       {phone ? (
         <>
           <PhoneTopBar
@@ -692,7 +700,7 @@ export function AppShell() {
             onRenameTab={setRenamingTabId}
           />
           {pickerSheet && (
-            <Sheet side="left" title={view === 'pm' ? 'PM sessions and notes' : 'Projects and filters'} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
+            <Sheet side="left" title="Projects and filters" hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
               <div className="-mx-2">{list}</div>
             </Sheet>
           )}
@@ -785,7 +793,7 @@ export function AppShell() {
             ) : view === 'inbox' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'pm' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} onBack={() => goBack(routePath(upRoute(route)))} /></Suspense>
             ) : view === 'personas' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
             ) : view === 'tickets' ? (

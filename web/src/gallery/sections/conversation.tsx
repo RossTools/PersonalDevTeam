@@ -22,8 +22,8 @@ function Demo({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function PromptBoxDemo({ working }: { working?: boolean }) {
-  const [text, setText] = useState(working ? 'Also update the changelog.' : '');
+function PromptBoxDemo({ working, phone }: { working?: boolean; phone?: boolean }) {
+  const [text, setText] = useState(working && !phone ? 'Also update the changelog.' : '');
   const [model, setModel] = useState('default');
   return (
     <PromptBox
@@ -34,6 +34,7 @@ function PromptBoxDemo({ working }: { working?: boolean }) {
       onStop={working ? () => toast.info('Stop') : undefined}
       sendLabel={working ? 'Queue' : 'Send'}
       placeholder="Message Claude…"
+      layout={phone ? 'phone' : 'default'}
       toolbar={
         <>
           <Select aria-label="Model" size="sm" quiet value={model} onChange={setModel}
@@ -41,7 +42,7 @@ function PromptBoxDemo({ working }: { working?: boolean }) {
           <Select aria-label="Permission mode" size="sm" quiet value="ask" onChange={() => {}} options={[{ value: 'ask', label: 'Ask' }]} />
         </>
       }
-      meta={working ? 'Esc stops' : 'Context 16% · 31k / 200k'}
+      meta={phone ? (working ? 'working' : 'ready') : working ? 'Esc stops' : 'Context 16% · 31k / 200k'}
     />
   );
 }
@@ -104,6 +105,12 @@ export const section = {
         <div className="flex flex-col gap-3">
           <PromptBoxDemo />
           <PromptBoxDemo working />
+        </div>
+      </Demo>
+      <Demo label="PromptBox · phone layout: idle, working with an empty box (⬆ is Stop)">
+        <div className="flex max-w-sm flex-col gap-3">
+          <PromptBoxDemo phone />
+          <PromptBoxDemo phone working />
         </div>
       </Demo>
       <Demo label="Composer · / commands (TUI-only shown, not pickable), @ files, images, a rate-limit warning">

@@ -103,7 +103,19 @@ Start too).
   `claude`, and `fake-agent app-server` / `fake-agent resume` as Codex's server and TUI (`fake-agent acp` for Devin).
 - web/src/conversation (events socket + reducer, MessageList with turn Changes and Continue, composer); `@ui`
   ApprovalCard (approvals with a diff preview, questions with "Other…", plans with "Approve, accept edits" for
-  Claude), DiffViewer, MessageBubble, ToolCallRow.
+  Claude; a tool's arguments as the title's summary with "All arguments ▾" for the rest; Allow/Deny), DiffViewer,
+  MessageBubble, ToolCallRow. A finished run of tool calls folds to one line ("Ran 3 commands", or for one other tool
+  "search_tickets · 2 calls").
+- **Pinned approval bar** (web `PinnedApprovalBar`, PDT-113): in every conversation, while a request is open, a line
+  over the composer ("⚠ wants create_ticket · Review", "· 1 more" when there are others); Review scrolls to the
+  oldest open request's card and focuses it.
+- **On a phone** (PDT-113): the composer's text grows to about five lines with one round button beside it (⬆ sends;
+  ■ Stop while the agent works and the box is empty; text while it works queues), and attach, model, permission mode
+  and the agent's state (working / ready / stopped) sit on a row under it. With the on-screen keyboard up, Enter
+  adds a new line (a hardware keyboard, which brings no on-screen one, keeps Enter to send: web
+  `common/viewport.ts` compares the visual viewport with the layout one), and the shell fits the visible part
+  above the keyboard so the composer stays in view. Approval cards put Deny and Allow side by side at their foot as
+  44 px buttons.
 - The session header's Conversation | Terminal switch (Codex: live shared TUI; Claude/Devin: `…/mode`); new-tab
   "Claude" (c) is a conversation, "Claude (terminal)" (t) the TUI.
 - The Start dialog's Conversation | Terminal choice (the host's default view), the ticket tab's Conversation
