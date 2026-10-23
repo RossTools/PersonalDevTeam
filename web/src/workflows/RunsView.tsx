@@ -1,5 +1,6 @@
 // The runs view (Phase 7d spec §4): every run of the workflow with its trigger and status; a run shows its path on the
-// graph of the version it ran, its steps, and Retry, Cancel and a waiting gate's choices.
+// graph of the version it ran, its steps, and Retry, Resume (an agent step that timed out or stopped), Cancel and a
+// waiting gate's choices.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
@@ -53,6 +54,7 @@ function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string
     void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
   };
   const retry = useMutation({ mutationFn: () => api.retryWorkflowRun(id), onSuccess: done });
+  const resume = useMutation({ mutationFn: () => api.resumeWorkflowRun(id), onSuccess: done });
   const cancel = useMutation({ mutationFn: () => api.cancelWorkflowRun(id), onSuccess: done });
   const answer = useMutation({ mutationFn: (a: { step: string; choice: string }) => api.answerWorkflowStep(id, a.step, a.choice), onSuccess: done });
   const [selected, setSelected] = useState<string | null>(null);
@@ -61,7 +63,8 @@ function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string
   const r = run.data;
   const status = RUN_STATUS[r.status];
   const d = doc.data?.doc;
-  const error = retry.error ?? cancel.error ?? answer.error;
+  const error = retry.error ?? resume.error ?? cancel.error ?? answer.error;
+  const resumeNode = r.steps.find((s) => s.id === r.resumeFrom)?.nodeId;
   return (
     <section aria-label="Run" className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -71,6 +74,10 @@ function RunDetail({ id, workflowId, catalog }: { id: string; workflowId: string
           version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${duration(r.endedAt - r.startedAt)}` : ''}
         </span>
         <span className="ml-auto flex gap-1">
+          {resumeNode && (
+            <Button size="sm" variant="primary" onClick={() => resume.mutate()} pending={resume.isPending}
+              title="Run this agent step again in the same run: same ticket, attempt and session">Resume from {resumeNode}</Button>
+          )}
           {r.status === 'failed' && <Button size="sm" variant="primary" onClick={() => retry.mutate()} pending={retry.isPending}>Retry from the failed step</Button>}
           {(r.status === 'running' || r.status === 'waiting') && (
             <Button size="sm" variant="secondary" onClick={() => cancel.mutate()} pending={cancel.isPending}>Cancel</Button>

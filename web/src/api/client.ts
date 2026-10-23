@@ -310,6 +310,7 @@ export const api = {
     request<WorkflowDetail>(`/api/workflows/${enc(id)}/versions/${v}/discard`, { method: 'POST' }),
   getWorkflowRun: (id: string) => request<WorkflowRunDetail>(`/api/workflow-runs/${enc(id)}`),
   retryWorkflowRun: (id: string) => request<WorkflowRunDetail>(`/api/workflow-runs/${enc(id)}/retry`, { method: 'POST' }),
+  resumeWorkflowRun: (id: string) => request<WorkflowRunDetail>(`/api/workflow-runs/${enc(id)}/resume`, { method: 'POST' }),
   cancelWorkflowRun: (id: string) => request<WorkflowRunDetail>(`/api/workflow-runs/${enc(id)}/cancel`, { method: 'POST' }),
   answerWorkflowStep: (run: string, step: string, choice: string) =>
     request<WorkflowRunDetail>(`/api/workflow-runs/${enc(run)}/steps/${enc(step)}/answer`, { method: 'POST', body: JSON.stringify({ choice }) }),

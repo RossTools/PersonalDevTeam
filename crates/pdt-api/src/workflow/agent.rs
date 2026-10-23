@@ -1,6 +1,6 @@
 //! Agent steps (Phase 7b spec §4–§5): starting a persona's session for an `agent` node, the outcome it submits through
 //! pdt-mcp, its questions, turns that end without an outcome (nudges, stalls, max turns), loop limits, and the user
-//! taking a step over from the Inbox.
+//! taking a step over from the Inbox, and steps that timed out: the Inbox, Resume and a late outcome (PDT-123).
 
 use super::catalog::{Outcome, StepCx};
 use super::nodes::agent::{AgentConfig, Owner, SessionChoice};
@@ -12,7 +12,7 @@ use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, Ter
 use pdt_core::ticket::{Actor, AttemptState, EventKind};
 use pdt_core::workflow::agent::{
     AgentStep, AgentStepState, OutcomeSpec, STOPPED, StepTicket, TIMEOUT, back_because, first_message,
-    next_pass_message, nudge_message, step_section,
+    next_pass_message, nudge_message, resumable_step, resume_message, step_section,
 };
 use pdt_core::workflow::api::{Step, StepStatus};
 use pdt_core::workspace::TabPlacement;
@@ -119,7 +119,15 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     {
         tracing::warn!(ticket = %ticket_id, error = %e, "could not set the ticket's pipeline stage");
     }
+    // A resumed step (PDT-123) goes on in the session of the step it resumes, while that is there.
+    let resume_of = cx.step.wait.get("resumeOf").and_then(Value::as_str).map(String::from);
+    let note = cx.step.wait.get("note").and_then(Value::as_str).map(String::from);
+    let resumed = match (&resume_of, c.owner) {
+        (Some(id), Owner::Agent) => resumed_session(st, id).await,
+        _ => None,
+    };
     let reused = match (c.owner, c.session) {
+        _ if resumed.is_some() => resumed.clone(),
         (Owner::Agent, SessionChoice::Reuse) => reusable_session(st, cx, &t).await,
         _ => None,
     };
@@ -129,7 +137,8 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     if c.owner == Owner::Agent && reused.is_none() && !admitted && !crate::scheduler::slot_free(st).await {
         tracing::info!(run = %cx.run.id, node = %cx.node.id, "an agent step waits for a slot");
         return Ok(Outcome::Wait {
-            wait: json!({"slot": true, "persona": persona.name, "loopAllowed": allowed}),
+            wait: json!({"slot": true, "persona": persona.name, "loopAllowed": allowed, "resumeOf": resume_of,
+                         "note": note}),
             until: None,
             timeout_port: None,
             output: Value::Null,
@@ -167,18 +176,31 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         return Ok(wait(&binding));
     }
     let ticket = t.ticket.as_ref().map(|(_, key, title)| StepTicket { key, title });
-    let message = first_message(&c.prompt, ticket, &c.outcomes);
+    let mut message = first_message(&c.prompt, ticket, &c.outcomes);
+    if resume_of.is_some()
+        && let Some(n) = note.as_deref().map(str::trim).filter(|n| !n.is_empty())
+    {
+        message.push_str(&format!("\n\nThe user's note: {n}"));
+    }
     let session_id = match reused {
         Some(s) => {
             // A later pass in the same session: it has the step's role and the ticket already, so only why it is back.
             // Otherwise its instructions were fixed when it started: the step's rules go with the message.
             let again = passes.iter().any(|a| a.session_id.as_deref() == Some(s.id.as_str()));
-            let text = if again {
+            let by_user = resumed.is_some();
+            let text = if by_user {
+                let why = match &resume_of {
+                    Some(id) => st.store.get_step(id).await.ok().flatten().map(|x| stop_reason(&x)),
+                    None => None,
+                };
+                resume_message(why.as_deref(), note.as_deref(), &c.outcomes)
+            } else if again {
                 next_pass_message(why_back(st, cx).await.as_deref(), &c.outcomes)
             } else {
                 format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes))
             };
-            queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone(), false).await?;
+            // Resume is the user's click: it reaches a stopped conversation too, like a Nudge.
+            queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone(), by_user).await?;
             s.id
         }
         None => {
@@ -192,6 +214,66 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     tracing::info!(run = %cx.run.id, node = %cx.node.id, persona = %persona.name, session = %session_id,
         "an agent step started");
     Ok(wait(&binding))
+}
+
+/// The session of the step a resumed step resumes (PDT-123), while it is there and can take a message: a
+/// conversation (a stopped one reopens), or a running terminal.
+async fn resumed_session(st: &AppState, step_id: &str) -> Option<Session> {
+    let a = st.store.get_agent_step(step_id).await.ok()??;
+    let s = st.store.get_session(a.session_id.as_deref()?).await.ok()??;
+    (s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || s.status == SessionStatus::Running))
+        .then_some(s)
+}
+
+/// Why an agent step ended without an outcome, for the user and the resumed session.
+fn stop_reason(step: &Step) -> String {
+    if let Some(r) = step.output.get("reason").and_then(Value::as_str) {
+        return r.to_string();
+    }
+    match step.port.as_deref() {
+        Some(STOPPED) => "it was stopped at its loop limit".into(),
+        _ => "it had no outcome within its time limit".into(),
+    }
+}
+
+/// An agent step took its `timeout` port (its max runtime, or its max turns): a Needs-you item in the Inbox naming
+/// the ticket, step and session, with Resume and Stop (PDT-123). The step has ended, so the item stays open until the
+/// user answers it, the run is resumed or cancelled.
+pub(crate) async fn timed_out(st: &AppState, step: &Step, run: &pdt_core::workflow::api::Run) {
+    let Ok(Some(a)) = st.store.get_agent_step(&step.id).await else { return };
+    // A removed session is not offered (PDT-93).
+    let session_id = match &a.session_id {
+        Some(sid) if matches!(st.store.get_session(sid).await, Ok(Some(_))) => Some(sid.clone()),
+        _ => None,
+    };
+    let why = stop_reason(step);
+    let item = InboxItem {
+        id: uuid::Uuid::now_v7().to_string(),
+        kind: InboxKind::TimedOut,
+        group: InboxGroup::Stalled,
+        status: InboxStatus::Open,
+        project_id: a.project_id.clone().or_else(|| run.project_id.clone()),
+        ticket_id: a.ticket_id.clone(),
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: a.attempt_id.clone(),
+        session_id,
+        run_id: Some(a.run_id.clone()),
+        step_id: Some(a.step_id.clone()),
+        persona_id: a.persona_id.clone(),
+        persona_name: None,
+        title: format!("{} timed out at {}", a.persona_name, step.node_id),
+        body: json!({"why": why, "node": step.node_id, "workflow": run.workflow_name, "outcomes": a.outcomes,
+                     "turns": a.turns}),
+        choices: vec![InboxChoice::new(inbox::RESUME, "Resume", true), InboxChoice::new(inbox::STOP, "Stop", false)],
+        resolution: Value::Null,
+        created_at: now_ms(),
+        resolved_at: None,
+    };
+    if let Err(e) = st.store.open_inbox_item(&item).await {
+        tracing::warn!(step = %step.id, error = %e, "could not put a timed-out step in the Inbox");
+    }
+    tracing::info!(step = %step.id, persona = %a.persona_name, "an agent step timed out");
 }
 
 /// Why a step runs again: the outcome or gate answer of the latest agent step or gate before it in the run.
@@ -469,20 +551,10 @@ async fn finish_with(
 /// `submit_outcome` (pdt-mcp): ends the session's step with an outcome it allows.
 pub(crate) async fn submit_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::SubmitOutcome) -> R<Value> {
     let _engine = st.engine_lock.lock().await;
-    let mut a = st
-        .store
-        .active_agent_step(&s.id)
-        .await
-        .map_err(err)?
-        .ok_or("no workflow step is waiting for an outcome from this session")?;
-    if !a.outcomes.iter().any(|o| o.id == input.outcome) {
-        let ids: Vec<&str> = a.outcomes.iter().map(|o| o.id.as_str()).collect();
-        return Err(format!("{} is not an outcome of this step; use one of: {}", input.outcome, ids.join(", ")));
-    }
-    let summary = input.summary.trim().to_string();
-    if summary.is_empty() {
-        return Err("give a short summary of what you did and found".into());
-    }
+    let Some(mut a) = st.store.active_agent_step(&s.id).await.map_err(err)? else {
+        return late_outcome(st, s, input).await;
+    };
+    let summary = checked_outcome(&a, &input)?;
     let step = waiting_step(st, &a).await?;
     if !input.comments.is_empty() {
         let cx = crate::mcp::tools::Cx { st, session: s };
@@ -495,6 +567,71 @@ pub(crate) async fn submit_outcome(st: &AppState, s: &Session, input: crate::mcp
     tracing::info!(session = %s.id, outcome = %input.outcome, "an agent submitted an outcome");
     Ok(json!({"accepted": true, "outcome": input.outcome,
               "message": "PDT has your outcome and moves the workflow on. End your turn now."}))
+}
+
+/// The outcome is one of the step's and the summary says something: the summary, trimmed.
+fn checked_outcome(a: &AgentStep, input: &crate::mcp::tools::SubmitOutcome) -> R<String> {
+    if !a.outcomes.iter().any(|o| o.id == input.outcome) {
+        let ids: Vec<&str> = a.outcomes.iter().map(|o| o.id.as_str()).collect();
+        return Err(format!("{} is not an outcome of this step; use one of: {}", input.outcome, ids.join(", ")));
+    }
+    let summary = input.summary.trim().to_string();
+    if summary.is_empty() {
+        return Err("give a short summary of what you did and found".into());
+    }
+    Ok(summary)
+}
+
+/// A `submit_outcome` from the session of a step that timed out, while its run hasn't moved on from it (PDT-123): the
+/// run goes on from that step's outcome port, as if the outcome had come in time.
+async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::SubmitOutcome) -> R<Value> {
+    const NONE: &str = "no workflow step is waiting for an outcome from this session";
+    let old = st.store.latest_agent_step(&s.id).await.map_err(err)?.ok_or(NONE)?;
+    let steps = st.store.list_steps(&old.run_id).await.map_err(err)?;
+    let timed_out = resumable_step(&steps)
+        .filter(|x| x.id == old.step_id && x.port.as_deref() == Some(TIMEOUT))
+        .cloned()
+        .ok_or(NONE)?;
+    let summary = checked_outcome(&old, &input)?;
+    let run = super::engine::reopen_at(st, &timed_out, json!({"lateOutcome": input.outcome})).await?;
+    // The node's step again, waiting as if it had never timed out, and ended at once by the outcome.
+    let now = now_ms();
+    let mut step = super::engine::new_step(
+        &run.id,
+        super::engine::next_seq(st, &run.id).await?,
+        &timed_out.node_id,
+        &timed_out.kind,
+    );
+    step.status = StepStatus::Waiting;
+    step.attempts = 1;
+    step.input = timed_out.input.clone();
+    step.wait = json!({"agent": {"session": s.id, "persona": old.persona_name}, "lateOutcomeOf": timed_out.id});
+    step.started_at = Some(now);
+    st.store.put_step(&step).await.map_err(err)?;
+    let mut a = AgentStep {
+        step_id: step.id.clone(),
+        state: AgentStepState::Working,
+        outcome: None,
+        summary: None,
+        comments: vec![],
+        by_user: false,
+        created_at: now,
+        updated_at: now,
+        ..old
+    };
+    st.store.put_agent_step(&a).await.map_err(err)?;
+    if !input.comments.is_empty() {
+        let cx = crate::mcp::tools::Cx { st, session: s };
+        for c in &input.comments {
+            crate::mcp::tools::add_review_comment(&cx, c).await?;
+        }
+    }
+    a.comments = input.comments;
+    finish_with(st, a, &step, &input.outcome, summary, false).await?;
+    tracing::info!(session = %s.id, outcome = %input.outcome, run = %run.id, "a late outcome resumed a workflow run");
+    Ok(json!({"accepted": true, "outcome": input.outcome,
+              "message": "Your step had timed out, but its run hadn't moved on: PDT has your outcome and moves the \
+                          workflow on. End your turn now."}))
 }
 
 /// `ask_user` (pdt-mcp): an Inbox question; a step waits for the answers instead of stalling.
@@ -774,6 +911,30 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
             end_item(st, item, json!({"choice": choice})).await?;
             finish_with(st, a, &step, outcome, summary, true).await?;
             Ok(json!({"outcome": outcome}))
+        }
+        InboxKind::TimedOut => {
+            let choice = answer.choice.as_deref().ok_or("choose Resume or Stop")?;
+            let _engine = st.engine_lock.lock().await;
+            let run_id = item.run_id.as_deref().ok_or("the item has no run")?;
+            let steps = st.store.list_steps(run_id).await.map_err(err)?;
+            if resumable_step(&steps).map(|s| s.id.as_str()) != item.step_id.as_deref() {
+                // Resumed from the run, or it went on otherwise: nothing left to decide.
+                end_item(st, item, json!({"choice": choice, "movedOn": true})).await?;
+                return Err("the run has already moved on from this step".into());
+            }
+            if choice == inbox::RESUME {
+                super::engine::resume_locked(st, run_id, answer.text.clone()).await?;
+                return Ok(json!({"resumed": true}));
+            }
+            if choice == inbox::STOP {
+                end_item(st, item, json!({"choice": choice})).await?;
+                let run = st.store.get_workflow_run(run_id).await.map_err(err)?;
+                if run.is_some_and(|r| !r.status.is_finished()) {
+                    super::engine::cancel_locked(st, run_id).await?;
+                }
+                return Ok(json!({"stopped": true}));
+            }
+            Err(format!("{choice} is not a choice here"))
         }
         InboxKind::Approval => Err("answer an approval in its session".into()),
     }

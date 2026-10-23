@@ -272,6 +272,14 @@ impl Store {
         row.as_ref().map(to_step).transpose()
     }
 
+    /// The session's newest step, done or not (a late `submit_outcome` after its step timed out, PDT-123).
+    pub async fn latest_agent_step(&self, session_id: &str) -> Result<Option<AgentStep>, StoreError> {
+        let sql =
+            format!("SELECT {STEP_COLUMNS} FROM agent_steps WHERE session_id = ? ORDER BY created_at DESC LIMIT 1");
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_step).transpose()
+    }
+
     /// Whether a step that is not done works on the attempt (an agent is on it, PDT-104).
     pub async fn attempt_has_open_agent_step(&self, attempt_id: &str) -> Result<bool, StoreError> {
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_steps WHERE attempt_id = ? AND state != 'done'")

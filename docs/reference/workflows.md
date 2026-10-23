@@ -233,7 +233,9 @@ secret as a bearer token); without `transport`, a URL and no command means `http
 - A run ends `succeeded`, `quiet` (an `end` with `quiet`, or no action did anything that wasn't quiet: nobody was
   told), `failed` (`error` names the node) or `cancelled`. Limits: `maxVisits` per node (loop limit, default 25),
   `maxSteps` (200) and `maxRuntimeMs` (7 days) per run, `timeoutMs` per execution (actions default 5 min).
-- `POST /api/workflow-runs/{id}/retry` (a failed run, from its failed step), `/cancel`, and
+- `POST /api/workflow-runs/{id}/retry` (a failed run, from its failed step), `/resume` (a run whose latest agent step
+  ended by `timeout` or `stopped`, from that step: [Timeouts and Resume](#timeouts-and-resume-pdt-123); `409
+  cannot_resume` otherwise; `GET` gives that step as `resumeFrom`), `/cancel` (also closes the run's Inbox items), and
   `/steps/{step}/answer {choice, text?}` (a waiting gate; the user's `text` goes on the run's ticket as their comment,
 naming the workflow, run and choice, so "Ticket comments to the agent" forwards it, and is in the gate's output). `GET /api/workflow-runs?workflow=&ticket=&status=&limit=`,
   `GET /api/workflow-runs/{id}` (with steps).
@@ -391,7 +393,8 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
     time limit, loop limit and "On error, go to". With no node selected it edits the workflow's name, description and
     limits.
 - Runs (`RunsView`): the runs (polled), and a run's graph of the version it ran with the path taken, its steps (input,
-  output, error), Retry from the failed step, Cancel, and a waiting gate's choices.
+  output, error), Retry from the failed step, Resume from a timed-out or stopped agent step, Cancel, and a waiting
+  gate's choices.
 - Dry run (`DryRunDialog`): the draft against a recent event of its trigger types, a hand-written one (prefilled from
   the trigger's schema) or a manual input; the path, why triggers didn't match, and what each action would do.
 - Versions (`VersionsView`): every version with author, status and note, a diff against the current one, Restore,
@@ -427,7 +430,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   counts as stalled). The first message is the node's `prompt`, the ticket's key and title, and the outcome list.
 - **Binding.** `agent_steps` (one per step: session, persona and version, project, ticket, attempt, outcomes,
   `state` `working | asking | stalled | done`, turns, nudges) is what pdt-mcp and the Inbox read. The step waits
-  (`wait: {agent: …}`) until `maxRuntimeMs` (4 h), then `timeout`; a step re-run after a restart waits again.
+  (`wait: {agent: …}`) until `maxRuntimeMs` (4 h), then `timeout` (the Inbox has it: [Timeouts and
+  Resume](#timeouts-and-resume-pdt-123)); a step re-run after a restart waits again.
 - **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), adds its line
   comments as review comments on the attempt's worktree (author: the persona), records an `outcome` timeline event
   and completes the step by that port with `{outcome, summary, comments, sessionId, persona, personaVersion, turns,
@@ -446,6 +450,28 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   with a `loop_limit` Inbox item instead (the earlier passes' outcomes and summaries): **Once more** runs it (that
   pass only), **Take over** completes it with an outcome (`by: user`), **Stop** takes `stopped`.
 - When a step completes or its run ends, its open Inbox items close and its binding is done.
+
+### Timeouts and Resume (PDT-123)
+
+- An agent step that takes `timeout` (its `maxRuntimeMs`, or `maxTurns` turns without an outcome) opens a
+  `timed_out` Inbox item (group Stalled): the ticket, the step's node and workflow, why (`body.why`), its session
+  (Open session, while it exists), and **Resume** (primary, with an optional note) and **Stop**. The step has ended,
+  so the item stays open after its run does (the Pipeline's timeout path ends the run), until it is answered, the run
+  is resumed or cancelled.
+- A run can be resumed from its latest agent step when that one ended by `timeout` or `stopped` (pdt-core
+  `resumable_step`; not once a later agent step ran, nor a finished sub-workflow's run). **Resume** (the Inbox item,
+  or Workflows → Runs "Resume from <node>", `POST /api/workflow-runs/{id}/resume`) skips what the run still had to
+  do after that step, runs the node again as a new step of the same run (same trigger, so the same ticket, attempt,
+  branch, worktree and PR; never a new attempt) without counting against its loop limit, and resolves the step's
+  item. The new step goes on in the timed-out step's session while that is there (a conversation, which reopens if
+  stopped, or a running terminal), whatever the node's `session`, with "[PDT] The user resumed your step after it
+  stopped: …" (pdt-core `resume_message`; the user's note first) sent as the user's; with no session left it starts
+  as a first pass would (a `reuse` node finds the attempt's session). **Stop** resolves the item and cancels the run
+  if it hasn't ended; the run can still be resumed from Runs.
+- **Late outcome**: a `submit_outcome` from a session with no open step, whose newest step timed out and is still
+  the run's resumable step, is accepted: the run is taken back to that step as for Resume and goes on from the
+  outcome's port (a new step of the node, ended by the outcome, with the usual timeline record), and the timed-out
+  item is resolved. Otherwise it is refused as before ("no workflow step is waiting…").
 
 ## Personas
 
@@ -481,7 +507,7 @@ deleted (`409 persona_in_use`).
   `reject` → Code); `auto` → straight on; then
   a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`merged` → `ticket.finish`; `queued` → end, Finish
   merged tickets finishes it, and PR notices gets it merging again after a failure, PDT-104; `refused` → wait), `person` → a wait for `attempt.merged` of this attempt. `timeout` and
-  `stopped` add a ticket comment and end. Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
+  `stopped` add a ticket comment and end (a timeout is also in the Inbox, and the run can be resumed: PDT-123). Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
   or `user`: manual), `afterRefine`, `accept`, `autoAcceptLabels` (a list, default none; the labels the ticket had
   when it started count), `merge`, `loopLimit`. Runs may last 30 days. A ticket accepted by label has no approval,
   so with `requireApproval` on its merge is refused (the run waits for someone to merge) unless the label is also
@@ -512,13 +538,15 @@ deleted (`409 persona_in_use`).
 ## Inbox
 
 `inbox_items` (pdt-store `inbox.rs`, pdt-api `inbox.rs`): `question` (`ask_user`), `gate` (a waiting `gate` node;
-group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c); one
+group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c),
+`timed_out` (group Stalled, PDT-123); one
 open item per step and kind. Approvals are
 not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
 session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
 accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
 `{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
-`outcome:<id>` or `stop` at a loop limit) or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
+`outcome:<id>` or `stop` at a loop limit; `resume` with an optional `text`, the note, or `stop` for a timed-out step)
+or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
 closes a question or stalled item (the step keeps waiting). A gate answered through
 `/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too. When a session is removed (and when the store
 opens, for older ones) its open questions close (`resolution` `{sessionGone: true}`) and no item keeps its
@@ -526,7 +554,7 @@ opens, for older ones) its open questions close (`resolution` `{sessionGone: tru
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
-over / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
+over / Stop, Resume (with a note) / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
 `o` opens the ticket, `e` dismisses. A gate has a note box: the note goes with the choice (as the user's ticket
 comment, so a rejection tells the coder what to change). An item on a ticket with an attempt also offers Open coder
 session (the attempt's running agent session), Open changes and Run… (the worktree's configured runs and tests); each

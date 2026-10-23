@@ -242,6 +242,9 @@ pub struct RunDetail {
     #[ts(flatten)]
     pub run: Run,
     pub steps: Vec<Step>,
+    /// The agent step the run can be resumed from (`POST /api/workflow-runs/{id}/resume`, PDT-123): its latest
+    /// agent step, when that one ended by `timeout` or `stopped`.
+    pub resume_from: Option<String>,
 }
 
 /// One entry of the event log.

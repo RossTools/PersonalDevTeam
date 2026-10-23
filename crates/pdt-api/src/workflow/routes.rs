@@ -469,7 +469,10 @@ pub(crate) async fn list_runs(
 async fn run_detail(st: &AppState, id: &str) -> Result<RunDetail, ApiError> {
     let run = st.store.get_workflow_run(id).await?.ok_or_else(|| ApiError::not_found("workflow run"))?;
     let steps = st.store.list_steps(id).await?;
-    Ok(RunDetail { run, steps })
+    let resume_from = pdt_core::workflow::agent::resumable_step(&steps)
+        .filter(|_| run.parent_step_id.is_none() || !run.status.is_finished())
+        .map(|s| s.id.clone());
+    Ok(RunDetail { run, steps, resume_from })
 }
 
 pub(crate) async fn get_run(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<RunDetail>, ApiError> {
@@ -479,6 +482,16 @@ pub(crate) async fn get_run(State(st): State<AppState>, Path(id): Path<String>) 
 pub(crate) async fn retry_run(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
     engine::retry_run(&st, &id).await.map_err(|e| conflict("cannot_retry", e))?;
+    Ok(Json(run_detail(&st, &id).await?))
+}
+
+/// `POST /api/workflow-runs/{id}/resume`: runs the agent step it timed out or stopped at again (PDT-123).
+pub(crate) async fn resume_run(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunDetail>, ApiError> {
+    run_detail(&st, &id).await?;
+    engine::resume_run(&st, &id, None).await.map_err(|e| conflict("cannot_resume", e))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -793,6 +806,7 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/workflow-runs", get(list_runs))
         .route("/workflow-runs/{id}", get(get_run))
         .route("/workflow-runs/{id}/retry", post(retry_run))
+        .route("/workflow-runs/{id}/resume", post(resume_run))
         .route("/workflow-runs/{id}/cancel", post(cancel_run))
         .route("/workflow-runs/{id}/steps/{step}/answer", post(answer))
         .route("/events", get(list_events))

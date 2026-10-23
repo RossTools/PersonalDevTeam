@@ -90,8 +90,8 @@ export function InboxView({ items, selectedId, onSelect }: {
     const p = primary(item);
     // A manual step: the user's note (the nudge box) is the outcome's summary.
     if (p && item.kind === 'manual') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
-    // A gate's note (the same box) goes with its choice.
-    if (p && item.kind === 'gate') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
+    // A gate's note (the same box) goes with its choice, and a resumed step's to its session.
+    if (p && (item.kind === 'gate' || item.kind === 'timed_out')) return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
 
@@ -176,6 +176,19 @@ export function InboxView({ items, selectedId, onSelect }: {
               <Button variant="secondary" aria-expanded={takingOver} onClick={() => setTakingOver((t) => !t)}>Take over</Button>
             </div>
             {takingOver && <Outcomes item={item} busy={busy} onPick={(choice) => void answer({ choice })} />}
+          </section>
+        )}
+        {item.kind === 'timed_out' && (
+          <section aria-label="Timed out" className="flex flex-col gap-3">
+            <p className="text-sm">
+              {typeof item.body.node === 'string' ? `Step ${item.body.node}` : 'The step'}
+              {typeof item.body.workflow === 'string' ? ` of workflow ${item.body.workflow}` : ''} ended without an
+              outcome: {typeof item.body.why === 'string' ? item.body.why : 'it ran out of time'}. Resume runs it again on the
+              same ticket and attempt{item.sessionId ? ', in the same session' : ''}; Stop leaves it stopped.
+            </p>
+            <Textarea aria-label="Note (optional)" placeholder="A note for the agent with Resume (optional)" value={nudge}
+              onChange={(e) => setNudge(e.target.value)} rows={2} />
+            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice, ...(choice === 'resume' && nudge.trim() ? { text: nudge } : {}) })} />
           </section>
         )}
         {item.kind === 'loop_limit' && (

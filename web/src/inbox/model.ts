@@ -14,6 +14,7 @@ export const GROUPS: { id: InboxGroup; title: string }[] = [
 
 export const KIND_LABEL: Record<InboxKind, string> = {
   question: 'Question', approval: 'Approval', stalled: 'Stalled', loop_limit: 'Loop limit', gate: 'Gate', manual: 'Your turn',
+  timed_out: 'Timed out',
 };
 
 /** The items of each group that has any, in the API's order. */
