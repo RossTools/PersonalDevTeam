@@ -63,7 +63,7 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Workflows', 'Personas', 'Files', 'Settings']);
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
     for (const name of ['Board', 'Search']) {
       expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
     }
