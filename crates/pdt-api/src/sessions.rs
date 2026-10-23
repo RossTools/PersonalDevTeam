@@ -465,7 +465,7 @@ fn start_pty(
         rows: size.rows,
     };
     let exit = st.ptys.spawn(spec)?;
-    let (store, id) = (st.store.clone(), s.id.clone());
+    let (store, id, st2) = (st.store.clone(), s.id.clone(), st.clone());
     let codex_home = is_codex(s).then(|| st.platform.codex_home.clone()).flatten();
     let spacing = st.codex_spawn_spacing;
     let handle = tokio::spawn(async move {
@@ -473,6 +473,7 @@ fn start_pty(
             if let Err(e) = store.end_session(&id, SessionStatus::Finished, Some(code), now_ms()).await {
                 tracing::warn!(session = %id, error = %e, "failed to record session exit");
             }
+            crate::notifications::session_exited(&st2, &id, code).await;
             // Remember which Codex conversation this was while its start time is still fresh.
             if codex_home.is_some() {
                 bind_codex_with(&store, codex_home.as_deref(), spacing, &id).await;

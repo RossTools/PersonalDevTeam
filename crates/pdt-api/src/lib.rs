@@ -19,6 +19,7 @@ mod inbox;
 mod jira;
 mod mcp;
 mod mcp_client;
+mod notifications;
 mod overlap;
 mod parts;
 mod personas;
@@ -59,6 +60,7 @@ pub async fn shutdown_mcp(st: &AppState) {
 }
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use jira::refresh_jira;
+pub use notifications::{Notifier, run_notifier, sync as sync_notifications};
 pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, apply_remote_access};
 pub use routes::{AppState, Health, router};

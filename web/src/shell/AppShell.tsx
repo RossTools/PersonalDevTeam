@@ -51,7 +51,10 @@ import { PmList } from '../pm/PmList';
 import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { useInbox } from '../inbox/useInbox';
 import { useDevTitle } from './useInstance';
-import { useWorkflowNotifications } from '../common/useWorkflowNotifications';
+import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
+import { useReadAllUpdates, useUpdates } from '../notifications/queries';
+import { useNotificationStream } from '../notifications/useNotificationStream';
+import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { VIEWS, type ViewId } from './views';
 import { TicketKeysContext } from '../common/ticketKeys';
 import type { TicketPeekState } from '../tickets/TicketsView';
@@ -69,7 +72,7 @@ const PHONE_LIST_SCREENS: readonly ViewId[] = ['sessions', 'inbox', 'workflows',
 
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
-/** The Settings list's Notifications row (phones). */
+/** The Settings page of notifications. */
 const NOTIFICATIONS = 'notifications';
 
 const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
@@ -92,7 +95,8 @@ function useScrollToSection(section: string | null, page: string) {
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
-/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n sessions need the user; [dev] on a dev instance. */
+/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n things need the user (the Inbox's Needs you); [dev]
+ * on a dev instance. */
 function useAttentionTitle(count: number) {
   useDevTitle(count);
   useReloadOnNewBuild();
@@ -233,7 +237,6 @@ export function AppShell() {
       if (hit) openTicket(hit);
     });
   }, [openTicket]);
-  useWorkflowNotifications(openTicketByKey);
   const pmSessions = pm.data?.sessions;
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     // A PM session has no tab: the PM view shows it.
@@ -380,14 +383,15 @@ export function AppShell() {
     }
   });
 
-  useAttentionTitle(ws.allInfos.filter((i) => i.activity === 'needs_you').length);
+  useAttentionTitle(inbox.data?.total ?? 0);
 
   const label = VIEWS.find((v) => v.id === view)!.label;
   const current = ws.currentInfo;
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
   // The Settings list's current row: a project's id, connections, or null (this host).
-  const settingsProjectId = settingsProject?.id ?? (settingsPage.kind === 'connections' ? CONNECTIONS : null);
-  const section = settingsPage.kind === 'notifications' ? 'notifications' : settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
+  const settingsProjectId = settingsProject?.id
+    ?? (settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
+  const section = settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
   useScrollToSection(view === 'settings' ? section : null, settingsProjectId ?? '');
   const currentProject = ws.projects.find((p) => p.id === current?.projectId) ?? null;
   const worktrees = useQuery({
@@ -418,12 +422,36 @@ export function AppShell() {
     if (folder.file) setSheetOpen(false);
   }, [folder.file]);
 
-  /** Settings for a project (by id), connections, or this host (null). */
+  /** Settings for a project (by id), connections, notifications, or this host (null). */
   const showProjectSettings = (id: string | null) => {
     const key = ws.projects.find((p) => p.id === id)?.key;
-    go({ view: 'settings', page: id === CONNECTIONS ? { kind: 'connections' } : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null } });
+    go({
+      view: 'settings',
+      page: id === CONNECTIONS ? { kind: 'connections' } : id === NOTIFICATIONS ? { kind: 'notifications' }
+        : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null },
+    });
     setSheetOpen(false);
   };
+
+  // Notifications (PDT-108): the Inbox's Updates, the stream's toasts and desktop notifications, and where a click goes.
+  const updates = useUpdates();
+  const readAllUpdates = useReadAllUpdates();
+  const unreadUpdates = (updates.data?.unreadUpdates ?? 0) > 0;
+  const openTarget = useCallback((t: NotificationTarget) => {
+    switch (t.kind) {
+      case 'session': openSession({ id: t.id, projectId: t.projectId }); break;
+      case 'ticket': openTicket({ id: t.id, projectId: t.projectId }); break;
+      case 'ticket_key': openTicketByKey(t.key); break;
+      case 'inbox': go({ view: 'inbox', itemId: t.id }); break;
+      case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); break;
+      case 'url': window.open(t.url, '_blank', 'noopener'); break;
+      case 'none': break;
+    }
+  }, [openSession, openTicket, openTicketByKey, setWorkflowTarget]);
+  const onScreenSession = view === 'sessions' && current?.item.kind === 'session' ? current.item.id : null;
+  const onScreenInbox = view === 'inbox' ? inboxId : null;
+  const onScreen = useMemo(() => ({ session: onScreenSession, inbox: onScreenInbox }), [onScreenSession, onScreenInbox]);
+  useNotificationStream(openTarget, onScreen);
 
   // The palette's items, built only while it is open (the screen re-renders every 2 s).
   const place: Place | null = current
@@ -497,7 +525,9 @@ export function AppShell() {
       />
     </>
   ) : view === 'inbox' ? (
-    <InboxList items={inboxItems} selectedId={inboxId} loading={inbox.isLoading} onSelect={(id) => { setInboxId(id); setSheetOpen(false); }} />
+    <InboxList items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} loading={inbox.isLoading}
+      onSelect={(id) => { setInboxId(id); setSheetOpen(false); }}
+      onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
   ) : view === 'pm' ? (
     <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
   ) : view === 'personas' ? (
@@ -516,10 +546,10 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => id === NOTIFICATIONS ? go({ view: 'settings', page: { kind: 'notifications' } }) : showProjectSettings(id === CONNECTIONS ? CONNECTIONS : null)}>
+      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS || id === NOTIFICATIONS ? id : null)}>
         <ListRow id="host" title="This host" current={!phone && settingsProjectId === null} />
+        <ListRow id={NOTIFICATIONS} title="Notifications" current={settingsProjectId === NOTIFICATIONS} />
         <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
-        {phone ? <ListRow id={NOTIFICATIONS} title="Notifications" /> : null}
       </List>
       <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
         <span className="flex-1">Projects</span>
@@ -590,6 +620,7 @@ export function AppShell() {
             view={view}
             onView={setView}
             counts={{ inbox: inbox.data?.total ?? 0 }}
+            dots={{ inbox: unreadUpdates }}
             ws={ws}
             projectId={stored.projectId}
             onProject={stored.setProjectId}
@@ -608,6 +639,7 @@ export function AppShell() {
             onSelect={setView}
             top={<InstanceBadge stacked />}
             counts={{ inbox: inbox.data?.total ?? 0 }}
+            dots={{ inbox: unreadUpdates }}
           />
           <aside aria-label={`${label} list`} className="flex min-h-0 w-72 flex-col border-r border-border">
             <div className="flex-1 overflow-auto px-1">{list}</div>
@@ -683,7 +715,7 @@ export function AppShell() {
                 )}
               </div>
             ) : view === 'inbox' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} selectedId={inboxId} onSelect={setInboxId} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'pm' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
             ) : view === 'personas' ? (
@@ -698,7 +730,8 @@ export function AppShell() {
               settingsPage.kind === 'project' ? (
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => showProjectSettings(null)} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
-              ) : settingsPage.kind === 'connections' ? <ConnectionsPage /> : <HostSettingsPage />
+              ) : settingsPage.kind === 'connections' ? <ConnectionsPage />
+                : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
             ) : ws.tab?.worktreeId ? (

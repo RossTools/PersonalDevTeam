@@ -17,12 +17,14 @@ const row = 'h-11 w-full justify-start gap-3 px-2.5 font-normal';
 
 type Node = TreeNode & { tab?: Tab };
 
-export function PhoneDrawer({ open, onOpenChange, view, onView, counts, ws, projectId, onProject, onRenameTab }: {
+export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws, projectId, onProject, onRenameTab }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   view: ViewId;
   onView: (v: ViewId) => void;
   counts: Partial<Record<ViewId, number>>;
+  /** A dot on a view with no count to show (the Inbox's unread Updates). */
+  dots?: Partial<Record<ViewId, boolean>>;
   ws: WorkspacesApi;
   /** The project the phone's screens show (null: all), from the switcher. */
   projectId: string | null;
@@ -78,12 +80,14 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, ws, proj
         <nav aria-label="Views" className="flex flex-col px-1">
           {VIEWS.filter((v) => v.id !== 'settings').map(({ id, label, icon: Icon }) => {
             const n = counts[id] ?? 0;
+            const dot = n === 0 && !!dots?.[id];
             return (
-              <Button key={id} variant="ghost" aria-label={n > 0 ? `${label} (${n})` : label} aria-current={view === id ? 'page' : undefined} onClick={() => choose(id)}
+              <Button key={id} variant="ghost" aria-label={n > 0 ? `${label} (${n})` : dot ? `${label} (new updates)` : label} aria-current={view === id ? 'page' : undefined} onClick={() => choose(id)}
                 className={cn(row, view === id ? 'bg-accent text-foreground' : 'text-muted-foreground')}>
                 <Icon aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-left">{label}</span>
                 {n > 0 && <span aria-hidden className="text-meta tabular-nums">{n}</span>}
+                {dot && <span aria-hidden className="size-2 rounded-full bg-primary" />}
               </Button>
             );
           })}

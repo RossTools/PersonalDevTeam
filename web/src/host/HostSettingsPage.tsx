@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
 import { api } from '../api/client';
-import { desktopNotificationsOn, setDesktopNotifications } from '../common/useWorkflowNotifications';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
@@ -341,30 +340,6 @@ function Agents({ v }: { v: HostSettingsView }) {
   );
 }
 
-/** Per browser: workflow notifications (`notify` steps) on the desktop while PDT's page is hidden. */
-function Notifications() {
-  const supported = typeof Notification !== 'undefined';
-  const [on, setOn] = useState(desktopNotificationsOn);
-  const [denied, setDenied] = useState(false);
-  const toggle = (want: boolean) => {
-    void setDesktopNotifications(want).then((now) => {
-      setOn(now);
-      setDenied(want && !now);
-    });
-  };
-  return (
-    <Section label="Notifications" description="Workflows' notify steps show here as toasts.">
-      <SettingsRow
-        label="Desktop notifications"
-        description={supported ? 'Also show them on this device\'s desktop while PDT\'s page is hidden. This browser only.' : 'This browser cannot show desktop notifications.'}
-      >
-        {denied && <span className="text-xs text-destructive">The browser blocked them: allow notifications for this site.</span>}
-        <Switch aria-label="Desktop notifications" checked={on} disabled={!supported} onChange={toggle} />
-      </SettingsRow>
-    </Section>
-  );
-}
-
 function ProjectsFolder({ v }: { v: HostSettingsView }) {
   const saved = v.settings.projectsDir ?? '';
   const save = useSaveSettings();
@@ -486,7 +461,6 @@ export function HostSettingsPage() {
       <Updates v={v} />
       <RemoteAccess v={v} me={me ?? null} />
       <Agents v={v} />
-      <Notifications />
       <Runs v={v} />
       <ProjectsFolder v={v} />
       <Checks />

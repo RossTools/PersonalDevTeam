@@ -121,6 +121,8 @@ pub struct AppState {
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How old a PM session gets before it rotates (PDT-81; tests shorten it).
     pub pm_rotate_age_ms: i64,
+    /// Makes and clears notifications (PDT-108), and streams them.
+    pub notifier: std::sync::Arc<crate::notifications::Notifier>,
 }
 
 impl AppState {
@@ -180,6 +182,7 @@ impl AppState {
             mcp_key: Default::default(),
             personas_installed: Default::default(),
             pm_rotate_age_ms: pdt_core::pm::ROTATE_AGE_MS,
+            notifier: Default::default(),
         }
     }
 }
@@ -219,6 +222,10 @@ impl AppState {
 
     /// Kills a terminal off the async runtime: on Windows this waits for `taskkill` to end the process tree.
     pub(crate) async fn kill_pty(&self, id: &str) -> Result<(), pdt_agents::PtyError> {
+        // PDT stopped it: its exit is not news (PDT-108).
+        if self.ptys.is_running(id) {
+            self.notifier.expect_exit(id);
+        }
         let (ptys, id) = (self.ptys.clone(), id.to_string());
         tokio::task::spawn_blocking(move || ptys.kill(&id))
             .await
@@ -227,6 +234,9 @@ impl AppState {
 
     /// Forgets a terminal (killing it if it still runs) off the async runtime, like [`AppState::kill_pty`].
     pub(crate) async fn remove_pty(&self, id: &str) {
+        if self.ptys.is_running(id) {
+            self.notifier.expect_exit(id);
+        }
         let (ptys, id) = (self.ptys.clone(), id.to_string());
         let _ = tokio::task::spawn_blocking(move || ptys.remove(&id)).await;
     }
@@ -379,6 +389,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             axum::routing::post(crate::mcp::post).get(crate::mcp::not_allowed).delete(crate::mcp::not_allowed),
         )
         .route("/personas", get(crate::personas::list).post(crate::personas::create))
+        .route("/personas/tools", get(crate::personas::tools))
         .route(
             "/personas/{id}",
             get(crate::personas::get_one)
@@ -397,6 +408,14 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/inbox", get(crate::inbox::list))
         .route("/inbox/{id}/answer", axum::routing::post(crate::inbox::answer))
         .route("/inbox/{id}/dismiss", axum::routing::post(crate::inbox::dismiss))
+        .route("/notifications", get(crate::notifications::list))
+        .route("/notifications/stream", get(crate::notifications::stream))
+        .route("/notifications/read-all", axum::routing::post(crate::notifications::read_all))
+        .route(
+            "/notifications/settings",
+            get(crate::notifications::get_settings).patch(crate::notifications::patch_settings),
+        )
+        .route("/notifications/{id}/read", axum::routing::post(crate::notifications::read))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")

@@ -26,7 +26,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `contains` `<label>`) and `ticket.overlap_found`, in the same transaction; an agent step's `outcome` timeline event
   becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e
   adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
-  `schedule.fired`, webhooks' `webhook.received` and `notify`'s `pdt.notified` ("Sensors and webhooks"); 7e-2 the
+  `schedule.fired` and webhooks' `webhook.received` ("Sensors and webhooks"); 7e-2 the
   Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and the Buildkite sensor's
   `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (`EVENT_TYPES`). CI events carry
   `provider` (`github_actions` or `buildkite`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
@@ -139,8 +139,8 @@ Every node also has an `error` port: taken once its retries are spent, if it has
 
 A trigger kind decides which events it fires for (`NodeKind::accepts`; default: the event is in the workflow's scope),
 then the engine checks the shared `projects` and `where`. `schedule` and `webhook` fire only for their own events, and
-`github.issue.opened` with `repos` for those repos whatever the scope. `pdt.notified` has no trigger (a workflow could
-notify itself forever).
+`github.issue.opened` with `repos` for those repos whatever the scope. `notify` logs no event, so a workflow can't
+notify itself forever.
 
 - `command` runs the program without a shell (`sh -c` / `cmd /c` for one), `input` as JSON on stdin, `env` added to
   pdtd's environment, in a scratch folder (`<data dir>/workflow-scratch/<run>`, removed when the run ends), the run's
@@ -338,8 +338,9 @@ another kind). A config field holding a connection's name says its kind in its s
   head (one badge for both providers), else `attempt.ci`. Events `ci.run_failed` (key `<attempt>:bk_failed:<pipeline>
   #<number>.<attempt>,…`, a CI-failed `notice` naming the build) and `ci.run_passed` (`…:bk_passed:…`), `provider:
   buildkite`, `pr` when there is one, so the built-in PR notices tell the agent.
-- **Notify** (`workflow/nodes/notify.rs`): `pdt.notified` (`title`, `body`, `level`, `link`, `workflowId`,
-  `workflowName`, `runId`; key per step).
+- **Notify** (`workflow/nodes/notify.rs`): a `workflow.notify` notification (PDT-108, [Notifications](#notifications)):
+  `title`, `body` plus "From <workflow>", `level` as its severity, `link` as its target (a ticket key opens the ticket,
+  else the URL); dedupe key `notify:<step>`; output `{notificationId}` (null when the kind is turned down below Inbox).
 
 ## Web
 
@@ -363,10 +364,7 @@ issues to Discord, Health watchdog, …) and pick it as the Discord channel, or 
 the step's panel. Or add a Discord bot connection and ask the PM to set up the channel and its webhook
 ([agents.md](agents.md#the-pm-pdt-81)).
 
-Notifications (`web/src/common/useWorkflowNotifications.ts`, in AppShell): follows `pdt.notified` from the page's load
-(`/api/events?type=pdt.notified&after=<seq>` every 2 s) and shows each as a toast ("Open": a ticket key opens the
-ticket, else the URL); with Settings → This host → Notifications → Desktop notifications on (per browser, after the
-browser's permission), also as a system notification while the page is hidden.
+`notify` steps show as notifications ([Notifications](#notifications)): a toast by default.
 
 The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings → This host → Workflows:
 
@@ -465,6 +463,9 @@ deleted (`409 persona_in_use`).
 - `GET /api/personas/{id}/template` (`404 not_builtin` otherwise) → `{setup, diff}`: the current template and the
   current version's diff to it. The persona page shows it for a built-in that differs (the fields, **Show the
   changes**) and **Load PDT's template** fills the setup form with it to review and save as a version.
+- `GET /api/personas/tools` (PDT-110) → every pdt-mcp tool (pdt-core `ALL_TOOLS`, in order) as `{name, does, asks,
+  default}`: the persona page's tool list, so a new tool shows there with no web change. Saving keeps every tool the
+  persona has, a name the server doesn't list included (shown checked, to uncheck).
 
 ## Pipeline, policies and scheduling (Phase 7c)
 
@@ -519,9 +520,15 @@ accept, oldest first within each, with ticket key and title and persona name. `P
 closes a question or stalled item (the step keeps waiting). A gate answered through
 `/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too. When a session is removed (and when the store
 opens, for older ones) its open questions close (`resolution` `{sessionGone: true}`) and no item keeps its
-`sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93).
+`sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93). **Sessions waiting** (group
+`session`, kind `session`, id `session:<session>`, after Approvals) are the live `session.needs_you` notifications
+([Notifications](#notifications)): not answerable here (Open session, Enter); viewing the session takes it out. `total`
+counts every item, sessions waiting included: the rail badge and the page title (`(n) …`) show it.
 
-Web: the rail's Inbox (web/src/inbox; the open count on its icon, `Ctrl+] i`): the list groups items by kind; the work
+Web: the rail's Inbox (web/src/inbox; the open count on its icon, a dot when Updates are unread, `Ctrl+] i`): the list
+has two sections, **Needs you** (the items, grouped by kind) and **Updates** (the notification feed, newest first, unread
+in bold, cleared dimmed, Mark all read, a link to Settings → Notifications; selecting one reads it and shows Open, its
+target); opening an item reads its notifications. The work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
 over / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
 `o` opens the ticket, `e` dismisses. A gate has a note box: the note goes with the choice (as the user's ticket
@@ -530,3 +537,45 @@ session (the attempt's running agent session), Open changes and Run… (the work
 opens its tab right after the ticket's tab in the workspace that has it (its Start workspace; AppShell's
 `TicketTabsContext`, `openChanges` with `ticketId`), moving an existing changes tab there (a session or run tab that
 exists is shown where it is), and switches to it.
+
+## Notifications
+
+PDT-108 (spec: the ticket). pdtd makes each notification once, in `notifications` (pdt-store `notifications.rs`), and
+every client shows it from there. Types and rules: pdt-core `notification.rs`; the Notifier: pdt-api `notifications.rs`.
+
+- **Kinds and Show.** Needs you: `session.needs_you`, `inbox.question`, `inbox.approval`, `inbox.gate` (gates and Ready
+  to accept), `inbox.manual`, `inbox.stalled`, `inbox.loop_limit`. Updates: `session.turn_ended`, `session.exited`,
+  `pr.ci_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`. Each kind's Show
+  is `off`, `dot` (only the target's own marker: no row), `inbox`, `toast` or `desktop`, each including the ones
+  before; defaults in `NotificationKind::default_show`. The Inbox's own kinds (`inbox.*`) never go below `inbox`.
+  Overrides live in host value `notifications.show` (kind → Show); `GET /api/notifications/settings` lists every kind
+  (section, label, when, show, default, allowed), `PATCH` `{kind: show | null}` (null restores the default).
+- **Rows.** Only `inbox` and up are stored, with the Show at creation. One live row per `dedupe_key`
+  (`session:<id>:needs_you|turn_ended|exited`, `inbox:<item>`, `attempt:<id>:ci_failed|conflict|queue_left|merged`,
+  `run:<id>:failed`, `notify:<step>`); a cause firing again updates its row (title, body, `created_at`, unread again).
+  `seq` grows on every change (created, updated, cleared). Pruned after 30 days, except live Needs-you rows.
+- **State causes** (`sync`, every 2 s and at once on a kick: activity changes, a session viewed, an Inbox answer or
+  dismiss, a settings change): a running agent session that needs the user and is unseen (`session.needs_you`, not
+  for a conversation with an open approval: that is `inbox.approval`), or idle and unseen for 30 s
+  (`session.turn_ended`, only above `dot`); open Inbox items and approvals. A row whose cause went away is cleared:
+  the session left that state or was viewed (`last_viewed_at`), the item resolved or closed, an exited session
+  restarted or removed, a conflict's PR mergeable again (or closed), a dropped PR back in the queue. Viewing a session
+  reads its rows (`POST /api/sessions/{id}/view`).
+- **Event causes** (`notify` where they happen): a terminal agent session's process exiting non-zero without PDT
+  killing it (Stop, close, restart: `AppState::kill_pty`/`remove_pty` mark it) or shutdown (`session.exited`); the PR
+  poller's and Buildkite's `ci.run_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged` as they are logged
+  (`ci.run_passed` clears `ci_failed`; `pr.merged` clears the attempt's other three); a run ending failed
+  (`workflow.failed`); `notify` steps.
+- **API.** `GET /api/notifications?section=needs_you|updates&project=&unread=&limit=&before=` → `{items,
+  unreadUpdates}` (Needs you lists live rows only); `POST /api/notifications/{id}/read`; `POST
+  /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `GET /api/notifications/stream`, Server-Sent
+  Events `created`/`updated`/`cleared` with the row (event id = `seq`; `Last-Event-ID` gets what was missed, as
+  `created` or `cleared`; it ends when pdtd shuts down).
+- **Web** (`web/src/notifications`): AppShell follows the stream (`useNotificationStream`, EventSource) and refreshes
+  the Inbox on every row. `presentation` decides a new row's toast (Show `toast`+, page visible, not the session in
+  the focused tab or the open Inbox item) or desktop notification (Show `desktop`, page hidden, this device allowed
+  them, this tab holds the `navigator.locks` lock so one tab per browser shows them; `tag` = dedupe key, closed when
+  the row clears); rows older than 2 minutes on arrival show neither. Clicking opens the target (session, ticket,
+  ticket key, Inbox item, workflow, URL). Settings → Notifications: This device (Desktop notifications, localStorage
+  `pdt.desktopNotifications` and the browser's permission, with Test) and What shows (a Show per kind, Needs you and
+  Updates, Reset to defaults).

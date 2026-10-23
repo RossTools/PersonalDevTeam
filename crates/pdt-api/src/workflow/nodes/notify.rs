@@ -1,11 +1,8 @@
-//! `notify` (Phase 7e spec §3.4): a notification in PDT. It records a `pdt.notified` event, which the web app shows as
-//! a toast (and a system notification while the page is hidden, if the user allowed it). Not a trigger, so a workflow
-//! can't notify itself in a loop.
+//! `notify` (Phase 7e spec §3.4): a `workflow.notify` notification (PDT-108), shown as the user set that kind to show
+//! (a toast by default; Settings → Notifications). It logs no event, so a workflow can't notify itself in a loop.
 
-use crate::routes::now_ms;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
-use pdt_core::workflow::api::NewLogEvent;
-use pdt_core::workflow::events::{Notified, PDT_NOTIFIED};
+use pdt_core::notification::{NewNotification, NotificationKind, NotificationTarget, Severity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -22,12 +19,23 @@ pub enum NotifyLevel {
 }
 
 impl NotifyLevel {
-    fn as_str(self) -> &'static str {
+    fn severity(self) -> Severity {
         match self {
-            NotifyLevel::Info => "info",
-            NotifyLevel::Warning => "warning",
-            NotifyLevel::Error => "error",
+            NotifyLevel::Info => Severity::Info,
+            NotifyLevel::Warning => Severity::Warning,
+            NotifyLevel::Error => Severity::Error,
         }
+    }
+}
+
+/// Where a `link` goes: a ticket by its key, else a URL.
+fn target(link: Option<&str>) -> NotificationTarget {
+    match link.map(str::trim).filter(|l| !l.is_empty()) {
+        Some(l) if pdt_core::ticket::parse_key(l).is_some_and(|k| k.key.is_some()) => {
+            NotificationTarget::TicketKey { key: l.to_string() }
+        }
+        Some(l) => NotificationTarget::Url { url: l.to_string() },
+        None => NotificationTarget::None,
     }
 }
 
@@ -74,24 +82,23 @@ impl NodeKind for Notify {
             if cx.dry_run {
                 return Ok(Outcome::next("out", json!({"would": format!("notify: {}", c.title)})));
             }
-            let payload = Notified {
-                title: c.title,
-                body: c.body,
-                level: c.level.as_str().into(),
-                link: c.link.filter(|l| !l.trim().is_empty()),
-                workflow_id: cx.workflow.id.clone(),
-                workflow_name: cx.workflow.name.clone(),
-                run_id: cx.run.id.clone(),
-            };
-            let mut e = NewLogEvent::new(PDT_NOTIFIED, format!("notify:{}", cx.step.id), "workflow", payload);
-            e.project_id = cx.run.project_id.clone();
-            e.ticket_id = cx.run.ticket_id.clone();
-            // Once per step: a step run again after a restart finds its own notification.
-            let id = match cx.st.store.emit_event(&e, now_ms()).await.map_err(|e| e.to_string())? {
-                Some(ev) => ev.id,
-                None => String::new(),
-            };
-            Ok(Outcome::next("out", json!({"eventId": id})))
+            // One per step: a step run again after a restart updates its own notification.
+            let mut n = NewNotification::new(
+                NotificationKind::WorkflowNotify,
+                format!("notify:{}", cx.step.id),
+                c.title,
+                target(c.link.as_deref()),
+            );
+            let from = format!("From {}", cx.workflow.name);
+            n.body =
+                [c.body.trim(), from.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+            n.severity = c.level.severity();
+            n.project_id = cx.run.project_id.clone();
+            n.ticket_id = cx.run.ticket_id.clone();
+            n.run_id = Some(cx.run.id.clone());
+            // Nothing is made when the user turned the kind down below the Inbox.
+            let id = crate::notifications::notify(cx.st, n).await.map(|n| n.id);
+            Ok(Outcome::next("out", json!({"notificationId": id})))
         })
     }
 }

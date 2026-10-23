@@ -2,7 +2,7 @@
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};
 use pdt_core::workflow::cond::Condition;
-use pdt_core::workflow::events::{EVENT_TYPES, EventType, NOT_TRIGGERS, OWN_TRIGGERS};
+use pdt_core::workflow::events::{EVENT_TYPES, EventType, OWN_TRIGGERS};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -39,7 +39,7 @@ pub struct EventTrigger(pub &'static EventType);
 pub fn event_triggers() -> Vec<Box<dyn NodeKind>> {
     EVENT_TYPES
         .iter()
-        .filter(|t| !OWN_TRIGGERS.contains(&t.id) && !NOT_TRIGGERS.contains(&t.id))
+        .filter(|t| !OWN_TRIGGERS.contains(&t.id))
         .map(|t| Box::new(EventTrigger(t)) as Box<dyn NodeKind>)
         .collect()
 }
