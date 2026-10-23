@@ -506,8 +506,8 @@ deleted (`409 persona_in_use`).
   `reject` → Code); `auto` → straight on; then
   a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`pipelineStage: merge`; `merged` → `ticket.finish`;
   `queued` → end, Finish merged tickets finishes it, and PR notices gets it merging again after a failure, PDT-104;
-  `refused` → a condition on `{{steps.merge.fixable}}`, PDT-124). Fixable (a conflict, uncommitted changes; a PR that
-  conflicts is also recorded as set to merge) → Fix the merge (agent `{{params.coder}}`, `session: reuse`, owner
+  `refused` → a condition on `{{steps.merge.fixable}}`, PDT-124). Fixable (a conflict, uncommitted changes; not recorded as set
+  to merge, so nothing merges the fix before its review, even when the loop ends early) → Fix the merge (agent `{{params.coder}}`, `session: reuse`, owner
   `{{params.codeBy}}`, `pipelineStage: code`, `loopLimit`; the prompt has the refusal's reason) → Review the fix (agent
   `{{params.reviewer}}`, new session, `pipelineStage: review`): `approved` → `attempt.merge` again,
   `changes_requested` → Fix again; a later refusal's reason is what Fix hears on its next pass. Not fixable (the

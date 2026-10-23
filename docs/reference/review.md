@@ -44,9 +44,9 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   Every refusal is 409 `merge_blocked` with a message (inactive, dirty, conflict, base_dirty, nothing,
   pr_not_mergeable (the message says whether it is a draft or conflicts), pr_queued, no_pr); a failing gh or git is
   409 `merge_failed`. A refusal for a conflict or uncommitted changes in the worktree is `fixable` to the
-  `attempt.merge` node (PDT-124). An automated merge of a pull request that conflicts still records the attempt as
-  set to merge (and `finishOnMerge`), so PR notices gets it merging once it is fixed; one whose pull request is
-  already on auto-merge or in the queue counts as queued.
+  `attempt.merge` node (PDT-124). A refusal never records the attempt as set to merge: then PR notices would turn
+  auto-merge on when CI passes, also for a fix no one reviewed (the Pipeline fixes and reviews its own). An automated
+  merge whose pull request is already on auto-merge or in the queue counts as queued.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
   (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (pdt-github `merge_pr`; the method from
   `merge_settings`, none with a merge queue; when GitHub says the PR is already clean it merges at once) and the merge

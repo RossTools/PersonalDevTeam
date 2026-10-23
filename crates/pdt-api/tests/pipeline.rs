@@ -718,10 +718,21 @@ fn pull_request(mergeable: Mergeable) -> PullRequest {
 }
 
 /// The pull request case of PDT-123, through the Pipeline and PR notices: QA passes, the PR conflicts, so the merge is
-/// refused but recorded as set to merge; the Coder fixes it and a Reviewer checks the fix; CI passing meanwhile turns
-/// nothing on (an agent is on it); then the Pipeline turns auto-merge on.
+/// refused (and not recorded as set to merge); the Coder fixes it and a Reviewer checks the fix; CI passing meanwhile
+/// turns nothing on; then the Pipeline turns auto-merge on.
 #[tokio::test]
 async fn a_conflicting_pr_is_fixed_and_reviewed_before_auto_merge_goes_on() {
+    conflicting_pr(false).await;
+}
+
+/// The same with the run stopped while the Reviewer looks at the fix: CI passing then turns nothing on either, as
+/// nothing recorded the refused merge as set to merge (PR notices would turn auto-merge on for it).
+#[tokio::test]
+async fn a_conflict_fix_left_unreviewed_never_merges() {
+    conflicting_pr(true).await;
+}
+
+async fn conflicting_pr(abandon: bool) {
     let gh = std::sync::Arc::new(FakeGithub::default());
     let env = setup_with(Some(gh.clone())).await;
     pipeline(
@@ -751,8 +762,8 @@ async fn a_conflicting_pr_is_fixed_and_reviewed_before_auto_merge_goes_on() {
         }
     };
     let fix = step("fix").await;
-    let info = env.state.store.get_attempt(&id).await.unwrap().unwrap();
-    assert!(info.merge_requested && info.finish_on_merge, "the refused merge is recorded");
+    let requested = || async { env.state.store.get_attempt(&id).await.unwrap().unwrap().merge_requested };
+    assert!(!requested().await, "a refused merge isn't set to merge");
     assert_eq!(merges(), 0);
     let said = tick_until(&env, "the fix reaching the coder", || async {
         agent_says(&env, &fix).await.into_iter().find(|m| m.contains("merge was refused")).map(Value::from)
@@ -775,7 +786,15 @@ async fn a_conflicting_pr_is_fixed_and_reviewed_before_auto_merge_goes_on() {
     let reviewer = step("fix_review").await;
     assert_ne!(reviewer, fix, "a fresh Reviewer");
     assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "review");
-    // CI passes while the Reviewer works: PR notices leaves it (an agent is on it), so nothing merges unreviewed.
+    if abandon {
+        let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={t}"), None).await;
+        let run = runs.as_array().unwrap().iter().find(|r| r["status"] == "waiting").unwrap()["id"].clone();
+        let (s, v) =
+            call(&env.app, "POST", &format!("/api/workflow-runs/{}/cancel", run.as_str().unwrap()), None).await;
+        assert!(s.is_success(), "{v}");
+        assert!(env.state.store.active_agent_steps().await.unwrap().is_empty(), "no agent on it now");
+    }
+    // CI passes while the Reviewer works (or after the run stopped): nothing merges unreviewed.
     gh.set_runs(
         &branch,
         vec![CiRun {
@@ -795,8 +814,14 @@ async fn a_conflicting_pr_is_fixed_and_reviewed_before_auto_merge_goes_on() {
         pdt_api::run_workflows(&env.state).await;
     }
     assert_eq!(merges(), 0, "not before the review");
+    if abandon {
+        assert!(!requested().await);
+        return;
+    }
     submit(reviewer, "approved").await;
     tick_until(&env, "auto-merge on", || async { (merges() == 1).then_some(Value::Null) }).await;
+    let info = env.state.store.get_attempt(&id).await.unwrap().unwrap();
+    assert!(info.merge_requested && info.finish_on_merge, "the reviewed merge is set to merge");
     let v = get_ticket(&env, &t).await;
     assert_eq!((v["stage"].as_str(), v["pipelineStage"].as_str()), (Some("in_progress"), Some("merge")), "merging");
     assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "nobody was asked");

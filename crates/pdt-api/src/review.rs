@@ -577,8 +577,8 @@ async fn record_merge(st: &AppState, info: &AttemptInfo, input: &MergeRequest) -
 }
 
 /// The Merge command (the route, and the `attempt.merge` node as an automated merger): the project's policy, then
-/// what would stop the merge, then the merge. A refusal is `Ok(Err(_))`; an automated merge refused for a pull request
-/// that conflicts still records the request to merge (PDT-124), so PR notices gets it merging again once it is fixed.
+/// what would stop the merge, then the merge. A refusal is `Ok(Err(_))`. A refusal never records the request to merge
+/// (PDT-124): set to merge, PR notices would turn auto-merge on once CI passes, also for a fix nobody reviewed.
 pub(crate) async fn merge_attempt(
     st: &AppState,
     id: &str,
@@ -609,9 +609,6 @@ pub(crate) async fn merge_attempt(
             if draft {
                 let reason = "the pull request is a draft; mark it ready for review first".into();
                 return Ok(Err(Refusal { code: "merge_blocked", reason, fixable: false }));
-            }
-            if automated {
-                record_merge(&st, &info, input).await?;
             }
             let reason = "the pull request conflicts with its base; merge the base branch in, resolve the conflicts \
                           and push"

@@ -196,8 +196,7 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   Reviewer first when the agent calls the fix large; then auto-merge goes back on (`attempt.merge` again), and a CI
   pass with auto-merge off turns it on too. After 3 tries per attempt PR notices comments on the ticket and only tells
   the agent again. "Set to merge" (`mergeRequested` on the events) is kept per attempt
-  (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on (or a workflow's merge refused because
-  the PR conflicts, PDT-124), or the poller seeing auto-merge or the
+  (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on (never a refused merge, PDT-124), or the poller seeing auto-merge or the
   merge queue; a merge queue drop counts too, a person dequeuing it does not, and a person turning auto-merge off
   (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A failure while an
   agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.

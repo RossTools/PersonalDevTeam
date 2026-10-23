@@ -63,8 +63,7 @@ impl NodeKind for Merge {
              locally (`merged`). The project's policy may not let a workflow merge, or may need a person's approval \
              first; that, and anything that stops the merge, leaves by `refused`. With `again` (after a fix), a pull \
              request already set to merge counts as `queued`, and the first merge's finishing choice stays. A refusal \
-             says `fixable` when the attempt's agent can clear it with a commit (a conflict, uncommitted changes); a \
-             workflow's merge refused for a pull request that conflicts is still recorded as set to merge.",
+             says `fixable` when the attempt's agent can clear it with a commit (a conflict, uncommitted changes).",
             &[("merged", "Merged"), ("queued", "Auto-merge on"), ("refused", "Refused")],
             false,
         )
