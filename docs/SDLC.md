@@ -137,4 +137,7 @@ right. A worktree removed by hand shows as "folder missing" in PDT until it is r
   starting runs through its API is fine.
 - Every dev instance gets an explicit `PDT_PORT` and `PDT_DATA_DIR` (Run does this; `PDT_PROFILE=dev` does it by
   hand).
-- Never edit an applied migration; add a new one.
+- Never edit an applied migration; add a new one, named by its UTC creation time:
+  `crates/pdt-store/migrations/$(date -u +%Y%m%d%H%M%S)_<what>.sql`. Never the next number (`0001`–`0029` are the
+  old numbered ones): two branches would pick the same one. `cargo test -p pdt-store` fails on a misnamed migration or
+  a duplicate version.

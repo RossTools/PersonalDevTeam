@@ -28,7 +28,7 @@ command = "pnpm --dir web test"
 
 # Areas (docs/run-config.md "Areas"): parts of PDT that two tickets in flight at once would both touch. Starting a
 # ticket warns when its areas or changed files overlap another active ticket's; only `migrations` is exclusive (two
-# branches adding migrations collide on their numbers).
+# branches changing the schema at once can clash, even with timestamped migration names).
 [[area]]
 name      = "migrations"
 paths     = ["crates/pdt-store/migrations/**"]
