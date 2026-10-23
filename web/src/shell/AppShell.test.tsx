@@ -878,7 +878,11 @@ describe('phone', () => {
     });
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
-    expect(await within(main).findByRole('row', { name: /Alpha/ })).toHaveClass('min-h-14');
+    // 56px on touch screens too: the row's 44px coarse-pointer minimum is replaced, not left to win in its media query.
+    const row = await within(main).findByRole('row', { name: /Alpha/ });
+    expect(row).toHaveClass('min-h-14', 'pointer-coarse:min-h-14');
+    expect(row).not.toHaveClass('pointer-coarse:min-h-control-touch');
+    expect(within(within(main).getByRole('region', { name: 'Agents' })).getAllByRole('row')[0]).toHaveClass('pointer-coarse:min-h-14');
     let menu = await topMenu();
     expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New workspace', 'New conversation']);
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'New workspace' }));

@@ -62,8 +62,11 @@ export function agentSecondary(branch: string | null, workspaceName: string | nu
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** A phone's rows: 56px tall, and moved from their menus rather than dragged. */
-const TOUCH_ROW = 'min-h-14';
+/**
+ * A phone's rows: 56px tall, and moved from their menus rather than dragged. The coarse-pointer variant replaces the
+ * row's own 44px touch minimum, whose media query would otherwise win over a plain `min-h-14`.
+ */
+const TOUCH_ROW = 'min-h-14 pointer-coarse:min-h-14';
 
 /**
  * herdr's left panel: workspaces on top, every agent below with its state and where it is. `touch` is the phone's
