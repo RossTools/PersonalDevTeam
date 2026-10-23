@@ -78,6 +78,8 @@ pub struct McpPool {
     tools: Mutex<HashMap<String, McpTools>>,
     /// A background refresh is running.
     refreshing: std::sync::atomic::AtomicBool,
+    /// By connection id: held while that server's client is checked and, if need be, started.
+    starting: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 fn fingerprint(conn: &Connection, secret: Option<&str>) -> String {
@@ -226,6 +228,12 @@ fn broken(e: &ServiceError) -> bool {
 impl McpPool {
     /// A live client for the `mcp` connection called `name`, started if need be.
     async fn peer(&self, st: &AppState, name: &str) -> Result<(String, Peer<RoleClient>), String> {
+        let (first, _) = crate::workflow::routes::connection_with_secret(st, name.trim()).await?;
+        // One start at a time per server (others are not held up), with its settings read again under the lock: a
+        // caller that read them before a change (a listing begun before the secret was saved) then finds the newer
+        // client instead of replacing it while it is in use.
+        let gate = self.starting.lock().unwrap().entry(first.id.clone()).or_default().clone();
+        let _started = gate.lock().await;
         let (conn, secret) = crate::workflow::routes::connection_with_secret(st, name.trim()).await?;
         if conn.kind != MCP {
             return Err(format!("{} is a {} connection, not {MCP}", conn.name, conn.kind));
@@ -244,25 +252,12 @@ impl McpPool {
                 }
             }
         }
-        // Started without the lock held, so one slow server never holds up the others.
         let service = connect(&conn, secret.as_deref()).await?;
+        let peer = service.peer().clone();
         let mut live = self.live.lock().await;
-        let peer = match live.get(&conn.id) {
-            // Another call started it meanwhile: use that one.
-            Some(l) if l.fingerprint == fp => {
-                tokio::spawn(stop(Live { service, fingerprint: fp, last_used: Instant::now() }));
-                l.service.peer().clone()
-            }
-            _ => {
-                let peer = service.peer().clone();
-                if let Some(old) =
-                    live.insert(conn.id.clone(), Live { service, fingerprint: fp, last_used: Instant::now() })
-                {
-                    tokio::spawn(stop(old));
-                }
-                peer
-            }
-        };
+        if let Some(old) = live.insert(conn.id.clone(), Live { service, fingerprint: fp, last_used: Instant::now() }) {
+            tokio::spawn(stop(old));
+        }
         Ok((conn.id, peer))
     }
 
@@ -351,6 +346,7 @@ impl McpPool {
 
     /// Stops servers unused for `idle`, and those whose connection is gone.
     pub async fn reap(&self, idle: Duration, ids: &[String]) {
+        self.starting.lock().unwrap().retain(|id, _| ids.contains(id));
         let mut live = self.live.lock().await;
         let gone: Vec<String> = live
             .iter()
