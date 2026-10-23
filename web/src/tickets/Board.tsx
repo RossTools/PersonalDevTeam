@@ -2,12 +2,12 @@
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
 // first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
 // work (Phase 7c), In progress splits into its stages: Code, Review, QA and Accept.
-import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type TouchEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Button, ContextMenu, dragData, IconButton, MenuButton, parseDragData, SegmentedControl, Skeleton, useConfirm, type MenuEntry,
+  Button, ContextMenu, dragData, IconButton, MenuButton, parseDragData, Skeleton, useConfirm, type MenuEntry,
 } from '@ui';
 import type { Session } from '../api/gen/Session';
 import type { TicketQuery } from '../api/gen/TicketQuery';
@@ -52,6 +52,9 @@ export const PIPELINE_COLUMNS: DisplayColumn[] = [
   { id: 'qa', stage: 'in_progress', title: 'QA', pipeline: 'qa' },
   { id: 'accept', stage: 'in_progress', title: 'Accept', pipeline: 'accept' },
 ];
+
+/** A pipeline stage's name (rows and cards). */
+export const PIPELINE_LABEL: Record<PipelineStage, string> = { refine: 'Refine', code: 'Code', review: 'Review', qa: 'QA', accept: 'Accept' };
 
 /** In progress splits into the pipeline's stages once any card in it has one. */
 export function boardSplits(inProgress: Pick<TicketSummary, 'pipelineStage'>[]): boolean {
@@ -389,11 +392,61 @@ function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
 /** "No parts on the board yet" or the count, for a lane whose cards are all elsewhere. */
 const laneEmpty = (lane: Lane) => (['todo', 'in_progress', 'done'] as BoardStage[]).every((s) => lane.items[s].length === 0);
 
+/** The column after `id` (by +1 or -1), or null at either end. */
+export function nextColumn(columns: DisplayColumn[], id: string, by: 1 | -1): DisplayColumn | null {
+  const i = columns.findIndex((c) => c.id === id);
+  return i < 0 ? null : columns[i + by] ?? null;
+}
+
+/** A horizontal swipe far enough to change column (and more sideways than up or down). */
+const SWIPE_PX = 60;
+/** Touches that start this close to the screen's left edge belong to the system Back gesture. */
+const EDGE_PX = 24;
+
+/**
+ * Phones: the board's columns as a row of chips with their counts, scrolling sideways when they don't fit; the chosen
+ * one is kept in view.
+ */
+export function ColumnChips({ columns, counts, value, onChange }: {
+  columns: DisplayColumn[];
+  counts: Record<string, number | undefined>;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const strip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    strip.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [value]);
+  return (
+    <div ref={strip} role="group" aria-label="Board column" className="-mx-2 flex shrink-0 gap-1.5 overflow-x-auto px-2 pb-0.5 md:-mx-3 md:px-3">
+      {columns.map((c) => {
+        const n = counts[c.id];
+        const on = c.id === value;
+        return (
+          <Button
+            key={c.id}
+            size="sm"
+            variant={on ? 'primary' : 'secondary'}
+            aria-pressed={on}
+            aria-label={n !== undefined ? `${c.title} (${n})` : c.title}
+            className="shrink-0 rounded-full"
+            onClick={() => onChange(c.id)}
+          >
+            {c.title}
+            {n !== undefined && <span className={cn('tabular-nums', !on && 'text-muted-foreground')}>{n}</span>}
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * To do / In progress / Done side by side, each its own paged, polled query; drag a card to another column of its lane
  * to move it (desktop). With parents on the board the rows are lanes and the board scrolls as a whole; the first lane's
  * columns stop at half the screen and scroll on their own, so the parents' lanes stay in reach. Phones show one
- * column at a time with a picker, its parts under a heading per parent.
+ * column at a time, picked from chips with counts or by a swipe sideways, its parts under a heading per parent; cards
+ * move from their menu (Move to), never by drag.
  */
 export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
   // Fixed while the board is on screen: a new value every render would be a new query every render.
@@ -437,8 +490,9 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
   // A pipeline column's status (loading, Show more) is In progress's, shown once under Code.
   const ownsStatus = (c: DisplayColumn) => !c.pipeline || c.pipeline === 'code';
 
+  const columnCount = (c: DisplayColumn) => (c.pipeline ? cards(cols.in_progress.items, c).length : cols[c.stage].total);
   const columnHead = (c: DisplayColumn) => {
-    const count = c.pipeline ? cards(cols.in_progress.items, c).length : cols[c.stage].total;
+    const count = columnCount(c);
     return (
       <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium">
         <span className="flex-1">{c.title}</span>
@@ -453,14 +507,33 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
       <p className="p-2 text-xs text-muted-foreground">No tickets.</p>
     ) : null;
 
+  // Phones: a swipe sideways shows the next or previous column.
+  const swipe = useRef<{ x: number; y: number } | null>(null);
+  const onTouchStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    swipe.current = e.touches.length === 1 && t && t.clientX > EDGE_PX ? { x: t.clientX, y: t.clientY } : null;
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    const from = swipe.current;
+    const t = e.changedTouches[0];
+    swipe.current = null;
+    if (!from || !t) return;
+    const dx = t.clientX - from.x;
+    const dy = t.clientY - from.y;
+    if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 2) return;
+    const to = nextColumn(all, current.id, dx < 0 ? 1 : -1);
+    if (to) setShown(to.id);
+  };
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 md:p-3">
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-2 p-2 md:p-3"
+      {...(phone ? { onTouchStart, onTouchEnd, onTouchCancel: () => { swipe.current = null; } } : {})}
+    >
       {phone && (
-        <SegmentedControl
-          aria-label="Board column"
-          size="sm"
-          className="self-start"
-          options={all.map((c) => ({ value: c.id, label: c.title }))}
+        <ColumnChips
+          columns={all}
+          counts={Object.fromEntries(all.map((c) => [c.id, columnCount(c)]))}
           value={current.id}
           onChange={setShown}
         />

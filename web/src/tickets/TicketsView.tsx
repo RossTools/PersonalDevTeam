@@ -22,8 +22,11 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
+import { AgentDot } from '../common/AgentState';
+import { useTopBarActions } from '../shell/PhoneTopBar';
 import { AttemptSection, MergedBanner } from './Attempt';
-import { Board } from './Board';
+import { agentLine, Board, PIPELINE_LABEL } from './Board';
+import { NewTicketFab, PhoneToolbar } from './PhoneTickets';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
 import { ImportJiraDialog } from './ImportJiraDialog';
@@ -166,11 +169,15 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
           <span className={cn('min-w-0 flex-1 truncate', isClosed(t.stage) && 'text-muted-foreground line-through')}>{t.title}</span>
         </div>
         <div className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-          <span>{STAGE_LABEL[t.stage]}</span>
-          <span aria-hidden>·</span>
-          <PriorityIcon priority={t.priority} />
+          {t.agent && (() => {
+            const line = agentLine(t.agent);
+            return <><AgentDot state={line.dot} /><span className="max-w-32 shrink-0 truncate">{line.text}</span><span aria-hidden>·</span></>;
+          })()}
+          <span className="shrink-0">{t.pipelineStage && t.stage === 'in_progress' ? PIPELINE_LABEL[t.pipelineStage] : STAGE_LABEL[t.stage]}</span>
           {badges}
-          <LabelChips labels={t.labels} className="overflow-hidden" />
+          <LabelChips labels={t.labels} className="min-w-0 overflow-hidden" />
+          <span className="flex-1" />
+          <PriorityIcon priority={t.priority} />
         </div>
       </div>
     );
@@ -371,6 +378,8 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   useClearToStartToasts(mode === 'backlog' ? items : []);
   const labels = useLabels(project?.id ?? null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  // Phones: rows get checkboxes only in bulk mode (a row's menu → Select), which ends once nothing is selected.
+  const [selecting, setSelecting] = useState(false);
   const [ownPeek, setOwnPeek] = useState<string | null>(null);
   const peekRef = peek ? peek.ticket : ownPeek;
   const setPeekId = useCallback((ref: string | null) => (peek ? peek.onChange(ref) : setOwnPeek(ref)), [peek]);
@@ -386,6 +395,11 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   // Only rows still in the list count as selected (a refetch may have dropped some).
   const selected = useMemo(() => items.filter((t) => selection.has(t.id)), [items, selection]);
   const selectedIds = selected.map((t) => t.id);
+  const bulkMode = !phone || selecting;
+  useEffect(() => {
+    if (selecting && selected.length === 0) setSelecting(false);
+  }, [selecting, selected.length]);
+  const clearSelection = () => { setSelection(new Set()); setSelecting(false); };
   const allLabels = useMemo(
     () => [...new Set([...(labels.data ?? []), ...items.flatMap((t) => t.labels)])].sort(),
     [labels.data, items],
@@ -404,7 +418,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     void runAction(async () => {
       await api.bulkTickets({ ids: selectedIds, action, ...(value !== undefined ? { value } : {}) });
       invalidateTickets(qc, selectedIds);
-      if (!keep) setSelection(new Set());
+      if (!keep) clearSelection();
     });
   const bulkDelete = () =>
     void runAction(async () => {
@@ -417,7 +431,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       });
       if (!ok) return;
       await api.bulkTickets({ ids: selectedIds, action: 'delete' });
-      setSelection(new Set());
+      clearSelection();
       invalidateTickets(qc);
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
     });
@@ -440,9 +454,12 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   };
 
   const rowMenu = (t: TicketSummary) => (at: { x: number; y: number }) =>
-    openMenu(at, `Ticket ${t.key}`, () =>
-      ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => { if (peekId === t.id) setPeekId(null); } }),
-    );
+    openMenu(at, `Ticket ${t.key}`, () => [
+      ...(phone && !selecting
+        ? [{ label: 'Select', onSelect: () => { setSelection(new Set([t.id])); setSelecting(true); } }, { separator: true } as MenuEntry]
+        : []),
+      ...ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t), ...(canStart(t) ? { onStart: () => start(t) } : {}), rank: rankable, onDeleted: () => { if (peekId === t.id) setPeekId(null); } }),
+    ]);
 
   const stageOptions = STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }));
   const priorityOptions = PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }));
@@ -468,6 +485,50 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     </>
   );
 
+  const priorityEntries = () => PRIORITIES.map((p): MenuEntry => ({ label: PRIORITY_LABEL[p], onSelect: () => bulk('priority', p) }));
+  // Phones: the moves under one menu, labels and Delete under ⋯, so the bar fits a narrow screen.
+  const bulkBar = phone ? (
+    <BulkActionBar count={selected.length} onClear={clearSelection}
+      className="h-auto min-h-12 border-t border-border pb-[env(safe-area-inset-bottom)]">
+      <MenuButton
+        label="Move"
+        placement="top start"
+        entries={() => [
+          { label: 'Move to Ready', onSelect: () => bulk('stage', 'ready') },
+          { label: 'Move to To do', onSelect: () => bulk('stage', 'todo') },
+          { label: 'Move to top', onSelect: () => bulk('top') },
+        ]}
+      >
+        <Button size="sm" compact variant="ghost">Move <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <MenuButton label="Set priority" placement="top start" entries={priorityEntries}>
+        <Button size="sm" compact variant="ghost">Priority <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <MenuButton
+        label="More bulk actions"
+        placement="top end"
+        entries={() => [{ submenu: 'Label', entries: labelEntries() }, { separator: true }, { label: 'Delete…', danger: true, onSelect: bulkDelete }]}
+      />
+    </BulkActionBar>
+  ) : (
+    <BulkActionBar count={selected.length} noun={selected.length === 1 ? 'ticket' : 'tickets'} onClear={clearSelection}>
+      <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'ready')}>Move to Ready</Button>
+      <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'todo')}>Move to To do</Button>
+      <MenuButton label="Set priority" placement="bottom start" entries={priorityEntries}>
+        <Button size="sm" compact variant="ghost">Priority <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <MenuButton label="Labels" placement="bottom start" entries={labelEntries}>
+        <Button size="sm" compact variant="ghost">Label <ChevronDown aria-hidden /></Button>
+      </MenuButton>
+      <Button size="sm" compact variant="ghost" onClick={() => bulk('top')}>Move to top</Button>
+      <Button size="sm" compact variant="ghost" className="text-destructive" onClick={bulkDelete}>Delete…</Button>
+    </BulkActionBar>
+  );
+
+  // Phones: Import from Jira under the top bar's ⋯ (the list screen only).
+  const jira = phone && peekRef === null && !!project && !!settings.data?.jira;
+  useTopBarActions(jira ? () => [{ label: 'Import from Jira…', onSelect: () => setImporting(true) }] : null);
+
   let body: ReactNode;
   if (projects.length === 0) {
     body = <EmptyState>Add a project in Settings to start writing tickets.</EmptyState>;
@@ -483,17 +544,18 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     body = (
       <DataList<TicketSummary>
         // React Aria's GridList can't gain or lose drag and drop in place: a new list when ranking turns on or off.
-        key={rankable ? 'ranked' : 'plain'}
+        key={rankable && !phone ? 'ranked' : 'plain'}
         aria-label="Tickets"
         striped
         {...(sections ? { sections } : { items })}
-        dependencies={[phone, rankable]}
+        dependencies={[phone, rankable, bulkMode]}
         rowHeight={phone ? 56 : 36}
-        selectable
+        selectable={bulkMode}
         selectedKeys={selection}
         onSelectionChange={setSelection}
         onAction={setPeekId}
-        {...(rankable
+        // Phones rank from the row's menu (Move to top / bottom): no drag on touch.
+        {...(rankable && !phone
           ? {
               dragKind: 'ticket',
               onMove: (m) => moveRows(m.ids, m.before ?? m.after!, m.before ? 'before' : 'after'),
@@ -524,6 +586,22 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   const ticketPeek = <TicketPeek ticketId={peekId} open={peekRef !== null} missing={peekMissing} onClose={() => setPeekId(null)} onLoaded={peekLoaded} phone={phone} />;
   // On a phone a peeked ticket is its own screen, in place of the list.
   if (phone && peekRef !== null) return <div className="flex min-h-0 flex-1 flex-col">{ticketPeek}</div>;
+  if (phone) {
+    return (
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {projects.length > 0 && <PhoneToolbar backlog={backlog} labels={allLabels} />}
+        <div className="flex min-h-0 flex-1 flex-col">{body}</div>
+        {mode === 'backlog' && selected.length > 0 ? (
+          bulkBar
+        ) : (
+          projects.length > 0 && <NewTicketFab onClick={() => onNewTicket(project?.id ?? null)} />
+        )}
+        {importing && project && <ImportJiraDialog projectId={project.id} onClose={() => setImporting(false)} />}
+        {menu}
+        {ticketPeek}
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader
@@ -558,24 +636,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       {mode === 'backlog' && projects.length > 0 && (
         <>
           <div className="shrink-0 border-b border-border">
-            {selected.length > 0 ? (
-              <BulkActionBar count={selected.length} noun={selected.length === 1 ? 'ticket' : 'tickets'} onClear={() => setSelection(new Set())}>
-                <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'ready')}>Move to Ready</Button>
-                <Button size="sm" compact variant="ghost" onClick={() => bulk('stage', 'todo')}>Move to To do</Button>
-                <MenuButton
-                  label="Set priority"
-                  placement="bottom start"
-                  entries={() => PRIORITIES.map((p) => ({ label: PRIORITY_LABEL[p], onSelect: () => bulk('priority', p) }))}
-                >
-                  <Button size="sm" compact variant="ghost">Priority <ChevronDown aria-hidden /></Button>
-                </MenuButton>
-                <MenuButton label="Labels" placement="bottom start" entries={labelEntries}>
-                  <Button size="sm" compact variant="ghost">Label <ChevronDown aria-hidden /></Button>
-                </MenuButton>
-                <Button size="sm" compact variant="ghost" onClick={() => bulk('top')}>Move to top</Button>
-                <Button size="sm" compact variant="ghost" className="text-destructive" onClick={bulkDelete}>Delete…</Button>
-              </BulkActionBar>
-            ) : (
+            {selected.length > 0 ? bulkBar : (
               <FilterBar
                 search={filters.q}
                 onSearchChange={(q) => backlog.setFilters({ q })}
