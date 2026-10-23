@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Pin } from 'lucide-react';
 import { Alert, Badge, Button, EmptyState, Input, Page, RelativeTime, Select, SettingsRow, Skeleton, Switch, Textarea, useConfirm } from '@ui';
@@ -7,7 +7,7 @@ import type { PmNote } from '../api/gen/PmNote';
 import type { Project } from '../api/gen/Project';
 import { Markdown } from '../common/Markdown';
 import { useAction } from '../common/useAction';
-import { useRefreshPm } from './usePm';
+import { firstLine, useRefreshPm } from './usePm';
 
 const HOST_WIDE = 'host';
 
@@ -16,7 +16,10 @@ const HOST_WIDE = 'host';
  * notes go in every new PM session's briefing. The PM keeps them with its tools; the user can add, edit, pin and
  * delete them here.
  */
-export function NotesPage() {
+export function NotesPage({ onOpen }: {
+  /** Phones: a tap on a note opens it (`NotePage`) instead of editing it in the list. */
+  onOpen?: (id: string) => void;
+} = {}) {
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<PmNote | 'new' | null>(null);
   const notes = useQuery({ queryKey: ['pm-notes', q], queryFn: () => api.pmNotes({ q: q.trim() || undefined, kind: 'note' }), refetchInterval: 2000 });
@@ -45,14 +48,23 @@ export function NotesPage() {
       <ul className="flex flex-col gap-3" aria-label="Notes">
         {(notes.data ?? []).map((n) => (
           <li key={n.id} className="flex flex-col gap-1 rounded-md border border-border p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {n.pinned && <Pin aria-label="Pinned" className="size-3.5 text-muted-foreground" />}
-              <span className="min-w-0 flex-1 truncate font-medium">{n.title}</span>
-              <Badge>{keyOf(n.projectId) ?? 'Host-wide'}</Badge>
-              <RelativeTime time={n.updatedAt} className="text-meta text-muted-foreground" />
-              <Button variant="ghost" size="sm" onClick={() => setEditing(n)}>Edit</Button>
-            </div>
-            {n.body && <div className="line-clamp-6 text-muted-foreground"><Markdown breaks>{n.body}</Markdown></div>}
+            {onOpen ? (
+              <button
+                type="button"
+                onClick={() => onOpen(n.id)}
+                className="flex min-h-control-touch flex-col gap-1 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <NoteHeading note={n} projectKey={keyOf(n.projectId)} />
+                {n.body && <span className="line-clamp-2 text-muted-foreground">{firstLine(n.body)}</span>}
+              </button>
+            ) : (
+              <>
+                <NoteHeading note={n} projectKey={keyOf(n.projectId)}>
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(n)}>Edit</Button>
+                </NoteHeading>
+                {n.body && <div className="line-clamp-6 text-muted-foreground"><Markdown breaks>{n.body}</Markdown></div>}
+              </>
+            )}
           </li>
         ))}
       </ul>
@@ -60,7 +72,51 @@ export function NotesPage() {
   );
 }
 
-function NoteForm({ note, projects, onDone }: { note: PmNote | null; projects: Project[]; onDone: () => void }) {
+function NoteHeading({ note, projectKey, children }: { note: PmNote; projectKey: string | null; children?: ReactNode }) {
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {note.pinned && <Pin aria-label="Pinned" className="size-3.5 text-muted-foreground" />}
+      <span className="min-w-0 flex-1 truncate font-medium">{note.title}</span>
+      <Badge>{projectKey ?? 'Host-wide'}</Badge>
+      <RelativeTime time={note.updatedAt} className="text-meta text-muted-foreground" />
+      {children}
+    </span>
+  );
+}
+
+/** One note as a screen of its own (phones, `/pm/notes/:id`): all of it, with Edit. Deleting it calls `onGone`. */
+export function NotePage({ id, onGone }: { id: string; onGone: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const notes = useQuery({ queryKey: ['pm-notes', ''], queryFn: () => api.pmNotes({ kind: 'note' }), refetchInterval: 2000 });
+  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const note = notes.data?.find((n) => n.id === id);
+  const key = note?.projectId ? projects.data?.find((p) => p.id === note.projectId)?.key ?? '?' : null;
+  return (
+    <Page title={note?.title ?? 'Note'}>
+      {notes.isPending && <Skeleton lines={4} label="Loading the note" />}
+      {notes.isError && <Alert tone="error">The note could not be loaded: {notes.error.message}</Alert>}
+      {notes.isSuccess && !note && <EmptyState>This note is gone.</EmptyState>}
+      {note && (editing ? (
+        <NoteForm note={note} projects={projects.data ?? []} onDone={() => setEditing(false)} onDeleted={onGone} />
+      ) : (
+        <>
+          <NoteHeading note={note} projectKey={key}>
+            <Button variant="secondary" size="sm" className="pointer-coarse:min-h-control-touch" onClick={() => setEditing(true)}>Edit</Button>
+          </NoteHeading>
+          {note.body ? <Markdown breaks>{note.body}</Markdown> : <p className="text-muted-foreground">No text.</p>}
+        </>
+      ))}
+    </Page>
+  );
+}
+
+function NoteForm({ note, projects, onDone, onDeleted = onDone }: {
+  note: PmNote | null;
+  projects: Project[];
+  onDone: () => void;
+  /** After Delete (default `onDone`). */
+  onDeleted?: () => void;
+}) {
   const titleId = useId();
   const projectId = useId();
   const [title, setTitle] = useState(note?.title ?? '');
@@ -82,7 +138,7 @@ function NoteForm({ note, projects, onDone }: { note: PmNote | null; projects: P
     if (!ok) return;
     await api.deletePmNote(note.id);
     await refresh();
-    onDone();
+    onDeleted();
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();

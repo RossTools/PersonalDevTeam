@@ -877,10 +877,47 @@ describe('phone', () => {
     window.history.replaceState(null, '', '/pm');
     renderWithQuery(<AppShell />);
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Screen actions' }));
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New session…', 'Notes', 'Earlier sessions…']);
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New session…', 'Notes', 'Earlier sessions']);
     await userEvent.click(screen.getByRole('menuitem', { name: 'Notes' }));
     expect(here()).toBe('/pm/notes');
     expect(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Back' })).toBeInTheDocument();
+  });
+
+  it("opens earlier PM sessions read-only from ⋯, and Back returns through them", async () => {
+    stubPhone();
+    const pmSession = { ...shell, id: 'pm1', projectId: 'host', kind: 'agent_tui', agent: 'claude', title: 'PM', mode: 'conversation', status: 'finished', createdAt: Date.UTC(2026, 9, 20, 9), persona: { id: 'pm', name: 'PM', version: 1, stepId: null } };
+    stubApi({
+      ...hostRoutes,
+      'GET /api/projects': [project],
+      [`GET /api/projects/${project.id}/worktrees`]: [],
+      [`GET /api/projects/${project.id}/sessions`]: [shell],
+      [`GET /api/projects/${project.id}/runs`]: [],
+      'GET /api/workspaces': [{ id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [] }],
+      'GET /api/pm': { current: null, sessions: [{ session: pmSession, rotation: 'done', reason: 'age', journal: '## Planned the phone' }] },
+      'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+    });
+    vi.stubGlobal('WebSocket', class { readyState = 0; onopen = null; onmessage = null; onclose = null; close() {} });
+    window.history.replaceState(null, '', '/pm');
+    renderWithQuery(<AppShell />);
+    const bar = () => screen.getByRole('banner', { name: 'Top bar' });
+    // No session yet: today's text and the box, not focused (the keyboard would cover the screen).
+    const box = await screen.findByRole('textbox', { name: 'Ask the PM' });
+    expect(box).not.toHaveFocus();
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Earlier sessions' }));
+    expect(here()).toBe('/pm/earlier');
+    expect(within(bar()).getByRole('heading', { name: 'Earlier sessions' })).toBeInTheDocument();
+    const list = await screen.findByRole('grid', { name: 'Earlier PM sessions' });
+    expect(list).toHaveTextContent('Ended: it was a day old');
+    expect(list).toHaveTextContent('Planned the phone');
+    await userEvent.click(within(list).getByText('Planned the phone'));
+    expect(here()).toBe('/pm/pm1');
+    expect(await screen.findByText('This session has ended.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/pm/earlier'));
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/pm'));
   });
 });
 

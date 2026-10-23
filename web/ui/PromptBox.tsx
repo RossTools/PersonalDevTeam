@@ -40,6 +40,11 @@ export interface PromptBoxProps {
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   /** While `above` lists completions: the listbox id and the highlighted option's id. */
   completion?: { listId: string; activeId?: string };
+  /**
+   * `phone`: the text grows to about five lines with one round button beside it (send, or stop while `onStop` is set
+   * and there is nothing to send), and the toolbar and meta go on a compact row under the box.
+   */
+  layout?: 'default' | 'phone';
   className?: string;
 }
 
@@ -69,8 +74,10 @@ export function PromptBox({
   canSend,
   inputRef,
   completion,
+  layout = 'default',
   className,
 }: PromptBoxProps) {
+  const phone = layout === 'phone';
   const own = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? own;
   const [dragging, setDragging] = useState(false);
@@ -87,9 +94,32 @@ export function PromptBox({
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
   const showSend = !onStop || sendable;
-  return (
-    <div className={cn('relative', className)}>
-    {above && <div className="absolute inset-x-0 bottom-full z-(--pdt-z-popover) mb-1">{above}</div>}
+  // A phone has room for one button: send while there is something to send, otherwise stop.
+  const showStop = !!onStop && !(phone && sendable);
+  const buttons = (
+    <>
+      {showStop && (
+        <IconButton label={stopLabel} variant="secondary" noTooltip={phone} onClick={onStop} className={cn('rounded-full', phone && 'size-11')}>
+          <Square aria-hidden className="size-3 fill-current" />
+        </IconButton>
+      )}
+      {showSend && !(phone && showStop) && (
+        <IconButton
+          label={sendLabel}
+          shortcut={sendShortcut}
+          variant="primary"
+          noTooltip={phone}
+          pending={pending}
+          disabled={!sendable || disabled}
+          onClick={onSend}
+          className={cn('rounded-full', phone && 'size-11')}
+        >
+          <ArrowUp aria-hidden className="size-4" />
+        </IconButton>
+      )}
+    </>
+  );
+  const box = (
     <div
       data-slot="prompt-box"
       data-dragging={dragging || undefined}
@@ -136,31 +166,37 @@ export function PromptBox({
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
-        className="max-h-60 min-h-11 resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 pt-2.5 pb-1 shadow-none focus-visible:border-0 focus-visible:ring-0"
+        className={cn(
+          'min-h-11 resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 shadow-none focus-visible:border-0 focus-visible:ring-0',
+          phone ? 'max-h-36 py-2.5' : 'max-h-60 pt-2.5 pb-1',
+        )}
       />
-      <div className="flex min-w-0 items-center gap-1 px-2 pb-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{toolbar}</div>
-        {meta && <div className="hidden shrink-0 text-meta text-muted-foreground tabular-nums sm:block">{meta}</div>}
-        {onStop && (
-          <IconButton label={stopLabel} variant="secondary" onClick={onStop} className="rounded-full">
-            <Square aria-hidden className="size-3 fill-current" />
-          </IconButton>
-        )}
-        {showSend && (
-          <IconButton
-            label={sendLabel}
-            shortcut={sendShortcut}
-            variant="primary"
-            pending={pending}
-            disabled={!sendable || disabled}
-            onClick={onSend}
-            className="rounded-full"
-          >
-            <ArrowUp aria-hidden className="size-4" />
-          </IconButton>
-        )}
-      </div>
+      {!phone && (
+        <div className="flex min-w-0 items-center gap-1 px-2 pb-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{toolbar}</div>
+          {meta && <div className="hidden shrink-0 text-meta text-muted-foreground tabular-nums sm:block">{meta}</div>}
+          {buttons}
+        </div>
+      )}
     </div>
+  );
+  return (
+    <div className={cn('relative', className)}>
+      {above && <div className="absolute inset-x-0 bottom-full z-(--pdt-z-popover) mb-1">{above}</div>}
+      {phone ? (
+        <>
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">{box}</div>
+            <div className="flex shrink-0 pb-0.5">{buttons}</div>
+          </div>
+          {(toolbar || meta) && (
+            <div className="flex min-w-0 items-center gap-1 pt-1">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">{toolbar}</div>
+              {meta && <div className="shrink-0 text-meta text-muted-foreground tabular-nums">{meta}</div>}
+            </div>
+          )}
+        </>
+      ) : box}
     </div>
   );
 }

@@ -29,6 +29,12 @@ describe('tool labels', () => {
     expect(summarizeTools([{ tool: 'Read', title: 'x' }, { tool: 'Grep', title: 'foo' }])).toBe('Read 1 file, searched 1 time');
   });
 
+  it('names a run of one uncategorised tool by the tool and its calls', () => {
+    const search = { tool: 'mcp__pdt__search_tickets', title: '' };
+    expect(summarizeTools([search, search])).toBe('search_tickets · 2 calls');
+    expect(summarizeTools([search, { tool: 'mcp__pdt__get_ticket', title: '' }])).toBe('Used 2 tools');
+  });
+
   it('formats a running clock', () => {
     expect(clock(42_000)).toBe('0:42');
     expect(clock(3_723_000)).toBe('1:02:03');
