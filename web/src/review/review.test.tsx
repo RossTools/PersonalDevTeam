@@ -141,7 +141,7 @@ describe('ChangesView', () => {
 describe('ChangesView on a phone', () => {
   const asPhone = () =>
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
-  const fileName = () => screen.getByRole('checkbox', { name: 'Viewed' }).closest('header')!.querySelector('.font-mono')!.textContent;
+  const fileName = () => screen.getByRole('checkbox', { name: 'Viewed', hidden: true }).closest('header')!.querySelector('.font-mono')!.textContent;
   const swipe = (el: Element, dx: number) => {
     fireEvent.touchStart(el, { touches: [{ clientX: 200, clientY: 300 }] });
     fireEvent.touchEnd(el, { changedTouches: [{ clientX: 200 + dx, clientY: 310 }] });
@@ -205,6 +205,12 @@ describe('ChangesView on a phone', () => {
     fireEvent.mouseDown(document.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
     const sheet = await screen.findByRole('dialog', { name: 'Comment on line 3' });
     await userEvent.type(within(sheet).getByRole('textbox'), 'Why c?');
+    // A swipe on the open sheet stays there: the file and the draft are kept.
+    swipe(within(sheet).getByText('Comment on line 3'), -120);
+    swipe(within(sheet).getByText('Comment on line 3'), 120);
+    expect(fileName()).toBe('src/login.ts');
+    expect(screen.getByRole('dialog', { name: 'Comment on line 3' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('textbox')).toHaveValue('Why c?');
     await userEvent.click(within(sheet).getByRole('button', { name: 'Comment' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')).toBe(true));
     expect(calls.find((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')?.body)

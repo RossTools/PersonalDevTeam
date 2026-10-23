@@ -95,10 +95,12 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   };
   const touch = useRef<{ x: number; y: number } | null>(null);
   const onTouchStart = (e: TouchEvent) => {
-    // Text boxes and threads keep their own gestures.
+    // Text boxes and threads keep their own gestures, and so do portals (the comment sheet): React bubbles their
+    // touches here too, but a swipe there must not move to another file and drop the comment being written.
     const t = e.target as Element;
     const p = e.touches[0];
-    touch.current = !p || t.closest('textarea, input, .cm-review-anchor') ? null : { x: p.clientX, y: p.clientY };
+    const outside = !(e.currentTarget as Element).contains(t);
+    touch.current = !p || outside || t.closest('textarea, input, .cm-review-anchor') ? null : { x: p.clientX, y: p.clientY };
   };
   const onTouchEnd = (e: TouchEvent) => {
     const from = touch.current;
