@@ -65,7 +65,7 @@ import type { TicketsMode } from '../tickets/useBacklog';
 import { isDetail, parseLocation, routePath, sectionSlug, upRoute, viewRoute, type Route, type SettingsPage } from './route';
 import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
 import { PhoneDrawer } from './PhoneDrawer';
-import { PhoneTopBar, TopBarActionsContext, type TopBarActions } from './PhoneTopBar';
+import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
 
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
@@ -158,6 +158,8 @@ export function AppShell() {
   const [sheetOpen, setSheetOpen] = useState(false);
   // The ⋯ entries the screen on show adds (phones).
   const [screenActions, setScreenActions] = useState<{ entries: TopBarActions } | null>(null);
+  // An edit on the screen on show: Cancel and Save in the top bar (phones).
+  const [screenEdit, setScreenEdit] = useState<TopBarEdit | null>(null);
   // The Inbox's selected item.
   const inboxId = route.view === 'inbox' ? route.itemId : null;
   // The Personas view's persona (`new`: the create form).
@@ -615,6 +617,7 @@ export function AppShell() {
     <TicketTabsContext.Provider value={ticketTabs}>
     <StartTicketContext.Provider value={startTicket}>
     <TopBarActionsContext.Provider value={setScreenActions}>
+    <TopBarEditContext.Provider value={setScreenEdit}>
     <div
       className="flex h-full flex-col overflow-hidden bg-background text-foreground md:flex-row"
       style={keyboardBox ? { position: 'fixed', left: 0, right: 0, top: keyboardBox.top, height: keyboardBox.height } : undefined}
@@ -631,6 +634,7 @@ export function AppShell() {
             onInbox={() => go(viewRoute('inbox'))}
             onSearch={() => setPaletteOpen(true)}
             actions={phoneActions}
+            edit={screenEdit}
           />
           <PhoneDrawer
             open={drawerOpen}
@@ -790,6 +794,7 @@ export function AppShell() {
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
     </div>
+    </TopBarEditContext.Provider>
     </TopBarActionsContext.Provider>
     </StartTicketContext.Provider>
     </TicketTabsContext.Provider>

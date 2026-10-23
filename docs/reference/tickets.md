@@ -32,7 +32,7 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   otherwise): a virtualised `DataList` paged by cursor (polls every 2 s, every 15 s past two pages), quick add (Enter
   adds a Draft above the first row when the list is a flat rank order; Shift+Enter opens the full form), filters
   (saved filters per browser in localStorage), bulk bar, rank by drag or Alt+↑/↓; a row opens the peek sheet
-  (non-modal on desktop; on phones a detail screen under the top bar, whose ← is Back), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
+  (non-modal on desktop; on phones the full ticket screen below, whose ← is Back), Open makes a ticket tab. The Board (Ctrl+] b) shows To do / In
   progress / Done (closed in the last 14 days, `closedAfter`); cards drag between columns on desktop, phones show one
   column at a time.
 - Phones (PDT-118): the top bar's title (`Tickets · <KEY> ▾`) opens the projects and saved filters; under it
@@ -43,6 +43,15 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   is selected. A floating ＋ (the app's only floating button) opens New ticket; Import from Jira is under ⋯. The
   Board picks its column from scrolling chips with counts (the desktop's columns, pipeline stages included) or a
   swipe sideways (not from the screen's left edge, the system Back gesture).
+- Phones, the ticket screen (PDT-119, `/tickets/:key`, in place of the peek): the title (tap to edit), stage ·
+  priority · the agent's state with the badges, the stage stepper (scrolls sideways), then Overview | Conversation |
+  Changes. The Overview is one column: Details, Attempt (or Sessions), Links and Overlaps fold at the top with one-line
+  summaries, then Description (✎ edits in place), Parts and Activity. While the title or description is edited the
+  top bar shows Cancel and Save in place of ← and its buttons. The bottom bar has Comment… (the composer in a bottom
+  sheet) and the stage's primary action: Draft/Ready → Refine · Start, To do → Start, In progress → Accept… while the
+  ticket's Accept gate waits in the Inbox (the Inbox's merge confirmation: PR, CI, diff size) else Open work (the
+  session working on it, else the attempt's newest), Done and Won't do → none. Move to, Priority, Start next part,
+  Make into parts…, Merge…, Abandon attempt… and Delete… are under ⋯.
 - **Pipeline stage** (Phase 7c): `pipelineStage` (`refine | code | review | qa | accept`, `tickets.pipeline_stage`)
   is where a pipeline workflow has the ticket: `refine` while Draft or Ready, the others while In progress. Agent
   steps and gates with a `pipelineStage` set it when they start; any change of stage clears it. Every ticket response
