@@ -61,6 +61,17 @@ export const KEY_HELP: [string, string][] = [
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 
+/** The mounted prefix handler, so the phone's key bar (⌃] then a typed key) runs the same shortcuts. */
+let current: ((a: KeyAction) => void) | null = null;
+
+/** Runs the shortcut for `key` as if it followed the prefix; false when no shortcut has that key. */
+export function runPrefixKey(key: string): boolean {
+  const action = actionFor(key);
+  if (!action || !current) return false;
+  current(action);
+  return true;
+}
+
 /**
  * Listens for the prefix, then one key, on the window in the capture phase, so the terminal never sees either.
  * Pressing the prefix twice lets the second one through to whatever has focus (the terminal sends it as 0x1d).
@@ -70,6 +81,8 @@ export function usePrefixKeys(onAction: (a: KeyAction) => void) {
   const handler = useRef(onAction);
   handler.current = onAction;
   useEffect(() => {
+    const run = (a: KeyAction) => handler.current(a);
+    current = run;
     const onKey = (e: KeyboardEvent) => {
       if (armed.current) {
         if (MODIFIER_KEYS.has(e.key)) return;
@@ -88,6 +101,9 @@ export function usePrefixKeys(onAction: (a: KeyAction) => void) {
       }
     };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (current === run) current = null;
+    };
   }, []);
 }

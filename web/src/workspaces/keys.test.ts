@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { actionFor, KEY_HELP, usePrefixKeys } from './keys';
+import { actionFor, KEY_HELP, runPrefixKey, usePrefixKeys } from './keys';
 
 const press = (key: string, init: KeyboardEventInit = {}) => {
   const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
@@ -58,5 +58,16 @@ describe('prefix keys', () => {
     press(']', { ctrlKey: true });
     expect(press('z').defaultPrevented).toBe(true);
     expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('runs a shortcut by key for the key bar, while the hook is mounted', () => {
+    const onAction = vi.fn();
+    const { unmount } = renderHook(() => usePrefixKeys(onAction));
+    expect(runPrefixKey('n')).toBe(true);
+    expect(onAction).toHaveBeenCalledWith({ type: 'next' });
+    expect(runPrefixKey('z')).toBe(false);
+    unmount();
+    expect(runPrefixKey('n')).toBe(false);
+    expect(onAction).toHaveBeenCalledTimes(1);
   });
 });
