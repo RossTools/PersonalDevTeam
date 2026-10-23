@@ -24,7 +24,10 @@ export type Route =
   | { view: 'tickets'; board: boolean; ticket: string | null }
   | { view: 'workflows'; target: WorkflowTarget }
   | { view: 'personas'; personaId: string | null }
-  /** A file in a checkout; `project` (a key) and `worktree` say which checkout when the user picked one. */
+  /**
+   * A file in a checkout, or a folder (its path ends in `/`: the phone's drill-down, PDT-120); `project` (a key) and
+   * `worktree` say which checkout when the user picked one.
+   */
   | { view: 'files'; path: string | null; project: string | null; worktree: string | null }
   | { view: 'settings'; page: SettingsPage };
 
@@ -64,7 +67,12 @@ export function parseRoute(pathname: string, search = ''): Route {
     case 'personas':
       return { view: 'personas', personaId: a };
     case 'files':
-      return { view: 'files', path: seg.length > 1 ? seg.slice(1).join('/') : null, project: q.get('project'), worktree: q.get('worktree') };
+      return {
+        view: 'files',
+        path: seg.length > 1 ? `${seg.slice(1).join('/')}${pathname.endsWith('/') ? '/' : ''}` : null,
+        project: q.get('project'),
+        worktree: q.get('worktree'),
+      };
     case 'settings':
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
@@ -159,9 +167,17 @@ export function upRoute(r: Route): Route {
   // A note goes up to the notes, an earlier session to the list of them.
   if (r.view === 'pm' && noteOf(r.pm)) return { view: 'pm', pm: 'notes' };
   if (r.view === 'pm' && r.pm !== 'current' && r.pm !== 'notes' && r.pm !== 'earlier') return { view: 'pm', pm: 'earlier' };
-  // A file goes up to the checkout it is in.
-  if (r.view === 'files') return { ...r, path: null };
+  // A run goes up to the workflow's runs.
+  if (r.view === 'workflows' && r.target?.kind === 'workflow' && r.target.runId) return { view: 'workflows', target: { kind: 'workflow', id: r.target.id, tab: 'runs' } };
+  // A file or folder goes up to the folder it is in.
+  if (r.view === 'files') return { ...r, path: parentFolder(r.path) };
   return viewRoute(r.view);
+}
+
+/** The folder a file or folder is in, as a folder path (`a/b.md` → `a/`); null at the checkout's top. */
+export function parentFolder(path: string | null): string | null {
+  const parts = (path ?? '').split('/').filter(Boolean);
+  return parts.length > 1 ? `${parts.slice(0, -1).join('/')}/` : null;
 }
 
 /** A Settings section's name in a path: its heading in lower case, words joined by `-` ("Danger zone" → `danger-zone`). */

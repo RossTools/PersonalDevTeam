@@ -25,6 +25,7 @@ import type { PersonaSetup } from '../api/gen/PersonaSetup';
 import type { PersonaVersion } from '../api/gen/PersonaVersion';
 import { Markdown } from '../common/Markdown';
 import { useAction } from '../common/useAction';
+import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import {
   AGENT_LABEL,
@@ -434,19 +435,65 @@ function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSele
   );
 }
 
+/** A persona to read (phones, PDT-120: personas are edited on a computer): who it is, its setup and its versions. */
+function PersonaReadOnly({ persona }: { persona: Persona }) {
+  const known = usePersonaTools().data;
+  const tools = shownTools(persona.tools);
+  return (
+    <Page
+      title={persona.name}
+      description={persona.description || undefined}
+      actions={
+        <>
+          {persona.builtin && <Badge>Built in</Badge>}
+          {persona.archived && <Badge tone="waiting">Archived</Badge>}
+        </>
+      }
+    >
+      <Section label={`Setup · version ${persona.version}`}>
+        <SettingsRow label="Role">{persona.role || <span className="text-muted-foreground">None</span>}</SettingsRow>
+        <SettingsRow label="Agent">{AGENT_LABEL[persona.agent]}</SettingsRow>
+        <SettingsRow label="Model"><span className="font-mono break-all">{persona.model || "the agent's default"}</span></SettingsRow>
+        <SettingsRow label="Permission mode">{persona.permissionMode ? PERMISSION_LABEL[persona.permissionMode] : 'Project or host default'}</SettingsRow>
+        <SettingsRow stacked label="Tools">
+          {persona.tools.length === 0 && <p className="text-xs text-muted-foreground">PDT's default set:</p>}
+          <ul aria-label="Tools" className="flex flex-col gap-1">
+            {tools.map((name) => {
+              const does = known?.find((t) => t.name === name)?.does;
+              return (
+                <li key={name} className="text-xs">
+                  <span className="font-mono">{name}</span>
+                  {does && <span className="text-muted-foreground"> · {does}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </SettingsRow>
+        <SettingsRow stacked label="Instructions">
+          {persona.instructions.trim() ? <Markdown className="min-w-0 break-words">{persona.instructions}</Markdown>
+            : <p className="text-xs text-muted-foreground">No instructions.</p>}
+        </SettingsRow>
+      </Section>
+      <Versions key={persona.id} persona={persona} />
+    </Page>
+  );
+}
+
 /**
  * The Personas view's main area: nothing chosen → a hint; `'new'` → the create form; a persona's id → its page
  * (name, role, description; the current setup, saved as a new version; the versions and a diff of any two; archive;
- * delete for those not built in).
+ * delete for those not built in). On a phone a persona is read-only.
  */
 export function PersonaPage({ personaId, onSelect }: { personaId: string | null; onSelect: (id: string) => void }) {
   const personas = usePersonas();
+  const phone = useMediaQuery(PHONE_QUERY);
   if (personaId === null) return <EmptyState icon={<UserRound />}>Choose a persona</EmptyState>;
-  if (personaId === 'new') return <NewPersonaForm onSelect={onSelect} />;
+  if (personaId === 'new') return phone ? <EmptyState icon={<UserRound />}>Make personas on a computer.</EmptyState> : <NewPersonaForm onSelect={onSelect} />;
   if (personas.isPending) return <Skeleton lines={6} label="Loading the persona" className="p-6" />;
   if (personas.isError) return <EmptyState role="alert">Personas could not be loaded: {personas.error.message}</EmptyState>;
   const persona = personas.data.find((p) => p.id === personaId);
   if (!persona) return <EmptyState icon={<UserRound />}>This persona no longer exists.</EmptyState>;
+  if (phone) return <PersonaReadOnly key={persona.id} persona={persona} />;
   const others = sortPersonas(personas.data.filter((p) => p.id !== personaId));
   return <PersonaDetail key={persona.id} persona={persona} onSelect={onSelect} others={others} />;
 }
