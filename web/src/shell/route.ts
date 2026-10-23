@@ -4,8 +4,12 @@ import type { WorkflowTab } from '../workflows/WorkflowPage';
 import type { WorkflowTarget } from '../workflows/WorkflowsList';
 import type { ViewId } from './views';
 
-/** A Settings page: this host (and a section of it), connections, notifications, or a project by key. */
+/**
+ * A Settings page: the index (`/settings`: this host on desktop, the list of pages on a phone), this host (and a
+ * section of it), connections, notifications, or a project by key.
+ */
 export type SettingsPage =
+  | { kind: 'index' }
   | { kind: 'host'; section: string | null }
   | { kind: 'connections' }
   | { kind: 'notifications' }
@@ -65,7 +69,8 @@ export function parseRoute(pathname: string, search = ''): Route {
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
       if (a === 'projects' && b) return { view: 'settings', page: { kind: 'project', key: b, section: c } };
-      return { view: 'settings', page: { kind: 'host', section: a === 'host' ? b : null } };
+      if (a === 'host') return { view: 'settings', page: { kind: 'host', section: b } };
+      return { view: 'settings', page: { kind: 'index' } };
     default:
       return { view: null };
   }
@@ -103,6 +108,7 @@ export function routePath(r: Route): string {
     case 'settings': {
       const p = r.page;
       switch (p.kind) {
+        case 'index': return '/settings';
         case 'host': return p.section ? `/settings/host/${enc(p.section)}` : '/settings/host';
         case 'connections': return '/settings/connections';
         case 'notifications': return '/settings/notifications';
@@ -122,8 +128,35 @@ export function viewRoute(view: ViewId): Route {
     case 'workflows': return { view, target: null };
     case 'personas': return { view, personaId: null };
     case 'files': return { view, path: null, project: null, worktree: null };
-    case 'settings': return { view, page: { kind: 'host', section: null } };
+    case 'settings': return { view, page: { kind: 'index' } };
   }
+}
+
+/**
+ * A screen inside a view (an item, a page, a tab), as opposed to the view's own top-level screen. On a phone a detail
+ * screen has ← (Back) in its top bar instead of ☰.
+ */
+export function isDetail(r: Route): boolean {
+  switch (r.view) {
+    case null: return false;
+    case 'pm': return r.pm !== 'current';
+    case 'sessions': return r.workspaceId !== null;
+    case 'inbox': return r.itemId !== null;
+    case 'tickets': return r.ticket !== null;
+    case 'workflows': return r.target !== null;
+    case 'personas': return r.personaId !== null;
+    case 'files': return r.path !== null;
+    case 'settings': return r.page.kind !== 'index';
+  }
+}
+
+/** Where ← goes from a detail screen when there is no history to go back through (opened from a link): its view. */
+export function upRoute(r: Route): Route {
+  if (r.view === null) return r;
+  if (r.view === 'tickets') return { ...r, ticket: null };
+  // A file goes up to the checkout it is in.
+  if (r.view === 'files') return { ...r, path: null };
+  return viewRoute(r.view);
 }
 
 /** A Settings section's name in a path: its heading in lower case, words joined by `-` ("Danger zone" → `danger-zone`). */

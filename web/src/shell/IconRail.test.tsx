@@ -49,11 +49,4 @@ describe('IconRail', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
-
-  it('has no toggle on the phone rail, which stays icons only', () => {
-    localStorage.setItem(RAIL_EXPANDED_KEY, 'true');
-    render(<IconRail active="sessions" onSelect={() => {}} onSearch={() => {}} />);
-    expect(within(rail()).queryByRole('button', { name: /side rail/ })).not.toBeInTheDocument();
-    expect(within(rail()).queryByText('Tickets')).not.toBeInTheDocument();
-  });
 });

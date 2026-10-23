@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
-import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref } from '@ui';
+import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
@@ -56,19 +56,21 @@ import { VIEWS, type ViewId } from './views';
 import { TicketKeysContext } from '../common/ticketKeys';
 import type { TicketPeekState } from '../tickets/TicketsView';
 import type { TicketsMode } from '../tickets/useBacklog';
-import { parseLocation, routePath, sectionSlug, viewRoute, type Route, type SettingsPage } from './route';
-import { currentLocation, navigate, useAppLinks, useLocation } from './router';
+import { isDetail, parseLocation, routePath, sectionSlug, upRoute, viewRoute, type Route, type SettingsPage } from './route';
+import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
+import { PhoneDrawer } from './PhoneDrawer';
+import { PhoneTopBar, TopBarActionsContext, type TopBarActions } from './PhoneTopBar';
 
 const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
-/** The list column's name on a phone, where it is a sheet: the opener's label and the sheet's title. */
-const LIST_NAME: Record<ViewId, string> = {
-  sessions: 'Workspaces and agents', inbox: 'Inbox items', pm: 'PM sessions and notes', tickets: 'Projects and filters', workflows: 'Workflows and templates',
-  personas: 'Personas', files: 'Files and folders', settings: 'Settings sections',
-};
+/** On a phone, the views whose list column is their top-level screen (PDT-112). The PM's and the Tickets' lists open
+ * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
+const PHONE_LIST_SCREENS: readonly ViewId[] = ['sessions', 'inbox', 'workflows', 'personas', 'files', 'settings'];
 
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
+/** The Settings list's Notifications row (phones). */
+const NOTIFICATIONS = 'notifications';
 
 const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
 
@@ -98,6 +100,7 @@ function useAttentionTitle(count: number) {
 
 // The ticket screens (and the Markdown libraries they use) load the first time they're shown.
 const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
+const NewWorkflowDialog = lazy(() => import('../workflows/NewWorkflowDialog').then((m) => ({ default: m.NewWorkflowDialog })));
 const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
 const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
@@ -125,7 +128,7 @@ export function AppShell() {
   // The Workflows view: the workflow or template shown (with its tab and run).
   const workflowTarget: WorkflowTarget = route.view === 'workflows' ? route.target : null;
   const setWorkflowTarget = useCallback((target: WorkflowTarget) => go({ view: 'workflows', target }), []);
-  const settingsPage: SettingsPage = route.view === 'settings' ? route.page : { kind: 'host', section: null };
+  const settingsPage: SettingsPage = route.view === 'settings' ? route.page : { kind: 'index' };
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
   // The New workflow dialog.
@@ -140,8 +143,11 @@ export function AppShell() {
   const [newTicket, setNewTicket] = useState<{ projectId: string | null; title: string } | null>(null);
   // The Start dialog: the ticket, and where its tabs open (undefined: the end of the project workspace).
   const [starting, setStarting] = useState<{ ticketId: string; placement?: TabPlacement } | null>(null);
-  // Phones: the list column is a sheet from the left, opened from the header.
+  // Phones: the drawer (☰), and the sheet holding the PM's or the Tickets' list.
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The ⋯ entries the screen on show adds (phones).
+  const [screenActions, setScreenActions] = useState<{ entries: TopBarActions } | null>(null);
   // The Inbox's selected item.
   const inboxId = route.view === 'inbox' ? route.itemId : null;
   // The Personas view's persona (`new`: the create form).
@@ -156,9 +162,11 @@ export function AppShell() {
   const confirm = useConfirm();
   const inbox = useInbox();
   const inboxItems = inbox.data?.items ?? [];
-  // The Inbox picks an item by itself when none is shown (or the one shown has gone): that replaces the path.
+  // The Inbox picks an item by itself when none is shown (or the one shown has gone): that replaces the path. On a
+  // phone `/inbox` is the list, where a tap opens an item (a new entry).
   const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
-  const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: !inboxShown }), [inboxShown]);
+  const autoPick = phone ? inboxId !== null && !inboxShown : !inboxShown;
+  const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: autoPick }), [autoPick]);
   const plusRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useThemePref();
   const qc = useQueryClient();
@@ -176,9 +184,10 @@ export function AppShell() {
   const wsId = ws.workspace?.id ?? null;
   const tabId = ws.tab?.id ?? null;
   useEffect(() => {
-    if (route.view !== 'sessions' || !wsId) return;
+    // On a phone `/sessions` is the workspaces screen: only a workspace's path gets its tab filled in.
+    if (route.view !== 'sessions' || !wsId || (phone && !route.workspaceId)) return;
     if (route.workspaceId !== wsId || route.tabId !== tabId) go({ view: 'sessions', workspaceId: wsId, tabId }, { replace: true });
-  }, [route, wsId, tabId]);
+  }, [route, wsId, tabId, phone]);
   // `/` shows the default view: the PM on a phone, Sessions otherwise.
   useEffect(() => {
     if (route.view === null) go(viewRoute(defaultView), { replace: true });
@@ -349,7 +358,7 @@ export function AppShell() {
       case 'newTab': setChooserOpen(true); break;
       case 'switcher':
         // Focus the current workspace in the sidebar; Up/Down and Enter pick another. On a phone, open the sheet first.
-        if (phone) setSheetOpen(true);
+        if (phone) setDrawerOpen(true);
         requestAnimationFrame(() => document.querySelector<HTMLElement>('#workspace-list [data-current], #workspace-list [role=row]')?.focus());
         break;
       case 'help': setHelpOpen(true); break;
@@ -378,7 +387,7 @@ export function AppShell() {
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
   // The Settings list's current row: a project's id, connections, or null (this host).
   const settingsProjectId = settingsProject?.id ?? (settingsPage.kind === 'connections' ? CONNECTIONS : null);
-  const section = settingsPage.kind === 'notifications' ? 'notifications' : settingsPage.kind === 'connections' ? null : settingsPage.section;
+  const section = settingsPage.kind === 'notifications' ? 'notifications' : settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
   useScrollToSection(view === 'settings' ? section : null, settingsProjectId ?? '');
   const currentProject = ws.projects.find((p) => p.id === current?.projectId) ?? null;
   const worktrees = useQuery({
@@ -507,9 +516,10 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS ? CONNECTIONS : null)}>
-        <ListRow id="host" title="This host" current={settingsProjectId === null} />
+      <List aria-label="Host" onAction={(id) => id === NOTIFICATIONS ? go({ view: 'settings', page: { kind: 'notifications' } }) : showProjectSettings(id === CONNECTIONS ? CONNECTIONS : null)}>
+        <ListRow id="host" title="This host" current={!phone && settingsProjectId === null} />
         <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
+        {phone ? <ListRow id={NOTIFICATIONS} title="Notifications" /> : null}
       </List>
       <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
         <span className="flex-1">Projects</span>
@@ -525,7 +535,30 @@ export function AppShell() {
       </List>
     </nav>
   );
-  const openList = () => setSheetOpen(true);
+  // The phone's screens (PDT-112): a view's top-level screen (its list, for most views) or a detail screen with ←.
+  const detail = isDetail(route);
+  const phoneList = phone && !detail && PHONE_LIST_SCREENS.includes(view);
+  const pickerSheet = phone && (view === 'pm' || view === 'tickets');
+  const ticketsProject = ws.projects.find((p) => p.id === backlog.projectId);
+  const phoneTitle: ReactNode = view === 'tickets' && !detail ? (
+    <Button variant="ghost" size="sm" aria-label="Projects and filters" aria-haspopup="dialog" onClick={() => setSheetOpen(true)} className="min-w-0 font-medium">
+      <span className="truncate">{ticketsProject ? `${label} · ${ticketsProject.key}` : label}</span>
+      <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
+    </Button>
+  ) : view === 'sessions' && detail ? (ws.workspace?.ticket ? `${ws.workspace.ticket.key} ${ws.workspace.ticket.title}` : ws.workspace?.name ?? label) : label;
+  const shellActions = (): MenuEntry[] =>
+    view === 'pm' ? [
+      { label: 'New session…', onSelect: newPmSession },
+      { label: 'Notes', onSelect: () => setPmSelection('notes') },
+      { label: 'Earlier sessions…', onSelect: () => setSheetOpen(true) },
+    ] : view === 'sessions' && detail ? [
+      { label: 'New tab', onSelect: () => setChooserOpen(true) },
+      { label: bottomOpen ? 'Hide terminal panel' : 'Terminal panel', onSelect: () => setBottomOpen((o) => !o) },
+    ] : [];
+  const hasShellActions = view === 'pm' || (view === 'sessions' && detail);
+  const phoneActions: TopBarActions | null = hasShellActions || screenActions
+    ? () => [...shellActions(), ...(screenActions?.entries() ?? [])]
+    : null;
   const projectKeyList = ws.projects.map((p) => p.key).join(' ');
   const projectKeys = useMemo(() => (projectKeyList ? projectKeyList.split(' ') : []), [projectKeyList]);
 
@@ -536,48 +569,70 @@ export function AppShell() {
     <OpenChangesContext.Provider value={openChanges}>
     <TicketTabsContext.Provider value={ticketTabs}>
     <StartTicketContext.Provider value={startTicket}>
-    <div className="flex h-full flex-col-reverse overflow-hidden bg-background text-foreground md:flex-row">
-      <IconRail
-        active={view}
-        onSelect={(v) => { setView(v); setSheetOpen(false); }}
-        onSearch={phone ? () => setPaletteOpen(true) : undefined}
-        top={phone ? undefined : <InstanceBadge stacked />}
-        counts={{ inbox: inbox.data?.total ?? 0 }}
-      />
+    <TopBarActionsContext.Provider value={setScreenActions}>
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground md:flex-row">
       {phone ? (
-        <Sheet side="left" title={LIST_NAME[view]} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
-          <div className="-mx-2">{list}</div>
-        </Sheet>
+        <>
+          <PhoneTopBar
+            detail={detail}
+            onMenu={() => setDrawerOpen(true)}
+            menuOpen={drawerOpen}
+            onBack={() => goBack(routePath(upRoute(route)))}
+            title={phoneTitle}
+            needsYou={inbox.data?.total ?? 0}
+            onInbox={() => go(viewRoute('inbox'))}
+            onSearch={() => setPaletteOpen(true)}
+            actions={phoneActions}
+          />
+          <PhoneDrawer
+            open={drawerOpen}
+            onOpenChange={setDrawerOpen}
+            view={view}
+            onView={setView}
+            counts={{ inbox: inbox.data?.total ?? 0 }}
+            ws={ws}
+            projectId={stored.projectId}
+            onProject={stored.setProjectId}
+            onRenameTab={setRenamingTabId}
+          />
+          {pickerSheet && (
+            <Sheet side="left" title={view === 'pm' ? 'PM sessions and notes' : 'Projects and filters'} hideTitle open={sheetOpen} onOpenChange={setSheetOpen} className="w-72 max-w-[85vw]">
+              <div className="-mx-2">{list}</div>
+            </Sheet>
+          )}
+        </>
       ) : (
-        <aside aria-label={`${label} list`} className="flex min-h-0 w-72 flex-col border-r border-border">
-          <div className="flex-1 overflow-auto px-1">{list}</div>
-        </aside>
+        <>
+          <IconRail
+            active={view}
+            onSelect={setView}
+            top={<InstanceBadge stacked />}
+            counts={{ inbox: inbox.data?.total ?? 0 }}
+          />
+          <aside aria-label={`${label} list`} className="flex min-h-0 w-72 flex-col border-r border-border">
+            <div className="flex-1 overflow-auto px-1">{list}</div>
+          </aside>
+        </>
       )}
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
         <UpdateBanner />
-        {view === 'sessions' ? (
+        {view === 'sessions' && !phoneList ? (
           <WorkspaceBar
             ws={ws}
             renamingTabId={renamingTabId}
             setRenamingTabId={setRenamingTabId}
             onNewTab={() => setChooserOpen(true)}
             plusRef={plusRef}
-            {...(phone ? { onOpenList: openList, leading: <InstanceBadge compact /> } : {})}
-            trailing={
+            hideName={phone}
+            // On a phone the terminal panel is under ⋯.
+            trailing={phone ? undefined : (
               <IconButton label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
                 <PanelBottom aria-hidden />
               </IconButton>
-            }
+            )}
           />
-        ) : phone ? (
-          <div className="flex min-w-0 items-center gap-1 border-b border-border px-2 py-1">
-            <Button variant="ghost" size="sm" aria-label={LIST_NAME[view]} aria-haspopup="dialog" onClick={openList} className="font-medium">
-              {label} <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
-            </Button>
-            <InstanceBadge compact />
-          </div>
         ) : null}
-        {view === 'sessions' && mergedTicketId && (
+        {view === 'sessions' && !phoneList && mergedTicketId && (
           <Suspense fallback={null}><WorkspaceMergedBanner key={mergedTicketId} ticketId={mergedTicketId} /></Suspense>
         )}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
@@ -618,7 +673,16 @@ export function AppShell() {
         )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
-            {view === 'inbox' ? (
+            {phoneList ? (
+              <div className="flex-1 overflow-auto px-1">
+                {list}
+                {view === 'workflows' && creatingWorkflow && (
+                  <Suspense fallback={null}><NewWorkflowDialog projects={ws.projects} templateId={creatingWorkflow.templateId}
+                    onClose={() => setCreatingWorkflow(null)}
+                    onCreated={(id) => { setCreatingWorkflow(null); setWorkflowTarget({ kind: 'workflow', id }); }} /></Suspense>
+                )}
+              </div>
+            ) : view === 'inbox' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} selectedId={inboxId} onSelect={setInboxId} /></Suspense>
             ) : view === 'pm' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
@@ -668,6 +732,7 @@ export function AppShell() {
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
     </div>
+    </TopBarActionsContext.Provider>
     </StartTicketContext.Provider>
     </TicketTabsContext.Provider>
     </OpenChangesContext.Provider>

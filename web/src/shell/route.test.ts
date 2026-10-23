@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLocation, parseRoute, routePath, sectionSlug, viewRoute, type Route } from './route';
+import { isDetail, parseLocation, parseRoute, routePath, sectionSlug, upRoute, viewRoute, type Route } from './route';
 import { VIEWS } from './views';
 
 describe('routes', () => {
@@ -31,6 +31,7 @@ describe('routes', () => {
     ['/files', { view: 'files', path: null, project: null, worktree: null }],
     ['/files/src/main.rs', { view: 'files', path: 'src/main.rs', project: null, worktree: null }],
     ['/files/a%20b/c%23d.md?project=PDT&worktree=wt', { view: 'files', path: 'a b/c#d.md', project: 'PDT', worktree: 'wt' }],
+    ['/settings', { view: 'settings', page: { kind: 'index' } }],
     ['/settings/host', { view: 'settings', page: { kind: 'host', section: null } }],
     ['/settings/host/updates', { view: 'settings', page: { kind: 'host', section: 'updates' } }],
     ['/settings/connections', { view: 'settings', page: { kind: 'connections' } }],
@@ -46,7 +47,7 @@ describe('routes', () => {
   });
 
   it('reads paths the app writes no other way', () => {
-    expect(parseRoute('/settings')).toEqual({ view: 'settings', page: { kind: 'host', section: null } });
+    expect(parseRoute('/settings/nonsense')).toEqual({ view: 'settings', page: { kind: 'index' } });
     expect(parseRoute('/workflows/wf/nonsense')).toEqual({ view: 'workflows', target: { kind: 'workflow', id: 'wf' } });
     expect(parseRoute('/nowhere/at/all')).toEqual({ view: null });
     expect(parseRoute('/sessions/w1/t1/')).toEqual({ view: 'sessions', workspaceId: 'w1', tabId: 't1' });
@@ -55,6 +56,20 @@ describe('routes', () => {
 
   it("gives every view its own path", () => {
     for (const v of VIEWS) expect(parseLocation(routePath(viewRoute(v.id))).view).toBe(v.id);
+  });
+
+  it('tells detail screens from top-level ones, and where each goes up to', () => {
+    const top = ['/pm', '/sessions', '/inbox', '/tickets?view=board', '/workflows', '/personas', '/files?project=PDT', '/settings', '/'];
+    for (const p of top) expect(isDetail(parseLocation(p)), p).toBe(false);
+    const up: [string, string][] = [
+      ['/pm/notes', '/pm'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
+      ['/workflows/wf/runs/r', '/workflows'], ['/personas/p', '/personas'], ['/files/a/b.md?project=PDT', '/files?project=PDT'],
+      ['/settings/projects/PDT/danger-zone', '/settings'], ['/settings/notifications', '/settings'],
+    ];
+    for (const [p, to] of up) {
+      expect(isDetail(parseLocation(p)), p).toBe(true);
+      expect(routePath(upRoute(parseLocation(p))), p).toBe(to);
+    }
   });
 
   it('names sections by their heading', () => {

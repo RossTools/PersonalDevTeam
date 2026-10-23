@@ -34,7 +34,7 @@ function RowField({ children }: { children: ReactNode }) {
 }
 
 /** A workspace's rolled-up state: its most urgent item ("Done" when an idle agent is unseen). */
-function workspaceState(ws: WorkspacesApi, w: Workspace) {
+export function workspaceState(ws: WorkspacesApi, w: Workspace) {
   return rollup(w.tabs.map((t) => ws.info(itemOf(t))).filter((i): i is ItemInfo => i !== null).map(itemState));
 }
 
@@ -74,24 +74,6 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
   const { openMenu, menu } = useMenuAt();
   const [adding, setAdding] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const agents = ws.allInfos
-    .filter((i) => i.session?.kind === 'agent_tui')
-    .map((i) => ({ id: i.item.id, info: i, where: findTab(ws.workspaces, i.item) }))
-    .sort((a, b) => {
-      const wa = a.where ? a.where.workspace.position : Infinity;
-      const wb = b.where ? b.where.workspace.position : Infinity;
-      return wa - wb || (a.where?.tab.position ?? 0) - (b.where?.tab.position ?? 0) || (a.info.session!.createdAt - b.info.session!.createdAt);
-    });
-  // Shared with the place picker and the views' cached queries.
-  const worktreeQs = useQueries({
-    queries: ws.projects.map((p) => ({ queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id), staleTime: 30_000 })),
-  });
-  const branches = new Map(worktreeQs.flatMap((q) => (q.data ?? []).map((w) => [w.id, w.branch] as const)));
-  /** The worktree's branch (its folder name until the worktrees load); null for the main checkout. */
-  const branchOf = (i: ItemInfo) => {
-    if (!i.worktreeId) return null;
-    return branches.get(i.worktreeId) ?? i.session?.cwd.split(/[\\/]/).filter(Boolean).pop() ?? null;
-  };
 
   const openTicket = useOpenTicket();
   const general = ws.workspaces.filter((w) => !isTicketWorkspace(w));
@@ -218,6 +200,40 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
           </div>
         </section>
       )}
+      <AgentsSection ws={ws} onRenameTab={onRenameTab} onChoose={onChoose} />
+      {menu}
+    </div>
+  );
+}
+
+/** Every agent session with its state and where it is (the Sessions sidebar, the phone drawer). */
+export function AgentsSection({ ws, onRenameTab, onChoose }: {
+  ws: WorkspacesApi;
+  onRenameTab: (tabId: string) => void;
+  /** Called after an agent is chosen (the phone drawer closes). */
+  onChoose?: () => void;
+}) {
+  const { openMenu, menu } = useMenuAt();
+  const agents = ws.allInfos
+    .filter((i) => i.session?.kind === 'agent_tui')
+    .map((i) => ({ id: i.item.id, info: i, where: findTab(ws.workspaces, i.item) }))
+    .sort((a, b) => {
+      const wa = a.where ? a.where.workspace.position : Infinity;
+      const wb = b.where ? b.where.workspace.position : Infinity;
+      return wa - wb || (a.where?.tab.position ?? 0) - (b.where?.tab.position ?? 0) || (a.info.session!.createdAt - b.info.session!.createdAt);
+    });
+  // Shared with the place picker and the views' cached queries.
+  const worktreeQs = useQueries({
+    queries: ws.projects.map((p) => ({ queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id), staleTime: 30_000 })),
+  });
+  const branches = new Map(worktreeQs.flatMap((q) => (q.data ?? []).map((w) => [w.id, w.branch] as const)));
+  /** The worktree's branch (its folder name until the worktrees load); null for the main checkout. */
+  const branchOf = (i: ItemInfo) => {
+    if (!i.worktreeId) return null;
+    return branches.get(i.worktreeId) ?? i.session?.cwd.split(/[\\/]/).filter(Boolean).pop() ?? null;
+  };
+  return (
+    <>
       <section aria-label="Agents">
         <h2 className={heading}>Agents</h2>
         <List
@@ -272,6 +288,6 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose }: {
         </List>
       </section>
       {menu}
-    </div>
+    </>
   );
 }

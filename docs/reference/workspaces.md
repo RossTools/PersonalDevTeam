@@ -23,8 +23,16 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 - The desktop rail (web/src/shell/IconRail.tsx) is icons only, with tooltips on the right; the toggle at its bottom
   expands it to show each view's name beside its icon (badges beside the names, no tooltips) and collapses it again.
   The state is per browser (localStorage `pdt.rail.expanded`).
-- On phones (< 768px) the list column is a left sheet opened from the workspace name; the rail is Sessions, Tickets,
-  Search (palette), Settings (Files is in the palette's Go to).
+- On phones (< 768px, PDT-112) there is no rail: a top bar has ☰ on a view's top-level screen and ← (Back, or up to
+  the view when the screen was opened from a link) on a detail screen, the title, 🔔 Needs you (the Inbox count, opens
+  the Inbox), ⌕ (the command palette) and ⋯ (the screen's actions: the shell's, plus any a screen adds with
+  `useTopBarActions`). ☰ opens the drawer (web/src/shell/PhoneDrawer.tsx): the project (the Tickets view's), the views
+  in the rail's order with the Inbox count, the workspaces folding open to their tabs (folded, a workspace shows its
+  loudest state), the agents, and Settings with the host's connection state. It closes on a tap outside, a swipe left,
+  Escape, choosing, or Back (it adds a history entry, which choosing replaces). Sessions, Inbox, Workflows, Personas,
+  Files and Settings show their list column as their top-level screen (`/sessions` is the workspaces and agents);
+  choosing an item pushes its route. The PM's earlier sessions are under its ⋯, the Tickets' projects and filters
+  under its title.
 
 ## URLs
 

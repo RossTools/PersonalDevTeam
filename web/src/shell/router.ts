@@ -1,5 +1,5 @@
 // The browser history behind the app's routes (PDT-111): the current location as React state, and navigation.
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
@@ -20,17 +20,66 @@ export const currentLocation = () => window.location.pathname + window.location.
 // first, so Back walks through what was opened rather than each step of opening it.
 let pushedThisTask = false;
 
-/** Shows a path: a new history entry (Back returns), or with `replace` in place of the current one. */
+/**
+ * What the app keeps in each history entry: `n`, how many app entries lie behind it (0 on the page it was loaded
+ * on), so ← knows whether Back stays in the app; `overlay`, an entry an open drawer added so Back closes it.
+ */
+interface EntryState {
+  n?: number;
+  overlay?: boolean;
+}
+
+const entry = (): EntryState => (window.history.state as EntryState | null) ?? {};
+
+/**
+ * Shows a path: a new history entry (Back returns), or with `replace` in place of the current one. An open drawer's
+ * entry is replaced, so choosing in a drawer leaves one entry.
+ */
 export function navigate(to: string, opts?: { replace?: boolean }) {
-  if (to === currentLocation()) return;
-  if (opts?.replace || pushedThisTask) {
-    window.history.replaceState(null, '', to);
+  const cur = entry();
+  if (to === currentLocation() && !cur.overlay) return;
+  if (opts?.replace || pushedThisTask || cur.overlay) {
+    window.history.replaceState({ n: cur.n ?? 0 }, '', to);
   } else {
-    window.history.pushState(null, '', to);
+    window.history.pushState({ n: (cur.n ?? 0) + 1 }, '', to);
     pushedThisTask = true;
     setTimeout(() => { pushedThisTask = false; }, 0);
   }
   notify();
+}
+
+/** ←: Back, when it stays in the app; otherwise (a detail screen opened from a link) `up` in place of this one. */
+export function goBack(up: string) {
+  if ((entry().n ?? 0) > 0) window.history.back();
+  else navigate(up, { replace: true });
+}
+
+let overlays = 0;
+
+/**
+ * While `open`, the history has an entry for it, so Back (the browser's, a phone's gesture) calls `close` rather than
+ * leaving the screen. Closed another way, the entry is taken back off.
+ */
+export function useBackCloses(open: boolean, close: () => void) {
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!open) return;
+    overlays++;
+    if (!entry().overlay) window.history.pushState({ n: (entry().n ?? 0) + 1, overlay: true }, '', currentLocation());
+    const onPop = () => {
+      if (!entry().overlay) closeRef.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      overlays--;
+      window.removeEventListener('popstate', onPop);
+      // After the effect re-runs (React's dev double run) nothing is undone; a navigation already replaced the entry.
+      setTimeout(() => {
+        if (overlays === 0 && entry().overlay) window.history.back();
+      }, 0);
+    };
+  }, [open]);
 }
 
 /** The current path and query string, re-rendering on navigation and on Back/Forward. */

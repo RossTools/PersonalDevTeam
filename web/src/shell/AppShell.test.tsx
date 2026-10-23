@@ -717,61 +717,156 @@ describe('phone', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/pm'));
   });
 
-  it('puts the list column in a sheet opened by the workspace name, closed by choosing a workspace', async () => {
-    stubPhone();
-    stubWorkspaces();
-    renderWithQuery(<AppShell />);
-    await screen.findByRole('tab', { name: /Claude A/ });
-    expect(screen.queryByRole('region', { name: 'Workspaces' })).not.toBeInTheDocument();
-    const opener = screen.getByRole('button', { name: 'Workspaces and agents' });
-    expect(opener).toHaveTextContent('Alpha');
-    await userEvent.click(opener);
-    const sheet = await screen.findByRole('dialog', { name: 'Workspaces and agents' });
-    await userEvent.click(await within(sheet).findByRole('row', { name: /Release/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Workspaces and agents' })).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Workspaces and agents' })).toHaveTextContent('Release');
-  });
+  const drawer = () => screen.findByRole('dialog', { name: 'Menu' });
+  const openDrawer = async () => {
+    await userEvent.click(screen.getByRole('button', { name: 'Menu' }));
+    return drawer();
+  };
+  const here = () => window.location.pathname + window.location.search;
 
-  it('closes the sheet on choosing an agent and on Escape', async () => {
+  it('has a top bar instead of the rail: ☰, the title, Needs you, Search and the DEV badge', async () => {
     stubPhone();
-    stubWorkspaces();
+    stubWorkspaces({ 'GET /api/health': health(true, 8512), 'GET /api/inbox': { items: [], total: 3 } });
     renderWithQuery(<AppShell />);
-    await screen.findByRole('tab', { name: /Claude A/ });
-    await userEvent.click(screen.getByRole('button', { name: 'Workspaces and agents' }));
-    let sheet = await screen.findByRole('dialog', { name: 'Workspaces and agents' });
-    await userEvent.click(within(within(sheet).getByRole('region', { name: 'Agents' })).getByRole('row', { name: /Codex B/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Workspaces and agents' })).not.toBeInTheDocument());
-    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
-    await userEvent.click(screen.getByRole('button', { name: 'Workspaces and agents' }));
-    sheet = await screen.findByRole('dialog', { name: 'Workspaces and agents' });
-    await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Workspaces and agents' })).not.toBeInTheDocument());
-  });
-
-  it('has Search in the rail, which opens the palette, and the DEV badge in the header', async () => {
-    stubPhone();
-    stubWorkspaces({ 'GET /api/health': health(true, 8512) });
-    renderWithQuery(<AppShell />);
-    const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Sessions', 'Inbox', 'Tickets', 'Search', 'Settings']);
-    const bar = (await screen.findByRole('button', { name: 'Workspaces and agents' })).parentElement!;
-    // Compact on phones (the tabs need the room); the port is in the tooltip.
+    const bar = screen.getByRole('banner', { name: 'Top bar' });
+    expect(screen.queryByRole('navigation', { name: 'Views' })).not.toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Menu' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(bar).getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
+    // Compact on phones; the port is in the tooltip.
     expect(await within(bar).findByText('DEV')).toHaveAttribute('title', 'Development instance on port 8512');
-    expect(within(rail).queryByTitle(/^Development instance/)).not.toBeInTheDocument();
-    await userEvent.click(within(rail).getByRole('button', { name: 'Search' }));
+    await userEvent.click(within(bar).getByRole('button', { name: 'Search' }));
     expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(await within(bar).findByRole('button', { name: 'Needs you (3)' }));
+    expect(here()).toBe('/inbox');
   });
 
-  it('opens the settings sections from the header in the Settings view', async () => {
+  it("lists the views in the drawer in the rail's order, with the Inbox count, Settings and the host's state", async () => {
+    stubPhone();
+    stubWorkspaces({ 'GET /api/inbox': { items: [], total: 3 } });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    const d = await openDrawer();
+    const nav = within(d).getByRole('navigation', { name: 'Views' });
+    await waitFor(() => expect(within(nav).getAllByRole('button').map((b) => b.getAttribute('aria-label')))
+      .toEqual(['Project manager', 'Sessions', 'Inbox (3)', 'Tickets', 'Workflows', 'Personas', 'Files']));
+    expect(within(nav).getByRole('button', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+    expect(within(d).getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    expect(within(d).getByText('Host connected')).toBeInTheDocument();
+    expect(within(d).getByRole('region', { name: 'Agents' })).toBeInTheDocument();
+    await userEvent.click(within(nav).getByRole('button', { name: 'Tickets' }));
+    expect(here()).toBe('/tickets');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument());
+    // Choosing replaced the drawer's history entry: Back goes to the screen before.
+    await act(() => window.history.back());
+    await waitFor(() => expect(here()).toBe('/sessions'));
+  });
+
+  it('closes the drawer on Back, staying on the screen', async () => {
+    stubPhone();
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    await openDrawer();
+    await act(() => window.history.back());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument());
+    expect(here()).toBe('/sessions');
+    // Closed by Escape, its entry goes too.
+    await openDrawer();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument());
+    await waitFor(() => expect(window.history.state?.overlay).toBeFalsy());
+    expect(here()).toBe('/sessions');
+  });
+
+  it('shows the workspaces at /sessions; a workspace opens on its tab, with ← back to them', async () => {
+    stubPhone();
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const main = screen.getByRole('main');
+    await userEvent.click(await within(within(main).getByRole('region', { name: 'Workspaces' })).findByRole('row', { name: /Alpha/ }));
+    await waitFor(() => expect(here()).toBe('/sessions/wa/ta'));
+    expect(await screen.findByRole('tab', { name: /Claude A/ })).toHaveAttribute('aria-selected', 'true');
+    const bar = screen.getByRole('banner', { name: 'Top bar' });
+    expect(within(bar).getByRole('heading', { name: 'Alpha' })).toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: 'Menu' })).not.toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/sessions'));
+    expect(await within(main).findByRole('region', { name: 'Agents' })).toBeInTheDocument();
+  });
+
+  it("folds the drawer's workspaces open to their tabs; a tab opens it", async () => {
+    stubPhone();
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    const d = await openDrawer();
+    const tree = within(within(d).getByRole('region', { name: 'Workspaces' }));
+    expect(await tree.findByRole('row', { name: /Alpha/ })).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(await tree.findByRole('row', { name: /Codex B/ }));
+    await waitFor(() => expect(here()).toBe('/sessions/wa/tb'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument());
+    expect(screen.getByRole('tab', { name: /Codex B/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('puts the terminal panel and New tab under ⋯ in a workspace', async () => {
+    stubPhone();
+    stubWorkspaces();
+    window.history.replaceState(null, '', '/sessions/wa/ta');
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    expect(screen.queryByRole('button', { name: 'Toggle terminal panel' })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Screen actions' }));
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New tab', 'Terminal panel']);
+  });
+
+  it('goes up from a detail screen opened from a link, and drills into Settings from its list', async () => {
     stubPhone();
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
+    window.history.replaceState(null, '', '/settings/projects/ALP');
     renderWithQuery(<AppShell />);
-    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Settings sections' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Settings sections' });
-    await userEvent.click(await within(sheet).findByRole('row', { name: /Alpha/ }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings sections' })).not.toBeInTheDocument());
-    expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+    const main = screen.getByRole('main');
+    expect(await within(main).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(here()).toBe('/settings');
+    const list = await within(main).findByRole('navigation', { name: 'Settings sections' });
+    expect(within(list).getAllByRole('row').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Connections', 'Notifications']));
+    await userEvent.click(within(list).getByRole('row', { name: /Alpha/ }));
+    expect(here()).toBe('/settings/projects/ALP');
+    expect(await within(main).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/settings'));
+  });
+
+  it('shows the Inbox as a list; an item opens as its own screen, and ← returns to the list', async () => {
+    const q = {
+      id: 'q', kind: 'question', group: 'question', status: 'open', projectId: project.id, ticketId: null, ticketKey: null,
+      ticketTitle: null, attemptId: null, sessionId: null, runId: null, stepId: null, personaId: null, personaName: null,
+      title: 'Which file?', body: { questions: [{ question: 'Which file?', choices: [] }] }, choices: [], resolution: null,
+      createdAt: 1, resolvedAt: null,
+    };
+    stubPhone();
+    stubWorkspaces({ 'GET /api/inbox': { items: [q], total: 1 } });
+    window.history.replaceState(null, '', '/inbox');
+    renderWithQuery(<AppShell />);
+    const main = screen.getByRole('main');
+    await userEvent.click(await within(main).findByText('Which file?'));
+    expect(here()).toBe('/inbox/q');
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/inbox'));
+    expect(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Menu' })).toBeInTheDocument();
+  });
+
+  it("has the PM's New session, Notes and earlier sessions under ⋯", async () => {
+    stubPhone();
+    stubAlpha();
+    window.history.replaceState(null, '', '/pm');
+    renderWithQuery(<AppShell />);
+    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Screen actions' }));
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New session…', 'Notes', 'Earlier sessions…']);
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Notes' }));
+    expect(here()).toBe('/pm/notes');
+    expect(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Back' })).toBeInTheDocument();
   });
 });
 
