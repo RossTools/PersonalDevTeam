@@ -149,7 +149,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 - `attention_at` is set when a session becomes idle or needs the user; it is **unseen** until `last_viewed_at`
   (`POST /api/sessions/{id}/view`, any device) passes it. Unseen and needs-you sessions make notifications
   (`session.needs_you`, `session.turn_ended` after 30 s; [workflows.md](workflows.md#notifications)); viewing one
-  clears and reads them.
+  clears and reads them. An open session's pane posts the view when it opens, when the tab becomes visible and when
+  a poll finds the session unseen (not on every poll).
 
 ## Terminals
 

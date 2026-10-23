@@ -78,4 +78,27 @@ describe('conversation reducer', () => {
     const state = { live: true, turnRunning: true, permissionMode: 'ask' as const, pending: [], terminalOpen: false, backgroundTasks: [] };
     expect(run([{ type: 'state', state }]).state).toEqual(state);
   });
+
+  it('a batch ends where the same messages one by one would, without touching the model it started from', () => {
+    const start = run([
+      { type: 'event', event: ev(1, 1, { kind: 'user_message', text: 'hi', images: [], source: 'pdt' }) },
+      { type: 'ready' },
+      { type: 'delta', itemId: 'm:1', field: 'markdown', text: 'Hel' },
+      { type: 'delta', itemId: 't:t1', field: 'output', text: 'a\n' },
+      'open',
+    ]);
+    const before = structuredClone(start);
+    const msgs: ConversationServerMessage[] = [
+      { type: 'event', event: ev(2, 2, tool('running'), 't:t1') },
+      { type: 'delta', itemId: 't:t1', field: 'output', text: 'a\nb\n' },
+      { type: 'event', event: ev(3, 3, { kind: 'agent_message', id: 'm', markdown: 'Hello', phase: 'final' }, 'm:1') },
+      { type: 'event', event: ev(1, 1, { kind: 'user_message', text: 'old', images: [], source: 'pdt' }) },
+      { type: 'event', event: ev(4, 2, tool('done', 'a\nb\n'), 't:t1') },
+      { type: 'state', state: { live: true, turnRunning: false, permissionMode: 'ask', pending: [], terminalOpen: false, backgroundTasks: [] } },
+      { type: 'ready' },
+    ];
+    const batched = reduce(start, { type: 'batch', msgs });
+    expect(batched).toEqual(run(msgs, start));
+    expect(start).toEqual(before);
+  });
 });

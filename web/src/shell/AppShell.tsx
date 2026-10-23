@@ -860,7 +860,6 @@ export function AppShell() {
               <RunView
                 key={current.run.id}
                 run={current.run}
-                polledAt={current.polledAt}
                 onRemoved={() => void ws.refresh()}
                 branchLink={branchLink}
                 {...(currentProject ? { repo: currentProject.githubRepo, baseBranch: currentProject.baseBranch } : {})}
@@ -869,7 +868,6 @@ export function AppShell() {
               <SessionView
                 key={current.session.id}
                 session={current.session}
-                polledAt={current.polledAt}
                 onRemoved={() => void ws.refresh()}
                 branchLink={branchLink}
                 {...(currentProject ? { repo: currentProject.githubRepo, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}

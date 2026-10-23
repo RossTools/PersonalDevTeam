@@ -58,8 +58,12 @@ pub(crate) async fn checkout_dir(
     }
 }
 
-fn read_file(checkout: &FsPath) -> Result<Option<String>, ApiError> {
-    match std::fs::read_to_string(checkout.join(PROJECT_CONFIG_FILE)) {
+/// The checkout's run configuration file, read on the blocking pool (`GET /api/tickets` reads it for every project
+/// with active attempts, on every poll).
+async fn read_file(checkout: &FsPath) -> Result<Option<String>, ApiError> {
+    let path = checkout.join(PROJECT_CONFIG_FILE);
+    let read = tokio::task::spawn_blocking(move || std::fs::read_to_string(path)).await.map_err(ApiError::internal)?;
+    match read {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(ApiError::internal(e)),
@@ -74,7 +78,7 @@ fn effective(file: Option<&str>, overrides: Option<&str>) -> Result<RunConfig, R
 
 /// The effective configuration for a run in `checkout`.
 pub(crate) async fn load_effective(st: &AppState, project_id: &str, checkout: &FsPath) -> Result<RunConfig, ApiError> {
-    effective_for_file(st, project_id, read_file(checkout)?.as_deref()).await
+    effective_for_file(st, project_id, read_file(checkout).await?.as_deref()).await
 }
 
 /// The effective configuration for a checkout whose file text is `file` (e.g. read from a branch with git).
@@ -108,7 +112,7 @@ pub(crate) async fn get_config(
 ) -> Result<Json<RunConfigView>, ApiError> {
     let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let (dir, _) = checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;
-    let file = read_file(&dir)?;
+    let file = read_file(&dir).await?;
     let overrides = st.store.get_project_settings(&id).await?.run_overrides;
     let (effective, error) = match effective(file.as_deref(), overrides.as_deref()) {
         Ok(c) => (Some(c), None),

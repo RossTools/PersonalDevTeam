@@ -9,22 +9,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function Probe({ id, polledAt }: { id: string; polledAt: number }) {
-  useViewTracking(id, polledAt);
+function Probe({ id, unseen }: { id: string; unseen: boolean }) {
+  useViewTracking(id, unseen);
   return null;
 }
 
 describe('useViewTracking', () => {
-  it('posts views while the tab is visible, including on each poll', async () => {
+  it('posts on mount and when a poll finds the session unseen, only while the tab is visible', async () => {
     const calls = stubApi({ 'POST /api/sessions/s1/view': undefined });
     let visibility = 'visible';
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility as DocumentVisibilityState);
-    const { rerender } = renderWithQuery(<Probe id="s1" polledAt={1} />);
+    const { rerender } = renderWithQuery(<Probe id="s1" unseen={false} />);
     await waitFor(() => expect(calls).toHaveLength(1));
-    rerender(<Probe id="s1" polledAt={2} />);
+    // Polls that find nothing new post nothing.
+    rerender(<Probe id="s1" unseen={false} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toHaveLength(1);
+    rerender(<Probe id="s1" unseen />);
     await waitFor(() => expect(calls).toHaveLength(2));
+    rerender(<Probe id="s1" unseen={false} />);
     visibility = 'hidden';
-    rerender(<Probe id="s1" polledAt={3} />);
+    rerender(<Probe id="s1" unseen />);
     await new Promise((r) => setTimeout(r, 20));
     expect(calls).toHaveLength(2);
     visibility = 'visible';

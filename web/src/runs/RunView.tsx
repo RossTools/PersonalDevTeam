@@ -6,6 +6,7 @@ import type { Run } from '../api/gen/Run';
 import { agentState, AgentDot } from '../common/AgentState';
 import { BranchChip } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
+import { usePolledAt } from '../common/usePolledAt';
 import { useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { TerminalView } from '../terminal/TerminalView';
@@ -16,9 +17,8 @@ import { withStopConfirm } from './useStartRun';
 type Step = 'setup' | 'command';
 
 /** Keyed by run id by its parent, so tab state never carries over from another run. */
-export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch }: {
+export function RunView({ run, onRemoved, branchLink, repo, baseBranch }: {
   run: Run;
-  polledAt?: number;
   onRemoved: () => void;
   /** The run's branch on GitHub, when known. Superseded by the branch chip's menu when `repo` is known. */
   branchLink?: string | null;
@@ -29,6 +29,8 @@ export function RunView({ run, polledAt, onRemoved, branchLink, repo, baseBranch
 }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  // The terminal's reattach check runs on every poll of the project's runs.
+  const polledAt = usePolledAt(['runs', run.projectId]);
   const projects = useQuery({
     queryKey: ['projects'],
     queryFn: api.listProjects,

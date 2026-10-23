@@ -23,7 +23,7 @@ import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { MessageSource } from '../api/gen/MessageSource';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
-import { buildBlocks, currentTool, turnStartedAt, type Block, type RowNode } from './blocks';
+import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
 import type { Streams } from './model';
 import { approvalTitle, clock, duration, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
@@ -365,26 +365,70 @@ function resetLabel(trigger: string): string {
   }
 }
 
-const BlockView = memo(function BlockView({ block, streams, keyboardFor, onAnswer }: {
-  block: Block;
-  streams: Streams;
-  keyboardFor: string | null;
-  onAnswer: MessageListProps['onAnswer'];
-}) {
-  if (block.type === 'group') {
-    return (
-      <ToolCallRow verb={summarizeTools(block.calls)}>
-        {block.nodes.map((n) => (
-          <div key={n.row.itemId ?? n.row.seq} className="py-0.5">
-            <NodeView node={n} streams={streams} />
-          </div>
-        ))}
-      </ToolCallRow>
-    );
-  }
-  const ev = block.node.row.event;
-  return <NodeView node={block.node} streams={streams} keyboard={ev.kind === 'request' && ev.id === keyboardFor} onAnswer={onAnswer} />;
-});
+/**
+ * One block. It renders again only when its own rows, its own streamed text or the keyboard's request changes: a
+ * streamed token re-renders its block, not the conversation (PDT-136).
+ */
+const BlockView = memo(
+  function BlockView({ block, streams, keyboardFor, onAnswer }: {
+    block: Block;
+    streams: Streams;
+    keyboardFor: string | null;
+    onAnswer: MessageListProps['onAnswer'];
+  }) {
+    if (block.type === 'group') {
+      return (
+        <ToolCallRow verb={summarizeTools(block.calls)}>
+          {block.nodes.map((n) => (
+            <div key={n.row.itemId ?? n.row.seq} className="py-0.5">
+              <NodeView node={n} streams={streams} />
+            </div>
+          ))}
+        </ToolCallRow>
+      );
+    }
+    const ev = block.node.row.event;
+    return <NodeView node={block.node} streams={streams} keyboard={ev.kind === 'request' && ev.id === keyboardFor} onAnswer={onAnswer} />;
+  },
+  (a, b) =>
+    a.block === b.block && a.keyboardFor === b.keyboardFor && a.onAnswer === b.onAnswer
+    && (a.streams === b.streams || blockItemIds(b.block).every((id) => a.streams[id] === b.streams[id])),
+);
+
+/** The rows' blocks, keeping each unchanged block the same object from render to render. */
+function useBlocks(rows: ConversationEvent[], turnRunning: boolean): Block[] {
+  const prev = useRef<Block[]>([]);
+  return useMemo(() => {
+    const next = reuseBlocks(prev.current, buildBlocks(rows, turnRunning));
+    prev.current = next;
+    return next;
+  }, [rows, turnRunning]);
+}
+
+/** The latest `f`, behind a function that never changes (callers pass new closures every render). */
+function useLatest<A extends unknown[], R>(f: (...args: A) => R): (...args: A) => R;
+function useLatest<A extends unknown[], R>(f: ((...args: A) => R) | undefined): ((...args: A) => R) | undefined;
+function useLatest<A extends unknown[], R>(f: ((...args: A) => R) | undefined) {
+  const ref = useRef(f);
+  useLayoutEffect(() => {
+    ref.current = f;
+  });
+  const stable = useCallback((...args: A) => ref.current!(...args), []);
+  return f ? stable : undefined;
+}
+
+/** The last row matching `f`, without copying the rows. */
+function findLast(rows: ConversationEvent[], f: (r: ConversationEvent) => boolean): ConversationEvent | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) if (f(rows[i])) return rows[i];
+  return undefined;
+}
+
+/** `next`, or `prev` when it holds the same diffs (so the context, and every row reading it, stays put). */
+function sameDiffs(prev: Map<string, string>, next: Map<string, string>): Map<string, string> {
+  if (prev.size !== next.size) return next;
+  for (const [k, v] of next) if (prev.get(k) !== v) return next;
+  return prev;
+}
 
 /**
  * The conversation: rows in order, pinned to the bottom while new content arrives unless the reader scrolled up
@@ -407,19 +451,31 @@ export function MessageList({
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
-  const blocks = buildBlocks(rows, turnRunning);
+  const blocks = useBlocks(rows, turnRunning);
+  const answer = useLatest(onAnswer);
+  const continueLatest = useLatest(onContinue);
   // y / n go to the newest open request only.
-  const openRequest = [...rows].reverse().find((r) => r.event.kind === 'request' && r.event.state === 'open');
-  const keyboardFor = openRequest?.event.kind === 'request' ? openRequest.event.id : null;
-  const ctx = useMemo<ListContext>(() => {
-    const turnDiffs = new Map<string, string>();
-    for (const r of rows) if (r.event.kind === 'turn_diff' && r.turnId && r.event.diff) turnDiffs.set(r.turnId, r.event.diff);
-    // Continue: the conversation's last turn was cut off and nothing has happened since.
-    const last = [...rows].reverse().find((r) => r.event.kind === 'turn' || r.event.kind === 'user_message');
+  const keyboardFor = useMemo(() => {
+    const open = findLast(rows, (r) => r.event.kind === 'request' && r.event.state === 'open');
+    return open?.event.kind === 'request' ? open.event.id : null;
+  }, [rows]);
+  const diffs = useRef(new Map<string, string>());
+  const turnDiffs = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows) if (r.event.kind === 'turn_diff' && r.turnId && r.event.diff) m.set(r.turnId, r.event.diff);
+    diffs.current = sameDiffs(diffs.current, m);
+    return diffs.current;
+  }, [rows]);
+  // Continue: the conversation's last turn was cut off and nothing has happened since.
+  const continueTurn = useMemo(() => {
+    const last = findLast(rows, (r) => r.event.kind === 'turn' || r.event.kind === 'user_message');
     const cut = last?.event.kind === 'turn' && last.event.phase === 'ended' && last.event.status === 'interrupted';
-    const continueTurn = cut && !turnRunning && pending.length === 0 ? last.itemId ?? null : null;
-    return { turnDiffs, continueTurn, onContinue, agent, imageUrl };
-  }, [rows, turnRunning, pending.length, onContinue, agent, imageUrl]);
+    return cut && !turnRunning && pending.length === 0 ? last.itemId ?? null : null;
+  }, [rows, turnRunning, pending.length]);
+  const ctx = useMemo<ListContext>(
+    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl }),
+    [turnDiffs, continueTurn, continueLatest, agent, imageUrl],
+  );
 
   const toBottom = useCallback(() => {
     const el = scroller.current;
@@ -461,7 +517,7 @@ export function MessageList({
           {nothing && empty}
           {blocks.map((b) => (
             <div key={b.key} className={ROW}>
-              <BlockView block={b} streams={streams} keyboardFor={keyboardFor} onAnswer={onAnswer} />
+              <BlockView block={b} streams={streams} keyboardFor={keyboardFor} onAnswer={answer} />
             </div>
           ))}
           {provisional.map((p) => (
