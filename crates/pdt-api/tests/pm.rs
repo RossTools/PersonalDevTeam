@@ -704,3 +704,22 @@ async fn the_pm_sets_up_a_discord_channel_and_webhook_that_a_workflow_posts_to()
     assert!(discord.channel("notes").is_some() && discord.channel("later").is_none());
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+#[tokio::test]
+async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
+    let env = setup(None).await;
+    for body in [json!({"title": "Buy milk"}), json!({"title": "Review the login fix", "ticket": "PX-1"})] {
+        let (s, v) = call(&env.app, "POST", "/api/todos", Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+    }
+    let pm = start_pm(&env, "hello").await;
+    wait_said(&env, &pm, 1).await;
+    let said = ask(&env, &pm, r#"mcp: list_todos {}"#).await;
+    assert!(said.contains("Buy milk") && said.contains("Review the login fix"), "{said}");
+    assert!(said.contains("\"ticket\": \"PX-1\""), "{said}");
+    let said = ask(&env, &pm, r#"mcp: list_todos {"project": "PX"}"#).await;
+    assert!(!said.contains("Buy milk") && said.contains("Review the login fix"), "{said}");
+    let said = ask(&env, &pm, r#"mcp: list_todos {"done": true}"#).await;
+    assert!(said.contains("\"todos\": []"), "{said}");
+    call(&env.app, "POST", &format!("/api/sessions/{pm}/kill"), None).await;
+}

@@ -39,6 +39,7 @@ mod sessions;
 mod slow;
 mod start;
 mod tickets;
+mod todos;
 pub mod update;
 mod workflow;
 mod workspaces;
