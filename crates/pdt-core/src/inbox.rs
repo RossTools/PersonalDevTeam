@@ -1,6 +1,6 @@
 //! The Inbox (Phase 7b spec §6): what waits on the user. Questions from agents (`ask_user`), human gates, stalled
-//! agent steps and loop limits are stored items; approvals (agents' open permission requests) are listed from the
-//! conversations. Pure types and rules; pdt-store keeps items, pdt-api makes and answers them.
+//! and timed-out agent steps and loop limits are stored items; approvals (agents' open permission requests) are
+//! listed from the conversations. Pure types and rules; pdt-store keeps items, pdt-api makes and answers them.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,8 @@ pub enum InboxKind {
     Approval,
     /// A manual step (Phase 7c): the user does the stage's work and picks its outcome.
     Manual,
+    /// An agent step that took its `timeout` port (PDT-123): Resume or Stop.
+    TimedOut,
     /// A session waiting on a permission prompt or a question (not stored: its `session.needs_you` notification).
     Session,
 }
@@ -37,12 +39,22 @@ impl InboxKind {
             InboxKind::Approval => "approval",
             InboxKind::Manual => "manual",
             InboxKind::Session => "session",
+            InboxKind::TimedOut => "timed_out",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [Self::Question, Self::Gate, Self::Stalled, Self::LoopLimit, Self::Approval, Self::Manual, Self::Session]
-            .into_iter()
-            .find(|k| k.as_str() == s)
+        [
+            Self::Question,
+            Self::Gate,
+            Self::Stalled,
+            Self::LoopLimit,
+            Self::Approval,
+            Self::Manual,
+            Self::Session,
+            Self::TimedOut,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == s)
     }
 }
 
@@ -165,6 +177,7 @@ pub fn choice_outcome(choice: &str) -> Option<&str> {
 pub const NUDGE: &str = "nudge";
 pub const AGAIN: &str = "again";
 pub const STOP: &str = "stop";
+pub const RESUME: &str = "resume";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

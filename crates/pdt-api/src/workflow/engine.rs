@@ -48,7 +48,7 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
     })
 }
 
-fn new_step(run_id: &str, seq: i64, node_id: &str, kind: &str) -> Step {
+pub(crate) fn new_step(run_id: &str, seq: i64, node_id: &str, kind: &str) -> Step {
     Step {
         id: uuid::Uuid::now_v7().to_string(),
         run_id: run_id.into(),
@@ -217,6 +217,10 @@ pub(crate) async fn complete_step(st: &AppState, step: &Step, port: &str, output
     s.ended_at = Some(now_ms());
     st.store.put_step(&s).await.map_err(err)?;
     end_step_extras(st, &s.id).await;
+    // An agent step that timed out tells the user, who can resume it (PDT-123).
+    if s.kind == super::nodes::agent::KIND && port == pdt_core::workflow::agent::TIMEOUT {
+        super::agent::timed_out(st, &s, &run).await;
+    }
     for n in successors(&doc, &run.id, &s.node_id, port, next_seq) {
         st.store.put_step(&n).await.map_err(err)?;
     }
@@ -251,6 +255,12 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
     let scratch = super::nodes::command::scratch_dir(&st.data_dir, &run.id);
     if tokio::fs::try_exists(&scratch).await.unwrap_or(false) {
         let _ = tokio::fs::remove_dir_all(&scratch).await;
+    }
+    // A cancelled run waits on nobody: its items close, a timed-out step's too (PDT-123).
+    if status == RunStatus::Cancelled
+        && let Err(e) = st.store.close_inbox_items(None, Some(&run.id), now).await
+    {
+        tracing::warn!(run = %run.id, error = %e, "could not close a run's Inbox items");
     }
     run.status = status;
     run.output = output;
@@ -541,8 +551,77 @@ pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> R<()> {
     st.store.update_workflow_run(&run).await.map_err(err)
 }
 
+/// Takes a run back to `step`, the agent step it timed out or stopped at (PDT-123), so it can go on from there: what
+/// the run still had to do after it (its `timeout` path) is skipped, the step's open Inbox items end with
+/// `resolution`, and the run runs again. Callers hold the engine lock and add the step that goes on.
+pub(crate) async fn reopen_at(st: &AppState, step: &Step, resolution: Value) -> R<Run> {
+    let mut run = st.store.get_workflow_run(&step.run_id).await.map_err(err)?.ok_or("the run is gone")?;
+    let steps = st.store.list_steps(&run.id).await.map_err(err)?;
+    if pdt_core::workflow::agent::resumable_step(&steps).map(|s| s.id.as_str()) != Some(step.id.as_str()) {
+        return Err("the run has moved on from this step".into());
+    }
+    if run.parent_step_id.is_some() && run.status.is_finished() {
+        return Err("this run's caller has gone on without it".into());
+    }
+    let now = now_ms();
+    for mut s in steps.into_iter().filter(|s| s.seq > step.seq) {
+        if matches!(s.status, StepStatus::Pending | StepStatus::Running | StepStatus::Waiting) {
+            s.status = StepStatus::Skipped;
+            s.ended_at = Some(now);
+            st.store.put_step(&s).await.map_err(err)?;
+            end_step_extras(st, &s.id).await;
+        }
+    }
+    for item in st.store.open_items_for_step(&step.id).await.map_err(err)? {
+        st.store
+            .end_inbox_item(&item.id, pdt_core::inbox::InboxStatus::Resolved, &resolution, now)
+            .await
+            .map_err(err)?;
+    }
+    run.status = RunStatus::Running;
+    run.error = None;
+    run.output = Value::Null;
+    run.wake_at = None;
+    run.ended_at = None;
+    st.store.update_workflow_run(&run).await.map_err(err)?;
+    tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, "a workflow run goes on from a stopped step");
+    Ok(run)
+}
+
+/// The next step number of a run.
+pub(crate) async fn next_seq(st: &AppState, run_id: &str) -> R<i64> {
+    Ok(st.store.list_steps(run_id).await.map_err(err)?.iter().map(|s| s.seq).max().unwrap_or(0) + 1)
+}
+
+/// Resumes a run from the agent step it timed out or stopped at (PDT-123): the node runs again in the same run, so
+/// with the same trigger, ticket and attempt, and in that step's session while it is there. `note` (the user's) goes
+/// to the session first.
+pub(crate) async fn resume_run(st: &AppState, run_id: &str, note: Option<String>) -> R<()> {
+    let _engine = st.engine_lock.lock().await;
+    resume_locked(st, run_id, note).await
+}
+
+/// `resume_run` for a caller that holds the engine lock.
+pub(crate) async fn resume_locked(st: &AppState, run_id: &str, note: Option<String>) -> R<()> {
+    let steps = st.store.list_steps(run_id).await.map_err(err)?;
+    let step = pdt_core::workflow::agent::resumable_step(&steps)
+        .cloned()
+        .ok_or("the run has no agent step that timed out or stopped to resume from")?;
+    reopen_at(st, &step, json!({"choice": pdt_core::inbox::RESUME})).await?;
+    let mut next = new_step(run_id, next_seq(st, run_id).await?, &step.node_id, &step.kind);
+    let note = note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    // A resumed step doesn't count against the node's loop limit: the user asked for it.
+    next.wait = json!({"loopAllowed": true, "resumeOf": step.id, "note": note});
+    st.store.put_step(&next).await.map_err(err)
+}
+
 pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> R<()> {
     let _engine = st.engine_lock.lock().await;
+    cancel_locked(st, run_id).await
+}
+
+/// `cancel_run` for a caller that holds the engine lock.
+pub(crate) async fn cancel_locked(st: &AppState, run_id: &str) -> R<()> {
     let mut run = st.store.get_workflow_run(run_id).await.map_err(err)?.ok_or("no such run")?;
     if run.status.is_finished() {
         return Err("the run has ended".into());

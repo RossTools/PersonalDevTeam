@@ -91,6 +91,24 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'))[1]?.body).toEqual({ choice: 'nudge', text: 'Finish up.' }));
   });
 
+  it('resumes a timed-out step with the user\'s note, or stops it', async () => {
+    const timedOut = item('to', {
+      kind: 'timed_out', group: 'stalled', sessionId: 'sess', personaName: 'Coder', title: 'Coder timed out at code',
+      body: { why: 'it had no outcome within its time limit', node: 'code', workflow: 'Pipeline' },
+      choices: [{ id: 'resume', title: 'Resume', primary: true }, { id: 'stop', title: 'Stop', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/to/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[timedOut]} selectedId="to" onSelect={() => {}} />);
+    expect(screen.getByText(/Step code of workflow Pipeline ended without an outcome/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    const answers = () => calls.filter((c) => c.method === 'POST' && c.path === '/api/inbox/to/answer');
+    await waitFor(() => expect(answers()[0]?.body).toEqual({ choice: 'stop' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Note (optional)' }), 'Push what you have.');
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(answers()[1]?.body).toEqual({ choice: 'resume', text: 'Push what you have.' }));
+  });
+
   it('moves with j and k, opens the ticket with o and dismisses with e', async () => {
     const calls = stubApi({ 'POST /api/inbox/q/dismiss': undefined, 'GET /api/inbox': { items: [], total: 0 } });
     const onSelect = vi.fn();

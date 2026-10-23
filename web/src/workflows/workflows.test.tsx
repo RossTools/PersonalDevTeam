@@ -101,6 +101,7 @@ describe('runs view', () => {
     id: 'r1', workflowId: 'w1', workflowName: 'CI to agent', version: 1, status, runKey: 'k', triggerEventId: null, triggerNode: 'ci',
     trigger: { type: 'ci.run_failed', ticketKey: 'PDT-1' }, projectId: null, ticketId: null, attemptId: null, parentRunId: null,
     parentStepId: null, error: status === 'failed' ? 'tell failed' : null, output: null, wakeAt: null, startedAt: 1, endedAt: null, steps,
+    resumeFrom: null as string | null,
   });
   const step = (id: string, nodeId: string, status: string, extra = {}) => ({
     id, runId: 'r1', seq: id === 's1' ? 1 : 2, nodeId, kind: nodeId === 'ci' ? 'ci.run_failed' : 'gate', status, input: {}, output: null,
@@ -131,6 +132,22 @@ describe('runs view', () => {
     expect(await screen.findByText('Go on?')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'yes' }));
     await waitFor(() => expect(calls.find((c) => c.path.endsWith('/answer'))?.body).toEqual({ choice: 'yes' }));
+  });
+
+  it('resumes a run from the agent step it timed out at', async () => {
+    const ended = { ...run('succeeded', [step('s1', 'ci', 'succeeded'), step('s2', 'tell', 'succeeded', { port: 'timeout' })]), resumeFrom: 's2' };
+    const calls = stubApi({
+      'GET /api/workflow-runs': [ended],
+      'GET /api/workflow-runs/r1': ended,
+      'GET /api/workflows/w1/versions/1': { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', createdAt: 1, doc: DOC },
+      'POST /api/workflows/check': check,
+      'POST /api/workflow-runs/r1/resume': { ...ended, status: 'running', resumeFrom: null },
+    });
+    renderWithQuery(<RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={() => {}} />);
+    const detail = await screen.findByRole('region', { name: 'Run' });
+    await userEvent.click(within(detail).getByRole('button', { name: 'Resume from tell' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/resume'))).toBe(true));
+    await waitFor(() => expect(within(detail).queryByRole('button', { name: 'Resume from tell' })).not.toBeInTheDocument());
   });
 });
 

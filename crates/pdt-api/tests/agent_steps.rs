@@ -491,6 +491,146 @@ async fn gates_are_answered_from_the_inbox_and_loop_limits_ask() {
     assert_eq!(last["port"], "stopped");
 }
 
+/// A review step that times out after one turn without an outcome (its session only echoes `prompt`), and ends the
+/// run by `gave_up`, as the Pipeline's timeout path does.
+fn timing_out_doc(prompt: &str) -> Value {
+    let mut doc = review_doc(prompt, json!({"maxTurns": 1}));
+    doc["nodes"].as_array_mut().unwrap().push(json!({"id": "gave_up", "kind": "end", "version": 1}));
+    doc["edges"].as_array_mut().unwrap().push(json!({"from": "review", "port": "timeout", "to": "gave_up"}));
+    doc
+}
+
+/// Runs `timing_out_doc` until its review step times out: the run, the step and its Inbox item.
+async fn timed_out_run(env: &Env, t: &str) -> (String, Value, Value) {
+    let wf = create_workflow(env, timing_out_doc("Have a look.")).await;
+    let id = run_now(env, &wf, json!({"ticketId": t})).await;
+    let r = run_ended(env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r:#}");
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    assert_eq!(step["port"], "timeout", "{r:#}");
+    assert_eq!(r["resumeFrom"], step["id"], "{r:#}");
+    let item = tick_until(env, "the timed-out item", || async {
+        inbox(env).await.into_iter().find(|i| i["kind"] == "timed_out")
+    })
+    .await;
+    (id, step, item)
+}
+
+/// PDT-123: a step that times out tells the user in the Inbox, and Resume runs it again in the same run and session,
+/// the user's note first.
+#[tokio::test]
+async fn a_timed_out_step_is_in_the_inbox_and_resumes_in_its_session() {
+    let env = setup().await;
+    let t = ticket(&env, "Slow").await;
+    let (id, step, item) = timed_out_run(&env, &t).await;
+    let session = step["output"]["sessionId"].as_str().unwrap().to_string();
+    assert_eq!(
+        (item["group"].as_str(), item["stepId"].as_str(), item["runId"].as_str(), item["sessionId"].as_str()),
+        (Some("stalled"), step["id"].as_str(), Some(id.as_str()), Some(session.as_str()))
+    );
+    assert_eq!(
+        (item["ticketTitle"].as_str(), item["personaName"].as_str(), item["body"]["node"].as_str()),
+        (Some("Slow"), Some("Reviewer"), Some("review"))
+    );
+    let choices: Vec<&str> = item["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(choices, ["resume", "stop"]);
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", item["id"].as_str().unwrap()),
+        Some(json!({"choice": "resume",
+                    "text": r#"mcp: submit_outcome {"outcome": "approved", "summary": "Done after all."}"#})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let r = run_ended(&env, &id).await;
+    assert_eq!((r["status"].as_str(), r["output"]["result"].as_str()), (Some("succeeded"), Some("approved")), "{r:#}");
+    let reviews: Vec<&Value> = r["steps"].as_array().unwrap().iter().filter(|s| s["nodeId"] == "review").collect();
+    assert_eq!(reviews.len(), 2, "{r:#}");
+    assert_eq!(reviews[1]["output"]["sessionId"].as_str(), Some(session.as_str()), "the same session");
+    assert!(r["resumeFrom"].is_null());
+    let said = agent_says(&env, &session).await;
+    assert!(said.iter().any(|m| m.starts_with("mcp submit_outcome:")), "{said:?}");
+    assert!(inbox(&env).await.is_empty());
+}
+
+/// PDT-123: an outcome the agent submits after its step timed out, while the run hasn't moved on, continues the run
+/// from that outcome's port; once it has moved on, there is no step to take one.
+#[tokio::test]
+async fn a_late_outcome_after_a_timeout_continues_the_run() {
+    let env = setup().await;
+    let t = ticket(&env, "Late").await;
+    let (id, step, _) = timed_out_run(&env, &t).await;
+    let session = step["output"]["sessionId"].as_str().unwrap().to_string();
+    let send = |text: &str| {
+        let (app, session, text) = (env.app.clone(), session.clone(), text.to_string());
+        async move {
+            let (s, v) =
+                call(&app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+        }
+    };
+    send(r#"mcp: submit_outcome {"outcome": "changes_requested", "summary": "Finally done."}"#).await;
+    let said = tick_until(&env, "the accepted outcome", || async {
+        let said = agent_says(&env, &session).await;
+        said.iter().any(|m| m.contains("hadn't moved on")).then(|| json!(said))
+    })
+    .await;
+    assert!(!said.to_string().contains("no workflow step is waiting"), "{said}");
+    let r = run_ended(&env, &id).await;
+    let last = r["steps"].as_array().unwrap().iter().rev().find(|s| s["nodeId"] == "review").unwrap().clone();
+    assert_eq!(
+        (last["port"].as_str(), last["output"]["summary"].as_str(), last["output"]["sessionId"].as_str()),
+        (Some("changes_requested"), Some("Finally done."), Some(session.as_str())),
+        "{r:#}"
+    );
+    assert!(r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "fix" && s["status"] == "succeeded"));
+    assert!(inbox(&env).await.is_empty(), "the timed-out item is resolved");
+    // The run has moved on: another outcome finds no step.
+    send(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Again."}"#).await;
+    tick_until(&env, "the refusal", || async {
+        let said = agent_says(&env, &session).await;
+        said.iter().any(|m| m.contains("no workflow step is waiting")).then_some(json!(null))
+    })
+    .await;
+}
+
+/// PDT-123: Stop leaves the step stopped; the run can still be resumed from Workflows → Runs, which sends the same
+/// session on (here it times out again, and is back in the Inbox).
+#[tokio::test]
+async fn a_stopped_timeout_can_be_resumed_from_the_run() {
+    let env = setup().await;
+    let t = ticket(&env, "Stop").await;
+    let (id, step, item) = timed_out_run(&env, &t).await;
+    let session = step["output"]["sessionId"].as_str().unwrap().to_string();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", item["id"].as_str().unwrap()),
+        Some(json!({"choice": "stop"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(inbox(&env).await.is_empty());
+    assert_eq!(run(&env, &id).await["status"], "succeeded");
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/resume"), None).await;
+    assert_eq!((s, r["status"].as_str()), (StatusCode::OK, Some("running")), "{r}");
+    let again = tick_until(&env, "the second timeout", || async {
+        inbox(&env).await.into_iter().find(|i| i["kind"] == "timed_out")
+    })
+    .await;
+    assert_ne!(again["stepId"], step["id"]);
+    assert_eq!(again["sessionId"].as_str(), Some(session.as_str()));
+    let said = agent_says(&env, &session).await;
+    assert!(said.iter().any(|m| m.contains("The user resumed your step after it stopped")), "{said:?}");
+    // Resuming from the run answers the item too.
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/resume"), None).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert!(inbox(&env).await.is_empty());
+    let (s, v) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/cancel"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
 #[tokio::test]
 async fn a_personal_projects_tickets_run_in_a_folder() {
     let env = setup().await;

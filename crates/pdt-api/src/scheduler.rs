@@ -48,9 +48,11 @@ pub(crate) async fn admit_waiting(st: &AppState) {
         if step.status != StepStatus::Waiting {
             continue;
         }
-        let loop_allowed = step.wait.get("loopAllowed").cloned().unwrap_or(Value::Bool(false));
+        let keep = |k: &str| step.wait.get(k).cloned().unwrap_or(Value::Null);
+        let (loop_allowed, resume_of, note) = (keep("loopAllowed"), keep("resumeOf"), keep("note"));
         step.status = StepStatus::Pending;
-        step.wait = json!({"admitted": true, "loopAllowed": loop_allowed});
+        step.wait = json!({"admitted": true, "loopAllowed": loop_allowed.as_bool() == Some(true),
+                           "resumeOf": resume_of, "note": note});
         step.wake_at = None;
         if let Err(e) = st.store.put_step(&step).await {
             tracing::warn!(step = %step.id, error = %e, "could not admit a step waiting for a slot");

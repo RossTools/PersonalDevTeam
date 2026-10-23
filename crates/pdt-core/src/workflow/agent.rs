@@ -204,6 +204,34 @@ pub fn nudge_message(outcomes: &[OutcomeSpec]) -> String {
     )
 }
 
+/// What a step's session gets when the user resumes the step after it timed out or stopped (PDT-123): the user's note
+/// first, if any, then why it stopped and how to finish.
+pub fn resume_message(why: Option<&str>, note: Option<&str>, outcomes: &[OutcomeSpec]) -> String {
+    let mut out = String::new();
+    if let Some(n) = note.map(str::trim).filter(|n| !n.is_empty()) {
+        out.push_str(&format!("{n}\n\n"));
+    }
+    out.push_str(&format!("[{SHORT_NAME}] The user resumed your step"));
+    match why.map(str::trim).filter(|w| !w.is_empty()) {
+        Some(w) => out.push_str(&format!(" after it stopped: {w}")),
+        None => out.push('.'),
+    }
+    out.push_str(&format!(
+        "\n\nCarry on where you left off, then call `submit_outcome` with one of: {}; or call `ask_user` if you need \
+         the user.",
+        outcome_list(outcomes)
+    ));
+    out
+}
+
+/// The step a run can be resumed from (PDT-123): its latest agent step, when that one ended by `timeout` or
+/// `stopped` (nothing after it in the run is an agent step, so the run has not moved on from it).
+pub fn resumable_step(steps: &[super::api::Step]) -> Option<&super::api::Step> {
+    let last = steps.iter().filter(|s| s.kind == "agent").max_by_key(|s| s.seq)?;
+    (last.status == super::api::StepStatus::Succeeded && matches!(last.port.as_deref(), Some(TIMEOUT | STOPPED)))
+        .then_some(last)
+}
+
 /// The section a step's session gets in its instructions (spec §4.2).
 pub fn step_section(persona: &str, instructions: &str, outcomes: &[OutcomeSpec]) -> String {
     let mut out = format!(
@@ -280,6 +308,52 @@ mod tests {
         );
         assert_eq!(back_because("attempt.merge", "queued", &serde_json::Value::Null), None);
         assert!(!next_pass_message(None, &outs()).contains("\n\n\n"));
+    }
+
+    #[test]
+    fn a_resumed_step_hears_the_users_note_first_then_why_and_how_to_finish() {
+        let m = resume_message(Some("8 turns ended without an outcome"), Some(" Push what you have. "), &outs());
+        assert!(
+            m.starts_with("Push what you have.\n\n[PDT] The user resumed your step after it stopped: 8 turns"),
+            "{m}"
+        );
+        assert!(m.contains("`submit_outcome` with one of: `approved` (it can merge), `changes_requested`"), "{m}");
+        let plain = resume_message(None, Some("  "), &outs());
+        assert!(plain.starts_with("[PDT] The user resumed your step.\n\nCarry on"), "{plain}");
+    }
+
+    #[test]
+    fn a_run_resumes_from_its_latest_agent_step_when_that_timed_out_or_stopped() {
+        use super::super::api::{Step, StepStatus};
+        let step = |seq: i64, kind: &str, port: Option<&str>| Step {
+            id: format!("s{seq}"),
+            run_id: "r".into(),
+            seq,
+            node_id: format!("n{seq}"),
+            kind: kind.into(),
+            status: StepStatus::Succeeded,
+            input: serde_json::Value::Null,
+            output: serde_json::Value::Null,
+            port: port.map(String::from),
+            attempts: 1,
+            error: None,
+            wake_at: None,
+            wait: serde_json::Value::Null,
+            started_at: None,
+            ended_at: None,
+        };
+        let timed_out = vec![step(1, "manual", Some("out")), step(2, "agent", Some("timeout")), step(3, "end", None)];
+        assert_eq!(resumable_step(&timed_out).map(|s| s.id.as_str()), Some("s2"));
+        let stopped = vec![step(2, "agent", Some("stopped")), step(1, "manual", Some("out"))];
+        assert_eq!(resumable_step(&stopped).map(|s| s.id.as_str()), Some("s2"));
+        // The run moved on: a later agent step, or the step ended by an outcome.
+        let moved = vec![step(2, "agent", Some("timeout")), step(3, "agent", Some("approved"))];
+        assert!(resumable_step(&moved).is_none());
+        assert!(resumable_step(&[step(2, "agent", Some("approved"))]).is_none());
+        let mut waiting = step(2, "agent", None);
+        waiting.status = StepStatus::Waiting;
+        assert!(resumable_step(&[waiting]).is_none());
+        assert!(resumable_step(&[step(1, "manual", Some("out"))]).is_none());
     }
 
     #[test]

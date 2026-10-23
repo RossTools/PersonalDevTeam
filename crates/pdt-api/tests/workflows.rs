@@ -240,6 +240,10 @@ async fn retry_resumes_a_failed_run_from_its_failed_step() {
     assert_eq!(run(&env, &id).await["status"], "failed");
     // Give the step what it needs, then retry it.
     env.state.store.set_workflow_state(&wf, "ticket", &json!(tid), false, 1).await.unwrap();
+    // Resume is for a run that stopped at an agent step (PDT-123), not a failed action.
+    assert!(run(&env, &id).await["resumeFrom"].is_null());
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/resume"), None).await;
+    assert_eq!((s, r["code"].as_str()), (StatusCode::CONFLICT, Some("cannot_resume")), "{r}");
     let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/retry"), None).await;
     assert_eq!((s, r["status"].as_str()), (StatusCode::OK, Some("running")), "{r}");
     pdt_api::run_workflows(&env.state).await;

@@ -211,7 +211,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
         let what =
             [Some(label.to_string()), i.persona_name.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
         n.body = with_ticket(&what, i.ticket_key.as_deref());
-        n.severity = if matches!(i.kind, InboxKind::Stalled | InboxKind::LoopLimit) {
+        n.severity = if matches!(i.kind, InboxKind::Stalled | InboxKind::TimedOut | InboxKind::LoopLimit) {
             Severity::Warning
         } else {
             Severity::Info
