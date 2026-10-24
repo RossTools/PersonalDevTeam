@@ -107,13 +107,15 @@ pub enum NotificationKind {
     ConnectionFailed,
     #[serde(rename = "host.loop_stale")]
     HostLoopStale,
+    #[serde(rename = "todo.due")]
+    TodoDue,
 }
 
 use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 18] = [
+    pub const ALL: [NotificationKind; 19] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -132,6 +134,7 @@ impl NotificationKind {
         K::WorkflowNotify,
         K::ConnectionFailed,
         K::HostLoopStale,
+        K::TodoDue,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -154,6 +157,7 @@ impl NotificationKind {
             K::WorkflowNotify => "workflow.notify",
             K::ConnectionFailed => "connection.failed",
             K::HostLoopStale => "host.loop_stale",
+            K::TodoDue => "todo.due",
         }
     }
 
@@ -194,7 +198,8 @@ impl NotificationKind {
             | K::InboxNotice
             | K::WorkflowNotify
             | K::ConnectionFailed
-            | K::HostLoopStale => Show::Toast,
+            | K::HostLoopStale
+            | K::TodoDue => Show::Toast,
             K::SessionTurnEnded => Show::Dot,
             K::SessionExited | K::PrCiFailed | K::PrConflict | K::PrQueueLeft | K::PrMerged | K::WorkflowFailed => {
                 Show::Inbox
@@ -232,6 +237,7 @@ impl NotificationKind {
             K::WorkflowNotify => "Workflow notification",
             K::ConnectionFailed => "Connection failing",
             K::HostLoopStale => "Background task stalled",
+            K::TodoDue => "Todo due",
         }
     }
 
@@ -256,6 +262,7 @@ impl NotificationKind {
             K::WorkflowNotify => "A workflow's Notify me step.",
             K::ConnectionFailed => "A sensor could not use a connection (a revoked token, the service down).",
             K::HostLoopStale => "One of PDT's background tasks (PR checks, the workflow engine…) stopped running.",
+            K::TodoDue => "One of your todos comes due (its day starts, or its time comes).",
         }
     }
 
@@ -321,6 +328,10 @@ pub enum NotificationTarget {
     },
     Url {
         url: String,
+    },
+    /// A todo in the right panel's list.
+    Todo {
+        id: String,
     },
     /// Settings → Connections.
     Connections,
@@ -424,6 +435,14 @@ pub fn attempt_key(attempt_id: &str, kind: NotificationKind) -> String {
         _ => "merged",
     };
     format!("attempt:{attempt_id}:{what}")
+}
+
+/// The one reminder per todo and due date (and time): re-dating it makes a new cause.
+pub fn todo_key(todo_id: &str, due_on: &str, due_time: Option<&str>) -> String {
+    match due_time {
+        Some(t) => format!("todo:{todo_id}:{due_on}T{t}"),
+        None => format!("todo:{todo_id}:{due_on}"),
+    }
 }
 
 /// A session left in a turn-ended state this long is worth a notification (when the kind is above `dot`).
@@ -671,6 +690,8 @@ mod tests {
         assert_eq!(inbox_key("i1"), "inbox:i1");
         assert_eq!(session_key("s", K::SessionNeedsYou), "session:s:needs_you");
         assert_eq!(attempt_key("a", K::PrCiFailed), "attempt:a:ci_failed");
+        assert_eq!(todo_key("t", "2026-10-23", None), "todo:t:2026-10-23");
+        assert_eq!(todo_key("t", "2026-10-23", Some("09:00")), "todo:t:2026-10-23T09:00");
     }
 
     #[test]

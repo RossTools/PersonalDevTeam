@@ -2,7 +2,8 @@
 //! from there. Event causes (a session's agent exiting, PR news, failed runs, `notify` steps) call [`notify`] where
 //! they happen; causes that are state (a session waiting on the user or left unseen, open Inbox items) are kept in
 //! step by [`sync`], which makes a row when its cause appears and clears it when the cause goes away. It runs every
-//! 2 s and at once when something [`kick`]s it. Needs-you notifications never go through workflows: they work with
+//! 2 s and at once when something [`kick`]s it. A todo coming due (PDT-140) is state too: its one reminder per due date
+//! is remembered on the todo, so a pdtd that was down at the due moment makes it once when it starts. Needs-you notifications never go through workflows: they work with
 //! every workflow off.
 
 use crate::error::ApiError;
@@ -17,7 +18,7 @@ use pdt_core::inbox::{InboxItem, InboxKind};
 use pdt_core::notification::{
     Change, KindSetting, NewNotification, Notification, NotificationKind as K, NotificationList, NotificationSettings,
     NotificationTarget, RETENTION_MS, ReadAll, Section, Severity, Show, attempt_key, inbox_key, session_key,
-    session_wants,
+    session_wants, todo_key,
 };
 use pdt_core::pr::{Mergeable, NoticeKind, PrState};
 use pdt_core::session::{SessionKind, SessionStatus};
@@ -260,6 +261,33 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
         }
     }
 
+    // Todos come due: one reminder per todo and due date, made once even if it is dismissed or pdtd restarts.
+    for (t, reminded) in st.store.dated_open_todos().await? {
+        let Some(due_on) = t.due_on.as_deref() else { continue };
+        let Some(at) = pdt_core::todo::due_at_local(Some(due_on), t.due_time.as_deref()) else { continue };
+        if at > now {
+            continue;
+        }
+        let key = todo_key(&t.id, due_on, t.due_time.as_deref());
+        if reminded.as_deref() != Some(key.as_str()) {
+            st.store.set_todo_reminded(&t.id, &key).await?;
+            let mut n =
+                NewNotification::new(K::TodoDue, &key, t.title.clone(), NotificationTarget::Todo { id: t.id.clone() });
+            // Late (pdtd was down): say since when.
+            let today = jiff::Zoned::now().date().to_string();
+            let when = match t.due_time.as_deref() {
+                _ if due_on < today.as_str() => format!("Overdue since {due_on}"),
+                Some(time) => format!("Due at {time}"),
+                None => "Due today".to_string(),
+            };
+            n.body = with_ticket(&when, t.ticket_key.as_deref());
+            n.project_id = t.project_id.clone();
+            n.ticket_id = t.ticket_id.clone();
+            notify(st, n).await;
+        }
+        wanted.insert(key);
+    }
+
     // What went away.
     for (key, n) in &live {
         let gone = match n.kind {
@@ -270,7 +298,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
                 None => true,
             },
             K::PrConflict | K::PrQueueLeft => pr_fixed(st, n),
-            K::HostLoopStale => !wanted.contains(key),
+            K::HostLoopStale | K::TodoDue => !wanted.contains(key),
             _ => false,
         };
         if gone {

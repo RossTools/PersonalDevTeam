@@ -3,4 +3,4 @@
 /**
  * What clicking a notification opens.
  */
-export type NotificationTarget = { "kind": "session", id: string, projectId: string, } | { "kind": "inbox", id: string, } | { "kind": "ticket", id: string, projectId: string, } | { "kind": "ticket_key", key: string, } | { "kind": "workflow", id: string, } | { "kind": "url", url: string, } | { "kind": "connections" } | { "kind": "none" };
+export type NotificationTarget = { "kind": "session", id: string, projectId: string, } | { "kind": "inbox", id: string, } | { "kind": "ticket", id: string, projectId: string, } | { "kind": "ticket_key", key: string, } | { "kind": "workflow", id: string, } | { "kind": "url", url: string, } | { "kind": "todo", id: string, } | { "kind": "connections" } | { "kind": "none" };

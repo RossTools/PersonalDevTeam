@@ -709,7 +709,8 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   to accept), `inbox.manual`, `inbox.stalled` (a stalled or timed-out step), `inbox.loop_limit`, `inbox.notice` (an unheard
   notice, PDT-139). Updates: `session.turn_ended`, `session.exited`,
   `pr.ci_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `connection.failed`
-  ("Sensors and webhooks"), `host.loop_stale` (a background loop of pdtd stopped finishing passes, [host.md](host.md)).
+  ("Sensors and webhooks"), `host.loop_stale` (a background loop of pdtd stopped finishing passes, [host.md](host.md)),
+  `todo.due` (a todo came due, PDT-140: [workspaces.md](workspaces.md) "Right panel and todos").
   Each kind's Show
   is `off`, `dot` (only the target's own marker: no row), `inbox`, `toast` or `desktop`, each including the ones
   before; defaults in `NotificationKind::default_show`. The Inbox's own kinds (`inbox.*`) never go below `inbox`.
@@ -717,14 +718,17 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   (section, label, when, show, default, allowed), `PATCH` `{kind: show | null}` (null restores the default).
 - **Rows.** Only `inbox` and up are stored, with the Show at creation. One live row per `dedupe_key`
   (`session:<id>:needs_you|turn_ended|exited`, `inbox:<item>`, `attempt:<id>:ci_failed|conflict|queue_left|merged`,
-  `run:<id>:failed`, `notify:<step>`, `connection:<name>`, `loop:<name>:stale`); a cause firing again updates its row
+  `run:<id>:failed`, `notify:<step>`, `connection:<name>`, `loop:<name>:stale`, `todo:<id>:<dueOn>[T<HH:MM>]`); a cause firing again updates its row
   (title, body, `created_at`, unread again).
   `seq` grows on every change (created, updated, cleared). Pruned after 30 days, except live Needs-you rows.
 - **State causes** (`sync`, every 2 s and at once on a kick: activity changes, a session viewed, an Inbox answer or
   dismiss, a settings change): a running agent session that needs the user and is unseen (`session.needs_you`, not
   for a conversation with an open approval: that is `inbox.approval`), or idle and unseen for 30 s
   (`session.turn_ended`, only above `dot`); open Inbox items and approvals; stale background loops
-  (`host.loop_stale`, severity error, default `toast`). A row whose cause went away is cleared: a loop's next pass,
+  (`host.loop_stale`, severity error, default `toast`); open todos whose due moment has passed (`todo.due`, default
+  `toast`, target `{kind: "todo", id}`: one per todo and due date, remembered on the todo as `reminded_key`, so a
+  dismissed one doesn't come back and one missed while pdtd was down comes once when it starts). A row whose cause
+  went away is cleared: a todo done, deleted or re-dated, a loop's next pass,
   the session left that state or was viewed (`last_viewed_at`), the item resolved or closed, an exited session
   restarted or removed, a conflict's PR mergeable again (or closed), a dropped PR back in the queue. Viewing a session
   reads its rows (`POST /api/sessions/{id}/view`).
