@@ -17,7 +17,7 @@ use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, start_pro
 use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
 use pdt_core::workflow::events::MergeVia;
 use pdt_core::workspace::{TabItem, Workspace, valid_workspace_name};
-use pdt_store::{AttemptInfo, TicketError};
+use pdt_store::{AttemptInfo, StartedAttempt, TicketError};
 use serde_json::json;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -192,6 +192,7 @@ pub(crate) async fn start_ticket(
                 _ => conflict("chat_not_startable", "that chat already works on a ticket".into()),
             });
         }
+        announce(&st, &started).await;
         let data = json!({"sessionId": chat.id, "agent": chat.agent, "attemptId": attempt_id, "fromChat": true});
         if let Err(e) =
             st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await
@@ -210,6 +211,7 @@ pub(crate) async fn start_ticket(
     }
 
     if v.no_session {
+        announce(&st, &started).await;
         open_tabs(&st, &project.id, &key, &id, &attempt_id, None, &v).await;
         if let Some(p) = &parent {
             part_started(&st, p).await;
@@ -278,6 +280,7 @@ pub(crate) async fn start_ticket(
             return Err(e);
         }
     };
+    announce(&st, &started).await;
     let data = json!({"sessionId": session.id, "agent": v.agent, "attemptId": attempt_id});
     if let Err(e) = st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await {
         tracing::warn!(ticket = %id, error = %e, "could not record the started session on the timeline");
@@ -290,6 +293,13 @@ pub(crate) async fn start_ticket(
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
     Ok(StartResult { ticket, attempt, session: Some(session) })
+}
+
+/// Logs the start for workflows (`attempt.started`), now that it can no longer be undone. Logged, never fails Start.
+async fn announce(st: &AppState, started: &StartedAttempt) {
+    if let Err(e) = st.store.announce_start(started, now_ms()).await {
+        tracing::error!(ticket = %started.ticket_id, error = %e, "could not log the start for workflows");
+    }
 }
 
 /// A Personal project's folder for a ticket's work, `<project folder>/<ticket key>` (made if missing; kept across
@@ -474,15 +484,21 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
     Ok(Json(load_ticket(&st, &id).await?))
 }
 
-/// Ends the ticket's active attempt because the ticket is being closed. Done says the work landed, so the attempt
-/// is `merged`; Won't do ends it `merged` if its branch is (git or GitHub), else `abandoned`.
-pub(crate) async fn end_for_close(st: &AppState, ticket_id: &str, stage: TicketStage) -> Result<(), ApiError> {
+/// Ends the ticket's active attempt because the ticket was closed (callers close it first, so a refused close ends
+/// nothing). Done says the work landed, so the attempt is `merged`; Won't do ends it `merged` if its branch is (git
+/// or GitHub), else `abandoned`.
+pub(crate) async fn end_for_close(
+    st: &AppState,
+    ticket_id: &str,
+    stage: TicketStage,
+    actor: Actor,
+) -> Result<(), ApiError> {
     if let Some(info) = st.store.active_attempt(ticket_id).await? {
         let merged = stage == TicketStage::Done || is_merged(st, &info, false).await;
         let state = if merged { AttemptState::Merged } else { AttemptState::Abandoned };
         let via = merged.then_some(MergeVia::Closed);
         let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
-        st.store.end_attempt(&info.attempt.id, state, Actor::User, via, pr, now_ms()).await?;
+        st.store.end_attempt(&info.attempt.id, state, actor, via, pr, now_ms()).await?;
     }
     Ok(())
 }

@@ -10,7 +10,7 @@
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
-use crate::workflow::nodes::http::{client, read_body};
+use crate::workflow::nodes::http::{client, read_body, send_error};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -72,7 +72,7 @@ impl JiraClient {
         if let Some(b) = body {
             req = req.json(b);
         }
-        let resp = req.send().await.map_err(|e| format!("Jira {method} {path}: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("Jira {method} {path}: {}", send_error(e)))?;
         let status = resp.status().as_u16();
         let bytes = read_body(resp, 8 * 1024 * 1024).await?;
         if status == 404 {

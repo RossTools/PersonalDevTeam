@@ -68,11 +68,15 @@ pub(crate) async fn update(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(patch) = payload?;
     let patch = patch.validate()?;
-    if let Some(stage) = patch.stage.filter(|s| s.is_closed()) {
-        // Closing a ticket ends its attempt (tickets spec §6).
-        crate::start::end_for_close(&st, &id, stage).await?;
+    let t = st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?;
+    // Closing a ticket ends its attempt (tickets spec §6), once the close went through.
+    match patch.stage.filter(|s| s.is_closed()) {
+        Some(stage) => {
+            crate::start::end_for_close(&st, &id, stage, Actor::User).await?;
+            reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+        }
+        None => reply(&st, t).await,
     }
-    reply(&st, st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -112,8 +116,11 @@ pub(crate) async fn bulk(
     if let pdt_core::ticket::ValidBulk::Stage(stage) = action
         && stage.is_closed()
     {
+        // The tickets are closed: end every attempt there is, whatever one of them does.
         for id in &req.ids {
-            crate::start::end_for_close(&st, id, stage).await?;
+            if let Err(e) = crate::start::end_for_close(&st, id, stage, Actor::User).await {
+                tracing::warn!(ticket = %id, error = %e.message(), "could not end the closed ticket's attempt");
+            }
         }
     }
     Ok(Json(BulkResult { count }))

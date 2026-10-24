@@ -181,7 +181,7 @@ struct SearchNotes {
     /// Only pinned notes (true) or unpinned ones (false).
     #[serde(default)]
     pinned: Option<bool>,
-    /// note or journal; both when left out.
+    /// note, journal or user (the user's own notes); all of them when left out.
     #[serde(default)]
     kind: Option<pdt_core::pm::NoteKind>,
     /// At most this many (default 20, at most 100).
@@ -454,21 +454,23 @@ fn defs() -> Vec<Def> {
         Def {
             name: "search_notes",
             title: "Search notes",
-            description: "The PM's notes and journal entries matching the words (full-text), host-wide and per \
-                          project; every pinned note when you give no words and pinned: true.",
+            description: "The PM's notes and journal entries, and the user's own notes (kind user, writtenBy \
+                          \"the user\"), matching the words (full-text), host-wide and per project; every pinned \
+                          note when you give no words and pinned: true.",
             schema: schema::<SearchNotes>,
         },
         Def {
             name: "save_note",
             title: "Save a note",
             description: "Adds a note (or replaces one by id): what PDT's data can't tell you, such as the user's \
-                          preferences, decisions, people and rules at work. Pinned notes go in every briefing.",
+                          preferences, decisions, people and rules at work. Pinned notes go in every briefing. The \
+                          user's own notes (kind user) are theirs: you can't change them.",
             schema: schema::<SaveNote>,
         },
         Def {
             name: "delete_note",
             title: "Delete a note",
-            description: "Removes a note that no longer holds.",
+            description: "Removes a note that no longer holds (not one of the user's own).",
             schema: schema::<DeleteNote>,
         },
         Def {
@@ -574,6 +576,14 @@ fn api(e: ApiError) -> String {
 
 fn store(e: pdt_store::StoreError) -> String {
     ApiError::from(e).message().to_string()
+}
+
+/// Refuses a PM tool's change to one of the user's own notes (PDT-126); a missing note is left to the tool.
+async fn pm_may_write(st: &AppState, id: &str) -> Result<(), String> {
+    match st.store.get_note(id).await.map_err(store)? {
+        Some(n) if !n.kind.pm_may_write() => Err(format!("note {id} is the user's own: only they can change it")),
+        _ => Ok(()),
+    }
 }
 
 /// Runs a tool. Err is a message for the agent.
@@ -798,7 +808,20 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 pinned: a.pinned,
                 limit: a.limit.unwrap_or(20).clamp(1, 100),
             };
-            Ok(json!({"notes": st.store.search_notes(&f).await.map_err(store)?}))
+            let notes: Vec<Value> = st
+                .store
+                .search_notes(&f)
+                .await
+                .map_err(store)?
+                .into_iter()
+                .map(|n| {
+                    let by = if n.kind == pdt_core::pm::NoteKind::User { "the user" } else { "the PM" };
+                    let mut v = json!(n);
+                    v["writtenBy"] = json!(by);
+                    v
+                })
+                .collect();
+            Ok(json!({"notes": notes}))
         }
         "list_todos" => {
             let a: ListTodos = args(a)?;
@@ -821,6 +844,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: SaveNote = args(a)?;
             let n = match a.id {
                 Some(id) => {
+                    pm_may_write(st, &id).await?;
                     let p = pdt_core::pm::NotePatch {
                         project: a.project,
                         title: Some(a.title),
@@ -830,8 +854,13 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                     crate::pm::edit_note(st, &id, p).await.map_err(api)?
                 }
                 None => {
-                    let n =
-                        pdt_core::pm::NewNote { project: a.project, title: a.title, body: a.body, pinned: a.pinned };
+                    let n = pdt_core::pm::NewNote {
+                        project: a.project,
+                        title: a.title,
+                        body: a.body,
+                        pinned: a.pinned,
+                        kind: None,
+                    };
                     crate::pm::add_note(st, n).await.map_err(api)?
                 }
             };
@@ -839,6 +868,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         "delete_note" => {
             let a: DeleteNote = args(a)?;
+            pm_may_write(st, &a.id).await?;
             if !st.store.delete_note(&a.id).await.map_err(store)? {
                 return Err(format!("there is no note {}", a.id));
             }
@@ -899,15 +929,15 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             if valid == Default::default() {
                 return Err("give at least one field to change".into());
             }
-            if let Some(stage) = valid.stage.filter(|s| s.is_closed()) {
-                crate::start::end_for_close(st, &id, stage).await.map_err(api)?;
-            }
             let t = st
                 .store
                 .patch_ticket_by(&id, &valid, Actor::Agent, now_ms())
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
+            if let Some(stage) = valid.stage.filter(|s| s.is_closed()) {
+                crate::start::end_for_close(st, &id, stage, Actor::Agent).await.map_err(api)?;
+            }
             Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
                       "parent": t.summary.parent.map(|p| p.key)}))
         }

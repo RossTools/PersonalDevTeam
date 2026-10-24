@@ -622,7 +622,7 @@ async fn finish_checks_first_then_cleans_up_or_only_moves_to_done() {
     let r = finish(&a, json!({"keepWorktree": true})).await;
     assert_eq!(r["outcome"], "kept", "{r}");
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{a}"), None).await;
-    assert_eq!(t["stage"], "done");
+    assert_eq!((t["stage"].as_str(), t["attempt"]["state"].as_str()), (Some("done"), Some("merged")), "{t}");
     assert!(a_path.exists());
 
     let (b, session, b_path) = start("Go").await;
@@ -667,6 +667,50 @@ async fn finish_checks_first_then_cleans_up_or_only_moves_to_done() {
     assert_eq!((r["outcome"].as_str(), r["worktreeRemoved"].as_bool()), (Some("finished"), Some(true)), "{r}");
     assert!(!a_path.exists());
     env.state.ptys.shutdown().await;
+}
+
+/// Finishing a ticket ends its active attempt (else it stays active with no worktree: counted against the cap,
+/// polled, and a later Start refused) and cancels its runs still going.
+#[tokio::test]
+async fn finishing_a_ticket_ends_its_attempt_and_cancels_its_runs() {
+    let env = setup().await;
+    let wf = create(&env, gate_doc("asks about the ticket")).await;
+    let (_, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "Finish me"})))
+            .await;
+    let ticket = t["id"].as_str().unwrap().to_string();
+    let (s, st) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{ticket}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{st}");
+    let waiting = run_now(&env, &wf, json!({"ticketId": ticket})).await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(run(&env, &waiting).await["status"], "waiting");
+
+    let (_, r) = call(&env.app, "POST", &format!("/api/tickets/{ticket}/finish"), Some(json!({}))).await;
+    assert_eq!(r["outcome"], "finished", "{r}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{ticket}"), None).await;
+    assert_eq!((t["stage"].as_str(), t["attempt"]["state"].as_str()), (Some("done"), Some("merged")), "{t}");
+    let r = run(&env, &waiting).await;
+    assert_eq!(r["status"], "cancelled", "{r}");
+    assert!(r["error"].as_str().unwrap().contains("finished"), "{r}");
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(run(&env, &waiting).await["status"], "cancelled", "the engine leaves it ended");
+
+    // Back to Ready, it starts again.
+    call(&env.app, "PATCH", &format!("/api/tickets/{ticket}"), Some(json!({"stage": "ready"}))).await;
+    let (s, st) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{ticket}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{st}");
 }
 
 #[tokio::test]

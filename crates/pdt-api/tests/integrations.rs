@@ -321,6 +321,83 @@ async fn discord_posts_split_long_messages_and_wait_out_a_rate_limit() {
     assert!(run_now(&env, &wf, json!({})).await["error"].as_str().unwrap().contains("not discord_webhook"));
 }
 
+/// A local address nothing listens on (the OS picked it, then it was let go).
+async fn closed_address() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    format!("http://{}", listener.local_addr().unwrap())
+}
+
+/// What `tracing` writes while the test's thread runs, at every level.
+#[derive(Clone, Default)]
+struct Log(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Log {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Log {
+    fn capture(&self) -> tracing::subscriber::DefaultGuard {
+        let log = self.clone();
+        let sub = tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).with_writer(move || log.clone());
+        tracing::subscriber::set_default(sub.finish())
+    }
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+#[tokio::test]
+async fn a_failed_request_never_shows_the_connection_secret() {
+    let log = Log::default();
+    let _guard = log.capture();
+    let env = setup().await;
+    let closed = closed_address().await;
+
+    // A Discord webhook's URL is its secret.
+    let hook = format!("{closed}/api/webhooks/987654321012/s3cret-hook-token");
+    connection(&env, "alerts", "discord_webhook", "", json!({}), Some(&hook)).await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "post", "kind": "discord.post", "version": 1,
+            "config": {"connection": "alerts", "content": "hi"}})),
+    )
+    .await;
+    let discord = run_now(&env, &wf, json!({})).await;
+
+    // A key sent in the query.
+    connection(&env, "svc", "http", &closed, json!({"auth": "query", "param": "apikey"}), Some("s3cret-query-key"))
+        .await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "get", "kind": "http.request", "version": 1,
+            "config": {"connection": "svc", "url": "/items"}})),
+    )
+    .await;
+    let http = run_now(&env, &wf, json!({})).await;
+
+    for (r, node) in [(&discord, "post"), (&http, "get")] {
+        assert_eq!(r["status"], "failed", "{r}");
+        let error = step(r, node)["error"].as_str().unwrap();
+        assert!(!error.is_empty() && r["error"].as_str().is_some(), "{r}");
+    }
+    assert!(step(&discord, "post")["error"].as_str().unwrap().starts_with("Discord: "), "{discord}");
+    assert!(step(&http, "get")["error"].as_str().unwrap().contains("/items"), "{http}");
+    let log = log.text();
+    assert!(log.contains("a workflow step failed"), "{log}");
+    for secret in ["987654321012", "s3cret-hook-token", "s3cret-query-key"] {
+        for (what, text) in [("discord run", discord.to_string()), ("http run", http.to_string()), ("log", log.clone())]
+        {
+            assert!(!text.contains(secret), "{secret} in the {what}: {text}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_discord_channel_is_made_only_when_missing() {
     // Requests in order: the first run lists the channels; the second lists them, makes the category, then the

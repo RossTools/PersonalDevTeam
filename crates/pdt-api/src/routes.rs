@@ -404,7 +404,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/pm", get(crate::pm::state))
         .route("/pm/sessions", axum::routing::post(crate::pm::start))
         .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))
-        .route("/pm/notes/{id}", axum::routing::patch(crate::pm::patch_note).delete(crate::pm::delete_note))
+        .route("/pm/notes/{id}", get(crate::pm::get_note).patch(crate::pm::patch_note).delete(crate::pm::delete_note))
         .route("/todos", get(crate::todos::list).post(crate::todos::create))
         .route("/todos/{id}", axum::routing::patch(crate::todos::patch).delete(crate::todos::delete))
         .route("/inbox", get(crate::inbox::list))

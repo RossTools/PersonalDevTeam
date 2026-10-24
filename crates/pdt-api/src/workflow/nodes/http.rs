@@ -101,6 +101,21 @@ pub(crate) fn client() -> &'static reqwest::Client {
     })
 }
 
+/// A request's error without its URL, with its causes. reqwest's own message ends with the URL, and a URL can be a
+/// secret (a Discord webhook's token, a key sent as a query parameter): every outbound call's error goes through
+/// this before it reaches a step, a run, a notification or the log.
+pub(crate) fn send_error(e: reqwest::Error) -> String {
+    let e = e.without_url();
+    let mut out = e.to_string();
+    let mut cause = std::error::Error::source(&e);
+    while let Some(c) = cause {
+        out.push_str(": ");
+        out.push_str(&c.to_string());
+        cause = c.source();
+    }
+    out
+}
+
 /// Adds a connection's secret to a request, the way its config says.
 pub(crate) fn authorize(
     req: reqwest::RequestBuilder,
@@ -122,7 +137,7 @@ pub(crate) fn authorize(
 /// Reads a response body, up to `cap` bytes.
 pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+    while let Some(chunk) = resp.chunk().await.map_err(send_error)? {
         let room = cap.saturating_sub(out.len());
         out.extend_from_slice(&chunk[..chunk.len().min(room)]);
         if chunk.len() > room {
@@ -174,7 +189,7 @@ pub(crate) async fn call_json(
     if let Some(b) = body {
         req = req.json(b);
     }
-    let resp = req.send().await.map_err(|e| format!("{who}: {method} {path}: {e}"))?;
+    let resp = req.send().await.map_err(|e| format!("{who}: {method} {path}: {}", send_error(e)))?;
     let status = resp.status().as_u16();
     let bytes = read_body(resp, BODY_CAP).await?;
     let text = String::from_utf8_lossy(&bytes);
@@ -256,7 +271,7 @@ impl NodeKind for Http {
                 Value::String(s) => req.body(s.clone()),
                 v => req.json(v),
             };
-            let resp = req.send().await.map_err(|e| format!("{method} {url}: {e}"))?;
+            let resp = req.send().await.map_err(|e| format!("{method} {url}: {}", send_error(e)))?;
             let status = resp.status().as_u16();
             let headers: BTreeMap<String, String> = resp
                 .headers()

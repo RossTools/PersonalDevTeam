@@ -17,7 +17,7 @@ const RUN_FIELDS: &str = "databaseId,attempt,workflowName,status,conclusion,head
 
 const PR_QUERY: &str = "query($owner:String!,$name:String!,$head:String!){repository(owner:$owner,name:$name){\
 pullRequests(headRefName:$head,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number url title state \
-isDraft headRefOid baseRefName mergeable mergeStateStatus isInMergeQueue mergeQueueEntry{position} \
+createdAt isDraft headRefOid baseRefName mergeable mergeStateStatus isInMergeQueue mergeQueueEntry{position} \
 autoMergeRequest{enabledAt} \
 timelineItems(itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{__typename \
 ...on RemovedFromMergeQueueEvent{id reason actor{login}}}}}}}}";
@@ -52,6 +52,8 @@ pub struct PullRequest {
     pub queue_position: Option<u32>,
     /// Its newest merge-queue event, when that is a removal.
     pub queue_removal: Option<QueueRemoval>,
+    /// When it was opened (ms; None when unknown): a ticket started again on the same branch has its old PR there too.
+    pub created_at: Option<i64>,
 }
 
 /// An issue (not a pull request) as the issues API lists it.
@@ -408,6 +410,7 @@ pub fn parse_pull_request(out: &str) -> Result<Option<PullRequest>, GhError> {
         in_merge_queue: n["isInMergeQueue"].as_bool().unwrap_or(false),
         queue_position: n["mergeQueueEntry"]["position"].as_u64().and_then(|p| u32::try_from(p).ok()).map(|p| p + 1),
         queue_removal: queue_removal(&n["timelineItems"]["nodes"][0]),
+        created_at: n["createdAt"].as_str().and_then(pdt_core::conversation::devin::iso_ms),
     }))
 }
 
@@ -761,11 +764,14 @@ mod tests {
         assert_eq!((pr.head_sha.as_str(), pr.base_branch.as_str()), ("b", "main"));
         assert_eq!(pr.queue_removal, None, "no timeline in the answer");
 
+        assert_eq!(pr.created_at, None, "no createdAt in the answer");
         let merged = r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":3,"url":"u","title":"t",
-          "state":"MERGED","isDraft":false,"headRefOid":"c","baseRefName":"main","mergeable":"UNKNOWN",
+          "createdAt":"2026-10-18T00:00:01Z","state":"MERGED","isDraft":false,"headRefOid":"c","baseRefName":"main","mergeable":"UNKNOWN",
           "mergeStateStatus":"UNKNOWN","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}]}}}}"#;
         let pr = parse_pull_request(merged).unwrap().unwrap();
         assert_eq!((pr.state, pr.auto_merge, pr.queue_position), (PrState::Merged, false, None));
+        assert_eq!(pr.created_at, pdt_core::conversation::devin::iso_ms("2026-10-18T00:00:01Z"));
+        assert!(pr.created_at.is_some());
         let removed = r#"{"data":{"repository":{"pullRequests":{"nodes":[{"number":49,"url":"u","title":"t",
           "state":"OPEN","isDraft":false,"headRefOid":"c","baseRefName":"main","mergeable":"MERGEABLE",
           "mergeStateStatus":"CLEAN","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null,

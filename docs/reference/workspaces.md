@@ -55,8 +55,9 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 - On desktop a panel sits right of the main area (web/src/shell/RightPanel.tsx). Open it is 320px wide and drags
   wider (240–640px; the divider also takes Left/Right); collapsed it is a 40px strip with a checklist icon and the count
   of open todos. The strip, the panel's collapse button, ⌘. (Mac) and Ctrl+] t open and close it. Open/closed and
-  width are kept per browser (`pdt.rightPanel.open`, `pdt.rightPanel.width`). It has tabs, starting with Todos.
-- Phones have no panel: ☑ in the top bar opens the same content in a right sheet.
+  width are kept per browser (`pdt.rightPanel.open`, `pdt.rightPanel.width`). It has two tabs, Todos and Notes (the user's own
+  notes, PDT-126: [agents.md](agents.md) "The PM"; a note opens at `/pm/notes/<id>`).
+- Phones have no panel: ☑ in the top bar opens the same content (both tabs) in a right sheet; opening a note closes it.
 - The todo list (web/src/todos): "Add a todo…" (Enter adds it at the top), a filter (All, or the project on screen,
   which new todos then join; kept as `pdt.todos.filter`), rows with a checkbox, the title (click to edit), a drag
   handle (also Alt+↑/↓) and ⋯ (Edit, Link to a ticket…, Unlink, Project, Delete), chips for the project key and the
@@ -127,7 +128,8 @@ its tab, the Inbox picking an item) replace it.
 
 - Worktrees live inside the repo at `.worktrees/<branch with / replaced by ->` (listed in .git/info/exclude; pdt-core
   `worktree.rs`), so `feature/x` lives in `.worktrees/feature-x`. Folders there made with plain git are adopted.
-- `DELETE /api/worktrees/{id}` refuses while busy (`worktree_busy`) or dirty without `force` (`worktree_dirty`); the
+- `DELETE /api/worktrees/{id}` refuses while busy (`worktree_busy`), while a ticket's active attempt works in it
+  (`worktree_attempt`: finish the ticket or abandon the attempt first) or dirty without `force` (`worktree_dirty`); the
   project's Settings page and the merge banner use it.
 - A folder there that is not a git worktree for that branch makes Run on that branch fail with
   `worktree_path_taken` (also a branch whose folder name another branch already took, e.g. `a/b` and `a-b`).
