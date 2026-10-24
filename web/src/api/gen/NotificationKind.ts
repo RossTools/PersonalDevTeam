@@ -3,4 +3,4 @@
 /**
  * Every kind of notification (PDT-108 §2.2).
  */
-export type NotificationKind = "session.needs_you" | "inbox.question" | "inbox.approval" | "inbox.gate" | "inbox.manual" | "inbox.stalled" | "inbox.loop_limit" | "session.turn_ended" | "session.exited" | "pr.ci_failed" | "pr.conflict" | "pr.queue_left" | "pr.merged" | "workflow.failed" | "workflow.notify" | "host.loop_stale";
+export type NotificationKind = "session.needs_you" | "inbox.question" | "inbox.approval" | "inbox.gate" | "inbox.manual" | "inbox.stalled" | "inbox.loop_limit" | "session.turn_ended" | "session.exited" | "pr.ci_failed" | "pr.conflict" | "pr.queue_left" | "pr.merged" | "workflow.failed" | "workflow.notify" | "connection.failed" | "host.loop_stale";

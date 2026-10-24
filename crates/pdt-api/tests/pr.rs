@@ -836,3 +836,52 @@ async fn auto_merge_turned_off_by_hand_stays_off() {
     assert_eq!(merges(&env), 0);
     env.state.ptys.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_failing_gh_keeps_the_last_look_and_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let before = ticket(&env).await["attempt"]["pr"].clone();
+    assert!(before["error"].is_null());
+    assert!(before["checkedAt"].as_i64().unwrap() > 0);
+
+    *env.gh.error.lock().unwrap() = Some("HTTP 401: Bad credentials".into());
+    pdt_api::refresh_prs(&env.state).await;
+    let p = ticket(&env).await["attempt"]["pr"].clone();
+    assert_eq!(p["ci"]["state"], "running", "the last look stays");
+    assert_eq!(p["checkedAt"], before["checkedAt"], "from when it was read");
+    assert!(p["error"].as_str().unwrap().contains("Bad credentials"), "{p}");
+
+    *env.gh.error.lock().unwrap() = None;
+    pdt_api::refresh_prs(&env.state).await;
+    assert!(ticket(&env).await["attempt"]["pr"]["error"].is_null());
+}
+
+#[tokio::test]
+async fn a_pr_comment_that_could_not_be_logged_is_logged_on_the_next_look() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
+    let id = list.as_array().unwrap().iter().find(|w| w["builtin"] == "pr-feedback").unwrap()["id"].clone();
+    call(&env.app, "PATCH", &format!("/api/workflows/{}", id.as_str().unwrap()), Some(json!({"enabled": true}))).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_comments(12, vec![comment(1, "alice", None)]);
+    pdt_api::refresh_prs(&env.state).await;
+
+    env.gh.set_comments(12, vec![comment(1, "alice", None), comment(2, "bob", None)]);
+    let db = tmp.path().join("pdt.db");
+    common::fail_events(&db, Some("pr.commented")).await;
+    pdt_api::refresh_prs(&env.state).await;
+    common::fail_events(&db, None).await;
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=pr.commented", None).await;
+    assert!(logged.as_array().unwrap().is_empty());
+    pdt_api::refresh_prs(&env.state).await;
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=pr.commented", None).await;
+    let ids: Vec<u64> =
+        logged.as_array().unwrap().iter().map(|e| e["payload"]["commentId"].as_u64().unwrap()).collect();
+    assert_eq!(ids, [2], "the mark stayed before it");
+}

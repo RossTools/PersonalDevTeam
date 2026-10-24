@@ -22,4 +22,12 @@ ci: CiStatus | null,
 /**
  * The newest merge-queue run for this PR (`gh-readonly-queue/<base>/pr-<n>-…`), while queued or after it left.
  */
-queueCi: CiStatus | null, checkedAt: number, };
+queueCi: CiStatus | null, 
+/**
+ * When it was last read (ms).
+ */
+checkedAt: number, 
+/**
+ * Why the reads since `checked_at` failed (`gh` signed out, GitHub down): the rest is that older look.
+ */
+error: string | null, };

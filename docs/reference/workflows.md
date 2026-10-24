@@ -207,10 +207,14 @@ secret as a bearer token); without `transport`, a URL and no command means `http
 
 - **Clients** (`McpPool` in `AppState`): one per server, started on first use (a 30 s limit on the handshake; a stdio
   server that fails says its last stderr lines), shared by concurrent calls, started again when the connection's
-  settings or secret change or after a transport error, stopped after 5 minutes idle (`maintain_workflows`) and when
-  pdtd stops. A stdio server's stderr goes to pdtd's log at debug level.
-- **Tools** (`tools/list`) are cached in memory by connection name: listed in the background when an `mcp` connection
-  is saved, and again by `maintain_workflows` once the last try is 10 minutes old. A failed listing keeps the tools from
+  settings or secret change or after a transport error, stopped after 5 minutes idle (`maintain_workflows`; never
+  while a call is in flight) and when pdtd stops. A call that does not answer in time (a second before its step's
+  `timeoutMs`, so the error names the server), a listing that takes over 30 s, or a call its step gave up on marks the
+  client broken (PDT-130): the next use starts the server again, so a wedged server never fails every later step. A
+  stdio server's stderr goes to pdtd's log at debug level.
+- **Tools** (`tools/list`) are cached in memory by connection name: listed in the background when pdtd first sees an
+  `mcp` connection and when one is saved, and again by `maintain_workflows` once the last try is 10 minutes old while
+  the server's client is live (an unused server is not started just to list it). A failed listing keeps the tools from
   before and records the error. `GET /api/connections/{id}/tools` (the cache: `{server, tools [{name, title,
   description, inputSchema, outputSchema}], error, listedAt, triedAt}`, null before the first listing), `POST` lists
   now. Deleting or renaming a connection drops its cache.
@@ -328,7 +332,8 @@ secret: the token) and `mcp` ("MCP tools as actions"; `GET/POST /api/connections
 another kind). A config field holding a connection's name says its kind in its schema (`x-connection-kind`:
 `discord_webhook`, `discord_bot`, `webhook`, `jira`, `buildkite`, `radarr`, `sonarr`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
-`hasSecret` is ever returned).
+`hasSecret` is ever returned). A connection carries `lastError` and `lastErrorAt` while a sensor cannot use it
+("Sensors and webhooks"); saving it (or its secret) clears them until the next use.
 
 ## Sensors and webhooks (Phase 7e)
 
@@ -338,14 +343,24 @@ another kind). A config field holding a connection's name says its kind in its s
   time, or a workflow saved or enabled since the mark, takes the slot as its baseline; a newer slot emits
   `schedule.fired` (key `schedule:<workflow>:<node>:<slot>`, payload `workflowId`, `nodeId`, `slot`, `slotIso`,
   `date`). A slot more than 2 minutes old (pdtd was down) fires only with `catchUp` (default on), and only the latest.
+- **Not losing events** (PDT-130): a sensor's mark (the newest issue, comment or time read to) moves only past what
+  was logged. An event that cannot be logged (the store failing) leaves the mark where it was, so the next look reads
+  it again; event keys make what was already logged harmless.
+- **Failing connections** (`connection_health.rs`): when the Jira or Buildkite sensor cannot use its connection (a
+  revoked token, the service down, no such connection), the connection gets `lastError` / `lastErrorAt` (shown on its
+  row in Settings → Connections) and one `connection.failed` notification (dedupe key `connection:<name>`, opening
+  Settings → Connections), however many polls fail; the first poll that works clears both. A pass in which any use of
+  a connection failed counts as failing. A failing `gh` (issues, PR comments, PRs) is logged once per read until it
+  works again; a PR it can't read keeps its last look with `error` set (`attempt.pr.error`, [tickets.md](tickets.md)).
 - **GitHub issues** (`github_issues.rs` `refresh_issues`, pdtd every 60 s): the repos enabled `github.issue.opened`
-  nodes name, else the GitHub repos of the projects in their scope, through `gh api …/issues` (pull requests left out).
-  The newest number per repo is kept in `host_settings` (`sensor.github_issues.<repo>`); the first look only records
-  it. Event key `github:<repo>:issue:<n>`, payload `repo`, `number`, `title`, `body`, `url`, `author`, `labels`,
+  nodes name, else the GitHub repos of the projects in their scope, through `gh api …/issues` (pull requests left out;
+  100 a page, read back page by page to the last issue seen, up to 10 pages). The newest number logged per repo is
+  kept in `host_settings` (`sensor.github_issues.<repo>`); the first look only records it (from one page). Event key `github:<repo>:issue:<n>`, payload `repo`, `number`, `title`, `body`, `url`, `author`, `labels`,
   `createdAt`, `projectId` (when it is a project's repo).
 - **PR comments and reviews** (`github.rs`): while an enabled workflow has a `pr.commented` or `pr.reviewed` trigger,
-  the PR poller also reads each active attempt's open PR's conversation comments, review comments and reviews. The
-  newest ids are kept per attempt (`sensor.pr_comments.<attempt>`); the first look only records them. Keys
+  the PR poller also reads each active attempt's open PR's conversation comments, review comments and reviews (the
+  comments and the reviews side by side). The newest ids are kept per attempt (`sensor.pr_comments.<attempt>`),
+  written only once every new one is logged; the first look only records them. Keys
   `<attempt>:comment:<id>` / `<attempt>:review:<id>`; payloads carry `author`, `body` (`path`, `line`, `inReview`; a
   review's `state`), `byOwner` (gh's own login), `isBot` and a `notice` (`commented` / `reviewed`).
 - **Webhooks** (`hooks.rs`): `POST /api/hooks/<name>` for a `webhook` connection; its secret as `Authorization: Bearer`
@@ -359,9 +374,12 @@ another kind). A config field holding a connection's name says its kind in its s
 - **Jira** (`jira.rs` `refresh_jira`, pdtd every 60 s): each project whose settings link Jira (a `jira` connection,
   a JQL scope, the done transition) is searched with `POST /rest/api/3/search/jql`, `(<scope>) AND updated >= "-<n>m"
   ORDER BY updated ASC` (relative, since JQL dates are in the Jira user's zone; n covers the time since the last look
-  plus a minute), with the changelog, up to 5 pages of 100. The last look is `sensor.jira.<project>` (`since`, the
-  connection and scope; the first look, or a new connection or scope, only records it). Per issue, news since then
-  less a minute (keys make re-reads harmless): `jira.issue.created` (key `jira:<connection id>:<key>:created`),
+  plus a minute), with the changelog, up to 5 pages of 100; an issue whose changelog or comments the search cut short
+  (over 100) has its newest 100 of each read from the issue. The last look is `sensor.jira.<project>` (`since`, the
+  connection and scope; the first look, or a new connection or scope, only records it); a poll that hits the page cap
+  moves it to the last issue read rather than to now, so the next poll reads on. Per issue, news since then less a
+  minute (keys make re-reads harmless): `jira.issue.created` (key `jira:<project>:<connection id>:<key>:created`, so
+  two projects whose scopes overlap on one connection each get the event),
   `jira.issue.updated` (the fields changelog entries changed, `changed`; key `…:updated:<updated>`; not for an issue
   created in the window), `jira.issue.transitioned` (`from`, `to`; key `…:status:<history id>`) and
   `jira.issue.commented` (`commentId`, `author`, `body` as text, `byMe`; key `…:comment:<id>`). Each carries the
@@ -387,7 +405,8 @@ Connections (`web/src/connections/`): Settings → Connections (its own page, un
 has a section per kind (Discord webhooks, Discord bots, Incoming webhooks, Jira Cloud sites, Buildkite organizations,
 HTTP services, Radarr, Sonarr, Plex servers, MCP servers, and Other for kinds no action uses), each saying how to set
 one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address `/api/hooks/<name>`
-show on its row; an MCP server's row shows its tools, or why listing them failed, with List again). The dialog asks
+show on its row, and why a sensor's last use of it failed, and since when; an MCP server's row shows its tools, or why
+listing them failed, with List again). The dialog asks
 what the kind needs (`kinds.ts`: its address, and its own settings: Jira's email, Buildkite's organization, Radarr's
 default quality profile and root folder, an MCP server's transport, program, arguments, environment and secret
 variable; a setting shown is required unless marked optional) and
@@ -639,15 +658,17 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
 
 - **Kinds and Show.** Needs you: `session.needs_you`, `inbox.question`, `inbox.approval`, `inbox.gate` (gates and Ready
   to accept), `inbox.manual`, `inbox.stalled` (a stalled or timed-out step), `inbox.loop_limit`. Updates: `session.turn_ended`, `session.exited`,
-  `pr.ci_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `host.loop_stale`
-  (a background loop of pdtd stopped finishing passes, [host.md](host.md)). Each kind's Show
+  `pr.ci_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `connection.failed`
+  ("Sensors and webhooks"), `host.loop_stale` (a background loop of pdtd stopped finishing passes, [host.md](host.md)).
+  Each kind's Show
   is `off`, `dot` (only the target's own marker: no row), `inbox`, `toast` or `desktop`, each including the ones
   before; defaults in `NotificationKind::default_show`. The Inbox's own kinds (`inbox.*`) never go below `inbox`.
   Overrides live in host value `notifications.show` (kind → Show); `GET /api/notifications/settings` lists every kind
   (section, label, when, show, default, allowed), `PATCH` `{kind: show | null}` (null restores the default).
 - **Rows.** Only `inbox` and up are stored, with the Show at creation. One live row per `dedupe_key`
   (`session:<id>:needs_you|turn_ended|exited`, `inbox:<item>`, `attempt:<id>:ci_failed|conflict|queue_left|merged`,
-  `run:<id>:failed`, `notify:<step>`, `loop:<name>:stale`); a cause firing again updates its row (title, body, `created_at`, unread again).
+  `run:<id>:failed`, `notify:<step>`, `connection:<name>`, `loop:<name>:stale`); a cause firing again updates its row
+  (title, body, `created_at`, unread again).
   `seq` grows on every change (created, updated, cleared). Pruned after 30 days, except live Needs-you rows.
 - **State causes** (`sync`, every 2 s and at once on a kick: activity changes, a session viewed, an Inbox answer or
   dismiss, a settings change): a running agent session that needs the user and is unseen (`session.needs_you`, not
@@ -661,7 +682,8 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   killing it (Stop, close, restart: `AppState::kill_pty`/`remove_pty` mark it) or shutdown (`session.exited`); the PR
   poller's and Buildkite's `ci.run_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged` as they are logged
   (`ci.run_passed` clears `ci_failed`; `pr.merged` clears the attempt's other three); a run ending failed
-  (`workflow.failed`); `notify` steps.
+  (`workflow.failed`); `notify` steps; a sensor's connection starting to fail (`connection.failed`, cleared when it
+  works again or is saved).
 - **API.** `GET /api/notifications?section=needs_you|updates&project=&unread=&limit=&before=` → `{items,
   unreadUpdates}` (Needs you lists live rows only); `POST /api/notifications/{id}/read`; `POST
   /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `GET /api/notifications/stream`, Server-Sent
@@ -672,6 +694,6 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   the focused tab or the open Inbox item) or desktop notification (Show `desktop`, page hidden, this device allowed
   them, this tab holds the `navigator.locks` lock so one tab per browser shows them; `tag` = dedupe key, closed when
   the row clears); rows older than 2 minutes on arrival show neither. Clicking opens the target (session, ticket,
-  ticket key, Inbox item, workflow, URL). Settings → Notifications: This device (Desktop notifications, localStorage
+  ticket key, Inbox item, workflow, URL, Settings → Connections). Settings → Notifications: This device (Desktop notifications, localStorage
   `pdt.desktopNotifications` and the browser's permission, with Test) and What shows (a Show per kind, Needs you and
   Updates, Reset to defaults).
