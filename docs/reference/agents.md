@@ -119,12 +119,46 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   default; one already in the library is left as it is and the result says `alreadyInLibrary`). The approval card's
   title is pdt-core `scryer::ask_title` ("Scryer: add the movie Dune (tmdb 438631), monitored"). The API key never
   reaches the agent.
+- **Scryer's whole API** (PDT-150; pdt-api `scryer/graphql.rs`, pdt-core `scryer.rs`), so the PM can find, read and
+  change any setting Scryer's GraphQL schema has (indexers, download clients, seeding profiles, quality, general
+  settings, jobs). Every document is checked against Scryer's schema before it is sent (apollo-compiler): the live
+  one from introspection, kept per connection for 10 minutes, else the copy PDT bundles
+  (`crates/pdt-api/src/scryer/schema.graphql`, asked for again after a minute). Subscriptions are not offered.
+  - `scryer_schema` (read): `search` (words in operation and type names and descriptions, a name match first, 30 at
+    most), `operation` (one query or mutation: its arguments, the input types and enums they take, its return type,
+    and for a mutation whether it asks), `type` (one type's fields, input fields, values or members); with none, the
+    API's size. Each answer says whether the schema is `live` or `bundled`.
+  - `scryer_query` (read, no asking): a query document with `variables` (and `operationName` for one of several),
+    validated, its variables checked against their types, and refused when it holds a mutation or subscription. The
+    answer is `{data}`, credentials redacted; past 48 KB the biggest lists are halved until it fits and
+    `truncated` lists each cut (`path`, `kept`, `of`) with a hint to select less or page.
+  - `scryer_mutate` (asking): `mutation` (its name), `args` (its arguments by name) and `select` (the fields to read
+    back; its scalar fields, and those of its object fields, when left out). PDT writes the document (each argument a
+    variable of the schema's type), validates it and its variables, and returns `{mutation, result}`, credentials
+    redacted. The approval card's title is pdt-core `scryer::mutate_ask_title` ("Scryer: createIndexerConfig
+    name=NZBgeek, config=[2 items], isEnabled, providerType=newznab"), credentials redacted. The connection's
+    `config.pmActs` answers it, except for a call that always asks (`scryer::mutate_always_asks`, `AskTarget::Always`):
+    a destructive or high-impact mutation (`delete*`, `remove*`, `reset*`, `revoke*`, `uninstall*`, `unlink*`,
+    `empty*`, `abandon*`, `clear*`, and a list in pdt-core `scryer.rs` such as `startApplicationUpgrade`, restoring a
+    backup, users and permissions, plugins and scripts), or one that sends a `$secret`. Signing in, passkeys, two-factor,
+    the user's own password and API keys, and first-run setup are never sent (`MutationRule::Denied`).
+  - **Credentials.** A value is a credential when its field's name says so (`password`, `apiKey`, `token`, `secret`,
+    `passkey`, `cookie`, `credential`, `privateKey`, `authorization`), or it is a value of a `{key, …}` pair whose
+    `key` does (Scryer's provider settings, `{key: "apiKey", stringValue}`). A mutation takes one by reference,
+    `{"$secret": "<connection>"}` anywhere in `args`: PDT puts that connection's secret there just before sending
+    (any kind: an HTTP service connection suits an indexer's API key), so the agent never sees it; a reference to a
+    connection without a secret fails before anything is sent, and queries take none. Written out literally, a
+    credential is redacted (`[redacted]`) from the conversation's tool-call and request events and their raw lines
+    (conversations.rs `redact_credentials`, for every `scryer_*` tool), so from the transcript and the card. What
+    Scryer answers is redacted the same way, also any secret PDT sent that it echoes. The log line for a change names
+    the connection and the mutation only.
 - **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
   Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s, `link_tickets`' and `unlink_tickets`' ticket,
   `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
   project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`); for the Discord tools the
-  setting is the bot connection's `config.pmActs` (a Discord server is in no project), and for `scryer_add` the
-  Scryer connection's (`AskTarget::Connection` with the connection's kind). Codex and Devin can't ask per tool, so
+  setting is the bot connection's `config.pmActs` (a Discord server is in no project), and for `scryer_add` and
+  `scryer_mutate` the Scryer connection's (`AskTarget::Connection` with the connection's kind; `AskTarget::Always`,
+  for the calls that always ask, is never answered for the user). Codex and Devin can't ask per tool, so
   there the asking tools are refused unless the project (or the connection) lets the PM act.
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM

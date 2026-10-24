@@ -185,6 +185,21 @@ pub(crate) async fn call_json(
     query: &[(&str, String)],
     body: Option<&Value>,
 ) -> Result<Value, String> {
+    call_json_capped(who, method, base, path, headers, query, body, BODY_CAP).await
+}
+
+/// [`call_json`] reading at most `cap` bytes of the answer (a GraphQL schema's introspection is bigger than most).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn call_json_capped(
+    who: &str,
+    method: reqwest::Method,
+    base: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    query: &[(&str, String)],
+    body: Option<&Value>,
+    cap: usize,
+) -> Result<Value, String> {
     let url = full_url(Some(base), path);
     let mut req = client().request(method.clone(), &url).header("accept", "application/json");
     for (k, v) in headers {
@@ -198,7 +213,7 @@ pub(crate) async fn call_json(
     }
     let resp = req.send().await.map_err(|e| format!("{who}: {method} {path}: {}", send_error(e)))?;
     let status = resp.status().as_u16();
-    let bytes = read_body(resp, BODY_CAP).await?;
+    let bytes = read_body(resp, cap).await?;
     let text = String::from_utf8_lossy(&bytes);
     if !(200..300).contains(&status) {
         let start: String = text.chars().take(300).collect();

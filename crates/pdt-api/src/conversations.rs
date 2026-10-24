@@ -469,6 +469,31 @@ async fn pump(
 }
 
 /// Stores an event (updating its item in place), applies it to the runtime state and sends it to viewers.
+/// A credential the agent wrote into a call to one of PDT's Scryer tools (PDT-150) is redacted from the event (the
+/// transcript and the approval card) and its raw line; the call itself still gets it. The raw line without them, when
+/// there were any.
+fn redact_credentials(event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
+    let (AgentEvent::ToolCall { tool, input, .. } | AgentEvent::Request { tool, input, .. }) = event else {
+        return None;
+    };
+    if !tool.contains("scryer_") {
+        return None;
+    }
+    let secrets = pdt_core::scryer::secret_values(input);
+    if secrets.is_empty() {
+        return None;
+    }
+    *input = pdt_core::scryer::redact(input);
+    let mut text = raw?.to_string();
+    for s in &secrets {
+        let escaped = serde_json::to_string(s).unwrap_or_default();
+        text = text
+            .replace(escaped.trim_matches('"'), pdt_core::scryer::REDACTED)
+            .replace(s.as_str(), pdt_core::scryer::REDACTED);
+    }
+    Some(text)
+}
+
 async fn append(
     st: &AppState,
     c: &Arc<Conv>,
@@ -493,6 +518,8 @@ async fn append(
             }
         }
     }
+    let scrubbed = redact_credentials(&mut event, raw);
+    let raw = scrubbed.as_deref().or(raw);
     let row = match st
         .store
         .upsert_session_event(&c.id, NewEvent { ts: now_ms(), item_id, turn_id, event: &event, raw })

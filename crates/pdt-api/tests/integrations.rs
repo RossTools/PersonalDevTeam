@@ -1080,6 +1080,10 @@ async fn media_dry_runs_call_nothing() {
         json!({"id": "a", "kind": "scryer.add", "version": 1,
                "config": {"connection": "films", "facet": "movie", "tmdbId": 693134}}),
         json!({"id": "a", "kind": "scryer.library", "version": 1, "config": {"connection": "films"}}),
+        json!({"id": "a", "kind": "scryer.query", "version": 1,
+               "config": {"connection": "films", "query": "query { indexers { id } }"}}),
+        json!({"id": "a", "kind": "scryer.mutate", "version": 1,
+               "config": {"connection": "films", "mutation": "deleteIndexerConfig", "args": {"id": "1"}}}),
     ] {
         let doc = manual_then(node);
         let (s, d) =
@@ -1189,6 +1193,83 @@ async fn scryer_searches_adds_once_and_reads_its_queue_and_library() {
     .await;
     let r = run_now(&env, &wf, json!({})).await;
     assert!(r["error"].as_str().unwrap().contains("(the API key is wrong)"), "{r}");
+}
+
+/// Any query or mutation (PDT-150), checked against the bundled schema when Scryer doesn't answer introspection, with
+/// a connection's secret filled in and credentials redacted from the output.
+#[tokio::test]
+async fn scryer_runs_any_query_or_mutation_checked_against_its_schema() {
+    use common::scryer::{FakeScryer, KEY};
+    let (url, scryer) = FakeScryer::serve().await;
+    scryer.introspection.store(false, std::sync::atomic::Ordering::SeqCst);
+    let env = setup().await;
+    connection(&env, "media", "scryer", &url, json!({}), Some(KEY)).await;
+    connection(&env, "sab", "http", "http://nas:8080", json!({}), Some("sab-pass-456")).await;
+
+    let query = |q: &str| {
+        manual_then(
+            json!({"id": "q", "kind": "scryer.query", "version": 1, "config": {"connection": "media", "query": q}}),
+        )
+    };
+    let wf = create(&env, query("query Settings { generalSettings { historyRetentionDays } }")).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(step(&r, "q")["output"]["data"]["generalSettings"]["historyRetentionDays"], 30);
+    // The bundled schema doesn't have what only a newer Scryer has: nothing is sent.
+    let n = scryer.seen.lock().unwrap().len();
+    let wf = create(&env, query("query { fakeVersion }")).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("fakeVersion"), "{r}");
+    let ops = scryer.ops();
+    assert!(ops[n..].iter().all(|o| o == "PdtIntrospection"), "only the schema was asked for: {ops:?}");
+
+    // A mutation with a password by reference.
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "m", "kind": "scryer.mutate", "version": 1, "config": {"connection": "media",
+            "mutation": "createDownloadClientConfig", "args": {"input": {"name": "{{trigger.name}}",
+            "clientType": "sabnzbd", "config": [{"key": "password", "secretValue": {"$secret": "sab"}}]}},
+            "select": "id name config { key defaultValue }"}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({"name": "SABnzbd"})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let out = &step(&r, "m")["output"];
+    assert_eq!((&out["mutation"], &out["result"]["name"]), (&json!("createDownloadClientConfig"), &json!("SABnzbd")));
+    assert_eq!(out["result"]["config"][0]["defaultValue"], "[redacted]", "{out}");
+    assert_eq!(scryer.clients.lock().unwrap()[0]["input"]["config"][0]["secretValue"], "sab-pass-456");
+    assert!(!r.to_string().contains("sab-pass-456"), "{r}");
+
+    // A reference to a connection that isn't there fails before anything is sent.
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "m", "kind": "scryer.mutate", "version": 1, "config": {"connection": "media",
+            "mutation": "createIndexerConfig", "args": {"input": {"name": "x", "providerType": "newznab",
+            "config": [{"key": "apiKey", "secretValue": {"$secret": "nope"}}]}}}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("no connection is called nope"), "{r}");
+    assert!(scryer.indexers.lock().unwrap().is_empty());
+
+    // Validation: a query node runs no mutations, and signing in is never sent.
+    for (node, says) in [
+        (
+            json!({"kind": "scryer.query", "config": {"connection": "media", "query": "mutation { triggerRssSync { __typename } }"}}),
+            "queries only",
+        ),
+        (json!({"kind": "scryer.query", "config": {"connection": "media", "query": "query { "}}), "doesn't parse"),
+        (
+            json!({"kind": "scryer.mutate", "config": {"connection": "media", "mutation": "loginWithPlex"}}),
+            "never sends",
+        ),
+    ] {
+        let mut node = node;
+        node["id"] = json!("x");
+        node["version"] = json!(1);
+        let (_, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": manual_then(node)}))).await;
+        assert!(v.to_string().contains(says), "{v}");
+    }
 }
 
 // ---- brief archive (7e-3) ----

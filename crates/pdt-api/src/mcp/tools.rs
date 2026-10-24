@@ -321,7 +321,7 @@ struct Def {
 }
 
 /// Tools that change nothing.
-const READ_ONLY: [&str; 16] = [
+const READ_ONLY: [&str; 18] = [
     "get_ticket",
     "catalog_search",
     "catalog_get",
@@ -338,6 +338,8 @@ const READ_ONLY: [&str; 16] = [
     "scryer_library",
     "scryer_search",
     "scryer_queue",
+    "scryer_schema",
+    "scryer_query",
 ];
 
 fn schema<T: JsonSchema>() -> Value {
@@ -587,6 +589,35 @@ fn defs() -> Vec<Def> {
                           Scryer finds and downloads it. A title already in the library is left as it is. The user \
                           confirms each call unless the Scryer connection lets you act.",
             schema: crate::scryer::tool_schema::<crate::scryer::ScryerAddConfig>,
+        },
+        Def {
+            name: "scryer_schema",
+            title: "Look up Scryer's API",
+            description: "Finds and describes Scryer's GraphQL operations and types, to read or change any of its \
+                          settings (indexers, download clients, seeding profiles, quality, general settings, jobs): \
+                          `search` words in names and descriptions; `operation` one query or mutation with its \
+                          arguments, the input types they take and what it returns; `type` one type's fields. With \
+                          none, how big the API is.",
+            schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerSchemaArgs>,
+        },
+        Def {
+            name: "scryer_query",
+            title: "Read from Scryer",
+            description: "Runs a GraphQL query on Scryer (a query document and its variables), checked against \
+                          Scryer's schema first; mutations go through scryer_mutate. Credentials in the answer are \
+                          redacted, and a long answer is cut (it says where): select fewer fields or page.",
+            schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerQueryConfig>,
+        },
+        Def {
+            name: "scryer_mutate",
+            title: "Change Scryer",
+            description: "Runs one GraphQL mutation on Scryer: its name, its arguments by name and the fields to read \
+                          back (its scalar fields when left out), checked against Scryer's schema first. Put a \
+                          password or API key in as {\"$secret\": \"<connection>\"}: PDT fills in that connection's \
+                          secret, so it never passes through you. The user confirms each call unless the Scryer \
+                          connection lets you act; deleting, resetting, upgrades and calls that send a secret always \
+                          ask.",
+            schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerMutateConfig>,
         },
     ]
 }
@@ -1084,6 +1115,13 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let given = a.get("connection").and_then(Value::as_str).map(String::from);
             confirmable(cx, name, &AskTarget::Connection { kind: SCRYER, name: given }).await?;
             crate::scryer::add_tool(st, a).await
+        }
+        "scryer_schema" => crate::scryer::graphql::schema_tool(st, a).await,
+        "scryer_query" => crate::scryer::graphql::query_tool(st, a).await,
+        "scryer_mutate" => {
+            let target = pdt_core::pm::ask_target(name, &a).unwrap_or(AskTarget::Always);
+            confirmable(cx, name, &target).await?;
+            crate::scryer::graphql::mutate_tool(st, a).await
         }
         other => Err(format!("no tool is called {other}")),
     }

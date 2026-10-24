@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 33] = [
+pub const ALL_TOOLS: [&str; 36] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -46,12 +46,15 @@ pub const ALL_TOOLS: [&str; 33] = [
     "scryer_search",
     "scryer_queue",
     "scryer_add",
+    "scryer_schema",
+    "scryer_query",
+    "scryer_mutate",
 ];
 
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
 /// card) unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so they are never in Claude's
 /// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 8] = [
+pub const ASKING_TOOLS: [&str; 9] = [
     "create_ticket",
     "edit_ticket",
     "link_tickets",
@@ -60,10 +63,11 @@ pub const ASKING_TOOLS: [&str; 8] = [
     "discord_change",
     "discord_webhook",
     "scryer_add",
+    "scryer_mutate",
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 31] = [
+pub const PM_TOOLS: [&str; 34] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -95,10 +99,13 @@ pub const PM_TOOLS: [&str; 31] = [
     "scryer_search",
     "scryer_queue",
     "scryer_add",
+    "scryer_schema",
+    "scryer_query",
+    "scryer_mutate",
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 33] = [
+const TOOL_DOES: [(&str, &str); 36] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
@@ -132,6 +139,9 @@ const TOOL_DOES: [(&str, &str); 33] = [
     ("scryer_search", "Look up films, series and anime to add to Scryer"),
     ("scryer_queue", "See what Scryer is downloading"),
     ("scryer_add", "Add a film, series or anime to Scryer"),
+    ("scryer_schema", "Find Scryer's settings and operations in its API"),
+    ("scryer_query", "Read anything from Scryer's API (settings, indexers, download clients)"),
+    ("scryer_mutate", "Change Scryer's settings through its API"),
 ];
 
 /// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).
@@ -592,7 +602,14 @@ user's yes unless the bot connection lets you act; say what you will change firs
 - Media (Scryer): `scryer_library` browses the user's library (films, series, anime; search, monitored or not), \
 `scryer_queue` shows what is downloading, and `scryer_search` looks titles up to add, each saying whether it is in the \
 library already. `scryer_add` adds one by the ids the search gave (monitored unless told otherwise; Scryer then finds \
-it); it waits for the user's yes unless the Scryer connection lets you act.
+it); it waits for the user's yes unless the Scryer connection lets you act.\n\
+- Scryer's settings (indexers, download clients, seeding profiles, quality, general settings, jobs): its whole \
+GraphQL API. Find what you need with `scryer_schema` (`search` words, then an `operation` or `type`), read with \
+`scryer_query` (a query document and variables; no yes needed), and change with `scryer_mutate` (one mutation, its \
+arguments and an optional selection), which waits for the user's yes unless the connection lets you act; deleting, \
+resetting and other high-impact changes always ask. Never ask the user to paste a password or API key into the chat: \
+they save it as a PDT connection's secret (Settings → Connections, e.g. an HTTP service), and you pass \
+`{\"$secret\": \"<connection>\"}` where the value goes; PDT fills it in.
 - In a workflow step, finish with `submit_outcome` and one of the step's outcomes.\n\
 - Be brief: short answers, lists over prose.\n";
 

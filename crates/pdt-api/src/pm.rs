@@ -262,7 +262,7 @@ pub(crate) async fn acts_without_asking(st: &AppState, target: &AskTarget) -> bo
             Err(_) => None,
         },
         AskTarget::Session(s) => st.store.get_session(s).await.ok().flatten().map(|s| s.project_id),
-        AskTarget::Connection { .. } => None,
+        AskTarget::Connection { .. } | AskTarget::Always => None,
     };
     let Some(project) = project else { return false };
     st.store.get_project_settings(&project).await.is_ok_and(|s| s.policy.pm_acts)
