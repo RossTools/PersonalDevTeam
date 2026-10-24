@@ -1,8 +1,10 @@
-// The user's todo list (PDT-125): the right panel's Todos tab on desktop and the phone's checklist sheet. Cards, due
-// dates and their groups (PDT-140); repeating todos (PDT-141).
-import { useEffect, useRef, useState } from 'react';
-import { CalendarPlus, ChevronDown, ChevronRight, X } from 'lucide-react';
-import { Alert, Button, Checkbox, Dialog, EmptyState, Field, IconButton, Input, MenuButton, SegmentedControl, Select, Skeleton } from '@ui';
+// The user's todo list (PDT-125): the right panel on desktop and the phone's Todos sheet. Due dates and their groups
+// (PDT-140); repeating todos (PDT-141); the redesign (PDT-143): a header with the scope, quick add, rows, six groups,
+// Move to today, the due picker, and ticked rows that linger before moving to Completed.
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { CalendarDays, ChevronDown, ChevronRight, CircleAlert, CircleArrowRight, Inbox, Sun, Sunrise } from 'lucide-react';
+import { cn } from '@ui/lib/utils';
+import { Alert, Button, Checkbox, Dialog, EmptyState, Field, Input, MenuButton, SegmentedControl, Select, Skeleton } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Recurrence } from '../api/gen/Recurrence';
 import type { RepeatFrom } from '../api/gen/RepeatFrom';
@@ -10,13 +12,16 @@ import type { RepeatRule } from '../api/gen/RepeatRule';
 import type { Todo } from '../api/gen/Todo';
 import { useOpenTicket } from '../tickets/actions';
 import { TicketPicker } from '../tickets/TicketPicker';
-import { defaultRecurrence, formatDay, grouped, localDay, positionFor, repeatText, shown, weekdayOf, WEEKDAYS, type TodoFilter } from './model';
-import { dueEntries, TodoCard } from './TodoCard';
+import { defaultRecurrence, grouped, localDay, moveToToday, positionFor, repeatText, shown, weekdayOf, WEEKDAYS, type DueGroupId, type TodoFilter } from './model';
+import { QuickAdd } from './QuickAdd';
+import { TodoRow } from './TodoRow';
 import { useTodoActions, useTodos } from './useTodos';
 
 export const TODO_FILTER_KEY = 'pdt.todos.filter';
 /** How long a todo opened from a notification keeps its ring. */
 const HIGHLIGHT_MS = 2500;
+/** How long a ticked todo stays in its place before it moves to Completed. */
+export const COMPLETE_LINGER_MS = 800;
 
 function readFilter(): TodoFilter {
   try {
@@ -34,25 +39,39 @@ function writeFilter(f: TodoFilter) {
   }
 }
 
-/** A due date and time as the API takes them. */
-type Due = { dueOn: string; dueTime: string };
-
 /** A todo to open: a notification asked for it. `seq` changes each time, so the same todo can be opened again. */
 export type TodoFocus = { id: string; seq: number };
 
+const GROUP_ICON: Record<DueGroupId, ReactNode> = {
+  overdue: <CircleAlert aria-hidden />,
+  today: <Sun aria-hidden className="text-waiting" />,
+  tomorrow: <Sunrise aria-hidden className="text-muted-foreground" />,
+  week: <CalendarDays aria-hidden className="text-muted-foreground" />,
+  later: <CircleArrowRight aria-hidden className="text-muted-foreground" />,
+  none: <Inbox aria-hidden className="text-muted-foreground" />,
+};
+
+/** The repeat editor, open for a todo or for quick add's new one. */
+type Repeating = { title: string; initial: Recurrence; dueOn: string | null; save: (r: Recurrence, dueOn: string | null) => void };
+
 /**
- * Add a todo at the top (with a due date if you like), filter by All or the current project, check off, edit in
- * place, set a due date, drag (or Alt+↑/↓) to reorder within a group, link to a project or ticket from ⋯. Open todos
- * group as Overdue, Today, Upcoming and No date; done ones fold into "Done (n)".
+ * The header ("Todos", the open count, the scope: All projects or the one on screen), quick add, then the open todos
+ * grouped as Overdue, Today, Tomorrow, Next 7 days, Later and No date (headings once something has a date), and the
+ * done ones folded into "Completed · n". Rows check off, rename in place, take a due date from the picker, drag (or
+ * Alt+↑/↓) within their group, and link to a project or ticket from ⋯.
  */
-export function TodoList({ projectId, projects, focus, onFocused }: {
-  /** The project on screen: the filter's "current project", and new todos' project while it is on. */
+export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, trailing }: {
+  /** The project on screen: the scope's project, and new todos' project while it is on. */
   projectId: string | null;
   projects: readonly Project[];
   /** A todo to show once. */
   focus?: TodoFocus | null;
   /** The list has handled `focus` (shown it, or found it gone): the caller drops it. */
   onFocused?: () => void;
+  /** Changes when quick add should take focus (the panel was opened with Ctrl+] t). */
+  focusAddSeq?: number;
+  /** At the end of the header (the desktop's collapse button). */
+  trailing?: ReactNode;
 }) {
   const todos = useTodos();
   const actions = useTodoActions();
@@ -60,17 +79,26 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
   const [filter, setFilterState] = useState<TodoFilter>(readFilter);
   const [doneOpen, setDoneOpen] = useState(false);
   const [linking, setLinking] = useState<Todo | null>(null);
-  const [dating, setDating] = useState<Todo | null>(null);
-  const [repeating, setRepeating] = useState<Todo | null>(null);
+  const [repeating, setRepeating] = useState<Repeating | null>(null);
   const [deleting, setDeleting] = useState<Todo | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [completing, setCompleting] = useState<ReadonlySet<string>>(new Set());
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const now = new Date();
   const project = projects.find((p) => p.id === projectId) ?? null;
   const active = filter === 'project' && project ? 'project' : 'all';
-  const { open, done } = shown(todos.data ?? [], active, project?.id ?? null);
-  const groups = grouped(open, now);
+  const all = todos.data ?? [];
+  const list = shown(all, active, project?.id ?? null);
+  // Just ticked: still among the open ones (as they were) until the delay is up.
+  const lingering = list.done.filter((t) => completing.has(t.id));
+  const open = [...list.open, ...lingering].sort((a, b) => a.position - b.position);
+  const done = list.done.filter((t) => !completing.has(t.id));
+  const byId = new Map(open.map((t) => [t.id, t]));
+  const groups = grouped(open.map((t) => (t.done ? { ...t, done: false } : t)), now)
+    .map((g) => ({ ...g, todos: g.todos.map((t) => byId.get(t.id)!) }));
   // Headings only once something has a date: a list of undated todos is just a list.
   const headings = groups.some((g) => g.id !== 'none');
+  const openCount = list.open.length;
   const setFilter = (f: TodoFilter) => {
     setFilterState(f);
     writeFilter(f);
@@ -79,9 +107,28 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
     const position = positionFor(group, id, targetId, where);
     if (position !== null) void actions.patch(id, { position });
   };
+  const tick = (t: Todo, isDone: boolean) => {
+    void actions.patch(t.id, { done: isDone });
+    const timer = timers.current.get(t.id);
+    if (timer) clearTimeout(timer);
+    timers.current.delete(t.id);
+    if (isDone && !t.done) {
+      setCompleting((s) => new Set([...s, t.id]));
+      timers.current.set(t.id, setTimeout(() => {
+        timers.current.delete(t.id);
+        setCompleting((s) => new Set([...s].filter((x) => x !== t.id)));
+      }, COMPLETE_LINGER_MS));
+    } else if (!isDone) {
+      setCompleting((s) => (s.has(t.id) ? new Set([...s].filter((x) => x !== t.id)) : s));
+    }
+  };
+  useEffect(() => {
+    const pending = timers.current;
+    return () => pending.forEach(clearTimeout);
+  }, []);
 
-  // Opened from a notification: show it (All if the filter hides it, Done unfolded if it is done) with a ring, then
-  // hand the request back (`onFocused`) so a later mount of the list (the panel reopened) doesn't show it again.
+  // Opened from a notification: show it (All if the filter hides it, Completed unfolded if it is done) with a ring,
+  // then hand the request back (`onFocused`) so a later mount of the list (the panel reopened) doesn't show it again.
   const focused = useRef(onFocused);
   focused.current = onFocused;
   const focusId = focus?.id ?? null;
@@ -108,83 +155,117 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
     };
   }, [highlight]);
 
-  const card = (t: Todo, group?: readonly Todo[], i = 0) => (
-    <TodoCard
+  const editRepeat = (t: Todo) => setRepeating({
+    title: t.title,
+    initial: t.recurrence ?? defaultRecurrence(t.dueOn, now),
+    dueOn: t.dueOn,
+    save: (recurrence, dueOn) => void actions.patch(t.id, { recurrence, ...(dueOn ? { dueOn } : {}) }),
+  });
+
+  const row = (t: Todo, group: DueGroupId | null, list?: readonly Todo[], i = 0) => (
+    <TodoRow
       key={t.id}
       todo={t}
       now={now}
+      group={group}
       showProject={active === 'all'}
       projects={projects}
       highlighted={highlight === t.id}
-      onPatch={(p) => void actions.patch(t.id, p)}
+      completing={completing.has(t.id)}
+      onPatch={(p) => (p.done !== undefined ? tick(t, p.done) : void actions.patch(t.id, p))}
       onDelete={() => (!t.done && t.recurrence ? setDeleting(t) : void actions.remove([t.id]))}
       onLink={() => setLinking(t)}
-      onPickDate={() => setDating(t)}
-      onRepeat={() => setRepeating(t)}
+      onRepeat={() => editRepeat(t)}
       onOpenTicket={openTicket}
-      {...(group ? {
+      {...(list && !completing.has(t.id) ? {
         onMove: (where: 'before' | 'after') => {
-          const target = where === 'before' ? group[i - 1] : group[i + 1];
-          if (target) move(group, t.id, target.id, where);
+          const target = where === 'before' ? list[i - 1] : list[i + 1];
+          if (target) move(list, t.id, target.id, where);
         },
-        onDropHere: (id: string, where: 'before' | 'after') => move(group, id, t.id, where),
+        onDropHere: (id: string, where: 'before' | 'after') => move(list, id, t.id, where),
       } : {})}
     />
   );
 
+  const scopeLabel = active === 'project' && project ? project.key || project.name : 'All projects';
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
-      <AddTodo
-        now={now}
-        onAdd={(title, due) =>
-          actions.add({
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center gap-2 pt-3 pr-2 pb-2 pl-4">
+        <h2 className="text-sm font-semibold tracking-tight">Todos</h2>
+        {openCount > 0 && <span className="text-xs text-muted-foreground tabular-nums" aria-label={`${openCount} open`}>{openCount}</span>}
+        <MenuButton
+          label="Scope"
+          entries={() => [
+            { label: `${active === 'all' ? '✓ ' : ''}All projects`, onSelect: () => setFilter('all') },
+            { label: `${active === 'project' ? '✓ ' : ''}${project ? project.key || project.name : 'This project'}`, disabled: !project, onSelect: () => setFilter('project') },
+          ]}
+        >
+          <Button variant="ghost" size="sm" aria-label={`Scope: ${scopeLabel}`} className="ml-auto gap-1 font-normal text-muted-foreground">
+            {scopeLabel}
+            <ChevronDown aria-hidden className="size-3.5" />
+          </Button>
+        </MenuButton>
+        {trailing}
+      </div>
+      <div className="shrink-0 px-3 pb-2">
+        <QuickAdd
+          now={now}
+          projects={projects}
+          projectId={active === 'project' && project ? project.id : null}
+          focusSeq={focusAddSeq}
+          onAdd={(t) => actions.add(t)}
+          onCustomRepeat={(title, current, set) => setRepeating({
             title,
-            ...(active === 'project' && project ? { project: project.id } : {}),
-            ...(due ? { dueOn: due.dueOn, ...(due.dueTime ? { dueTime: due.dueTime } : {}) } : {}),
+            initial: current.recurrence ?? defaultRecurrence(current.dueOn, now),
+            dueOn: current.dueOn,
+            save: (recurrence, dueOn) => set({ ...current, recurrence, dueOn: current.dueOn ?? dueOn }),
           })}
-      />
-      <SegmentedControl
-        aria-label="Show"
-        size="sm"
-        value={active}
-        onChange={setFilter}
-        options={[
-          { value: 'all', label: 'All' },
-          { value: 'project', label: project?.key || 'This project', disabled: !project },
-        ]}
-      />
-      <div className="-mx-2 flex min-h-0 flex-1 flex-col overflow-auto px-2">
+        />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto px-1.5 pb-3">
         {todos.isPending && <Skeleton lines={4} label="Loading todos" />}
         {todos.isError && <Alert tone="error">Todos could not be loaded: {todos.error.message}</Alert>}
         {todos.isSuccess && open.length === 0 && done.length === 0 && (
           <EmptyState>{active === 'project' ? `No todos for ${project?.key ?? 'this project'} yet.` : 'Nothing to do yet.'}</EmptyState>
         )}
         {groups.map((g) => (
-          <section key={g.id} aria-label={g.label} className="mb-2 flex flex-col gap-1">
+          <section key={g.id} aria-label={g.label} className="mt-2.5 flex flex-col first:mt-1">
             {headings && (
-              <h3 className={g.id === 'overdue' ? 'px-1 text-2xs font-medium tracking-wide text-destructive uppercase' : 'px-1 text-2xs font-medium tracking-wide text-muted-foreground uppercase'}>
-                {g.label} <span className="tabular-nums">({g.todos.length})</span>
+              <h3 className={cn('flex min-h-6.5 items-center gap-1.5 px-2.5 text-xs font-semibold [&>svg]:size-3.5', g.id === 'overdue' && 'text-destructive')}>
+                {GROUP_ICON[g.id]}
+                {g.label}
+                <span className="font-medium text-muted-foreground tabular-nums">{g.todos.length}</span>
+                {g.id === 'overdue' && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="ml-auto font-medium text-muted-foreground"
+                    onClick={() => g.todos.forEach((t) => void actions.patch(t.id, moveToToday(t, new Date())))}
+                  >
+                    Move to today
+                  </Button>
+                )}
               </h3>
             )}
-            <ul aria-label={headings ? `${g.label} todos` : 'Todos'} className="flex flex-col gap-1">
-              {g.todos.map((t, i) => card(t, g.todos, i))}
+            <ul aria-label={headings ? `${g.label} todos` : 'Todos'} className="flex flex-col">
+              {g.todos.map((t, i) => row(t, g.id, g.todos, i))}
             </ul>
           </section>
         ))}
         {done.length > 0 && (
-          <section aria-label="Done" className="flex flex-col gap-1">
-            <div className="flex items-center gap-1">
-              <Button variant="ghost" size="sm" aria-expanded={doneOpen} onClick={() => setDoneOpen((o) => !o)} className="text-muted-foreground">
-                {doneOpen ? <ChevronDown aria-hidden className="size-4" /> : <ChevronRight aria-hidden className="size-4" />}
-                Done ({done.length})
+          <section aria-label="Completed" className="mt-3.5 flex flex-col">
+            <div className="flex items-center gap-1 px-1">
+              <Button variant="ghost" size="sm" aria-expanded={doneOpen} onClick={() => setDoneOpen((o) => !o)} className="font-medium text-muted-foreground">
+                {doneOpen ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
+                Completed · {done.length}
               </Button>
-              <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground" onClick={() => void actions.remove(done.map((t) => t.id))}>
-                Clear done
+              <Button variant="ghost" size="sm" className="ml-auto font-normal text-muted-foreground" onClick={() => void actions.remove(done.map((t) => t.id))}>
+                Clear
               </Button>
             </div>
             {doneOpen && (
-              <ul aria-label="Done todos" className="flex flex-col gap-1">
-                {done.map((t) => card(t))}
+              <ul aria-label="Completed todos" className="flex flex-col">
+                {done.map((t) => row(t, null))}
               </ul>
             )}
           </section>
@@ -203,27 +284,16 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
           />
         </Dialog>
       )}
-      {dating && (
-        <DueDialog
-          title={dating.title}
-          initial={{ dueOn: dating.dueOn ?? localDay(now), dueTime: dating.dueTime ?? '' }}
-          onClose={() => setDating(null)}
-          onSave={(due) => {
-            setDating(null);
-            void actions.patch(dating.id, due);
-          }}
-        />
-      )}
       {repeating && (
         <RepeatDialog
           title={repeating.title}
-          initial={repeating.recurrence ?? defaultRecurrence(repeating.dueOn, now)}
+          initial={repeating.initial}
           dueOn={repeating.dueOn}
           now={now}
           onClose={() => setRepeating(null)}
           onSave={(recurrence, dueOn) => {
             setRepeating(null);
-            void actions.patch(repeating.id, { recurrence, ...(dueOn ? { dueOn } : {}) });
+            repeating.save(recurrence, dueOn);
           }}
         />
       )}
@@ -350,115 +420,5 @@ export function RepeatDialog({ title, initial, dueOn: givenDueOn, now, onSave, o
         )}
       </form>
     </Dialog>
-  );
-}
-
-/** Pick a date (and, if you like, a time). */
-export function DueDialog({ title, initial, onSave, onClose }: {
-  title: string;
-  initial: Due;
-  onSave: (due: Due) => void;
-  onClose: () => void;
-}) {
-  const [dueOn, setDueOn] = useState(initial.dueOn);
-  const [dueTime, setDueTime] = useState(initial.dueTime);
-  const valid = /^\d{4}-\d{2}-\d{2}$/.test(dueOn);
-  return (
-    <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
-      title="Due date"
-      description={title}
-      size="sm"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button disabled={!valid} onClick={() => onSave({ dueOn, dueTime })}>Save</Button>
-        </>
-      }
-    >
-      <form
-        className="flex flex-col gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (valid) onSave({ dueOn, dueTime });
-        }}
-      >
-        <Field label="Date">
-          <Input type="date" value={dueOn} required onChange={(e) => setDueOn(e.target.value)} />
-        </Field>
-        <Field label="Time" hint="Optional: the reminder comes then instead of at the day's start.">
-          <Input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
-        </Field>
-      </form>
-    </Dialog>
-  );
-}
-
-function AddTodo({ now, onAdd }: { now: Date; onAdd: (title: string, due: Due | null) => Promise<unknown> }) {
-  const [title, setTitle] = useState('');
-  const [due, setDue] = useState<Due | null>(null);
-  const [picking, setPicking] = useState(false);
-  const [pending, setPending] = useState(false);
-  const add = async () => {
-    const t = title.trim();
-    if (!t || pending) return;
-    setPending(true);
-    const made = await onAdd(t, due);
-    setPending(false);
-    if (made) {
-      setTitle('');
-      setDue(null);
-    }
-  };
-  const dueText = due && `Due ${formatDay(due.dueOn, now)}${due.dueTime ? ` ${due.dueTime}` : ''}`;
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-1">
-        <Input
-          aria-label="Add a todo"
-          placeholder="Add a todo…"
-          value={title}
-          size="sm"
-          maxLength={500}
-          disabled={pending}
-          className="min-w-0 flex-1"
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void add();
-            }
-          }}
-        />
-        <MenuButton
-          label="Due date for the new todo"
-          entries={() => dueEntries(due ?? { dueOn: null }, now, (dueOn) => setDue(dueOn ? { dueOn, dueTime: '' } : null), () => setPicking(true))}
-        >
-          <IconButton label="Due date for the new todo" size="sm" variant="ghost" className="text-muted-foreground">
-            <CalendarPlus aria-hidden />
-          </IconButton>
-        </MenuButton>
-      </div>
-      {due && dueText && (
-        <div className="flex items-center gap-1 px-1 text-meta text-muted-foreground">
-          <span>{dueText}</span>
-          <IconButton label="No due date" size="sm" variant="ghost" noTooltip onClick={() => setDue(null)} className="size-5">
-            <X aria-hidden />
-          </IconButton>
-        </div>
-      )}
-      {picking && (
-        <DueDialog
-          title={title.trim() || 'New todo'}
-          initial={due ?? { dueOn: localDay(now), dueTime: '' }}
-          onClose={() => setPicking(false)}
-          onSave={(d) => {
-            setPicking(false);
-            setDue(d);
-          }}
-        />
-      )}
-    </div>
   );
 }

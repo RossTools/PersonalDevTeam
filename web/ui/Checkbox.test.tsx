@@ -50,4 +50,23 @@ describe('Checkbox', () => {
     const label = screen.getByRole('checkbox', { name: 'Also delete the branch' }).closest('label')!;
     expect(label.className.split(' ')).toContain('relative');
   });
+
+  it('has a round shape that fills when ticked, with a danger border', async () => {
+    render(
+      <>
+        <Checkbox aria-label="Done: Renew the passport" shape="round" danger />
+        <Checkbox aria-label="Done: Call the dentist" shape="round" defaultChecked />
+      </>,
+    );
+    const overdue = screen.getByRole('checkbox', { name: 'Done: Renew the passport' }).closest('label')!;
+    const dot = overdue.querySelector('[data-slot="checkbox-indicator"]')!;
+    expect(dot).toHaveAttribute('data-shape', 'round');
+    expect(dot.className).toContain('rounded-full');
+    expect(dot.className).toContain('border-destructive');
+    const ticked = screen.getByRole('checkbox', { name: 'Done: Call the dentist' });
+    expect(ticked).toBeChecked();
+    expect(ticked.closest('label')!.querySelector('svg')).not.toBeNull();
+    await userEvent.click(ticked);
+    expect(ticked).not.toBeChecked();
+  });
 });

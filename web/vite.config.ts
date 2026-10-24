@@ -6,7 +6,7 @@ import optimizeLocales from '@react-aria/optimize-locales-plugin';
 import { fileURLToPath } from 'node:url';
 
 /** The app's top-level paths (web/src/shell/route.ts). */
-const APP_PATHS = /^\/(pm|sessions|inbox|tickets|workflows|personas|files|settings)(\/|\?|$)/;
+const APP_PATHS = /^\/(pm|sessions|inbox|tickets|notes|workflows|personas|files|settings)(\/|\?|$)/;
 
 /**
  * Serves index.html for the app's paths, as pdtd does (PDT-111): Vite's own fallback would treat `/files/src/main.ts`

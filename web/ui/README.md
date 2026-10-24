@@ -28,7 +28,7 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
     `waiting-soft`, `failed-soft`; diff: `diff-add`, `diff-del`, `diff-add-strong`, `diff-del-strong`;
   - overlays: `bg-backdrop`; shadows `shadow-popover`, `shadow-dialog`.
 - No raw colours (hex, rgb, `bg-black/…`, `bg-white`), no `text-[…px]`, no `z-[…]`. Type sizes: `text-2xs` (10px
-  labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16). Layers:
+  labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16), and `text-title` (30px, a document's title: a note's). Layers:
   `z-(--pdt-z-popover)`, `z-(--pdt-z-dialog)`, `z-(--pdt-z-menu)`, `z-(--pdt-z-toast)`. A test (`src/lint.test.ts`)
   enforces this outside `tokens.css`.
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens
@@ -51,6 +51,13 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
   screens (Android turns the long press into a drag): drag from a handle, or only with a fine pointer.
 - **Pending and errors.** Actions show `pending` on their control; forms show errors with `Alert`/`Field`; everything
   else toasts (`toast.error(message)`).
+- **Dates.** `Calendar` (a month to pick a day from: Monday first, ‹ › to page, arrows move, Enter picks) takes and
+  gives plain `YYYY-MM-DD` strings; `min` makes earlier days unpickable (except the chosen one), today is amber with a
+  dot, the chosen day `bg-primary`. Its primitive (`primitives/calendar.tsx`) is written by hand on React Aria's
+  `Calendar`/`CalendarGrid`/`CalendarCell` with `@internationalized/date`: `shadcn add calendar` would overwrite our
+  edited button, input, input-group, select and textarea primitives.
+- **Checkbox shapes.** `Checkbox shape="round"` is the todo list's 18px circle: a muted border (`danger` makes it
+  red), filled `running` green with a dark check when ticked. The square default is for forms and lists.
 
 ## Settings pages
 
