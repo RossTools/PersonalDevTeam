@@ -196,6 +196,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     }
     // A later pass in a new session (the earlier one's terminal stopped, PDT-144): the whole task, and why it is back.
     if reused.is_none()
+        && c.session == SessionChoice::Reuse
         && resume_of.is_none()
         && !passes.is_empty()
         && let Some(why) = why_back(st, cx).await

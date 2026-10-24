@@ -79,12 +79,12 @@ export function primary(item: InboxItem): string | null {
   return item.choices.find((c) => c.primary)?.id ?? null;
 }
 
-/** Whether `e` dismisses it (questions and stalled steps, whose step keeps waiting; unheard notices). */
 /** A stalled step whose first message never reached its session: it offers Resume with this message (PDT-144). */
 export function resends(item: InboxItem): boolean {
   return item.kind === 'stalled' && item.choices.some((c) => c.id === 'resend');
 }
 
+/** Whether `e` dismisses it (questions and stalled steps, whose step keeps waiting; unheard notices). */
 export function dismissable(item: InboxItem): boolean {
   return item.kind === 'question' || item.kind === 'stalled' || item.kind === 'notice';
 }

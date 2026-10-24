@@ -604,6 +604,52 @@ async fn a_step_on_an_attempt_whose_terminal_was_interrupted_gets_a_new_session(
     assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "stalled"));
 }
 
+/// PDT-144: the Coder's session was handed to its terminal and a restart stopped that: rejecting at Accept starts a new
+/// conversation with the whole task and why it is back.
+#[tokio::test]
+async fn a_rejected_tickets_coder_whose_terminal_stopped_gets_a_new_session_with_the_task_and_why() {
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    for outcome in ["approved", "pass"] {
+        let mine = inbox_item(&env, "manual", &t).await;
+        answer(&env, &mine, json!({"choice": format!("outcome:{outcome}")})).await;
+    }
+    let accept = inbox_item(&env, "gate", &t).await;
+    let first = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{first}/mode"), Some(json!({"mode": "terminal"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["mode"], "terminal", "{v}");
+    restart(&env).await;
+    env.state.ptys.shutdown().await;
+    assert_eq!(session_status(&env, &first).await, "interrupted");
+    answer(&env, &accept, json!({"choice": "reject", "text": "The button is the wrong colour."})).await;
+
+    let coder = tick_until(&env, "a new Coder session", || async {
+        let sessions = get_ticket(&env, &t).await["sessions"].as_array().unwrap().clone();
+        sessions.into_iter().find(|x| x["id"] != first.as_str())
+    })
+    .await;
+    assert_eq!(coder["mode"], "conversation", "{coder}");
+    let id = coder["id"].as_str().unwrap().to_string();
+    let said = tick_until(&env, "the new Coder's first message", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0"), None).await;
+        v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "user_message").map(|e| e["event"]["text"].clone())
+    })
+    .await;
+    let said = said.as_str().unwrap();
+    assert!(said.contains("Ticket: ") && said.contains("Colour the button"), "the whole task: {said}");
+    assert!(
+        said.contains("This step is back for another pass. The user chose `reject`: The button is the wrong colour."),
+        "{said}"
+    );
+}
+
 /// Starts `t` with no session and commits a change on its branch; the attempt.
 async fn start_with_a_commit(env: &Env, t: &str, file: &str) -> Value {
     let (s, started) =
