@@ -118,6 +118,25 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'))[1]?.body).toEqual({ choice: 'nudge', text: 'Finish up.' }));
   });
 
+  it('resumes a stalled step whose message never arrived with that message, Enter too', async () => {
+    const undelivered = item('un', {
+      kind: 'stalled', group: 'stalled', sessionId: 'sess', personaName: 'Coder', title: 'Coder stalled',
+      body: { why: 'Its message was never delivered: [PDT] Your step is back for another pass.', message: '[PDT] Your step is back for another pass.' },
+      choices: [
+        { id: 'resend', title: 'Resume with this message', primary: true },
+        { id: 'nudge', title: 'Nudge', primary: false },
+        { id: 'outcome:submitted', title: 'Take over: submitted', primary: false },
+      ],
+    });
+    const calls = stubApi({ 'POST /api/inbox/un/answer': (c: Call) => c.body, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[undelivered]} selectedId="un" onSelect={() => {}} />);
+    expect(screen.getByText(/Its message was never delivered/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Resume with this message/ }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'resend' }));
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'))[1]?.body).toEqual({ choice: 'resend' }));
+  });
+
   it('resumes a timed-out step with the user\'s note, or stops it', async () => {
     const timedOut = item('to', {
       kind: 'timed_out', group: 'stalled', sessionId: 'sess', personaName: 'Coder', title: 'Coder timed out at code',

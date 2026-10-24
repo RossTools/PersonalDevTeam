@@ -2,7 +2,9 @@
 //! with nobody typing for 20 s; a conversation idle with no open request, no queued message, no rate limit and its
 //! terminal closed (a parked one reopens to take it). All of a session's waiting messages go in one message. A
 //! message whose attempt has no running agent session is recorded as not told; what the user sent to a conversation
-//! (an Inbox answer, a nudge) reopens it even when it is stopped or interrupted. Delivering resumes the step. PDT's own
+//! (an Inbox answer, a nudge) reopens it even when it is stopped or interrupted, and so does a message that `reopens`
+//! (an agent step's next pass, the user's ticket comment: PDT-144), which may also reopen its attempt's newest
+//! conversation that was not stopped. Delivering resumes the step. PDT's own
 //! messages wait while the host's cap on agents running a turn is reached (Phase 7c §6.2); the user's never do.
 //!
 //! Honest delivery (PDT-129): a message typed into a terminal is told once the keys went in and the terminal is still
@@ -50,10 +52,13 @@ pub(crate) async fn deliver(st: &AppState) {
         }
     }
     // What the user sent to a conversation that is not running (parked, stopped, or interrupted by a pdtd restart)
-    // reopens it, as typing into it would (PDT-95). PDT's own messages still go only to running sessions.
+    // reopens it, as typing into it would (PDT-95), and so does a workflow message that reopens (an agent step's next
+    // pass, the user's ticket comment: PDT-144). PDT's other messages still go only to running sessions.
     let mut stopped: Vec<Session> = vec![];
-    for m in &waiting {
-        if let Some(sid) = m.session_id.as_deref().filter(|_| m.by_user)
+    // An attempt with no running agent session: its newest conversation that was not stopped, for messages that reopen.
+    let mut reopen_by_attempt: HashMap<String, String> = HashMap::new();
+    for m in waiting.iter().filter(|m| m.by_user || m.reopens) {
+        if let Some(sid) = m.session_id.as_deref()
             && !running.iter().any(|s| s.id == sid)
             && !stopped.iter().any(|s| s.id == sid)
             && let Ok(Some(s)) = st.store.get_session(sid).await
@@ -61,6 +66,22 @@ pub(crate) async fn deliver(st: &AppState) {
             && s.mode == SessionMode::Conversation
         {
             stopped.push(s);
+        }
+        if let (None, Some(a)) = (&m.session_id, &m.attempt_id)
+            && !by_attempt.contains_key(a.as_str())
+            && !reopen_by_attempt.contains_key(a)
+            && let Ok(sessions) = st.store.list_attempt_sessions(a).await
+            && let Some(s) = sessions.into_iter().rev().find(|s| {
+                s.kind == SessionKind::AgentTui
+                    && s.mode == SessionMode::Conversation
+                    && s.status != SessionStatus::Finished
+                    && !running.iter().any(|r| r.id == s.id)
+            })
+        {
+            reopen_by_attempt.insert(a.clone(), s.id.clone());
+            if !stopped.iter().any(|x| x.id == s.id) {
+                stopped.push(s);
+            }
         }
     }
     // Sessions the previous pdtd left that are about to resume: their messages wait for them (PDT-129).
@@ -83,7 +104,9 @@ pub(crate) async fn deliver(st: &AppState) {
         }
         let target = match (&m.session_id, &m.attempt_id) {
             (Some(s), _) => by_id.get(s.as_str()).copied(),
-            (None, Some(a)) => by_attempt.get(a.as_str()).copied(),
+            (None, Some(a)) => by_attempt.get(a.as_str()).copied().or_else(|| {
+                m.reopens.then(|| reopen_by_attempt.get(a).and_then(|id| by_id.get(id.as_str()).copied())).flatten()
+            }),
             _ => None,
         };
         let resumes = |s: &Session| match (&m.session_id, &m.attempt_id) {
@@ -222,6 +245,7 @@ pub(crate) async fn track(
         resolved_at: None,
         by_user,
         pending_id: Some(pending_id.to_string()),
+        reopens: false,
     };
     st.store.queue_session_message(&m).await?;
     Ok(())

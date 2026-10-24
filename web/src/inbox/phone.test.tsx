@@ -152,6 +152,17 @@ describe('phone triage', () => {
     await waitFor(() => expect(answered(calls)).toEqual({ choice: 'outcome:changes_requested' }));
   });
 
+  it('offers Resume with this message first for a stalled step whose message never arrived', async () => {
+    const undelivered = item('un', {
+      ...stalled, id: 'un', body: { why: 'Its message was never delivered: hi', message: 'hi' },
+      choices: [{ id: 'resend', title: 'Resume with this message', primary: true }, ...stalled.choices.map((c) => ({ ...c, primary: false }))],
+    });
+    const { calls } = triage([undelivered], 'un');
+    expect(barLabels()).toEqual(['Take over', 'Nudge', 'Resume with this message']);
+    await userEvent.click(bar().getByRole('button', { name: 'Resume with this message' }));
+    await waitFor(() => expect(answered(calls)).toEqual({ choice: 'resend' }));
+  });
+
   it('nudges a stalled step with the words typed', async () => {
     const { calls } = triage([stalled], 'st');
     await userEvent.type(screen.getByRole('textbox', { name: 'Nudge message (optional)' }), 'Carry on');

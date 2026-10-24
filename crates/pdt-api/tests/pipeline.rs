@@ -564,6 +564,159 @@ async fn a_rejected_tickets_coder_hears_why_once_without_the_whole_task_again() 
     assert_eq!(all.matches("wrong colour").count(), 1, "{all}");
 }
 
+/// pdtd stopping (an update): every running session is interrupted and the conversations' processes close.
+async fn restart(env: &Env) {
+    env.state.store.mark_running_interrupted(1).await.unwrap();
+    pdt_api::shutdown_conversations(&env.state).await;
+}
+
+async fn session_status(env: &Env, id: &str) -> Value {
+    call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1["status"].clone()
+}
+
+/// PDT-144: a restart interrupted the Coder's conversation; rejecting at Accept reopens it with why it is back,
+/// rather than telling nobody and stalling the step.
+#[tokio::test]
+async fn a_rejected_tickets_coder_interrupted_by_a_restart_reopens_and_hears_why() {
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    for outcome in ["approved", "pass"] {
+        let mine = inbox_item(&env, "manual", &t).await;
+        answer(&env, &mine, json!({"choice": format!("outcome:{outcome}")})).await;
+    }
+    let accept = inbox_item(&env, "gate", &t).await;
+    let coder = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    restart(&env).await;
+    assert_eq!(session_status(&env, &coder).await, "interrupted");
+    answer(&env, &accept, json!({"choice": "reject", "text": "The button is the wrong colour."})).await;
+
+    let said = tick_until(&env, "the next pass reaching the interrupted coder", || async {
+        let said = agent_says(&env, &coder).await;
+        said.iter().any(|m| m.contains("back for another pass")).then_some(json!(said))
+    })
+    .await;
+    assert!(said.to_string().contains("The user chose `reject`: The button is the wrong colour."), "{said}");
+    assert_eq!(session_status(&env, &coder).await, "running", "it reopened");
+    assert_eq!(get_ticket(&env, &t).await["sessions"].as_array().unwrap().len(), 1, "no new session");
+    // (fake-agent only echoes the pass, so its turn ends without an outcome: that stalls it, in time, as usual.)
+    for _ in 0..10 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let lost = |i: &Value| {
+        let why = i["body"]["why"].as_str().unwrap_or_default();
+        why.contains("stopped before") || why.contains("never delivered")
+    };
+    assert!(!inbox(&env).await.iter().any(lost), "{:#?}", inbox(&env).await);
+}
+
+/// PDT-144: "Ticket comments to the agent" reopens the attempt's conversation a restart interrupted.
+#[tokio::test]
+async fn a_comment_reaches_the_coder_a_restart_interrupted() {
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    inbox_item(&env, "manual", &t).await;
+    let coder = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    restart(&env).await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{t}/comments"),
+        Some(json!({"body": "Make it blue.", "by": "user"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    tick_until(&env, "the comment reaching the interrupted coder", || async {
+        let said = agent_says(&env, &coder).await;
+        said.iter().any(|m| m.contains("New comment on") && m.contains("Make it blue.")).then_some(json!(null))
+    })
+    .await;
+    assert_eq!(session_status(&env, &coder).await, "running");
+}
+
+/// PDT-144: a terminal a restart interrupted can't take the step's message, so the step starts a session of its own
+/// with the whole task.
+#[tokio::test]
+async fn a_step_on_an_attempt_whose_terminal_was_interrupted_gets_a_new_session() {
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{t}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "terminal"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let terminal = v["session"]["id"].as_str().unwrap().to_string();
+    // The restart comes before the engine's next tick picks the start up.
+    restart(&env).await;
+    env.state.ptys.shutdown().await;
+    assert_eq!(session_status(&env, &terminal).await, "interrupted");
+    // The Coder's own conversation submits, and review is next.
+    inbox_item(&env, "manual", &t).await;
+    let sessions = get_ticket(&env, &t).await["sessions"].as_array().unwrap().clone();
+    let coder = sessions.iter().find(|x| x["id"] != terminal.as_str()).expect("a new session");
+    assert_eq!(coder["mode"], "conversation", "{coder}");
+    assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "stalled"));
+}
+
+/// PDT-144: the Coder's session was handed to its terminal and a restart stopped that: rejecting at Accept starts a new
+/// conversation with the whole task and why it is back.
+#[tokio::test]
+async fn a_rejected_tickets_coder_whose_terminal_stopped_gets_a_new_session_with_the_task_and_why() {
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    for outcome in ["approved", "pass"] {
+        let mine = inbox_item(&env, "manual", &t).await;
+        answer(&env, &mine, json!({"choice": format!("outcome:{outcome}")})).await;
+    }
+    let accept = inbox_item(&env, "gate", &t).await;
+    let first = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{first}/mode"), Some(json!({"mode": "terminal"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["mode"], "terminal", "{v}");
+    restart(&env).await;
+    env.state.ptys.shutdown().await;
+    assert_eq!(session_status(&env, &first).await, "interrupted");
+    answer(&env, &accept, json!({"choice": "reject", "text": "The button is the wrong colour."})).await;
+
+    let coder = tick_until(&env, "a new Coder session", || async {
+        let sessions = get_ticket(&env, &t).await["sessions"].as_array().unwrap().clone();
+        sessions.into_iter().find(|x| x["id"] != first.as_str())
+    })
+    .await;
+    assert_eq!(coder["mode"], "conversation", "{coder}");
+    let id = coder["id"].as_str().unwrap().to_string();
+    let said = tick_until(&env, "the new Coder's first message", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0"), None).await;
+        v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "user_message").map(|e| e["event"]["text"].clone())
+    })
+    .await;
+    let said = said.as_str().unwrap();
+    assert!(said.contains("Ticket: ") && said.contains("Colour the button"), "the whole task: {said}");
+    assert!(
+        said.contains("This step is back for another pass. The user chose `reject`: The button is the wrong colour."),
+        "{said}"
+    );
+}
+
 /// Starts `t` with no session and commits a change on its branch; the attempt.
 async fn start_with_a_commit(env: &Env, t: &str, file: &str) -> Value {
     let (s, started) =

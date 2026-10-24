@@ -84,8 +84,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
     changes) → quiet end.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user (`actor` = `user`, not an agent's comment
-    through the API or a workflow's) with an active attempt → `session.send`. A note given with a gate's choice is the
-    user's comment too, but carries `workflowId` and is skipped: that run passes it on itself.
+    through the API or a workflow's) with an active attempt → `session.send` (`reopen: true`: with no running agent
+    session, the attempt's newest conversation that wasn't stopped, e.g. one a pdtd restart interrupted, reopens to take
+    it, PDT-144). A note given with a gate's choice is the user's comment too, but carries `workflowId` and is skipped: that run passes it on itself.
   - **Base moved while a PR waits** (off, PDT-24): `pr.behind` → `session.send`. PR notices now handles `pr.behind`
     too (PDT-104), so with both on the agent hears it twice.
   - **PR comments to the agent** (off, 7e): `pr.commented` and `pr.reviewed` (not `byOwner`, not `isBot`; reviews
@@ -119,7 +120,7 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
 | `state.set` (`key`, `value`, `ifMissing`; or `add`: a counter, output `value`) | `out` |
-| `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`) | `sent`, `untold`, `skipped` |
+| `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`, `reopen`) | `sent`, `untold`, `skipped` |
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`, `pipelineStage`; Phase 7c) | `merged`, `queued`, `refused` |
@@ -320,7 +321,9 @@ nothing queued, no open request, no rate limit, terminal closed; a parked one re
 messages in one message; no running agent session → `untold`, except while a pdtd restart is about to resume the
 session (`AppState::pending_resume`): its messages wait for it. What the user sent to a session (an Inbox answer, a
 Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart), reopening it as typing
-would. `dedupe` is per attempt (also against `pr` timeline keys from before the event log); an `untold` message does
+would. So does a message that `reopens` (`session_messages.reopens`, PDT-144: an agent step's message to its reused
+session, and `session.send` with `reopen`, which with no running agent session for its attempt goes to the attempt's
+newest conversation that wasn't stopped); unlike the user's, the host's cap still holds it. `dedupe` is per attempt (also against `pr` timeline keys from before the event log); an `untold` message does
 not spend its key. Resolving writes the timeline record and resumes the step (`sent` or `untold`).
 
 Honest delivery (PDT-129):
@@ -532,8 +535,11 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   and version (`sessions.persona_id`, `persona_version`, `step_id`), with no attempt (so PR notices still go to the
   attempt's own session) but linked to the ticket (`sessions.ticket_id`, PDT-105): it is titled `<Persona> · <KEY>`,
   carries the ticket like an attempt's session and is in the ticket's `sessions` (with `persona`, `attemptId` null).
-  `reuse` (Coder): the session this node used earlier in the run, else the attempt's running agent session, else a new
-  one that becomes the attempt's. Every new session a step starts on a ticket opens its tab at the end of the
+  `reuse` (Coder): the session this node used earlier in the run, else the attempt's agent session, else a new
+  one that becomes the attempt's. A conversation the user didn't stop can be reused even when it isn't running (a
+  pdtd restart interrupted it): the step's message reopens it (PDT-144). A terminal only while it runs, or while a
+  restart is about to resume it; one that stopped can't take a message, so the step starts a new conversation with
+  the whole first message and, on a later pass, why it is back. Every new session a step starts on a ticket opens its tab at the end of the
   attempt's Start workspace (after the ticket's tab and the sessions before it: Coder, Reviewer, QA), else the
   project's workspace (a Refiner before any attempt, or the workspace is gone), as a session the user's Start makes
   would (PDT-103, PDT-105); each pass's new session opens its own tab, and earlier passes' stay like other ended
@@ -562,7 +568,11 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   `turns + 1`; at `maxTurns` (10) the step takes `timeout`; while `nudges` (1) remain PDT sends "[PDT] You ended your
   turn without `submit_outcome`…"; after that the binding is **stalled** and the Inbox has it. The engine tick also
   stalls a working step whose session stopped (not running, or a conversation with no live process, turn or queued
-  message) for 30 s, or was removed (its `session_id` cleared).
+  message) for 30 s, or was removed (its `session_id` cleared). While the step's message to a reused session is still
+  waiting or on its way, the step isn't stalled (a conversation reopens to take it, or the cap holds it); once that
+  message ends `untold` (lost on the way, or nobody could take it), the step stalls at once with "Its message was never
+  delivered: <the message, quoted>" and its Stalled item offers **Resume with this message** (`resend`, primary),
+  which sends it again as the user's (reopening a stopped conversation), as well as Nudge and Take over.
 - **Background tasks (PDT-142).** A conversation's turn that ends while background tasks the agent started still run
   (Claude's `background_tasks_changed`, kept by `conversations.rs`; a long pytest, a CI watch) isn't counted, nudged
   or stalled: the binding records `background_since` and the tasks' descriptions, and the ticket's agent state is
@@ -704,7 +714,8 @@ open ones stay however old. Approvals are
 not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
 session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
 accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
-`{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
+`{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, `resend` (the undelivered message in `body.message`) or `outcome:<id>`, for a stalled
+step; `again`,
 `outcome:<id>` or `stop` at a loop limit; `resume` with an optional `text`, the note, or `stop` for a timed-out step)
 or `{answers}` / `{text}` for a question (a notice takes no answer); `POST /api/inbox/{id}/dismiss`
 closes a question or stalled item (the step keeps waiting) or a notice. A gate answered through
@@ -733,7 +744,8 @@ On a phone (PDT-117, web/src/inbox/PhoneInboxList.tsx and PhoneInbox.tsx) `/inbo
 count) | **Updates** (a dot while any is unread), and **Review all (n)** at the bottom opens the first item.
 `/inbox/<item>` shows one item (the top bar says "Approval · 2 of 4"): its ticket and step in brief, the kind's content
 (it scrolls) and its decisions in a bar fixed at the bottom, 48px, primary on the right (Question: the choices as big
-rows, Send; Approval: Deny · Always · Allow; Stalled: Take over (its outcomes in a bottom sheet) · Nudge; Unheard notice: Dismiss · Open ticket; a loop limit's,
+rows, Send; Approval: Deny · Always · Allow; Stalled: Take over (its outcomes in a bottom sheet) · Nudge, with Resume with this message on the right when its message
+never arrived; Unheard notice: Dismiss · Open ticket; a loop limit's,
 gate's, manual step's or timed-out step's own choices; Session waiting: Open session); more than three choices fold
 into **More ▾** (a bottom sheet). A decision shows the next item in place (Back returns to the list), "All clear" after
 the last; a horizontal swipe moves between items without answering. ⋯ has Open session, Open ticket and Dismiss.

@@ -750,6 +750,12 @@ pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
     state.live || state.turn_running || !state.pending.is_empty()
 }
 
+/// Whether a conversation is loaded in this pdtd. Removing a session forgets it first, so a turn its closing ended
+/// finds it gone.
+pub(crate) fn is_loaded(st: &AppState, id: &str) -> bool {
+    st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).contains_key(id)
+}
+
 /// A loaded conversation's background tasks (PDT-142).
 pub(crate) struct Background {
     pub tasks: Vec<BackgroundTask>,

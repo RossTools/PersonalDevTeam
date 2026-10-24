@@ -13,4 +13,10 @@ session: string | null, text: string,
 /**
  * A key already sent to the attempt is not sent again (`{{trigger.notice.key}}`).
  */
-dedupe: string | null, timeline: TimelineRecord, };
+dedupe: string | null, timeline: TimelineRecord, 
+/**
+ * A conversation that is not running (stopped, or interrupted by a restart) reopens to take it, as it would for
+ * the user's own message: for what the user wrote (their ticket comment). Otherwise only a running session is
+ * told (PDT-144).
+ */
+reopen: boolean, };

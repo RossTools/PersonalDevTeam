@@ -24,7 +24,7 @@ const RUN_COLUMNS: &str = "r.id, r.workflow_id, w.name AS workflow_name, r.versi
 const STEP_COLUMNS: &str = "id, run_id, seq, node_id, kind, status, input, output, port, attempts, error, wake_at, \
                             wait, started_at, ended_at";
 const MSG_COLUMNS: &str = "id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, step_id, status, \
-                           told_session, created_at, resolved_at, by_user, pending_id";
+                           told_session, created_at, resolved_at, by_user, pending_id, reopens";
 const CONN_COLUMNS: &str = "id, name, kind, url, config, has_secret, created_at, updated_at, last_error, last_error_at";
 
 fn corrupt(what: &str, e: impl std::fmt::Display) -> StoreError {
@@ -145,6 +145,9 @@ pub struct SessionMessage {
     pub by_user: bool,
     /// While `sending`: the conversation's pending message that carries it (PDT-129).
     pub pending_id: Option<String>,
+    /// A conversation that is not running (stopped, interrupted) reopens to take it, as for the user's own messages;
+    /// unlike those, the host's cap still holds it (PDT-144).
+    pub reopens: bool,
 }
 
 fn to_message(r: &SqliteRow) -> Result<SessionMessage, StoreError> {
@@ -164,6 +167,7 @@ fn to_message(r: &SqliteRow) -> Result<SessionMessage, StoreError> {
         resolved_at: r.try_get("resolved_at")?,
         by_user: r.try_get::<i64, _>("by_user")? != 0,
         pending_id: r.try_get("pending_id")?,
+        reopens: r.try_get::<i64, _>("reopens")? != 0,
     })
 }
 
@@ -803,8 +807,8 @@ impl Store {
         }
         sqlx::query(
             "INSERT INTO session_messages (id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, \
-             step_id, status, told_session, created_at, resolved_at, by_user, pending_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             step_id, status, told_session, created_at, resolved_at, by_user, pending_id, reopens) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&m.id)
         .bind(&m.attempt_id)
@@ -821,6 +825,7 @@ impl Store {
         .bind(m.resolved_at)
         .bind(m.by_user)
         .bind(&m.pending_id)
+        .bind(m.reopens)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -846,6 +851,21 @@ impl Store {
             format!("SELECT {MSG_COLUMNS} FROM session_messages WHERE status = 'waiting' ORDER BY created_at, id");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         rows.iter().map(to_message).collect()
+    }
+
+    /// The newest message to `session_id` with `dedupe` (an agent step's first message to its session, PDT-144).
+    pub async fn latest_session_message(
+        &self,
+        session_id: &str,
+        dedupe: &str,
+    ) -> Result<Option<SessionMessage>, StoreError> {
+        let sql = format!(
+            "SELECT {MSG_COLUMNS} FROM session_messages WHERE session_id = ? AND dedupe = ? \
+             ORDER BY created_at DESC, id DESC LIMIT 1"
+        );
+        let row =
+            sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).bind(dedupe).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_message).transpose()
     }
 
     pub async fn get_session_message(&self, id: &str) -> Result<Option<SessionMessage>, StoreError> {
@@ -1366,9 +1386,11 @@ mod tests {
             resolved_at: None,
             by_user: true,
             pending_id: None,
+            reopens: true,
         };
         store.queue_session_message(&m).await.unwrap();
         assert!(store.waiting_session_messages().await.unwrap()[0].by_user);
+        assert!(store.waiting_session_messages().await.unwrap()[0].reopens);
         let again = SessionMessage { id: "m2".into(), ..m.clone() };
         assert_eq!(store.queue_session_message(&again).await.unwrap().id, "m", "one per step");
         assert!(store.session_message_sent("a", "conflict:h").await.unwrap());
@@ -1420,6 +1442,22 @@ mod tests {
         assert!(store.session_message_sent("a", "k").await.unwrap(), "waiting counts");
         store.resolve_session_message("u", None, 8).await.unwrap();
         assert!(!store.session_message_sent("a", "k").await.unwrap(), "untold does not");
+        // A step's first message to a session (PDT-144): the newest with its key.
+        let first = SessionMessage {
+            id: "f1".into(),
+            session_id: Some("sx".into()),
+            step_id: None,
+            dedupe: Some("agent:s".into()),
+            created_at: 10,
+            ..m.clone()
+        };
+        store.queue_session_message(&first).await.unwrap();
+        store.resolve_session_message("f1", None, 11).await.unwrap();
+        let again = SessionMessage { id: "f2".into(), created_at: 12, ..first.clone() };
+        store.queue_session_message(&again).await.unwrap();
+        let got = store.latest_session_message("sx", "agent:s").await.unwrap().unwrap();
+        assert_eq!((got.id.as_str(), got.status.as_str()), ("f2", "waiting"));
+        assert!(store.latest_session_message("sy", "agent:s").await.unwrap().is_none());
 
         let c = Connection {
             id: "c".into(),
