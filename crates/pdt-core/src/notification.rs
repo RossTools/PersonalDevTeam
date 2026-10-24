@@ -91,6 +91,9 @@ pub enum NotificationKind {
     SessionTurnEnded,
     #[serde(rename = "session.exited")]
     SessionExited,
+    /// A message PDT or the user sent an agent never reached it (PDT-129).
+    #[serde(rename = "session.undelivered")]
+    SessionUndelivered,
     #[serde(rename = "pr.ci_failed")]
     PrCiFailed,
     #[serde(rename = "pr.conflict")]
@@ -115,7 +118,7 @@ use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 19] = [
+    pub const ALL: [NotificationKind; 20] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -126,6 +129,7 @@ impl NotificationKind {
         K::InboxNotice,
         K::SessionTurnEnded,
         K::SessionExited,
+        K::SessionUndelivered,
         K::PrCiFailed,
         K::PrConflict,
         K::PrQueueLeft,
@@ -149,6 +153,7 @@ impl NotificationKind {
             K::InboxNotice => "inbox.notice",
             K::SessionTurnEnded => "session.turn_ended",
             K::SessionExited => "session.exited",
+            K::SessionUndelivered => "session.undelivered",
             K::PrCiFailed => "pr.ci_failed",
             K::PrConflict => "pr.conflict",
             K::PrQueueLeft => "pr.queue_left",
@@ -197,6 +202,7 @@ impl NotificationKind {
             | K::InboxLoopLimit
             | K::InboxNotice
             | K::WorkflowNotify
+            | K::SessionUndelivered
             | K::ConnectionFailed
             | K::HostLoopStale
             | K::TodoDue => Show::Toast,
@@ -229,6 +235,7 @@ impl NotificationKind {
             K::InboxNotice => "Unheard notice",
             K::SessionTurnEnded => "Turn ended",
             K::SessionExited => "Session exited",
+            K::SessionUndelivered => "Message not delivered",
             K::PrCiFailed => "CI failed",
             K::PrConflict => "Conflict",
             K::PrQueueLeft => "Left the merge queue",
@@ -254,6 +261,10 @@ impl NotificationKind {
             K::InboxNotice => "A pull request conflicts or fails CI and no agent session could be told.",
             K::SessionTurnEnded => "A session finished its turn and you haven't looked yet.",
             K::SessionExited => "A session's agent exited on its own (not your Stop).",
+            K::SessionUndelivered => {
+                "A message for an agent could not be delivered (it stopped, PDT restarted, or it \
+                                      never became ready)."
+            }
             K::PrCiFailed => "CI failed on an attempt's pull request.",
             K::PrConflict => "An attempt's pull request conflicts with its base.",
             K::PrQueueLeft => "The merge queue dropped an attempt's pull request.",

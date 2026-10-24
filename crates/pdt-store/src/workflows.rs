@@ -24,7 +24,7 @@ const RUN_COLUMNS: &str = "r.id, r.workflow_id, w.name AS workflow_name, r.versi
 const STEP_COLUMNS: &str = "id, run_id, seq, node_id, kind, status, input, output, port, attempts, error, wake_at, \
                             wait, started_at, ended_at";
 const MSG_COLUMNS: &str = "id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, step_id, status, \
-                           told_session, created_at, resolved_at, by_user";
+                           told_session, created_at, resolved_at, by_user, pending_id";
 const CONN_COLUMNS: &str = "id, name, kind, url, config, has_secret, created_at, updated_at, last_error, last_error_at";
 
 fn corrupt(what: &str, e: impl std::fmt::Display) -> StoreError {
@@ -136,13 +136,15 @@ pub struct SessionMessage {
     pub timeline: Value,
     pub run_id: Option<String>,
     pub step_id: Option<String>,
-    /// `waiting`, `told` or `untold`.
+    /// `waiting`, `sending` (a conversation has it, the agent has not echoed it yet), `told` or `untold`.
     pub status: String,
     pub told_session: Option<String>,
     pub created_at: i64,
     pub resolved_at: Option<i64>,
     /// The user sent it (an Inbox answer or nudge): the host's cap on agents running a turn never holds it.
     pub by_user: bool,
+    /// While `sending`: the conversation's pending message that carries it (PDT-129).
+    pub pending_id: Option<String>,
 }
 
 fn to_message(r: &SqliteRow) -> Result<SessionMessage, StoreError> {
@@ -161,6 +163,7 @@ fn to_message(r: &SqliteRow) -> Result<SessionMessage, StoreError> {
         created_at: r.try_get("created_at")?,
         resolved_at: r.try_get("resolved_at")?,
         by_user: r.try_get::<i64, _>("by_user")? != 0,
+        pending_id: r.try_get("pending_id")?,
     })
 }
 
@@ -800,8 +803,8 @@ impl Store {
         }
         sqlx::query(
             "INSERT INTO session_messages (id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, \
-             step_id, status, told_session, created_at, resolved_at, by_user) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             step_id, status, told_session, created_at, resolved_at, by_user, pending_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&m.id)
         .bind(&m.attempt_id)
@@ -817,19 +820,23 @@ impl Store {
         .bind(m.created_at)
         .bind(m.resolved_at)
         .bind(m.by_user)
+        .bind(&m.pending_id)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
         Ok(m.clone())
     }
 
-    /// Whether a message with `dedupe` for the attempt is waiting or was resolved (told or not).
+    /// Whether a message with `dedupe` for the attempt is waiting, on its way or told. One nobody was told does not
+    /// count: a later notice with its key may still be told (PDT-129).
     pub async fn session_message_sent(&self, attempt_id: &str, dedupe: &str) -> Result<bool, StoreError> {
-        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_messages WHERE attempt_id = ? AND dedupe = ?")
-            .bind(attempt_id)
-            .bind(dedupe)
-            .fetch_one(&self.pool)
-            .await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_messages WHERE attempt_id = ? AND dedupe = ? AND status != 'untold'",
+        )
+        .bind(attempt_id)
+        .bind(dedupe)
+        .fetch_one(&self.pool)
+        .await?;
         Ok(n > 0)
     }
 
@@ -847,10 +854,60 @@ impl Store {
         row.as_ref().map(to_message).transpose()
     }
 
-    /// Resolves a waiting message: told to `session`, or to nobody. False when it was not waiting.
+    /// Messages a conversation has and has not echoed yet: those of one pending message, or all of them.
+    pub async fn sending_session_messages(&self, pending_id: Option<&str>) -> Result<Vec<SessionMessage>, StoreError> {
+        let sql = format!(
+            "SELECT {MSG_COLUMNS} FROM session_messages WHERE status = 'sending' AND (? IS NULL OR pending_id = ?) \
+             ORDER BY created_at, id"
+        );
+        let rows =
+            sqlx::query(sqlx::AssertSqlSafe(sql)).bind(pending_id).bind(pending_id).fetch_all(&self.pool).await?;
+        rows.iter().map(to_message).collect()
+    }
+
+    /// Hands waiting messages to a conversation's pending message `pending_id` (on their way to `session`). Returns
+    /// how many it took.
+    pub async fn send_session_messages(
+        &self,
+        ids: &[String],
+        session: &str,
+        pending_id: &str,
+    ) -> Result<u64, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let mut n = 0;
+        for id in ids {
+            n += sqlx::query(
+                "UPDATE session_messages SET status = 'sending', told_session = ?, pending_id = ? \
+                 WHERE id = ? AND status = 'waiting'",
+            )
+            .bind(session)
+            .bind(pending_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        }
+        tx.commit().await?;
+        Ok(n)
+    }
+
+    /// Puts the messages of a pending message that never went out back to waiting.
+    pub async fn unsend_session_messages(&self, pending_id: &str) -> Result<u64, StoreError> {
+        let r = sqlx::query(
+            "UPDATE session_messages SET status = 'waiting', told_session = NULL, pending_id = NULL \
+             WHERE pending_id = ? AND status = 'sending'",
+        )
+        .bind(pending_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Resolves a waiting (or sending) message: told to `session`, or to nobody. False when it was already resolved.
     pub async fn resolve_session_message(&self, id: &str, session: Option<&str>, now: i64) -> Result<bool, StoreError> {
         let r = sqlx::query(
-            "UPDATE session_messages SET status = ?, told_session = ?, resolved_at = ? WHERE id = ? AND status = 'waiting'",
+            "UPDATE session_messages SET status = ?, told_session = ?, resolved_at = ? \
+             WHERE id = ? AND status IN ('waiting', 'sending')",
         )
         .bind(if session.is_some() { "told" } else { "untold" })
         .bind(session)
@@ -1308,6 +1365,7 @@ mod tests {
             created_at: 1,
             resolved_at: None,
             by_user: true,
+            pending_id: None,
         };
         store.queue_session_message(&m).await.unwrap();
         assert!(store.waiting_session_messages().await.unwrap()[0].by_user);
@@ -1344,6 +1402,24 @@ mod tests {
         assert!(store.get_session_message("m").await.unwrap().is_none());
         assert!(store.get_session_message("w").await.unwrap().is_some());
         assert!(store.get_session_message("l").await.unwrap().is_some(), "the active attempt's stays");
+
+        // On its way to a conversation (PDT-129): sending until the echo, back to waiting when it never went out.
+        assert_eq!(store.send_session_messages(&["w".into()], "sess", "p1").await.unwrap(), 1);
+        assert!(store.waiting_session_messages().await.unwrap().is_empty());
+        assert_eq!(store.sending_session_messages(Some("p1")).await.unwrap().len(), 1);
+        assert!(store.sending_session_messages(Some("p2")).await.unwrap().is_empty());
+        assert_eq!(store.unsend_session_messages("p1").await.unwrap(), 1);
+        assert_eq!(store.waiting_session_messages().await.unwrap()[0].told_session, None);
+        store.send_session_messages(&["w".into()], "sess", "p1").await.unwrap();
+        assert_eq!(store.sending_session_messages(None).await.unwrap()[0].pending_id.as_deref(), Some("p1"));
+        assert!(store.resolve_session_message("w", None, 7).await.unwrap(), "a sending one resolves");
+        // Nobody was told: its dedupe key is not spent.
+        let untold =
+            SessionMessage { id: "u".into(), step_id: Some("s4".into()), dedupe: Some("k".into()), ..m.clone() };
+        store.queue_session_message(&untold).await.unwrap();
+        assert!(store.session_message_sent("a", "k").await.unwrap(), "waiting counts");
+        store.resolve_session_message("u", None, 8).await.unwrap();
+        assert!(!store.session_message_sent("a", "k").await.unwrap(), "untold does not");
 
         let c = Connection {
             id: "c".into(),

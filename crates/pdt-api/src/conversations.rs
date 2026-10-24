@@ -35,6 +35,8 @@ use tokio::sync::broadcast;
 
 /// How long an idle conversation's process lives before it is parked (spec §3.2).
 pub const IDLE_PARK: Duration = Duration::from_secs(15 * 60);
+/// How long a message may sit unechoed while nothing happens in its conversation (`Conversations::pending_timeout`).
+pub const PENDING_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// How many stored events one page of the replay or `GET …/events` returns at most.
 const PAGE: i64 = 500;
 
@@ -48,6 +50,9 @@ pub struct Conversations {
     pub idle_park: Duration,
     /// How long a conversation must be quiet before PDT sends a notice of its own (tests shorten it).
     pub notice_quiet: Duration,
+    /// How long a message may wait to go in with no turn running, nothing asked and nothing heard from the agent
+    /// before PDT gives up on it and says so (PDT-129; tests shorten it).
+    pub pending_timeout: Duration,
     /// PDT's `codex app-server`, made on first use.
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
 }
@@ -60,6 +65,7 @@ impl Default for Conversations {
             generation: Arc::new(AtomicU64::new(1)),
             idle_park: IDLE_PARK,
             notice_quiet: Duration::from_secs(20),
+            pending_timeout: PENDING_TIMEOUT,
             codex: Default::default(),
         }
     }
@@ -440,10 +446,13 @@ async fn pump(
                             why.push_str(&stderr_tail);
                         }
                         s.stopped = Some(why);
-                        s.pending.clear();
                     }
                 }
                 if !expected {
+                    // What it had not taken yet is lost with it: say so (PDT-129).
+                    let lost: Vec<String> = c.state().pending.drain(..).map(|p| p.id).collect();
+                    let why = format!("{} stopped before it took it.", agent.label());
+                    crate::workflow::outbox::lost(&st, &lost, Some(&why));
                     let text = c.state().stopped.clone().unwrap_or_default();
                     append(&st, &c, None, None, AgentEvent::Error { text, retryable: true }, None).await;
                 }
@@ -537,9 +546,11 @@ async fn append(
             AgentEvent::UserMessage { text, source, .. }
                 if *source != pdt_core::conversation::MessageSource::Terminal =>
             {
-                // The agent took a message: it is no longer pending.
+                // The agent took a message: it is no longer pending, and whatever it carried was told (PDT-129).
                 if let Some(i) = pending_index(&s.pending, text) {
-                    s.pending.remove(i);
+                    let p = s.pending.remove(i);
+                    let st2 = st.clone();
+                    tokio::spawn(async move { crate::workflow::outbox::echoed(&st2, &p.id).await });
                 }
                 true
             }
@@ -600,11 +611,14 @@ pub(crate) async fn start(st: &AppState, session: &Session, first: Option<String
     let c = conv(st, session).await?;
     ensure_live(st, &c, session).await?;
     if let Some(text) = first {
-        send_message(st, session, &text, &[], Delivery::Next, false).await?;
+        send_message(st, session, &text, &[], Delivery::Next, false, None).await?;
     }
     Ok(())
 }
 
+/// Sends a message: pending until the agent echoes it. `outbox` names the pending id the outbox's messages already
+/// wait under; any other message gets an outbox row of its own (status `sending`), so a message lost on the way (the
+/// agent stops, pdtd restarts) is reported instead of vanishing (PDT-129).
 async fn send_message(
     st: &AppState,
     session: &Session,
@@ -612,6 +626,7 @@ async fn send_message(
     image_ids: &[String],
     delivery: Delivery,
     notice: bool,
+    outbox: Option<&str>,
 ) -> Result<PendingMessage, ApiError> {
     if !valid_message(text, image_ids.len()) {
         return Err(ApiError::new(
@@ -624,12 +639,15 @@ async fn send_message(
     let c = conv(st, session).await?;
     let live = ensure_live(st, &c, session).await?;
     let pending = PendingMessage {
-        id: uuid::Uuid::now_v7().to_string(),
+        id: outbox.map_or_else(|| uuid::Uuid::now_v7().to_string(), String::from),
         text: text.to_string(),
         delivery,
         images: image_ids.to_vec(),
         notice,
     };
+    if outbox.is_none() {
+        crate::workflow::outbox::track(st, session, &pending.id, text, !notice).await?;
+    }
     {
         let mut s = c.state();
         s.pending.push(pending.clone());
@@ -643,6 +661,10 @@ async fn send_message(
         c.state().pending.retain(|p| p.id != pending.id);
         c.push_state();
         refresh_activity(st, &c).await;
+        // The sender hears of it (an error, or the outbox trying again): nothing to report.
+        if outbox.is_none() {
+            crate::workflow::outbox::lost(st, std::slice::from_ref(&pending.id), None);
+        }
         return Err(adapter_error(e));
     }
     Ok(pending)
@@ -662,6 +684,34 @@ pub(crate) fn ready_for_notice(st: &AppState, id: &str) -> bool {
         && !s.terminal_open
         && s.limited_until.is_none_or(|t| t <= now_ms())
         && s.last_active.elapsed() >= st.conversations.notice_quiet
+}
+
+/// What keeps a conversation from taking PDT's message now (`busy_with`).
+pub(crate) enum Busy {
+    Turn,
+    Request,
+    Message,
+    Terminal,
+    RateLimit,
+}
+
+/// Why a loaded conversation is not ready for a notice, if one of these is it (a quiet spell is not).
+pub(crate) fn busy_with(st: &AppState, id: &str) -> Option<Busy> {
+    let c = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()?;
+    let s = c.state();
+    if s.turn_running {
+        Some(Busy::Turn)
+    } else if !s.open_requests.is_empty() {
+        Some(Busy::Request)
+    } else if !s.pending.is_empty() {
+        Some(Busy::Message)
+    } else if s.terminal_open {
+        Some(Busy::Terminal)
+    } else if s.limited_until.is_some_and(|t| t > now_ms()) {
+        Some(Busy::RateLimit)
+    } else {
+        None
+    }
 }
 
 /// The conversations running a turn, or with a message on its way to one (the host's cap counts them, Phase 7c §6.2).
@@ -696,15 +746,21 @@ pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
     state.live || state.turn_running || !state.pending.is_empty()
 }
 
-/// Sends PDT's own message (a PR notice) as the next message; it shows as PDT's, not the user's.
-pub(crate) async fn send_notice(st: &AppState, session: &Session, text: &str) -> Result<(), ApiError> {
-    send_message(st, session, text, &[], Delivery::Next, true).await.map(|_| ())
+/// Sends the outbox's messages (`pending_id` names them) as the next message; it shows as PDT's, not the user's. They
+/// are told once the agent echoes it.
+pub(crate) async fn send_notice(
+    st: &AppState,
+    session: &Session,
+    text: &str,
+    pending_id: &str,
+) -> Result<(), ApiError> {
+    send_message(st, session, text, &[], Delivery::Next, true, Some(pending_id)).await.map(|_| ())
 }
 
 /// Sends a message PDT composed for the user (review feedback) as the user's next message: queued while a turn runs;
 /// a parked or stopped conversation reopens to take it.
 pub(crate) async fn send_user_message(st: &AppState, session: &Session, text: &str) -> Result<(), ApiError> {
-    send_message(st, session, text, &[], Delivery::Next, false).await.map(|_| ())
+    send_message(st, session, text, &[], Delivery::Next, false, None).await.map(|_| ())
 }
 
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
@@ -715,11 +771,13 @@ pub(crate) async fn stop(st: &AppState, session: &Session) -> Result<(), ApiErro
     }
     park(st, &c).await;
     st.store.end_session(&session.id, SessionStatus::Finished, None, now_ms()).await?;
-    {
+    let dropped: Vec<String> = {
         let mut s = c.state();
-        s.pending.clear();
         s.activity = None;
-    }
+        s.pending.drain(..).map(|p| p.id).collect()
+    };
+    // The user stopped it: what had not gone in is not told, and they know why.
+    crate::workflow::outbox::lost(st, &dropped, None);
     c.push_state();
     Ok(())
 }
@@ -758,6 +816,8 @@ pub(crate) async fn forget(st: &AppState, id: &str) {
     let c = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     if let Some(c) = c {
         park(st, &c).await;
+        let dropped: Vec<String> = c.state().pending.drain(..).map(|p| p.id).collect();
+        crate::workflow::outbox::lost(st, &dropped, None);
     }
 }
 
@@ -786,10 +846,41 @@ pub async fn park_idle_conversations(st: &AppState) -> usize {
     parked
 }
 
-/// Parks idle conversations every 30 s, until shutdown.
+/// Gives up on messages that have waited `pending_timeout` to go in while nothing happened in their conversation (no
+/// turn, nothing asked, no event): they are dropped and reported, so they no longer hold the conversation busy
+/// (PDT-129). Returns how many it dropped.
+pub async fn expire_pending_messages(st: &AppState) -> usize {
+    let convs: Vec<Arc<Conv>> =
+        st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
+    let mut dropped = 0;
+    for c in convs {
+        let stuck: Vec<String> = {
+            let mut s = c.state();
+            if s.pending.is_empty()
+                || s.turn_running
+                || !s.open_requests.is_empty()
+                || s.last_active.elapsed() < st.conversations.pending_timeout
+            {
+                continue;
+            }
+            s.pending.drain(..).map(|p| p.id).collect()
+        };
+        tracing::warn!(session = %c.id, messages = stuck.len(), "a conversation never took its messages; giving up");
+        dropped += stuck.len();
+        let mins = st.conversations.pending_timeout.as_secs().div_ceil(60);
+        let why = format!("The agent did not take it within {mins} min.");
+        crate::workflow::outbox::lost(st, &stuck, Some(&why));
+        c.push_state();
+        refresh_activity(st, &c).await;
+    }
+    dropped
+}
+
+/// Parks idle conversations and gives up on stuck messages every 30 s, until shutdown.
 pub async fn run_conversation_ticker(st: AppState) {
     let every = Duration::from_secs(30);
     crate::loops::run_every(st, "conversations", every, crate::loops::Start::AfterOnePeriod, |st| async move {
+        expire_pending_messages(&st).await;
         park_idle_conversations(&st).await;
     })
     .await
@@ -1146,6 +1237,8 @@ pub(crate) async fn terminal_conversation_moved(
 /// After a pdtd restart: a turn that was running ends as interrupted and open requests expire (spec §9). Run before
 /// serving.
 pub async fn recover_conversations(st: &AppState) {
+    // Messages a conversation had not echoed when the previous pdtd stopped never reached it (PDT-129).
+    crate::workflow::outbox::recover(st).await;
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
         Ok(v) => v,
         Err(e) => {
@@ -1329,7 +1422,8 @@ pub(crate) async fn post_message(
     let Json(body) = payload?;
     let session = conversation_session(&st, &id).await?;
     let images = body.images.unwrap_or_default();
-    let pending = send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), false).await?;
+    let pending =
+        send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), false, None).await?;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }
 

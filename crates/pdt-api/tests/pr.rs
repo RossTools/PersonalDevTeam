@@ -52,6 +52,7 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
         argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned()
     };
     state.conversations.notice_quiet = Duration::ZERO;
+    state.typing_quiet = Duration::ZERO;
     let gh = Arc::new(FakeGithub::default());
     state.github = gh.clone();
     // pdt-mcp (a fake agent's `mcp:` calls) needs pdtd listening.
@@ -461,8 +462,12 @@ async fn a_conversation_is_told_as_pdt_once_it_is_idle() {
     env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
     env.gh.set_jobs(7, &["test (linux)"]);
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::run_workflows(&env.state).await;
-    let events = pr_events(&env).await;
+    // Told once the agent echoes it (PDT-129), not as it is handed over.
+    let events = tick_until(&env, "the notice told", || async {
+        let e = pr_events(&env).await;
+        (!e.is_empty()).then_some(e)
+    })
+    .await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!((&events[0]["data"]["told"], &events[0]["data"]["sessionId"]), (&json!(true), &json!(env.session)));
     let all = wait_turns(&env, 2).await;
@@ -880,8 +885,9 @@ async fn an_unheard_conflict_waits_in_the_inbox_until_it_is_fixed() {
     env.state.store.emit_event(&again, 1).await.unwrap().expect("logged");
     let second = finished_run(&env, 2).await;
     assert_eq!(second["workflowId"], json!(wf));
-    // Its key counts as sent (untold), and the Inbox item is made once per key besides.
-    assert_eq!(path(&second)[2..], ["tell:skipped"], "{second}");
+    // Nobody was told, so its key is not spent (PDT-129): it tries again, still untold, and the Inbox item is made
+    // once per key.
+    assert_eq!(path(&second)[2..], ["tell:untold", "unheard:true", "inbox:skipped"], "{second}");
     assert_eq!(comments(&env).await.iter().filter(|c| c.contains("no agent session")).count(), 1);
     assert_eq!(notice_items(&env).await.len(), 1);
 

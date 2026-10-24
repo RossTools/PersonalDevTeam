@@ -190,7 +190,8 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
                 interrupt_pending: false,
                 interrupted: false,
                 generation,
-                last_input_ms: 0,
+                // A TUI that just started is still drawing: the quiet window starts now (PDT-129).
+                last_input_ms: now_ms(),
             },
         );
         let _ = st.store.update_activity(&s.id, Some(Activity::Idle), None).await;
@@ -263,6 +264,56 @@ fn is_answer(bytes: &[u8]) -> bool {
     bytes.contains(&b'\r') || bytes == b"\x1b" || !strip_ansi(bytes).trim().is_empty()
 }
 
+/// Whether a chunk of terminal input is only what the terminal sent by itself: focus reports (`ESC [ I`, `ESC [ O`),
+/// replies to queries (device attributes `ESC [ ? … c`, cursor position `ESC [ r ; c R`, mode reports `… $ y`,
+/// keyboard flags `ESC [ ? … u`, status `ESC [ … n`) and OSC / DCS replies (colours, `XTGETTCAP`). The user typing
+/// sends anything else.
+fn is_terminal_reply(bytes: &[u8]) -> bool {
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != 0x1b {
+            return false;
+        }
+        match bytes.get(i + 1) {
+            Some(b'[') => {
+                let start = i + 2;
+                let mut j = start;
+                while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                    j += 1;
+                }
+                let Some(&last) = bytes.get(j) else { return false };
+                let params = &bytes[start..j];
+                let private = params.first().is_some_and(|b| matches!(b, b'?' | b'>' | b'='));
+                let reply = match last {
+                    b'I' | b'O' => params.is_empty(),
+                    b'c' => private,
+                    b'u' => params.first() == Some(&b'?'),
+                    b'R' | b'n' => !params.is_empty(),
+                    b'y' => params.last() == Some(&b'$'),
+                    _ => false,
+                };
+                if !reply {
+                    return false;
+                }
+                i = j + 1;
+            }
+            Some(b']' | b'P') => {
+                let mut j = i + 2;
+                i = loop {
+                    match bytes.get(j) {
+                        None => return false,
+                        Some(0x07) => break j + 1,
+                        Some(0x1b) if bytes.get(j + 1) == Some(&b'\\') => break j + 2,
+                        Some(_) => j += 1,
+                    }
+                };
+            }
+            _ => return false,
+        }
+    }
+    !bytes.is_empty()
+}
+
 /// A plain Enter submits input; Alt/Shift+Enter (`ESC CR`) inserts a composer newline.
 fn is_enter(bytes: &[u8]) -> bool {
     bytes.iter().enumerate().any(|(i, b)| *b == b'\r' && (i == 0 || bytes[i - 1] != 0x1b))
@@ -275,6 +326,11 @@ pub(crate) fn ready_for_message(st: &AppState, id: &str, quiet_ms: i64) -> bool 
     map.get(id).is_some_and(|t| t.activity == Activity::Idle && now_ms() - t.last_input_ms >= quiet_ms)
 }
 
+/// A tracked agent terminal's activity (None: this daemon does not track it).
+pub(crate) fn activity_of(st: &AppState, id: &str) -> Option<Activity> {
+    st.activity.lock().unwrap_or_else(|e| e.into_inner()).get(id).map(|t| t.activity)
+}
+
 /// The agent terminals this daemon tracks whose activity is `working` (the host's cap counts them, Phase 7c §6.2).
 pub(crate) fn working_ids(st: &AppState) -> Vec<String> {
     let map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
@@ -282,7 +338,8 @@ pub(crate) fn working_ids(st: &AppState) -> Vec<String> {
 }
 
 /// Types `text` into an agent session as one bracketed paste, then presses Enter (as the browser's Compose does), so
-/// the agent takes it as a prompt. Activity sees it as input.
+/// the agent takes it as a prompt. Activity sees it as input. Fails when the terminal's process is gone before the
+/// paste or the Enter (PDT-129): the bytes would reach nobody. (One that exits once it has read the line took it.)
 pub(crate) async fn type_message(st: &AppState, id: &str, text: &str) -> Result<(), pdt_agents::PtyError> {
     let body = text.replace('\x1b', "").replace("\r\n", "\r").replace('\n', "\r");
     let paste = format!("\x1b[200~{body}\x1b[201~");
@@ -299,6 +356,10 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
     let sig = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
+        // What the terminal answers by itself (a focus change, a query's reply) is not someone typing (PDT-129).
+        if is_terminal_reply(bytes) {
+            return;
+        }
         t.last_input_ms = now_ms();
         if t.agent == AgentKind::Claude && matches!(bytes, b"\x1b" | b"\x03") {
             // Esc can also close a dialog. Only the subsequent acknowledgement proves the turn stopped.
@@ -440,7 +501,31 @@ pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{Screen, is_answer, is_enter};
+    use super::{Screen, is_answer, is_enter, is_terminal_reply};
+
+    #[test]
+    fn terminal_replies_are_not_typing() {
+        for sent in [
+            &b"\x1b[I"[..],
+            b"\x1b[O",
+            b"\x1b[I\x1b[O",
+            b"\x1b[?1;2c",
+            b"\x1b[>0;276;0c",
+            b"\x1b[12;40R",
+            b"\x1b[0n",
+            b"\x1b[?2004;1$y",
+            b"\x1b[?0u",
+            b"\x1b]11;rgb:0000/0000/0000\x1b\\",
+            b"\x1b]10;rgb:ffff/ffff/ffff\x07",
+            b"\x1bP1+r544e=787465726d\x1b\\",
+        ] {
+            assert!(is_terminal_reply(sent), "{sent:?}");
+        }
+        for typed in [&b"a"[..], b"\r", b"\x1b", b"\x7f", b"\x1b[A", b"\x1b[3~", b"\x1b[I hi", b"", b"\x1b]11;unended"]
+        {
+            assert!(!is_terminal_reply(typed), "{typed:?}");
+        }
+    }
 
     #[test]
     fn claude_interruption_acknowledgement_is_found_across_chunks() {

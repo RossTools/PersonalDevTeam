@@ -1011,6 +1011,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 created_at: now_ms(),
                 resolved_at: None,
                 by_user: false,
+                pending_id: None,
             };
             let m = st.store.queue_session_message(&m).await.map_err(store)?;
             Ok(json!({"queued": true, "messageId": m.id}))

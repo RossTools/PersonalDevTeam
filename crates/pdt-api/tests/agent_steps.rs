@@ -740,3 +740,62 @@ async fn a_hung_step_holds_up_neither_other_runs_nor_submit_outcome() {
     let get = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "get").unwrap().clone();
     assert_eq!(get["status"], "skipped", "{r:#}");
 }
+
+#[tokio::test]
+async fn a_working_steps_removed_session_stalls_it() {
+    let env = setup().await;
+    let t = ticket(&env, "Long one").await;
+    // Its turn stays open on a question for the user.
+    let wf = create_workflow(&env, review_doc("ask: Which one?", json!({}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let step = tick_until(&env, "the step's session", || async {
+        let r = run(&env, &id).await;
+        let step = r["steps"].as_array()?.iter().find(|s| s["nodeId"] == "review")?.clone();
+        (step["status"] == "waiting").then_some(step)
+    })
+    .await;
+    let step_id = step["id"].as_str().unwrap();
+    let binding = env.state.store.get_agent_step(step_id).await.unwrap().unwrap();
+    let session = binding.session_id.clone().unwrap();
+    let (s, v) = call(&env.app, "DELETE", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    // Past the grace a working step gets before its session counts as gone.
+    let mut a = env.state.store.get_agent_step(step_id).await.unwrap().unwrap();
+    assert!(a.session_id.is_none(), "removing the session cleared it");
+    a.updated_at -= 60_000;
+    env.state.store.put_agent_step(&a).await.unwrap();
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    assert_eq!(stalled["stepId"], step_id);
+    assert!(stalled["body"]["why"].as_str().unwrap().contains("removed"), "{stalled}");
+}
+
+#[tokio::test]
+async fn a_step_whose_session_failed_to_start_starts_one_on_retry() {
+    let mut env = setup().await;
+    let t = ticket(&env, "Retry me").await;
+    let wf = create_workflow(
+        &env,
+        review_doc(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Second time lucky."}"#, json!({})),
+    )
+    .await;
+    // The engine's state starts sessions: with no agent program they fail to start.
+    env.state.platform.claude_program = env._tmp.path().join("no-such-claude").to_string_lossy().into_owned();
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["status"], "failed", "{r:#}");
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    let a = env.state.store.get_agent_step(step["id"].as_str().unwrap()).await.unwrap().unwrap();
+    assert_eq!(a.state, pdt_core::workflow::agent::AgentStepState::Done, "the failed step no longer works");
+    assert!(a.session_id.is_none());
+
+    env.state.platform.claude_program = FAKE.to_string();
+    let (s, v) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/retry"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r:#}");
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    assert_eq!(step["port"], "approved");
+    assert!(step["output"]["sessionId"].is_string(), "{step}");
+}

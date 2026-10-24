@@ -307,6 +307,12 @@ impl Store {
         Ok(())
     }
 
+    /// Forgets a step's binding (one whose session never started: the step starts over, PDT-129).
+    pub async fn delete_agent_step(&self, step_id: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM agent_steps WHERE step_id = ?").bind(step_id).execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn get_agent_step(&self, step_id: &str) -> Result<Option<AgentStep>, StoreError> {
         let sql = format!("SELECT {STEP_COLUMNS} FROM agent_steps WHERE step_id = ?");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(step_id).fetch_optional(&self.pool).await?;

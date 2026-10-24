@@ -4,6 +4,7 @@
 //! - `ask: <question>` — asks an AskUserQuestion with options A and B, then says the answer.
 //! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
 //! - `exit` — writes to stderr and exits 3.
+//! - `deaf` — ends its turn, then never reads another message (it stays alive; nothing sent to it is echoed).
 //! - `env: NAME` — says whether NAME is set.
 //! - `bg: <ms>` — starts a background task and ends the turn; when the task finishes `<ms>` later it reports it to
 //!   itself like Claude (a replayed `task-notification` message), which starts a turn that says so. Closing stdin
@@ -409,6 +410,13 @@ impl Agent {
                 let _ = tx.send(Some(json!({"type":"fake_task_done","task":task})));
             });
             self.say("Started it in the background.");
+        } else if text == "deaf" {
+            self.say("Not listening any more.");
+            self.result("success", started);
+            // Alive, but never reads another message (nothing sent now is echoed).
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
         } else if text == "exit" {
             eprintln!("fake-agent: crashing as asked");
             std::process::exit(3);

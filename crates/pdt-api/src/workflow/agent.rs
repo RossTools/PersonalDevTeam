@@ -92,10 +92,15 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         output: Value::Null,
     };
     if let Some(a) = st.store.get_agent_step(&cx.step.id).await.map_err(err)? {
-        return Ok(match (&a.state, &a.outcome) {
-            (AgentStepState::Done, Some(o)) => Outcome::next(o, outcome_output(&a)),
-            _ => wait(&a),
-        });
+        match (&a.state, &a.outcome, &a.session_id) {
+            (AgentStepState::Done, Some(o), _) => return Ok(Outcome::next(o, outcome_output(&a))),
+            // Its session never started (`new_session` failed or the step's time limit cut it), or the step ended
+            // without an outcome: this run of the step (a Retry, a node retry) starts over (PDT-129).
+            (AgentStepState::Working, _, None) | (AgentStepState::Done, None, _) => {
+                st.store.delete_agent_step(&cx.step.id).await.map_err(err)?;
+            }
+            _ => return Ok(wait(&a)),
+        }
     }
     // Loop limit (spec §5.2): earlier passes of this node in the run.
     let passes = st.store.agent_steps_of_node(&cx.run.id, &cx.node.id).await.map_err(err)?;
@@ -441,6 +446,7 @@ async fn queue_message(
         created_at: now_ms(),
         resolved_at: None,
         by_user,
+        pending_id: None,
     };
     st.store.queue_session_message(&m).await.map_err(err)?;
     Ok(())
@@ -815,11 +821,15 @@ pub(crate) async fn sweep(st: &AppState) {
             }
             continue;
         }
-        // Removing a session clears its steps' `session_id`.
+        // Removing a session clears its steps' `session_id` (a working step's binding is written with the session
+        // once it started, so a waiting step without one lost it).
         let Some(sid) = a.session_id.clone() else {
-            if a.state == AgentStepState::Asking {
-                stall(st, a, "Its session was removed while it waited for your answer.").await;
-            }
+            let why = if a.state == AgentStepState::Asking {
+                "Its session was removed while it waited for your answer."
+            } else {
+                "Its session was removed before it submitted an outcome."
+            };
+            stall(st, a, why).await;
             continue;
         };
         let gone = match st.store.get_session(&sid).await {

@@ -1920,7 +1920,7 @@ impl Store {
         Ok(None)
     }
 
-    /// The keys of the pull-request notices already recorded for an attempt (`pr` events), so each is told once,
+    /// The keys of the pull-request notices told to an attempt (`pr` events; untold ones do not count), so each is told once,
     /// across pdtd restarts too.
     pub async fn pr_notice_keys(&self, ticket_id: &str, attempt_id: &str) -> Result<HashSet<String>, StoreError> {
         let rows: Vec<(Option<String>,)> =
@@ -1932,6 +1932,8 @@ impl Store {
             .into_iter()
             .filter_map(|(d,)| serde_json::from_str::<serde_json::Value>(&d?).ok())
             .filter(|v| v.get("attemptId").and_then(|a| a.as_str()) == Some(attempt_id))
+            // A notice nobody was told does not spend its key (PDT-129).
+            .filter(|v| v.get("told").and_then(|t| t.as_bool()) != Some(false))
             .filter_map(|v| v.get("key").and_then(|k| k.as_str()).map(String::from))
             .collect())
     }

@@ -199,3 +199,23 @@ async fn spawn_after_shutdown_is_refused_and_starts_no_process() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(!marker.exists(), "the command must not have run");
 }
+
+/// Input to a process that has gone is refused, not queued for a writer that leads nowhere (PDT-129): as soon as its
+/// side of the terminal closes, before its exit is reported.
+#[tokio::test]
+async fn input_is_refused_once_the_process_is_gone() {
+    let m = PtyManager::new();
+    let exit = m.spawn(interactive("a")).unwrap();
+    assert!(m.accepts_input("a"));
+    m.write("a", b"exit\r").unwrap();
+    tokio::time::timeout(WAIT, async {
+        while m.accepts_input("a") {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("its input closes");
+    assert!(matches!(m.write("a", b"x"), Err(PtyError::NotRunning(_))));
+    tokio::time::timeout(WAIT, exit).await.unwrap().unwrap();
+    assert!(!m.accepts_input("a") && !m.accepts_input("nobody"));
+}

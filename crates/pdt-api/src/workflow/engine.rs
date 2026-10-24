@@ -696,6 +696,19 @@ async fn fail_step(
     e: String,
     definite: bool,
 ) -> R<bool> {
+    // An agent step whose session would not start no longer works on its attempt (PDT-129). One cut short after its
+    // session started keeps its binding, so running it again goes on in that session instead of starting another.
+    if step.kind == super::nodes::agent::KIND
+        && let Ok(Some(mut a)) = st.store.get_agent_step(&step.id).await
+        && a.state != pdt_core::workflow::agent::AgentStepState::Done
+        && a.session_id.is_none()
+    {
+        a.state = pdt_core::workflow::agent::AgentStepState::Done;
+        a.updated_at = now_ms();
+        if let Err(e) = st.store.put_agent_step(&a).await {
+            tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
+        }
+    }
     let node = doc.node(&step.node_id);
     let retry = node.and_then(|n| n.retry);
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step failed");
