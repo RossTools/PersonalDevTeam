@@ -11,3 +11,4 @@ pub mod process;
 pub mod register;
 pub mod selfupdate;
 pub mod supervise;
+pub mod tray_login;

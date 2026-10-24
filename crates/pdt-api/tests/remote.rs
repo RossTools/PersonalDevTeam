@@ -278,3 +278,86 @@ async fn a_failed_unserve_is_reported_and_retried() {
         "retried once after the failure, then nothing left to remove"
     );
 }
+
+// PDT-148: after a restart Tailscale can come up after pdtd; the watch makes remote access follow it.
+
+fn quick_watch(state: &mut AppState) {
+    state.remote_watch = pdt_api::RemoteWatch {
+        retry_first: Duration::from_millis(20),
+        retry_max: Duration::from_millis(80),
+        check_every: Duration::from_millis(40),
+    };
+}
+
+/// Waits up to 5 s for `f` to hold.
+async fn eventually(what: &str, f: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !f() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn the_watch_activates_remote_access_once_tailscale_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = Arc::new(RecordingTailscale::new(Err(TsError::NotRunning("state Stopped".into()))));
+    let (app, state) = setup_with(tmp.path(), fake.clone(), quick_watch).await;
+    let mut settings = state.store.get_host_settings().await.unwrap();
+    (settings.remote_access, settings.owner_login) = (true, Some("me@example.com".into()));
+    state.store.put_host_settings(&settings).await.unwrap();
+    let r = apply_remote_access(&state).await;
+    assert_eq!((r.enabled, r.active), (true, false), "{r:?}");
+    assert_eq!(get_as_tailnet_host(&app).await, StatusCode::FORBIDDEN);
+
+    tokio::spawn(pdt_api::run_remote_watch(state.clone()));
+    eventually("a few retries", || fake.status_calls() >= 3).await;
+    assert!(fake.calls().is_empty(), "nothing is served while Tailscale is stopped");
+    fake.set_status(Ok(ts(true)));
+    eventually("remote access to be active", || state.remote.lock().unwrap().active).await;
+    assert_eq!(get_as_tailnet_host(&app).await, StatusCode::OK, "no manual refresh needed");
+    assert_eq!(fake.calls(), ["serve --bg --https=443 http://127.0.0.1:7999"]);
+
+    // Active: it only asks for the status, and serves nothing again while nothing changed.
+    let asked = fake.status_calls();
+    eventually("a check while active", || fake.status_calls() >= asked + 2).await;
+    assert_eq!(fake.calls().len(), 1, "{:?}", fake.calls());
+    let (_, v) = call(&app, "GET", "/api/health", None).await;
+    let watch = v["loops"].as_array().unwrap().iter().find(|l| l["name"] == "remote").cloned();
+    assert!(watch.is_some_and(|l| !l["lastPassAt"].is_null()), "{v}");
+}
+
+#[tokio::test]
+async fn the_watch_notices_tailscale_stopping_and_a_new_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = Arc::new(RecordingTailscale::new(Ok(ts(true))));
+    let (app, state) = setup_with(tmp.path(), fake.clone(), quick_watch).await;
+    let (s, v) = call(&app, "PUT", "/api/host/settings", Some(on())).await;
+    assert_eq!((s, v["remote"]["active"].clone()), (StatusCode::OK, json!(true)), "{v}");
+    tokio::spawn(pdt_api::run_remote_watch(state.clone()));
+
+    fake.set_status(Err(TsError::NotRunning("state Stopped".into())));
+    eventually("remote access to go inactive", || !state.remote.lock().unwrap().active).await;
+    assert_eq!(get_as_tailnet_host(&app).await, StatusCode::FORBIDDEN, "the name is withdrawn");
+
+    fake.set_status(Ok(TsStatus { dns_name: "box.new.ts.net".into(), ..ts(true) }));
+    eventually("the new name", || state.remote.lock().unwrap().dns_name.as_deref() == Some("box.new.ts.net")).await;
+    assert!(state.remote.lock().unwrap().active);
+    assert_eq!(get_as(&app, "box.new.ts.net").await, StatusCode::OK);
+    assert_eq!(get_as_tailnet_host(&app).await, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn the_watch_runs_no_tailscale_command_with_remote_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = Arc::new(RecordingTailscale::new(Ok(ts(true))));
+    let (_app, state) = setup_with(tmp.path(), fake.clone(), quick_watch).await;
+    apply_remote_access(&state).await;
+    tokio::spawn(pdt_api::run_remote_watch(state.clone()));
+    eventually("a few passes", || {
+        state.loops.health(i64::MAX).iter().any(|l| l.name == "remote" && l.last_pass_at.is_some())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!((fake.status_calls(), fake.calls().len()), (0, 0));
+}

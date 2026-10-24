@@ -68,6 +68,8 @@ pub struct AppState {
     /// What remote access changed in this process (mapped ports, the allowlist entry). Turning it off undoes only
     /// these, never mappings another instance (e.g. the stable one) made.
     pub(crate) remote_applied: std::sync::Arc<std::sync::Mutex<crate::remote::Applied>>,
+    /// How often `run_remote_watch` retries remote access that is not active, and checks it while it is.
+    pub remote_watch: crate::remote::RemoteWatch,
     /// The driver of each active run in this daemon run (stop requests, completion).
     pub(crate) run_controls: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::run_manager::RunControl>>>,
@@ -182,6 +184,7 @@ impl AppState {
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
             remote_applied: Default::default(),
+            remote_watch: Default::default(),
             run_controls: Default::default(),
             run_start_lock: Default::default(),
             ticket_start_lock: Default::default(),

@@ -8,7 +8,7 @@ use pdt_core::brand::{PRODUCT_NAME, Profile};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, Wry};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -37,6 +37,9 @@ struct Tray {
     restart_item: MenuItem<Wry>,
     update_item: MenuItem<Wry>,
     version_item: MenuItem<Wry>,
+    /// "Start at login" (PDT-148), in the menu only where the tray can register itself.
+    login_item: CheckMenuItem<Wry>,
+    login: Option<daemon::TrayLogin>,
     /// Set while startup or a restart runs, so they never overlap.
     busy: AtomicBool,
     /// Set while an Update click is handled, so a second click never posts a second install.
@@ -99,6 +102,8 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     let version_item = MenuItem::with_id(app, "version", "Version …", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let placement_item = MenuItem::with_id(app, "placement", "", true, None::<&str>)?;
+    let login = daemon::tray_login(profile);
+    let login_item = CheckMenuItem::with_id(app, "login", "Start at login", login.is_some(), false, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -111,6 +116,9 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
             &quit,
         ],
     )?;
+    if login.is_some() {
+        menu.insert(&login_item, 3)?;
+    }
     let suffix = if profile == Profile::Dev { " (dev)" } else { "" };
     let icon = app.default_window_icon().cloned().ok_or("the app has no icon")?;
     TrayIconBuilder::with_id("main")
@@ -137,6 +145,8 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         restart_item,
         update_item,
         version_item,
+        login_item,
+        login,
         busy: AtomicBool::new(true),
         updating: AtomicBool::new(false),
         ready: AtomicBool::new(false),
@@ -152,6 +162,10 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         if let Some(why) = &misplaced {
             set_placement(&handle, Some(Placement::Misplaced(why.clone())));
             explain_misplaced(&handle, why);
+        }
+        // The tray starts at login too, unless the user turned that off (PDT-148).
+        if let Some(login) = &tray.login {
+            let _ = tray.login_item.set_checked(login.ensure());
         }
         // A first macOS launch starts pdt-host through launchd; the tray then only waits for pdtd.
         let registered = daemon::ensure_registered(profile);
@@ -208,9 +222,21 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "update" => update_clicked(app),
         "restart" => restart_daemon(app),
         "placement" => placement_clicked(app),
+        "login" => login_clicked(app),
         // Only the tray exits (decision 16): pdt-host keeps pdtd running.
         "quit" => app.exit(0),
         _ => {}
+    }
+}
+
+/// "Start at login": the item has already toggled itself; make the registration follow, or put it back.
+fn login_clicked(app: &AppHandle) {
+    let tray = app.state::<Tray>();
+    let Some(login) = &tray.login else { return };
+    let on = tray.login_item.is_checked().unwrap_or(false);
+    if let Err(e) = login.set(on) {
+        let _ = tray.login_item.set_checked(!on);
+        error_dialog(app, format!("Could not change starting at login: {e}")).show(|_| {});
     }
 }
 
