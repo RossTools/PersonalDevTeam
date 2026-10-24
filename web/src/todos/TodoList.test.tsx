@@ -357,6 +357,42 @@ describe('TodoList with due dates', () => {
       expect(box()).toHaveValue('');
     });
 
+    it('keeps a dismissed match dismissed while typing on, until its words are gone', async () => {
+      stubDated();
+      show(null);
+      await screen.findByText('Todo late');
+      await userEvent.type(box(), 'Call Sam tomorrow');
+      await userEvent.click(screen.getByRole('button', { name: 'Keep the date words in the title' }));
+      await userEvent.type(box(), ' about lunch');
+      expect(screen.queryByRole('button', { name: 'Keep the date words in the title' }), 'still dismissed after more typing').toBeNull();
+      expect(screen.getByRole('button', { name: 'Date' })).toBeInTheDocument();
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Call Sam tomorrow about lunch' }]));
+
+      // Once the dismissed words are edited away, a new phrase matches again.
+      await userEvent.type(box(), 'Pay tomorrow');
+      await userEvent.click(screen.getByRole('button', { name: 'Keep the date words in the title' }));
+      await userEvent.clear(box());
+      await userEvent.type(box(), 'Pay fri');
+      expect(screen.getByRole('button', { name: 'Keep the date words in the title' }), 'fri is a date tag').toBeInTheDocument();
+    });
+
+    it('keeps a day picked by hand over typed date words as typing goes on', async () => {
+      stubDated();
+      show(null);
+      await screen.findByText('Todo late');
+      await userEvent.type(box(), 'Call Sam tomorrow');
+      // The date tag comes from the words; open the picker (from the Repeat tag) and pick Next week by hand.
+      await userEvent.click(screen.getByRole('button', { name: 'Repeat' }));
+      const picker = await screen.findByRole('dialog', { name: /^Due date: / });
+      await userEvent.click(within(picker).getByRole('button', { name: 'Back' }));
+      await userEvent.click(within(screen.getByRole('dialog', { name: /^Due date: / })).getByRole('button', { name: /^Next week(?!,)/ }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await userEvent.type(box(), ' soon');
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Call Sam tomorrow soon', dueOn: '2026-10-26' }]));
+    });
+
     it('sets a date with the Date tag', async () => {
       stubDated();
       show(null);

@@ -27,7 +27,8 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
   onCustomRepeat: (title: string, current: DueValue, set: (v: DueValue) => void) => void;
 }) {
   const [text, setText] = useState('');
-  const [ignore, setIgnore] = useState<ReadonlySet<ParseKind>>(new Set());
+  // × on a tag (or a pick by hand) dismisses a kind's typed phrases; it holds while those words are still in the text.
+  const [dismissed, setDismissed] = useState<Partial<Record<ParseKind, string[]>>>({});
   const [manual, setManual] = useState<DueValue>(NONE);
   const [project, setProject] = useState<string | null>(null);
   const [ticket, setTicket] = useState<{ id: string; key: string } | null>(null);
@@ -45,6 +46,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
     if (focusSeq) input.current?.focus();
   }, [focusSeq]);
 
+  const ignore = ignored(dismissed, text);
   const parsed = parseTodo(text, now, ignore);
   const typedWhen = parsed.matches.some((m) => m.kind === 'when');
   const typedRepeat = parsed.matches.some((m) => m.kind === 'repeat');
@@ -59,7 +61,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
 
   const reset = () => {
     setText('');
-    setIgnore(new Set());
+    setDismissed({});
     setManual(NONE);
     setProject(null);
     setTicket(null);
@@ -84,7 +86,10 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
     anchor.current = from;
     setPicker(panel);
   };
-  const dismiss = (kind: ParseKind) => setIgnore((s) => new Set([...s, kind]));
+  const dismiss = (kind: ParseKind) => {
+    const words = parsed.matches.filter((m) => m.kind === kind).map((m) => m.text.toLowerCase());
+    if (words.length) setDismissed((d) => ({ ...d, [kind]: words }));
+  };
   /** A tag's ×: clear it, then back to the text. */
   const clearing = (fn: () => void) => () => {
     fn();
@@ -128,8 +133,6 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
             disabled={pending}
             onChange={(e) => {
               setText(e.target.value);
-              // A dismissed match counts for the text it was dismissed in.
-              if (ignore.size) setIgnore(new Set());
             }}
             onScroll={(e) => {
               if (mirror.current) mirror.current.scrollLeft = e.currentTarget.scrollLeft;
@@ -247,6 +250,12 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
       )}
     </div>
   );
+}
+
+/** The kinds whose dismissed phrases are all still in the text (once one is edited away, its kind matches again). */
+export function ignored(dismissed: Partial<Record<ParseKind, string[]>>, text: string): ReadonlySet<ParseKind> {
+  const lower = text.toLowerCase();
+  return new Set((Object.keys(dismissed) as ParseKind[]).filter((k) => dismissed[k]!.every((w) => lower.includes(w))));
 }
 
 /** The text with its matched phrases wrapped in a soft primary fill. */

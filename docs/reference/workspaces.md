@@ -92,7 +92,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   / `3 nov`; `9am`, `3:30pm`, `at 15:30`, `noon`, `midnight`; `every day|weekday|week|month`, `every mon, thu`,
   `every 2 weeks`, `daily`, `weekly`, `monthly`; `may`, `sun` and `sat` only with a day number or after on/next/every;
   a time alone is today if still ahead, else tomorrow), highlighted, and shown as tags under the text; × on a tag
-  keeps its words in the title (for the current text). Unset ones are dashed tags: Date and Repeat (the picker),
+  keeps its words in the title for as long as they stay in the text (a day picked by hand over typed date
+  words works the same way). Unset ones are dashed tags: Date and Repeat (the picker),
   Project and Ticket. Enter adds the todo with the parsed title (or the whole text if nothing is left), date, time,
   repeat, project and ticket.
 - When an open todo comes due (local midnight on its day, or its time) pdtd makes one `todo.due` notification
