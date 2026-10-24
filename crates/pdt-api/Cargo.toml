@@ -33,6 +33,7 @@ hmac = "0.13.0"
 hex = "0.4.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "json", "system-proxy", "query"] }
 rmcp = { version = "3.6.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest-native-tls"] }
+apollo-compiler = "1.33.1"
 
 [dev-dependencies]
 tower.workspace = true
@@ -41,7 +42,6 @@ http-body-util = "0.1.5"
 hex = "0.4.3"
 sqlx.workspace = true
 tracing-subscriber.workspace = true
-apollo-compiler = "1.33.1"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.191"

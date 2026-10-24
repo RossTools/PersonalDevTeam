@@ -3,11 +3,12 @@
 //! `scryer_add`, `scryer_queue`, `scryer_library`). A connection of kind `scryer`: `url` Scryer's address
 //! (`http://nas:8080`, with its base path if it has one), the secret an API key (Scryer: Settings → API keys), sent
 //! as a bearer token to `<url>/graphql`; `config.pmActs` lets the PM add without asking. Like Radarr and Sonarr
-//! (`workflow/nodes/arr.rs`), an add is by id and checks the library first.
+//! (`workflow/nodes/arr.rs`), an add is by id and checks the library first. The whole API (any query or mutation,
+//! checked against Scryer's schema) is in [`graphql`] (PDT-150).
 
 use crate::routes::AppState;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
-use crate::workflow::nodes::http::{call_json, service};
+use crate::workflow::nodes::http::{call_json_capped, service};
 use pdt_core::scryer::{Facet, Ids, SCRYER, monitor_type};
 use pdt_core::workflow::api::Connection;
 use reqwest::Method;
@@ -17,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use ts_rs::TS;
 
+pub(crate) mod graphql;
+
 /// How many search results are kept unless told.
 const SEARCH_LIMIT: usize = 10;
 /// How many library titles a page has unless told (Scryer allows 300).
@@ -24,8 +27,7 @@ const LIBRARY_LIMIT: usize = 50;
 /// How many queue items are read unless told (Scryer allows 200).
 const QUEUE_LIMIT: usize = 50;
 
-/// The GraphQL operations PDT sends, each checked against Scryer's published schema by a test
-/// (`tests/fixtures/scryer-schema.graphql`).
+/// The GraphQL operations PDT sends, each checked against Scryer's published schema by a test (`scryer/schema.graphql`).
 mod ops {
     const TITLE_FIELDS: &str = "id name year facet monitored libraryName contentStatus episodesOwned episodesTotal \
                                 sizeBytes externalIds { source value }";
@@ -301,13 +303,32 @@ impl Client {
 
     /// One GraphQL operation; its `data`, or Scryer's errors.
     async fn gql(&self, query: &str, variables: Value) -> Result<Value, String> {
+        self.gql_named(query, variables, None).await
+    }
+
+    /// One operation of a document (by name, when it has several); its `data`, or Scryer's errors.
+    async fn gql_named(&self, query: &str, variables: Value, operation: Option<&str>) -> Result<Value, String> {
+        self.gql_capped(query, variables, operation, crate::workflow::nodes::http::BODY_CAP).await
+    }
+
+    /// [`Client::gql_named`] reading at most `cap` bytes of the answer.
+    async fn gql_capped(
+        &self,
+        query: &str,
+        variables: Value,
+        operation: Option<&str>,
+        cap: usize,
+    ) -> Result<Value, String> {
         let who = format!("Scryer ({})", self.conn.name);
         let auth = format!("Bearer {}", self.key);
-        let body = json!({"query": query, "variables": variables});
-        let v =
-            call_json(&who, Method::POST, &self.conn.url, "/graphql", &[("Authorization", &auth)], &[], Some(&body))
-                .await
-                .map_err(|e| if e.contains(" answered 401 ") { format!("{e} (the API key is wrong)") } else { e })?;
+        let mut body = json!({"query": query, "variables": variables});
+        if let Some(o) = operation {
+            body["operationName"] = json!(o);
+        }
+        let headers = [("Authorization", auth.as_str())];
+        let v = call_json_capped(&who, Method::POST, &self.conn.url, "/graphql", &headers, &[], Some(&body), cap)
+            .await
+            .map_err(|e| if e.contains(" answered 401 ") { format!("{e} (the API key is wrong)") } else { e })?;
         if let Some(errors) = v["errors"].as_array().filter(|e| !e.is_empty()) {
             let all: Vec<&str> = errors.iter().filter_map(|e| e["message"].as_str()).collect();
             return Err(format!("{who}: {}", all.join("; ")));
@@ -735,9 +756,16 @@ impl NodeKind for Library {
     }
 }
 
-/// The four kinds.
+/// The kinds: the four shortcuts, and any query or mutation.
 pub fn kinds() -> Vec<Box<dyn NodeKind>> {
-    vec![Box::new(Search), Box::new(Add), Box::new(Queue), Box::new(Library)]
+    vec![
+        Box::new(Search),
+        Box::new(Add),
+        Box::new(Queue),
+        Box::new(Library),
+        Box::new(graphql::Query),
+        Box::new(graphql::Mutate),
+    ]
 }
 
 // ---- the PM's tools ----
@@ -849,12 +877,11 @@ mod tests {
     /// operation name and checks no fields).
     #[test]
     fn every_operation_fits_scryers_schema() {
-        use apollo_compiler::{ExecutableDocument, Schema};
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/scryer-schema.graphql");
-        let text = std::fs::read_to_string(path).unwrap();
-        let schema = Schema::parse_and_validate(text, "scryer-schema.graphql").expect("Scryer's schema");
+        use apollo_compiler::ExecutableDocument;
+        let schema = graphql::bundled();
+        let schema = &schema.schema;
         // The errors, if any.
-        let check = |op: &str| match ExecutableDocument::parse_and_validate(&schema, op, "op.graphql") {
+        let check = |op: &str| match ExecutableDocument::parse_and_validate(schema, op, "op.graphql") {
             Ok(_) => None,
             Err(e) => Some(e.errors.to_string()),
         };

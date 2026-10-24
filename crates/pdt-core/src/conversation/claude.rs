@@ -248,6 +248,7 @@ pub fn tool_title(tool: &str, input: &Value) -> String {
             crate::discord::ask_title(t, input).unwrap_or_else(|| "Discord".into())
         }
         (_, Some("scryer_add")) => crate::scryer::ask_title(input).unwrap_or_else(|| "Scryer".into()),
+        (_, Some("scryer_mutate")) => crate::scryer::mutate_ask_title(input).unwrap_or_else(|| "Scryer".into()),
         ("Bash", _) => field("command"),
         ("Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit", _) => {
             let f = field("file_path");

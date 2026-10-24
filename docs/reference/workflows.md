@@ -145,6 +145,7 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `radarr.queue` / `sonarr.queue` (`connection`) | `out` |
 | `scryer.search` (`connection`, `term`, `facet`, `limit`), `scryer.queue` (`connection`, `limit`), `scryer.library` (`connection`, `facet`, `query`, `monitored`, `limit`, `offset`) | `out` |
 | `scryer.add` (`connection`, `facet`, `tvdbId`, `tmdbId`, `imdbId`, `name`, `library`, `monitored`, `monitor`) | `added`, `exists` |
+| `scryer.query` (`connection`, `query`, `variables`, `operationName`), `scryer.mutate` (`connection`, `mutation`, `args`, `select`) | `out` |
 | `plex.search` (`connection`, `query`, `limit`), `plex.recently_added` (`connection`, `section`, `limit`), `plex.refresh` (`connection`, `section`) | `out` |
 | `mcp.tool` (`server`: an `mcp` connection, `tool`, `arguments`) | `out` |
 | `brief.archive` (`brief`, `title`, `body`, `items [{title, link, note}]`, `date`), `brief.read` (`brief`, `since`, `last`) | `out` |
@@ -207,7 +208,15 @@ notify itself forever.
   default): `{items [{title, progress, status (`downloading`, `importPending`, …), secondsLeft, client, attention}],
   total}`. Library: `titles` (50 a page by default, at most 300): `{titles, total, hasMore}`.
   Every operation is checked against Scryer's published schema, vendored in
-  `crates/pdt-api/tests/fixtures/scryer-schema.graphql` (a unit test with apollo-compiler).
+  `crates/pdt-api/src/scryer/schema.graphql` (a unit test with apollo-compiler).
+  Any query or mutation (PDT-150; `scryer/graphql.rs`): `scryer.query` runs a query document (no mutations or
+  subscriptions) and outputs `{data}`; `scryer.mutate` runs one mutation by name with its `args` and `select` and
+  outputs `{mutation, result}`. Both are validated against Scryer's live schema (introspection, kept 10 minutes per
+  connection; the bundled one when Scryer doesn't answer it) before anything is sent, and credentials in the output
+  are redacted. A mutation's credential is `{"$secret": "<connection>"}`, filled in from that connection's secret.
+  Saving checks a query parses and holds only queries, and that a mutation is not one PDT never sends (signing in and
+  the user's own credentials); a workflow's mutations don't ask (the user enabled it). The PM's tools on them, and
+  which mutations always ask, are in [agents.md](agents.md) "Scryer's whole API".
 - **Plex** (`plex.rs`; `url` the server, secret the `X-Plex-Token`, JSON asked for). Search: `/hub/search`, the hubs'
   items flattened: `{items [{title, type, year, ratingKey, section, show, addedAt}]}`. Recently added:
   `/library/sections/<key>/recentlyAdded` (or `/library/recentlyAdded`), `limit` default 20. Refresh:
@@ -496,8 +505,8 @@ variable; a setting shown is required unless marked optional) and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
 Webhook URL); an incoming webhook can generate its secret. A Discord bot asks for the server's id, the application's id
 (which makes the invite link with View Channels, Manage Channels, Send Messages and Manage Webhooks) and whether the PM
-changes the server without asking; Scryer asks for its address, an API key and whether the PM adds to the library
-without asking (both rows then show "PM acts without asking"). Saving keeps config keys the dialog doesn't show. The secret is written to the keychain and never shown again
+changes the server without asking; Scryer asks for its address, an API key and whether the PM adds titles and changes
+settings without asking (both rows then show "PM acts without asking"). Saving keeps config keys the dialog doesn't show. The secret is written to the keychain and never shown again
 (empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use
 `ConnectionPicker`: the connections of that kind, and Add… for a new one.
 

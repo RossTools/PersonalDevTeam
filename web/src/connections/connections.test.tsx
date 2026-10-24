@@ -96,7 +96,7 @@ describe('connections', () => {
     });
   });
 
-  it('sets up Scryer: its address, an API key, and whether the PM adds without asking', async () => {
+  it('sets up Scryer: its address, an API key, and whether the PM acts without asking', async () => {
     const created = { ...conn('media', 'scryer', false), url: 'http://nas:8080' };
     const calls = stubApi({
       'GET /api/connections': [],
@@ -109,7 +109,7 @@ describe('connections', () => {
     await userEvent.type(within(dialog).getByLabelText('Name'), 'media');
     await userEvent.type(within(dialog).getByLabelText('Address'), 'http://nas:8080');
     await userEvent.type(within(dialog).getByLabelText('API key'), 'ska_abc');
-    await userEvent.click(within(dialog).getByRole('switch', { name: /adds to this library without asking/ }));
+    await userEvent.click(within(dialog).getByRole('switch', { name: /changes settings without asking/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({

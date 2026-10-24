@@ -330,6 +330,8 @@ pub enum AskTarget {
         kind: &'static str,
         name: Option<String>,
     },
+    /// A call no policy answers for the user: a destructive Scryer change, or one that sends a connection's secret.
+    Always,
 }
 
 /// Whether a connection the PM acts through (a Discord bot, a Scryer) lets it act without asking (`config.pmActs`).
@@ -350,6 +352,10 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
             name: field("connection").map(String::from),
         }),
         "scryer_add" => {
+            Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
+        }
+        "scryer_mutate" if crate::scryer::mutate_always_asks(input) => Some(AskTarget::Always),
+        "scryer_mutate" => {
             Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
         }
         _ => None,
@@ -753,6 +759,11 @@ mod tests {
             t("mcp__pdt__scryer_add", json!({"connection": "media"})),
             Some(AskTarget::Connection { kind: "scryer", name: Some("media".into()) })
         );
+        assert_eq!(
+            t("scryer_mutate", json!({"mutation": "updateGeneralSettings"})),
+            Some(AskTarget::Connection { kind: "scryer", name: None })
+        );
+        assert_eq!(t("scryer_mutate", json!({"mutation": "deleteIndexerConfig"})), Some(AskTarget::Always));
         assert_eq!(t("get_ticket", json!({"ticket": "PDT-4"})), None);
     }
 
