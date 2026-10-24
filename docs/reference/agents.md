@@ -79,7 +79,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   runs in the **work folder** (PDT-100, pdt-core `pm::work_folder`): the deepest folder holding every project's
   folder (each checkout's parent) and Host settings' Projects folder (its default `~/work` only while there are no
   projects); the home folder when they share nothing below the root. They have no tab: the PM rail item (`Ctrl+] m`,
-  the palette's Go to) shows them, and opening one from the Inbox goes there.
+  the palette's Go to) shows them, and opening one from the Inbox goes there. The PM item (rail and phone drawer)
+  carries a dot, "Project manager (new reply)", while a session not yet ended is unseen and not working and isn't
+  the one on screen (PDT-145); the PM view marks the session it shows seen, as a session's tab does.
 - **Sessions.** `GET /api/pm` → `{current, sessions}` (`pm_sessions`: rotation `none` | `journal` | `done`, reason,
   journal); `POST /api/pm/sessions {text?}` ends the current one (reason `user`, no journal) and starts one of the
   built-in **PM** persona's current version (its agent and model; permission mode `ask` unless the persona sets one).

@@ -33,3 +33,11 @@ export const earlier = (sessions: PmSessionInfo[]) => sessions.filter((s) => s.r
 
 /** A journal's first line, for list rows. */
 export const firstLine = (text: string | null) => (text ?? '').split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') ?? '';
+
+/**
+ * Whether a PM session has a reply the user hasn't seen (PDT-145): its turn ended since they last looked, it isn't
+ * running a turn now, and it isn't the one on screen (`shown`; opening it marks it seen). An ended session's last turn
+ * is its journal, not a reply.
+ */
+export const pmUnread = (sessions: PmSessionInfo[] | undefined, shown: string | null) =>
+  !!sessions?.some(({ session: s, rotation }) => rotation !== 'done' && s.unseen && s.activity !== 'working' && s.id !== shown);

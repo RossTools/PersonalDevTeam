@@ -1132,6 +1132,42 @@ describe('phone', () => {
     await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/pm'));
   });
+
+  describe("the PM's unread reply (PDT-145)", () => {
+    const pmRoutes = (session: Record<string, unknown>) => {
+      const pmSession: Record<string, unknown> = { ...shell, id: 'pm1', projectId: 'host', kind: 'agent_tui', agent: 'claude', title: 'PM', mode: 'conversation', persona: { id: 'pm', name: 'PM', version: 1, stepId: null }, ...session };
+      const state = { current: pmSession, sessions: [{ session: pmSession, rotation: 'none', reason: null, journal: null }] };
+      return {
+        ...hostRoutes,
+        'GET /api/projects': [],
+        'GET /api/pm': () => state,
+        'POST /api/sessions/pm1/view': () => { pmSession.unseen = false; pmSession.lastViewedAt = 9; },
+        'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+      };
+    };
+    const rail = () => screen.getByRole('navigation', { name: 'Views' });
+
+    it('dots the PM item when its turn ended unseen, and opening the PM clears it', async () => {
+      const calls = stubApi(pmRoutes({ activity: 'idle', attentionAt: 5, unseen: true }));
+      vi.stubGlobal('WebSocket', class { readyState = 0; onopen = null; onmessage = null; onclose = null; close() {} });
+      renderWithQuery(<AppShell />);
+      const item = await within(rail()).findByRole('button', { name: 'Project manager (new reply)' });
+      await userEvent.click(item);
+      expect(within(rail()).getByRole('button', { name: 'Project manager' })).toHaveAttribute('aria-current', 'page');
+      await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/sessions/pm1/view', body: undefined }));
+      // Seen now: no dot after leaving the PM either.
+      await userEvent.click(within(rail()).getByRole('button', { name: 'Sessions' }));
+      await waitFor(() => expect(within(rail()).getByRole('button', { name: 'Project manager' })).toBeInTheDocument());
+    });
+
+    it('shows no dot while the PM runs a turn', async () => {
+      const calls = stubApi(pmRoutes({ activity: 'working', attentionAt: 5, unseen: true }));
+      renderWithQuery(<AppShell />);
+      await waitFor(() => expect(calls.some((c) => c.path === '/api/pm')).toBe(true));
+      await act(() => new Promise((r) => setTimeout(r, 50)));
+      expect(within(rail()).getByRole('button', { name: 'Project manager' })).toBeInTheDocument();
+    });
+  });
 });
 
 describe('tickets', () => {
