@@ -401,8 +401,14 @@ pub fn ticket_state(t: &crate::ticket::TicketSummary) -> String {
             TicketAgentState::Stalled => "stalled",
             TicketAgentState::Yours => "waiting for the user",
             TicketAgentState::Queued => "queued for a slot",
+            TicketAgentState::Background => "waiting on background tasks",
         };
-        parts.push(format!("{who} {what}"));
+        match (a.state, a.background.as_slice()) {
+            (TicketAgentState::Background, tasks @ [_, ..]) => {
+                parts.push(format!("{who} waiting on background task: {}", tasks.join(", ")))
+            }
+            _ => parts.push(format!("{who} {what}")),
+        }
     }
     if t.blocked_by > 0 {
         parts.push(format!("blocked by {}", t.blocked_by));
@@ -678,6 +684,7 @@ mod tests {
             session_id: None,
             busy: false,
             run_id: None,
+            background: vec![],
         });
         t.blocked_by = 2;
         assert_eq!(

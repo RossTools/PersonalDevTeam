@@ -38,6 +38,11 @@ maxRuntimeMs: number | null,
  */
 nudges: number | null, 
 /**
+ * How long the session may wait on background tasks it started, its turn ended, before the step stalls
+ * (default 30 minutes).
+ */
+backgroundWaitMs: number | null, 
+/**
  * How many times the node may run again in one run before the Inbox asks (default 3; 0: no limit).
  */
 loopLimit: number | null, 

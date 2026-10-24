@@ -53,6 +53,9 @@ pub struct Conversations {
     /// How long a message may wait to go in with no turn running, nothing asked and nothing heard from the agent
     /// before PDT gives up on it and says so (PDT-129; tests shorten it).
     pub pending_timeout: Duration,
+    /// How long a conversation whose background tasks all finished must stay quiet (no turn) before an agent step
+    /// waiting on them counts its turn as ended (PDT-142; tests shorten it).
+    pub background_grace: Duration,
     /// PDT's `codex app-server`, made on first use.
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
 }
@@ -66,6 +69,7 @@ impl Default for Conversations {
             idle_park: IDLE_PARK,
             notice_quiet: Duration::from_secs(20),
             pending_timeout: PENDING_TIMEOUT,
+            background_grace: Duration::from_secs(10),
             codex: Default::default(),
         }
     }
@@ -744,6 +748,31 @@ pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
     };
     let state = c.state();
     state.live || state.turn_running || !state.pending.is_empty()
+}
+
+/// A loaded conversation's background tasks (PDT-142).
+pub(crate) struct Background {
+    pub tasks: Vec<BackgroundTask>,
+    /// Its agent process is running.
+    pub live: bool,
+    /// A turn runs, something is asked, or a message is on its way: it is at work, not waiting.
+    pub busy: bool,
+    /// None run, and nothing has happened for `background_grace`: no turn, request or message on its way. A task that
+    /// finished without the agent taking it up leaves it settled.
+    pub settled: bool,
+}
+
+/// The background tasks of a conversation loaded in this pdtd; None for one that isn't (or a terminal).
+pub(crate) fn background(st: &AppState, id: &str) -> Option<Background> {
+    let c = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()?;
+    let s = c.state();
+    let settled = s.background_tasks.is_empty()
+        && !s.turn_running
+        && s.open_requests.is_empty()
+        && s.pending.is_empty()
+        && s.last_active.elapsed() >= st.conversations.background_grace;
+    let busy = s.turn_running || !s.open_requests.is_empty() || !s.pending.is_empty();
+    Some(Background { tasks: s.background_tasks.clone(), live: s.live, busy, settled })
 }
 
 /// Sends the outbox's messages (`pending_id` names them) as the next message; it shows as PDT's, not the user's. They

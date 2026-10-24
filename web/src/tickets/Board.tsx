@@ -91,6 +91,10 @@ export function agentLine(a: TicketAgent): { text: string; dot: AgentStateValue 
     case 'stalled': return { text: `${who} stalled`, dot: dot('failed') };
     case 'yours': return { text: a.persona ? `Your turn · ${a.persona}` : 'Your turn', dot: dot('waiting') };
     case 'queued': return { text: `${who} · waiting for a slot`, dot: dot('idle') };
+    case 'background': return {
+      text: a.background.length ? `${who} · waiting on background task: ${a.background.join(', ')}` : `${who} · waiting on background tasks`,
+      dot: dot('running'),
+    };
   }
 }
 

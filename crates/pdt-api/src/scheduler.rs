@@ -172,7 +172,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
         TicketAgentState::Asking => 0,
         TicketAgentState::Stalled => 1,
         TicketAgentState::Yours => 2,
-        TicketAgentState::Working => 3,
+        TicketAgentState::Working | TicketAgentState::Background => 3,
         TicketAgentState::Queued => 4,
     };
     let mut out: HashMap<String, TicketAgent> = HashMap::new();
@@ -192,6 +192,19 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
             AgentStepState::Done => continue,
         };
         let session_busy = a.session_id.as_ref().is_some_and(|s| busy.contains(s));
+        // Its turn ended while background tasks run (PDT-142): what they are now, else as of the turn end.
+        let (state, background) = match a.background_since {
+            Some(_) if state == TicketAgentState::Working && !session_busy => {
+                let now: Vec<String> = a
+                    .session_id
+                    .as_deref()
+                    .and_then(|sid| crate::conversations::background(st, sid))
+                    .map(|b| b.tasks.into_iter().map(|t| t.description).collect())
+                    .unwrap_or_default();
+                (TicketAgentState::Background, if now.is_empty() { a.background.clone() } else { now })
+            }
+            _ => (state, vec![]),
+        };
         put(
             ticket,
             TicketAgent {
@@ -200,6 +213,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
                 session_id: a.session_id.clone(),
                 busy: session_busy,
                 run_id: Some(a.run_id.clone()),
+                background,
             },
         );
     }
@@ -214,6 +228,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
                     session_id: None,
                     busy: false,
                     run_id: item.run_id.clone(),
+                    background: vec![],
                 },
             );
         }
@@ -229,6 +244,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
                 session_id: None,
                 busy: false,
                 run_id: Some(step.run_id.clone()),
+                background: vec![],
             },
         );
     }

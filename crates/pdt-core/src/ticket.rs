@@ -339,6 +339,8 @@ pub enum TicketAgentState {
     Yours,
     /// Waiting for a slot under the host's cap on agents running a turn.
     Queued,
+    /// Its turn ended while background tasks it started run (PDT-142): it goes on when they finish.
+    Background,
 }
 
 /// Who owns a ticket's current workflow step, for the Board's cards.
@@ -353,6 +355,9 @@ pub struct TicketAgent {
     /// Its session is running a turn now.
     pub busy: bool,
     pub run_id: Option<String>,
+    /// What it waits on (`background`): the background tasks' descriptions.
+    #[serde(default)]
+    pub background: Vec<String>,
 }
 
 /// How a ticket overlaps another one that has an active attempt.

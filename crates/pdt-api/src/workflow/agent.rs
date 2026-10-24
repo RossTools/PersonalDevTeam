@@ -168,6 +168,9 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         nudges: 0,
         max_turns: c.max_turns(),
         auto_nudges: c.nudges(),
+        background_since: None,
+        background: vec![],
+        background_wait_ms: c.background_wait_ms(),
         outcome: None,
         summary: None,
         comments: vec![],
@@ -538,8 +541,17 @@ async fn finish_with(
     a.outcome = Some(outcome.to_string());
     a.summary = Some(summary.clone());
     a.by_user = by_user;
+    a.background_since = None;
+    a.background.clear();
     a.updated_at = now_ms();
     st.store.put_agent_step(&a).await.map_err(err)?;
+    // A stalled step that gets its outcome after all (the agent went on by itself) needs nothing from the user now.
+    for item in st.store.open_items_for_step(&a.step_id).await.map_err(err)? {
+        if item.kind == InboxKind::Stalled {
+            let resolution = json!({"outcome": outcome, "by": if by_user { "user" } else { "agent" }});
+            st.store.end_inbox_item(&item.id, InboxStatus::Closed, &resolution, now_ms()).await.map_err(err)?;
+        }
+    }
     let run = st.store.get_workflow_run(&a.run_id).await.map_err(err)?;
     if let Some(ticket) = &a.ticket_id {
         let data = json!({
@@ -713,7 +725,8 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
 }
 
 /// A session's turn ended (a conversation's `Turn` end, a terminal going idle): a working step with no outcome is
-/// nudged, then stalled; at `maxTurns` it times out (spec §4.4).
+/// nudged, then stalled; at `maxTurns` it times out (spec §4.4). A conversation still running background tasks it
+/// started waits on them instead (PDT-142): Claude takes each one up when it finishes, in a turn of its own.
 pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
     let run = session_run(st, session_id).await;
     let _locked = super::engine::lock_run(st, run.as_deref()).await;
@@ -728,6 +741,25 @@ pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
         return;
     }
     let Ok(step) = waiting_step(st, &a).await else { return };
+    let tasks = crate::conversations::background(st, session_id).map(|b| b.tasks).unwrap_or_default();
+    if !tasks.is_empty() {
+        let now = now_ms();
+        a.background_since.get_or_insert(now);
+        a.background = tasks.into_iter().map(|t| t.description).collect();
+        a.updated_at = now;
+        if let Err(e) = st.store.put_agent_step(&a).await {
+            tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
+        }
+        tracing::info!(step = %a.step_id, tasks = a.background.len(), "an agent step waits on background tasks");
+        return;
+    }
+    outcome_less_turn(st, a, &step, session_id).await;
+}
+
+/// A turn ended without an outcome, with no background task left to wait on: it counts, then a nudge, then a stall.
+async fn outcome_less_turn(st: &AppState, mut a: AgentStep, step: &Step, session_id: &str) {
+    a.background_since = None;
+    a.background.clear();
     a.turns += 1;
     a.updated_at = now_ms();
     if a.turns >= a.max_turns {
@@ -737,7 +769,7 @@ pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
         }
         let output = json!({"timedOut": true, "reason": format!("{} turns ended without an outcome", a.turns),
                             "sessionId": a.session_id, "persona": a.persona_name});
-        if let Err(e) = super::engine::complete_step(st, &step, TIMEOUT, output).await {
+        if let Err(e) = super::engine::complete_step(st, step, TIMEOUT, output).await {
             tracing::warn!(step = %a.step_id, error = %e, "could not time out an agent step");
         }
         return;
@@ -755,6 +787,29 @@ pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
         return;
     }
     stall(st, a, "Its turn ended without an outcome.").await;
+}
+
+/// The background tasks a step waited on all finished and its session stayed quiet (no turn took them up): its last
+/// turn ended without an outcome after all (PDT-142).
+async fn background_settled(st: &AppState, session_id: &str, step_id: &str) {
+    let run = session_run(st, session_id).await;
+    let _locked = super::engine::lock_run(st, run.as_deref()).await;
+    let Ok(Some(a)) = st.store.active_agent_step(session_id).await else { return };
+    if a.step_id != step_id || a.state != AgentStepState::Working || a.background_since.is_none() {
+        return;
+    }
+    if !crate::conversations::background(st, session_id).is_some_and(|b| b.settled) {
+        return;
+    }
+    let Ok(step) = waiting_step(st, &a).await else { return };
+    tracing::info!(step = %a.step_id, "an agent step's background tasks ended without a turn");
+    outcome_less_turn(st, a, &step, session_id).await;
+}
+
+/// Why a step that waited on background tasks too long stalls.
+fn background_why(a: &AgentStep, now: i64) -> String {
+    let mins = (now - a.background_since.unwrap_or(now)).max(0) / 60_000;
+    format!("Waiting on background tasks for {mins} min: {}.", a.background.join(", "))
 }
 
 /// Marks a binding stalled and puts it in the Inbox (Nudge / Take over).
@@ -808,7 +863,30 @@ async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
 pub(crate) async fn sweep(st: &AppState) {
     let Ok(active) = st.store.active_agent_steps().await else { return };
     let now = now_ms();
-    for a in active {
+    for mut a in active {
+        // Waiting on background tasks (PDT-142): while they run, only the cap stalls it; once they ended with no turn
+        // taking them up, its last turn counts as ended. A conversation whose process ended is gone (below).
+        if a.state == AgentStepState::Working
+            && a.background_since.is_some()
+            && let Some(sid) = a.session_id.clone()
+            && let Some(b) = crate::conversations::background(st, &sid).filter(|b| b.live)
+        {
+            if !b.tasks.is_empty() {
+                // A turn at work meanwhile (a notice, the user's message) isn't stalled under it.
+                let capped =
+                    now - a.background_since.unwrap_or(now) >= i64::try_from(a.background_wait_ms).unwrap_or(i64::MAX);
+                if capped && !b.busy && waiting_step(st, &a).await.is_ok() {
+                    a.background = b.tasks.into_iter().map(|t| t.description).collect();
+                    let why = background_why(&a, now);
+                    stall(st, a, &why).await;
+                }
+            } else if b.settled {
+                // Not here: it takes the run's lock, and the tick holds the engine's.
+                let (st2, step) = (st.clone(), a.step_id.clone());
+                tokio::spawn(async move { background_settled(&st2, &sid, &step).await });
+            }
+            continue;
+        }
         let waited = now - a.updated_at >= GONE_GRACE_MS;
         if !(a.state == AgentStepState::Working && waited || a.state == AgentStepState::Asking) {
             continue;
@@ -881,6 +959,9 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
                 queue_message(st, &s, &text, None, a.ticket_id.clone(), true).await?;
                 a.nudges += 1;
                 a.state = AgentStepState::Working;
+                // Its wait on background tasks starts over if the nudged turn ends with some still running.
+                a.background_since = None;
+                a.background.clear();
                 a.updated_at = now_ms();
                 st.store.put_agent_step(&a).await.map_err(err)?;
                 end_item(st, item, json!({"choice": choice})).await?;

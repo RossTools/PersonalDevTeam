@@ -14,6 +14,7 @@ const DEFAULT_MAX_TURNS: u32 = 10;
 const DEFAULT_MAX_RUNTIME_MS: u64 = 4 * 60 * 60 * 1000;
 const DEFAULT_NUDGES: u32 = 1;
 const DEFAULT_LOOP_LIMIT: u32 = 3;
+const DEFAULT_BACKGROUND_WAIT_MS: u64 = 30 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -67,6 +68,11 @@ pub struct AgentConfig {
     /// Automatic nudges before the step counts as stalled (default 1).
     #[serde(default)]
     pub nudges: Option<u32>,
+    /// How long the session may wait on background tasks it started, its turn ended, before the step stalls
+    /// (default 30 minutes).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub background_wait_ms: Option<u64>,
     /// How many times the node may run again in one run before the Inbox asks (default 3; 0: no limit).
     #[serde(default)]
     pub loop_limit: Option<u32>,
@@ -88,6 +94,9 @@ impl AgentConfig {
     }
     pub fn nudges(&self) -> u32 {
         self.nudges.unwrap_or(DEFAULT_NUDGES)
+    }
+    pub fn background_wait_ms(&self) -> u64 {
+        self.background_wait_ms.unwrap_or(DEFAULT_BACKGROUND_WAIT_MS)
     }
     pub fn loop_limit(&self) -> u32 {
         self.loop_limit.unwrap_or(DEFAULT_LOOP_LIMIT)
@@ -120,7 +129,8 @@ impl NodeKind for Agent {
             "Agent step",
             "Runs a persona in a session with a set of outcomes; the outcome the agent submits (submit_outcome) picks \
              the port. It can ask the user (ask_user); a turn that ends without an outcome is nudged, then stalled in \
-             the Inbox. `timeout`: no outcome within its max runtime or turns; `stopped`: stopped at its loop limit.",
+             the Inbox (not while background tasks it started run, up to backgroundWaitMs). `timeout`: no outcome \
+             within its max runtime or turns; `stopped`: stopped at its loop limit.",
             &[(TIMEOUT, "No outcome in time"), (STOPPED, "Stopped at the loop limit")],
             true,
         )
