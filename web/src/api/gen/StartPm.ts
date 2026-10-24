@@ -5,6 +5,10 @@
  */
 export type StartPm = { 
 /**
- * The new session's first message.
+ * The new conversation's first message.
  */
-text?: string, };
+text?: string, 
+/**
+ * Its title; made from the first message when left out.
+ */
+title?: string, };

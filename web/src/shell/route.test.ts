@@ -76,7 +76,7 @@ describe('routes', () => {
     const top = ['/pm', '/notes', '/notes/pm', '/sessions', '/inbox', '/tickets?view=board', '/workflows', '/personas', '/files?project=PDT', '/settings', '/'];
     for (const p of top) expect(isDetail(parseLocation(p)), p).toBe(false);
     const up: [string, string][] = [
-      ['/notes/n1', '/notes'], ['/notes/new', '/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm/earlier'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
+      ['/notes/n1', '/notes'], ['/notes/new', '/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm'], ['/pm/new', '/pm'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
       ['/workflows/wf/runs/r', '/workflows/wf/runs'], ['/workflows/wf/runs', '/workflows'], ['/workflows/templates/tp', '/workflows'],
       ['/personas/p', '/personas'],
       ['/files/a/b.md?project=PDT', '/files/a/?project=PDT'], ['/files/a/b/', '/files/a/'], ['/files/a/', '/files'], ['/files/b.md', '/files'],

@@ -189,6 +189,14 @@ impl Store {
         Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
+    /// When the conversation's last event was written; None when it has none.
+    pub async fn last_session_event_ts(&self, session_id: &str) -> Result<Option<i64>, StoreError> {
+        Ok(sqlx::query_scalar("SELECT MAX(ts) FROM session_events WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
     /// The newest `seq` (0 when the conversation is empty).
     pub async fn last_session_event_seq(&self, session_id: &str) -> Result<i64, StoreError> {
         Ok(sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id = ?")

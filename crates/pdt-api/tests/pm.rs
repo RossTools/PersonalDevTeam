@@ -365,6 +365,7 @@ async fn notes_and_the_journal_carry_into_the_next_session() {
     let said = ask(&env, &first, r#"mcp: write_journal {"body": "We planned the PM's notes."}"#).await;
     assert!(said.contains("\"written\": true"), "{said}");
 
+    close_pm(&env, &first).await;
     let second = start_pm(&env, "hello again").await;
     wait_said(&env, &second, 1).await;
     let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
@@ -379,6 +380,127 @@ async fn notes_and_the_journal_carry_into_the_next_session() {
         assert!(text.contains(want), "missing {want:?} in\n{text}");
     }
     call(&env.app, "POST", &format!("/api/sessions/{second}/kill"), None).await;
+}
+
+/// The PM conversation `id` as `GET /api/pm/sessions` lists it.
+async fn pm_info(env: &Env, id: &str) -> Value {
+    let (s, v) = call(&env.app, "GET", "/api/pm/sessions", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v.as_array().unwrap().iter().find(|i| i["session"]["id"] == id).cloned().unwrap_or(Value::Null)
+}
+
+/// Closes a PM conversation and waits until it has ended (its journal turn over).
+async fn close_pm(env: &Env, id: &str) -> Value {
+    let (s, v) = call(&env.app, "DELETE", &format!("/api/pm/sessions/{id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let info = pm_info(env, id).await;
+        // The row is marked done just before a stand-in journal is written.
+        if info["open"] == false && !info["journal"].is_null() {
+            return info;
+        }
+        assert!(Instant::now() < deadline, "the conversation never ended: {info}");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn user_says(env: &Env, session: &str) -> Vec<String> {
+    events(env, session)
+        .await
+        .iter()
+        .filter(|e| e["event"]["kind"] == "user_message")
+        .map(|e| e["event"]["text"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn several_pm_conversations_run_at_once_each_with_its_own_transcript() {
+    let env = setup(None).await;
+    let cb = start_pm(&env, "Plan the CB cutover").await;
+    wait_said(&env, &cb, 1).await;
+    let pdt = start_pm(&env, "A PDT bug\nThe board flickers.").await;
+    wait_said(&env, &pdt, 1).await;
+
+    // A new one ends none of the others; each is titled from its first message and keeps its own transcript.
+    let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
+    assert_eq!(pm["current"]["id"], pdt.as_str(), "old clients get the newest open conversation");
+    let (a, b) = (pm_info(&env, &cb).await, pm_info(&env, &pdt).await);
+    assert_eq!((a["open"].as_bool(), a["title"].as_str()), (Some(true), Some("Plan the CB cutover")));
+    assert_eq!((b["open"].as_bool(), b["title"].as_str()), (Some(true), Some("A PDT bug")));
+    assert_eq!(a["unseen"], a["session"]["unseen"]);
+    assert!(a["lastActivity"].as_i64().unwrap() >= a["session"]["createdAt"].as_i64().unwrap());
+    assert_eq!(user_says(&env, &cb).await, ["Plan the CB cutover"]);
+    assert_eq!(user_says(&env, &pdt).await, ["A PDT bug\nThe board flickers."]);
+    ask(&env, &cb, "Back to the cutover").await;
+    assert_eq!(user_says(&env, &pdt).await.len(), 1, "a message goes to its own conversation only");
+
+    // Each briefing lists the other open conversations.
+    let text = instructions(&env, &pdt);
+    assert!(text.contains("## Other open PM conversations") && text.contains("- Plan the CB cutover ("), "{text}");
+    let third = start_pm(&env, "Something else").await;
+    wait_said(&env, &third, 1).await;
+    let text = instructions(&env, &third);
+    for want in ["- Plan the CB cutover (", "- A PDT bug ("] {
+        assert!(text.contains(want), "missing {want:?} in\n{text}");
+    }
+    assert!(!text.contains("- Something else ("), "not itself: {text}");
+    let (_, list) = call(&env.app, "GET", "/api/pm/sessions", None).await;
+    assert_eq!(list.as_array().unwrap().iter().filter(|i| i["open"] == true).count(), 3);
+    // The most recently active first.
+    assert_eq!(list[0]["session"]["id"], third.as_str());
+
+    // Renaming.
+    let url = format!("/api/pm/sessions/{pdt}");
+    let (s, v) = call(&env.app, "PATCH", &url, Some(json!({"title": "Board flicker"}))).await;
+    assert_eq!((s, v["title"].as_str()), (StatusCode::OK, Some("Board flicker")));
+    assert_eq!(pm_info(&env, &pdt).await["title"], "Board flicker");
+    let (s, _) = call(&env.app, "PATCH", &url, Some(json!({"title": " "}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(&env.app, "PATCH", "/api/pm/sessions/nope", Some(json!({"title": "x"}))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // Closing one asks it for its journal and ends it; the others stay open.
+    let closed = close_pm(&env, &third).await;
+    assert_eq!((closed["rotation"].as_str(), closed["reason"].as_str()), (Some("done"), Some("user")));
+    assert_eq!(closed["journal"], "(no journal)");
+    assert!(agent_says(&env, &third).await.iter().any(|m| m.contains("This PM session is ending")));
+    let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
+    let open: Vec<&str> = pm["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["open"] == true)
+        .map(|i| i["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(open.len(), 2, "{pm}");
+    assert!(open.contains(&"Board flicker") && open.contains(&"Plan the CB cutover"));
+    assert_eq!(pm["current"]["id"], pdt.as_str(), "the newest open one");
+    assert_eq!(pm["sessions"][2]["session"]["id"], third.as_str(), "ended ones last");
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/pm/sessions/{third}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "closing an ended one does nothing");
+
+    // One started without a message is named by the first one it gets; closing it ends it at once.
+    let (s, v) = call(&env.app, "POST", "/api/pm/sessions", Some(json!({}))).await;
+    assert_eq!((s, v["title"].as_str()), (StatusCode::CREATED, Some("New conversation")));
+    let blank = v["id"].as_str().unwrap().to_string();
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/pm/sessions/{blank}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let info = pm_info(&env, &blank).await;
+    assert_eq!((info["open"].as_bool(), info["journal"].is_null()), (Some(false), true), "no journal: it said nothing");
+    let (_, v) = call(&env.app, "POST", "/api/pm/sessions", Some(json!({"title": "Named"}))).await;
+    let named = v["id"].as_str().unwrap().to_string();
+    assert_eq!(v["title"], "Named");
+    let (_, v) = call(&env.app, "POST", "/api/pm/sessions", Some(json!({}))).await;
+    let fresh = v["id"].as_str().unwrap().to_string();
+    ask(&env, &fresh, "Release notes for 1.4").await;
+    assert_eq!(pm_info(&env, &fresh).await["title"], "Release notes for 1.4");
+    ask(&env, &named, "Hi").await;
+    assert_eq!(pm_info(&env, &named).await["title"], "Named", "a given title stays");
+    for id in [&cb, &pdt, &named, &fresh] {
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
 }
 
 #[tokio::test]

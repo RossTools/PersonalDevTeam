@@ -7,10 +7,10 @@ import type { Session } from "./Session";
  */
 export type PmState = { 
 /**
- * The PM session in use; None until the user next writes to the PM.
+ * The newest open PM conversation (for clients that know only one); None when none is open.
  */
 current: Session | null, 
 /**
- * Every PM session, newest first (the current one included).
+ * Every PM conversation: the open ones (latest activity first), then the ended ones (newest first).
  */
 sessions: Array<PmSessionInfo>, };

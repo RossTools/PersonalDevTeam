@@ -425,10 +425,15 @@ export const api = {
   personaDiff: (id: string, from: number, to: number) =>
     request<PersonaDiff>(`/api/personas/${enc(id)}/diff${queryString({ from, to })}`),
   personaTemplate: (id: string) => request<PersonaTemplate>(`/api/personas/${enc(id)}/template`),
-  /** The project manager (PDT-81): its current session and the earlier ones. */
+  /** The project manager (PDT-81): its conversations, the open ones first (PDT-149). */
   pm: () => request<PmState>('/api/pm'),
-  /** A new PM session (ending the current one), `text` its first message. */
-  startPm: (text?: string) => request<Session>('/api/pm/sessions', { method: 'POST', body: JSON.stringify({ text }) }),
+  /** A new PM conversation beside the open ones, `text` its first message (and, without `title`, its title). */
+  startPm: (text?: string, title?: string) =>
+    request<Session>('/api/pm/sessions', { method: 'POST', body: JSON.stringify({ text, title }) }),
+  renamePm: (id: string, title: string) =>
+    request<Session>(`/api/pm/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+  /** Closes a PM conversation: it writes its journal, then ends. */
+  closePm: (id: string) => request<void>(`/api/pm/sessions/${enc(id)}`, { method: 'DELETE' }),
   pmNotes: (q: { q?: string; project?: string; kind?: NoteKind; limit?: number } = {}) => request<PmNote[]>(`/api/pm/notes${queryString(q)}`),
   pmNote: (id: string) => request<PmNote>(`/api/pm/notes/${enc(id)}`),
   createPmNote: (n: NewNote) => request<PmNote>('/api/pm/notes', { method: 'POST', body: JSON.stringify(n) }),

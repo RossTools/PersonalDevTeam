@@ -175,8 +175,6 @@ export function isDetail(r: Route): boolean {
 export function upRoute(r: Route): Route {
   if (r.view === null) return r;
   if (r.view === 'tickets') return { ...r, ticket: null };
-  // An earlier session goes up to the list of them.
-  if (r.view === 'pm' && r.pm !== 'current' && r.pm !== 'earlier') return { view: 'pm', pm: 'earlier' };
   // A run goes up to the workflow's runs.
   if (r.view === 'workflows' && r.target?.kind === 'workflow' && r.target.runId) return { view: 'workflows', target: { kind: 'workflow', id: r.target.id, tab: 'runs' } };
   // A file or folder goes up to the folder it is in.
