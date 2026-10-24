@@ -14,7 +14,7 @@ import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
-import { after, dismissable, KIND_LABEL, passesOf, primary, questionsOf, selectedUpdate, step } from './model';
+import { after, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, selectedUpdate, step } from './model';
 import { useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
@@ -84,6 +84,10 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
     if (p && (item.kind === 'gate' || item.kind === 'timed_out')) return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
     if (item.kind === 'session') {
       if (item.sessionId && item.projectId) openSession({ id: item.sessionId, projectId: item.projectId });
+      return;
+    }
+    if (item.kind === 'notice') {
+      if (item.ticketId && item.projectId) openTicket({ id: item.ticketId, projectId: item.projectId });
       return;
     }
     if (p && item.kind !== 'approval') void answer({ choice: p });
@@ -166,6 +170,21 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             <div>
               <Button variant="primary" onClick={doPrimary}>Open session <Kbd>↵</Kbd></Button>
             </div>
+          </section>
+        )}
+        {item.kind === 'notice' && (
+          <section aria-label="Unheard notice" className="flex flex-col gap-3">
+            <p className="text-sm">
+              No agent session was open to tell{typeof item.body.workflow === 'string' ? ` (from ${item.body.workflow})` : ''}, so
+              it waits for you: fix it yourself, or start the ticket's agent and pass it on. It goes away once the pull request is
+              fixed, merged or closed.
+            </p>
+            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+            {item.ticketId && (
+              <div>
+                <Button variant="primary" onClick={doPrimary}>Open ticket <Kbd>↵</Kbd></Button>
+              </div>
+            )}
           </section>
         )}
         {item.kind === 'approval' && <Approval item={item} onAnswered={() => { onSelect(after(items, item.id)); void refresh(); }} />}

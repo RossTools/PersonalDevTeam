@@ -136,7 +136,7 @@ async fn settings_list_every_kind_and_keep_inbox_kinds_findable() {
     let (app, _) = setup(tmp.path()).await;
     let (_, kinds) = call(&app, "GET", "/api/notifications/settings", None).await;
     let kinds = kinds.as_array().unwrap();
-    assert_eq!(kinds.len(), 16);
+    assert_eq!(kinds.len(), 17);
     let gate = kinds.iter().find(|k| k["kind"] == "inbox.gate").unwrap();
     assert_eq!((&gate["show"], &gate["allowed"]), (&json!("toast"), &json!(["inbox", "toast", "desktop"])));
     let (s, e) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"inbox.gate": "off"}))).await;

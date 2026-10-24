@@ -836,3 +836,96 @@ async fn auto_merge_turned_off_by_hand_stays_off() {
     assert_eq!(merges(&env), 0);
     env.state.ptys.shutdown().await;
 }
+
+async fn notice_items(env: &Env) -> Vec<Value> {
+    let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+    v["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "notice").cloned().collect()
+}
+
+/// PDT-139: a conflict with no agent session to tell (the session is gone; interrupted ones are the same) goes to the
+/// ticket and the Inbox, once, and the Inbox item closes when the PR is mergeable again.
+#[tokio::test]
+async fn an_unheard_conflict_waits_in_the_inbox_until_it_is_fixed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/sessions/{}", env.session), None).await;
+    assert!(s.is_success(), "{s}");
+    let mut conflicting = pr();
+    conflicting.mergeable = Mergeable::Conflicting;
+    env.gh.set_pr(BRANCH, Some(conflicting));
+    pdt_api::refresh_prs(&env.state).await;
+    let run = finished_run(&env, 1).await;
+    assert_eq!(
+        path(&run),
+        ["conflict:out", "asked:false", "tell:untold", "unheard:true", "inbox:added", "unheard_note:out"],
+        "{run}"
+    );
+    let notes: Vec<String> = comments(&env).await.into_iter().filter(|c| c.contains("no agent session")).collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("conflicts with main"), "{}", notes[0]);
+    let items = notice_items(&env).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["title"], "PR #12 conflicts with its base and no agent session is open");
+    assert_eq!(items[0]["ticketId"], json!(env.ticket));
+    assert_eq!(items[0]["group"], "notice");
+
+    // The same notice again (another run on it): no second comment, no second item.
+    let wf = run["workflowId"].as_str().unwrap();
+    let again = pdt_core::workflow::api::NewLogEvent::new(
+        pdt_core::workflow::events::PR_CONFLICT,
+        "again",
+        "test",
+        run["trigger"].clone(),
+    );
+    env.state.store.emit_event(&again, 1).await.unwrap().expect("logged");
+    let second = finished_run(&env, 2).await;
+    assert_eq!(second["workflowId"], json!(wf));
+    // Its key counts as sent (untold), and the Inbox item is made once per key besides.
+    assert_eq!(path(&second)[2..], ["tell:skipped"], "{second}");
+    assert_eq!(comments(&env).await.iter().filter(|c| c.contains("no agent session")).count(), 1);
+    assert_eq!(notice_items(&env).await.len(), 1);
+
+    // Mergeable again: the item closes.
+    env.gh.set_pr(BRANCH, Some(pr()));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::sync_notifications(&env.state).await;
+    assert!(notice_items(&env).await.is_empty());
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-139: an unheard CI failure closes when CI passes, and anything left closes once the attempt merges. A merge
+/// with nobody to tell asks nothing.
+#[tokio::test]
+async fn unheard_notices_close_when_ci_passes_or_the_attempt_merges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/sessions/{}", env.session), None).await;
+    assert!(s.is_success(), "{s}");
+    let mut conflicting = pr();
+    conflicting.mergeable = Mergeable::Conflicting;
+    env.gh.set_pr(BRANCH, Some(conflicting.clone()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    tick_until(&env, "two notices in the Inbox", || async { (notice_items(&env).await.len() == 2).then_some(()) })
+        .await;
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let left = notice_items(&env).await;
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0]["body"]["notice"], "conflict");
+
+    let mut merged = pr();
+    merged.state = PrState::Merged;
+    env.gh.set_pr(BRANCH, Some(merged));
+    pdt_api::refresh_prs(&env.state).await;
+    assert!(notice_items(&env).await.is_empty());
+    let run = tick_until(&env, "the merge's run ending", || async {
+        notice_runs(&env)
+            .await
+            .into_iter()
+            .find(|r| path(r).first().is_some_and(|p| p == "pr_merged:out") && r["status"] != "waiting")
+    })
+    .await;
+    assert_eq!(path(&run)[1..], ["tell:untold", "unheard:false", "heard:-"], "{run}");
+    env.state.ptys.shutdown().await;
+}

@@ -130,6 +130,7 @@ pub(crate) fn ci_events(
 ) -> Vec<NewLogEvent> {
     let a = crate::github::attempt_ref(info);
     let merge_requested = pr.is_some_and(|p| crate::github::merge_requested(info, p));
+    let merge_refused = pr.is_some_and(|p| crate::github::merge_refused(info, p));
     let (auto_merge, in_merge_queue) = pr.map(|p| (p.auto_merge, p.in_merge_queue)).unwrap_or_default();
     let pr = pr.map(|p| p.number);
     let event = |notice, jobs| CiEvent {
@@ -144,6 +145,7 @@ pub(crate) fn ci_events(
         auto_merge,
         in_merge_queue,
         merge_requested,
+        merge_refused,
         agent_working,
     };
     match ci.state {

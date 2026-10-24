@@ -36,6 +36,11 @@ inMergeQueue: boolean,
  */
 mergeRequested: boolean, 
 /**
+ * A workflow's merge of the attempt was refused for something its agent can fix (a conflict, uncommitted
+ * changes), and the pull request is still open (PDT-139): PR notices puts the Coder on its later failures.
+ */
+mergeRefused: boolean, 
+/**
  * An agent step is working on the attempt (a workflow already has an agent on it).
  */
 agentWorking: boolean, projectId: string, ticketId: string, 

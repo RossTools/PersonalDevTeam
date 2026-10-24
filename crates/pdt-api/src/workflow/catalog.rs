@@ -329,6 +329,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(discord::Discord));
         kinds.push(Box::new(crate::discord::EnsureChannel));
         kinds.push(Box::new(notify::Notify));
+        kinds.push(Box::new(inbox_notice::InboxNotice));
         kinds.extend(arr::kinds());
         kinds.push(Box::new(plex::Search));
         kinds.push(Box::new(plex::RecentlyAdded));

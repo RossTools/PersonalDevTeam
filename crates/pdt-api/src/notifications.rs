@@ -19,7 +19,7 @@ use pdt_core::notification::{
     NotificationTarget, RETENTION_MS, ReadAll, Section, Severity, Show, attempt_key, inbox_key, session_key,
     session_wants,
 };
-use pdt_core::pr::{Mergeable, PrState};
+use pdt_core::pr::{Mergeable, NoticeKind, PrState};
 use pdt_core::session::{SessionKind, SessionStatus};
 use pdt_core::workflow::api::LogEvent;
 use pdt_core::workflow::events as ev;
@@ -164,6 +164,8 @@ pub async fn sync(st: &AppState) {
 }
 
 async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
+    // Unheard notices whose cause went away close first, so their rows clear in this pass.
+    crate::inbox::settle_notices(st, None).await;
     let now = now_ms();
     let cfg = settings(st).await;
     let live: HashMap<String, Notification> =
@@ -221,11 +223,12 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
         let what =
             [Some(label.to_string()), i.persona_name.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
         n.body = with_ticket(&what, i.ticket_key.as_deref());
-        n.severity = if matches!(i.kind, InboxKind::Stalled | InboxKind::TimedOut | InboxKind::LoopLimit) {
-            Severity::Warning
-        } else {
-            Severity::Info
-        };
+        n.severity =
+            if matches!(i.kind, InboxKind::Stalled | InboxKind::TimedOut | InboxKind::LoopLimit | InboxKind::Notice) {
+                Severity::Warning
+            } else {
+                Severity::Info
+            };
         n.project_id = i.project_id.clone();
         n.ticket_id = i.ticket_id.clone();
         n.session_id = i.session_id.clone();
@@ -340,6 +343,7 @@ pub(crate) async fn on_event(st: &AppState, e: &LogEvent) {
         ev::CI_RUN_PASSED => {
             if let Some(a) = &e.attempt_id {
                 clear(st, &attempt_key(a, K::PrCiFailed)).await;
+                crate::inbox::settle_notices(st, Some((a, &[NoticeKind::CiFailed]))).await;
             }
             return;
         }
@@ -365,6 +369,8 @@ pub(crate) async fn on_event(st: &AppState, e: &LogEvent) {
             for k in [K::PrCiFailed, K::PrConflict, K::PrQueueLeft] {
                 clear(st, &attempt_key(&attempt, k)).await;
             }
+            let all = [NoticeKind::CiFailed, NoticeKind::Conflict, NoticeKind::QueueLeft, NoticeKind::Behind];
+            crate::inbox::settle_notices(st, Some((&attempt, &all))).await;
             (format!("{ticket_key}{pr} merged"), String::new(), Severity::Info)
         }
     };

@@ -440,12 +440,19 @@ pub(crate) fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> boo
     info.merge_requested || pr.auto_merge || pr.in_merge_queue || pr.queue_removal.as_ref().is_some_and(|r| r.by_queue)
 }
 
+/// Whether a workflow's merge of the attempt was refused for something its agent can fix and the PR is still open
+/// (PDT-139).
+pub(crate) fn merge_refused(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
+    info.merge_refused && pr.state == PrState::Open
+}
+
 /// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
 /// `agent_working`: an agent step works on the attempt now.
 pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_working: bool) -> Vec<NewLogEvent> {
     let a = attempt_ref(info);
     let key = |k: &str| format!("{}:{k}", a.attempt_id);
     let merge_requested = merge_requested(info, now);
+    let merge_refused = merge_refused(info, now);
     let pr_event = |n: Notice| PrEvent {
         attempt: a.clone(),
         pr: now.number,
@@ -455,6 +462,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
         in_merge_queue: now.in_merge_queue,
         notice: n,
         merge_requested,
+        merge_refused,
         agent_working,
     };
     let mut out = vec![];
@@ -481,6 +489,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
                         auto_merge: now.auto_merge,
                         in_merge_queue: now.in_merge_queue,
                         merge_requested,
+                        merge_refused,
                         agent_working,
                     },
                 )
@@ -513,6 +522,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
                 auto_merge: now.auto_merge,
                 in_merge_queue: now.in_merge_queue,
                 merge_requested,
+                merge_refused,
                 agent_working,
             },
         ));
