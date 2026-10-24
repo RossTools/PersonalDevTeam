@@ -413,11 +413,14 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
         let mut info = info.clone();
         if (now.auto_merge || now.in_merge_queue) && !info.merge_requested {
             info.merge_requested = true;
+            info.merge_refused = false;
             if let Err(e) = st.store.set_attempt_merge_requested(&info.attempt.id).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record that a PR is set to merge");
             }
-        } else if info.merge_requested && turned_off_by_hand(prev.as_ref(), &now) {
+        } else if (info.merge_requested || info.merge_refused) && turned_off_by_hand(prev.as_ref(), &now) {
+            // Off by hand stays off (PDT-104): a refused merge no longer counts either (PDT-139).
             info.merge_requested = false;
+            info.merge_refused = false;
             if let Err(e) = st.store.clear_attempt_merge_requested(&info.attempt.id).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %e, "could not forget that a PR was set to merge");
             }
@@ -485,12 +488,19 @@ pub(crate) fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> boo
     info.merge_requested || pr.auto_merge || pr.in_merge_queue || pr.queue_removal.as_ref().is_some_and(|r| r.by_queue)
 }
 
+/// Whether a workflow's merge of the attempt was refused for something its agent can fix and the PR is still open
+/// (PDT-139).
+pub(crate) fn merge_refused(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
+    info.merge_refused && pr.state == PrState::Open
+}
+
 /// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
 /// `agent_working`: an agent step works on the attempt now.
 pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_working: bool) -> Vec<NewLogEvent> {
     let a = attempt_ref(info);
     let key = |k: &str| format!("{}:{k}", a.attempt_id);
     let merge_requested = merge_requested(info, now);
+    let merge_refused = merge_refused(info, now);
     let pr_event = |n: Notice| PrEvent {
         attempt: a.clone(),
         pr: now.number,
@@ -500,6 +510,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
         in_merge_queue: now.in_merge_queue,
         notice: n,
         merge_requested,
+        merge_refused,
         agent_working,
     };
     let mut out = vec![];
@@ -526,6 +537,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
                         auto_merge: now.auto_merge,
                         in_merge_queue: now.in_merge_queue,
                         merge_requested,
+                        merge_refused,
                         agent_working,
                     },
                 )
@@ -558,6 +570,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
                 auto_merge: now.auto_merge,
                 in_merge_queue: now.in_merge_queue,
                 merge_requested,
+                merge_refused,
                 agent_working,
             },
         ));

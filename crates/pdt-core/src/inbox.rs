@@ -27,6 +27,9 @@ pub enum InboxKind {
     TimedOut,
     /// A session waiting on a permission prompt or a question (not stored: its `session.needs_you` notification).
     Session,
+    /// A notice nobody could be told (PDT-139): PR notices found no agent session for a conflict or a CI failure.
+    /// One per attempt and notice; it closes once the cause went away.
+    Notice,
 }
 
 impl InboxKind {
@@ -40,6 +43,7 @@ impl InboxKind {
             InboxKind::Manual => "manual",
             InboxKind::Session => "session",
             InboxKind::TimedOut => "timed_out",
+            InboxKind::Notice => "notice",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -52,6 +56,7 @@ impl InboxKind {
             Self::Manual,
             Self::Session,
             Self::TimedOut,
+            Self::Notice,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -69,18 +74,21 @@ pub enum InboxGroup {
     Session,
     Stalled,
     LoopLimit,
+    /// Notices no agent session could be told (PDT-139).
+    Notice,
     Gate,
     /// A gate with `inbox: accept`: the work is done and waits for the user's Accept.
     Accept,
 }
 
 impl InboxGroup {
-    pub const ALL: [InboxGroup; 7] = [
+    pub const ALL: [InboxGroup; 8] = [
         InboxGroup::Question,
         InboxGroup::Approval,
         InboxGroup::Session,
         InboxGroup::Stalled,
         InboxGroup::LoopLimit,
+        InboxGroup::Notice,
         InboxGroup::Gate,
         InboxGroup::Accept,
     ];
@@ -91,6 +99,7 @@ impl InboxGroup {
             InboxGroup::Session => "session",
             InboxGroup::Stalled => "stalled",
             InboxGroup::LoopLimit => "loop_limit",
+            InboxGroup::Notice => "notice",
             InboxGroup::Gate => "gate",
             InboxGroup::Accept => "accept",
         }
@@ -105,6 +114,7 @@ impl InboxGroup {
             InboxGroup::Session => "Sessions waiting",
             InboxGroup::Stalled => "Stalled",
             InboxGroup::LoopLimit => "Loop limit",
+            InboxGroup::Notice => "Unheard notices",
             InboxGroup::Gate => "Gates",
             InboxGroup::Accept => "Ready to accept",
         }
@@ -201,7 +211,7 @@ pub struct InboxItem {
     pub persona_name: Option<String>,
     pub title: String,
     /// Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
-    /// (stalled), `passes` (loop limit), `request` (approval).
+    /// (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice).
     #[ts(type = "Record<string, unknown>")]
     pub body: Value,
     pub choices: Vec<InboxChoice>,

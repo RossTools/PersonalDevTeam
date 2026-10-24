@@ -222,7 +222,10 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   would type. The built-in workflow "PR notices" (on by default) sends it with `session.send`: typed into the
   attempt's newest running agent session as one bracketed paste plus Enter once it is idle and nobody has typed in it
   for 20 s, then recorded as a `pr` event (`told`, `sessionId`, `workflowId`, `runId`); with no running agent session
-  it is recorded as not told. Each notice key is sent once per attempt, across restarts too. Turning the workflow off
+  it is recorded as not told, and a CI failure, conflict, queue drop or falling behind goes to the user instead
+  (PDT-139): a ticket comment with the notice and an Unheard notices item in the Inbox, once per attempt and notice
+  key, which closes once the PR is fixed (mergeable, CI passed, back in the queue, caught up), merged or closed, or the
+  attempt ends ([workflows.md](workflows.md#inbox)). Each notice key is sent once per attempt, across restarts too. Turning the workflow off
   stops the notices. Conversations: see [conversations.md](conversations.md#tickets-5d).
 - A PR that was set to merge (PDT-104) is handled further: its CI failure, conflict, queue drop or falling behind
   becomes an agent step (the attempt's Coder session, or a new one when it has ended) that fixes it and pushes, with a
@@ -231,7 +234,10 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   the agent again. "Set to merge" (`mergeRequested` on the events) is kept per attempt
   (`attempts.merge_requested`): Merge… / `attempt.merge` turning auto-merge on (never a refused merge, PDT-124), or the poller seeing auto-merge or the
   merge queue; a merge queue drop counts too, a person dequeuing it does not, and a person turning auto-merge off
-  (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A failure while an
+  (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A workflow's merge
+  refused for a conflict or uncommitted changes (`attempts.merge_refused`, `mergeRefused` on the events, PDT-139) gets
+  the same fix step for the PR's later failures, but a CI pass alone never turns auto-merge on for it; being set to
+  merge replaces it, and a person turning auto-merge off clears it with `merge_requested`. A failure while an
   agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.
   Details: [workflows.md](workflows.md) "Workflows".
 - A user's comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments

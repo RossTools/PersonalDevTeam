@@ -17,7 +17,7 @@ import { PrDetails } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
-import { after, dismissable, KIND_LABEL, merges, passesOf, questionsOf, selectedUpdate, step } from './model';
+import { after, dismissable, KIND_LABEL, merges, noticeText, passesOf, questionsOf, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
@@ -180,19 +180,23 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
         onAnswer={answer}
         onApproved={() => finish(item)}
         onOpenSession={() => item.sessionId && item.projectId && openSession({ id: item.sessionId, projectId: item.projectId })}
+        onOpenTicket={() => item.ticketId && item.projectId && openTicket({ id: item.ticketId, projectId: item.projectId })}
+        onDismiss={() => void dismiss()}
       />
     </div>
   );
 }
 
 /** One item: its context and content (scrolling), and its decisions at the bottom. Keyed by item, so its state is its own. */
-function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession }: {
+function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession, onOpenTicket, onDismiss }: {
   item: InboxItem;
   busy: boolean;
   className?: string;
   onAnswer: (a: { choice: string; text?: string } | { answers: string[] }) => Promise<void>;
   onApproved: () => void;
   onOpenSession: () => void;
+  onOpenTicket: () => void;
+  onDismiss: () => void;
 }) {
   const [note, setNote] = useState('');
   const [answers, setAnswers] = useState<string[]>([]);
@@ -328,6 +332,21 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
         </>
       );
       bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={withNote} />;
+      break;
+    case 'notice':
+      content = (
+        <>
+          <p className="text-sm">
+            No agent session was open to tell, so it waits for you. It goes away once the pull request is fixed, merged or
+            closed.
+          </p>
+          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+        </>
+      );
+      bar = <DecisionBar busy={busy} decisions={[
+        { id: 'dismiss', title: 'Dismiss' },
+        { id: 'ticket', title: 'Open ticket', primary: true, disabled: !item.ticketId },
+      ]} onPick={(id) => (id === 'dismiss' ? onDismiss() : onOpenTicket())} />;
       break;
     case 'gate':
       content = (

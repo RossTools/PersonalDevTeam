@@ -729,7 +729,8 @@ async fn a_conflicting_pr_is_fixed_and_reviewed_before_auto_merge_goes_on() {
 }
 
 /// The same with the run stopped while the Reviewer looks at the fix: CI passing then turns nothing on either, as
-/// nothing recorded the refused merge as set to merge (PR notices would turn auto-merge on for it).
+/// nothing recorded the refused merge as set to merge (PR notices would turn auto-merge on for it). A later conflict
+/// still gets PR notices' fix step, as the merge was refused (PDT-139).
 #[tokio::test]
 async fn a_conflict_fix_left_unreviewed_never_merges() {
     conflicting_pr(true).await;
@@ -819,6 +820,29 @@ async fn conflicting_pr(abandon: bool) {
     assert_eq!(merges(), 0, "not before the review");
     if abandon {
         assert!(!requested().await);
+        // The refused merge still counts (PDT-139): when the PR conflicts again, PR notices puts the Coder on it.
+        assert!(env.state.store.get_attempt(&id).await.unwrap().unwrap().merge_refused);
+        let mut again = pull_request(Mergeable::Conflicting);
+        again.head_sha = "fedcba9876".into();
+        gh.set_pr(&branch, Some(again));
+        pdt_api::refresh_prs(&env.state).await;
+        let run = tick_until(&env, "PR notices fixing the new conflict", || async {
+            let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={t}"), None).await;
+            for r in runs.as_array().unwrap().iter().filter(|r| r["workflowName"] == "PR notices") {
+                let (_, run) =
+                    call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["id"].as_str().unwrap()), None).await;
+                let fixing = run["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "fix");
+                if fixing && run["trigger"]["headSha"] == "fedcba9876" {
+                    return Some(run);
+                }
+            }
+            None
+        })
+        .await;
+        let nodes: Vec<&str> = run["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
+        assert_eq!(nodes[..3], ["conflict", "asked", "busy"], "{run}");
+        assert_eq!(run["trigger"]["mergeRefused"], true);
+        assert_eq!(merges(), 0, "nothing merges before the fix");
         return;
     }
     submit(reviewer, "approved").await;

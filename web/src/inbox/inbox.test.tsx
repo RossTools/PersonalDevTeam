@@ -155,6 +155,27 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/q/dismiss')).toBe(true));
   });
 
+  it('shows an unheard notice: what it said, Enter opens the ticket, e dismisses it', async () => {
+    const notice = item('n', {
+      kind: 'notice', group: 'notice', stepId: null, title: 'PR #12 conflicts with its base and no agent session is open',
+      body: { notice: 'conflict', key: 'conflict:abc', text: '[PDT] PR #12 (b) conflicts with main.', workflow: 'PR notices' },
+    });
+    expect(grouped([gate, notice]).map((g) => g.title)).toEqual(['Unheard notices', 'Gates']);
+    const calls = stubApi({ 'POST /api/inbox/n/dismiss': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    const openTicket = vi.fn();
+    renderWithQuery(
+      <OpenTicketContext.Provider value={openTicket}>
+        <InboxView items={[notice]} selectedId="n" onSelect={() => {}} />
+      </OpenTicketContext.Provider>,
+    );
+    expect(screen.getByRole('region', { name: 'Unheard notice' })).toHaveTextContent('conflicts with main');
+    expect(screen.getByText(/Unheard notice ·/)).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(openTicket).toHaveBeenCalledWith({ id: 't', projectId: 'p' });
+    fireEvent.keyDown(window, { key: 'e' });
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/n/dismiss')).toBe(true));
+  });
+
   it('asks the user to do a manual stage and pick its outcome, with their note as the summary', async () => {
     const manual = item('m', {
       kind: 'manual', title: 'Your turn: Review', personaName: 'Reviewer',

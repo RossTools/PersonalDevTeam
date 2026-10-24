@@ -85,6 +85,8 @@ pub enum NotificationKind {
     InboxStalled,
     #[serde(rename = "inbox.loop_limit")]
     InboxLoopLimit,
+    #[serde(rename = "inbox.notice")]
+    InboxNotice,
     #[serde(rename = "session.turn_ended")]
     SessionTurnEnded,
     #[serde(rename = "session.exited")]
@@ -111,7 +113,7 @@ use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 17] = [
+    pub const ALL: [NotificationKind; 18] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -119,6 +121,7 @@ impl NotificationKind {
         K::InboxManual,
         K::InboxStalled,
         K::InboxLoopLimit,
+        K::InboxNotice,
         K::SessionTurnEnded,
         K::SessionExited,
         K::PrCiFailed,
@@ -140,6 +143,7 @@ impl NotificationKind {
             K::InboxManual => "inbox.manual",
             K::InboxStalled => "inbox.stalled",
             K::InboxLoopLimit => "inbox.loop_limit",
+            K::InboxNotice => "inbox.notice",
             K::SessionTurnEnded => "session.turn_ended",
             K::SessionExited => "session.exited",
             K::PrCiFailed => "pr.ci_failed",
@@ -167,6 +171,7 @@ impl NotificationKind {
                 | K::InboxManual
                 | K::InboxStalled
                 | K::InboxLoopLimit
+                | K::InboxNotice
         )
     }
 
@@ -186,6 +191,7 @@ impl NotificationKind {
             | K::InboxManual
             | K::InboxStalled
             | K::InboxLoopLimit
+            | K::InboxNotice
             | K::WorkflowNotify
             | K::ConnectionFailed
             | K::HostLoopStale => Show::Toast,
@@ -215,6 +221,7 @@ impl NotificationKind {
             K::InboxManual => "Your turn",
             K::InboxStalled => "Stalled",
             K::InboxLoopLimit => "Loop limit",
+            K::InboxNotice => "Unheard notice",
             K::SessionTurnEnded => "Turn ended",
             K::SessionExited => "Session exited",
             K::PrCiFailed => "CI failed",
@@ -238,6 +245,7 @@ impl NotificationKind {
             K::InboxManual => "A manual step waits for you.",
             K::InboxStalled => "An agent step ended its turns, or timed out, without an outcome.",
             K::InboxLoopLimit => "An agent step reached its loop limit.",
+            K::InboxNotice => "A pull request conflicts or fails CI and no agent session could be told.",
             K::SessionTurnEnded => "A session finished its turn and you haven't looked yet.",
             K::SessionExited => "A session's agent exited on its own (not your Stop).",
             K::PrCiFailed => "CI failed on an attempt's pull request.",
@@ -258,6 +266,7 @@ impl NotificationKind {
             (InboxKind::Approval, _) => K::InboxApproval,
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
+            (InboxKind::Notice, _) => K::InboxNotice,
             (InboxKind::Manual, _) => K::InboxManual,
             (InboxKind::Gate | InboxKind::Session, _) => K::InboxGate,
         }

@@ -12,6 +12,7 @@ pub mod discord;
 pub mod end;
 pub mod gate;
 pub mod http;
+pub mod inbox_notice;
 pub mod jira;
 pub mod mcp_tool;
 pub mod merge;

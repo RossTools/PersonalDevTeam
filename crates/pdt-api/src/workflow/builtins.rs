@@ -54,8 +54,9 @@ const PUSH_PROMPT: &str = "The Reviewer approved your fix. Push it (run the chec
 PDT then gets the pull request merging again.";
 
 /// The built-in PR notices (PDT-25, Phase 7a; PDT-104): each notice once to the attempt's agent; for a pull request
-/// that was set to merge, an agent step that fixes it (a Reviewer first when the agent calls the fix large), then
-/// auto-merge on again, up to [`FIX_TRIES`] times per attempt.
+/// that was set to merge (or whose workflow merge was refused for a conflict, PDT-139), an agent step that fixes it (a
+/// Reviewer first when the agent calls the fix large), then auto-merge on again, up to [`FIX_TRIES`] times per
+/// attempt. A notice with no agent session to tell goes to the Inbox and the ticket's comments, once (PDT-139).
 fn pr_notices() -> WorkflowDoc {
     let node = |id: &str, kind: &str, x: i32, y: i32, title: &str, config: serde_json::Value| {
         let mut n = json!({"id": id, "kind": kind, "version": 1, "position": {"x": x, "y": y}});
@@ -106,8 +107,9 @@ fn pr_notices() -> WorkflowDoc {
             280,
             150,
             "Set to merge?",
-            json!({"conditions": [
-            cond("{{trigger.mergeRequested}}", "truthy", None)]}),
+            json!({"match": "any", "conditions": [
+            cond("{{trigger.mergeRequested}}", "truthy", None),
+            cond("{{trigger.mergeRefused}}", "truthy", None)]}),
         ),
         node(
             "busy",
@@ -221,6 +223,37 @@ fn pr_notices() -> WorkflowDoc {
             "attempt": "{{trigger.attemptId}}", "text": "{{trigger.notice.text}}",
             "dedupe": "{{trigger.notice.key}}", "timeline": "pr"}),
         ),
+        // Nobody to tell (PDT-139): a conflict, CI failure, queue drop or base move goes to the user instead.
+        node(
+            "unheard",
+            "condition",
+            1960,
+            450,
+            "Needs someone?",
+            json!({"conditions": [
+            cond("{{trigger.notice.kind}}", "exists", None),
+            cond("{{trigger.notice.kind}}", "ne", Some(json!("merged")))]}),
+        ),
+        node(
+            "inbox",
+            "inbox.notice",
+            2240,
+            450,
+            "Put it in the Inbox",
+            json!({"attempt": "{{trigger.attemptId}}", "text": "{{trigger.notice.text}}", "key": "{{trigger.notice.key}}"}),
+        ),
+        node(
+            "unheard_note",
+            "ticket.comment",
+            2520,
+            450,
+            "Note it on the ticket",
+            comment(
+                "PR notices had no agent session to tell, so this waits for you (it is in the Inbox):\n\n\
+                 {{trigger.notice.text}}",
+            ),
+        ),
+        node("heard", "end", 2240, 600, "Nothing to do", json!({"quiet": true})),
     ];
     let e = |from: &str, port: &str, to: &str| {
         if port.is_empty() { json!({"from": from, "to": to}) } else { json!({"from": from, "port": port, "to": to}) }
@@ -254,6 +287,10 @@ fn pr_notices() -> WorkflowDoc {
         e("remerge", "queued", "merging"),
         e("remerge", "merged", "merging"),
         e("remerge", "refused", "refused_note"),
+        e("tell", "untold", "unheard"),
+        e("unheard", "true", "inbox"),
+        e("unheard", "false", "heard"),
+        e("inbox", "added", "unheard_note"),
     ]);
     doc(json!({
         "name": "PR notices",
@@ -262,7 +299,9 @@ fn pr_notices() -> WorkflowDoc {
                         is typing, and lands on the ticket's timeline. A pull request that was set to merge gets an \
                         agent step instead (the attempt's Coder session, or a new one): it fixes the cause and pushes, \
                         with a Reviewer first when it calls the fix large, and auto-merge goes back on, also when CI \
-                        passes again with it off. After 3 tries on one attempt it stops and comments on the ticket.",
+                        passes again with it off; a workflow's merge refused for a conflict counts too. After 3 tries \
+                        on one attempt it stops and comments on the ticket. A notice with no agent session to tell \
+                        goes to the Inbox and the ticket instead, once; the Inbox item closes when its cause is gone.",
         "nodes": nodes,
         "edges": edges,
     }))
@@ -463,5 +502,15 @@ mod tests {
             let errors: Vec<_> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
             assert!(errors.is_empty(), "{}: {errors:?}", b.id);
         }
+    }
+
+    /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.
+    #[test]
+    fn pr_notices_leaves_no_notice_untold() {
+        let issues = validate(&pr_notices(), crate::workflow::catalog::catalog());
+        let open: Vec<_> =
+            issues.iter().filter(|i| i.code == "open_port" && i.node.as_deref() == Some("tell")).collect();
+        assert!(open.iter().all(|i| !i.message.contains("untold")), "{open:?}");
+        assert!(!issues.iter().any(|i| i.code == "unreachable"), "{issues:?}");
     }
 }
