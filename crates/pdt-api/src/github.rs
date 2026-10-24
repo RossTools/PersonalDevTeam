@@ -368,11 +368,14 @@ async fn refresh_one(
         let mut info = info.clone();
         if (now.auto_merge || now.in_merge_queue) && !info.merge_requested {
             info.merge_requested = true;
+            info.merge_refused = false;
             if let Err(e) = st.store.set_attempt_merge_requested(&info.attempt.id).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record that a PR is set to merge");
             }
-        } else if info.merge_requested && turned_off_by_hand(prev.as_ref(), &now) {
+        } else if (info.merge_requested || info.merge_refused) && turned_off_by_hand(prev.as_ref(), &now) {
+            // Off by hand stays off (PDT-104): a refused merge no longer counts either (PDT-139).
             info.merge_requested = false;
+            info.merge_refused = false;
             if let Err(e) = st.store.clear_attempt_merge_requested(&info.attempt.id).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %e, "could not forget that a PR was set to merge");
             }

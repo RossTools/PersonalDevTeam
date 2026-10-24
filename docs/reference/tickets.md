@@ -231,7 +231,8 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   merge queue; a merge queue drop counts too, a person dequeuing it does not, and a person turning auto-merge off
   (on at the last look, off now, not dropped by the queue) clears it, so it isn't turned back on. A workflow's merge
   refused for a conflict or uncommitted changes (`attempts.merge_refused`, `mergeRefused` on the events, PDT-139) gets
-  the same fix step for the PR's later failures, but a CI pass alone never turns auto-merge on for it. A failure while an
+  the same fix step for the PR's later failures, but a CI pass alone never turns auto-merge on for it; being set to
+  merge replaces it, and a person turning auto-merge off clears it with `merge_requested`. A failure while an
   agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.
   Details: [workflows.md](workflows.md) "Workflows".
 - A user's comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments

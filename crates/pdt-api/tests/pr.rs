@@ -929,3 +929,34 @@ async fn unheard_notices_close_when_ci_passes_or_the_attempt_merges() {
     assert_eq!(path(&run)[1..], ["tell:untold", "unheard:false", "heard:-"], "{run}");
     env.state.ptys.shutdown().await;
 }
+
+/// PDT-139 with PDT-104: after a refused merge (fixed, auto-merge back on), a person turning auto-merge off makes the
+/// refused merge count no more: the next conflict is only told, and nothing turns auto-merge back on.
+#[tokio::test]
+async fn auto_merge_turned_off_by_hand_forgets_a_refused_merge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let attempt = ticket(&env).await["attempt"]["id"].as_str().unwrap().to_string();
+    let info = || async { env.state.store.get_attempt(&attempt).await.unwrap().unwrap() };
+    assert!(env.state.store.set_attempt_merge_refused(&attempt).await.unwrap());
+    // The fix merged again: auto-merge on, which takes over from the refusal.
+    let mut merging = pr();
+    merging.auto_merge = true;
+    env.gh.set_pr(BRANCH, Some(merging));
+    pdt_api::refresh_prs(&env.state).await;
+    let i = info().await;
+    assert!(i.merge_requested && !i.merge_refused);
+    // Off by hand, then it conflicts.
+    env.gh.set_pr(BRANCH, Some(pr()));
+    pdt_api::refresh_prs(&env.state).await;
+    let i = info().await;
+    assert!(!i.merge_requested && !i.merge_refused);
+    let mut conflicting = pr();
+    conflicting.mergeable = Mergeable::Conflicting;
+    env.gh.set_pr(BRANCH, Some(conflicting));
+    pdt_api::refresh_prs(&env.state).await;
+    let run = finished_run(&env, 1).await;
+    assert_eq!(path(&run)[..3], ["conflict:out", "asked:false", "tell:sent"], "{run}");
+    assert_eq!(merges(&env), 0);
+    env.state.ptys.shutdown().await;
+}

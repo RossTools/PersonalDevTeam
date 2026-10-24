@@ -1766,31 +1766,40 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Records that the attempt's pull request was set to merge. True when it was news.
+    /// Records that the attempt's pull request was set to merge; a refused merge (PDT-139) is forgotten, as this
+    /// takes over. True when it was news.
     pub async fn set_attempt_merge_requested(&self, id: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE attempts SET merge_requested = 1 WHERE id = ? AND merge_requested = 0")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE attempts SET merge_requested = 1, merge_refused = 0 WHERE id = ? AND merge_requested = 0",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
     /// Records that a workflow's merge was refused for something the attempt's agent can fix (PDT-139). True when it
-    /// was news.
+    /// was news. Not while it is set to merge (that says more).
     pub async fn set_attempt_merge_refused(&self, id: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE attempts SET merge_refused = 1 WHERE id = ? AND merge_refused = 0")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE attempts SET merge_refused = 1 WHERE id = ? AND merge_refused = 0 AND merge_requested = 0",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
-    /// Forgets it (a person turned auto-merge off). True when it was set.
+    /// Forgets it, and a refused merge too (a person turned auto-merge off: PDT notices turn it on for neither). True
+    /// when either was set.
     pub async fn clear_attempt_merge_requested(&self, id: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE attempts SET merge_requested = 0 WHERE id = ? AND merge_requested = 1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE attempts SET merge_requested = 0, merge_refused = 0 WHERE id = ? AND \
+             (merge_requested = 1 OR merge_refused = 1)",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -2858,6 +2867,15 @@ mod tests {
         assert!(store.set_attempt_merge_refused("at1").await.unwrap());
         assert!(!store.set_attempt_merge_refused("at1").await.unwrap());
         assert!(store.get_attempt("at1").await.unwrap().unwrap().merge_refused);
+        // Set to merge takes over from a refused merge; turned off by hand forgets both (PDT-139).
+        assert!(store.set_attempt_merge_requested("at1").await.unwrap());
+        assert!(!store.get_attempt("at1").await.unwrap().unwrap().merge_refused);
+        assert!(!store.set_attempt_merge_refused("at1").await.unwrap(), "not while set to merge");
+        assert!(store.clear_attempt_merge_requested("at1").await.unwrap());
+        assert!(store.set_attempt_merge_refused("at1").await.unwrap());
+        assert!(store.clear_attempt_merge_requested("at1").await.unwrap());
+        let info = store.get_attempt("at1").await.unwrap().unwrap();
+        assert!(!info.merge_requested && !info.merge_refused);
 
         // The workspace Start made is remembered, and forgotten when the workspace is deleted.
         assert_eq!(store.get_attempt("at1").await.unwrap().unwrap().attempt.workspace_id, None);

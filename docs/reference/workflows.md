@@ -566,7 +566,9 @@ deleted (`409 persona_in_use`).
   `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays. A first merge
   (not `again`) refused as `fixable` records that choice anyway and sets `attempts.merge_refused` (PDT-139, sticky):
   the PR's later `ci.run_failed` and `pr.*` events carry `mergeRefused` (while it is open), so PR notices puts the
-  Coder on them instead of only telling an agent. It is not "set to merge" (`mergeRequested` stays false, PDT-124).
+  Coder on them instead of only telling an agent. It is not "set to merge" (`mergeRequested` stays false, PDT-124);
+  once the attempt is set to merge (the remerge after the fix) that replaces it, and a person turning auto-merge off
+  clears both, so it stays off (PDT-104).
 - **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`,
   `approvalExemptLabels` (tickets with one of them need no approval; normalised like ticket labels, `[]` clears),
   `maxRunningAttempts`, `autoStart` `off | todo | ready`; `PUT` takes them as top-level fields, `maxRunningAttempts`
