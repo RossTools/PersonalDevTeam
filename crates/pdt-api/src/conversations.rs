@@ -755,6 +755,8 @@ pub(crate) struct Background {
     pub tasks: Vec<BackgroundTask>,
     /// Its agent process is running.
     pub live: bool,
+    /// A turn runs, something is asked, or a message is on its way: it is at work, not waiting.
+    pub busy: bool,
     /// None run, and nothing has happened for `background_grace`: no turn, request or message on its way. A task that
     /// finished without the agent taking it up leaves it settled.
     pub settled: bool,
@@ -769,7 +771,8 @@ pub(crate) fn background(st: &AppState, id: &str) -> Option<Background> {
         && s.open_requests.is_empty()
         && s.pending.is_empty()
         && s.last_active.elapsed() >= st.conversations.background_grace;
-    Some(Background { tasks: s.background_tasks.clone(), live: s.live, settled })
+    let busy = s.turn_running || !s.open_requests.is_empty() || !s.pending.is_empty();
+    Some(Background { tasks: s.background_tasks.clone(), live: s.live, busy, settled })
 }
 
 /// Sends the outbox's messages (`pending_id` names them) as the next message; it shows as PDT's, not the user's. They

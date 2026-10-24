@@ -872,8 +872,11 @@ pub(crate) async fn sweep(st: &AppState) {
             && let Some(b) = crate::conversations::background(st, &sid).filter(|b| b.live)
         {
             if !b.tasks.is_empty() {
-                a.background = b.tasks.into_iter().map(|t| t.description).collect();
-                if now - a.background_since.unwrap_or(now) >= i64::try_from(a.background_wait_ms).unwrap_or(i64::MAX) {
+                // A turn at work meanwhile (a notice, the user's message) isn't stalled under it.
+                let capped =
+                    now - a.background_since.unwrap_or(now) >= i64::try_from(a.background_wait_ms).unwrap_or(i64::MAX);
+                if capped && !b.busy && waiting_step(st, &a).await.is_ok() {
+                    a.background = b.tasks.into_iter().map(|t| t.description).collect();
                     let why = background_why(&a, now);
                     stall(st, a, &why).await;
                 }

@@ -903,3 +903,69 @@ async fn a_hung_background_task_stalls_at_the_cap_and_a_late_outcome_closes_the_
     assert_eq!(r["output"]["result"], "approved", "{r:#}");
     assert!(inbox(&env).await.is_empty(), "the Stalled item closed");
 }
+
+/// Ticks the engine for `ms`.
+async fn tick_for(env: &Env, ms: u64) {
+    let until = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < until {
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// PDT-142: the cap doesn't stall a step whose session is at work in a turn (a notice or the user's message started
+/// it) while a long-lived background task runs.
+#[tokio::test]
+async fn the_background_cap_does_not_stall_a_turn_at_work() {
+    let env = setup().await;
+    let t = ticket(&env, "Dev server").await;
+    let wf = create_workflow(&env, review_doc("bg: 600000", json!({"backgroundWaitMs": 1000}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = step_session(&env, &id).await;
+    // No ticks from here until the turn runs: the wait starts at the turn's end, the cap only on a tick.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        if v["agent"]["state"] == "background" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "never waited on the task: {}", v["agent"]);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": "slow"}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    tick_for(&env, 1500).await;
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    assert_eq!((v["agent"]["state"].as_str(), v["agent"]["busy"].as_bool()), (Some("working"), Some(true)));
+    assert!(inbox(&env).await.iter().all(|i| i["kind"] != "stalled"), "stalled mid-turn");
+}
+
+/// PDT-142: a binding still working on a step that has ended (cut short some other way) is done, not stalled by the
+/// cap.
+#[tokio::test]
+async fn the_background_cap_does_not_stall_a_step_that_has_ended() {
+    let env = setup().await;
+    let t = ticket(&env, "Ended").await;
+    let wf = create_workflow(&env, review_doc("bg: 600000", json!({"backgroundWaitMs": 1000}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    step_session(&env, &id).await;
+    let step_id = tick_until(&env, "the wait on the task", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        let r = run(&env, &id).await;
+        let step = r["steps"].as_array()?.iter().find(|s| s["nodeId"] == "review")?.clone();
+        (v["agent"]["state"] == "background").then(|| step["id"].clone())
+    })
+    .await;
+    let step_id = step_id.as_str().unwrap();
+    // The step ends without its binding hearing of it.
+    let mut step = env.state.store.get_step(step_id).await.unwrap().unwrap();
+    step.status = pdt_core::workflow::api::StepStatus::Failed;
+    env.state.store.put_step(&step).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    tick_for(&env, 500).await;
+    assert!(inbox(&env).await.iter().all(|i| i["kind"] != "stalled"), "stalled an ended step");
+    let a = env.state.store.get_agent_step(step_id).await.unwrap().unwrap();
+    assert_eq!(a.state, pdt_core::workflow::agent::AgentStepState::Done);
+}

@@ -570,7 +570,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   judged as usual. If the tasks all end and no turn starts for a grace period (10 s), the engine tick counts the
   waiting turn as ended without an outcome (nudge, then stall). While they run, only the cap stalls the step:
   `backgroundWaitMs` (30 min, per agent node) after the first such turn end, with "Waiting on background tasks for
-  X min: <descriptions>." A Nudge from the Inbox starts the wait over. Terminal (TUI) sessions report no background
+  X min: <descriptions>." (never while a turn runs or a message or request is open, and only while the step still
+  waits; a binding whose step ended is done instead). A Nudge from the Inbox starts the wait over. Terminal (TUI) sessions report no background
   tasks, so their turns are judged as before; Codex and Devin conversations don't report them either.
 - **Late outcomes.** A stalled step whose session submits an outcome after all (it went on by itself) completes as
   usual, and its Stalled item closes.
