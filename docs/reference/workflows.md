@@ -114,7 +114,7 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
 | `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `event {type, where}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
-| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
+| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `backgroundWaitMs`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
 | `wait` (`ms`, `until`, or `event {type, where}` with `timeoutMs`; `pipelineStage`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
@@ -550,7 +550,7 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   instructions, the outcomes, and the rule: finish with `submit_outcome`, ask with `ask_user`, a turn with neither
   counts as stalled). The first message is the node's `prompt`, the ticket's key and title, and the outcome list.
 - **Binding.** `agent_steps` (one per step: session, persona and version, project, ticket, attempt, outcomes,
-  `state` `working | asking | stalled | done`, turns, nudges) is what pdt-mcp and the Inbox read. The step waits
+  `state` `working | asking | stalled | done`, turns, nudges, the background-task wait) is what pdt-mcp and the Inbox read. The step waits
   (`wait: {agent: …}`) until `maxRuntimeMs` (4 h), then `timeout` (the Inbox has it: [Timeouts and
   Resume](#timeouts-and-resume-pdt-123)); a step re-run after a restart waits again.
 - **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), adds its line
@@ -563,6 +563,17 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   turn without `submit_outcome`…"; after that the binding is **stalled** and the Inbox has it. The engine tick also
   stalls a working step whose session stopped (not running, or a conversation with no live process, turn or queued
   message) for 30 s, or was removed (its `session_id` cleared).
+- **Background tasks (PDT-142).** A conversation's turn that ends while background tasks the agent started still run
+  (Claude's `background_tasks_changed`, kept by `conversations.rs`; a long pytest, a CI watch) isn't counted, nudged
+  or stalled: the binding records `background_since` and the tasks' descriptions, and the ticket's agent state is
+  `background` ("waiting on background task: …"). Claude takes a finished task up in a turn of its own, which is
+  judged as usual. If the tasks all end and no turn starts for a grace period (10 s), the engine tick counts the
+  waiting turn as ended without an outcome (nudge, then stall). While they run, only the cap stalls the step:
+  `backgroundWaitMs` (30 min, per agent node) after the first such turn end, with "Waiting on background tasks for
+  X min: <descriptions>." A Nudge from the Inbox starts the wait over. Terminal (TUI) sessions report no background
+  tasks, so their turns are judged as before; Codex and Devin conversations don't report them either.
+- **Late outcomes.** A stalled step whose session submits an outcome after all (it went on by itself) completes as
+  usual, and its Stalled item closes.
 - **Failed starts.** A step whose session would not start fails (its binding, which has no session, is done; one cut
   short after its session started keeps it and goes on there); a Retry, a node retry or a
   restart that runs the same step again finds a binding with no session (or done without an outcome) and starts over

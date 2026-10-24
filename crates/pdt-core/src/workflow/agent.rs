@@ -92,6 +92,18 @@ pub struct AgentStep {
     pub max_turns: u32,
     /// Automatic nudges before it counts as stalled.
     pub auto_nudges: u32,
+    /// Since when its session has waited on background tasks it started (PDT-142): a turn that ended while they ran
+    /// is neither counted, nudged nor stalled. None when it isn't waiting on any.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub background_since: Option<i64>,
+    /// What those tasks are (their descriptions), as of the turn end.
+    #[serde(default)]
+    pub background: Vec<String>,
+    /// How long it may wait on them before it stalls.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub background_wait_ms: u64,
     pub outcome: Option<String>,
     pub summary: Option<String>,
     pub comments: Vec<OutcomeComment>,

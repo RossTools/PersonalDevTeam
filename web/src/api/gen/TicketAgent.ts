@@ -12,4 +12,8 @@ persona: string | null, state: TicketAgentState, sessionId: string | null,
 /**
  * Its session is running a turn now.
  */
-busy: boolean, runId: string | null, };
+busy: boolean, runId: string | null, 
+/**
+ * What it waits on (`background`): the background tasks' descriptions.
+ */
+background: Array<string>, };

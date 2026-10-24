@@ -18,7 +18,20 @@ nudges: number, maxTurns: number,
 /**
  * Automatic nudges before it counts as stalled.
  */
-autoNudges: number, outcome: string | null, summary: string | null, comments: Array<OutcomeComment>, 
+autoNudges: number, 
+/**
+ * Since when its session has waited on background tasks it started (PDT-142): a turn that ended while they ran
+ * is neither counted, nudged nor stalled. None when it isn't waiting on any.
+ */
+backgroundSince: number | null, 
+/**
+ * What those tasks are (their descriptions), as of the turn end.
+ */
+background: Array<string>, 
+/**
+ * How long it may wait on them before it stalls.
+ */
+backgroundWaitMs: number, outcome: string | null, summary: string | null, comments: Array<OutcomeComment>, 
 /**
  * The user took it over and picked the outcome.
  */

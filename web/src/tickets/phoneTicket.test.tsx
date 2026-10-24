@@ -21,7 +21,7 @@ const attempt: AttemptSummary = {
 const inProgress = ticket(1, {
   title: 'Fix login', stage: 'in_progress', priority: 'medium', attempt, attempts: [attempt],
   sessions: [{ id: 's1', title: 'Coder · ALP-1', status: 'running', agent: 'claude', attemptId: 'a1', persona: 'Coder', mode: 'conversation' }],
-  agent: { persona: 'Coder', state: 'working', sessionId: 's1', busy: true, runId: 'r1' },
+  agent: { persona: 'Coder', state: 'working', sessionId: 's1', busy: true, runId: 'r1', background: [] },
 });
 const gate: InboxItem = {
   id: 'g1', kind: 'gate', group: 'accept', status: 'open', projectId: project.id, ticketId: 't1', ticketKey: 'ALP-1', ticketTitle: 'Fix login',

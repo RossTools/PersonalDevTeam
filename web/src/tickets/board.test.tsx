@@ -247,9 +247,9 @@ describe('board pipeline stages', () => {
         in_progress: [
           summary(2, { stage: 'in_progress', title: 'Cache', attempt }),
           summary(5, { stage: 'in_progress', title: 'Reviewing', pipelineStage: 'review',
-            agent: { persona: 'Reviewer', state: 'working', sessionId: 's9', busy: true, runId: 'r1' } }),
+            agent: { persona: 'Reviewer', state: 'working', sessionId: 's9', busy: true, runId: 'r1', background: [] } }),
           summary(6, { stage: 'in_progress', title: 'Accepting', pipelineStage: 'accept',
-            agent: { persona: null, state: 'yours', sessionId: null, busy: false, runId: 'r2' } }),
+            agent: { persona: null, state: 'yours', sessionId: null, busy: false, runId: 'r2', background: [] } }),
         ],
         done: columns.done,
       } as Record<string, ReturnType<typeof summary>[]>)[params(c.path).stage] ?? []),
@@ -281,12 +281,14 @@ describe('board pipeline stages', () => {
     expect(inColumn({ pipelineStage: null }, code)).toBe(true);
     expect(inColumn({ pipelineStage: 'review' }, code)).toBe(false);
     expect(inColumn({ pipelineStage: 'review' }, review)).toBe(true);
-    const a = { persona: 'Coder', sessionId: null, busy: false, runId: null };
+    const a = { persona: 'Coder', sessionId: null, busy: false, runId: null, background: [] };
     expect(agentLine({ ...a, state: 'asking' }).text).toBe('Coder asks you');
     expect(agentLine({ ...a, state: 'stalled' }).dot.dot).toBe('failed');
     expect(agentLine({ ...a, state: 'queued' }).text).toBe('Coder · waiting for a slot');
     expect(agentLine({ ...a, state: 'yours' }).text).toBe('Your turn · Coder');
     expect(agentLine({ ...a, state: 'working', busy: true }).dot.pulse).toBe(true);
+    expect(agentLine({ ...a, state: 'background', background: ['Run pytest'] }).text)
+      .toBe('Coder · waiting on background task: Run pytest');
   });
 });
 

@@ -37,6 +37,7 @@ async fn setup() -> Env {
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
+    state.conversations.background_grace = Duration::from_millis(500);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
     let app = router(state.clone(), None);
@@ -798,4 +799,107 @@ async fn a_step_whose_session_failed_to_start_starts_one_on_retry() {
     let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
     assert_eq!(step["port"], "approved");
     assert!(step["output"]["sessionId"].is_string(), "{step}");
+}
+
+/// The agent step of a run and its session, once the step has one.
+async fn step_session(env: &Env, run_id: &str) -> String {
+    tick_until(env, "the step's session", || async {
+        let r = run(env, run_id).await;
+        let step = r["steps"].as_array()?.iter().find(|s| s["nodeId"] == "review")?.clone();
+        step["wait"]["agent"]["session"].as_str().map(|s| json!(s))
+    })
+    .await
+    .as_str()
+    .unwrap()
+    .to_string()
+}
+
+const NUDGE: &str = "You ended your turn without `submit_outcome`";
+
+/// PDT-142: a turn that ends while a background task runs (a long pytest) is neither counted, nudged nor stalled; the
+/// ticket says what it waits on. The turn Claude starts when the task finishes is evaluated as usual.
+#[tokio::test]
+async fn a_turn_ended_waiting_on_a_background_task_is_neither_nudged_nor_stalled() {
+    let env = setup().await;
+    let t = ticket(&env, "Slow tests").await;
+    let wf = create_workflow(&env, review_doc("bg: 3000", json!({}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = step_session(&env, &id).await;
+    let agent = tick_until(&env, "the wait on the task", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        (v["agent"]["state"] == "background").then(|| v["agent"].clone())
+    })
+    .await;
+    assert_eq!(agent["background"], json!(["Sleep in the background"]), "{agent}");
+    // Ticking on while it runs: no nudge, no stall.
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(inbox(&env).await.is_empty());
+    assert!(!agent_says(&env, &session).await.iter().any(|m| m.contains(NUDGE)));
+    // The task's own turn ends without an outcome: that one is nudged, and the nudge's turn stalls.
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    assert_eq!((stalled["body"]["turns"].as_u64(), stalled["body"]["nudges"].as_u64()), (Some(2), Some(1)));
+    let said = tick_until(&env, "the nudge's echo", || async {
+        let said = agent_says(&env, &session).await;
+        said.iter().any(|m| m.contains(NUDGE)).then(|| json!(said))
+    })
+    .await;
+    let said: Vec<String> = serde_json::from_value(said).unwrap();
+    let at = |what: &str| said.iter().position(|m| m.contains(what)).unwrap();
+    assert!(at("The background task finished.") < at(NUDGE), "{said:?}");
+}
+
+/// PDT-142: a background task that ends without the agent taking it up leaves its turn ended without an outcome,
+/// once the conversation stays quiet for the grace period.
+#[tokio::test]
+async fn a_background_task_that_ends_quietly_counts_as_the_turn_ending() {
+    let env = setup().await;
+    let t = ticket(&env, "Quiet task").await;
+    let wf = create_workflow(&env, review_doc("bg-quiet: 1000", json!({}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = step_session(&env, &id).await;
+    tick_until(&env, "the wait on the task", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        (v["agent"]["state"] == "background").then_some(Value::Null)
+    })
+    .await;
+    assert!(inbox(&env).await.is_empty());
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    assert_eq!((stalled["body"]["turns"].as_u64(), stalled["body"]["nudges"].as_u64()), (Some(2), Some(1)));
+    assert!(!agent_says(&env, &session).await.iter().any(|m| m.contains("The background task finished.")));
+}
+
+/// PDT-142: a hung background task still stalls the step after its cap, saying why; an outcome the stalled step
+/// submits after all closes the Stalled item.
+#[tokio::test]
+async fn a_hung_background_task_stalls_at_the_cap_and_a_late_outcome_closes_the_stall() {
+    let env = setup().await;
+    let t = ticket(&env, "Hung task").await;
+    let wf = create_workflow(&env, review_doc("bg: 600000", json!({"backgroundWaitMs": 1000}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = step_session(&env, &id).await;
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    let why = stalled["body"]["why"].as_str().unwrap();
+    assert!(why.starts_with("Waiting on background tasks for 0 min: Sleep in the background"), "{why}");
+    assert_eq!((stalled["body"]["turns"].as_u64(), stalled["body"]["nudges"].as_u64()), (Some(0), Some(0)));
+    assert!(!agent_says(&env, &session).await.iter().any(|m| m.contains(NUDGE)));
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    assert_eq!(v["agent"]["state"], "stalled", "{}", v["agent"]);
+
+    let text = r#"mcp: submit_outcome {"outcome": "approved", "summary": "Done after all."}"#;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["output"]["result"], "approved", "{r:#}");
+    assert!(inbox(&env).await.is_empty(), "the Stalled item closed");
 }

@@ -3,4 +3,4 @@
 /**
  * The state of whoever works on a ticket in a workflow now (Phase 7c spec §7).
  */
-export type TicketAgentState = "working" | "asking" | "stalled" | "yours" | "queued";
+export type TicketAgentState = "working" | "asking" | "stalled" | "yours" | "queued" | "background";

@@ -6,9 +6,10 @@
 //! - `exit` — writes to stderr and exits 3.
 //! - `deaf` — ends its turn, then never reads another message (it stays alive; nothing sent to it is echoed).
 //! - `env: NAME` — says whether NAME is set.
-//! - `bg: <ms>` — starts a background task and ends the turn; when the task finishes `<ms>` later it reports it to
+//! - `bg: <ms>` (its first line) — starts a background task and ends the turn; when the task finishes `<ms>` later it reports it to
 //!   itself like Claude (a replayed `task-notification` message), which starts a turn that says so. Closing stdin
 //!   first ends it with the process.
+//! - `bg-quiet: <ms>` — like `bg:`, but the finished task only drops off the list: no turn takes it up.
 //! - `who` — says the session id, whether it was resumed, its model and mode, whether it got PDT's instructions, and
 //!   the `session_id` the message carried.
 //! - `where` — says its working folder and its built-in tools (`--tools`; `all` without it).
@@ -201,6 +202,9 @@ impl Agent {
         let task = v["task"].as_str().unwrap_or("");
         out(json!({"type":"system","subtype":"task_updated","task_id":task,"patch":{"status":"completed"}}));
         out(json!({"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":self.session}));
+        if v["quiet"] == true {
+            return;
+        }
         self.init();
         let note = format!(
             "<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n<summary>\
@@ -400,14 +404,16 @@ impl Agent {
                 },
             };
             self.say(&reply);
-        } else if let Some(ms) = text.strip_prefix("bg:") {
+        } else if let Some((quiet, ms)) = text.lines().next().and_then(|l| {
+            l.strip_prefix("bg-quiet:").map(|ms| (true, ms)).or_else(|| l.strip_prefix("bg:").map(|ms| (false, ms)))
+        }) {
             let task = self.next_id("task");
             out(json!({"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":task,
                 "task_type":"local_bash","description":"Sleep in the background"}],"session_id":self.session}));
             let (tx, ms) = (self.tx.clone(), ms.trim().parse().unwrap_or(1000));
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(ms));
-                let _ = tx.send(Some(json!({"type":"fake_task_done","task":task})));
+                let _ = tx.send(Some(json!({"type":"fake_task_done","task":task,"quiet":quiet})));
             });
             self.say("Started it in the background.");
         } else if text == "deaf" {

@@ -60,10 +60,12 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   steps, gates, waits and `attempt.merge` with a `pipelineStage` set it when they start; any change of stage clears it. Every ticket response
   also carries `agent` (`TicketAgent`, computed in memory by pdt-api `scheduler::ticket_agents`): who owns its
   workflow step now (`persona`, `sessionId`, `busy` while its session runs a turn) and `state` `working | asking |
-  stalled | yours` (a manual step or a gate) `| queued` (waiting for a slot). The backlog shows a Refining badge; the
+  stalled | yours` (a manual step or a gate) `| queued` (waiting for a slot) `| background` (its turn ended while
+  background tasks it started run, PDT-142; `background` lists their descriptions). The backlog shows a Refining badge; the
   Board splits In progress into Code | Review | QA | Accept | Merge once any In progress card has a stage (none:
   Code; `merge_blocked` under Merge, with a Merge blocked badge), and
-  each card shows the owner line ("Reviewer · working", "Your turn", "… · waiting for a slot").
+  each card shows the owner line ("Reviewer · working", "Your turn", "… · waiting for a slot", "Coder · waiting on
+  background task: Run pytest").
 - **Refine**: `POST /api/tickets/{id}/refine` (`{by: "user"}` from the web; ticket menu and the ticket tab's menu) on
   a Draft or Ready ticket (else 409 `ticket_not_refinable`) sets `pipelineStage: refine` and logs
   `ticket.refine_requested`; 409 `no_refine_workflow` when no enabled workflow for the project has that trigger, and
