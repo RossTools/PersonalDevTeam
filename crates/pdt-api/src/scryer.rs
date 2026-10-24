@@ -24,9 +24,77 @@ const LIBRARY_LIMIT: usize = 50;
 /// How many queue items are read unless told (Scryer allows 200).
 const QUEUE_LIMIT: usize = 50;
 
-const TITLE_FIELDS: &str = "id name year facet monitored libraryName contentStatus episodesOwned episodesTotal \
-                            sizeBytes externalIds { source value }";
-const RESULT_FIELDS: &str = "tvdbId tmdbId imdbId smgId name year overview";
+/// The GraphQL operations PDT sends, each checked against Scryer's published schema by a test
+/// (`tests/fixtures/scryer-schema.graphql`).
+mod ops {
+    const TITLE_FIELDS: &str = "id name year facet monitored libraryName contentStatus episodesOwned episodesTotal \
+                                sizeBytes externalIds { source value }";
+    const RESULT_FIELDS: &str = "tvdbId tmdbId imdbId smgId name year overview";
+
+    pub fn titles_by_ids() -> String {
+        format!(
+            "query PdtTitlesByIds($source: String!, $values: [String!]!) {{ \
+             titlesByExternalIds(source: $source, values: $values) {{ {TITLE_FIELDS} }} }}"
+        )
+    }
+
+    pub fn libraries() -> String {
+        "query PdtLibraries($facet: MediaFacetValue) { libraries(facet: $facet) { id name slug } }".into()
+    }
+
+    pub fn search() -> String {
+        format!(
+            "query PdtSearch($query: String!, $type: MediaFacetValue!, $limit: Int!) {{ \
+             searchMetadata(query: $query, type: $type, limit: $limit) {{ {RESULT_FIELDS} }} }}"
+        )
+    }
+
+    pub fn search_all() -> String {
+        format!(
+            "query PdtSearchAll($query: String!, $limit: Int!) {{ searchMetadataMulti(query: $query, limit: \
+             $limit) {{ movies {{ {RESULT_FIELDS} }} series {{ {RESULT_FIELDS} }} anime {{ {RESULT_FIELDS} }} }} }}"
+        )
+    }
+
+    pub fn movie() -> String {
+        "query PdtMovie($input: MetadataMovieInput!) { metadataMovie(input: $input) { tvdbId tmdbId smgId name year } }"
+            .into()
+    }
+
+    /// A series' metadata has no IMDb id: an add keeps the caller's.
+    pub fn series() -> String {
+        "query PdtSeries($input: MetadataSeriesInput!) { metadataSeries(input: $input) { tvdbId tmdbId smgId name \
+         year } }"
+            .into()
+    }
+
+    pub fn add_title() -> String {
+        format!(
+            "mutation PdtAddTitle($input: AddTitleInput!) {{ addTitle(input: $input) {{ title {{ {TITLE_FIELDS} }} \
+             reusedExistingTitle }} }}"
+        )
+    }
+
+    pub fn queue() -> String {
+        "query PdtQueue($limit: Int!) { downloadQueuePage(limit: $limit) { totalCount items { titleName \
+         progressPercent displayState remainingSeconds clientName attentionRequired attentionReason } } }"
+            .into()
+    }
+
+    pub fn library() -> String {
+        format!(
+            "query PdtLibrary($facet: MediaFacetValue, $query: String, $filter: TitleCatalogFilterInput, $limit: \
+             Int, $offset: Int) {{ titles(facet: $facet, query: $query, filter: $filter, limit: $limit, offset: \
+             $offset) {{ totalCount hasMore items {{ {TITLE_FIELDS} }} }} }}"
+        )
+    }
+
+    /// Every operation, for the schema test.
+    #[cfg(test)]
+    pub fn all() -> Vec<String> {
+        vec![titles_by_ids(), libraries(), search(), search_all(), movie(), series(), add_title(), queue(), library()]
+    }
+}
 
 // ---- configs and outputs ----
 
@@ -258,11 +326,7 @@ impl Client {
             if values.is_empty() {
                 continue;
             }
-            let q = format!(
-                "query PdtTitlesByIds($source: String!, $values: [String!]!) {{ \
-                 titlesByExternalIds(source: $source, values: $values) {{ {TITLE_FIELDS} }} }}"
-            );
-            let d = self.gql(&q, json!({"source": source, "values": values})).await?;
+            let d = self.gql(&ops::titles_by_ids(), json!({"source": source, "values": values})).await?;
             for t in d["titlesByExternalIds"].as_array().into_iter().flatten() {
                 if !out.iter().any(|o| o["id"] == t["id"]) {
                     out.push(t.clone());
@@ -274,8 +338,7 @@ impl Client {
 
     /// A library's id by its name, slug or id, among the facet's.
     async fn library_id(&self, facet: Facet, given: &str) -> Result<String, String> {
-        let q = "query PdtLibraries($facet: MediaFacetValue) { libraries(facet: $facet) { id name slug } }";
-        let d = self.gql(q, json!({"facet": facet.gql()})).await?;
+        let d = self.gql(&ops::libraries(), json!({"facet": facet.gql()})).await?;
         let all = d["libraries"].as_array().cloned().unwrap_or_default();
         let g = given.trim();
         let found = all
@@ -422,19 +485,11 @@ pub(crate) async fn search(client: &Client, c: &ScryerSearchConfig) -> Result<Sc
     let limit = c.limit.unwrap_or(SEARCH_LIMIT).clamp(1, 100);
     let found: Vec<(Facet, Value)> = match facet_of(c.facet.as_deref())? {
         Some(f) => {
-            let q = format!(
-                "query PdtSearch($query: String!, $type: MediaFacetValue!, $limit: Int!) {{ \
-                 searchMetadata(query: $query, type: $type, limit: $limit) {{ {RESULT_FIELDS} }} }}"
-            );
-            let d = client.gql(&q, json!({"query": term, "type": f.gql(), "limit": limit})).await?;
+            let d = client.gql(&ops::search(), json!({"query": term, "type": f.gql(), "limit": limit})).await?;
             d["searchMetadata"].as_array().into_iter().flatten().map(|v| (f, v.clone())).collect()
         }
         None => {
-            let q = format!(
-                "query PdtSearchAll($query: String!, $limit: Int!) {{ searchMetadataMulti(query: $query, limit: \
-                 $limit) {{ movies {{ {RESULT_FIELDS} }} series {{ {RESULT_FIELDS} }} anime {{ {RESULT_FIELDS} }} }} }}"
-            );
-            let d = client.gql(&q, json!({"query": term, "limit": limit})).await?;
+            let d = client.gql(&ops::search_all(), json!({"query": term, "limit": limit})).await?;
             let m = &d["searchMetadataMulti"];
             [(Facet::Movie, "movies"), (Facet::Series, "series"), (Facet::Anime, "anime")]
                 .into_iter()
@@ -476,21 +531,13 @@ pub(crate) async fn add(client: &Client, c: &ScryerAddConfig) -> Result<(bool, S
         lookup["imdbId"] = json!(i);
     }
     let (field, q) = match facet {
-        Facet::Movie => (
-            "metadataMovie",
-            "query PdtMovie($input: MetadataMovieInput!) { metadataMovie(input: $input) { tvdbId tmdbId smgId name \
-             year } }",
-        ),
+        Facet::Movie => ("metadataMovie", ops::movie()),
         Facet::Series | Facet::Anime => {
             lookup["includeEpisodes"] = json!(false);
-            (
-                "metadataSeries",
-                "query PdtSeries($input: MetadataSeriesInput!) { metadataSeries(input: $input) { tvdbId tmdbId smgId \
-                 imdbId name year } }",
-            )
+            ("metadataSeries", ops::series())
         }
     };
-    let d = client.gql(q, json!({"input": lookup})).await?;
+    let d = client.gql(&q, json!({"input": lookup})).await?;
     let meta = &d[field];
     let name = meta["name"].as_str().map(str::trim).filter(|n| !n.is_empty());
     let Some(name) = name else {
@@ -516,19 +563,13 @@ pub(crate) async fn add(client: &Client, c: &ScryerAddConfig) -> Result<(bool, S
         "options": options, "externalIds": all.external_ids(facet), "smgId": meta["smgId"],
         "tvdbId": all.tvdb, "tmdbId": all.tmdb, "imdbId": all.imdb,
     });
-    let q = format!(
-        "mutation PdtAddTitle($input: AddTitleInput!) {{ addTitle(input: $input) {{ title {{ {TITLE_FIELDS} }} \
-         reusedExistingTitle }} }}"
-    );
-    let d = client.gql(&q, json!({"input": input})).await?;
+    let d = client.gql(&ops::add_title(), json!({"input": input})).await?;
     let r = &d["addTitle"];
     Ok((r["reusedExistingTitle"].as_bool() != Some(true), title(&r["title"])))
 }
 
 pub(crate) async fn queue(client: &Client, c: &ScryerQueueConfig) -> Result<ScryerQueueOutput, String> {
-    let q = "query PdtQueue($limit: Int!) { downloadQueuePage(limit: $limit) { totalCount items { titleName \
-             progressPercent displayState remainingSeconds clientName attentionRequired attentionReason } } }";
-    let d = client.gql(q, json!({"limit": c.limit.unwrap_or(QUEUE_LIMIT).clamp(1, 200)})).await?;
+    let d = client.gql(&ops::queue(), json!({"limit": c.limit.unwrap_or(QUEUE_LIMIT).clamp(1, 200)})).await?;
     let page = &d["downloadQueuePage"];
     let items: Vec<ScryerQueueItem> = page["items"].as_array().into_iter().flatten().map(queue_item).collect();
     Ok(ScryerQueueOutput { total: page["totalCount"].as_i64().unwrap_or(items.len() as i64), items })
@@ -538,14 +579,9 @@ pub(crate) async fn library(client: &Client, c: &ScryerLibraryConfig) -> Result<
     let facet = facet_of(c.facet.as_deref())?;
     let query = c.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
     let filter = c.monitored.map(|m| json!({"monitored": m}));
-    let q = format!(
-        "query PdtLibrary($facet: MediaFacetValue, $query: String, $filter: TitleCatalogFilterInput, $limit: Int, \
-         $offset: Int) {{ titles(facet: $facet, query: $query, filter: $filter, limit: $limit, offset: $offset) {{ \
-         totalCount hasMore items {{ {TITLE_FIELDS} }} }} }}"
-    );
     let vars = json!({"facet": facet.map(Facet::gql), "query": query, "filter": filter,
                       "limit": c.limit.unwrap_or(LIBRARY_LIMIT).clamp(1, 300), "offset": c.offset.unwrap_or(0)});
-    let d = client.gql(&q, vars).await?;
+    let d = client.gql(&ops::library(), vars).await?;
     let page = &d["titles"];
     let titles: Vec<ScryerTitle> = page["items"].as_array().into_iter().flatten().map(title).collect();
     Ok(ScryerLibraryOutput {
@@ -807,6 +843,29 @@ mod tests {
             check_add(&c(json!({"connection": "m", "facet": "{{trigger.f}}", "tmdbId": "{{trigger.id}}"}))).is_ok()
         );
         assert!(check_add(&c(json!({"connection": "m", "facet": "movie", "imdbId": "tt1"}))).is_ok());
+    }
+
+    /// Every operation PDT sends is valid against Scryer's published schema (the fake in the API tests answers by
+    /// operation name and checks no fields).
+    #[test]
+    fn every_operation_fits_scryers_schema() {
+        use apollo_compiler::{ExecutableDocument, Schema};
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/scryer-schema.graphql");
+        let text = std::fs::read_to_string(path).unwrap();
+        let schema = Schema::parse_and_validate(text, "scryer-schema.graphql").expect("Scryer's schema");
+        // The errors, if any.
+        let check = |op: &str| match ExecutableDocument::parse_and_validate(&schema, op, "op.graphql") {
+            Ok(_) => None,
+            Err(e) => Some(e.errors.to_string()),
+        };
+        for op in ops::all() {
+            if let Some(e) = check(&op) {
+                panic!("{op}\n{e}");
+            }
+        }
+        // The test catches a field Scryer doesn't have (a series' metadata has no imdbId).
+        let wrong = "query X($input: MetadataSeriesInput!) { metadataSeries(input: $input) { imdbId } }";
+        assert!(check(wrong).is_some_and(|e| e.contains("imdbId")));
     }
 
     #[test]

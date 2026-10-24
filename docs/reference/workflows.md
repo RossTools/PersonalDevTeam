@@ -206,6 +206,8 @@ notify itself forever.
   episodesTotal, sizeBytes}`). Scryer then searches for a monitored title itself. Queue: `downloadQueuePage` (50 by
   default): `{items [{title, progress, status (`downloading`, `importPending`, …), secondsLeft, client, attention}],
   total}`. Library: `titles` (50 a page by default, at most 300): `{titles, total, hasMore}`.
+  Every operation is checked against Scryer's published schema, vendored in
+  `crates/pdt-api/tests/fixtures/scryer-schema.graphql` (a unit test with apollo-compiler).
 - **Plex** (`plex.rs`; `url` the server, secret the `X-Plex-Token`, JSON asked for). Search: `/hub/search`, the hubs'
   items flattened: `{items [{title, type, year, ratingKey, section, show, addedAt}]}`. Recently added:
   `/library/sections/<key>/recentlyAdded` (or `/library/recentlyAdded`), `limit` default 20. Refresh:
