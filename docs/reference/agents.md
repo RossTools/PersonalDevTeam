@@ -93,7 +93,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   stage, tickets in progress with branch/PR/CI/agent in words, the Inbox, running agent sessions), `search_tickets`,
   `get_ticket`, `get_session` (state, open requests, last messages),
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, `list_todos` (the user's todo
-  list, read-only: the PM never changes it), the catalog and workflow tools
+  list with due dates, `dueOn`/`dueTime`; read-only: the PM never changes it), the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
   attempt, as the API; `parent` takes a key or id, `""` detaches), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:

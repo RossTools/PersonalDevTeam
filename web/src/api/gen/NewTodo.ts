@@ -11,4 +11,12 @@ project?: string,
 /**
  * A ticket id or key; its project too unless `project` is given.
  */
-ticket?: string, };
+ticket?: string, 
+/**
+ * `YYYY-MM-DD`.
+ */
+dueOn?: string, 
+/**
+ * `HH:MM`; needs `dueOn`.
+ */
+dueTime?: string, };

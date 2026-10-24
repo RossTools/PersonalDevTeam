@@ -68,6 +68,9 @@ pub(crate) async fn create(
     if let Some(p) = input.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         project_id = Some(project(&st, p).await?);
     }
+    let due_on = todo::valid_due_on(input.due_on.as_deref().unwrap_or_default()).map_err(bad)?;
+    let due_time = todo::valid_due_time(input.due_time.as_deref().unwrap_or_default()).map_err(bad)?;
+    let (due_on, due_time) = todo::valid_due(due_on, due_time).map_err(bad)?;
     let now = now_ms();
     let position = st.store.first_todo_position().await?.map_or(0.0, |p| p - 1.0);
     let id = uuid::Uuid::now_v7().to_string();
@@ -85,14 +88,19 @@ pub(crate) async fn create(
             project_key: None,
             ticket_key: None,
             ticket_title: None,
+            due_on,
+            due_time,
         })
         .await?;
+    // A todo added already due reminds at once.
+    crate::notifications::kick(&st);
     let made = st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?;
     Ok((StatusCode::CREATED, Json(made)))
 }
 
-/// `PATCH /api/todos/{id}`: title, done, position, project and ticket (`""` removes a link). A linked ticket's project
-/// is the todo's: linking one sets the project, and moving the todo to another project (or none) drops the ticket.
+/// `PATCH /api/todos/{id}`: title, done, position, project and ticket (`""` removes a link), due date and time (`""`
+/// clears; clearing the date clears the time). A linked ticket's project is the todo's: linking one sets the project,
+/// and moving the todo to another project (or none) drops the ticket.
 pub(crate) async fn patch(
     State(st): State<AppState>,
     Path(id): Path<String>,
@@ -134,10 +142,26 @@ pub(crate) async fn patch(
             }
         }
     }
+    if p.due_on.is_some() || p.due_time.is_some() {
+        let mut due_on = t.due_on.clone();
+        let mut due_time = t.due_time.clone();
+        if let Some(d) = &p.due_on {
+            due_on = todo::valid_due_on(d).map_err(bad)?;
+            if due_on.is_none() {
+                due_time = None;
+            }
+        }
+        if let Some(d) = &p.due_time {
+            due_time = todo::valid_due_time(d).map_err(bad)?;
+        }
+        (t.due_on, t.due_time) = todo::valid_due(due_on, due_time).map_err(bad)?;
+    }
     t.updated_at = now;
     if !st.store.update_todo(&t).await? {
         return Err(ApiError::not_found("todo"));
     }
+    // Done or re-dated: its reminder clears (or a new one comes) now rather than on the next pass.
+    crate::notifications::kick(&st);
     Ok(Json(st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?))
 }
 
@@ -146,5 +170,6 @@ pub(crate) async fn delete(State(st): State<AppState>, Path(id): Path<String>) -
     if !st.store.delete_todo(&id).await? {
         return Err(ApiError::not_found("todo"));
     }
+    crate::notifications::kick(&st);
     Ok(StatusCode::NO_CONTENT)
 }

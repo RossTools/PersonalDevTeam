@@ -1,4 +1,5 @@
 //! PDT-125: the user's todo list over the API: add, edit, check off, reorder, link to a project or ticket, delete.
+//! PDT-140: due dates, and the one reminder each makes.
 
 mod common;
 
@@ -8,6 +9,7 @@ use serde_json::{Value, json};
 
 struct Env {
     app: axum::Router,
+    state: pdt_api::AppState,
     project: String,
     ticket: String,
     _tmp: tempfile::TempDir,
@@ -20,7 +22,8 @@ async fn setup() -> Env {
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let app = pdt_api::router(pdt_api::AppState::new(store, tmp.path().join("data")), None);
+    let state = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let app = pdt_api::router(state.clone(), None);
     let (s, p) = call(
         &app,
         "POST",
@@ -33,7 +36,7 @@ async fn setup() -> Env {
     let (s, t) =
         call(&app, "POST", &format!("/api/projects/{project}/tickets"), Some(json!({"title": "Fix the login"}))).await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
-    Env { app, project, ticket: t["id"].as_str().unwrap().to_string(), _tmp: tmp }
+    Env { app, state, project, ticket: t["id"].as_str().unwrap().to_string(), _tmp: tmp }
 }
 
 async fn add(env: &Env, body: Value) -> Value {
@@ -138,4 +141,123 @@ async fn todos_link_to_a_project_or_a_ticket_and_filter_by_project() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn due_dates_are_set_changed_and_cleared() {
+    let env = setup().await;
+    let t = add(&env, json!({"title": "Pay rent", "dueOn": "2026-11-01"})).await;
+    assert_eq!((&t["dueOn"], &t["dueTime"]), (&json!("2026-11-01"), &Value::Null));
+    let id = t["id"].as_str().unwrap();
+
+    let timed = patch(&env, id, json!({"dueOn": "2026-11-02", "dueTime": "09:30"})).await;
+    assert_eq!((&timed["dueOn"], &timed["dueTime"]), (&json!("2026-11-02"), &json!("09:30")));
+    let untimed = patch(&env, id, json!({"dueTime": ""})).await;
+    assert_eq!((&untimed["dueOn"], &untimed["dueTime"]), (&json!("2026-11-02"), &Value::Null));
+    patch(&env, id, json!({"dueTime": "18:00"})).await;
+    let cleared = patch(&env, id, json!({"dueOn": ""})).await;
+    assert_eq!((&cleared["dueOn"], &cleared["dueTime"]), (&Value::Null, &Value::Null), "the time goes with the date");
+    let untouched = patch(&env, id, json!({"title": "Pay the rent"})).await;
+    assert_eq!(untouched["dueOn"], Value::Null);
+
+    for bad in [
+        json!({"dueOn": "2026-02-30"}),
+        json!({"dueOn": "soon"}),
+        json!({"dueTime": "9am"}),
+        json!({"dueTime": "10:00"}),
+    ] {
+        let (s, v) = call(&env.app, "PATCH", &format!("/api/todos/{id}"), Some(bad.clone())).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")), "{bad}");
+    }
+    let (s, _) = call(&env.app, "POST", "/api/todos", Some(json!({"title": "x", "dueOn": "11/01/2026"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(&env.app, "POST", "/api/todos", Some(json!({"title": "x", "dueTime": "10:00"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "a time needs a date");
+}
+
+/// The live `todo.due` rows: (title, body, target todo id).
+async fn reminders(app: &axum::Router) -> Vec<(String, String, String)> {
+    let (s, v) = call(app, "GET", "/api/notifications?section=updates", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["kind"] == "todo.due" && n["clearedAt"].is_null())
+        .map(|n| {
+            assert_eq!(n["target"]["kind"], "todo", "{n}");
+            let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
+            (s(&n["title"]), s(&n["body"]), s(&n["target"]["id"]))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_todo_coming_due_reminds_once_and_clears_when_done_or_re_dated() {
+    let env = setup().await;
+    let due = add(&env, json!({"title": "Renew passport", "dueOn": "2020-01-01", "ticket": "PX-1"})).await;
+    let id = due["id"].as_str().unwrap();
+    add(&env, json!({"title": "Later", "dueOn": "2999-01-01"})).await;
+    add(&env, json!({"title": "Undated"})).await;
+    let done = add(&env, json!({"title": "Already done", "dueOn": "2020-01-01"})).await;
+    patch(&env, done["id"].as_str().unwrap(), json!({"done": true})).await;
+
+    for _ in 0..3 {
+        pdt_api::sync_notifications(&env.state).await;
+    }
+    assert_eq!(
+        reminders(&env.app).await,
+        [("Renew passport".into(), "PX-1 · Overdue since 2020-01-01".into(), id.to_string())],
+        "exactly one, none for a done todo or one not due yet"
+    );
+
+    // Done clears it, and reopening doesn't remind again for the same date.
+    patch(&env, id, json!({"done": true})).await;
+    pdt_api::sync_notifications(&env.state).await;
+    assert!(reminders(&env.app).await.is_empty());
+    patch(&env, id, json!({"done": false})).await;
+    pdt_api::sync_notifications(&env.state).await;
+    assert!(reminders(&env.app).await.is_empty(), "one per due date");
+
+    // A new date is a new reminder once it comes; a future one clears it.
+    patch(&env, id, json!({"dueOn": "2020-01-02", "dueTime": "08:00"})).await;
+    pdt_api::sync_notifications(&env.state).await;
+    let r = reminders(&env.app).await;
+    assert_eq!(r.len(), 1, "{r:?}");
+    patch(&env, id, json!({"dueOn": "2999-01-01"})).await;
+    pdt_api::sync_notifications(&env.state).await;
+    assert!(reminders(&env.app).await.is_empty(), "re-dated into the future");
+
+    // Deleting it clears its reminder.
+    let gone = add(&env, json!({"title": "Gone", "dueOn": "2020-01-01"})).await;
+    pdt_api::sync_notifications(&env.state).await;
+    assert_eq!(reminders(&env.app).await.len(), 1);
+    call(&env.app, "DELETE", &format!("/api/todos/{}", gone["id"].as_str().unwrap()), None).await;
+    pdt_api::sync_notifications(&env.state).await;
+    assert!(reminders(&env.app).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_reminder_missed_while_pdtd_was_down_comes_once_on_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("pdt.db");
+    // Added while no notifier ran (pdtd down at the due moment).
+    {
+        let store = pdt_store::Store::open(&db).await.unwrap();
+        let app = pdt_api::router(pdt_api::AppState::new(store.clone(), tmp.path().join("data")), None);
+        let (s, v) =
+            call(&app, "POST", "/api/todos", Some(json!({"title": "Call the bank", "dueOn": "2020-01-01"}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{v}");
+        store.close().await;
+    }
+    for start in 0..2 {
+        let store = pdt_store::Store::open(&db).await.unwrap();
+        let state = pdt_api::AppState::new(store.clone(), tmp.path().join("data"));
+        let app = pdt_api::router(state.clone(), None);
+        pdt_api::sync_notifications(&state).await;
+        let (_, v) = call(&app, "GET", "/api/notifications?section=updates", None).await;
+        let made = v["items"].as_array().unwrap().iter().filter(|n| n["kind"] == "todo.due").count();
+        assert_eq!(made, 1, "start {start}: one catch-up, not one per start");
+        store.close().await;
+    }
 }

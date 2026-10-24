@@ -15,4 +15,12 @@ projectKey: string | null,
 /**
  * The linked ticket's key (`PDT-12`) and title.
  */
-ticketKey: string | null, ticketTitle: string | null, };
+ticketKey: string | null, ticketTitle: string | null, 
+/**
+ * The day it is due (`YYYY-MM-DD`, the user's local day).
+ */
+dueOn: string | null, 
+/**
+ * The time on that day (`HH:MM`, local); without one it is due from the day's start.
+ */
+dueTime: string | null, };

@@ -7,7 +7,7 @@ import { cn } from '@ui/lib/utils';
 import { IconButton } from '@ui';
 import type { Project } from '../api/gen/Project';
 import { NotesPanel } from '../pm/NotesPanel';
-import { TodoList } from '../todos/TodoList';
+import { TodoList, type TodoFocus } from '../todos/TodoList';
 import { useOpenTodoCount } from '../todos/useTodos';
 
 export const RIGHT_PANEL_OPEN_KEY = 'pdt.rightPanel.open';
@@ -78,15 +78,23 @@ export function useRightPanelKey(onToggle: () => void) {
 }
 
 /** The right panel's content (its tabs), shared by the desktop panel and the phone's sheet. */
-export function RightPanelContent({ projectId, projects, onOpenNote, trailing }: {
+export function RightPanelContent({ projectId, projects, onOpenNote, focusTodo, onTodoFocused, trailing }: {
   projectId: string | null;
   projects: readonly Project[];
+  /** A todo to show (a due reminder was opened): switches to Todos. */
+  focusTodo?: TodoFocus | null;
+  /** The list has shown `focusTodo`: drop it, so reopening the panel doesn't show it again. */
+  onTodoFocused?: () => void;
   /** Opens one of the user's notes (its `NotePage`). */
   onOpenNote: (id: string) => void;
   /** At the end of the tab row (the desktop's collapse button). */
   trailing?: ReactNode;
 }) {
   const [tab, setTab] = useState<TabId>('todos');
+  const focusSeq = focusTodo?.seq;
+  useEffect(() => {
+    if (focusSeq !== undefined) setTab('todos');
+  }, [focusSeq]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1 border-b border-border px-2">
@@ -112,20 +120,22 @@ export function RightPanelContent({ projectId, projects, onOpenNote, trailing }:
         {trailing}
       </div>
       <div role="tabpanel" id={`right-panel-${tab}`} aria-labelledby={`right-panel-tab-${tab}`} className="flex min-h-0 flex-1 flex-col">
-        {tab === 'todos' && <TodoList projectId={projectId} projects={projects} />}
+        {tab === 'todos' && <TodoList projectId={projectId} projects={projects} focus={focusTodo} onFocused={onTodoFocused} />}
         {tab === 'notes' && <NotesPanel onOpen={onOpenNote} />}
       </div>
     </div>
   );
 }
 
-export function RightPanel({ open, onOpenChange, projectId, projects, onOpenNote }: {
+export function RightPanel({ open, onOpenChange, projectId, projects, onOpenNote, focusTodo, onTodoFocused }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The project on screen (the todo filter's "current project"). */
   projectId: string | null;
   projects: readonly Project[];
   onOpenNote: (id: string) => void;
+  focusTodo?: TodoFocus | null;
+  onTodoFocused?: () => void;
 }) {
   const count = useOpenTodoCount();
   const [width, setWidth] = useState(readWidth);
@@ -195,6 +205,8 @@ export function RightPanel({ open, onOpenChange, projectId, projects, onOpenNote
           projectId={projectId}
           projects={projects}
           onOpenNote={onOpenNote}
+          focusTodo={focusTodo}
+          onTodoFocused={onTodoFocused}
           trailing={
             <IconButton label="Collapse the right panel" shortcut="⌘." aria-expanded size="sm" onClick={() => onOpenChange(false)} className="text-muted-foreground">
               <PanelRightClose aria-hidden />

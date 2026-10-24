@@ -48,6 +48,7 @@ import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
 import { RightPanel, RightPanelContent, useRightPanelKey, useRightPanelOpen } from './RightPanel';
+import type { TodoFocus } from '../todos/TodoList';
 import { IconRail } from './IconRail';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
@@ -157,6 +158,9 @@ export function AppShell() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [rightOpen, setRightOpen] = useRightPanelOpen();
   const [todosSheetOpen, setTodosSheetOpen] = useState(false);
+  // A todo a due reminder opened (PDT-140).
+  const [todoFocus, setTodoFocus] = useState<TodoFocus | null>(null);
+  const clearTodoFocus = useCallback(() => setTodoFocus(null), []);
   const [addingProject, setAddingProject] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
@@ -482,9 +486,14 @@ export function AppShell() {
       case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); break;
       case 'url': window.open(t.url, '_blank', 'noopener'); break;
       case 'connections': go({ view: 'settings', page: { kind: 'connections' } }); break;
+      case 'todo':
+        if (phone) setTodosSheetOpen(true);
+        else setRightOpen(true);
+        setTodoFocus({ id: t.id, seq: Date.now() });
+        break;
       case 'none': break;
     }
-  }, [openSession, openTicket, openTicketByKey, setWorkflowTarget]);
+  }, [openSession, openTicket, openTicketByKey, setWorkflowTarget, phone, setRightOpen]);
   const onScreenSession = view === 'sessions' && current?.item.kind === 'session' ? current.item.id : null;
   const onScreenInbox = view === 'inbox' ? inboxId : null;
   const onScreen = useMemo(() => ({ session: onScreenSession, inbox: onScreenInbox }), [onScreenSession, onScreenInbox]);
@@ -752,6 +761,8 @@ export function AppShell() {
             <RightPanelContent
               projectId={todoProjectId}
               projects={ws.projects}
+              focusTodo={todoFocus}
+              onTodoFocused={clearTodoFocus}
               onOpenNote={(id) => {
                 setPmSelection(`note:${id}`);
                 setTodosSheetOpen(false);
@@ -905,7 +916,7 @@ export function AppShell() {
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
-      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} onOpenNote={(id) => setPmSelection(`note:${id}`)} />}
+      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} onOpenNote={(id) => setPmSelection(`note:${id}`)} focusTodo={todoFocus} onTodoFocused={clearTodoFocus} />}
     </div>
     </TopBarEditContext.Provider>
     </TopBarActionsContext.Provider>
