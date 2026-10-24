@@ -140,6 +140,7 @@ impl NodeKind for SessionSend {
                 created_at: now_ms(),
                 resolved_at: None,
                 by_user: false,
+                pending_id: None,
             };
             let m = store.queue_session_message(&m).await.map_err(|e| e.to_string())?;
             if m.status != "waiting" {

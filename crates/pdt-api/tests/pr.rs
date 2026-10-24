@@ -52,6 +52,7 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
         argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned()
     };
     state.conversations.notice_quiet = Duration::ZERO;
+    state.typing_quiet = Duration::ZERO;
     let gh = Arc::new(FakeGithub::default());
     state.github = gh.clone();
     // pdt-mcp (a fake agent's `mcp:` calls) needs pdtd listening.
@@ -461,8 +462,12 @@ async fn a_conversation_is_told_as_pdt_once_it_is_idle() {
     env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
     env.gh.set_jobs(7, &["test (linux)"]);
     pdt_api::refresh_prs(&env.state).await;
-    pdt_api::run_workflows(&env.state).await;
-    let events = pr_events(&env).await;
+    // Told once the agent echoes it (PDT-129), not as it is handed over.
+    let events = tick_until(&env, "the notice told", || async {
+        let e = pr_events(&env).await;
+        (!e.is_empty()).then_some(e)
+    })
+    .await;
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!((&events[0]["data"]["told"], &events[0]["data"]["sessionId"]), (&json!(true), &json!(env.session)));
     let all = wait_turns(&env, 2).await;

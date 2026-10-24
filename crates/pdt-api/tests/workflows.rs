@@ -49,6 +49,7 @@ async fn setup() -> Env {
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.claude_program = reading_agent(&bin).to_string_lossy().into_owned();
+    state.typing_quiet = std::time::Duration::ZERO;
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "Proj", "repoPath": repo.to_string_lossy()}))).await;

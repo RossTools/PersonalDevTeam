@@ -156,6 +156,11 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `--chain` (pdt-agents `hooks.rs`). Terminal Codex also reads its OSC 7501 status, with screen heuristics for older
   CLIs (docs/superpowers/notes/phase-2-agent-signals.md).
 - The user's own settings are never edited.
+- Typing for PDT (the outbox, PDT-129): a terminal takes PDT's messages only while `idle` and nobody has typed for
+  20 s, counted from when its tracker starts (a fresh TUI is still drawing). What the terminal sends by itself (focus
+  reports, replies to device-attribute, cursor-position, mode and colour queries; `is_terminal_reply`) is not typing.
+  A session at `unknown` (hooks that never fire) is not typed into: after the outbox's deadline its messages are
+  untold and the user gets a `session.undelivered` notification ([workflows.md](workflows.md#outbox-sessionsend)).
 - `attention_at` is set when a session becomes idle or needs the user; it is **unseen** until `last_viewed_at`
   (`POST /api/sessions/{id}/view`, any device) passes it. Unseen and needs-you sessions make notifications
   (`session.needs_you`, `session.turn_ended` after 30 s; [workflows.md](workflows.md#notifications)); viewing one

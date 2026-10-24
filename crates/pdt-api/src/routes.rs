@@ -143,6 +143,14 @@ pub struct AppState {
     /// The longest one call of a sensor (Jira, Buildkite) to its service may take, connecting included (tests
     /// shorten it). A half-open connection then fails the call instead of holding up the poll.
     pub sensor_timeout: std::time::Duration,
+    /// How long a session may be unable to take its outbox messages (not idle, yet not working either: stuck at
+    /// unknown, waiting on the user) before they are given up on and reported (PDT-129; tests shorten it).
+    pub outbox_deadline: std::time::Duration,
+    /// How long nobody may have typed into a terminal (counted from when PDT started watching it) before the outbox
+    /// types into it (tests shorten it).
+    pub typing_quiet: std::time::Duration,
+    /// When each session's outbox messages were first seen waiting on it while it was not working (ms).
+    pub(crate) outbox_stuck: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
 }
 
 impl AppState {
@@ -211,6 +219,9 @@ impl AppState {
             loops: Default::default(),
             poll_part_limit: crate::loops::POLL_PART_LIMIT,
             sensor_timeout: std::time::Duration::from_secs(30),
+            outbox_deadline: crate::workflow::outbox::DEADLINE,
+            typing_quiet: std::time::Duration::from_secs(20),
+            outbox_stuck: Default::default(),
         }
     }
 }

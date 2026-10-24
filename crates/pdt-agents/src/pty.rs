@@ -108,6 +108,9 @@ struct Handle {
 
 struct Proc {
     input: std_mpsc::Sender<Vec<u8>>,
+    /// The child's side is gone (its output ended, or a write failed), though its exit may not be reported yet: input
+    /// sent now would go nowhere (PDT-129).
+    closed: std::sync::atomic::AtomicBool,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pid: Option<u32>,
@@ -252,6 +255,7 @@ impl PtyManager {
             events,
             proc: Some(Proc {
                 input: input_tx,
+                closed: Default::default(),
                 master: Mutex::new(Some(pair.master)),
                 killer: Mutex::new(killer),
                 pid,
@@ -265,7 +269,13 @@ impl PtyManager {
             let mut first = cfg!(windows);
             loop {
                 match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) | Err(_) => {
+                        // unix: every slave fd closed (EIO), so the child exited; Windows: the master closed.
+                        if let Some(p) = &h.proc {
+                            p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        break;
+                    }
                     Ok(n) => {
                         let mut chunk = &buf[..n];
                         if std::mem::take(&mut first)
@@ -288,9 +298,13 @@ impl PtyManager {
             }
         });
 
+        let h = handle.clone();
         std::thread::spawn(move || {
             while let Ok(bytes) = input_rx.recv() {
                 if writer.write_all(&bytes).and_then(|_| writer.flush()).is_err() {
+                    if let Some(p) = &h.proc {
+                        p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
                     break;
                 }
             }
@@ -329,9 +343,11 @@ impl PtyManager {
         Ok(Attachment { scrollback: st.scrollback.snapshot(), exited: st.exited, events: h.events.subscribe() })
     }
 
+    /// Fails once the process is gone, even before its exit is reported (its output ended or a write failed).
     pub fn write(&self, id: &str, bytes: &[u8]) -> Result<(), PtyError> {
         let h = self.get(id)?;
-        let Some(p) = h.proc.as_ref().filter(|_| !h.exited()) else {
+        let Some(p) = h.proc.as_ref().filter(|p| !h.exited() && !p.closed.load(std::sync::atomic::Ordering::SeqCst))
+        else {
             return Err(PtyError::NotRunning(id.to_string()));
         };
         p.input.send(bytes.to_vec()).map_err(|_| PtyError::NotRunning(id.to_string()))
@@ -352,6 +368,13 @@ impl PtyManager {
             return Err(PtyError::NotRunning(id.to_string()));
         }
         h.kill().map_err(|e| PtyError::Io(e.to_string()))
+    }
+
+    /// Whether input written now can reach the process: it runs and its side of the terminal is still open.
+    pub fn accepts_input(&self, id: &str) -> bool {
+        self.get(id).is_ok_and(|h| {
+            !h.exited() && h.proc.as_ref().is_some_and(|p| !p.closed.load(std::sync::atomic::Ordering::SeqCst))
+        })
     }
 
     pub fn is_running(&self, id: &str) -> bool {

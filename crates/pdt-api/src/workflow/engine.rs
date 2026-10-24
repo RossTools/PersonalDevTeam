@@ -595,6 +595,15 @@ async fn apply(
 
 /// A failed execution: retried while the node allows, then its error port, else the run fails. True when it ended.
 async fn fail_step(st: &AppState, doc: &WorkflowDoc, run: &mut Run, mut step: Step, e: String) -> R<bool> {
+    // An agent step that failed (its session would not start) no longer works on its attempt (PDT-129).
+    if step.kind == super::nodes::agent::KIND
+        && let Ok(Some(mut a)) = st.store.get_agent_step(&step.id).await
+        && a.state != pdt_core::workflow::agent::AgentStepState::Done
+    {
+        a.state = pdt_core::workflow::agent::AgentStepState::Done;
+        a.updated_at = now_ms();
+        let _ = st.store.put_agent_step(&a).await;
+    }
     let node = doc.node(&step.node_id);
     let retry = node.and_then(|n| n.retry);
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step failed");

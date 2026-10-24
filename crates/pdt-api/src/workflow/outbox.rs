@@ -4,9 +4,18 @@
 //! message whose attempt has no running agent session is recorded as not told; what the user sent to a conversation
 //! (an Inbox answer, a nudge) reopens it even when it is stopped or interrupted. Delivering resumes the step. PDT's own
 //! messages wait while the host's cap on agents running a turn is reached (Phase 7c §6.2); the user's never do.
+//!
+//! Honest delivery (PDT-129): a message typed into a terminal is told once the keys went in and the terminal is still
+//! there; one handed to a conversation is `sending` until the agent echoes it, and every other conversation message
+//! (the user's own, review feedback) gets a `sending` row too. A message that is lost on the way (the agent stops,
+//! pdtd restarts, the agent never takes it) or that waits [`DEADLINE`] on a session that is neither idle nor working
+//! is resolved untold, and the user gets a `session.undelivered` notification naming the session and the text.
+//! Messages for a session a restart is about to resume wait for it.
 
 use crate::routes::{AppState, now_ms};
+use pdt_core::activity::Activity;
 use pdt_core::conversation::SessionMode;
+use pdt_core::notification::{NewNotification, NotificationKind, NotificationTarget, Severity};
 use pdt_core::session::{Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{Actor, EventKind};
 use pdt_core::workflow::api::StepStatus;
@@ -14,8 +23,10 @@ use pdt_store::SessionMessage;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-/// How long nobody may have typed into a terminal before a message is typed into it.
-const QUIET_MS: i64 = 20_000;
+/// How long messages may wait on a session that cannot take them though it is not working (`AppState::outbox_deadline`).
+pub(crate) const DEADLINE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// How much of a message a notification quotes.
+const QUOTE_CHARS: usize = 300;
 
 pub(crate) async fn deliver(st: &AppState) {
     let waiting = match st.store.waiting_session_messages().await {
@@ -52,6 +63,13 @@ pub(crate) async fn deliver(st: &AppState) {
             stopped.push(s);
         }
     }
+    // Sessions the previous pdtd left that are about to resume: their messages wait for them (PDT-129).
+    let resuming: Vec<Session> = if st.pending_resume.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+        vec![]
+    } else {
+        let interrupted = st.store.list_sessions_by_status(SessionStatus::Interrupted).await.unwrap_or_default();
+        interrupted.into_iter().filter(|s| st.resume_pending(&s.id)).collect()
+    };
     let by_id: HashMap<&str, &Session> =
         running.iter().filter(live).chain(&stopped).map(|s| (s.id.as_str(), s)).collect();
     let mut batches: HashMap<String, (&Session, Vec<SessionMessage>)> = HashMap::new();
@@ -68,11 +86,21 @@ pub(crate) async fn deliver(st: &AppState) {
             (None, Some(a)) => by_attempt.get(a.as_str()).copied(),
             _ => None,
         };
+        let resumes = |s: &Session| match (&m.session_id, &m.attempt_id) {
+            (Some(id), _) => s.id == *id,
+            (None, Some(a)) => s.attempt_id.as_deref() == Some(a.as_str()),
+            _ => false,
+        };
         match target {
             Some(s) => batches.entry(s.id.clone()).or_insert_with(|| (s, vec![])).1.push(m),
+            None if resuming.iter().any(resumes) => {}
             None => resolve(st, &m, None).await,
         }
     }
+    let now = now_ms();
+    let deadline = i64::try_from(st.outbox_deadline.as_millis()).unwrap_or(i64::MAX);
+    // Sessions that no longer wait on anything are forgotten.
+    st.outbox_stuck.lock().unwrap_or_else(|e| e.into_inner()).retain(|sid, _| batches.contains_key(sid));
     // The host's cap on agents running a turn holds PDT's own messages, never what the user sent (Phase 7c §6.2).
     let mut free: Option<usize> = None;
     for (sid, (session, list)) in batches {
@@ -80,11 +108,32 @@ pub(crate) async fn deliver(st: &AppState) {
         let ready = if conversation {
             crate::conversations::ready_for_notice(st, &sid)
         } else {
-            crate::activity::ready_for_message(st, &sid, QUIET_MS)
+            crate::activity::ready_for_message(st, &sid, i64::try_from(st.typing_quiet.as_millis()).unwrap_or(i64::MAX))
         };
         if !ready {
+            // Working is worth waiting for, however long it takes; anything else only until the deadline.
+            let (working, why) = not_ready(st, &sid, conversation);
+            let since = {
+                let mut stuck = st.outbox_stuck.lock().unwrap_or_else(|e| e.into_inner());
+                if working {
+                    stuck.remove(&sid);
+                    continue;
+                }
+                *stuck.entry(sid.clone()).or_insert(now)
+            };
+            if now - since >= deadline {
+                st.outbox_stuck.lock().unwrap_or_else(|e| e.into_inner()).remove(&sid);
+                tracing::warn!(session = %sid, messages = list.len(), why, "giving up on messages the session never took");
+                let mins = st.outbox_deadline.as_secs().div_ceil(60);
+                let why = format!("{why} for {mins} min, so PDT stopped waiting to tell it.");
+                for m in &list {
+                    resolve(st, m, None).await;
+                }
+                report(st, &sid, &list, &why).await;
+            }
             continue;
         }
+        st.outbox_stuck.lock().unwrap_or_else(|e| e.into_inner()).remove(&sid);
         if !list.iter().any(|m| m.by_user) {
             let slots = match free {
                 Some(n) => n,
@@ -97,12 +146,24 @@ pub(crate) async fn deliver(st: &AppState) {
             free = Some(slots.saturating_sub(1));
         }
         let text = list.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
-        let sent = if conversation {
-            crate::conversations::send_notice(st, session, &text).await.map_err(|e| e.message().to_string())
-        } else {
-            crate::activity::type_message(st, &sid, &text).await.map_err(|e| e.to_string())
-        };
-        match sent {
+        if conversation {
+            // Told when the agent echoes it (`echoed`); until then the messages are on their way.
+            let pending_id = uuid::Uuid::now_v7().to_string();
+            let ids: Vec<String> = list.iter().map(|m| m.id.clone()).collect();
+            if let Err(e) = st.store.send_session_messages(&ids, &sid, &pending_id).await {
+                tracing::warn!(session = %sid, error = %e, "could not mark messages on their way");
+                continue;
+            }
+            match crate::conversations::send_notice(st, session, &text, &pending_id).await {
+                Ok(()) => tracing::info!(session = %sid, messages = list.len(), "gave the agent its messages"),
+                Err(e) => {
+                    tracing::warn!(session = %sid, error = %e.message(), "could not send messages to the conversation");
+                    let _ = st.store.unsend_session_messages(&pending_id).await;
+                }
+            }
+            continue;
+        }
+        match crate::activity::type_message(st, &sid, &text).await {
             Ok(()) => {
                 tracing::info!(session = %sid, messages = list.len(), "told the agent");
                 for m in &list {
@@ -112,6 +173,141 @@ pub(crate) async fn deliver(st: &AppState) {
             Err(e) => tracing::warn!(session = %sid, error = %e, "could not type a message into the session"),
         }
     }
+}
+
+/// Whether a session that cannot take messages now is working (worth waiting for), and else why it cannot.
+fn not_ready(st: &AppState, sid: &str, conversation: bool) -> (bool, &'static str) {
+    if conversation {
+        return match crate::conversations::busy_with(st, sid) {
+            // A rate limit ends by itself.
+            Some(crate::conversations::Busy::Turn | crate::conversations::Busy::RateLimit) => (true, ""),
+            Some(crate::conversations::Busy::Request) => (false, "It waited on you"),
+            Some(crate::conversations::Busy::Message) => (false, "It had another message it never took"),
+            Some(crate::conversations::Busy::Terminal) => (false, "Its terminal was open"),
+            None => (false, "It was not ready"),
+        };
+    }
+    match crate::activity::activity_of(st, sid) {
+        Some(Activity::Working) => (true, ""),
+        Some(Activity::NeedsYou) => (false, "It waited on you"),
+        Some(Activity::Unknown) => (false, "PDT could not tell whether it was idle (no activity reports)"),
+        // Idle, with someone typing into it.
+        Some(Activity::Idle) => (false, "Someone was typing in it"),
+        None => (false, "PDT was not watching its terminal"),
+    }
+}
+
+/// Records a conversation message that is not the outbox's (the user's own, review feedback, a step's first message)
+/// as on its way, so losing it is reported (PDT-129).
+pub(crate) async fn track(
+    st: &AppState,
+    session: &Session,
+    pending_id: &str,
+    text: &str,
+    by_user: bool,
+) -> Result<(), crate::error::ApiError> {
+    let m = SessionMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        attempt_id: None,
+        session_id: Some(session.id.clone()),
+        ticket_id: None,
+        dedupe: None,
+        text: text.to_string(),
+        timeline: Value::Null,
+        run_id: None,
+        step_id: None,
+        status: "sending".into(),
+        told_session: Some(session.id.clone()),
+        created_at: now_ms(),
+        resolved_at: None,
+        by_user,
+        pending_id: Some(pending_id.to_string()),
+    };
+    st.store.queue_session_message(&m).await?;
+    Ok(())
+}
+
+/// The agent echoed a conversation's pending message: what it carried was told.
+pub(crate) async fn echoed(st: &AppState, pending_id: &str) {
+    let rows = match st.store.sending_session_messages(Some(pending_id)).await {
+        Ok(v) => v,
+        Err(e) => return tracing::warn!(error = %e, "could not read the messages on their way"),
+    };
+    for m in rows {
+        let _locked = super::engine::lock_run(st, m.run_id.as_deref()).await;
+        resolve(st, &m, m.told_session.as_deref()).await;
+    }
+}
+
+/// Conversation messages that will never go in: resolved untold and, given `why`, reported to the user. In the
+/// background: callers may hold the engine lock.
+pub(crate) fn lost(st: &AppState, pending_ids: &[String], why: Option<&str>) {
+    if pending_ids.is_empty() {
+        return;
+    }
+    let (st, ids, why) = (st.clone(), pending_ids.to_vec(), why.map(String::from));
+    tokio::spawn(async move {
+        for id in ids {
+            match st.store.sending_session_messages(Some(&id)).await {
+                Ok(rows) => give_up(&st, rows, why.as_deref()).await,
+                Err(e) => tracing::warn!(error = %e, "could not read the messages on their way"),
+            }
+        }
+    });
+}
+
+/// After a restart (before serving): conversation messages the previous pdtd had not seen echoed never went in.
+pub(crate) async fn recover(st: &AppState) {
+    let rows = match st.store.sending_session_messages(None).await {
+        Ok(v) => v,
+        Err(e) => return tracing::warn!(error = %e, "could not read the messages on their way"),
+    };
+    let mut by_pending: HashMap<Option<String>, Vec<SessionMessage>> = HashMap::new();
+    for m in rows {
+        by_pending.entry(m.pending_id.clone()).or_default().push(m);
+    }
+    for (_, rows) in by_pending {
+        tracing::warn!(messages = rows.len(), "a restart lost messages on their way to a conversation");
+        give_up(st, rows, Some("PDT restarted before the agent took it.")).await;
+    }
+}
+
+/// Resolves messages untold and reports them (one notification for the lot).
+async fn give_up(st: &AppState, rows: Vec<SessionMessage>, why: Option<&str>) {
+    for m in &rows {
+        let _locked = super::engine::lock_run(st, m.run_id.as_deref()).await;
+        resolve(st, m, None).await;
+    }
+    if let (Some(why), Some(sid)) = (why, rows.first().and_then(|m| m.told_session.clone().or(m.session_id.clone()))) {
+        report(st, &sid, &rows, why).await;
+    }
+}
+
+/// A `session.undelivered` notification: the session, why, and what it was not told.
+async fn report(st: &AppState, session_id: &str, rows: &[SessionMessage], why: &str) {
+    let Some(first) = rows.first() else { return };
+    let session = st.store.get_session(session_id).await.ok().flatten();
+    let name = session.as_ref().map_or("an agent session".to_string(), |s| format!("“{}”", s.title));
+    let text = rows.iter().map(|m| m.text.trim()).collect::<Vec<_>>().join("\n\n");
+    let quote: String = text.chars().take(QUOTE_CHARS).collect();
+    let ellipsis = if text.chars().count() > QUOTE_CHARS { "…" } else { "" };
+    let target = match &session {
+        Some(s) => NotificationTarget::Session { id: s.id.clone(), project_id: s.project_id.clone() },
+        None => NotificationTarget::None,
+    };
+    let mut n = NewNotification::new(
+        NotificationKind::SessionUndelivered,
+        format!("undelivered:{}", first.id),
+        format!("A message did not reach {name}"),
+        target,
+    );
+    n.severity = Severity::Warning;
+    n.body = format!("{why}\n\n{quote}{ellipsis}");
+    n.session_id = session.as_ref().map(|s| s.id.clone());
+    n.project_id = session.as_ref().map(|s| s.project_id.clone());
+    n.ticket_id = first.ticket_id.clone();
+    n.run_id = first.run_id.clone();
+    crate::notifications::notify(st, n).await;
 }
 
 /// Records a message as told to `session` (or to nobody): its timeline record, the outbox row, and its step.

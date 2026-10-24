@@ -97,11 +97,13 @@ Start too).
 - PR notices (PDT-44) and other `session.send` messages from workflows (docs/reference/workflows.md) also reach
   conversations: the newest running agent session of the attempt, once it is idle with
   nothing queued, its terminal closed, no rate limit hit (`limited_until` from `usage` rate limits) and quiet for
-  20 s; the message is `source: notice` ("Sent automatically").
+  20 s; the message is `source: notice` ("Sent automatically"). It counts as told only once the agent echoes it; a
+  message (PDT's or the user's) that the agent never takes is reported instead (`session.undelivered`: the agent
+  stopped, pdtd restarted, or 5 min passed with nothing happening; [workflows.md](workflows.md#outbox-sessionsend)).
 
 ## Tests and web
 
-- Tests use `fake-agent` (crates/pdt-api/src/bin/fake-agent; `run:`, `ask:`, `slow`, `exit`, `env:`, `who`) as
+- Tests use `fake-agent` (crates/pdt-api/src/bin/fake-agent; `run:`, `ask:`, `slow`, `exit`, `deaf`, `env:`, `who`) as
   `claude`, and `fake-agent app-server` / `fake-agent resume` as Codex's server and TUI (`fake-agent acp` for Devin).
 - web/src/conversation (events socket + reducer, MessageList with turn Changes and Continue, composer); `@ui`
   ApprovalCard (approvals with a diff preview, questions with "Other…", plans with "Approve, accept edits" for

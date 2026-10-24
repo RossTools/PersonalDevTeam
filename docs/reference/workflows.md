@@ -270,13 +270,35 @@ naming the workflow, run and choice, so "Ticket comments to the agent" forwards 
 
 ## Outbox (`session.send`)
 
-`session_messages`, one per step. `outbox.rs` delivers with the PR notices' old rule: the attempt's newest running
-agent session (a terminal with a live PTY, or a conversation); a terminal idle with no typing for 20 s, a conversation
-`ready_for_notice` (idle, nothing queued, no open request, no rate limit, terminal closed; a parked one reopens); all
-of a session's waiting messages in one message; no running agent session → `untold`. What the user sent to a
-session (an Inbox answer, a Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart),
-reopening it as typing would. `dedupe` is per attempt (also
-against `pr` timeline keys from before the event log). Resolving writes the timeline record and resumes the step.
+`session_messages`, one per step (status `waiting | sending | told | untold`). `outbox.rs` delivers with the PR
+notices' old rule: the attempt's newest running agent session (a terminal with a live PTY, or a conversation); a
+terminal idle with no typing for 20 s (counted from when PDT started watching it, so a TUI still starting isn't typed
+into; focus reports and the terminal's replies to queries are not typing), a conversation `ready_for_notice` (idle,
+nothing queued, no open request, no rate limit, terminal closed; a parked one reopens); all of a session's waiting
+messages in one message; no running agent session → `untold`, except while a pdtd restart is about to resume the
+session (`AppState::pending_resume`): its messages wait for it. What the user sent to a session (an Inbox answer, a
+Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart), reopening it as typing
+would. `dedupe` is per attempt (also against `pr` timeline keys from before the event log); an `untold` message does
+not spend its key. Resolving writes the timeline record and resumes the step (`sent` or `untold`).
+
+Honest delivery (PDT-129):
+- A terminal's message is told once its paste and Enter went in; writes to a terminal whose process is gone fail
+  (pdt-agents `PtyManager::write`/`accepts_input`: as soon as the child's side of the PTY closes, before its exit is
+  reported), and the message stays waiting.
+- A conversation's message is `sending` (`pending_id`: the conversation's pending message that carries it) until the
+  agent echoes it as a `user_message` (Claude's replay, Codex's item; Devin's ACP has none, so its echo is PDT's own
+  as the prompt is written), then `told`. Every other conversation message (the user's `POST …/messages`, review
+  feedback, an agent step's first message) gets a `sending` row too.
+- Lost on the way → `untold` and a `session.undelivered` notification naming the session, why and the text: the agent
+  exits unexpectedly with messages it hadn't taken; pdtd restarts with rows still `sending`
+  (`recover_conversations`); a conversation leaves a message pending for `Conversations::pending_timeout` (5 min) with
+  no turn, no open request and no event (`expire_pending_messages`, every 30 s; it no longer holds the conversation
+  busy). The user's Stop, or removing the session, resolves them `untold` without a notification.
+- A session that cannot take its messages though it isn't working (a terminal at `unknown` or `needs_you`, untracked,
+  or being typed in; a conversation waiting on a request or with its terminal open) gets `AppState::outbox_deadline`
+  (30 min, counted from when it was first seen so): then its messages are `untold` with a `session.undelivered`
+  notification. A working session (or a conversation in a rate limit) is waited for however long it takes.
+
 Told and untold messages are deleted 30 days after they were resolved (`maintain_workflows`), except an active
 attempt's, whose `dedupe` keys still count.
 
@@ -482,7 +504,10 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   `turns + 1`; at `maxTurns` (10) the step takes `timeout`; while `nudges` (1) remain PDT sends "[PDT] You ended your
   turn without `submit_outcome`…"; after that the binding is **stalled** and the Inbox has it. The engine tick also
   stalls a working step whose session stopped (not running, or a conversation with no live process, turn or queued
-  message) for 30 s.
+  message) for 30 s, or was removed (its `session_id` cleared).
+- **Failed starts.** A step whose session would not start fails (its binding is done); a Retry, a node retry or a
+  restart that runs the same step again finds a binding with no session (or done without an outcome) and starts over
+  instead of waiting for it.
 - **Questions.** `ask_user` makes an Inbox question (a new one replaces the step's open one) and the binding
   `asking`, so its turn's end isn't a stall; the answer goes back through the outbox as "[PDT] The user answered your
   questions: …" and the binding works again. A session with no step can ask too. Removing the asking session closes
@@ -639,7 +664,8 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
 
 - **Kinds and Show.** Needs you: `session.needs_you`, `inbox.question`, `inbox.approval`, `inbox.gate` (gates and Ready
   to accept), `inbox.manual`, `inbox.stalled` (a stalled or timed-out step), `inbox.loop_limit`. Updates: `session.turn_ended`, `session.exited`,
-  `pr.ci_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `host.loop_stale`
+  `session.undelivered` (a message for an agent never reached it: [Outbox](#outbox-sessionsend)), `pr.ci_failed`,
+  `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `host.loop_stale`
   (a background loop of pdtd stopped finishing passes, [host.md](host.md)). Each kind's Show
   is `off`, `dot` (only the target's own marker: no row), `inbox`, `toast` or `desktop`, each including the ones
   before; defaults in `NotificationKind::default_show`. The Inbox's own kinds (`inbox.*`) never go below `inbox`.
@@ -661,7 +687,8 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   killing it (Stop, close, restart: `AppState::kill_pty`/`remove_pty` mark it) or shutdown (`session.exited`); the PR
   poller's and Buildkite's `ci.run_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged` as they are logged
   (`ci.run_passed` clears `ci_failed`; `pr.merged` clears the attempt's other three); a run ending failed
-  (`workflow.failed`); `notify` steps.
+  (`workflow.failed`); `notify` steps; a message given up on (`session.undelivered`, severity warning, default
+  `toast`, key `undelivered:<message id>`).
 - **API.** `GET /api/notifications?section=needs_you|updates&project=&unread=&limit=&before=` → `{items,
   unreadUpdates}` (Needs you lists live rows only); `POST /api/notifications/{id}/read`; `POST
   /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `GET /api/notifications/stream`, Server-Sent
