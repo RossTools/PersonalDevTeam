@@ -152,7 +152,7 @@ describe('runs view', () => {
   const run = (status: string, steps: object[]) => ({
     id: 'r1', workflowId: 'w1', workflowName: 'CI to agent', version: 1, status, runKey: 'k', triggerEventId: null, triggerNode: 'ci',
     trigger: { type: 'ci.run_failed', ticketKey: 'PDT-1' }, projectId: null, ticketId: null, attemptId: null, parentRunId: null,
-    parentStepId: null, error: status === 'failed' ? 'tell failed' : null, output: null, wakeAt: null, startedAt: 1, endedAt: null, steps,
+    parentStepId: null, error: status === 'failed' ? 'tell failed' : null, output: null, wakeAt: null, startedAt: 1, resumedAt: null, endedAt: null, steps,
     resumeFrom: null as string | null,
   });
   const step = (id: string, nodeId: string, status: string, extra = {}) => ({

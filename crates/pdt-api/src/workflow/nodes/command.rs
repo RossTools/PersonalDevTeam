@@ -89,6 +89,11 @@ impl NodeKind for Command {
         )
     }
 
+    /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        false
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: CommandConfig = parse(config)?;
         if c.program.trim().is_empty() {

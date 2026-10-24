@@ -1,7 +1,7 @@
 //! Scheduling (Phase 7c spec §6): auto-start of To do / Ready tickets up to a project's cap, the host's cap on agents
 //! running a turn (slots for PDT's own work), and who owns a ticket's workflow step now (the Board's cards, §7).
 
-use crate::routes::{AppState, now_ms};
+use crate::routes::AppState;
 use pdt_core::inbox::InboxKind;
 use pdt_core::policy::{AutoStart, pick_next};
 use pdt_core::start::{StartMode, StartTicket};
@@ -54,11 +54,11 @@ pub(crate) async fn admit_waiting(st: &AppState) {
         step.wait = json!({"admitted": true, "loopAllowed": loop_allowed.as_bool() == Some(true),
                            "resumeOf": resume_of, "note": note});
         step.wake_at = None;
-        if let Err(e) = st.store.put_step(&step).await {
+        // The step and its run's wake are one write (PDT-131): an admitted step is never left in a run that sleeps.
+        if let Err(e) = st.store.put_step_and_wake(&step).await {
             tracing::warn!(step = %step.id, error = %e, "could not admit a step waiting for a slot");
             continue;
         }
-        let _ = st.store.wake_workflow_run(&step.run_id, now_ms()).await;
         tracing::info!(step = %step.id, "a step waiting for a slot got one");
     }
 }
