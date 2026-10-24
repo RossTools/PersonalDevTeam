@@ -36,7 +36,7 @@ export function IconRail({ active, onSelect, top, counts, dots }: {
   top?: ReactNode;
   /** A count badge on a view's item (the Inbox's open items). */
   counts?: Partial<Record<ViewId, number>>;
-  /** A dot on a view's item with no count to show (the Inbox's unread Updates). */
+  /** A dot on a view's item with no count to show (the Inbox's unread Updates, the PM's unread reply). */
   dots?: Partial<Record<ViewId, boolean>>;
 }) {
   const [expandedPref, setExpandedPref] = useState(readExpanded);
@@ -47,10 +47,10 @@ export function IconRail({ active, onSelect, top, counts, dots }: {
   };
   // Beside the column, so it never covers the next button.
   const tooltipPlacement = 'right';
-  const view = ({ id, label, icon: Icon }: (typeof VIEWS)[number]) => {
+  const view = ({ id, label, icon: Icon, dot: dotName }: (typeof VIEWS)[number]) => {
     const n = counts?.[id] ?? 0;
     const dot = n === 0 && !!dots?.[id];
-    const name = n > 0 ? `${label} (${n})` : dot ? `${label} (new updates)` : label;
+    const name = n > 0 ? `${label} (${n})` : dot ? `${label} (${dotName ?? 'new'})` : label;
     const shown = n > 99 ? '99+' : n;
     const current = active === id ? 'page' : undefined;
     const tone = active === id ? 'bg-accent text-foreground' : 'text-muted-foreground';

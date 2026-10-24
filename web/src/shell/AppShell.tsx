@@ -56,7 +56,7 @@ import { InboxList } from '../inbox/InboxList';
 import { PhoneInboxList } from '../inbox/PhoneInboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
-import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
+import { pmUnread, usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
 import { NotesList } from '../notes/NotesList';
 import { useNotesFilters } from '../notes/useNotes';
 import type { Whose } from '../notes/model';
@@ -507,6 +507,9 @@ export function AppShell() {
   const updates = useUpdates();
   const readAllUpdates = useReadAllUpdates();
   const unreadUpdates = (updates.data?.unreadUpdates ?? 0) > 0;
+  // The PM's unread reply: no dot for the session on screen.
+  const pmShown = route.view !== 'pm' ? null : pmSelection === 'current' ? pm.data?.current?.id ?? null : pmSelection;
+  const pmDot = pmUnread(pm.data?.sessions, pmShown);
   const openTarget = useCallback((t: NotificationTarget) => {
     switch (t.kind) {
       case 'session': openSession({ id: t.id, projectId: t.projectId }); break;
@@ -784,7 +787,7 @@ export function AppShell() {
             view={view}
             onView={setView}
             counts={{ inbox: inbox.data?.total ?? 0 }}
-            dots={{ inbox: unreadUpdates }}
+            dots={{ inbox: unreadUpdates, pm: pmDot }}
             ws={ws}
             projectId={stored.projectId}
             onProject={stored.setProjectId}
@@ -812,7 +815,7 @@ export function AppShell() {
             onSelect={setView}
             top={<InstanceBadge stacked />}
             counts={{ inbox: inbox.data?.total ?? 0 }}
-            dots={{ inbox: unreadUpdates }}
+            dots={{ inbox: unreadUpdates, pm: pmDot }}
           />
           <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', view === 'notes' && 'w-80')}>
             <div className="flex-1 overflow-auto px-1">{list}</div>

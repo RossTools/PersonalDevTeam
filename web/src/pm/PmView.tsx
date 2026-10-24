@@ -8,6 +8,7 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { ConversationView } from '../conversation/ConversationView';
 import { enterAddsLine } from '../conversation/ConversationComposer';
 import { loadDraft, saveDraft } from '../conversation/drafts';
+import { useViewTracking } from '../sessions/useViewTracking';
 import { earlier, firstLine, REASON_LABEL, usePm, useRefreshPm, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
@@ -53,6 +54,7 @@ export function PmView({ selection, onSelect, onNew }: {
           actions={<Button variant="ghost" size="sm" onClick={onNew}>New session</Button>}
         />
       )}
+      <ViewTracked session={s} />
       <ConversationView
         key={s.id}
         session={s}
@@ -66,6 +68,12 @@ export function PmView({ selection, onSelect, onNew }: {
       />
     </div>
   );
+}
+
+/** Marks the PM session on screen seen, as a session's tab does (it clears the rail's dot, PDT-145). */
+function ViewTracked({ session }: { session: Session }) {
+  useViewTracking(session.id, session.unseen ? session.attentionAt ?? 0 : null);
+  return null;
 }
 
 function Ended({ journal, onCurrent }: { journal: string | null; onCurrent: () => void }) {

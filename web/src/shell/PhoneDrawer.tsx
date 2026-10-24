@@ -82,11 +82,11 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
           />
         </div>
         <nav aria-label="Views" className="flex flex-col px-1">
-          {VIEWS.filter((v) => v.id !== 'settings').map(({ id, label, icon: Icon }) => {
+          {VIEWS.filter((v) => v.id !== 'settings').map(({ id, label, icon: Icon, dot: dotName }) => {
             const n = counts[id] ?? 0;
             const dot = n === 0 && !!dots?.[id];
             return (
-              <Button key={id} variant="ghost" aria-label={n > 0 ? `${label} (${n})` : dot ? `${label} (new updates)` : label} aria-current={view === id ? 'page' : undefined} onClick={() => choose(id)}
+              <Button key={id} variant="ghost" aria-label={n > 0 ? `${label} (${n})` : dot ? `${label} (${dotName ?? 'new'})` : label} aria-current={view === id ? 'page' : undefined} onClick={() => choose(id)}
                 className={cn(row, view === id ? 'bg-accent text-foreground' : 'text-muted-foreground')}>
                 <Icon aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-left">{label}</span>
