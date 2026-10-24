@@ -94,6 +94,9 @@
   --shadow-dialog: var(--pdt-shadow-dialog);
   --text-2xs: 10px;
   --text-meta: 11px;
+  /* A document's title (a note's, PDT-143): the one size above text-base. */
+  --text-title: 30px;
+  --text-title--line-height: 1.2;
   --spacing-control-sm: var(--pdt-control-sm);
   --spacing-control-md: var(--pdt-control-md);
   --spacing-control-touch: var(--pdt-control-touch);

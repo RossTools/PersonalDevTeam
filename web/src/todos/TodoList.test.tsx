@@ -38,6 +38,12 @@ const sent = (method: string, path: string) => calls.filter((c) => c.method === 
 const open = () => screen.getByRole('list', { name: 'Todos' });
 const titles = () => within(open()).getAllByRole('listitem').map((li) => li.getAttribute('aria-label'));
 
+/** Picks a scope from the header's dropdown. */
+async function scope(name: string) {
+  await userEvent.click(screen.getByRole('button', { name: /^Scope: / }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: new RegExp(`^(✓ )?${name}$`) }));
+}
+
 function show(projectId: string | null = 'p1', openTicket = vi.fn(), focus: TodoFocus | null = null) {
   renderWithQuery(
     <OpenTicketContext.Provider value={openTicket}>
@@ -97,22 +103,22 @@ describe('TodoList', () => {
     expect(within(c).getByText('PX')).toBeInTheDocument();
   });
 
-  it('filters to the current project, where new todos join it', async () => {
+  it('scopes to the current project, where new todos join it', async () => {
     show();
     await screen.findByText('Todo a');
-    await userEvent.click(screen.getByRole('radio', { name: 'PX' }));
+    await scope('PX');
     expect(titles()).toEqual(['Todo b', 'Todo c']);
     await userEvent.type(screen.getByRole('textbox', { name: 'Add a todo' }), 'Ship{Enter}');
     await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Ship', project: 'p1' }]));
   });
 
-  it('folds done todos into "Done (n)" and clears them', async () => {
+  it('folds done todos into "Completed · n" and clears them', async () => {
     show();
-    const toggle = await screen.findByRole('button', { name: 'Done (1)' });
+    const toggle = await screen.findByRole('button', { name: 'Completed · 1' });
     expect(screen.queryByText('Todo d')).toBeNull();
     await userEvent.click(toggle);
-    expect(within(screen.getByRole('list', { name: 'Done todos' })).getByText('Todo d')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Clear done' }));
+    expect(within(screen.getByRole('list', { name: 'Completed todos' })).getByText('Todo d')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/todos/d')).toBe(true));
   });
 
@@ -147,10 +153,11 @@ describe('TodoList with due dates', () => {
     todo('later', 5, { dueOn: '2026-11-03' }),
     todo('late2', 6, { dueOn: '2026-10-22' }),
     todo('old', 0, { done: true, doneAt: 5, dueOn: '2026-10-01' }),
+    todo('week', 7, { dueOn: '2026-10-27' }),
   ];
   const group = (name: string) => screen.getByRole('list', { name: `${name} todos` });
   const names = (name: string) => within(group(name)).getAllByRole('listitem').map((li) => li.getAttribute('aria-label'));
-  const chip = (title: string) => within(screen.getByRole('listitem', { name: title })).queryByLabelText(/^Due /);
+  const chip = (title: string) => within(screen.getByRole('listitem', { name: title })).queryByLabelText(/^Due (?!date)/);
 
   function stubDated() {
     calls = stubApi({
@@ -159,32 +166,54 @@ describe('TodoList with due dates', () => {
       'PATCH /api/todos/late': (c: Call) => ({ ...dated[0], ...(c.body as object) }),
       'PATCH /api/todos/late2': (c: Call) => ({ ...dated[5], ...(c.body as object) }),
       'PATCH /api/todos/none': (c: Call) => ({ ...dated[1], ...(c.body as object) }),
+      'PATCH /api/todos/today': (c: Call) => ({ ...dated[2], ...(c.body as object) }),
     });
   }
 
-  it('groups as Overdue, Today, Upcoming and No date, in their order', async () => {
+  it('groups as Overdue, Today, Tomorrow, Next 7 days, Later and No date, in their order', async () => {
     stubDated();
     show();
     await screen.findByText('Todo late');
-    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Overdue (2)', 'Today (1)', 'Upcoming (2)', 'No date (1)']);
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'Overdue2Move to today', 'Today1', 'Tomorrow1', 'Next 7 days1', 'Later1', 'No date1',
+    ]);
     expect(names('Overdue')).toEqual(['Todo late', 'Todo late2']);
     expect(names('Today')).toEqual(['Todo today']);
-    expect(names('Upcoming')).toEqual(['Todo tmrw', 'Todo later']);
+    expect(names('Tomorrow')).toEqual(['Todo tmrw']);
+    expect(names('Next 7 days')).toEqual(['Todo week']);
+    expect(names('Later')).toEqual(['Todo later']);
     expect(names('No date')).toEqual(['Todo none']);
   });
 
-  it('chips overdue in red, today, tomorrow and the date; none on done cards', async () => {
+  it('says the day where its heading doesn\'t: overdue in red, a time today in amber; nothing on done rows', async () => {
     stubDated();
     show();
     await screen.findByText('Todo late');
-    expect(chip('Todo late')).toHaveTextContent('Overdue');
-    expect(chip('Todo late')?.className).toMatch(/failed|destructive/);
-    expect(chip('Todo today')).toHaveTextContent('Today 17:00');
-    expect(chip('Todo tmrw')).toHaveTextContent('Tomorrow');
-    expect(chip('Todo later')?.textContent).toMatch(/3/);
+    expect(chip('Todo late')).toHaveTextContent(/20/);
+    expect(chip('Todo late')?.className).toMatch(/destructive/);
+    expect(within(screen.getByRole('listitem', { name: 'Todo late' })).getByRole('checkbox').closest('label')!.querySelector('.border-destructive')).not.toBeNull();
+    expect(chip('Todo today')).toHaveTextContent('17:00');
+    expect(chip('Todo today')?.className).toMatch(/waiting/);
+    expect(chip('Todo tmrw'), 'the heading says Tomorrow').toBeNull();
+    expect(chip('Todo later')).toHaveTextContent(/3/);
     expect(chip('Todo none')).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Done (1)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Completed · 1' }));
     expect(chip('Todo old')).toBeNull();
+  });
+
+  it('moves every overdue todo to today, keeping a time only if it is still ahead', async () => {
+    calls = stubApi({
+      'GET /api/todos': [todo('late', 1, { dueOn: '2026-10-20', dueTime: '09:00' }), todo('late2', 2, { dueOn: '2026-10-21', dueTime: '16:00' }), todo('none', 3)],
+      'PATCH /api/todos/late': (c: Call) => todo('late', 1, c.body as Partial<Todo>),
+      'PATCH /api/todos/late2': (c: Call) => todo('late2', 2, c.body as Partial<Todo>),
+    });
+    show();
+    await screen.findByText('Todo late');
+    await userEvent.click(screen.getByRole('button', { name: 'Move to today' }));
+    await waitFor(() => {
+      expect(sent('PATCH', '/api/todos/late')).toEqual([{ dueOn: '2026-10-23', dueTime: '' }]);
+      expect(sent('PATCH', '/api/todos/late2')).toEqual([{ dueOn: '2026-10-23', dueTime: '16:00' }]);
+    });
   });
 
   it('drags to reorder within a group, never across', async () => {
@@ -205,39 +234,186 @@ describe('TodoList with due dates', () => {
     expect(sent('PATCH', '/api/todos/none')).toEqual([]);
   });
 
-  it('sets a due date from the card menu: quick picks, a picked date, or none', async () => {
-    stubDated();
-    show();
-    await screen.findByText('Todo none');
-    await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo none' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Tomorrow/ }));
-    await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([{ dueOn: '2026-10-24', dueTime: '' }]));
+  describe('the due picker', () => {
+    const picker = () => screen.getByRole('dialog', { name: /^Due date: / });
+    const openPicker = async (title: string) => {
+      await userEvent.click(within(screen.getByRole('listitem', { name: title })).getByRole('button', { name: `Due date for ${title}` }));
+      return screen.findByRole('dialog', { name: `Due date: ${title}` });
+    };
 
-    await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo late' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'No due date' }));
-    await waitFor(() => expect(sent('PATCH', '/api/todos/late')).toEqual([{ dueOn: '', dueTime: '' }]));
+    it('sets a day from each quick pick, closing; No date clears it', async () => {
+      stubDated();
+      show();
+      await screen.findByText('Todo none');
+      const picks: [string, object][] = [
+        ['In an hour', { dueOn: '2026-10-23', dueTime: '11:00' }],
+        ['Today', { dueOn: '2026-10-23', dueTime: '' }],
+        ['Tomorrow', { dueOn: '2026-10-24', dueTime: '' }],
+        ['This weekend', { dueOn: '2026-10-24', dueTime: '' }],
+        ['Next week', { dueOn: '2026-10-26', dueTime: '' }],
+      ];
+      for (const [name] of picks) {
+        const dialog = await openPicker('Todo none');
+        expect(within(dialog).queryByRole('button', { name: 'No date' }), 'nothing to clear').toBeNull();
+        await userEvent.click(within(dialog).getByRole('button', { name: new RegExp(`^${name}(?!,)`) }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      }
+      expect(sent('PATCH', '/api/todos/none')).toEqual(picks.map(([, p]) => p));
 
-    await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo late2' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Pick a date…' }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-12-01' } });
-    fireEvent.change(within(dialog).getByLabelText(/^Time/), { target: { value: '08:15' } });
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(sent('PATCH', '/api/todos/late2')).toEqual([{ dueOn: '2026-12-01', dueTime: '08:15' }]));
+      const dialog = await openPicker('Todo late');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'No date' }));
+      await waitFor(() => expect(sent('PATCH', '/api/todos/late')).toEqual([{ dueOn: '' }]));
+    });
+
+    it('opens from the row\'s date and the menu, and picks a calendar day keeping the time', async () => {
+      stubDated();
+      show();
+      await screen.findByText('Todo late');
+      await userEvent.click(chip('Todo late')!);
+      expect(picker()).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+      await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo late2' }));
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date…' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Due date: Todo late2' });
+      // Past days can't be picked.
+      await userEvent.click(within(dialog).getByRole('button', { name: /October 21, 2026/ }));
+      expect(sent('PATCH', '/api/todos/late2')).toEqual([]);
+      await userEvent.click(within(dialog).getByRole('button', { name: /October 29, 2026/ }));
+      await waitFor(() => expect(sent('PATCH', '/api/todos/late2')).toEqual([{ dueOn: '2026-10-29' }]));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
+
+    it('takes a typed date', async () => {
+      stubDated();
+      show();
+      await screen.findByText('Todo none');
+      const dialog = await openPicker('Todo none');
+      await userEvent.type(within(dialog).getByRole('textbox', { name: 'Type a date' }), 'fri 9am{Enter}');
+      await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([{ dueOn: '2026-10-30', dueTime: '09:00' }]));
+    });
+
+    it('sets a time from a slot or typed, and clears it, staying open', async () => {
+      stubDated();
+      show();
+      await screen.findByText('Todo today');
+      const dialog = await openPicker('Todo today');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Time: 17:00' }));
+      expect(within(picker()).getByRole('heading', { name: /^Time · / })).toBeInTheDocument();
+      await userEvent.click(within(picker()).getByRole('button', { name: /^09:00/ }));
+      fireEvent.change(within(picker()).getByLabelText('Time'), { target: { value: '07:45' } });
+      fireEvent.blur(within(picker()).getByLabelText('Time'));
+      await userEvent.click(within(picker()).getByRole('button', { name: 'No time' }));
+      await waitFor(() => expect(sent('PATCH', '/api/todos/today')).toEqual([{ dueTime: '09:00' }, { dueTime: '07:45' }, { dueTime: '' }]));
+      expect(picker()).toBeInTheDocument();
+    });
+
+    it('sets a repeat from the presets, dating an undated todo; Custom… opens the editor', async () => {
+      stubDated();
+      show();
+      await screen.findByText('Todo none');
+      let dialog = await openPicker('Todo none');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Repeat' }));
+      expect(within(picker()).getByRole('heading', { name: 'Repeat' })).toBeInTheDocument();
+      // Built from today (a Friday, the 23rd).
+      expect(within(picker()).getByRole('button', { name: /^Every week(?!day)/ })).toHaveTextContent('on Fri');
+      await userEvent.click(within(picker()).getByRole('button', { name: /^Every month/ }));
+      await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([
+        { recurrence: { rule: { every: 'month', day: 23 }, from: 'due' }, dueOn: '2026-10-23' },
+      ]));
+      await userEvent.click(within(picker()).getByRole('button', { name: /^Doesn’t repeat/ }));
+      await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toHaveLength(2));
+      expect(sent('PATCH', '/api/todos/none')[1]).toEqual({ recurrence: null });
+      await userEvent.click(within(picker()).getByRole('button', { name: 'Custom…' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Due date/ })).toBeNull());
+      dialog = await screen.findByRole('dialog', { name: 'Repeat' });
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    });
   });
 
-  it('adds a todo with a due date', async () => {
-    stubDated();
-    show();
-    await screen.findByText('Todo late');
-    await userEvent.click(screen.getByRole('button', { name: 'Due date for the new todo' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: /^Today/ }));
-    expect(screen.getByText(/^Due /)).toBeInTheDocument();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Add a todo' }), 'Pay rent{Enter}');
-    await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Pay rent', dueOn: '2026-10-23' }]));
+  describe('quick add', () => {
+    const box = () => screen.getByRole('textbox', { name: 'Add a todo' });
+
+    it('picks dates and repeats out of the text as tags; × keeps the words; Enter sends the parsed fields', async () => {
+      stubDated();
+      show(null);
+      await screen.findByText('Todo late');
+      await userEvent.click(box());
+      expect(screen.getByRole('button', { name: 'Date' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Repeat' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Ticket' })).toBeInTheDocument();
+      await userEvent.type(box(), 'Call the dentist tomorrow 3pm every month');
+      expect(screen.getByText('Tomorrow 15:00')).toBeInTheDocument();
+      expect(screen.getByText('Every month on the 24th')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Date' })).toBeNull();
+      await userEvent.click(screen.getByRole('button', { name: 'Keep the repeat words in the title' }));
+      expect(screen.queryByText('Every month on the 24th')).toBeNull();
+      expect(box(), 'focus goes back to the text').toHaveFocus();
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([
+        { title: 'Call the dentist every month', dueOn: '2026-10-24', dueTime: '15:00' },
+      ]));
+      expect(box()).toHaveValue('');
+    });
+
+    it('sets a date with the Date tag', async () => {
+      stubDated();
+      show(null);
+      await screen.findByText('Todo late');
+      await userEvent.click(box());
+      await userEvent.click(screen.getByRole('button', { name: 'Date' }));
+      await userEvent.click(within(await screen.findByRole('dialog', { name: 'Due date: New todo' })).getByRole('button', { name: /^Today(?!,)/ }));
+      expect(await screen.findByRole('button', { name: 'No date' }), 'the Date tag, set').toBeInTheDocument();
+      await userEvent.type(box(), 'Pay rent{Enter}');
+      await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Pay rent', dueOn: '2026-10-23' }]));
+    });
+  });
+
+  describe('completing', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+      vi.setSystemTime(new Date(2026, 9, 23, 10, 0));
+    });
+
+    /** The server's list, kept as patches change it. */
+    function stubLive() {
+      let live = [...dated];
+      calls = stubApi({
+        'GET /api/todos': () => live,
+        'PATCH /api/todos/none': (c: Call) => {
+          const body = c.body as Partial<Todo>;
+          live = live.map((t) => (t.id === 'none' ? { ...t, ...body, doneAt: body.done ? 9 : null } : t));
+          return live.find((t) => t.id === 'none');
+        },
+      });
+    }
+
+    it('keeps a ticked row in place, struck through, then moves it to Completed', async () => {
+      stubLive();
+      show();
+      await screen.findByText('Todo none');
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Done: Todo none' }));
+      await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([{ done: true }]));
+      const row = within(group('No date')).getByRole('listitem', { name: 'Todo none' });
+      expect(row).toHaveAttribute('data-completing');
+      expect(within(row).getByRole('button', { name: 'Todo none' }).className).toMatch(/line-through/);
+      await act(async () => { vi.advanceTimersByTime(900); });
+      await waitFor(() => expect(screen.queryByRole('list', { name: 'No date todos' })).toBeNull());
+      expect(screen.getByRole('button', { name: 'Completed · 2' })).toBeInTheDocument();
+    });
+
+    it('stays put when unticked within the delay', async () => {
+      stubLive();
+      show();
+      await screen.findByText('Todo none');
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Done: Todo none' }));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Not done: Todo none' })).toBeChecked());
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Not done: Todo none' }));
+      await act(async () => { vi.advanceTimersByTime(900); });
+      await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([{ done: true }, { done: false }]));
+      expect(within(group('No date')).getByRole('listitem', { name: 'Todo none' })).not.toHaveAttribute('data-completing');
+    });
   });
 
   it('shows a reminder\'s todo once: reopening the list keeps the filter and rings nothing', async () => {
@@ -255,12 +431,11 @@ describe('TodoList with due dates', () => {
     renderWithQuery(<OpenTicketContext.Provider value={vi.fn()}><Harness /></OpenTicketContext.Provider>);
     expect((await screen.findByRole('listitem', { name: 'Todo late' })).className).toMatch(/ring-2/);
     expect(onFocused).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('radio', { name: 'All' })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Scope: All projects' })).toBeInTheDocument();
 
     act(() => toggle());
     act(() => toggle());
-    await screen.findByRole('radio', { name: 'PX' });
-    expect(screen.getByRole('radio', { name: 'PX' }), 'the chosen filter stays').toBeChecked();
+    expect(await screen.findByRole('button', { name: 'Scope: PX' }), 'the chosen scope stays').toBeInTheDocument();
     expect(screen.queryByRole('listitem', { name: 'Todo late' }), 'not in PX, and not pulled back in').toBeNull();
     expect(onFocused).toHaveBeenCalledTimes(1);
   });
@@ -303,9 +478,9 @@ describe('TodoList with due dates', () => {
     it('shows the repeat icon and rule on open cards only', async () => {
       show(null);
       await screen.findByText('Todo rep');
-      expect(within(card('Todo rep')).getByLabelText('Repeats: Every Mon, Wed')).toHaveTextContent('Every Mon, Wed');
+      expect(within(card('Todo rep')).getByLabelText('Repeats: Every Mon, Wed')).toHaveTextContent('Mon, Wed');
       expect(within(card('Todo plain')).queryByLabelText(/^Repeats/)).toBeNull();
-      await userEvent.click(screen.getByRole('button', { name: /Done \(1\)/ }));
+      await userEvent.click(screen.getByRole('button', { name: 'Completed · 1' }));
       expect(within(card('Todo was')).queryByLabelText(/^Repeats/), 'not on a done card').toBeNull();
     });
 

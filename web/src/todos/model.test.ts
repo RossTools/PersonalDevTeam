@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Todo } from '../api/gen/Todo';
-import { addDays, defaultRecurrence, dueLabel, dueState, grouped, localDay, positionFor, quickDays, repeatText, shown, weekdayOf } from './model';
+import { addDays, defaultRecurrence, dueLabel, dueState, grouped, inAnHour, localDay, moveToToday, positionFor, quickPicks, repeatPresets, repeatText, shown, weekdayOf, weekendPick } from './model';
 
 function todo(id: string, position: number, more: Partial<Todo> = {}): Todo {
   return {
@@ -75,7 +75,7 @@ describe('due dates', () => {
     expect(dueLabel(due(null), now)).toBeNull();
   });
 
-  it('groups open todos as Overdue, Today, Upcoming and No date, keeping their order', () => {
+  it('groups open todos as Overdue, Today, Tomorrow, Next 7 days, Later and No date, keeping their order', () => {
     const open = [
       todo('a', 1, { dueOn: '2026-11-02' }),
       todo('b', 2),
@@ -83,19 +83,55 @@ describe('due dates', () => {
       todo('d', 4, { dueOn: '2026-10-01' }),
       todo('e', 5, { dueOn: '2026-10-24' }),
       todo('f', 6, { dueOn: '2026-10-23', dueTime: '08:00' }),
+      todo('g', 7, { dueOn: '2026-10-25' }),
+      todo('h', 8, { dueOn: '2026-10-30' }),
+      todo('i', 9, { dueOn: '2026-10-31' }),
+      todo('j', 10, { dueOn: '2026-10-23', dueTime: '10:00' }),
+      todo('k', 11, { dueOn: '2026-10-23', dueTime: '10:01' }),
     ];
     expect(grouped(open, now).map((g) => [g.label, g.todos.map((t) => t.id)])).toEqual([
-      ['Overdue', ['d', 'f']],
-      ['Today', ['c']],
-      ['Upcoming', ['a', 'e']],
+      ['Overdue', ['d', 'f', 'j']],
+      ['Today', ['c', 'k']],
+      ['Tomorrow', ['e']],
+      ['Next 7 days', ['g', 'h']],
+      ['Later', ['a', 'i']],
       ['No date', ['b']],
     ]);
     expect(grouped([todo('x', 1)], now).map((g) => g.id)).toEqual(['none']);
   });
 
-  it('offers today, tomorrow and the coming Monday', () => {
-    expect(quickDays(now).map((q) => q.day)).toEqual(['2026-10-23', '2026-10-24', '2026-10-26']);
-    expect(quickDays(new Date(2026, 9, 26, 9)).map((q) => q.day)[2], 'a Monday picks the next one').toBe('2026-11-02');
+  it('moves an overdue todo to today, keeping a time still ahead and dropping a past one', () => {
+    expect(moveToToday(due('2026-10-20'), now)).toEqual({ dueOn: '2026-10-23', dueTime: '' });
+    expect(moveToToday(due('2026-10-20', '15:00'), now)).toEqual({ dueOn: '2026-10-23', dueTime: '15:00' });
+    expect(moveToToday(due('2026-10-20', '09:00'), now)).toEqual({ dueOn: '2026-10-23', dueTime: '' });
+    expect(moveToToday(due('2026-10-23', '10:00'), now), 'due this very minute').toEqual({ dueOn: '2026-10-23', dueTime: '' });
+  });
+
+  it('puts "In an hour" an hour on, to the nearest 5 minutes, rolling into tomorrow late at night', () => {
+    expect(inAnHour(new Date(2026, 9, 23, 14, 43))).toEqual({ dueOn: '2026-10-23', dueTime: '15:45' });
+    expect(inAnHour(new Date(2026, 9, 23, 14, 42))).toEqual({ dueOn: '2026-10-23', dueTime: '15:40' });
+    expect(inAnHour(new Date(2026, 9, 23, 14, 58))).toEqual({ dueOn: '2026-10-23', dueTime: '16:00' });
+    expect(inAnHour(new Date(2026, 9, 23, 23, 20))).toEqual({ dueOn: '2026-10-24', dueTime: '00:20' });
+    expect(inAnHour(new Date(2026, 9, 23, 22, 58)), 'rounds up past midnight').toEqual({ dueOn: '2026-10-24', dueTime: '00:00' });
+    expect(inAnHour(new Date(2026, 11, 31, 23, 30))).toEqual({ dueOn: '2027-01-01', dueTime: '00:30' });
+  });
+
+  it('picks this weekend on a weekday and next weekend on a Saturday or Sunday', () => {
+    // Mon 19 … Sun 25 October 2026.
+    const picks = [19, 20, 21, 22, 23, 24, 25].map((d) => weekendPick(new Date(2026, 9, d, 9)));
+    expect(picks.map((p) => p.day)).toEqual(['2026-10-24', '2026-10-24', '2026-10-24', '2026-10-24', '2026-10-24', '2026-10-31', '2026-10-31']);
+    expect(picks.map((p) => p.label)).toEqual([...Array(5).fill('This weekend'), 'Next weekend', 'Next weekend']);
+  });
+
+  it('offers in an hour, today, tomorrow, the weekend and the coming Monday', () => {
+    expect(quickPicks(now).map((q) => [q.label, q.dueOn, q.dueTime ?? null])).toEqual([
+      ['In an hour', '2026-10-23', '11:00'],
+      ['Today', '2026-10-23', null],
+      ['Tomorrow', '2026-10-24', null],
+      ['This weekend', '2026-10-24', null],
+      ['Next week', '2026-10-26', null],
+    ]);
+    expect(quickPicks(new Date(2026, 9, 26, 9)).at(-1)?.dueOn, 'a Monday picks the next one').toBe('2026-11-02');
   });
 });
 
@@ -117,5 +153,14 @@ describe('repeatText', () => {
     expect(weekdayOf('2026-10-26')).toBe(1);
     expect(defaultRecurrence('2026-10-28', new Date(2026, 9, 23))).toEqual({ rule: { every: 'week', interval: 1, days: [3] }, from: 'due' });
     expect(defaultRecurrence(null, new Date(2026, 9, 23)).rule).toEqual({ every: 'week', interval: 1, days: [5] });
+  });
+  it('offers presets built from the chosen day', () => {
+    expect(repeatPresets('2026-10-28').map((p) => [p.label, p.detail, p.rule])).toEqual([
+      ['Every day', '', { every: 'day', interval: 1 }],
+      ['Every weekday', 'Mon–Fri', { every: 'weekday' }],
+      ['Every week', 'on Wed', { every: 'week', interval: 1, days: [3] }],
+      ['Every 2 weeks', 'on Wed', { every: 'week', interval: 2, days: [3] }],
+      ['Every month', 'on the 28th', { every: 'month', day: 28 }],
+    ]);
   });
 });

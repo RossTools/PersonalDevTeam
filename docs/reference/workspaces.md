@@ -50,29 +50,55 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   header is one line (state, title, branch chip) with Changes, Conversation/Terminal, Paste, Compose, Font size (a
   terminal's, [agents.md](agents.md) "Terminals"), Stop, Restart, Make ticket and Remove under its ⋯; a run's is one line with its state, Stop and Restart under ⋯.
 
-## Right panel and todos (PDT-125)
+## Right panel and todos (PDT-125, PDT-143)
 
 - On desktop a panel sits right of the main area (web/src/shell/RightPanel.tsx). Open it is 320px wide and drags
   wider (240–640px; the divider also takes Left/Right); collapsed it is a 40px strip with a checklist icon and the count
   of open todos. The strip, the panel's collapse button, ⌘. (Mac) and Ctrl+] t open and close it. Open/closed and
-  width are kept per browser (`pdt.rightPanel.open`, `pdt.rightPanel.width`). It has two tabs, Todos and Notes (the user's own
-  notes, PDT-126: [agents.md](agents.md) "The PM"; a note opens at `/pm/notes/<id>`).
-- Phones have no panel: ☑ in the top bar opens the same content (both tabs) in a right sheet; opening a note closes it.
-- The todo list (web/src/todos): "Add a todo…" (Enter adds it at the top; the calendar button beside it gives the new
-  todo a due date), a filter (All, or the project on screen, which new todos then join; kept as `pdt.todos.filter`),
-  and a card per todo (TodoCard.tsx; in the gallery): a checkbox, the title (click to edit), a drag handle (also
-  Alt+↑/↓) and ⋯ (Edit, Due date, Repeat…, Stop repeating, Link to a ticket…, Unlink, Project, Delete), chips for the
-  due date, the repeat rule, the project key and the linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
+  width are kept per browser (`pdt.rightPanel.open`, `pdt.rightPanel.width`). It is the todo list only (PDT-143): the
+  user's notes have a view of their own ([agents.md](agents.md) "The user's own notes").
+- Phones have no panel: ☑ in the top bar opens the same list in a right sheet ("Todos").
+- The todo list (web/src/todos): a header ("Todos", the open count, a scope dropdown, the collapse button), the add
+  box, then the open todos in groups and the done ones folded into "Completed · n" with Clear. The scope is **All
+  projects** or the project on screen (which new todos then join), kept as `pdt.todos.filter`. Opening the panel with
+  Ctrl+] t focuses the add box; ⌘. only toggles it.
+- Rows (TodoRow.tsx; in the gallery): an 18px round checkbox (web/ui `Checkbox shape="round"`, its border red when
+  overdue), the title (click to edit) and a muted meta line: the due day where the group heading doesn't already say
+  it (red when overdue; a time today in amber), the repeat rule ("Every Sat", "Mon, Thu"), the linked ticket's key
+  (opens it) and, in All, the project key when there's no ticket. Hairlines separate rows from the title on. On
+  hover a row fills and shows a calendar button (the due picker) and ⋯ (Edit, Due date…, Repeat…, Stop repeating,
+  Link to a ticket… / Unlink, Project, Delete). Rows drag (with a fine pointer; on touch from a grip handle) or
+  Alt+↑/↓ to reorder within their group; a drop from another group does nothing.
+- Completing: a ticked row is PATCHed at once but stays in its place for 800 ms, struck through on a faint green
+  fill, then moves to Completed; un-ticking it in that time keeps it where it is.
 - Due dates (PDT-140): optional, the user's local day (`dueOn`, `YYYY-MM-DD`) with an optional time (`dueTime`,
-  `HH:MM`). Due date offers Today, Tomorrow, Next week (the coming Monday), each a day without a time (a quick pick
-  drops one set before), Pick a date… (a date and an optional time) and No due date. The chip says **Overdue** (red), **Today**, **Tomorrow** or the date (with the time if set); done
-  cards have none. A todo with a time is overdue once that time passes. Open todos group as Overdue, Today, Upcoming
-  and No date (headings only once something has a date), each in the manual order; a drag reorders within its group
-  and a drop from another group does nothing. Rules in web/src/todos/model.ts.
+  `HH:MM`). A todo with a time is overdue once that time passes. Open todos group as **Overdue** (with **Move to
+  today**, which moves each overdue todo to today, keeping its time only if that is still ahead), **Today**,
+  **Tomorrow**, **Next 7 days** (2–7 days out), **Later** and **No date**, each with its count, in the manual order;
+  headings only once something has a date. Rules in web/src/todos/model.ts.
+- The due picker (DuePicker.tsx, PDT-143) is one popover anchored to whatever opened it (the row's date, the
+  calendar button, ⋯ Due date…, quick add's Date tag). Panel A: a type-a-date box (quick add's parser; Enter applies
+  it), quick picks (In an hour: now + 60 min to the nearest 5, with its time, so late at night tomorrow; Today;
+  Tomorrow; This weekend, the coming Saturday, or Next weekend on a Saturday or Sunday; Next week, the coming Monday;
+  No date when one is set; all but In an hour drop the time), a month calendar (web/ui `Calendar`: Monday first, past
+  days can't be picked except the set one, today in amber; a day keeps the time) and two footer pills, Time and
+  Repeat, each with × to clear. Panel B: 09:00/12:00/15:00/18:00 slots, a time field and No time. Panel C: Doesn't
+  repeat, presets from the chosen day (every day, weekday, week, 2 weeks, month on the nth), the current rule if it
+  is none of those, Custom… (the Repeat editor) and what the next one counts from. A repeat on an undated todo dates
+  it today. Changes PATCH at once; a quick pick or a calendar day closes the picker.
+- Quick add (QuickAdd.tsx, parse.ts, PDT-143): the add box grows when focused. Dates, times and repeats typed into the
+  title are picked out on the client as you type (whole words only, preferring the end of the text; `today`,
+  `tonight`, `tomorrow`/`tmr`, weekdays and `next fri`, `next week`, `this weekend`, `in N days|weeks|months`, `nov 3`
+  / `3 nov`; `9am`, `3:30pm`, `at 15:30`, `noon`, `midnight`; `every day|weekday|week|month`, `every mon, thu`,
+  `every 2 weeks`, `daily`, `weekly`, `monthly`; `may`, `sun` and `sat` only with a day number or after on/next/every;
+  a time alone is today if still ahead, else tomorrow), highlighted, and shown as tags under the text; × on a tag
+  keeps its words in the title (for the current text). Unset ones are dashed tags: Date and Repeat (the picker),
+  Project and Ticket. Enter adds the todo with the parsed title (or the whole text if nothing is left), date, time,
+  repeat, project and ticket.
 - When an open todo comes due (local midnight on its day, or its time) pdtd makes one `todo.due` notification
-  ([workflows.md](workflows.md) "Notifications"); opening it opens the panel (the phone's sheet) on Todos and rings
-  the card, switching the filter to All if it hid it. The list uses each such request once (AppShell drops it), so
-  reopening the panel later doesn't ring the card or change the filter again. Done, deleted or re-dated clears it; a new date reminds again.
+  ([workflows.md](workflows.md) "Notifications"); opening it opens the panel (the phone's sheet) and rings
+  the row, switching the filter to All if it hid it. The list uses each such request once (AppShell drops it), so
+  reopening the panel later doesn't ring the row or change the filter again. Done, deleted or re-dated clears it; a new date reminds again.
   pdtd works out the moment in the host's own time zone.
 - Repeating todos (PDT-141): a todo with a due date can repeat: every N days (daily), every weekday (Mon–Fri), every
   N weeks on chosen days (weekly), or each month on a day (1–31; a shorter month uses its last day, and the next month
@@ -83,11 +109,11 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   (the default) the series keeps its schedule but skips days already past, so the next one is never due today or
   earlier; from when it's done, it counts from the day it was checked off. A todo makes its next one once (the store
   remembers it as `next_id`, in the same transaction), so two checks at once, or un-checking and checking it again,
-  don't make another. The next one gets its own due reminder. Its card shows a repeat icon and the rule ("Every Mon,
-  Wed"); ⋯ has Repeat… (the editor: the rule, what the next one counts from, and a first due date for an undated
-  todo) and Stop repeating (`recurrence: null`). Deleting an open repeating todo asks: Only this one
+  don't make another. The next one gets its own due reminder. Its row shows a repeat icon and the rule; ⋯ has
+  Repeat… (the editor: the rule, what the next one counts from, and a first due date for an undated todo) and Stop
+  repeating (`recurrence: null`). Deleting an open repeating todo asks: Only this one
   (`DELETE /api/todos/{id}?series=only`, the default: the next one takes its place) or Stop the series
-  (`?series=series`). Clearing the due date stops it repeating. Done cards show no rule.
+  (`?series=series`). Clearing the due date stops it repeating. Done rows show no rule.
 - The server keeps them in `todos` (`GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`; GET filters by `project`
   and `done`). `dueOn`/`dueTime` are validated in pdt-core `todo.rs`; in a PATCH `dueOn: ""` clears the date and its
   time (and recurrence), `dueTime: ""` only the time, and a time needs a date. Order is a float `position` (a move takes the midpoint of its new neighbours). A linked ticket is always
@@ -105,7 +131,9 @@ its tab, the Inbox picking an item) replace it.
 | Path | Shows |
 |---|---|
 | `/` | The PM on phones, Sessions otherwise |
-| `/pm`, `/pm/<sessionId>`, `/pm/notes` | The PM's current session, an earlier one, the notes |
+| `/pm`, `/pm/earlier`, `/pm/<sessionId>` | The PM's current session, the sessions that ended, one of them |
+| `/notes`, `/notes/pm`, `/notes/<id>`, `/notes/new` | The Notes view: my notes, the PM's memory, one note, a new one (created by its first save, which replaces the path with its own) |
+| `/pm/notes/<id>`, `/pm/notes` | Old paths (ticket descriptions link to them): replaced by `/notes/<id>` and `/notes/pm` |
 | `/sessions`, `/sessions/<workspaceId>/<tabId>` | A workspace and tab (`/sessions` alone: the browser's last choice) |
 | `/inbox`, `/inbox/<itemId>` | The Inbox, an item |
 | `/tickets` (`?view=board`), `/tickets/<key>` | Backlog (or Board), with the ticket peeked at (by key; an id is replaced by the key) |

@@ -17,6 +17,10 @@ export interface CheckboxProps {
   'aria-label'?: string;
   'aria-describedby'?: string;
   className?: string;
+  /** `round`: the todo list's 18px circle, filled `running` green when ticked. */
+  shape?: 'square' | 'round';
+  /** Round only: a red border (an overdue todo). */
+  danger?: boolean;
 }
 
 /** A checkbox with its label; `onChange(checked)`. Inside a Field it is described by the Field's hint and error. */
@@ -32,6 +36,8 @@ export function Checkbox({
   value,
   id,
   className,
+  shape,
+  danger,
   ...aria
 }: CheckboxProps) {
   const field = useFieldControl({ id, disabled, ...aria });
@@ -51,6 +57,8 @@ export function Checkbox({
       name={name}
       value={value}
       className={className}
+      shape={shape}
+      danger={danger}
     >
       {text}
     </CheckboxPrimitive>

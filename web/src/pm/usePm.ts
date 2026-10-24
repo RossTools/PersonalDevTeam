@@ -14,13 +14,10 @@ export function useRefreshPm() {
 }
 
 /**
- * What the PM view shows: the current session, the notes, one note (`note:<id>`), the list of earlier sessions, or an
- * earlier session (its id).
+ * What the PM view shows: the current session, the list of earlier sessions, or an earlier session (its id). The
+ * notes have a view of their own (PDT-143).
  */
-export type PmSelection = 'current' | 'notes' | 'earlier' | `note:${string}` | (string & {});
-
-/** The note a selection shows, if it is one. */
-export const noteOf = (s: PmSelection): string | null => (s.startsWith('note:') ? s.slice(5) : null);
+export type PmSelection = 'current' | 'earlier' | (string & {});
 
 export const REASON_LABEL: Record<RotateReason, string> = {
   context: 'its context filled up',
