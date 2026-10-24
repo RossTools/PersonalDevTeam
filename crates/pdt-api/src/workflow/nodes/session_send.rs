@@ -36,6 +36,11 @@ pub struct SessionSendConfig {
     pub dedupe: Option<String>,
     #[serde(default)]
     pub timeline: TimelineRecord,
+    /// A conversation that is not running (stopped, or interrupted by a restart) reopens to take it, as it would for
+    /// the user's own message: for what the user wrote (their ticket comment). Otherwise only a running session is
+    /// told (PDT-144).
+    #[serde(default)]
+    pub reopen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -55,7 +60,8 @@ impl NodeKind for SessionSend {
             Category::Action,
             "Tell the agent",
             "Types a message into an agent session once it is idle and nobody is typing (a conversation: no turn \
-             running). `untold` when the attempt has no running agent session; `skipped` when the dedupe key was sent.",
+             running). `untold` when the attempt has no running agent session (with `reopen`, nor a conversation to reopen); \
+             `skipped` when the dedupe key was sent.",
             &[("sent", "Told"), ("untold", "No session to tell"), ("skipped", "Already sent")],
             false,
         )
@@ -141,6 +147,7 @@ impl NodeKind for SessionSend {
                 resolved_at: None,
                 by_user: false,
                 pending_id: None,
+                reopens: c.reopen,
             };
             let m = store.queue_session_message(&m).await.map_err(|e| e.to_string())?;
             // Still waiting, or on its way to a conversation (told once the agent echoes it): wait for it.

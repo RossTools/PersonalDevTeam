@@ -88,6 +88,7 @@ async fn queue(env: &Env, session: &str, text: &str) -> String {
         resolved_at: None,
         by_user: false,
         pending_id: None,
+        reopens: false,
     };
     env.state.store.queue_session_message(&m).await.unwrap().id
 }

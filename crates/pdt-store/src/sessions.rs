@@ -127,6 +127,13 @@ impl Store {
         rows.iter().map(to_session).collect()
     }
 
+    /// An attempt's sessions, oldest first.
+    pub async fn list_attempt_sessions(&self, attempt_id: &str) -> Result<Vec<Session>, StoreError> {
+        let sql = format!("{SELECT} WHERE s.attempt_id = ? ORDER BY s.created_at, s.id");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(attempt_id).fetch_all(&self.pool).await?;
+        rows.iter().map(to_session).collect()
+    }
+
     /// Sessions with the given status, oldest first.
     pub async fn list_sessions_by_status(&self, status: SessionStatus) -> Result<Vec<Session>, StoreError> {
         let sql = format!("{SELECT} WHERE s.status = ? ORDER BY s.created_at, s.id");

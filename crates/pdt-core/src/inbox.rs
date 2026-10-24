@@ -188,6 +188,8 @@ pub const NUDGE: &str = "nudge";
 pub const AGAIN: &str = "again";
 pub const STOP: &str = "stop";
 pub const RESUME: &str = "resume";
+/// A stalled step whose first message never reached its session: send it again, as the user's (PDT-144).
+pub const RESEND: &str = "resend";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

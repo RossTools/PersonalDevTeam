@@ -14,7 +14,7 @@ import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
-import { after, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, selectedUpdate, step } from './model';
+import { after, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
 import { useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
@@ -76,7 +76,11 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
       if (questionAnswers.some((a) => a.trim())) sendAnswers();
       return;
     }
-    if (item.kind === 'stalled') return void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) });
+    if (item.kind === 'stalled') {
+      // Its first message never reached the session: sending it again comes first.
+      if (resends(item)) return void answer({ choice: 'resend' });
+      return void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) });
+    }
     const p = primary(item);
     // A manual step: the user's note (the nudge box) is the outcome's summary.
     if (p && item.kind === 'manual') return void answer({ choice: p, ...(nudge.trim() ? { text: nudge } : {}) });
@@ -197,8 +201,14 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             <Textarea aria-label="Nudge message (optional)" placeholder="Your own words for the nudge (optional)" value={nudge}
               onChange={(e) => setNudge(e.target.value)} rows={2} />
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" pending={busy} onClick={() => void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) })}>
-                Nudge <Kbd>↵</Kbd>
+              {resends(item) && (
+                <Button variant="primary" pending={busy} onClick={() => void answer({ choice: 'resend' })}>
+                  Resume with this message <Kbd>↵</Kbd>
+                </Button>
+              )}
+              <Button variant={resends(item) ? 'secondary' : 'primary'} pending={busy}
+                onClick={() => void answer({ choice: 'nudge', ...(nudge.trim() ? { text: nudge } : {}) })}>
+                Nudge {!resends(item) && <Kbd>↵</Kbd>}
               </Button>
               <Button variant="secondary" aria-expanded={takingOver} onClick={() => setTakingOver((t) => !t)}>Take over</Button>
             </div>

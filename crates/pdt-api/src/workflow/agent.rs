@@ -27,6 +27,8 @@ fn err(e: impl std::fmt::Display) -> String {
 
 /// How long a step may wait for a session that ended mid-step before it counts as stalled.
 const GONE_GRACE_MS: i64 = 30_000;
+/// How much of an undelivered message a stall's reason quotes.
+const QUOTE_CHARS: usize = 300;
 
 /// The dedupe key of a step's first message to a reused session: until it is delivered, the session's turns are
 /// its earlier work, not the step's.
@@ -192,6 +194,14 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     {
         message.push_str(&format!("\n\nThe user's note: {n}"));
     }
+    // A later pass in a new session (the earlier one's terminal stopped, PDT-144): the whole task, and why it is back.
+    if reused.is_none()
+        && resume_of.is_none()
+        && !passes.is_empty()
+        && let Some(why) = why_back(st, cx).await
+    {
+        message.push_str(&format!("\n\nThis step is back for another pass. {why}"));
+    }
     let session_id = match reused {
         Some(s) => {
             // A later pass in the same session: it has the step's role and the ticket already, so only why it is back.
@@ -209,8 +219,10 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
             } else {
                 format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes))
             };
-            // Resume is the user's click: it reaches a stopped conversation too, like a Nudge.
-            queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone(), by_user).await?;
+            // Resume is the user's click: it reaches a stopped conversation too, like a Nudge. The step's own message
+            // reopens one a restart interrupted (PDT-144): the user enabled the workflow, and the cap still holds it.
+            let to = Delivery { by_user, reopens: true };
+            queue_message(st, &s, &text, Some(prompt_key(&cx.step.id)), binding.ticket_id.clone(), to).await?;
             s.id
         }
         None => {
@@ -330,9 +342,20 @@ async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
     Ok(())
 }
 
-/// A session `reuse` can take: this node's earlier session in the run, else the attempt's running agent session.
+/// A session `reuse` can take: this node's earlier session in the run, else the attempt's agent session. A
+/// conversation that was not stopped (a parked or interrupted one reopens to take the message, PDT-144), or a terminal
+/// that runs or is about to resume after a restart; a stopped terminal can't take a message, so the step gets a new
+/// session.
 async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: &Target) -> Option<Session> {
-    let alive = |s: &Session| s.kind == SessionKind::AgentTui && !matches!(s.status, SessionStatus::Finished);
+    let alive = |s: &Session| {
+        s.kind == SessionKind::AgentTui
+            && match (s.mode, s.status) {
+                (_, SessionStatus::Finished) => false,
+                (SessionMode::Conversation, _) => true,
+                (_, SessionStatus::Running) => st.ptys.is_running(&s.id),
+                (_, SessionStatus::Interrupted) => st.resume_pending(&s.id),
+            }
+    };
     let earlier = st.store.agent_steps_of_node(&cx.run.id, &cx.node.id).await.ok()?;
     for a in earlier.iter().rev() {
         if let Some(id) = &a.session_id
@@ -425,6 +448,17 @@ async fn new_session(
     Ok(s)
 }
 
+/// Who a message to a step's session comes from: the user (their click: the cap never holds it, and it reopens a
+/// stopped conversation), or PDT, whose message `reopens` a conversation that is not running only when it says so.
+#[derive(Clone, Copy)]
+struct Delivery {
+    by_user: bool,
+    reopens: bool,
+}
+
+const USER: Delivery = Delivery { by_user: true, reopens: true };
+const PDT: Delivery = Delivery { by_user: false, reopens: false };
+
 /// Queues a message to a session through the outbox (7a's delivery rule: never into a running turn).
 async fn queue_message(
     st: &AppState,
@@ -432,7 +466,7 @@ async fn queue_message(
     text: &str,
     dedupe: Option<String>,
     ticket_id: Option<String>,
-    by_user: bool,
+    to: Delivery,
 ) -> R<()> {
     let m = SessionMessage {
         id: uuid::Uuid::now_v7().to_string(),
@@ -448,8 +482,9 @@ async fn queue_message(
         told_session: None,
         created_at: now_ms(),
         resolved_at: None,
-        by_user,
+        by_user: to.by_user,
         pending_id: None,
+        reopens: to.reopens,
     };
     st.store.queue_session_message(&m).await.map_err(err)?;
     Ok(())
@@ -780,7 +815,7 @@ async fn outcome_less_turn(st: &AppState, mut a: AgentStep, step: &Step, session
             tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
         }
         if let Ok(Some(s)) = st.store.get_session(session_id).await
-            && let Err(e) = queue_message(st, &s, &nudge_message(&a.outcomes), None, a.ticket_id.clone(), false).await
+            && let Err(e) = queue_message(st, &s, &nudge_message(&a.outcomes), None, a.ticket_id.clone(), PDT).await
         {
             tracing::warn!(session = %session_id, error = %e, "could not nudge an agent step's session");
         }
@@ -813,7 +848,18 @@ fn background_why(a: &AgentStep, now: i64) -> String {
 }
 
 /// Marks a binding stalled and puts it in the Inbox (Nudge / Take over).
-async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
+async fn stall(st: &AppState, a: AgentStep, why: &str) {
+    stall_item(st, a, why, None).await;
+}
+
+/// The step's first message never reached its session (PDT-144): stalled, quoting it, with Resume with this message.
+async fn stall_undelivered(st: &AppState, a: AgentStep, text: &str) {
+    let quote: String = text.trim().chars().take(QUOTE_CHARS).collect();
+    let ellipsis = if text.trim().chars().count() > QUOTE_CHARS { "…" } else { "" };
+    stall_item(st, a, &format!("Its message was never delivered: {quote}{ellipsis}"), Some(text)).await;
+}
+
+async fn stall_item(st: &AppState, mut a: AgentStep, why: &str, undelivered: Option<&str>) {
     a.state = AgentStepState::Stalled;
     a.updated_at = now_ms();
     if let Err(e) = st.store.put_agent_step(&a).await {
@@ -824,7 +870,11 @@ async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
         Some(sid) if matches!(st.store.get_session(sid).await, Ok(Some(_))) => Some(sid.clone()),
         _ => None,
     };
-    let mut choices = vec![InboxChoice::new(inbox::NUDGE, "Nudge", true)];
+    let mut choices = vec![];
+    if undelivered.is_some() {
+        choices.push(InboxChoice::new(inbox::RESEND, "Resume with this message", true));
+    }
+    choices.push(InboxChoice::new(inbox::NUDGE, "Nudge", undelivered.is_none()));
     choices.extend(
         a.outcomes
             .iter()
@@ -846,7 +896,7 @@ async fn stall(st: &AppState, mut a: AgentStep, why: &str) {
         persona_id: a.persona_id.clone(),
         persona_name: None,
         title: format!("{} stalled", a.persona_name),
-        body: json!({"why": why, "outcomes": a.outcomes, "turns": a.turns, "nudges": a.nudges}),
+        body: json!({"why": why, "outcomes": a.outcomes, "turns": a.turns, "nudges": a.nudges, "message": undelivered}),
         choices,
         resolution: Value::Null,
         created_at: now_ms(),
@@ -887,7 +937,21 @@ pub(crate) async fn sweep(st: &AppState) {
             }
             continue;
         }
-        let waited = now - a.updated_at >= GONE_GRACE_MS;
+        // The step's message to a reused session (PDT-144): while it waits to go in (a conversation a restart
+        // interrupted reopens to take it, a terminal about to resume waits for it), the step waits too; one that never
+        // reached the session since the step last went on (a Nudge) stalls it at once, saying so.
+        let prompt = match (&a.state, &a.session_id) {
+            (AgentStepState::Working, Some(sid)) => {
+                st.store.latest_session_message(sid, &prompt_key(&a.step_id)).await.ok().flatten()
+            }
+            _ => None,
+        };
+        let on_its_way = prompt.as_ref().is_some_and(|m| m.status == "waiting" || m.status == "sending");
+        let untold = prompt
+            .as_ref()
+            .filter(|m| m.status == "untold" && m.resolved_at.unwrap_or(0) >= a.updated_at)
+            .map(|m| m.text.clone());
+        let waited = now - a.updated_at >= GONE_GRACE_MS || untold.is_some();
         if !(a.state == AgentStepState::Working && waited || a.state == AgentStepState::Asking) {
             continue;
         }
@@ -910,6 +974,13 @@ pub(crate) async fn sweep(st: &AppState) {
             stall(st, a, why).await;
             continue;
         };
+        if on_its_way {
+            continue;
+        }
+        if let Some(text) = untold {
+            stall_undelivered(st, a, &text).await;
+            continue;
+        }
         let gone = match st.store.get_session(&sid).await {
             // An asking step waits for the user, however its session is.
             Ok(Some(_)) if a.state == AgentStepState::Asking => false,
@@ -939,25 +1010,31 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
             let step_id = item.step_id.as_deref().ok_or("the item has no step")?;
             let mut a = st.store.get_agent_step(step_id).await.map_err(err)?.ok_or("the step is gone")?;
             let step = waiting_step(st, &a).await?;
-            if choice == inbox::NUDGE {
+            if choice == inbox::NUDGE || choice == inbox::RESEND {
                 let s = st
                     .store
                     .get_session(a.session_id.as_deref().unwrap_or_default())
                     .await
                     .map_err(err)?
                     .ok_or("the step's session is gone: take it over instead")?;
-                let text = answer
-                    .text
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .map(String::from)
-                    .unwrap_or_else(|| nudge_message(&a.outcomes));
                 if s.status != SessionStatus::Running && s.mode != SessionMode::Conversation {
                     return Err("the step's terminal session has stopped: restart it, or take the step over".into());
                 }
-                queue_message(st, &s, &text, None, a.ticket_id.clone(), true).await?;
-                a.nudges += 1;
+                if choice == inbox::RESEND {
+                    // The step's undelivered first message, again, as the user's (PDT-144).
+                    let text = item.body.get("message").and_then(Value::as_str).ok_or("the item has no message")?;
+                    queue_message(st, &s, text, Some(prompt_key(&a.step_id)), a.ticket_id.clone(), USER).await?;
+                } else {
+                    let text = answer
+                        .text
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                        .map(String::from)
+                        .unwrap_or_else(|| nudge_message(&a.outcomes));
+                    queue_message(st, &s, &text, None, a.ticket_id.clone(), USER).await?;
+                    a.nudges += 1;
+                }
                 a.state = AgentStepState::Working;
                 // Its wait on background tasks starts over if the nudged turn ends with some still running.
                 a.background_since = None;
@@ -965,7 +1042,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
                 a.updated_at = now_ms();
                 st.store.put_agent_step(&a).await.map_err(err)?;
                 end_item(st, item, json!({"choice": choice})).await?;
-                return Ok(json!({"nudged": true}));
+                return Ok(if choice == inbox::RESEND { json!({"resent": true}) } else { json!({"nudged": true}) });
             }
             let outcome = inbox::choice_outcome(choice).ok_or_else(|| format!("{choice} is not a choice here"))?;
             if !a.outcomes.iter().any(|o| o.id == outcome) {
@@ -1081,7 +1158,7 @@ async fn answer_question(st: &AppState, item: &InboxItem, answer: &inbox::InboxA
     }
     let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
     end_item(st, item, json!({"answers": answer.answers, "text": answer.text})).await?;
-    queue_message(st, &s, &text, None, item.ticket_id.clone(), true).await?;
+    queue_message(st, &s, &text, None, item.ticket_id.clone(), USER).await?;
     if let Some(step) = &item.step_id
         && let Ok(Some(mut a)) = st.store.get_agent_step(step).await
         && a.state == AgentStepState::Asking

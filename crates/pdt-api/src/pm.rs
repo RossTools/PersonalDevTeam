@@ -218,6 +218,7 @@ pub(crate) async fn turn_ended(st: &AppState, id: &str) {
                 resolved_at: None,
                 by_user: false,
                 pending_id: None,
+                reopens: false,
             };
             if let Err(e) = st.store.queue_session_message(&m).await {
                 tracing::warn!(session = %id, error = %e, "could not ask the PM session for its journal");

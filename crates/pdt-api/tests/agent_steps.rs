@@ -969,3 +969,90 @@ async fn the_background_cap_does_not_stall_a_step_that_has_ended() {
     let a = env.state.store.get_agent_step(step_id).await.unwrap().unwrap();
     assert_eq!(a.state, pdt_core::workflow::agent::AgentStepState::Done);
 }
+
+/// PDT-144: a later pass's message that never reaches its session (the agent stopped listening, then was stopped)
+/// stalls the step saying so and quoting it, and Resume with this message sends it again, reopening the conversation.
+#[tokio::test]
+async fn a_pass_message_that_never_arrives_stalls_the_step_and_can_be_sent_again() {
+    let env = setup().await;
+    let t = ticket(&env, "Twice").await;
+    let wf = create_workflow(&env, json!({
+        "name": "Code and accept",
+        "nodes": [
+            {"id": "go", "kind": "manual", "version": 1},
+            {"id": "code", "kind": "agent", "version": 1, "config": {"persona": "Coder", "session": "reuse",
+                "prompt": r#"mcp: submit_outcome {"outcome": "submitted", "summary": "Built."}"#,
+                "outcomes": [{"id": "submitted"}]}},
+            {"id": "accept", "kind": "gate", "version": 1, "config": {"question": "Accept?", "choices": ["accept", "reject"]}},
+            {"id": "done", "kind": "end", "version": 1},
+        ],
+        "edges": [
+            {"from": "go", "to": "code"},
+            {"from": "code", "port": "submitted", "to": "accept"},
+            {"from": "accept", "port": "accept", "to": "done"},
+            {"from": "accept", "port": "reject", "to": "code"},
+        ],
+    }))
+    .await;
+    run_now(&env, &wf, json!({"ticketId": t})).await;
+    let gate =
+        tick_until(&env, "the gate", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "gate") }).await;
+    let coder = gate_session(&env, &t).await;
+    // The agent stops reading: the next pass is handed to it but never taken, and stopping it loses it.
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{coder}/messages"), Some(json!({"text": "deaf"}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    tick_until(&env, "the agent going deaf", || async {
+        agent_says(&env, &coder).await.iter().any(|m| m.contains("Not listening")).then_some(json!(null))
+    })
+    .await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", gate["id"].as_str().unwrap()),
+        Some(json!({"choice": "reject", "text": "Wrong colour."})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tick_until(&env, "the pass on its way", || async {
+        let sending = env.state.store.sending_session_messages(None).await.unwrap();
+        sending.iter().any(|m| m.text.contains("back for another pass")).then_some(json!(null))
+    })
+    .await;
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{coder}/kill"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    let why = stalled["body"]["why"].as_str().unwrap();
+    assert!(why.starts_with("Its message was never delivered: [PDT] Your step is back for another pass."), "{why}");
+    assert!(why.contains("Wrong colour."), "{why}");
+    let choices: Vec<&str> = stalled["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(choices, ["resend", "nudge", "outcome:submitted"]);
+    assert_eq!(stalled["choices"][0]["primary"], true);
+
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", stalled["id"].as_str().unwrap()),
+        Some(json!({"choice": "resend"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tick_until(&env, "the pass reaching the reopened coder", || async {
+        let said = agent_says(&env, &coder).await;
+        said.iter().any(|m| m.contains("back for another pass") && m.contains("Wrong colour.")).then_some(json!(null))
+    })
+    .await;
+    assert!(
+        !inbox(&env).await.iter().any(
+            |i| i["kind"] == "stalled" && i["body"]["why"].as_str().unwrap_or_default().contains("never delivered")
+        )
+    );
+}
+
+/// The session of a ticket's only agent step so far.
+async fn gate_session(env: &Env, t: &str) -> String {
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    v["sessions"][0]["id"].as_str().unwrap().to_string()
+}

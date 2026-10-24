@@ -17,7 +17,7 @@ import { PrDetails } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
-import { after, dismissable, KIND_LABEL, merges, noticeText, passesOf, questionsOf, selectedUpdate, step } from './model';
+import { after, dismissable, KIND_LABEL, merges, noticeText, passesOf, questionsOf, resends, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
@@ -285,10 +285,19 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
           </Sheet>
         </>
       );
-      bar = <DecisionBar busy={busy} decisions={[
-        { id: 'takeover', title: 'Take over', disabled: outcomes.length === 0 },
-        { id: 'nudge', title: 'Nudge', primary: true },
-      ]} onPick={(id) => (id === 'takeover' ? setTakingOver(true) : withNote('nudge'))} />;
+      // Its first message never reached the session: sending it again comes first (PDT-144).
+      const decisions = resends(item)
+        ? [
+          { id: 'takeover', title: 'Take over', disabled: outcomes.length === 0 },
+          { id: 'nudge', title: 'Nudge' },
+          { id: 'resend', title: 'Resume with this message', primary: true },
+        ]
+        : [{ id: 'takeover', title: 'Take over', disabled: outcomes.length === 0 }, { id: 'nudge', title: 'Nudge', primary: true }];
+      bar = <DecisionBar busy={busy} decisions={decisions} onPick={(id) => {
+        if (id === 'takeover') setTakingOver(true);
+        else if (id === 'resend') void onAnswer({ choice: 'resend' });
+        else withNote('nudge');
+      }} />;
       break;
     }
     case 'loop_limit':
