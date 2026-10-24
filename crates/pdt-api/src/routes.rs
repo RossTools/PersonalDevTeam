@@ -107,8 +107,21 @@ pub struct AppState {
     pub home_dir: Option<std::path::PathBuf>,
     /// Conversation sessions' runtimes (structured agents).
     pub conversations: crate::conversations::Conversations,
-    /// Serializes the workflow engine's ticks and the commands that change runs.
+    /// Serializes the workflow engine's state changes (claiming a step, writing its result, matching events) and
+    /// the commands that change runs. Never held while a node runs.
     pub(crate) engine_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// One lock per run, held while the engine advances it (node bodies included) and by the commands that act on
+    /// one of its steps, so they never see a step half-run. Taken before `engine_lock`.
+    pub(crate) run_locks: std::sync::Arc<crate::workflow::engine::RunLocks>,
+    /// Agent steps start one at a time (the host's running cap), though runs advance side by side.
+    pub(crate) agent_step_start: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// How many runs advance at once.
+    pub(crate) engine_runs: std::sync::Arc<tokio::sync::Semaphore>,
+    /// How long an engine tick waits for the runs it advances before it goes on without them (they keep running).
+    /// `new` waits long, so a test's tick ends with its runs; pdtd sets a short wait.
+    pub engine_tick_wait: std::time::Duration,
+    /// Parsed workflow documents of enabled workflows, for the schedule and matching passes.
+    pub(crate) workflow_docs: std::sync::Arc<crate::workflow::engine::DocCache>,
     /// The built-in workflows were installed or updated in this daemon run.
     pub(crate) builtins_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// pdt-mcp's host key (`<data dir>/mcp.key`), once read.
@@ -183,6 +196,11 @@ impl AppState {
             home_dir: std::env::home_dir(),
             conversations: Default::default(),
             engine_lock: Default::default(),
+            run_locks: Default::default(),
+            agent_step_start: Default::default(),
+            engine_runs: std::sync::Arc::new(tokio::sync::Semaphore::new(crate::workflow::engine::CONCURRENT_RUNS)),
+            engine_tick_wait: std::time::Duration::from_secs(10 * 60),
+            workflow_docs: Default::default(),
             auto_start_failed: Default::default(),
             mcp: Default::default(),
             builtins_installed: Default::default(),

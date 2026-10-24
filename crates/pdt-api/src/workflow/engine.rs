@@ -1,6 +1,9 @@
 //! The durable workflow engine (Phase 7a spec §4): matches logged events to enabled triggers, starts runs, executes
 //! their steps one by one (each written before and after it runs, so a restart re-runs at most the step that was
 //! running), handles waits, retries, error paths, limits and sub-workflows, and dry-runs documents in memory.
+//!
+//! Locks (PDT-128): `engine_lock` is held only around state changes (claiming a step, writing its result, the tick's
+//! passes, the commands); a node's body runs outside it, holding only its run's lock, and runs advance side by side.
 
 use super::catalog::{Category, Outcome, StepCx, catalog, parse};
 use super::nodes::trigger::{MANUAL, SharedTrigger};
@@ -11,8 +14,95 @@ use pdt_core::workflow::doc::{ERROR_PORT, WorkflowDoc};
 use pdt_core::workflow::refs::{resolve, resolve_keeping};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use ts_rs::TS;
+
+/// How many runs advance at once.
+pub(crate) const CONCURRENT_RUNS: usize = 16;
+
+/// One lock per run (`AppState::run_locks`), shared by the runs of one ticket (`lock_key`). An entry nobody holds
+/// or waits for is dropped on the next lookup.
+#[derive(Default)]
+pub(crate) struct RunLocks(std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>);
+
+impl RunLocks {
+    fn get(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        m.retain(|_, l| Arc::strong_count(l) > 1);
+        m.entry(run_id.to_string()).or_default().clone()
+    }
+
+    pub(crate) async fn lock(&self, run_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        self.get(run_id).lock_owned().await
+    }
+
+    fn try_lock(&self, run_id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        self.get(run_id).try_lock_owned().ok()
+    }
+}
+
+/// Runs of one ticket (or attempt) go one at a time, as before PDT-128: one run's checks (is an agent on it?) see what
+/// the other's steps did. Runs of different tickets go side by side.
+fn lock_key(run: &Run) -> String {
+    match (&run.ticket_id, &run.attempt_id) {
+        (Some(t), _) => format!("ticket:{t}"),
+        (None, Some(a)) => format!("attempt:{a}"),
+        _ => format!("run:{}", run.id),
+    }
+}
+
+/// What a command acting on a run's steps holds: the run's lock (so no step of it is half-run), then the engine's.
+pub(crate) struct Locked<'a> {
+    _engine: tokio::sync::MutexGuard<'a, ()>,
+    _run: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+/// Takes `run_id`'s lock (when there is a run), then the engine lock.
+pub(crate) async fn lock_run<'a>(st: &'a AppState, run_id: Option<&str>) -> Locked<'a> {
+    let run = match run_id {
+        Some(id) => {
+            let key = match st.store.get_workflow_run(id).await {
+                Ok(Some(r)) => lock_key(&r),
+                _ => format!("run:{id}"),
+            };
+            Some(st.run_locks.lock(&key).await)
+        }
+        None => None,
+    };
+    Locked { _run: run, _engine: st.engine_lock.lock().await }
+}
+
+/// Parsed documents of workflows as they were at `updated_at` (`AppState::workflow_docs`), so the 2 s passes over
+/// enabled workflows don't parse every document each tick.
+#[derive(Default)]
+pub(crate) struct DocCache(std::sync::Mutex<HashMap<(String, u32, i64), Arc<WorkflowDoc>>>);
+
+const DOC_CACHE_MAX: usize = 256;
+
+/// The enabled workflows with their current documents.
+pub(crate) async fn enabled_with_docs(st: &AppState) -> Vec<(Workflow, Arc<WorkflowDoc>)> {
+    let mut out = vec![];
+    for wf in st.store.enabled_workflows().await.unwrap_or_default() {
+        let key = (wf.id.clone(), wf.version, wf.updated_at);
+        let cached = st.workflow_docs.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
+        let doc = match cached {
+            Some(d) => d,
+            None => {
+                let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
+                let doc = Arc::new(doc);
+                let mut m = st.workflow_docs.0.lock().unwrap_or_else(|e| e.into_inner());
+                if m.len() >= DOC_CACHE_MAX {
+                    m.clear();
+                }
+                m.insert(key, doc.clone());
+                doc
+            }
+        };
+        out.push((wf, doc));
+    }
+    out
+}
 
 type R<T> = Result<T, String>;
 
@@ -145,12 +235,10 @@ async fn match_events(st: &AppState) {
         Ok(_) => return,
         Err(e) => return tracing::warn!(error = %e, "could not read new events"),
     };
-    let mut enabled: Vec<(Workflow, WorkflowDoc)> = vec![];
-    for wf in st.store.enabled_workflows().await.unwrap_or_default() {
-        if let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await {
-            enabled.push((wf, doc));
-        }
-    }
+    let enabled = enabled_with_docs(st).await;
+    // Read once for the batch; a step an earlier event resumed is not resumed again.
+    let waiting = st.store.steps_waiting_for_events().await.unwrap_or_default();
+    let mut resumed: HashSet<String> = HashSet::new();
     for e in events {
         let trigger = trigger_value(&e);
         let ctx = json!({"trigger": trigger});
@@ -181,17 +269,21 @@ async fn match_events(st: &AppState) {
             }
         }
         // Steps waiting for this event.
-        for (_, step) in st.store.steps_waiting_for_events().await.unwrap_or_default() {
+        for (_, step) in &waiting {
+            if resumed.contains(&step.id) {
+                continue;
+            }
             let Some(w) = step.wait.get("event") else { continue };
             if w.get("type").and_then(|t| t.as_str()) != Some(e.kind.as_str()) {
                 continue;
             }
             let conds: Vec<pdt_core::workflow::cond::Condition> =
                 w.get("where").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
-            if all(&conds, &json!({"event": trigger}))
-                && let Err(x) = complete_step(st, &step, "event", trigger.clone()).await
-            {
-                tracing::warn!(step = %step.id, error = %x, "could not resume a waiting step");
+            if all(&conds, &json!({"event": trigger})) {
+                resumed.insert(step.id.clone());
+                if let Err(x) = complete_step(st, step, "event", trigger.clone()).await {
+                    tracing::warn!(step = %step.id, error = %x, "could not resume a waiting step");
+                }
             }
         }
         if let Err(x) = st.store.mark_event_processed(e.seq, now_ms()).await {
@@ -291,13 +383,24 @@ fn is_quiet(steps: &[Step]) -> bool {
     })
 }
 
-/// Runs a run's steps until it waits or ends.
-async fn advance(st: &AppState, mut run: Run) -> R<()> {
-    let (wf, doc) = match load(st, &run).await {
-        Ok(x) => x,
-        Err(e) => return finish_run(st, &mut run, RunStatus::Failed, Value::Null, Some(e)).await,
-    };
+/// Runs a run's steps until it waits or ends. The caller holds the run's lock; the engine lock is taken for each state
+/// change and let go while a node's body runs.
+async fn advance(st: &AppState, run_id: &str) -> R<()> {
+    let mut loaded: Option<(Workflow, WorkflowDoc)> = None;
     for _ in 0..10_000 {
+        let engine = st.engine_lock.lock().await;
+        // Read again each time: a command may have ended the run while a step ran.
+        let Some(mut run) = st.store.get_workflow_run(run_id).await.map_err(err)? else { return Ok(()) };
+        if run.status.is_finished() {
+            return Ok(());
+        }
+        if loaded.is_none() {
+            match load(st, &run).await {
+                Ok(x) => loaded = Some(x),
+                Err(e) => return finish_run(st, &mut run, RunStatus::Failed, Value::Null, Some(e)).await,
+            }
+        }
+        let Some((wf, doc)) = loaded.as_ref() else { return Ok(()) };
         let now = now_ms();
         let steps = st.store.list_steps(&run.id).await.map_err(err)?;
         if now - run.started_at > i64::try_from(doc.settings.max_runtime_ms).unwrap_or(i64::MAX) {
@@ -343,27 +446,78 @@ async fn advance(st: &AppState, mut run: Run) -> R<()> {
             let e = format!("the run took more than {} steps", doc.settings.max_steps);
             return finish_run(st, &mut run, RunStatus::Failed, Value::Null, Some(e)).await;
         }
-        if execute(st, &wf, &doc, &mut run, step, &steps).await? {
+        let job = match claim(st, wf, doc, &mut run, step, &steps).await? {
+            Claim::Ended => return Ok(()),
+            Claim::Moved => continue,
+            Claim::Run(job) => job,
+        };
+        // A node's body runs outside the engine lock (PDT-128), unless it is a quick one the engine's passes depend on.
+        let engine = if job.locked {
+            Some(engine)
+        } else {
+            drop(engine);
+            None
+        };
+        let result = {
+            let cx =
+                StepCx { st, workflow: wf, run: &run, step: &job.step, node: job.node, ctx: &job.ctx, dry_run: false };
+            match tokio::time::timeout(job.limit, job.kind.run(&cx, job.input)).await {
+                Ok(r) => r,
+                Err(_) => Err(format!("timed out after {} ms", job.limit.as_millis())),
+            }
+        };
+        let _engine = match engine {
+            Some(g) => g,
+            None => st.engine_lock.lock().await,
+        };
+        // The step may have ended while it ran (its run was cancelled): then its result goes nowhere.
+        let current = st.store.get_step(&job.step.id).await.map_err(err)?;
+        if !current.is_some_and(|s| s.status == StepStatus::Running && s.attempts == job.step.attempts) {
+            tracing::info!(run = %run_id, node = %job.step.node_id, "a step's run moved on while it ran: its result is dropped");
+            continue;
+        }
+        let Some(mut run) = st.store.get_workflow_run(run_id).await.map_err(err)? else { return Ok(()) };
+        if apply(st, doc, &mut run, job.step, result).await? {
             return Ok(());
         }
     }
     Ok(())
 }
 
-/// Executes one step. True when the run ended.
-async fn execute(
+/// A step claimed to run: what its body needs.
+struct Job<'a> {
+    step: Step,
+    node: &'a pdt_core::workflow::doc::Node,
+    kind: &'static dyn super::catalog::NodeKind,
+    input: Value,
+    ctx: Value,
+    limit: std::time::Duration,
+    /// The body runs under the engine lock.
+    locked: bool,
+}
+
+enum Claim<'a> {
+    /// The run ended.
+    Ended,
+    /// The step ended without running (an error path or a retry): look again.
+    Moved,
+    Run(Box<Job<'a>>),
+}
+
+/// Marks one step running (or fails it before it runs), under the engine lock.
+async fn claim<'a>(
     st: &AppState,
     wf: &Workflow,
-    doc: &WorkflowDoc,
+    doc: &'a WorkflowDoc,
     run: &mut Run,
     mut step: Step,
     steps: &[Step],
-) -> R<bool> {
-    let fail = |e: String| e;
+) -> R<Claim<'a>> {
+    let ended = |e: bool| if e { Claim::Ended } else { Claim::Moved };
     let Some(node) = doc.node(&step.node_id) else {
         let e = format!("node {} is not in the workflow", step.node_id);
-        finish_run(st, run, RunStatus::Failed, Value::Null, Some(fail(e))).await?;
-        return Ok(true);
+        finish_run(st, run, RunStatus::Failed, Value::Null, Some(e)).await?;
+        return Ok(Claim::Ended);
     };
     let kind = catalog().get(&node.kind);
     let visits = steps
@@ -375,32 +529,40 @@ async fn execute(
     let config = catalog().current_config(node);
     let (kind, config) = match (kind, config) {
         (Some(k), Ok(c)) if visits < usize::try_from(node.max_visits()).unwrap_or(usize::MAX) => (k, c),
-        (_, Err(e)) => return fail_step(st, doc, run, step, e).await,
-        (None, _) => return fail_step(st, doc, run, step, format!("no node kind is called {}", node.kind)).await,
+        (_, Err(e)) => return fail_step(st, doc, run, step, e).await.map(ended),
+        (None, _) => {
+            let e = format!("no node kind is called {}", node.kind);
+            return fail_step(st, doc, run, step, e).await.map(ended);
+        }
         _ => {
             let e = format!("loop limit: {} ran {visits} times in this run", node.id);
             step.attempts = u32::MAX / 2;
-            return fail_step(st, doc, run, step, e).await;
+            return fail_step(st, doc, run, step, e).await.map(ended);
         }
     };
     let state = st.store.workflow_state(&wf.id).await.map_err(err)?;
     let ctx = context(wf, run, steps, state, false);
     let input = resolve_keeping(&config, &ctx, Some("event"));
-    let now = now_ms();
     step.status = StepStatus::Running;
     step.attempts += 1;
     step.input = input.clone();
-    step.started_at = Some(now);
+    step.started_at = Some(now_ms());
     step.error = None;
     st.store.put_step(&step).await.map_err(err)?;
     let limit = std::time::Duration::from_millis(node.timeout_ms.unwrap_or_else(|| kind.default_timeout_ms()));
-    let result = {
-        let cx = StepCx { st, workflow: wf, run, step: &step, node, ctx: &ctx, dry_run: false };
-        match tokio::time::timeout(limit, kind.run(&cx, input)).await {
-            Ok(r) => r,
-            Err(_) => Err(format!("timed out after {} ms", limit.as_millis())),
-        }
-    };
+    let outside = matches!(catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
+    let locked = !outside || kind.in_engine_lock();
+    Ok(Claim::Run(Box::new(Job { step, node, kind, input, ctx, limit, locked })))
+}
+
+/// Writes what a step's body came to, under the engine lock. True when the run ended.
+async fn apply(
+    st: &AppState,
+    doc: &WorkflowDoc,
+    run: &mut Run,
+    mut step: Step,
+    result: Result<Outcome, String>,
+) -> R<bool> {
     match result {
         Ok(Outcome::Next { port, output }) => {
             complete_step(st, &step, &port, output).await?;
@@ -459,40 +621,66 @@ async fn fail_step(st: &AppState, doc: &WorkflowDoc, run: &mut Run, mut step: St
     Ok(true)
 }
 
-/// Advances every run that can move.
+/// Advances every run that can move, each in its own task (at most `CONCURRENT_RUNS` at once), and waits for them
+/// up to `engine_tick_wait`; a run still going then (a slow step) goes on in the background, and later ticks leave it
+/// alone while its lock is held.
 async fn advance_all(st: &AppState) {
     let runs = match st.store.runnable_workflow_runs(now_ms()).await {
         Ok(r) => r,
         Err(e) => return tracing::warn!(error = %e, "could not list workflow runs"),
     };
+    // A ticket's runs go one after another in one task (`lock_key`), in the order they were listed.
+    let mut groups: Vec<(String, Vec<Run>)> = vec![];
     for run in runs {
-        if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-            return;
-        }
-        // A run advanced before it may have ended it (finishing a ticket cancels the ticket's other runs).
-        let run = match st.store.get_workflow_run(&run.id).await {
-            Ok(Some(r)) if !r.status.is_finished() => r,
-            _ => continue,
-        };
-        let id = run.id.clone();
-        if let Err(e) = advance(st, run).await {
-            tracing::warn!(run = %id, error = %e, "a workflow run could not go on");
+        let key = lock_key(&run);
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, g)) => g.push(run),
+            None => groups.push((key, vec![run])),
         }
     }
+    let mut tasks = tokio::task::JoinSet::new();
+    for (key, group) in groups {
+        if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        // Being advanced already (a slow step), or a command is acting on it: a later tick picks it up.
+        let Some(guard) = st.run_locks.try_lock(&key) else { continue };
+        let Ok(permit) = st.engine_runs.clone().try_acquire_owned() else { break };
+        let st = st.clone();
+        tasks.spawn(async move {
+            let _held = (guard, permit);
+            for run in group {
+                if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                if let Err(e) = advance(&st, &run.id).await {
+                    tracing::warn!(run = %run.id, error = %e, "a workflow run could not go on");
+                }
+            }
+        });
+    }
+    let all = async { while tasks.join_next().await.is_some() {} };
+    let _ = tokio::time::timeout(st.engine_tick_wait, all).await;
+    tasks.detach_all();
 }
 
 /// One engine tick: install built-ins (once), match new events, run steps, deliver session messages, run what they
 /// woke. pdtd runs it every 2 s; tests call it.
 pub async fn run_workflows(st: &AppState) {
-    let _engine = st.engine_lock.lock().await;
-    super::builtins::ensure_installed(st).await;
-    crate::personas::ensure_builtins(st).await;
-    super::nodes::schedule::fire_schedules(st).await;
-    match_events(st).await;
-    crate::scheduler::admit_waiting(st).await;
+    {
+        let _engine = st.engine_lock.lock().await;
+        super::builtins::ensure_installed(st).await;
+        crate::personas::ensure_builtins(st).await;
+        super::nodes::schedule::fire_schedules(st).await;
+        match_events(st).await;
+        crate::scheduler::admit_waiting(st).await;
+    }
     advance_all(st).await;
-    super::outbox::deliver(st).await;
-    super::agent::sweep(st).await;
+    {
+        let _engine = st.engine_lock.lock().await;
+        super::outbox::deliver(st).await;
+        super::agent::sweep(st).await;
+    }
     advance_all(st).await;
 }
 
@@ -537,7 +725,7 @@ pub(crate) async fn start_child(cx: &StepCx<'_>, workflow_id: &str, input: Value
 
 /// Retries a failed run from its failed step.
 pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> R<()> {
-    let _engine = st.engine_lock.lock().await;
+    let _locked = lock_run(st, Some(run_id)).await;
     let mut run = st.store.get_workflow_run(run_id).await.map_err(err)?.ok_or("no such run")?;
     if run.status != RunStatus::Failed {
         return Err("only a failed run can be retried".into());
@@ -558,7 +746,7 @@ pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> R<()> {
 
 /// Takes a run back to `step`, the agent step it timed out or stopped at (PDT-123), so it can go on from there: what
 /// the run still had to do after it (its `timeout` path) is skipped, the step's open Inbox items end with
-/// `resolution`, and the run runs again. Callers hold the engine lock and add the step that goes on.
+/// `resolution`, and the run runs again. Callers hold the run's and the engine's locks and add the step that goes on.
 pub(crate) async fn reopen_at(st: &AppState, step: &Step, resolution: Value) -> R<Run> {
     let mut run = st.store.get_workflow_run(&step.run_id).await.map_err(err)?.ok_or("the run is gone")?;
     let steps = st.store.list_steps(&run.id).await.map_err(err)?;
@@ -602,11 +790,11 @@ pub(crate) async fn next_seq(st: &AppState, run_id: &str) -> R<i64> {
 /// with the same trigger, ticket and attempt, and in that step's session while it is there. `note` (the user's) goes
 /// to the session first.
 pub(crate) async fn resume_run(st: &AppState, run_id: &str, note: Option<String>) -> R<()> {
-    let _engine = st.engine_lock.lock().await;
+    let _locked = lock_run(st, Some(run_id)).await;
     resume_locked(st, run_id, note).await
 }
 
-/// `resume_run` for a caller that holds the engine lock.
+/// `resume_run` for a caller that holds the run's and the engine's locks.
 pub(crate) async fn resume_locked(st: &AppState, run_id: &str, note: Option<String>) -> R<()> {
     let steps = st.store.list_steps(run_id).await.map_err(err)?;
     let step = pdt_core::workflow::agent::resumable_step(&steps)
@@ -620,6 +808,8 @@ pub(crate) async fn resume_locked(st: &AppState, run_id: &str, note: Option<Stri
     st.store.put_step(&next).await.map_err(err)
 }
 
+/// Cancels a run. It takes only the engine lock, so it never waits for a step that is running (a hung request): that
+/// step's result is dropped when it comes.
 pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> R<()> {
     let _engine = st.engine_lock.lock().await;
     cancel_locked(st, run_id).await
@@ -639,12 +829,11 @@ pub(crate) async fn cancel_because(st: &AppState, run_id: &str, why: &str) -> R<
     finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some(why.into())).await
 }
 
-/// Answers a waiting gate.
 /// Answers a waiting gate with `choice`. The user's `text` with it (why they rejected, what to change) goes on the
 /// run's ticket as their comment, so the timeline keeps it and the agent working on the ticket hears it ("Ticket
 /// comments to the agent"); the gate's output carries it too.
 pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &str, text: Option<&str>) -> R<()> {
-    let _engine = st.engine_lock.lock().await;
+    let _locked = lock_run(st, Some(run_id)).await;
     let step = st.store.get_step(step_id).await.map_err(err)?.filter(|s| s.run_id == run_id).ok_or("no such step")?;
     let choices: Vec<String> = step
         .wait

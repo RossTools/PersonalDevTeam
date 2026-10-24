@@ -173,8 +173,8 @@ async fn move_to_done(st: &AppState, ticket_id: &str, by: Option<&By>) -> Result
     Ok(())
 }
 
-/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it (a `ticket.finish` step
-/// runs in the engine, which holds its lock: `by` says so).
+/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it. Each cancel takes the
+/// engine lock: a `ticket.finish` step's body runs outside it (PDT-128).
 async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
     let filter = pdt_store::RunFilter { ticket_id: Some(ticket_id.to_string()), limit: 500, ..Default::default() };
     let runs = match st.store.list_workflow_runs(&filter).await {
@@ -188,12 +188,9 @@ async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
     }
     for run in runs.iter().filter(|r| !r.status.is_finished() && !keep.contains(&r.id)) {
         let why = "cancelled: the ticket was finished";
-        let done = match by {
-            Some(_) => crate::workflow::engine::cancel_because(st, &run.id, why).await,
-            None => {
-                let _engine = st.engine_lock.lock().await;
-                crate::workflow::engine::cancel_because(st, &run.id, why).await
-            }
+        let done = {
+            let _engine = st.engine_lock.lock().await;
+            crate::workflow::engine::cancel_because(st, &run.id, why).await
         };
         if let Err(e) = done {
             tracing::warn!(ticket = %ticket_id, run = %run.id, error = %e, "could not cancel the finished ticket's run");
