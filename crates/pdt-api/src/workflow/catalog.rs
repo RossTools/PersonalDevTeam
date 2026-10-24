@@ -104,12 +104,26 @@ pub struct StepCx<'a> {
     pub ctx: &'a Value,
     /// A dry run: report what would happen, change nothing.
     pub dry_run: bool,
+    /// The step ran before and was cut short (PDT stopped while it ran, or it timed out): it may have done some or all
+    /// of its work. `step.output` holds the progress it recorded ([`StepCx::save_progress`]).
+    pub rerun: bool,
 }
 
 impl StepCx<'_> {
     /// The node's title, else its id.
     pub fn node_title(&self) -> &str {
         if self.node.title.is_empty() { &self.node.id } else { &self.node.title }
+    }
+
+    /// Records what the step has done so far (as its output), so running it again after a restart or a retry picks up
+    /// from there (`cx.step.output`) instead of doing it twice.
+    pub async fn save_progress(&self, progress: &Value) -> Result<(), String> {
+        self.st
+            .store
+            .set_step_progress(&self.step.id, self.step.attempts, progress)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     /// The workflow and run, for records of what a workflow did (vision principle 5).
@@ -168,6 +182,14 @@ pub trait NodeKind: Send + Sync {
     /// outside it; flow, gate, wait and condition kinds always run under it.
     fn in_engine_lock(&self) -> bool {
         false
+    }
+
+    /// Whether running a node with this (resolved) `input` again after it was cut short (PDT stopped while it ran, or
+    /// it timed out) is safe: it does nothing twice, because what it does can be repeated or it checks what it did
+    /// (`StepCx::rerun`, its saved progress). An unsafe one is not run again on its own (no restart re-run, no retry
+    /// after a timeout): its step fails, and Retry on the run is the user's choice to run it once more (PDT-131).
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        true
     }
 }
 

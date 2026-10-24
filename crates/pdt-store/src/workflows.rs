@@ -19,7 +19,8 @@ const WF_COLUMNS: &str = "id, name, description, scope, project_id, enabled, bui
                            AND v.status = 'proposed') AS proposed, created_at, updated_at";
 const RUN_COLUMNS: &str = "r.id, r.workflow_id, w.name AS workflow_name, r.version, r.status, r.run_key, \
                            r.trigger_event_id, r.trigger_node, r.trigger, r.project_id, r.ticket_id, r.attempt_id, \
-                           r.parent_run_id, r.parent_step_id, r.error, r.output, r.wake_at, r.started_at, r.ended_at";
+                           r.parent_run_id, r.parent_step_id, r.error, r.output, r.wake_at, r.started_at, r.resumed_at, \
+                           r.ended_at";
 const STEP_COLUMNS: &str = "id, run_id, seq, node_id, kind, status, input, output, port, attempts, error, wake_at, \
                             wait, started_at, ended_at";
 const MSG_COLUMNS: &str = "id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, step_id, status, \
@@ -94,6 +95,7 @@ fn to_run(r: &SqliteRow) -> Result<Run, StoreError> {
         output: json_of(r.try_get("output")?),
         wake_at: r.try_get("wake_at")?,
         started_at: r.try_get("started_at")?,
+        resumed_at: r.try_get("resumed_at")?,
         ended_at: r.try_get("ended_at")?,
     })
 }
@@ -312,7 +314,8 @@ impl Store {
         .bind(now)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE workflows SET updated_at = ? WHERE id = ?").bind(now).bind(id).execute(&mut *tx).await?;
+        // The workflow's `updated_at` stays: a proposal changes nothing that runs until it is accepted, and a schedule
+        // takes a change after its last slot as its new baseline (PDT-131).
         tx.commit().await?;
         Ok(Some(u32::try_from(next).unwrap_or(0)))
     }
@@ -559,15 +562,17 @@ impl Store {
         rows.iter().map(to_run).collect()
     }
 
-    /// Writes a run's changing fields: status, error, output, wake time, end.
+    /// Writes a run's changing fields: status, error, output, wake time, when it was resumed, end.
     pub async fn update_workflow_run(&self, run: &Run) -> Result<(), StoreError> {
         sqlx::query(
-            "UPDATE workflow_runs SET status = ?, error = ?, output = ?, wake_at = ?, ended_at = ? WHERE id = ?",
+            "UPDATE workflow_runs SET status = ?, error = ?, output = ?, wake_at = ?, resumed_at = ?, ended_at = ? \
+             WHERE id = ?",
         )
         .bind(run.status.as_str())
         .bind(&run.error)
         .bind(opt_json(&run.output))
         .bind(run.wake_at)
+        .bind(run.resumed_at)
         .bind(run.ended_at)
         .bind(&run.id)
         .execute(&self.pool)
@@ -582,6 +587,82 @@ impl Store {
             .execute(&self.pool)
             .await?;
         let _ = now;
+        Ok(())
+    }
+
+    /// Waiting runs with no wake time (left by a PDT before PDT-131, which set none for a wait with no timeout) wake
+    /// now, so the engine looks at them once: it gives them their runtime limit as a wake time, and goes on with one a
+    /// crash left with nothing to wait for. Returns how many woke.
+    pub async fn wake_untimed_workflow_runs(&self, now: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query("UPDATE workflow_runs SET wake_at = ? WHERE status = 'waiting' AND wake_at IS NULL")
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Ends a step and queues what it leads to in one transaction (PDT-131), so a crash never leaves a run with the
+    /// step done and nothing after it: the step's open Inbox items close, its agent binding is done, and its run, if
+    /// waiting, wakes.
+    pub async fn complete_workflow_step(&self, step: &Step, next: &[Step], now: i64) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        put_step(&mut tx, step).await?;
+        for n in next {
+            put_step(&mut tx, n).await?;
+        }
+        sqlx::query("UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND step_id = ?")
+            .bind(now)
+            .bind(&step.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE agent_steps SET state = 'done', updated_at = ? WHERE step_id = ? AND state != 'done'")
+            .bind(now)
+            .bind(&step.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE workflow_runs SET status = 'running', wake_at = NULL WHERE id = ? AND status = 'waiting'")
+            .bind(&step.run_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Records what a running step has done so far (its `output`, e.g. the Discord messages it posted), so running it
+    /// again after a restart or a retry doesn't do it twice. False when the step is no longer at that execution.
+    pub async fn set_step_progress(&self, id: &str, attempts: u32, output: &Value) -> Result<bool, StoreError> {
+        let r =
+            sqlx::query("UPDATE workflow_steps SET output = ? WHERE id = ? AND status = 'running' AND attempts = ?")
+                .bind(opt_json(output))
+                .bind(id)
+                .bind(i64::from(attempts))
+                .execute(&self.pool)
+                .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Closes the open Inbox items of every run of a workflow (it is being deleted: nothing could answer them).
+    pub async fn close_workflow_inbox_items(&self, workflow_id: &str, now: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query(
+            "UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND \
+             run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?)",
+        )
+        .bind(now)
+        .bind(workflow_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// Writes a step that is to run now, and wakes its run if it waits, in one transaction.
+    pub async fn put_step_and_wake(&self, s: &Step) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        put_step(&mut tx, s).await?;
+        sqlx::query("UPDATE workflow_runs SET status = 'running', wake_at = NULL WHERE id = ? AND status = 'waiting'")
+            .bind(&s.run_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -985,6 +1066,7 @@ mod tests {
             output: Value::Null,
             wake_at: None,
             started_at: 10,
+            resumed_at: None,
             ended_at: None,
         }
     }
@@ -1041,6 +1123,7 @@ mod tests {
         assert_eq!(store.propose_workflow_version("w", &doc("agent"), Author::Agent, "a", 7).await.unwrap(), Some(2));
         let w = store.get_workflow("w").await.unwrap().unwrap();
         assert_eq!((w.name.as_str(), w.version, w.proposed), ("one", 1, Some(2)), "the current version stays");
+        assert_eq!(w.updated_at, 5, "a proposal is no change to what runs (a schedule's baseline stays)");
         // A save meanwhile takes the next number; a newer proposal sets the older one aside.
         assert_eq!(store.save_workflow_version("w", &doc("mine"), Author::User, "", 8).await.unwrap(), Some(3));
         assert_eq!(store.propose_workflow_version("w", &doc("agent 2"), Author::Agent, "", 9).await.unwrap(), Some(4));
@@ -1131,6 +1214,35 @@ mod tests {
         store.update_workflow_run(&r).await.unwrap();
         assert_eq!(store.prune_workflow_runs(21).await.unwrap(), 1);
         assert!(store.list_steps("r1").await.unwrap().is_empty(), "steps go with their run");
+    }
+
+    #[tokio::test]
+    async fn progress_is_kept_for_the_execution_that_made_it_and_completion_is_one_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        store.insert_workflow(&wf("w", Scope::Host, None), &doc("w"), Author::User, "").await.unwrap();
+        let mut gate = step("g", "r1", 2);
+        gate.status = StepStatus::Waiting;
+        assert!(store.start_workflow_run(&run("r1", "k"), &[step("s1", "r1", 1), gate.clone()]).await.unwrap());
+        let mut r = store.get_workflow_run("r1").await.unwrap().unwrap();
+        r.status = RunStatus::Waiting;
+        store.update_workflow_run(&r).await.unwrap();
+        assert_eq!(store.wake_untimed_workflow_runs(7).await.unwrap(), 1, "no wake time: woken");
+        assert_eq!(store.get_workflow_run("r1").await.unwrap().unwrap().wake_at, Some(7));
+
+        let mut post = step("p", "r1", 3);
+        post.status = StepStatus::Running;
+        post.output = Value::Null;
+        store.put_step(&post).await.unwrap();
+        assert!(store.set_step_progress("p", 1, &json!({"messageIds": ["m1"]})).await.unwrap());
+        assert!(!store.set_step_progress("p", 2, &json!({})).await.unwrap(), "another execution's");
+        assert_eq!(store.get_step("p").await.unwrap().unwrap().output, json!({"messageIds": ["m1"]}));
+
+        gate.status = StepStatus::Succeeded;
+        store.complete_workflow_step(&gate, &[step("n", "r1", 4)], 9).await.unwrap();
+        let steps = store.list_steps("r1").await.unwrap();
+        assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["s1", "g", "p", "n"]);
+        assert_eq!(store.get_workflow_run("r1").await.unwrap().unwrap().status, RunStatus::Running, "woken");
     }
 
     #[tokio::test]

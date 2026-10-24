@@ -511,7 +511,9 @@ async fn waiting_step(st: &AppState, a: &AgentStep) -> R<Step> {
         let mut done = a.clone();
         done.state = AgentStepState::Done;
         done.updated_at = now_ms();
-        let _ = st.store.put_agent_step(&done).await;
+        if let Err(e) = st.store.put_agent_step(&done).await {
+            tracing::warn!(step = %done.step_id, error = %e, "could not write an agent step's binding");
+        }
         return Err("this workflow step has already ended".into());
     }
     Ok(step)
@@ -724,7 +726,9 @@ pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
     a.updated_at = now_ms();
     if a.turns >= a.max_turns {
         a.state = AgentStepState::Done;
-        let _ = st.store.put_agent_step(&a).await;
+        if let Err(e) = st.store.put_agent_step(&a).await {
+            tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
+        }
         let output = json!({"timedOut": true, "reason": format!("{} turns ended without an outcome", a.turns),
                             "sessionId": a.session_id, "persona": a.persona_name});
         if let Err(e) = super::engine::complete_step(st, &step, TIMEOUT, output).await {
@@ -734,7 +738,9 @@ pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
     }
     if a.nudges < a.auto_nudges {
         a.nudges += 1;
-        let _ = st.store.put_agent_step(&a).await;
+        if let Err(e) = st.store.put_agent_step(&a).await {
+            tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
+        }
         if let Ok(Some(s)) = st.store.get_session(session_id).await
             && let Err(e) = queue_message(st, &s, &nudge_message(&a.outcomes), None, a.ticket_id.clone(), false).await
         {
@@ -804,7 +810,9 @@ pub(crate) async fn sweep(st: &AppState) {
         if !matches!(st.store.get_step(&a.step_id).await, Ok(Some(s)) if s.status == StepStatus::Waiting) {
             let mut done = a.clone();
             done.state = AgentStepState::Done;
-            let _ = st.store.put_agent_step(&done).await;
+            if let Err(e) = st.store.put_agent_step(&done).await {
+                tracing::warn!(step = %done.step_id, error = %e, "could not write an agent step's binding");
+            }
             continue;
         }
         // Removing a session clears its steps' `session_id`.

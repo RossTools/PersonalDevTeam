@@ -180,8 +180,19 @@ pub struct Run {
     pub wake_at: Option<i64>,
     #[ts(type = "number")]
     pub started_at: i64,
+    /// When Retry or Resume last set it going again: its runtime limit counts from then.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub resumed_at: Option<i64>,
     #[ts(type = "number | null")]
     pub ended_at: Option<i64>,
+}
+
+impl Run {
+    /// When its runtime limit (`maxRuntimeMs`) started counting.
+    pub fn runtime_from(&self) -> i64 {
+        self.resumed_at.unwrap_or(self.started_at)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

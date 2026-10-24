@@ -253,11 +253,41 @@ secret as a bearer token); without `transport`, a URL and no command means `http
 - `workflow_runs` / `workflow_steps`: a run starts with its trigger's step; each step is written before and after it
   runs (`pending` → `running` → `succeeded` / `waiting` / `failed`), so after a restart a `running` step runs again
   and the rest continue. A step's input is its config with references filled in; its output feeds `{{steps.x}}`.
+  Ending a step is one transaction (PDT-131): the step, the steps its port leads to, closing its Inbox items, ending
+  its agent binding and waking its run, so a crash never leaves a run with a step done and nothing after it. A run a
+  PDT before that left so (nothing left to run or wait for, its last step to end leaving by a port that leads
+  somewhere, nothing queued after it) gets those steps queued instead of ending early.
+- Running a step again (PDT-131). A step cut short — found `running` after a restart, or dropped by its `timeoutMs`
+  — may have done some or all of its work, and runs again only if its kind is safe to run again (`rerun_safe`); the
+  node sees `StepCx::rerun`. A restart doesn't use up one of the node's retries (its `attempts` stays). Safe because
+  they record or check what they did: `discord.post` saves each piece's message id as it posts
+  (`StepCx::save_progress`, kept in the step's `output` while it runs and across its retries and Retry), so it posts
+  only the pieces still to go; `ticket.comment` marks its comment with its step (`data.stepId`) and finds it instead
+  of commenting again; `attempt.merge` takes `merged` when its attempt already merged (a pull request already set to
+  merge is `queued` anyway); `notify`, `session.send`, gates and agent steps are keyed by their step. Not safe, so
+  never run again on their own: `command`, `http.request` other than GET, HEAD, PUT, DELETE and OPTIONS,
+  `buildkite.trigger`, `buildkite.retry`, `jira.create` and `jira.comment`. Cut short, such a step fails without its
+  retries ("PDT stopped while this step ran… Retry the run to run it once more"; a timeout keeps its own error) and
+  takes its error port, else the run fails; Retry on the run is the user's choice to run it once more. A definite
+  failure (an error answer) is still retried as the node says.
 - Waits (`wait`, gates, deliveries, sub-workflows, retries) keep the step `waiting` with what it waits for (`wait`)
-  and `wake_at`; a timer that comes due takes the step's timeout port. A run with only waiting steps is `waiting`.
+  and `wake_at`; a timer that comes due takes the step's timeout port. A run with only waiting steps is `waiting`,
+  and wakes at its first timer or at its runtime limit, whichever comes first, so a wait with no timeout (an answer,
+  a sub-run, a session that never comes) can't keep it past `maxRuntimeMs`. Waiting runs with no wake time (left by
+  a PDT before PDT-131) are woken once by the tick to get one.
+- Event waits look back (PDT-131): events are matched to waiting steps as they are processed, so a step that starts
+  waiting for an event (a `wait`, a gate's `event`) first looks for one already logged since its run started that
+  fits its type and conditions, is not the run's trigger, and no step of the run took already (a loop's next wait
+  waits for the next event). A pull request merged by hand during QA ends the Pipeline's wait for `attempt.merged` at
+  once instead of three days later.
 - A run ends `succeeded`, `quiet` (an `end` with `quiet`, or no action did anything that wasn't quiet: nobody was
   told), `failed` (`error` names the node) or `cancelled`. Limits: `maxVisits` per node (loop limit, default 25),
-  `maxSteps` (200) and `maxRuntimeMs` (7 days) per run, `timeoutMs` per execution (actions default 5 min).
+  `maxSteps` (200) and `maxRuntimeMs` (7 days) per run, `timeoutMs` per execution (actions default 5 min). The
+  runtime limit counts from the run's start, or from when Retry or Resume last set it going (`resumedAt`), as its
+  waits' timeouts start again too.
+- Deleting a workflow (`DELETE /api/workflows/{id}`) cancels its runs still going (a run of another workflow waiting
+  on one through `workflow.call` goes on by `failed`) and closes every open Inbox item of its runs, before the
+  workflow and its runs go.
 - `POST /api/workflow-runs/{id}/retry` (a failed run, from its failed step), `/resume` (a run whose latest agent step
   ended by `timeout` or `stopped`, from that step: [Timeouts and Resume](#timeouts-and-resume-pdt-123); `409
   cannot_resume` otherwise; `GET` gives that step as `resumeFrom`), `/cancel` (also closes the run's Inbox items), and
@@ -335,7 +365,8 @@ another kind). A config field holding a connection's name says its kind in its s
 - **Schedules** (`workflow/nodes/schedule.rs`, pdt-core `workflow/schedule.rs`): each engine tick, every enabled
   workflow's `schedule` node's latest slot (`every` aligned to the epoch, at least 1 minute; or a 5-field cron in
   `timezone`, default the host's) is compared with its mark in state (`_pdt.schedule.<node>`): a node seen for the first
-  time, or a workflow saved or enabled since the mark, takes the slot as its baseline; a newer slot emits
+  time, or a workflow saved or enabled since the mark (a pending proposal doesn't count: it changes nothing that runs
+  until accepted, PDT-131), takes the slot as its baseline; a newer slot emits
   `schedule.fired` (key `schedule:<workflow>:<node>:<slot>`, payload `workflowId`, `nodeId`, `slot`, `slotIso`,
   `date`). A slot more than 2 minutes old (pdtd was down) fires only with `catchUp` (default on), and only the latest.
 - **GitHub issues** (`github_issues.rs` `refresh_issues`, pdtd every 60 s): the repos enabled `github.issue.opened`

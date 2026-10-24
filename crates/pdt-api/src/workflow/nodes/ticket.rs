@@ -171,10 +171,16 @@ impl NodeKind for Comment {
                     json!({"would": format!("comment on ticket {}: {}", c.ticket, c.body)}),
                 ));
             }
+            // The comment carries its step, so the step run again after a restart finds it (PDT-131).
+            if let Some(e) = cx.st.store.comment_by_step(&c.ticket, &cx.step.id).await.map_err(|e| e.to_string())? {
+                return Ok(Outcome::next("out", json!({"eventId": e.id})));
+            }
+            let mut data = cx.by().data();
+            data["stepId"] = json!(cx.step.id);
             let e = cx
                 .st
                 .store
-                .add_comment_by(&c.ticket, &c.body, Actor::System, Some(cx.by().data()), now_ms())
+                .add_comment_by(&c.ticket, &c.body, Actor::System, Some(data), now_ms())
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or("no such ticket")?;
