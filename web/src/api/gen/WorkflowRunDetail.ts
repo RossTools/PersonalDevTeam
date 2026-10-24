@@ -19,4 +19,8 @@ triggerNode: string,
 /**
  * The event payload (or the manual input) it started with.
  */
-trigger: unknown, projectId: string | null, ticketId: string | null, attemptId: string | null, parentRunId: string | null, parentStepId: string | null, error: string | null, output: unknown, wakeAt: number | null, startedAt: number, endedAt: number | null, };
+trigger: unknown, projectId: string | null, ticketId: string | null, attemptId: string | null, parentRunId: string | null, parentStepId: string | null, error: string | null, output: unknown, wakeAt: number | null, startedAt: number, 
+/**
+ * When Retry or Resume last set it going again: its runtime limit counts from then.
+ */
+resumedAt: number | null, endedAt: number | null, };

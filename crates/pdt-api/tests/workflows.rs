@@ -999,3 +999,191 @@ async fn untouched_pipelines_follow_the_newer_template_and_edited_ones_stay() {
     assert_eq!(get(app.clone(), "old".into()).await["version"], 2);
     assert_eq!(get(app, recorded).await["version"], 3);
 }
+
+/// Runs the engine until the run stops moving (at most a few ticks).
+async fn settle(env: &Env, id: &str) -> Value {
+    for _ in 0..5 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    run(env, id).await
+}
+
+#[tokio::test]
+async fn a_wait_takes_an_event_that_came_before_it_started_waiting() {
+    let env = setup().await;
+    let (_, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "x"}))).await;
+    let tid = t["id"].as_str().unwrap().to_string();
+    let wf = create(
+        &env,
+        json!({"name": "looks back", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "qa", "kind": "gate", "version": 1, "config": {"question": "QA done?", "choices": ["yes"]}},
+        {"id": "w", "kind": "wait", "version": 1, "config": {"event": {"type": "ticket.commented",
+            "where": [{"left": "{{event.ticketId}}", "op": "eq", "right": "{{trigger.ticket}}"}]}}},
+        {"id": "again", "kind": "wait", "version": 1, "config": {"timeoutMs": 600000, "event": {"type": "ticket.commented",
+            "where": [{"left": "{{event.ticketId}}", "op": "eq", "right": "{{trigger.ticket}}"}]}}},
+        {"id": "e", "kind": "end", "version": 1, "config": {"output": "{{steps.again.body}}"}}],
+        "edges": [{"from": "t", "to": "qa"}, {"from": "qa", "port": "yes", "to": "w"},
+                  {"from": "w", "port": "event", "to": "again"}, {"from": "again", "port": "event", "to": "e"}]}),
+    )
+    .await;
+    // Before the run: not for it.
+    call(&env.app, "POST", &format!("/api/tickets/{tid}/comments"), Some(json!({"body": "too early"}))).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let id = run_now(&env, &wf, json!({"ticket": tid})).await;
+    pdt_api::run_workflows(&env.state).await;
+    // While the run is at the gate, the comment comes and is processed with nobody waiting for it.
+    call(&env.app, "POST", &format!("/api/tickets/{tid}/comments"), Some(json!({"body": "during QA"}))).await;
+    pdt_api::run_workflows(&env.state).await;
+    let r = run(&env, &id).await;
+    let gate = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "qa").unwrap()["id"].as_str().unwrap();
+    let (s, _) =
+        call(&env.app, "POST", &format!("/api/workflow-runs/{id}/steps/{gate}/answer"), Some(json!({"choice": "yes"})))
+            .await;
+    assert_eq!(s, StatusCode::OK);
+    // The first wait takes it at once; the second, a loop's next wait, doesn't take it again.
+    let r = settle(&env, &id).await;
+    assert_eq!(r["status"], "waiting", "{r}");
+    let w = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "w").unwrap();
+    assert_eq!((w["port"].as_str(), w["output"]["body"].as_str()), (Some("event"), Some("during QA")), "{r}");
+    call(&env.app, "POST", &format!("/api/tickets/{tid}/comments"), Some(json!({"body": "next"}))).await;
+    let r = settle(&env, &id).await;
+    assert_eq!((r["status"].as_str(), &r["output"]), (Some("succeeded"), &json!("next")), "{r}");
+}
+
+#[tokio::test]
+async fn a_step_that_ended_without_its_next_steps_queued_is_recovered() {
+    let env = setup().await;
+    let wf = create(
+        &env,
+        json!({"name": "crashy", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "ask", "kind": "gate", "version": 1, "config": {"question": "Go?", "choices": ["go"]}},
+        {"id": "e", "kind": "end", "version": 1, "config": {"output": "went"}}],
+        "edges": [{"from": "t", "to": "ask"}, {"from": "ask", "port": "go", "to": "e"}]}),
+    )
+    .await;
+    let id = run_now(&env, &wf, json!({})).await;
+    pdt_api::run_workflows(&env.state).await;
+    // What a PDT before single-write completion could leave: the gate written as answered, then a crash before its
+    // next step was queued and its run woken (a waiting run with no wake time).
+    let store = &env.state.store;
+    let mut gate = store.list_steps(&id).await.unwrap().into_iter().find(|s| s.node_id == "ask").unwrap();
+    gate.status = pdt_core::workflow::api::StepStatus::Succeeded;
+    gate.port = Some("go".into());
+    gate.ended_at = Some(gate.started_at.unwrap() + 1);
+    store.put_step(&gate).await.unwrap();
+    let mut r = store.get_workflow_run(&id).await.unwrap().unwrap();
+    assert_eq!(r.status, pdt_core::workflow::api::RunStatus::Waiting);
+    r.wake_at = None;
+    store.update_workflow_run(&r).await.unwrap();
+
+    let r = settle(&env, &id).await;
+    assert_eq!((r["status"].as_str(), &r["output"]), (Some("succeeded"), &json!("went")), "{r}");
+    assert_eq!(ports(&r), ["t:out", "ask:go", "e:-"]);
+}
+
+#[tokio::test]
+async fn deleting_a_workflow_ends_its_runs_and_closes_their_inbox_items() {
+    let env = setup().await;
+    let child = create(&env, gate_doc("child")).await;
+    let parent = create(
+        &env,
+        json!({"name": "parent", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "call", "kind": "workflow.call", "version": 1, "config": {"workflow": child}},
+        {"id": "e", "kind": "end", "version": 1, "config": {"output": "the child is gone"}}],
+        "edges": [{"from": "t", "to": "call"}, {"from": "call", "port": "failed", "to": "e"}]}),
+    )
+    .await;
+    let id = run_now(&env, &parent, json!({})).await;
+    let r = settle(&env, &id).await;
+    assert_eq!(r["status"], "waiting", "{r}");
+    let open = |v: &Value| v["items"].as_array().map_or(0, |i| i.len());
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    assert_eq!(open(&inbox), 1, "the child's gate: {inbox}");
+
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/workflows/{child}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    assert_eq!(open(&inbox), 0, "{inbox}");
+    let r = settle(&env, &id).await;
+    assert_eq!((r["status"].as_str(), &r["output"]), (Some("succeeded"), &json!("the child is gone")), "{r}");
+}
+
+#[tokio::test]
+async fn the_runtime_limit_ends_a_waiting_run_and_counts_from_a_retry() {
+    // Long enough that a tick on a busy machine stays well inside it: the test waits it out once, not tick by tick.
+    const LIMIT: i64 = 3000;
+    let env = setup().await;
+    let settings = json!({"maxSteps": 200, "maxRuntimeMs": LIMIT});
+    let mut doc = gate_doc("slow");
+    doc["settings"] = settings.clone();
+    let slow = create(&env, doc).await;
+    // A run that fails at once, to be retried after its limit.
+    let (_, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "x"}))).await;
+    let doc = json!({"name": "mover", "settings": settings, "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "move", "kind": "ticket.move", "version": 1, "config": {"ticket": "{{state.ticket}}", "stage": "todo"}}],
+        "edges": [{"from": "t", "to": "move"}]});
+    let mover = create(&env, doc).await;
+    let waits = run_now(&env, &slow, json!({})).await;
+    let fails = run_now(&env, &mover, json!({})).await;
+    pdt_api::run_workflows(&env.state).await;
+    let r = run(&env, &waits).await;
+    assert_eq!(r["status"], "waiting", "{r}");
+    assert_eq!(
+        r["wakeAt"].as_i64().unwrap(),
+        r["startedAt"].as_i64().unwrap() + LIMIT + 1,
+        "it wakes at its limit: {r}"
+    );
+    assert_eq!(run(&env, &fails).await["status"], "failed");
+
+    tokio::time::sleep(Duration::from_millis(u64::try_from(LIMIT).unwrap() + 100)).await;
+    let r = settle(&env, &waits).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r["error"].as_str().unwrap().contains("took longer"), "{r}");
+
+    // Past its limit too, a retried run gets its time again.
+    env.state.store.set_workflow_state(&mover, "ticket", &t["id"], false, 1).await.unwrap();
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{fails}/retry"), None).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let r = settle(&env, &fails).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert!(r["resumedAt"].as_i64().is_some());
+}
+
+#[tokio::test]
+async fn a_comment_step_run_again_after_a_restart_comments_once() {
+    let env = setup().await;
+    let (_, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "x"}))).await;
+    let tid = t["id"].as_str().unwrap().to_string();
+    let wf = create(
+        &env,
+        json!({"name": "commenter", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "c", "kind": "ticket.comment", "version": 1, "config": {"ticket": "{{trigger.ticket}}", "body": "hello"}}],
+        "edges": [{"from": "t", "to": "c"}]}),
+    )
+    .await;
+    let id = run_now(&env, &wf, json!({"ticket": tid})).await;
+    assert_eq!(settle(&env, &id).await["status"], "succeeded");
+    // As if PDT stopped after the comment was written but before its step was: the step is found running.
+    let store = &env.state.store;
+    let mut c = store.list_steps(&id).await.unwrap().into_iter().find(|s| s.node_id == "c").unwrap();
+    c.status = pdt_core::workflow::api::StepStatus::Running;
+    c.port = None;
+    c.ended_at = None;
+    store.put_step(&c).await.unwrap();
+    let mut r = store.get_workflow_run(&id).await.unwrap().unwrap();
+    r.status = pdt_core::workflow::api::RunStatus::Running;
+    r.ended_at = None;
+    store.update_workflow_run(&r).await.unwrap();
+    assert_eq!(settle(&env, &id).await["status"], "succeeded");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{tid}/events"), None).await;
+    let comments = events["items"].as_array().unwrap().iter().filter(|e| e["kind"] == "comment").count();
+    assert_eq!(comments, 1, "{events}");
+}

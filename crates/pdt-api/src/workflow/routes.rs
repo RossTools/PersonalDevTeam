@@ -257,7 +257,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     if w.source == Source::Repo {
         return Err(conflict("workflow_in_repo", format!("{} lives in the repo: remove its file", w.name)));
     }
-    st.store.delete_workflow(&id).await?;
+    engine::delete_workflow(&st, &id).await.map_err(ApiError::internal)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

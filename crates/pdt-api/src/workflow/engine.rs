@@ -204,6 +204,7 @@ pub(crate) async fn start_run(
         output: Value::Null,
         wake_at: None,
         started_at: now,
+        resumed_at: None,
         ended_at: None,
     };
     let mut first = new_step(&run.id, 1, &node.id, &node.kind);
@@ -299,24 +300,38 @@ pub(crate) async fn complete_step(st: &AppState, step: &Step, port: &str, output
         return Ok(());
     }
     let (_, doc) = load(st, &run).await?;
-    let steps = st.store.list_steps(&run.id).await.map_err(err)?;
-    let next_seq = steps.iter().map(|s| s.seq).max().unwrap_or(0) + 1;
+    let next_seq = next_seq(st, &run.id).await?;
+    let now = now_ms();
     let mut s = step.clone();
     s.status = StepStatus::Succeeded;
     s.port = Some(port.into());
     s.output = output;
     s.wake_at = None;
-    s.ended_at = Some(now_ms());
-    st.store.put_step(&s).await.map_err(err)?;
-    end_step_extras(st, &s.id).await;
+    s.ended_at = Some(now);
+    // The step, what it leads to, its Inbox items, its agent binding and the run's wake are one write (PDT-131).
+    let next = successors(&doc, &run.id, &s.node_id, port, next_seq);
+    st.store.complete_workflow_step(&s, &next, now).await.map_err(err)?;
     // An agent step that timed out tells the user, who can resume it (PDT-123).
     if s.kind == super::nodes::agent::KIND && port == pdt_core::workflow::agent::TIMEOUT {
         super::agent::timed_out(st, &s, &run).await;
     }
-    for n in successors(&doc, &run.id, &s.node_id, port, next_seq) {
-        st.store.put_step(&n).await.map_err(err)?;
+    Ok(())
+}
+
+/// The steps a crash left out (PDT-131): a run with nothing left to run or wait for whose last step to end left by a
+/// port that leads somewhere, with nothing queued after it. Before step completion was one write, a crash between
+/// ending a step and queueing its successors left a run so; they are queued now instead of the run ending early.
+fn lost_successors(doc: &WorkflowDoc, run_id: &str, steps: &[Step]) -> Vec<Step> {
+    let max_seq = steps.iter().map(|s| s.seq).max().unwrap_or(0);
+    let Some(last) = steps.iter().filter(|s| s.ended_at.is_some()).max_by_key(|s| (s.ended_at, s.seq)) else {
+        return vec![];
+    };
+    match (&last.status, &last.port) {
+        (StepStatus::Succeeded, Some(port)) if last.seq == max_seq => {
+            successors(doc, run_id, &last.node_id, port, max_seq + 1)
+        }
+        _ => vec![],
     }
-    st.store.wake_workflow_run(&run.id, now_ms()).await.map_err(err)
 }
 
 /// What waits on a step outside the engine ends with it: its open Inbox items close, its agent binding is done.
@@ -329,7 +344,9 @@ async fn end_step_extras(st: &AppState, step_id: &str) {
     {
         a.state = pdt_core::workflow::agent::AgentStepState::Done;
         a.updated_at = now_ms();
-        let _ = st.store.put_agent_step(&a).await;
+        if let Err(e) = st.store.put_agent_step(&a).await {
+            tracing::warn!(step = %step_id, error = %e, "could not end a step's agent binding");
+        }
     }
 }
 
@@ -403,7 +420,9 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
         let Some((wf, doc)) = loaded.as_ref() else { return Ok(()) };
         let now = now_ms();
         let steps = st.store.list_steps(&run.id).await.map_err(err)?;
-        if now - run.started_at > i64::try_from(doc.settings.max_runtime_ms).unwrap_or(i64::MAX) {
+        let deadline =
+            run.runtime_from().saturating_add(i64::try_from(doc.settings.max_runtime_ms).unwrap_or(i64::MAX));
+        if now > deadline {
             let e = format!("the run took longer than {} ms", doc.settings.max_runtime_ms);
             return finish_run(st, &mut run, RunStatus::Failed, Value::Null, Some(e)).await;
         }
@@ -434,8 +453,20 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
             let waiting: Vec<&Step> = steps.iter().filter(|s| s.status == StepStatus::Waiting).collect();
             if !waiting.is_empty() {
                 run.status = RunStatus::Waiting;
-                run.wake_at = waiting.iter().filter_map(|s| s.wake_at).min();
+                // It wakes for its first timer, or at its runtime limit at the latest (PDT-131): a wait with no timeout
+                // (an answer, a sub-run, a session that never comes) can't keep it going past `maxRuntimeMs`.
+                let first = waiting.iter().filter_map(|s| s.wake_at).min();
+                let limit = deadline.saturating_add(1);
+                run.wake_at = Some(first.map_or(limit, |t| t.min(limit)));
                 return st.store.update_workflow_run(&run).await.map_err(err);
+            }
+            let lost = lost_successors(doc, &run.id, &steps);
+            if !lost.is_empty() {
+                tracing::warn!(run = %run.id, "a step ended without its next steps queued: queueing them");
+                for n in &lost {
+                    st.store.put_step(n).await.map_err(err)?;
+                }
+                continue;
             }
             let output = steps.iter().rev().find(|s| s.status == StepStatus::Succeeded).map(|s| s.output.clone());
             let status = if is_quiet(&steps) { RunStatus::Quiet } else { RunStatus::Succeeded };
@@ -458,12 +489,21 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
             drop(engine);
             None
         };
-        let result = {
-            let cx =
-                StepCx { st, workflow: wf, run: &run, step: &job.step, node: job.node, ctx: &job.ctx, dry_run: false };
+        let (result, cut_short) = {
+            let cx = StepCx {
+                st,
+                workflow: wf,
+                run: &run,
+                step: &job.step,
+                node: job.node,
+                ctx: &job.ctx,
+                dry_run: false,
+                rerun: job.rerun,
+            };
+            // A timeout drops the body wherever it was: it may have done its work (PDT-131).
             match tokio::time::timeout(job.limit, job.kind.run(&cx, job.input)).await {
-                Ok(r) => r,
-                Err(_) => Err(format!("timed out after {} ms", job.limit.as_millis())),
+                Ok(r) => (r, false),
+                Err(_) => (Err(format!("timed out after {} ms", job.limit.as_millis())), true),
             }
         };
         let _engine = match engine {
@@ -472,12 +512,16 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
         };
         // The step may have ended while it ran (its run was cancelled): then its result goes nowhere.
         let current = st.store.get_step(&job.step.id).await.map_err(err)?;
-        if !current.is_some_and(|s| s.status == StepStatus::Running && s.attempts == job.step.attempts) {
+        let Some(current) = current.filter(|s| s.status == StepStatus::Running && s.attempts == job.step.attempts)
+        else {
             tracing::info!(run = %run_id, node = %job.step.node_id, "a step's run moved on while it ran: its result is dropped");
             continue;
-        }
+        };
         let Some(mut run) = st.store.get_workflow_run(run_id).await.map_err(err)? else { return Ok(()) };
-        if apply(st, doc, &mut run, job.step, result).await? {
+        // What the body recorded as it went (`StepCx::save_progress`) stays with the step for its next execution.
+        let mut step = job.step;
+        step.output = current.output;
+        if apply(st, doc, &mut run, step, result, cut_short).await? {
             return Ok(());
         }
     }
@@ -494,6 +538,8 @@ struct Job<'a> {
     limit: std::time::Duration,
     /// The body runs under the engine lock.
     locked: bool,
+    /// The step ran before and was cut short (`StepCx::rerun`).
+    rerun: bool,
 }
 
 enum Claim<'a> {
@@ -529,30 +575,42 @@ async fn claim<'a>(
     let config = catalog().current_config(node);
     let (kind, config) = match (kind, config) {
         (Some(k), Ok(c)) if visits < usize::try_from(node.max_visits()).unwrap_or(usize::MAX) => (k, c),
-        (_, Err(e)) => return fail_step(st, doc, run, step, e).await.map(ended),
+        (_, Err(e)) => return fail_step(st, doc, run, step, e, true).await.map(ended),
         (None, _) => {
             let e = format!("no node kind is called {}", node.kind);
-            return fail_step(st, doc, run, step, e).await.map(ended);
+            return fail_step(st, doc, run, step, e, true).await.map(ended);
         }
         _ => {
             let e = format!("loop limit: {} ran {visits} times in this run", node.id);
             step.attempts = u32::MAX / 2;
-            return fail_step(st, doc, run, step, e).await.map(ended);
+            return fail_step(st, doc, run, step, e, true).await.map(ended);
         }
     };
     let state = st.store.workflow_state(&wf.id).await.map_err(err)?;
     let ctx = context(wf, run, steps, state, false);
     let input = resolve_keeping(&config, &ctx, Some("event"));
+    // Found running, it was cut short by a restart (PDT-131); a retry after a timeout says so in its wait. A restart
+    // doesn't use up one of the node's retries.
+    let restarted = step.status == StepStatus::Running;
+    let rerun = restarted || step.wait.get(CUT_SHORT).and_then(Value::as_bool) == Some(true);
+    if !restarted {
+        step.attempts += 1;
+    }
     step.status = StepStatus::Running;
-    step.attempts += 1;
     step.input = input.clone();
     step.started_at = Some(now_ms());
     step.error = None;
+    if rerun && !kind.rerun_safe(&input) {
+        let e = "PDT stopped while this step ran, so it may have done its work already: it does not run again on its \
+                 own. Retry the run to run it once more.";
+        tracing::warn!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, "a step cut short by a restart is not run again");
+        return fail_step(st, doc, run, step, e.into(), false).await.map(ended);
+    }
     st.store.put_step(&step).await.map_err(err)?;
     let limit = std::time::Duration::from_millis(node.timeout_ms.unwrap_or_else(|| kind.default_timeout_ms()));
     let outside = matches!(catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
     let locked = !outside || kind.in_engine_lock();
-    Ok(Claim::Run(Box::new(Job { step, node, kind, input, ctx, limit, locked })))
+    Ok(Claim::Run(Box::new(Job { step, node, kind, input, ctx, limit, locked, rerun })))
 }
 
 /// Writes what a step's body came to, under the engine lock. True when the run ended.
@@ -562,6 +620,7 @@ async fn apply(
     run: &mut Run,
     mut step: Step,
     result: Result<Outcome, String>,
+    cut_short: bool,
 ) -> R<bool> {
     match result {
         Ok(Outcome::Next { port, output }) => {
@@ -577,6 +636,10 @@ async fn apply(
             step.wake_at = until;
             step.output = output;
             st.store.put_step(&step).await.map_err(err)?;
+            // The event may have come already, while the run was on an earlier step (PDT-131).
+            if let Some(e) = look_back(st, run, &step).await? {
+                complete_step(st, &step, "event", trigger_value(&e)).await?;
+            }
             Ok(false)
         }
         Ok(Outcome::End { quiet, output }) => {
@@ -589,36 +652,78 @@ async fn apply(
             finish_run(st, run, status, output, None).await?;
             Ok(true)
         }
-        Err(e) => fail_step(st, doc, run, step, e).await,
+        Err(e) => fail_step(st, doc, run, step, e, !cut_short).await,
     }
 }
 
+/// An event a step that starts waiting for one would have taken had it been waiting already: one of its type and
+/// conditions logged since the run's start, that is not the run's trigger and that no step of the run took already
+/// (a loop waits for the next one, not the last). Events are matched to waits only as they are processed, so without
+/// this a wait reached after its event (a pull request merged by hand during QA) would wait for one that never comes.
+async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>> {
+    let Some(w) = step.wait.get("event") else { return Ok(None) };
+    let Some(kind) = w.get("type").and_then(Value::as_str) else { return Ok(None) };
+    let conds: Vec<pdt_core::workflow::cond::Condition> =
+        w.get("where").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
+    let steps = st.store.list_steps(&run.id).await.map_err(err)?;
+    let taken: HashSet<&str> = steps
+        .iter()
+        .filter(|s| s.status == StepStatus::Succeeded && s.port.as_deref() == Some("event"))
+        .filter_map(|s| s.output.get("eventId").and_then(Value::as_str))
+        .chain(run.trigger_event_id.as_deref())
+        .collect();
+    let filter = pdt_store::EventFilter {
+        kind: Some(kind.into()),
+        since: Some(run.started_at),
+        limit: 1000,
+        ..Default::default()
+    };
+    let events = st.store.list_log_events(&filter).await.map_err(err)?;
+    Ok(events.into_iter().find(|e| !taken.contains(e.id.as_str()) && all(&conds, &json!({"event": trigger_value(e)}))))
+}
+
+/// A step's `wait` while it waits to be retried after a timeout: it was cut short (`StepCx::rerun`).
+const CUT_SHORT: &str = "cutShort";
+
 /// A failed execution: retried while the node allows, then its error port, else the run fails. True when it ended.
-async fn fail_step(st: &AppState, doc: &WorkflowDoc, run: &mut Run, mut step: Step, e: String) -> R<bool> {
-    // An agent step that failed (its session would not start) no longer works on its attempt (PDT-129).
+/// `definite`: it failed and did nothing (else it was cut short, by a timeout or a restart, and may have done its work:
+/// a kind that isn't safe to run again is not retried, PDT-131).
+async fn fail_step(
+    st: &AppState,
+    doc: &WorkflowDoc,
+    run: &mut Run,
+    mut step: Step,
+    e: String,
+    definite: bool,
+) -> R<bool> {
+    // An agent step whose session would not start no longer works on its attempt (PDT-129). One cut short after its
+    // session started keeps its binding, so running it again goes on in that session instead of starting another.
     if step.kind == super::nodes::agent::KIND
         && let Ok(Some(mut a)) = st.store.get_agent_step(&step.id).await
         && a.state != pdt_core::workflow::agent::AgentStepState::Done
+        && a.session_id.is_none()
     {
         a.state = pdt_core::workflow::agent::AgentStepState::Done;
         a.updated_at = now_ms();
-        let _ = st.store.put_agent_step(&a).await;
+        if let Err(e) = st.store.put_agent_step(&a).await {
+            tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
+        }
     }
     let node = doc.node(&step.node_id);
     let retry = node.and_then(|n| n.retry);
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step failed");
     step.error = Some(e.clone());
-    if let Some(r) = retry
+    let safe = definite || catalog().get(&step.kind).is_none_or(|k| k.rerun_safe(&step.input));
+    if let Some(r) = retry.filter(|_| safe)
         && step.attempts <= r.max
     {
         step.status = StepStatus::Waiting;
-        step.wait = json!({"retry": true});
+        step.wait = json!({"retry": true, CUT_SHORT: !definite});
         step.wake_at = Some(now_ms() + i64::try_from(r.delay_ms(step.attempts)).unwrap_or(0));
         st.store.put_step(&step).await.map_err(err)?;
         return Ok(false);
     }
     if node.is_some() && doc.has_edge_from(&step.node_id, ERROR_PORT) {
-        st.store.put_step(&step).await.map_err(err)?;
         complete_step(st, &step, ERROR_PORT, json!({"error": e})).await?;
         return Ok(false);
     }
@@ -681,6 +786,9 @@ pub async fn run_workflows(st: &AppState) {
         super::builtins::ensure_installed(st).await;
         crate::personas::ensure_builtins(st).await;
         super::nodes::schedule::fire_schedules(st).await;
+        if let Err(e) = st.store.wake_untimed_workflow_runs(now_ms()).await {
+            tracing::warn!(error = %e, "could not wake waiting runs with no wake time");
+        }
         match_events(st).await;
         crate::scheduler::admit_waiting(st).await;
     }
@@ -746,10 +854,16 @@ pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> R<()> {
     failed.error = None;
     failed.attempts = 0;
     failed.ended_at = None;
+    // The user's Retry runs it once more, whatever cut it short (PDT-131).
+    if let Value::Object(w) = &mut failed.wait {
+        w.remove(CUT_SHORT);
+    }
     st.store.put_step(&failed).await.map_err(err)?;
     run.status = RunStatus::Running;
     run.error = None;
     run.ended_at = None;
+    // Its runtime limit counts from now, as its waits' timeouts do.
+    run.resumed_at = Some(now_ms());
     st.store.update_workflow_run(&run).await.map_err(err)
 }
 
@@ -784,6 +898,7 @@ pub(crate) async fn reopen_at(st: &AppState, step: &Step, resolution: Value) -> 
     run.error = None;
     run.output = Value::Null;
     run.wake_at = None;
+    run.resumed_at = Some(now);
     run.ended_at = None;
     st.store.update_workflow_run(&run).await.map_err(err)?;
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, "a workflow run goes on from a stopped step");
@@ -836,6 +951,28 @@ pub(crate) async fn cancel_because(st: &AppState, run_id: &str, why: &str) -> R<
         return Err("the run has ended".into());
     }
     finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some(why.into())).await
+}
+
+/// Deletes a workflow (PDT-131): its runs still going are cancelled first (a run of another workflow waiting on one,
+/// through `workflow.call`, goes on by `failed`), and every open Inbox item of its runs closes, since nothing could
+/// answer them once it is gone. Under the engine lock, so no run of it starts meanwhile. False for an unknown one.
+pub(crate) async fn delete_workflow(st: &AppState, id: &str) -> R<bool> {
+    let _engine = st.engine_lock.lock().await;
+    for status in [RunStatus::Running, RunStatus::Waiting] {
+        let f = pdt_store::RunFilter {
+            workflow_id: Some(id.into()),
+            status: Some(status),
+            limit: 500,
+            ..Default::default()
+        };
+        for run in st.store.list_workflow_runs(&f).await.map_err(err)? {
+            if let Err(e) = cancel_because(st, &run.id, "its workflow was deleted").await {
+                tracing::warn!(run = %run.id, error = %e, "could not cancel a deleted workflow's run");
+            }
+        }
+    }
+    st.store.close_workflow_inbox_items(id, now_ms()).await.map_err(err)?;
+    st.store.delete_workflow(id).await.map_err(err)
 }
 
 /// Answers a waiting gate with `choice`. The user's `text` with it (why they rejected, what to change) goes on the
@@ -989,6 +1126,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         output: Value::Null,
         wake_at: None,
         started_at: now_ms(),
+        resumed_at: None,
         ended_at: None,
     };
     let state = st.store.workflow_state(&wf.id).await.unwrap_or_default();
@@ -1040,7 +1178,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         let ctx = context(wf, &run, &done, state.clone(), true);
         let input = resolve_keeping(&config, &ctx, Some("event"));
         ds.input = input.clone();
-        let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true };
+        let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true, rerun: false };
         let result = kind.dry_run(&cx, input).await;
         let port = match result {
             Ok(Outcome::Next { port, output }) => {

@@ -2165,6 +2165,20 @@ impl Store {
         self.add_comment_by(ticket_id, body, Actor::User, None, now).await
     }
 
+    /// The comment a workflow step wrote on the ticket (its `data.stepId`), if it did: a step run again after a restart
+    /// finds it instead of commenting twice (PDT-131).
+    pub async fn comment_by_step(&self, ticket_id: &str, step_id: &str) -> Result<Option<TicketEvent>, StoreError> {
+        let row = sqlx::query(
+            "SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE ticket_id = ? \
+             AND kind = 'comment' AND json_extract(data, '$.stepId') = ? LIMIT 1",
+        )
+        .bind(ticket_id)
+        .bind(step_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(to_event).transpose()
+    }
+
     /// A comment by `actor`; `data` names the workflow and run that wrote a system comment.
     pub async fn add_comment_by(
         &self,

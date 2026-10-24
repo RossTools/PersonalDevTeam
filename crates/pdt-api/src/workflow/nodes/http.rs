@@ -226,6 +226,13 @@ impl NodeKind for Http {
         )
     }
 
+    /// GET, HEAD, PUT, DELETE and OPTIONS can be sent again; other methods (POST, PATCH) cut short aren't sent again on
+    /// their own (PDT-131).
+    fn rerun_safe(&self, input: &Value) -> bool {
+        let method = input.get("method").and_then(Value::as_str).unwrap_or("GET");
+        ["GET", "HEAD", "PUT", "DELETE", "OPTIONS"].contains(&method.to_uppercase().as_str())
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: HttpConfig = parse(config)?;
         if c.url.trim().is_empty() && c.connection.is_none() {

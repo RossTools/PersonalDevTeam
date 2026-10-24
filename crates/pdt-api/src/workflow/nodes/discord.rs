@@ -1,5 +1,6 @@
 //! `discord.post` (Phase 7e spec §3.3): posts to a Discord channel through a webhook (a `discord_webhook` connection
-//! whose secret is the webhook URL). Long messages are split at line breaks; a rate limit waits and tries again.
+//! whose secret is the webhook URL). Long messages are split at line breaks; a rate limit waits and tries again. Each
+//! piece posted is recorded as it goes, so a restart or a retry posts only the rest.
 
 use super::http::{client, read_body, send_error};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
@@ -104,8 +105,15 @@ impl NodeKind for Discord {
             }
             let url =
                 secret.filter(|s| !s.trim().is_empty()).ok_or_else(|| format!("{} has no webhook URL", conn.name))?;
-            let mut ids = vec![];
-            for (i, content) in pieces.iter().enumerate() {
+            // Pieces posted before a restart or a failed try are not posted again (PDT-131): each one's id is saved as
+            // it goes.
+            let mut ids: Vec<String> = cx
+                .step
+                .output
+                .get("messageIds")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            for (i, content) in pieces.iter().enumerate().skip(ids.len()) {
                 let mut body = json!({"content": content, "allowed_mentions": {"parse": []}});
                 if let Some(u) = &c.username {
                     body["username"] = json!(u);
@@ -114,6 +122,7 @@ impl NodeKind for Discord {
                     body["embeds"] = json!(c.embeds);
                 }
                 ids.push(post(&url, c.thread.as_deref(), &body).await?);
+                cx.save_progress(&json!(DiscordOutput { message_ids: ids.clone() })).await?;
             }
             Ok(Outcome::next("out", DiscordOutput { message_ids: ids }))
         })

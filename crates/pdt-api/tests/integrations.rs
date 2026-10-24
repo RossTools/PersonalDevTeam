@@ -321,6 +321,107 @@ async fn discord_posts_split_long_messages_and_wait_out_a_rate_limit() {
     assert!(run_now(&env, &wf, json!({})).await["error"].as_str().unwrap().contains("not discord_webhook"));
 }
 
+/// A server that never answers request number `hang` (nor records it: as if PDT stopped before sending it), and
+/// answers every other with `{"id": "m<n>"}`.
+async fn hanging_server(hang: usize) -> (String, Seen) {
+    let seen = Seen::default();
+    let s2 = seen.clone();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app = axum::Router::new().fallback(move |req: Request<Body>| {
+        let (seen, count) = (s2.clone(), count.clone());
+        async move {
+            let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            if n == hang {
+                std::future::pending::<()>().await;
+            }
+            let method = req.method().to_string();
+            let path = req.uri().to_string();
+            let bytes = req.into_body().collect().await.unwrap().to_bytes();
+            let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            seen.0.lock().unwrap().push((method, path, body, None));
+            axum::Json(json!({"id": format!("m{n}")}))
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), seen)
+}
+
+/// Starts a run of `wf` and runs the engine once, with ticks that wait at most a moment for a slow step.
+async fn start_slow(env: &mut Env, wf: &str, input: Value) -> String {
+    env.state.engine_tick_wait = std::time::Duration::from_millis(300);
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": input}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    pdt_api::run_workflows(&env.state).await;
+    r["runId"].as_str().unwrap().to_string()
+}
+
+/// A second daemon on the same database and keychain: the first one stopped.
+async fn restarted(env: &Env) -> (AppState, axum::Router) {
+    let store = Store::open(&env.tmp.path().join("pdt.db")).await.unwrap();
+    let mut state = AppState::new(store, env.tmp.path().join("data"));
+    state.secrets = env.state.secrets.clone();
+    let app = router(state.clone(), None);
+    (state, app)
+}
+
+#[tokio::test]
+async fn a_restart_mid_discord_post_posts_each_piece_once() {
+    let (url, seen) = hanging_server(2).await;
+    let mut env = setup().await;
+    connection(&env, "alerts", "discord_webhook", "", json!({}), Some(&format!("{url}/api/webhooks/1/abc"))).await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "post", "kind": "discord.post", "version": 1, "retry": {"max": 1},
+            "config": {"connection": "alerts", "content": "{{trigger.text}}"}})),
+    )
+    .await;
+    let long = format!("{}\n{}", "a".repeat(1500), "b".repeat(1500));
+    let id = start_slow(&mut env, &wf, json!({"text": long})).await;
+    // The first piece went out and is recorded; the daemon stops while the second is on its way.
+    let r = call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1;
+    assert_eq!(step(&r, "post")["status"], "running", "{r}");
+    assert_eq!(step(&r, "post")["output"]["messageIds"], json!(["m1"]));
+
+    let (state, app) = restarted(&env).await;
+    pdt_api::run_workflows(&state).await;
+    let r = call(&app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let post = step(&r, "post");
+    assert_eq!(post["output"]["messageIds"], json!(["m1", "m3"]));
+    assert_eq!(post["attempts"], 1, "the restart doesn't use up a retry");
+    let contents: Vec<String> =
+        seen.all().iter().map(|(_, _, b, _)| b["content"].as_str().unwrap().chars().take(1).collect()).collect();
+    assert_eq!(contents, ["a", "b"], "each piece once");
+}
+
+#[tokio::test]
+async fn a_post_cut_short_by_a_restart_is_not_sent_again() {
+    let (url, seen) = hanging_server(1).await;
+    let mut env = setup().await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "req", "kind": "http.request", "version": 1, "retry": {"max": 3},
+            "config": {"method": "POST", "url": format!("{url}/hook"), "body": {"x": 1}}})),
+    )
+    .await;
+    let id = start_slow(&mut env, &wf, json!({})).await;
+    let (state, app) = restarted(&env).await;
+    pdt_api::run_workflows(&state).await;
+    let r = call(&app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r["error"].as_str().unwrap().contains("Retry the run"), "{r}");
+    assert!(seen.all().is_empty(), "not sent again");
+    // The user's Retry sends it once more.
+    let (s, _) = call(&app, "POST", &format!("/api/workflow-runs/{id}/retry"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    pdt_api::run_workflows(&state).await;
+    let r = call(&app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(seen.all().len(), 1);
+}
+
 /// A local address nothing listens on (the OS picked it, then it was let go).
 async fn closed_address() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -368,6 +469,8 @@ async fn a_failed_request_never_shows_the_connection_secret() {
             "config": {"connection": "alerts", "content": "hi"}})),
     )
     .await;
+    // A callsite other tests' threads registered as this one set its subscriber may have cached "never": look again.
+    tracing::callsite::rebuild_interest_cache();
     let discord = run_now(&env, &wf, json!({})).await;
 
     // A key sent in the query.
@@ -379,6 +482,7 @@ async fn a_failed_request_never_shows_the_connection_secret() {
             "config": {"connection": "svc", "url": "/items"}})),
     )
     .await;
+    tracing::callsite::rebuild_interest_cache();
     let http = run_now(&env, &wf, json!({})).await;
 
     for (r, node) in [(&discord, "post"), (&http, "get")] {

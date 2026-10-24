@@ -73,6 +73,11 @@ impl NodeKind for Retry {
         )
     }
 
+    /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        false
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: RetryConfig = parse(config)?;
         if c.connection.trim().is_empty() {
@@ -143,6 +148,11 @@ impl NodeKind for TriggerBuild {
             &[("out", "Then")],
             false,
         )
+    }
+
+    /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        false
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {

@@ -94,6 +94,14 @@ impl NodeKind for Merge {
             if cx.dry_run {
                 return Ok(Outcome::next("queued", json!({"would": format!("merge attempt {}", c.attempt)})));
             }
+            // Cut short after it merged (PDT-131): the attempt says so. A pull request already set to merge is `queued`
+            // below as for any automated merge.
+            if cx.rerun
+                && let Ok(Some(info)) = cx.st.store.get_attempt(&c.attempt).await
+                && info.attempt.state == pdt_core::ticket::AttemptState::Merged
+            {
+                return Ok(Outcome::next("merged", json!({"outcome": MergeOutcome::Merged, "already": true})));
+            }
             if c.again
                 && let Some(pr) = fresh_pr(cx, &c.attempt).await
                 && (pr.auto_merge || pr.in_merge_queue)

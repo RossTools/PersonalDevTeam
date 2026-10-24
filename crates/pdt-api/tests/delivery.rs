@@ -251,3 +251,49 @@ async fn a_terminal_stuck_at_unknown_has_its_message_reported_by_the_deadline() 
     assert_eq!(n["target"], json!({"kind": "session", "id": id, "projectId": env.pid}));
     env.state.ptys.shutdown().await;
 }
+
+/// A `session.send` step run again (a restart, a retry) while its message is on its way to a conversation waits for
+/// the echo, rather than taking `untold` (PDT-129).
+#[tokio::test]
+async fn a_rerun_send_step_waits_for_its_message_on_its_way() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), FAKE).await;
+    let id = new_session(&env, json!({"initialPrompt": "deaf"})).await;
+    wait_turns(&env, &id, 1).await;
+    let doc = json!({"name": "Tell", "nodes": [
+        {"id": "go", "kind": "manual", "version": 1},
+        {"id": "tell", "kind": "session.send", "version": 1, "config": {"session": id, "text": "hello from a step"}},
+    ], "edges": [{"from": "go", "to": "tell"}]});
+    let (s, w) =
+        call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "projectId": env.pid, "enabled": true})))
+            .await;
+    assert_eq!(s, 201, "{w}");
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/workflows/{}/run", w["id"].as_str().unwrap()), Some(json!({}))).await;
+    assert_eq!(s, 200, "{r}");
+    let run = r["runId"].as_str().unwrap().to_string();
+    let step = || async {
+        let steps = env.state.store.list_steps(&run).await.unwrap();
+        steps.into_iter().find(|s| s.node_id == "tell").unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let message = loop {
+        pdt_api::run_workflows(&env.state).await;
+        let sending = env.state.store.sending_session_messages(None).await.unwrap();
+        if let Some(m) = sending.into_iter().find(|m| m.step_id.is_some()) {
+            break m;
+        }
+        assert!(Instant::now() < deadline, "the step's message never went out");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    // Run the step again, as a restart would.
+    let mut s = step().await;
+    assert_eq!(s.status, pdt_core::workflow::api::StepStatus::Waiting);
+    s.status = pdt_core::workflow::api::StepStatus::Pending;
+    env.state.store.put_step_and_wake(&s).await.unwrap();
+    pdt_api::run_workflows(&env.state).await;
+    let s = step().await;
+    assert_eq!(s.status, pdt_core::workflow::api::StepStatus::Waiting, "{:?}", s.port);
+    assert_eq!(status(&env, &message.id).await, "sending");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}

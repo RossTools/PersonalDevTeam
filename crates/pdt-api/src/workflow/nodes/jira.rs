@@ -128,6 +128,11 @@ impl NodeKind for JiraCreate {
         )
     }
 
+    /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        false
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: JiraCreateConfig = parse(config)?;
         for (field, v) in [("connection", &c.connection), ("project", &c.project), ("summary", &c.summary)] {
@@ -304,6 +309,11 @@ impl NodeKind for JiraComment {
             &[("out", "Then")],
             false,
         )
+    }
+
+    /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        false
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
