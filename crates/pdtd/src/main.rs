@@ -92,6 +92,8 @@ async fn run() -> anyhow::Result<()> {
     state.listen_port = cfg.port;
     state.instance = pdt_core::instance::InstanceInfo::new(cfg.profile, cfg.port);
     state.remote_https_port = cfg.remote_https_port;
+    // A slow step never holds up the engine's next tick for long: its run goes on in the background.
+    state.engine_tick_wait = std::time::Duration::from_secs(1);
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
     // Likewise the GitHub CLI (attempts' pull requests and CI).
     state.github = match &cfg.gh_bin {

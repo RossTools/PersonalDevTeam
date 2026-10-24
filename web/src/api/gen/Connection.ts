@@ -7,4 +7,8 @@ export type Connection = { id: string, name: string,
 /**
  * What it is (`discord_webhook`, `http`, `radarr`, …).
  */
-kind: string, url: string, config: Record<string, unknown>, hasSecret: boolean, createdAt: number, updatedAt: number, };
+kind: string, url: string, config: Record<string, unknown>, hasSecret: boolean, createdAt: number, updatedAt: number, 
+/**
+ * Why a sensor's last use of it failed (a revoked token, the service down); None once a use works again.
+ */
+lastError: string | null, lastErrorAt: number | null, };

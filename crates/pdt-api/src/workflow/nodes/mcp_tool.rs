@@ -76,7 +76,10 @@ impl NodeKind for McpToolKind {
                 let what = format!("call {} on {} with {}", c.tool, c.server, Value::Object(arguments));
                 return Ok(Outcome::next("out", json!({"would": what})));
             }
-            let result = cx.st.mcp.call(cx.st, &c.server, c.tool.trim(), arguments).await?;
+            // Answer (or give up) a moment before the step's own limit, so the error says which server stalled.
+            let limit = cx.node.timeout_ms.unwrap_or_else(|| self.default_timeout_ms());
+            let timeout = std::time::Duration::from_millis(limit.saturating_sub(1000).max(1000));
+            let result = cx.st.mcp.call(cx.st, &c.server, c.tool.trim(), arguments, timeout).await?;
             Ok(Outcome::Next { port: "out".into(), output: tool_output(&result)? })
         })
     }

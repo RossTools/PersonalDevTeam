@@ -3,7 +3,8 @@
 //! news as events (Phase 7a): `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
 //! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent. While an
 //! enabled workflow listens for them, it also reads an open PR's comments and reviews (Phase 7e): `pr.commented`,
-//! `pr.reviewed`, after a silent first look (the baseline in `host_settings`).
+//! `pr.reviewed`, after a silent first look (the baseline in `host_settings`), moved on only once every new one is
+//! logged. A read that fails keeps the last look, marked with the error (`attempt.pr.error`), and is logged once.
 
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{
@@ -28,7 +29,8 @@ pub(crate) struct PrWatch {
     by_attempt: HashMap<String, PullRequestStatus>,
     /// The failed jobs of each run attempt already asked for, while a watched PR still shows that run.
     jobs: HashMap<(u64, u32), Vec<String>>,
-    /// The last error per project, so a broken `gh` is logged once rather than every minute.
+    /// The last error per read (`pr:<project>`, `issues:<repo>`, `feedback:<attempt>`), so a broken `gh` is logged
+    /// once rather than every minute.
     errors: HashMap<String, String>,
     /// The login `gh` is authenticated as (comments by it are the user's own).
     viewer: Option<String>,
@@ -46,6 +48,22 @@ pub(crate) struct FeedbackSeen {
 
 fn feedback_key(attempt_id: &str) -> String {
     format!("sensor.pr_comments.{attempt_id}")
+}
+
+/// A `gh` read failed: logged when that is news (the first failure, or a new reason).
+pub(crate) fn gh_failed(st: &AppState, what: &str, error: &str) {
+    let mut w = watch(st);
+    if w.errors.get(what).map(String::as_str) != Some(error) {
+        tracing::warn!(read = what, error, "could not read from GitHub");
+        w.errors.insert(what.to_string(), error.to_string());
+    }
+}
+
+/// A `gh` read worked (logged when it had been failing).
+pub(crate) fn gh_worked(st: &AppState, what: &str) {
+    if watch(st).errors.remove(what).is_some() {
+        tracing::info!(read = what, "reading from GitHub works again");
+    }
 }
 
 /// Whether an enabled workflow has a trigger of one of `kinds` (so a sensor has someone to tell).
@@ -139,19 +157,28 @@ async fn refresh_feedback(st: &AppState, info: &AttemptInfo, repo: &str, pr: &Pu
         st.store.get_host_value(&key).await.ok().flatten().and_then(|v| serde_json::from_value(v).ok());
     let viewer = watch(st).viewer.clone();
     let (gh, repo_s, n) = (st.github.clone(), repo.to_string(), pr.number);
+    // The comments and the reviews are read side by side.
     let read = tokio::task::spawn_blocking(move || {
-        let viewer = match viewer {
-            Some(v) => Some(v),
-            None => gh.viewer_login().ok(),
-        };
-        let comments = gh.pr_comments(&repo_s, n)?;
-        let reviews = gh.pr_reviews(&repo_s, n)?;
-        Ok::<_, GhError>((viewer, comments, reviews))
+        std::thread::scope(|s| {
+            let reviews = s.spawn(|| gh.pr_reviews(&repo_s, n));
+            let viewer = match viewer {
+                Some(v) => Some(v),
+                None => gh.viewer_login().ok(),
+            };
+            let comments = gh.pr_comments(&repo_s, n)?;
+            let reviews =
+                reviews.join().unwrap_or_else(|_| Err(GhError::BadOutput("the reviews read panicked".into())))?;
+            Ok::<_, GhError>((viewer, comments, reviews))
+        })
     })
     .await;
+    let what = format!("feedback:{}", info.attempt.id);
     let (viewer, comments, reviews) = match read {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => return tracing::debug!(repo, error = %e, "could not read a pull request's comments"),
+        Ok(Ok(r)) => {
+            gh_worked(st, &what);
+            r
+        }
+        Ok(Err(e)) => return gh_failed(st, &what, &e.to_string()),
         Err(e) => return tracing::warn!(error = %e, "the PR comments task failed"),
     };
     if viewer.is_some() {
@@ -160,11 +187,14 @@ async fn refresh_feedback(st: &AppState, info: &AttemptInfo, repo: &str, pr: &Pu
     let (events, now) = feedback_events(info, pr, &comments, &reviews, viewer.as_deref(), seen);
     for e in events {
         if let Err(x) = st.store.emit_event(&e, now_ms()).await {
-            tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request comment");
+            // The mark stays: the next look logs what is still missing (keys skip what was logged).
+            return tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request comment");
         }
     }
-    if seen != Some(now) {
-        let _ = st.store.put_host_value(&key, &serde_json::to_value(now).unwrap_or_default()).await;
+    if seen != Some(now)
+        && let Err(e) = st.store.put_host_value(&key, &serde_json::to_value(now).unwrap_or_default()).await
+    {
+        tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record how far a PR's comments were read");
     }
 }
 
@@ -256,6 +286,7 @@ pub async fn refresh_prs(st: &AppState) {
     };
     let active_ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
     watch(st).forget_unseen_jobs();
+    watch(st).errors.retain(|k, _| k.strip_prefix("feedback:").is_none_or(|a| active_ids.contains(a)));
     let open: Vec<String> = watch(st)
         .by_attempt
         .iter()
@@ -274,7 +305,7 @@ pub async fn refresh_prs(st: &AppState) {
         }
     }
     let mut repos: HashMap<String, Option<String>> = HashMap::new();
-    let mut queue_runs: HashMap<String, Vec<CiRun>> = HashMap::new();
+    let mut tick = Tick::new(st).await;
     let ended = settling.into_iter().map(|i| (i, false));
     for (info, tell) in active.into_iter().map(|i| (i, true)).chain(ended) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
@@ -289,14 +320,30 @@ pub async fn refresh_prs(st: &AppState) {
             }
         };
         let Some(repo) = repo else { continue };
-        refresh_one(st, &info, &repo, &mut queue_runs, tell).await;
+        refresh_one(st, &info, &repo, &mut tick, tell).await;
+    }
+}
+
+/// What one pass over the attempts shares: each repo's merge-queue runs, the failed jobs known (read once a pass, not
+/// once an attempt), and whether a workflow listens for PR comments.
+struct Tick {
+    queue_runs: HashMap<String, Vec<CiRun>>,
+    jobs: Arc<HashMap<(u64, u32), Vec<String>>>,
+    feedback: bool,
+}
+
+impl Tick {
+    async fn new(st: &AppState) -> Tick {
+        let feedback = workflows_listen(st, &[ev::PR_COMMENTED, ev::PR_REVIEWED]).await;
+        let jobs = Arc::new(watch(st).jobs.clone());
+        Tick { queue_runs: HashMap::new(), jobs, feedback }
     }
 }
 
 /// Reads one active attempt's PR now (the ticket was opened).
 pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) {
     if let Some(repo) = github_repo(&info.repo_path).await {
-        refresh_one(st, info, &repo, &mut HashMap::new(), true).await;
+        refresh_one(st, info, &repo, &mut Tick::new(st).await, true).await;
     }
 }
 
@@ -312,17 +359,11 @@ pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
 }
 
 /// Reads one attempt's PR into the watch; with `tell`, queues its news.
-async fn refresh_one(
-    st: &AppState,
-    info: &AttemptInfo,
-    repo: &str,
-    queue_runs: &mut HashMap<String, Vec<CiRun>>,
-    tell: bool,
-) {
+async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut Tick, tell: bool) {
     let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
     let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
-    let cached_queue = queue_runs.get(repo).cloned();
-    let known_jobs = watch(st).jobs.clone();
+    let cached_queue = tick.queue_runs.get(repo).cloned();
+    let known_jobs = tick.jobs.clone();
     let (gh, repo_s, branch) = (st.github.clone(), repo.to_string(), info.attempt.branch.clone());
     let since = info.attempt.created_at;
     let read = tokio::task::spawn_blocking(move || {
@@ -336,23 +377,27 @@ async fn refresh_one(
             return;
         }
     };
+    let what = format!("pr:{}", info.project_id);
     let (found, queue, jobs) = match read {
         Ok(r) => {
-            watch(st).errors.remove(&info.project_id);
+            gh_worked(st, &what);
             r
         }
         Err(e) => {
             let msg = e.to_string();
-            let mut w = watch(st);
-            if w.errors.get(&info.project_id) != Some(&msg) {
-                tracing::warn!(repo, error = %msg, "could not read pull requests from GitHub");
-                w.errors.insert(info.project_id.clone(), msg);
+            gh_failed(st, &what, &msg);
+            // The badge keeps the last look, saying it is stale and why.
+            if let Some(p) = watch(st).by_attempt.get_mut(&info.attempt.id) {
+                p.error = Some(msg);
             }
             return;
         }
     };
     if let Some(q) = queue {
-        queue_runs.insert(repo.to_string(), q);
+        tick.queue_runs.insert(repo.to_string(), q);
+    }
+    if !jobs.is_empty() {
+        Arc::make_mut(&mut tick.jobs).extend(jobs.clone());
     }
     let Some(mut now) = found else {
         watch(st).by_attempt.remove(&info.attempt.id);
@@ -389,7 +434,7 @@ async fn refresh_one(
                 Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event"),
             }
         }
-        if now.state == PrState::Open && workflows_listen(st, &[ev::PR_COMMENTED, ev::PR_REVIEWED]).await {
+        if now.state == PrState::Open && tick.feedback {
             refresh_feedback(st, info, repo, &now).await;
         }
     }
@@ -612,6 +657,7 @@ fn read_pr(
         queue_ci,
         queue_removal: pr.queue_removal,
         checked_at: 0,
+        error: None,
     };
     Ok((Some(status), fresh_queue, fetched_jobs))
 }
@@ -683,6 +729,7 @@ mod tests {
             queue_ci: None,
             queue_removal: None,
             checked_at: 0,
+            error: None,
         };
         w.by_attempt.insert("a".into(), status(vec![failed.clone()]));
         w.jobs.insert((1, 1), vec!["test".into()]);
@@ -757,6 +804,7 @@ mod tests {
                 by_queue: true,
             }),
             checked_at: 0,
+            error: None,
         };
         let on = status(true, false, None);
         assert!(turned_off_by_hand(Some(&on), &status(false, false, None)));

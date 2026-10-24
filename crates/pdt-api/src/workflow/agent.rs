@@ -134,6 +134,8 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     // A new session runs a turn at once: under the host's cap it waits for a slot (Phase 7c §6.2). A reused one gets
     // its message through the outbox, which keeps to the cap itself.
     let admitted = cx.step.wait.get("admitted").and_then(Value::as_bool) == Some(true);
+    // Steps of different runs start side by side (PDT-128): one at a time here, so two can't both take the last slot.
+    let _starting = st.agent_step_start.lock().await;
     if c.owner == Owner::Agent && reused.is_none() && !admitted && !crate::scheduler::slot_free(st).await {
         tracing::info!(run = %cx.run.id, node = %cx.node.id, "an agent step waits for a slot");
         return Ok(Outcome::Wait {
@@ -548,9 +550,26 @@ async fn finish_with(
     super::engine::complete_step(st, step, outcome, outcome_output(&a)).await
 }
 
-/// `submit_outcome` (pdt-mcp): ends the session's step with an outcome it allows.
+/// The run a session's step belongs to, for its lock: its active binding's, else the step the session was started
+/// for (whose binding doesn't name the session yet while the step is starting it), else its latest binding's.
+async fn session_run(st: &AppState, session_id: &str) -> Option<String> {
+    if let Ok(Some(a)) = st.store.active_agent_step(session_id).await {
+        return Some(a.run_id);
+    }
+    if let Ok(Some(s)) = st.store.get_session(session_id).await
+        && let Some(step) = s.persona.and_then(|p| p.step_id)
+        && let Ok(Some(a)) = st.store.get_agent_step(&step).await
+    {
+        return Some(a.run_id);
+    }
+    st.store.latest_agent_step(session_id).await.ok().flatten().map(|a| a.run_id)
+}
+
+/// `submit_outcome` (pdt-mcp): ends the session's step with an outcome it allows. It waits only for its own run (a
+/// step of it being started), never for other runs' steps.
 pub(crate) async fn submit_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::SubmitOutcome) -> R<Value> {
-    let _engine = st.engine_lock.lock().await;
+    let run = session_run(st, &s.id).await;
+    let _locked = super::engine::lock_run(st, run.as_deref()).await;
     let Some(mut a) = st.store.active_agent_step(&s.id).await.map_err(err)? else {
         return late_outcome(st, s, input).await;
     };
@@ -637,7 +656,8 @@ async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::Subm
 /// `ask_user` (pdt-mcp): an Inbox question; a step waits for the answers instead of stalling.
 pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question>) -> R<Value> {
     let questions = inbox::valid_questions(questions)?;
-    let _engine = st.engine_lock.lock().await;
+    let run = session_run(st, &s.id).await;
+    let _locked = super::engine::lock_run(st, run.as_deref()).await;
     let binding = st.store.active_agent_step(&s.id).await.map_err(err)?;
     if let Some(a) = &binding {
         // A new question replaces the step's open one.
@@ -687,7 +707,8 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
 /// A session's turn ended (a conversation's `Turn` end, a terminal going idle): a working step with no outcome is
 /// nudged, then stalled; at `maxTurns` it times out (spec §4.4).
 pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
-    let _engine = st.engine_lock.lock().await;
+    let run = session_run(st, session_id).await;
+    let _locked = super::engine::lock_run(st, run.as_deref()).await;
     let Ok(Some(mut a)) = st.store.active_agent_step(session_id).await else { return };
     if a.state != AgentStepState::Working {
         return;
@@ -818,7 +839,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Question => answer_question(st, item, answer).await,
         InboxKind::Stalled => {
             let choice = answer.choice.as_deref().ok_or("choose Nudge or an outcome")?;
-            let _engine = st.engine_lock.lock().await;
+            let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
             let step_id = item.step_id.as_deref().ok_or("the item has no step")?;
             let mut a = st.store.get_agent_step(step_id).await.map_err(err)?.ok_or("the step is gone")?;
             let step = waiting_step(st, &a).await?;
@@ -862,7 +883,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         }
         InboxKind::LoopLimit => {
             let choice = answer.choice.as_deref().ok_or("choose Once more, an outcome or Stop")?;
-            let _engine = st.engine_lock.lock().await;
+            let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
             let step_id = item.step_id.as_deref().ok_or("the item has no step")?;
             let mut step = st.store.get_step(step_id).await.map_err(err)?.ok_or("the step is gone")?;
             if step.status != StepStatus::Waiting {
@@ -898,7 +919,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         }
         InboxKind::Manual => {
             let choice = answer.choice.as_deref().ok_or("choose the step's outcome")?;
-            let _engine = st.engine_lock.lock().await;
+            let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
             let step_id = item.step_id.as_deref().ok_or("the item has no step")?;
             let a = st.store.get_agent_step(step_id).await.map_err(err)?.ok_or("the step is gone")?;
             let step = waiting_step(st, &a).await?;
@@ -914,7 +935,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         }
         InboxKind::TimedOut => {
             let choice = answer.choice.as_deref().ok_or("choose Resume or Stop")?;
-            let _engine = st.engine_lock.lock().await;
+            let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
             let run_id = item.run_id.as_deref().ok_or("the item has no run")?;
             let steps = st.store.list_steps(run_id).await.map_err(err)?;
             if resumable_step(&steps).map(|s| s.id.as_str()) != item.step_id.as_deref() {
@@ -959,7 +980,7 @@ async fn answer_question(st: &AppState, item: &InboxItem, answer: &inbox::InboxA
     if s.mode != SessionMode::Conversation && s.status != SessionStatus::Running {
         return Err("the asking terminal session has stopped; restart it first".into());
     }
-    let _engine = st.engine_lock.lock().await;
+    let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
     end_item(st, item, json!({"answers": answer.answers, "text": answer.text})).await?;
     queue_message(st, &s, &text, None, item.ticket_id.clone(), true).await?;
     if let Some(step) = &item.step_id

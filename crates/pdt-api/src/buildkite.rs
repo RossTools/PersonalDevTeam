@@ -2,7 +2,8 @@
 //! settings. Every 60 s, after the PR check, pdtd reads the builds of each active attempt's head (its PR's head, else
 //! the pushed branch, else the local one) and keeps them for ticket responses (merged with the PR's GitHub CI for
 //! the badge, or `attempt.ci` without a PR). It logs `ci.run_failed` / `ci.run_passed` with `provider: buildkite`,
-//! each once (its key names the builds and their retries), so the built-in PR notices tell the agent.
+//! each once (its key names the builds and their retries), so the built-in PR notices tell the agent. A failing
+//! connection is reported once ([`crate::connection_health`]).
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::nodes::http::{client, read_body, send_error};
@@ -166,7 +167,7 @@ pub(crate) fn ci_events(
 }
 
 /// One look at the Buildkite CI of every active attempt of a project with Buildkite pipelines. pdtd runs it every
-/// 60 s, after the PR check. Never fails; problems are logged.
+/// 60 s, after the PR check. Never fails: a connection that fails is reported on it, other problems are logged.
 pub async fn refresh_buildkite(st: &AppState) {
     let active = match st.store.list_active_attempts().await {
         Ok(v) => v.into_iter().filter(|i| !i.attempt.branch.is_empty()).collect::<Vec<_>>(),
@@ -175,6 +176,7 @@ pub async fn refresh_buildkite(st: &AppState) {
     let ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
     crate::github::keep_buildkite(st, &ids);
     let mut settings: HashMap<String, Option<pdt_core::buildkite::BuildkiteSettings>> = HashMap::new();
+    let mut uses = crate::connection_health::Uses::default();
     for info in active {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
@@ -191,20 +193,25 @@ pub async fn refresh_buildkite(st: &AppState) {
             crate::github::set_buildkite(st, &info.attempt.id, None);
             continue;
         };
-        if let Err(e) = refresh_attempt(st, &info, &bk).await {
-            tracing::debug!(ticket = %info.ticket_key, error = %e, "could not read Buildkite builds");
+        match refresh_attempt(st, &info, &bk).await {
+            Ok(true) => uses.worked(&bk.connection),
+            Ok(false) => {}
+            Err(e) => uses.failed(&bk.connection, &e),
         }
     }
+    uses.report(st).await;
 }
 
+/// Reads one attempt's builds; true when it used the connection (false: no head to ask about), the connection's
+/// error when that failed.
 async fn refresh_attempt(
     st: &AppState,
     info: &AttemptInfo,
     bk: &pdt_core::buildkite::BuildkiteSettings,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(head) = head_of(st, info).await else {
         crate::github::set_buildkite(st, &info.attempt.id, None);
-        return Ok(());
+        return Ok(false);
     };
     let c = BuildkiteClient::named(st, &bk.connection).await?;
     let mut runs = vec![];
@@ -213,7 +220,7 @@ async fn refresh_attempt(
     }
     let ci = CiStatus::of(&runs, &head);
     crate::github::set_buildkite(st, &info.attempt.id, ci.clone());
-    let Some(ci) = ci else { return Ok(()) };
+    let Some(ci) = ci else { return Ok(true) };
     let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == PrState::Open);
     let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
     for e in ci_events(info, &ci, pr.as_ref(), &head, agent_working) {
@@ -223,5 +230,5 @@ async fn refresh_attempt(
             Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a Buildkite event"),
         }
     }
-    Ok(())
+    Ok(true)
 }

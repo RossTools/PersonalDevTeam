@@ -664,3 +664,79 @@ async fn a_personal_projects_tickets_run_in_a_folder() {
     let (_, t2) = call(&env.app, "GET", &format!("/api/tickets/{}", t["id"].as_str().unwrap()), None).await;
     assert_eq!(t2["stage"], "in_progress", "merge detection leaves it alone");
 }
+
+/// PDT-128: a step that hangs (an HTTP server that never answers) holds up neither other runs nor an agent's
+/// `submit_outcome`, and cancelling its run doesn't wait for it.
+#[tokio::test]
+async fn a_hung_step_holds_up_neither_other_runs_nor_submit_outcome() {
+    let env = setup().await;
+    let slow = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let slow_url = format!("http://{}/hang", slow.local_addr().unwrap());
+    tokio::spawn(async move {
+        let mut held = vec![];
+        while let Ok((sock, _)) = slow.accept().await {
+            held.push(sock);
+        }
+    });
+    let hang = create_workflow(
+        &env,
+        json!({
+            "name": "Hang",
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "get", "kind": "http.request", "version": 1, "timeoutMs": 120_000, "config": {"url": slow_url}},
+            ],
+            "edges": [{"from": "go", "to": "get"}],
+        }),
+    )
+    .await;
+    // As in pdtd: a tick goes on without a run still in a slow step.
+    let mut st = env.state.clone();
+    st.engine_tick_wait = Duration::from_millis(200);
+    let hung = run_now(&env, &hang, json!({})).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        pdt_api::run_workflows(&st).await;
+        let r = run(&env, &hung).await;
+        if r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "get" && s["status"] == "running") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the request never started: {r:#}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let t = ticket(&env, "Review me").await;
+    let wf = create_workflow(
+        &env,
+        review_doc(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Looks right."}"#, json!({})),
+    )
+    .await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(30);
+    let r = loop {
+        pdt_api::run_workflows(&st).await;
+        let r = run(&env, &id).await;
+        if !matches!(r["status"].as_str(), Some("running" | "waiting")) {
+            break r;
+        }
+        assert!(Instant::now() < deadline, "the review never ended while the other run hung: {r:#}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!((r["status"].as_str(), r["output"]["result"].as_str()), (Some("succeeded"), Some("approved")), "{r:#}");
+    let r = run(&env, &hung).await;
+    assert_eq!(r["status"], "running", "{r:#}");
+
+    // Cancelling doesn't wait for the hung request, whose result, if it ever comes, goes nowhere.
+    let cancel = tokio::time::timeout(
+        Duration::from_secs(5),
+        call(&env.app, "POST", &format!("/api/workflow-runs/{hung}/cancel"), None),
+    )
+    .await
+    .expect("cancel waited for the hung step");
+    assert_eq!(cancel.0, StatusCode::OK, "{}", cancel.1);
+    let r = run(&env, &hung).await;
+    assert_eq!(r["status"], "cancelled", "{r:#}");
+    let get = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "get").unwrap().clone();
+    assert_eq!(get["status"], "skipped", "{r:#}");
+}

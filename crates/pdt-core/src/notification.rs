@@ -103,6 +103,8 @@ pub enum NotificationKind {
     WorkflowFailed,
     #[serde(rename = "workflow.notify")]
     WorkflowNotify,
+    #[serde(rename = "connection.failed")]
+    ConnectionFailed,
     #[serde(rename = "host.loop_stale")]
     HostLoopStale,
 }
@@ -111,7 +113,7 @@ use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 17] = [
+    pub const ALL: [NotificationKind; 18] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -128,6 +130,7 @@ impl NotificationKind {
         K::PrMerged,
         K::WorkflowFailed,
         K::WorkflowNotify,
+        K::ConnectionFailed,
         K::HostLoopStale,
     ];
 
@@ -149,6 +152,7 @@ impl NotificationKind {
             K::PrMerged => "pr.merged",
             K::WorkflowFailed => "workflow.failed",
             K::WorkflowNotify => "workflow.notify",
+            K::ConnectionFailed => "connection.failed",
             K::HostLoopStale => "host.loop_stale",
         }
     }
@@ -189,6 +193,7 @@ impl NotificationKind {
             | K::InboxLoopLimit
             | K::InboxNotice
             | K::WorkflowNotify
+            | K::ConnectionFailed
             | K::HostLoopStale => Show::Toast,
             K::SessionTurnEnded => Show::Dot,
             K::SessionExited | K::PrCiFailed | K::PrConflict | K::PrQueueLeft | K::PrMerged | K::WorkflowFailed => {
@@ -225,6 +230,7 @@ impl NotificationKind {
             K::PrMerged => "Merged",
             K::WorkflowFailed => "Workflow failed",
             K::WorkflowNotify => "Workflow notification",
+            K::ConnectionFailed => "Connection failing",
             K::HostLoopStale => "Background task stalled",
         }
     }
@@ -248,6 +254,7 @@ impl NotificationKind {
             K::PrMerged => "An attempt's pull request merged.",
             K::WorkflowFailed => "A workflow run failed.",
             K::WorkflowNotify => "A workflow's Notify me step.",
+            K::ConnectionFailed => "A sensor could not use a connection (a revoked token, the service down).",
             K::HostLoopStale => "One of PDT's background tasks (PR checks, the workflow engine…) stopped running.",
         }
     }
@@ -315,6 +322,8 @@ pub enum NotificationTarget {
     Url {
         url: String,
     },
+    /// Settings → Connections.
+    Connections,
     None,
 }
 
@@ -396,6 +405,11 @@ pub fn session_key(session_id: &str, kind: NotificationKind) -> String {
         K::SessionExited => format!("session:{session_id}:exited"),
         _ => format!("session:{session_id}:needs_you"),
     }
+}
+
+/// The one live row per failing connection (by name: a missing connection has no id).
+pub fn connection_key(name: &str) -> String {
+    format!("connection:{name}")
 }
 
 pub fn inbox_key(item_id: &str) -> String {

@@ -617,6 +617,8 @@ pub(crate) async fn create_connection(
         has_secret: false,
         created_at: now,
         updated_at: now,
+        last_error: None,
+        last_error_at: None,
     };
     st.store.insert_connection(&conn).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(_) => {
@@ -624,6 +626,7 @@ pub(crate) async fn create_connection(
         }
         other => other.into(),
     })?;
+    crate::connection_health::forget(&st, &[&conn.name]).await;
     crate::mcp_client::connection_changed(&st, Some(&conn)).await;
     Ok((StatusCode::CREATED, Json(conn)))
 }
@@ -646,6 +649,7 @@ pub(crate) async fn patch_connection(
 ) -> Result<Json<Connection>, ApiError> {
     let p = body(payload)?;
     let mut c = load_connection(&st, &id).await?;
+    let old_name = c.name.clone();
     if let Some(n) = p.name {
         c.name = valid_name(&n)?;
     }
@@ -669,6 +673,8 @@ pub(crate) async fn patch_connection(
         }
         other => other.into(),
     })?;
+    (c.last_error, c.last_error_at) = (None, None);
+    crate::connection_health::forget(&st, &[&old_name, &c.name]).await;
     crate::mcp_client::connection_changed(&st, Some(&c)).await;
     Ok(Json(c))
 }
@@ -677,7 +683,7 @@ pub(crate) async fn delete_connection(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    load_connection(&st, &id).await?;
+    let c = load_connection(&st, &id).await?;
     let secrets = st.secrets.clone();
     let account = secret_account(&id);
     tokio::task::spawn_blocking(move || secrets.delete(&account))
@@ -685,6 +691,7 @@ pub(crate) async fn delete_connection(
         .map_err(ApiError::internal)?
         .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
     st.store.delete_connection(&id).await?;
+    crate::connection_health::forget(&st, &[&c.name]).await;
     crate::mcp_client::connection_changed(&st, None).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -716,6 +723,8 @@ pub(crate) async fn put_secret(
     c.has_secret = true;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await?;
+    (c.last_error, c.last_error_at) = (None, None);
+    crate::connection_health::forget(&st, &[&c.name]).await;
     crate::mcp_client::connection_changed(&st, Some(&c)).await;
     Ok(Json(c))
 }
@@ -734,6 +743,8 @@ pub(crate) async fn delete_secret(
     c.has_secret = false;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await?;
+    (c.last_error, c.last_error_at) = (None, None);
+    crate::connection_health::forget(&st, &[&c.name]).await;
     crate::mcp_client::connection_changed(&st, Some(&c)).await;
     Ok(Json(c))
 }

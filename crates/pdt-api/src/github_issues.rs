@@ -1,7 +1,9 @@
 //! New GitHub issues (Phase 7e spec §2.3). pdtd polls, every 60 s, each repo an enabled workflow's
 //! `github.issue.opened` trigger watches (its `repos`, else the GitHub repos of the projects in its scope) and logs
 //! `github.issue.opened` for each issue newer than the last one seen. The first look at a repo only records its newest
-//! issue (`sensor.github_issues.<repo>`), so turning a watcher on never replays a repo's history.
+//! issue (`sensor.github_issues.<repo>`), so turning a watcher on never replays a repo's history. Later looks read
+//! back page by page to the last issue seen, and the mark moves only past issues that were logged: a failed insert is
+//! tried again on the next look.
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{
@@ -128,17 +130,30 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String
     out
 }
 
-/// One look at every watched repo's newest issues. pdtd runs it every 60 s. Never fails; problems are logged.
+/// One look at every watched repo's newest issues. pdtd runs it every 60 s. Never fails; problems are logged (a
+/// failing `gh` once per repo until it works again).
 pub async fn refresh_issues(st: &AppState) {
     for (repo, project) in watched_repos(st).await.into_values() {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
+        let key = baseline_key(&repo);
+        let seen = match st.store.get_host_value(&key).await {
+            Ok(v) => v.and_then(|v| v["newest"].as_u64()),
+            Err(e) => {
+                tracing::warn!(repo, error = %e, "could not read where a repository's issues were read to");
+                continue;
+            }
+        };
         let (gh, r) = (st.github.clone(), repo.clone());
-        let issues = match tokio::task::spawn_blocking(move || gh.recent_issues(&r)).await {
-            Ok(Ok(i)) => i,
+        let read = tokio::task::spawn_blocking(move || gh.recent_issues(&r, seen)).await;
+        let issues = match read {
+            Ok(Ok(i)) => {
+                crate::github::gh_worked(st, &format!("issues:{repo}"));
+                i
+            }
             Ok(Err(e)) => {
-                tracing::debug!(repo, error = %e, "could not read a repository's issues");
+                crate::github::gh_failed(st, &format!("issues:{repo}"), &e.to_string());
                 continue;
             }
             Err(e) => {
@@ -146,9 +161,9 @@ pub async fn refresh_issues(st: &AppState) {
                 continue;
             }
         };
-        let key = baseline_key(&repo);
         let newest = issues.iter().map(|i| i.number).max().unwrap_or(0);
-        let seen = st.store.get_host_value(&key).await.ok().flatten().and_then(|v| v["newest"].as_u64());
+        // The newest issue logged (or, the first time, seen).
+        let mut mark = seen.unwrap_or(newest);
         if let Some(seen) = seen {
             let mut new: Vec<_> = issues.iter().filter(|i| i.number > seen).collect();
             new.sort_by_key(|i| i.number);
@@ -171,12 +186,17 @@ pub async fn refresh_issues(st: &AppState) {
                     payload,
                 );
                 if let Err(x) = st.store.emit_event(&e, now_ms()).await {
-                    tracing::warn!(repo, error = %x, "could not log a new issue");
+                    // The mark stays before it: the next look tries it again.
+                    tracing::warn!(repo, issue = i.number, error = %x, "could not log a new issue");
+                    break;
                 }
+                mark = i.number;
             }
         }
-        if seen.is_none_or(|s| newest > s) {
-            let _ = st.store.put_host_value(&key, &json!({"newest": newest.max(seen.unwrap_or(0))})).await;
+        if seen != Some(mark)
+            && let Err(e) = st.store.put_host_value(&key, &json!({"newest": mark})).await
+        {
+            tracing::warn!(repo, error = %e, "could not record where a repository's issues were read to");
         }
     }
 }

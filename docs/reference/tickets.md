@@ -208,6 +208,11 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   `PrBadge`, web/src/tickets/PullRequest.tsx). An attempt that ended while its PR was last seen open has the PR read
   again each tick for an hour after (no news), and the web shows a merged attempt's still-open PR as Merged (PDT-59:
   git's merge check can end the attempt while GitHub still says queued).
+- `attempt.pr.checkedAt` is when it was last read. When a read fails (`gh` signed out, GitHub down) the last look stays
+  with `error` set (PDT-130): the board card's badge shows a warning sign and says why in its tooltip, the Attempt
+  section "Not updated: <error> (last checked <when>)"; otherwise both say when it was last checked. A failing `gh` is
+  logged once until it works again. The failed jobs known are read once a pass (not once an attempt), and whether a
+  workflow listens for PR comments once a pass.
 - News is logged as events (PDT-76; docs/reference/workflows.md): CI failed (`ci.run_failed`, per set of failed run
   attempts), CI passed (`ci.run_passed`), a conflict (`pr.conflict`, per head), the merge queue removing the PR
   without merging it (`pr.queue_left`, per `RemovedFromMergeQueueEvent`, read in the same query, so a PR queued and
