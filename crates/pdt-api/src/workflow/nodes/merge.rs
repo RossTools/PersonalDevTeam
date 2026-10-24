@@ -52,6 +52,21 @@ async fn fresh_pr(cx: &StepCx<'_>, attempt: &str) -> Option<pdt_core::pr::PullRe
     crate::github::watched_pr(cx.st, attempt).filter(|p| p.state == pdt_core::pr::PrState::Open)
 }
 
+/// A first merge refused for something the agent can fix (PDT-139): PR notices puts the Coder on the attempt's later
+/// conflicts and CI failures (not set to merge, so CI passing alone turns nothing on: PDT-124), and a merge again
+/// after a fix finishes the ticket as this one asked.
+async fn refused_fixable(cx: &StepCx<'_>, attempt: &str, req: &MergeRequest) {
+    let store = &cx.st.store;
+    if let Some(finish) = req.finish_on_merge
+        && let Err(e) = store.set_attempt_finish(attempt, finish, req.delete_branch.unwrap_or(false)).await
+    {
+        tracing::warn!(attempt, error = %e, "could not record how a refused merge finishes");
+    }
+    if let Err(e) = store.set_attempt_merge_refused(attempt).await {
+        tracing::warn!(attempt, error = %e, "could not record a refused merge");
+    }
+}
+
 impl NodeKind for Merge {
     fn spec(&self) -> KindSpec {
         spec::<MergeConfig, Value>(
@@ -98,6 +113,9 @@ impl NodeKind for Merge {
                     Ok(Outcome::next(port, json!({"outcome": r.outcome, "commit": r.commit})))
                 }
                 Ok(Err(r)) => {
+                    if r.fixable && !c.again {
+                        refused_fixable(cx, &c.attempt, &req).await;
+                    }
                     Ok(Outcome::next("refused", json!({"code": r.code, "reason": r.reason, "fixable": r.fixable})))
                 }
                 Err(e) => Err(e.message().to_string()),

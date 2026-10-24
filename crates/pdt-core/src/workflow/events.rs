@@ -257,6 +257,10 @@ pub struct CiEvent {
     /// (PDT-104): PR notices gets it merging again.
     #[serde(default)]
     pub merge_requested: bool,
+    /// A workflow's merge of the attempt was refused for something its agent can fix (a conflict, uncommitted
+    /// changes), and the pull request is still open (PDT-139): PR notices puts the Coder on its later failures.
+    #[serde(default)]
+    pub merge_refused: bool,
     /// An agent step is working on the attempt (a workflow already has an agent on it).
     #[serde(default)]
     pub agent_working: bool,
@@ -280,6 +284,10 @@ pub struct PrEvent {
     /// (PDT-104): PR notices gets it merging again.
     #[serde(default)]
     pub merge_requested: bool,
+    /// A workflow's merge of the attempt was refused for something its agent can fix (a conflict, uncommitted
+    /// changes), and the pull request is still open (PDT-139): PR notices puts the Coder on its later failures.
+    #[serde(default)]
+    pub merge_refused: bool,
     /// An agent step is working on the attempt (a workflow already has an agent on it).
     #[serde(default)]
     pub agent_working: bool,

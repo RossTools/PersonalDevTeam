@@ -61,7 +61,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   - **PR notices** (on; a Pipeline's own refused merge is fixed and reviewed in the Pipeline, PDT-124: see
     "Pipeline"): `pr.merged`, `attempt.merged` (not `via: closed`) → `session.send` (`text:
     {{trigger.notice.text}}`, `dedupe: {{trigger.notice.key}}`, `timeline: pr`). `ci.run_failed`, `pr.conflict`,
-    `pr.queue_left` and `pr.behind` → a condition on `{{trigger.mergeRequested}}` (PDT-104): not set to merge → the
+    `pr.queue_left` and `pr.behind` → a condition on `{{trigger.mergeRequested}}` or `{{trigger.mergeRefused}}`
+    (PDT-104; PDT-139: a workflow's first `attempt.merge` refused as `fixable` counts, see below): neither → the
     same `session.send`; set to merge but an agent on it (`attempt.agent_working`, read as the step runs, so a
     conflict and the queue drop it caused, logged in one look, get one fix) → the `session.send` too; else
     `state.set` `tries.{{trigger.attemptId}}` `add: 1`, and over 3 (`FIX_TRIES`) → a `ticket.comment` the first time
@@ -71,7 +72,13 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     `approved` → `push` (agent, Coder, reuse: push it; `submitted` → `remerge`), `changes_requested` → `fix`.
     `timeout` / `stopped` of these → a ticket comment. `remerge` `refused` → a ticket comment with the reason.
     `ci.run_passed` where `pr` exists, `mergeRequested`, not `autoMerge`, not `inMergeQueue`, not `agentWorking` →
-    `remerge`. An untouched PR notices follows this template, so an enabled one picks it up on pdtd's next start.
+    `remerge` (only `mergeRequested`: a refused merge alone never turns auto-merge on for an unreviewed fix,
+    PDT-124). The `session.send`'s `untold` (no running agent session for the attempt: none, or all `interrupted`,
+    PDT-139) → a condition that the notice is not `merged` (`false` → a quiet end) → `inbox.notice` (one Inbox item per
+    attempt and notice key, below) → `added` → a `ticket.comment` with the notice text; `skipped` ends there. An
+    untold notice does not spend its key (PDT-129), so the same notice again tries the agent again (told if a session
+    is there by then) and, still untold, stops at `inbox.notice`'s `skipped`.
+    An untouched PR notices follows this template, so an enabled one picks it up on pdtd's next start.
   - **Finish merged tickets** (on): `attempt.merged` (`via: detected`) → gate answered ahead by `finishOnMerge`
     (Merge…'s "Move to Done and clean up once it merges", PDT-75), else `unanswered` → quiet end (the merged banner
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
@@ -116,6 +123,7 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
 | `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`, `pipelineStage`; Phase 7c) | `merged`, `queued`, `refused` |
+| `inbox.notice` (`attempt`, `text`, `key`, `title`; PDT-139): an Inbox item (kind and group `notice`, Unheard notices) on the attempt's ticket, once per attempt and key (`inbox_items.dedupe_key` `notice:<attempt>:<key>`, also once it closed); body `notice` (the trigger's notice kind), `key`, `text`, `pr`, `url`, `workflow`; the default title says what happened and that no agent session is open | `added`, `skipped` |
 | `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
@@ -618,7 +626,12 @@ deleted (`409 persona_in_use`).
   or anything that stops the merge leaves by `refused` (`code`, `reason`, `fixable`: a conflict or uncommitted
   changes, which the attempt's agent can clear); `merge_failed` is an error. With `again`
   (PR notices after a fix, PDT-104) it reads the PR from GitHub first: one already on auto-merge or in the queue is
-  `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays.
+  `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays. A first merge
+  (not `again`) refused as `fixable` records that choice anyway and sets `attempts.merge_refused` (PDT-139, sticky):
+  the PR's later `ci.run_failed` and `pr.*` events carry `mergeRefused` (while it is open), so PR notices puts the
+  Coder on them instead of only telling an agent. It is not "set to merge" (`mergeRequested` stays false, PDT-124);
+  once the attempt is set to merge (the remerge after the fix) that replaces it, and a person turning auto-merge off
+  clears both, so it stays off (PDT-104).
 - **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`,
   `approvalExemptLabels` (tickets with one of them need no approval; normalised like ticket labels, `[]` clears),
   `maxRunningAttempts`, `autoStart` `off | todo | ready`; `PUT` takes them as top-level fields, `maxRunningAttempts`
@@ -636,16 +649,21 @@ deleted (`409 persona_in_use`).
 
 `inbox_items` (pdt-store `inbox.rs`, pdt-api `inbox.rs`): `question` (`ask_user`), `gate` (a waiting `gate` node;
 group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c),
-`timed_out` (group Stalled, PDT-123); one
-open item per step and kind. Resolved and closed items are deleted 30 days after they ended (`maintain_workflows`);
+`timed_out` (group Stalled, PDT-123), `notice` (group Unheard notices, after Loop limit, PDT-139: made by
+`inbox.notice`, with no step, so it outlives its run); one
+open item per step and kind. A `notice` closes (`resolution` `{settled: true}`) when its cause is gone: the
+attempt ended (merged, abandoned) or its PR, as the PR check last saw it, is no longer open or shows the notice
+settled (`pdt_core::pr::notice_settled`: a conflict mergeable again, CI passed, back in the queue or on auto-merge,
+caught up with its base), checked on every notifications `sync` (`inbox::settle_notices`); and at once on the
+attempt's `ci.run_passed` (its CI notices, Buildkite's too) and `pr.merged` (all of them). Dismiss closes one too. Resolved and closed items are deleted 30 days after they ended (`maintain_workflows`);
 open ones stay however old. Approvals are
 not stored: the open permission requests of live conversations (`approval:<session>:<request>`), answered in their
 session. `GET /api/inbox?project=` → `{items, total}`, Questions, Approvals, Stalled, Loop limit, Gates, Ready to
 accept, oldest first within each, with ticket key and title and persona name. `POST /api/inbox/{id}/answer` takes
 `{choice}` (a gate's choice, with an optional `text`, the user's comment; `nudge` with an optional `text`, or `outcome:<id>`, for a stalled step; `again`,
 `outcome:<id>` or `stop` at a loop limit; `resume` with an optional `text`, the note, or `stop` for a timed-out step)
-or `{answers}` / `{text}` for a question; `POST /api/inbox/{id}/dismiss`
-closes a question or stalled item (the step keeps waiting). A gate answered through
+or `{answers}` / `{text}` for a question (a notice takes no answer); `POST /api/inbox/{id}/dismiss`
+closes a question or stalled item (the step keeps waiting) or a notice. A gate answered through
 `/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too. When a session is removed (and when the store
 opens, for older ones) its open questions close (`resolution` `{sessionGone: true}`) and no item keeps its
 `sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93). **Sessions waiting** (group
@@ -658,7 +676,8 @@ has two sections, **Needs you** (the items, grouped by kind) and **Updates** (th
 in bold, cleared dimmed, Mark all read, a link to Settings → Notifications; selecting one reads it and shows Open, its
 target); opening an item reads its notifications. The work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
-over / Stop, Resume (with a note) / Stop, a gate's choices, a manual step's outcomes); `j`/`k` move, Enter takes the primary action,
+over / Stop, Resume (with a note) / Stop, a gate's choices, a manual step's outcomes, an unheard notice's text with
+Open ticket and Dismiss); `j`/`k` move, Enter takes the primary action,
 `o` opens the ticket, `e` dismisses. A gate has a note box: the note goes with the choice (as the user's ticket
 comment, so a rejection tells the coder what to change). An item on a ticket with an attempt also offers Open coder
 session (the attempt's running agent session), Open changes and Run… (the worktree's configured runs and tests); each
@@ -670,7 +689,7 @@ On a phone (PDT-117, web/src/inbox/PhoneInboxList.tsx and PhoneInbox.tsx) `/inbo
 count) | **Updates** (a dot while any is unread), and **Review all (n)** at the bottom opens the first item.
 `/inbox/<item>` shows one item (the top bar says "Approval · 2 of 4"): its ticket and step in brief, the kind's content
 (it scrolls) and its decisions in a bar fixed at the bottom, 48px, primary on the right (Question: the choices as big
-rows, Send; Approval: Deny · Always · Allow; Stalled: Take over (its outcomes in a bottom sheet) · Nudge; a loop limit's,
+rows, Send; Approval: Deny · Always · Allow; Stalled: Take over (its outcomes in a bottom sheet) · Nudge; Unheard notice: Dismiss · Open ticket; a loop limit's,
 gate's, manual step's or timed-out step's own choices; Session waiting: Open session); more than three choices fold
 into **More ▾** (a bottom sheet). A decision shows the next item in place (Back returns to the list), "All clear" after
 the last; a horizontal swipe moves between items without answering. ⋯ has Open session, Open ticket and Dismiss.
@@ -682,7 +701,8 @@ PDT-108 (spec: the ticket). pdtd makes each notification once, in `notifications
 every client shows it from there. Types and rules: pdt-core `notification.rs`; the Notifier: pdt-api `notifications.rs`.
 
 - **Kinds and Show.** Needs you: `session.needs_you`, `inbox.question`, `inbox.approval`, `inbox.gate` (gates and Ready
-  to accept), `inbox.manual`, `inbox.stalled` (a stalled or timed-out step), `inbox.loop_limit`. Updates: `session.turn_ended`, `session.exited`,
+  to accept), `inbox.manual`, `inbox.stalled` (a stalled or timed-out step), `inbox.loop_limit`, `inbox.notice` (an unheard
+  notice, PDT-139). Updates: `session.turn_ended`, `session.exited`,
   `session.undelivered` (a message for an agent never reached it: [Outbox](#outbox-sessionsend)), `pr.ci_failed`,
   `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `connection.failed`
   ("Sensors and webhooks"), `host.loop_stale` (a background loop of pdtd stopped finishing passes, [host.md](host.md)).

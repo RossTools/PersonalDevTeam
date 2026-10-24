@@ -9,6 +9,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::conversation::{AgentEvent, RequestState};
 use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus};
+use pdt_core::pr::NoticeKind;
+use pdt_core::ticket::AttemptState;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -194,13 +196,58 @@ pub(crate) async fn answer(
     Ok(Json(r))
 }
 
-/// `POST /api/inbox/{id}/dismiss`: closes a question or stalled item without acting (its step keeps waiting).
+/// `POST /api/inbox/{id}/dismiss`: closes a question or stalled item without acting (its step keeps waiting), or an
+/// unheard notice.
 pub(crate) async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let item = load(&st, &id).await?;
-    if !matches!(item.kind, InboxKind::Question | InboxKind::Stalled) {
-        return Err(bad("only questions and stalled steps can be dismissed; answer this one"));
+    if !matches!(item.kind, InboxKind::Question | InboxKind::Stalled | InboxKind::Notice) {
+        return Err(bad("only questions, stalled steps and notices can be dismissed; answer this one"));
     }
     st.store.end_inbox_item(&id, InboxStatus::Closed, &json!({"dismissed": true}), now_ms()).await?;
     crate::notifications::kick(&st);
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Closes the unheard notices whose cause went away (PDT-139): the attempt ended (merged, or a new one started) or
+/// its pull request shows the notice settled (`pdt_core::pr::notice_settled`). `only`: just this attempt's notices
+/// of these kinds, closed whatever the pull request shows (an event said so: CI passed, the PR merged). Never fails;
+/// problems are logged.
+pub(crate) async fn settle_notices(st: &AppState, only: Option<(&str, &[NoticeKind])>) {
+    let items = match st.store.open_inbox_items_of(InboxKind::Notice).await {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the Inbox's notices");
+            return;
+        }
+    };
+    let mut closed = false;
+    for i in items {
+        let Some(attempt) = i.attempt_id.as_deref() else { continue };
+        let kind: Option<NoticeKind> = i.body.get("notice").cloned().and_then(|k| serde_json::from_value(k).ok());
+        let settled = match only {
+            Some((a, kinds)) => a == attempt && kind.is_some_and(|k| kinds.contains(&k)),
+            None => match st.store.get_attempt(attempt).await {
+                Ok(None) => true,
+                Ok(Some(info)) if info.attempt.state != AttemptState::Active => true,
+                Ok(Some(_)) => kind.is_some_and(|k| {
+                    // Unknown after a restart until the PR check looks again.
+                    crate::github::watched_pr(st, attempt).is_some_and(|pr| pdt_core::pr::notice_settled(k, &pr))
+                }),
+                Err(e) => {
+                    tracing::warn!(attempt, error = %e, "could not read a notice's attempt");
+                    false
+                }
+            },
+        };
+        if !settled {
+            continue;
+        }
+        match st.store.end_inbox_item(&i.id, InboxStatus::Closed, &json!({"settled": true}), now_ms()).await {
+            Ok(c) => closed |= c,
+            Err(e) => tracing::warn!(item = %i.id, error = %e, "could not close a settled notice"),
+        }
+    }
+    if closed {
+        crate::notifications::kick(st);
+    }
 }

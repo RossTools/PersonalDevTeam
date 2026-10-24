@@ -415,6 +415,22 @@ pub fn merged_notice(pr: Option<u32>, branch: &str, base: &str) -> Notice {
     }
 }
 
+/// Whether the cause of a notice of `kind` went away, as `now` shows the pull request (PDT-139): it is no longer open,
+/// a conflict is mergeable again, CI passed, it is back in the merge queue (or set to merge), it caught up with its
+/// base. An unheard notice's Inbox item closes then.
+pub fn notice_settled(kind: NoticeKind, now: &PullRequestStatus) -> bool {
+    if now.state != PrState::Open {
+        return true;
+    }
+    match kind {
+        NoticeKind::Conflict => now.mergeable == Mergeable::Mergeable,
+        NoticeKind::CiFailed => now.ci.as_ref().is_some_and(|c| c.state == CiState::Passed),
+        NoticeKind::QueueLeft => now.in_merge_queue || now.auto_merge,
+        NoticeKind::Behind => !now.behind,
+        NoticeKind::Merged | NoticeKind::Commented | NoticeKind::Reviewed => false,
+    }
+}
+
 fn short(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
 }
@@ -473,6 +489,39 @@ pub(crate) mod tests {
         assert!(!p.merged_at(""));
         p.state = PrState::Closed;
         assert!(!p.merged_at("abc"), "closed without merging");
+    }
+
+    #[test]
+    fn a_notice_settles_once_its_cause_is_gone() {
+        let mut p = pr();
+        p.mergeable = Mergeable::Conflicting;
+        assert!(!notice_settled(NoticeKind::Conflict, &p));
+        p.mergeable = Mergeable::Unknown;
+        assert!(!notice_settled(NoticeKind::Conflict, &p), "not known yet");
+        p.mergeable = Mergeable::Mergeable;
+        assert!(notice_settled(NoticeKind::Conflict, &p));
+
+        let ci = |state| Some(CiStatus { state, url: "u".into(), runs: vec![] });
+        p.ci = ci(CiState::Failed);
+        assert!(!notice_settled(NoticeKind::CiFailed, &p));
+        p.ci = ci(CiState::Running);
+        assert!(!notice_settled(NoticeKind::CiFailed, &p), "a new run, not passed yet");
+        p.ci = ci(CiState::Passed);
+        assert!(notice_settled(NoticeKind::CiFailed, &p));
+
+        p.auto_merge = false;
+        assert!(!notice_settled(NoticeKind::QueueLeft, &p));
+        p.in_merge_queue = true;
+        assert!(notice_settled(NoticeKind::QueueLeft, &p));
+
+        p.behind = true;
+        assert!(!notice_settled(NoticeKind::Behind, &p));
+        p.behind = false;
+        assert!(notice_settled(NoticeKind::Behind, &p));
+
+        p.mergeable = Mergeable::Conflicting;
+        p.state = PrState::Closed;
+        assert!(notice_settled(NoticeKind::Conflict, &p), "a closed PR conflicts with nothing");
     }
 
     pub(crate) fn pr() -> PullRequestStatus {

@@ -578,7 +578,8 @@ async fn record_merge(st: &AppState, info: &AttemptInfo, input: &MergeRequest) -
 
 /// The Merge command (the route, and the `attempt.merge` node as an automated merger): the project's policy, then
 /// what would stop the merge, then the merge. A refusal is `Ok(Err(_))`. A refusal never records the request to merge
-/// (PDT-124): set to merge, PR notices would turn auto-merge on once CI passes, also for a fix nobody reviewed.
+/// (PDT-124): set to merge, PR notices would turn auto-merge on once CI passes, also for a fix nobody reviewed. (The
+/// `attempt.merge` node records a fixable refusal apart, as `merge_refused`: PDT-139.)
 pub(crate) async fn merge_attempt(
     st: &AppState,
     id: &str,

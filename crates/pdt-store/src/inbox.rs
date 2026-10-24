@@ -122,6 +122,48 @@ impl Store {
         Ok(self.get_inbox_item(&i.id).await?.unwrap_or_else(|| i.clone()))
     }
 
+    /// Adds an item that is made once per `dedupe_key` (an unheard notice, PDT-139): None when an item with the key
+    /// was ever made (open, answered or closed; pruned ones are forgotten).
+    pub async fn add_inbox_item_once(&self, i: &InboxItem, dedupe_key: &str) -> Result<Option<InboxItem>, StoreError> {
+        let r = sqlx::query(
+            "INSERT INTO inbox_items (id, kind, grp, status, project_id, ticket_id, attempt_id, session_id, run_id, \
+             step_id, persona_id, title, body, choices, resolution, created_at, resolved_at, dedupe_key) \
+             SELECT ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ? \
+             WHERE NOT EXISTS (SELECT 1 FROM inbox_items WHERE dedupe_key = ?)",
+        )
+        .bind(&i.id)
+        .bind(i.kind.as_str())
+        .bind(i.group.as_str())
+        .bind(&i.project_id)
+        .bind(&i.ticket_id)
+        .bind(&i.attempt_id)
+        .bind(&i.session_id)
+        .bind(&i.run_id)
+        .bind(&i.step_id)
+        .bind(&i.persona_id)
+        .bind(&i.title)
+        .bind(i.body.to_string())
+        .bind(serde_json::to_string(&i.choices).unwrap_or_else(|_| "[]".into()))
+        .bind(i.created_at)
+        .bind(dedupe_key)
+        .bind(dedupe_key)
+        .execute(&self.pool)
+        .await?;
+        if r.rows_affected() == 0 {
+            return Ok(None);
+        }
+        self.get_inbox_item(&i.id).await
+    }
+
+    /// The open items of one kind, oldest first.
+    pub async fn open_inbox_items_of(&self, kind: InboxKind) -> Result<Vec<InboxItem>, StoreError> {
+        let sql = format!(
+            "SELECT {ITEM_COLUMNS} FROM inbox_items WHERE status = 'open' AND kind = ? ORDER BY created_at, id"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(kind.as_str()).fetch_all(&self.pool).await?;
+        rows.iter().map(to_item).collect()
+    }
+
     pub async fn get_inbox_item(&self, id: &str) -> Result<Option<InboxItem>, StoreError> {
         let sql = format!("SELECT {ITEM_COLUMNS} FROM inbox_items WHERE id = ?");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
@@ -376,6 +418,24 @@ mod tests {
             created_at: at,
             resolved_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn an_item_with_a_dedupe_key_is_made_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        let notice = |id: &str| InboxItem { kind: InboxKind::Notice, group: InboxGroup::Notice, ..item(id, None, 1) };
+        let made = store.add_inbox_item_once(&notice("n1"), "notice:a1:conflict:abc").await.unwrap();
+        assert_eq!(made.unwrap().id, "n1");
+        assert!(store.add_inbox_item_once(&notice("n2"), "notice:a1:conflict:abc").await.unwrap().is_none());
+        assert!(store.add_inbox_item_once(&notice("n3"), "notice:a1:conflict:def").await.unwrap().is_some());
+        let open: Vec<_> =
+            store.open_inbox_items_of(InboxKind::Notice).await.unwrap().into_iter().map(|i| i.id).collect();
+        assert_eq!(open, ["n1", "n3"]);
+        // Closed, it is still the key's: the same notice doesn't come back.
+        assert!(store.end_inbox_item("n1", InboxStatus::Closed, &json!({}), 2).await.unwrap());
+        assert!(store.add_inbox_item_once(&notice("n4"), "notice:a1:conflict:abc").await.unwrap().is_none());
+        assert_eq!(store.open_inbox_items_of(InboxKind::Notice).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

@@ -9,6 +9,7 @@ export const GROUPS: { id: InboxGroup; title: string }[] = [
   { id: 'session', title: 'Sessions waiting' },
   { id: 'stalled', title: 'Stalled' },
   { id: 'loop_limit', title: 'Loop limit' },
+  { id: 'notice', title: 'Unheard notices' },
   { id: 'gate', title: 'Gates' },
   { id: 'accept', title: 'Ready to accept' },
 ];
@@ -17,6 +18,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   question: 'Question', approval: 'Approval', stalled: 'Stalled', loop_limit: 'Loop limit', gate: 'Gate', manual: 'Your turn',
   session: 'Session waiting',
   timed_out: 'Timed out',
+  notice: 'Unheard notice',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -77,9 +79,14 @@ export function primary(item: InboxItem): string | null {
   return item.choices.find((c) => c.primary)?.id ?? null;
 }
 
-/** Whether `e` dismisses it (questions and stalled steps; the step keeps waiting). */
+/** Whether `e` dismisses it (questions and stalled steps, whose step keeps waiting; unheard notices). */
 export function dismissable(item: InboxItem): boolean {
-  return item.kind === 'question' || item.kind === 'stalled';
+  return item.kind === 'question' || item.kind === 'stalled' || item.kind === 'notice';
+}
+
+/** What an unheard notice said, and its settling, in a line (PDT-139). */
+export function noticeText(item: InboxItem): string {
+  return typeof item.body.text === 'string' ? item.body.text : item.title;
 }
 
 /** An Update's id in the Inbox's selection (Needs-you items use their own ids). */
