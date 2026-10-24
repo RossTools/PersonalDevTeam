@@ -7,7 +7,7 @@ import { RIGHT_PANEL_OPEN_KEY, RIGHT_PANEL_WIDTH, RIGHT_PANEL_WIDTH_KEY, RightPa
 
 const todo = (id: string, done = false): Todo => ({
   id, title: `Todo ${id}`, position: 0, done, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1,
-  doneAt: done ? 2 : null, projectKey: null, ticketKey: null, ticketTitle: null,
+  doneAt: done ? 2 : null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null,
 });
 
 /** The panel as AppShell holds it: its open state from storage, ⌘. toggling it. */

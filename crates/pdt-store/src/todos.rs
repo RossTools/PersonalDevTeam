@@ -6,7 +6,7 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
 const SELECT: &str = "SELECT t.id, t.project_id, t.ticket_id, t.title, t.done, t.position, t.created_at, \
-                      t.updated_at, t.done_at, p.key AS project_key, k.number AS ticket_number, \
+                      t.updated_at, t.done_at, t.due_on, t.due_time, p.key AS project_key, k.number AS ticket_number, \
                       kp.key AS ticket_project_key, k.title AS ticket_title \
                       FROM todos t \
                       LEFT JOIN projects p ON p.id = t.project_id \
@@ -32,6 +32,8 @@ fn to_todo(r: &SqliteRow) -> Result<Todo, StoreError> {
             None => format!("#{n}"),
         }),
         ticket_title: r.try_get("ticket_title")?,
+        due_on: r.try_get("due_on")?,
+        due_time: r.try_get("due_time")?,
     })
 }
 
@@ -73,8 +75,8 @@ impl Store {
     /// Adds a todo (its keys are ignored: they come from the links).
     pub async fn insert_todo(&self, t: &Todo) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO todos (id, project_id, ticket_id, title, done, position, created_at, updated_at, done_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO todos (id, project_id, ticket_id, title, done, position, created_at, updated_at, done_at, \
+             due_on, due_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&t.id)
         .bind(&t.project_id)
@@ -85,6 +87,8 @@ impl Store {
         .bind(t.created_at)
         .bind(t.updated_at)
         .bind(t.done_at)
+        .bind(&t.due_on)
+        .bind(&t.due_time)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -94,7 +98,7 @@ impl Store {
     pub async fn update_todo(&self, t: &Todo) -> Result<bool, StoreError> {
         let r = sqlx::query(
             "UPDATE todos SET project_id = ?, ticket_id = ?, title = ?, done = ?, position = ?, updated_at = ?, \
-             done_at = ? WHERE id = ?",
+             done_at = ?, due_on = ?, due_time = ? WHERE id = ?",
         )
         .bind(&t.project_id)
         .bind(&t.ticket_id)
@@ -103,10 +107,28 @@ impl Store {
         .bind(t.position)
         .bind(t.updated_at)
         .bind(t.done_at)
+        .bind(&t.due_on)
+        .bind(&t.due_time)
         .bind(&t.id)
         .execute(&self.pool)
         .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// Open todos with a due day, each with the due key its reminder was last made for.
+    pub async fn dated_open_todos(&self) -> Result<Vec<(Todo, Option<String>)>, StoreError> {
+        let sql = format!(
+            "{} WHERE t.done = 0 AND t.due_on IS NOT NULL ORDER BY t.position",
+            SELECT.replace("SELECT t.id,", "SELECT t.reminded_key, t.id,")
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
+        rows.iter().map(|r| Ok((to_todo(r)?, r.try_get("reminded_key")?))).collect()
+    }
+
+    /// Records that a todo's reminder was made for `key` (its due date then).
+    pub async fn set_todo_reminded(&self, id: &str, key: &str) -> Result<(), StoreError> {
+        sqlx::query("UPDATE todos SET reminded_key = ? WHERE id = ?").bind(key).bind(id).execute(&self.pool).await?;
+        Ok(())
     }
 
     pub async fn delete_todo(&self, id: &str) -> Result<bool, StoreError> {
@@ -134,6 +156,8 @@ mod tests {
             project_key: None,
             ticket_key: None,
             ticket_title: None,
+            due_on: None,
+            due_time: None,
         }
     }
 
@@ -197,7 +221,39 @@ mod tests {
         assert_eq!((a.ticket_id, a.project_id.as_deref()), (None, Some("p")), "deleting the ticket keeps the todo");
 
         assert!(store.delete_todo("b").await.unwrap());
+        assert!(store.dated_open_todos().await.unwrap().is_empty());
         assert!(!store.delete_todo("b").await.unwrap());
         assert_eq!(store.get_todo("b").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn due_dates_are_kept_and_reminders_remembered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store
+            .insert_todo(&Todo { due_on: Some("2026-10-23".into()), due_time: Some("09:00".into()), ..todo("a", 1.0) })
+            .await
+            .unwrap();
+        store.insert_todo(&todo("b", 2.0)).await.unwrap();
+        store
+            .insert_todo(&Todo { due_on: Some("2026-10-20".into()), done: true, done_at: Some(3), ..todo("c", 3.0) })
+            .await
+            .unwrap();
+        let a = store.get_todo("a").await.unwrap().unwrap();
+        assert_eq!((a.due_on.as_deref(), a.due_time.as_deref()), (Some("2026-10-23"), Some("09:00")));
+
+        let dated = store.dated_open_todos().await.unwrap();
+        assert_eq!(dated.iter().map(|(t, k)| (t.id.as_str(), k.clone())).collect::<Vec<_>>(), [("a", None)]);
+        store.set_todo_reminded("a", "todo:a:2026-10-23T09:00").await.unwrap();
+        assert_eq!(store.dated_open_todos().await.unwrap()[0].1.as_deref(), Some("todo:a:2026-10-23T09:00"));
+
+        // Saving the todo keeps what its reminder was made for.
+        let a = Todo { due_on: Some("2026-10-24".into()), due_time: None, ..a };
+        assert!(store.update_todo(&a).await.unwrap());
+        let (t, k) = store.dated_open_todos().await.unwrap().remove(0);
+        assert_eq!(
+            (t.due_on.as_deref(), t.due_time, k.as_deref()),
+            (Some("2026-10-24"), None, Some("todo:a:2026-10-23T09:00"))
+        );
     }
 }

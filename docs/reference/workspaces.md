@@ -58,12 +58,24 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   width are kept per browser (`pdt.rightPanel.open`, `pdt.rightPanel.width`). It has two tabs, Todos and Notes (the user's own
   notes, PDT-126: [agents.md](agents.md) "The PM"; a note opens at `/pm/notes/<id>`).
 - Phones have no panel: ☑ in the top bar opens the same content (both tabs) in a right sheet; opening a note closes it.
-- The todo list (web/src/todos): "Add a todo…" (Enter adds it at the top), a filter (All, or the project on screen,
-  which new todos then join; kept as `pdt.todos.filter`), rows with a checkbox, the title (click to edit), a drag
-  handle (also Alt+↑/↓) and ⋯ (Edit, Link to a ticket…, Unlink, Project, Delete), chips for the project key and the
-  linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
+- The todo list (web/src/todos): "Add a todo…" (Enter adds it at the top; the calendar button beside it gives the new
+  todo a due date), a filter (All, or the project on screen, which new todos then join; kept as `pdt.todos.filter`),
+  and a card per todo (TodoCard.tsx; in the gallery): a checkbox, the title (click to edit), a drag handle (also
+  Alt+↑/↓) and ⋯ (Edit, Due date, Link to a ticket…, Unlink, Project, Delete), chips for the due date, the project key
+  and the linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
+- Due dates (PDT-140): optional, the user's local day (`dueOn`, `YYYY-MM-DD`) with an optional time (`dueTime`,
+  `HH:MM`). Due date offers Today, Tomorrow, Next week (the coming Monday), Pick a date… (a date and an optional time)
+  and No due date. The chip says **Overdue** (red), **Today**, **Tomorrow** or the date (with the time if set); done
+  cards have none. A todo with a time is overdue once that time passes. Open todos group as Overdue, Today, Upcoming
+  and No date (headings only once something has a date), each in the manual order; a drag reorders within its group
+  and a drop from another group does nothing. Rules in web/src/todos/model.ts.
+- When an open todo comes due (local midnight on its day, or its time) pdtd makes one `todo.due` notification
+  ([workflows.md](workflows.md) "Notifications"); opening it opens the panel (the phone's sheet) on Todos and rings
+  the card, switching the filter to All if it hid it. Done, deleted or re-dated clears it; a new date reminds again.
+  pdtd works out the moment in the host's own time zone.
 - The server keeps them in `todos` (`GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`; GET filters by `project`
-  and `done`). Order is a float `position` (a move takes the midpoint of its new neighbours). A linked ticket is always
+  and `done`). `dueOn`/`dueTime` are validated in pdt-core `todo.rs`; in a PATCH `dueOn: ""` clears the date and its
+  time, `dueTime: ""` only the time, and a time needs a date. Order is a float `position` (a move takes the midpoint of its new neighbours). A linked ticket is always
   in the todo's project: linking one sets the project, moving the todo to another project drops the link, and deleting
   the ticket or project only removes the link. The PM reads them with `list_todos` ([agents.md](agents.md) "The PM").
 

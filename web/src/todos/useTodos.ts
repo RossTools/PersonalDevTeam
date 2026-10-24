@@ -64,6 +64,8 @@ function local(t: Todo, p: TodoPatch): Todo {
     ...t,
     ...(p.title !== undefined ? { title: p.title } : {}),
     ...(p.position !== undefined ? { position: p.position } : {}),
+    ...(p.dueOn !== undefined ? { dueOn: p.dueOn || null, ...(p.dueOn ? {} : { dueTime: null }) } : {}),
+    ...(p.dueTime !== undefined ? { dueTime: p.dueTime || null } : {}),
     ...(p.done !== undefined ? { done: p.done, doneAt: p.done ? (t.doneAt ?? Date.now()) : null } : {}),
   };
 }
