@@ -398,9 +398,12 @@ describe('TodoList with due dates', () => {
       show(null);
       await screen.findByText('Todo late');
       expect(box()).not.toHaveFocus();
+      expect(screen.queryByRole('button', { name: 'Date' }), 'closed: no tags yet').toBeNull();
       // The line the input sits on: the + circle is its first child.
       await userEvent.click(box().parentElement!.parentElement!.querySelector('svg')!);
       expect(box()).toHaveFocus();
+      expect(box()).toHaveAttribute('placeholder', 'What needs doing?');
+      expect(screen.getByRole('button', { name: 'Date' }), 'opened into the quick-add box').toBeInTheDocument();
       await userEvent.keyboard('Pay rent');
       expect(box()).toHaveValue('Pay rent');
     });
