@@ -1,6 +1,6 @@
 // The user's todo list (PDT-125): the right panel's Todos tab on desktop and the phone's checklist sheet. Cards, due
 // dates and their groups (PDT-140).
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CalendarPlus, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { Alert, Button, Dialog, EmptyState, Field, IconButton, Input, MenuButton, SegmentedControl, Skeleton } from '@ui';
 import type { Project } from '../api/gen/Project';
@@ -42,11 +42,14 @@ export type TodoFocus = { id: string; seq: number };
  * place, set a due date, drag (or Alt+↑/↓) to reorder within a group, link to a project or ticket from ⋯. Open todos
  * group as Overdue, Today, Upcoming and No date; done ones fold into "Done (n)".
  */
-export function TodoList({ projectId, projects, focus }: {
+export function TodoList({ projectId, projects, focus, onFocused }: {
   /** The project on screen: the filter's "current project", and new todos' project while it is on. */
   projectId: string | null;
   projects: readonly Project[];
+  /** A todo to show once. */
   focus?: TodoFocus | null;
+  /** The list has handled `focus` (shown it, or found it gone): the caller drops it. */
+  onFocused?: () => void;
 }) {
   const todos = useTodos();
   const actions = useTodoActions();
@@ -72,25 +75,33 @@ export function TodoList({ projectId, projects, focus }: {
     if (position !== null) void actions.patch(id, { position });
   };
 
-  // Opened from a notification: show it (All if the filter hides it, Done unfolded if it is done) with a ring.
+  // Opened from a notification: show it (All if the filter hides it, Done unfolded if it is done) with a ring, then
+  // hand the request back (`onFocused`) so a later mount of the list (the panel reopened) doesn't show it again.
+  const focused = useRef(onFocused);
+  focused.current = onFocused;
   const focusId = focus?.id ?? null;
   const focusSeq = focus?.seq ?? 0;
   const loaded = todos.isSuccess;
   useEffect(() => {
     if (!focusId || !loaded) return;
     const t = todos.data?.find((x) => x.id === focusId);
-    if (!t) return;
-    if (active === 'project' && t.projectId !== project?.id) setFilterState('all');
-    if (t.done) setDoneOpen(true);
-    setHighlight(focusId);
-    const scroll = requestAnimationFrame(() => document.getElementById(`todo-${focusId}`)?.scrollIntoView?.({ block: 'nearest' }));
+    if (t) {
+      if (active === 'project' && t.projectId !== project?.id) setFilterState('all');
+      if (t.done) setDoneOpen(true);
+      setHighlight(focusId);
+    }
+    focused.current?.();
+    // Once per request (the list re-renders on every poll).
+  }, [focusId, focusSeq, loaded]);
+  useEffect(() => {
+    if (!highlight) return;
+    const scroll = requestAnimationFrame(() => document.getElementById(`todo-${highlight}`)?.scrollIntoView?.({ block: 'nearest' }));
     const off = setTimeout(() => setHighlight(null), HIGHLIGHT_MS);
     return () => {
       cancelAnimationFrame(scroll);
       clearTimeout(off);
     };
-    // Once per request (the list re-renders on every poll).
-  }, [focusId, focusSeq, loaded]);
+  }, [highlight]);
 
   const card = (t: Todo, group?: readonly Todo[], i = 0) => (
     <TodoCard

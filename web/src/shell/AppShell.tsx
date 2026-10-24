@@ -160,6 +160,7 @@ export function AppShell() {
   const [todosSheetOpen, setTodosSheetOpen] = useState(false);
   // A todo a due reminder opened (PDT-140).
   const [todoFocus, setTodoFocus] = useState<TodoFocus | null>(null);
+  const clearTodoFocus = useCallback(() => setTodoFocus(null), []);
   const [addingProject, setAddingProject] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
@@ -761,6 +762,7 @@ export function AppShell() {
               projectId={todoProjectId}
               projects={ws.projects}
               focusTodo={todoFocus}
+              onTodoFocused={clearTodoFocus}
               onOpenNote={(id) => {
                 setPmSelection(`note:${id}`);
                 setTodosSheetOpen(false);
@@ -914,7 +916,7 @@ export function AppShell() {
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
-      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} onOpenNote={(id) => setPmSelection(`note:${id}`)} focusTodo={todoFocus} />}
+      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} onOpenNote={(id) => setPmSelection(`note:${id}`)} focusTodo={todoFocus} onTodoFocused={clearTodoFocus} />}
     </div>
     </TopBarEditContext.Provider>
     </TopBarActionsContext.Provider>

@@ -1,4 +1,5 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
@@ -211,12 +212,12 @@ describe('TodoList with due dates', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo none' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: /^Tomorrow/ }));
-    await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([{ dueOn: '2026-10-24' }]));
+    await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([{ dueOn: '2026-10-24', dueTime: '' }]));
 
     await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo late' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'No due date' }));
-    await waitFor(() => expect(sent('PATCH', '/api/todos/late')).toEqual([{ dueOn: '' }]));
+    await waitFor(() => expect(sent('PATCH', '/api/todos/late')).toEqual([{ dueOn: '', dueTime: '' }]));
 
     await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo late2' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Due date' }));
@@ -237,6 +238,31 @@ describe('TodoList with due dates', () => {
     expect(screen.getByText(/^Due /)).toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'Add a todo' }), 'Pay rent{Enter}');
     await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Pay rent', dueOn: '2026-10-23' }]));
+  });
+
+  it('shows a reminder\'s todo once: reopening the list keeps the filter and rings nothing', async () => {
+    stubDated();
+    localStorage.setItem('pdt.todos.filter', 'project');
+    const onFocused = vi.fn();
+    let toggle = () => {};
+    // As AppShell holds it: the focus is dropped once the list has used it; closing the panel unmounts the list.
+    function Harness() {
+      const [focus, setFocus] = useState<TodoFocus | null>({ id: 'late', seq: 1 });
+      const [shown, setShown] = useState(true);
+      toggle = () => setShown((v) => !v);
+      return shown ? <TodoList projectId="p1" projects={[project]} focus={focus} onFocused={() => { onFocused(); setFocus(null); }} /> : null;
+    }
+    renderWithQuery(<OpenTicketContext.Provider value={vi.fn()}><Harness /></OpenTicketContext.Provider>);
+    expect((await screen.findByRole('listitem', { name: 'Todo late' })).className).toMatch(/ring-2/);
+    expect(onFocused).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('radio', { name: 'All' })).toBeChecked();
+
+    act(() => toggle());
+    act(() => toggle());
+    await screen.findByRole('radio', { name: 'PX' });
+    expect(screen.getByRole('radio', { name: 'PX' }), 'the chosen filter stays').toBeChecked();
+    expect(screen.queryByRole('listitem', { name: 'Todo late' }), 'not in PX, and not pulled back in').toBeNull();
+    expect(onFocused).toHaveBeenCalledTimes(1);
   });
 
   it('shows a todo a reminder opened, even when the filter hid it', async () => {

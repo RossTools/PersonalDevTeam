@@ -28,7 +28,7 @@ export function DueChip({ todo: t, now }: { todo: Pick<Todo, 'done' | 'dueOn' | 
   );
 }
 
-/** The menu entries that set a due date: the quick picks, a date of the user's choosing, none. */
+/** The menu entries that set a due date: the quick picks (a day without a time), a date of the user's choosing, none. */
 export function dueEntries(current: Pick<Todo, 'dueOn'>, now: Date, set: (dueOn: string) => void, pick: () => void): MenuEntry[] {
   return [
     ...quickDays(now).map((q) => ({
@@ -73,7 +73,7 @@ export function TodoCard({ todo: t, now, showProject, projects, highlighted, onP
   };
   const entries = (): MenuEntry[] => [
     { label: 'Edit', onSelect: () => setEditing(true) },
-    ...(t.done ? [] : [{ submenu: 'Due date', icon: <CalendarDays aria-hidden />, entries: dueEntries(t, now, (dueOn) => onPatch({ dueOn }), onPickDate) }]),
+    ...(t.done ? [] : [{ submenu: 'Due date', icon: <CalendarDays aria-hidden />, entries: dueEntries(t, now, (dueOn) => onPatch({ dueOn, dueTime: '' }), onPickDate) }]),
     { label: t.ticketId ? 'Link to another ticket…' : 'Link to a ticket…', onSelect: onLink },
     ...(t.ticketId ? [{ label: `Unlink ${t.ticketKey ?? 'the ticket'}`, onSelect: () => onPatch({ ticket: '' }) }] : []),
     {

@@ -64,14 +64,15 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   Alt+↑/↓) and ⋯ (Edit, Due date, Link to a ticket…, Unlink, Project, Delete), chips for the due date, the project key
   and the linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
 - Due dates (PDT-140): optional, the user's local day (`dueOn`, `YYYY-MM-DD`) with an optional time (`dueTime`,
-  `HH:MM`). Due date offers Today, Tomorrow, Next week (the coming Monday), Pick a date… (a date and an optional time)
-  and No due date. The chip says **Overdue** (red), **Today**, **Tomorrow** or the date (with the time if set); done
+  `HH:MM`). Due date offers Today, Tomorrow, Next week (the coming Monday), each a day without a time (a quick pick
+  drops one set before), Pick a date… (a date and an optional time) and No due date. The chip says **Overdue** (red), **Today**, **Tomorrow** or the date (with the time if set); done
   cards have none. A todo with a time is overdue once that time passes. Open todos group as Overdue, Today, Upcoming
   and No date (headings only once something has a date), each in the manual order; a drag reorders within its group
   and a drop from another group does nothing. Rules in web/src/todos/model.ts.
 - When an open todo comes due (local midnight on its day, or its time) pdtd makes one `todo.due` notification
   ([workflows.md](workflows.md) "Notifications"); opening it opens the panel (the phone's sheet) on Todos and rings
-  the card, switching the filter to All if it hid it. Done, deleted or re-dated clears it; a new date reminds again.
+  the card, switching the filter to All if it hid it. The list uses each such request once (AppShell drops it), so
+  reopening the panel later doesn't ring the card or change the filter again. Done, deleted or re-dated clears it; a new date reminds again.
   pdtd works out the moment in the host's own time zone.
 - The server keeps them in `todos` (`GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`; GET filters by `project`
   and `done`). `dueOn`/`dueTime` are validated in pdt-core `todo.rs`; in a PATCH `dueOn: ""` clears the date and its
