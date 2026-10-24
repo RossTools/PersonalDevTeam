@@ -1,12 +1,18 @@
+import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Alert, IconButton, List, ListRow, Skeleton, relativeTime } from '@ui';
-import { earlier, firstLine, REASON_LABEL, usePm, type PmSelection } from './usePm';
+import { Alert, IconButton, List, ListRow, Skeleton, relativeTime, useMenuAt } from '@ui';
+import { InlineRename } from '../common/InlineRename';
+import { RowField } from '../common/RowField';
+import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, shownConversation, usePm, usePmActions, type PmSelection } from './usePm';
 
 const heading = 'flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
+/** Ended conversations the list shows; the rest are under "All ended conversations". */
+const RECENT_ENDED = 5;
 
 /**
- * The PM view's list column (PDT-81): the current session and the sessions that ended (when, why, and their journal's
- * first line). The notes have a view of their own (PDT-143).
+ * The PM view's list column (PDT-149): the open conversations (the most recently active first, an unread one in bold;
+ * each renamed or closed from its menu), New conversation, then the recently ended ones (their journal's first line).
+ * On a phone it is the PM's first screen. The notes have a view of their own (PDT-143).
  */
 export function PmList({ selection, onSelect, onNew }: {
   selection: PmSelection;
@@ -14,42 +20,76 @@ export function PmList({ selection, onSelect, onNew }: {
   onNew: () => void;
 }) {
   const pm = usePm();
-  const current = pm.data?.current ?? null;
-  const ended = earlier(pm.data?.sessions ?? []);
+  const sessions = pm.data?.sessions ?? [];
+  const open = openConversations(sessions);
+  const ended = earlier(sessions);
+  const shown = shownConversation(sessions, pm.data?.current?.id, selection)?.session.id ?? null;
+  const { openMenu, menu } = useMenuAt();
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const { rename, close } = usePmActions((id) => {
+    if (id === shown) onSelect('current');
+  });
   return (
     <div className="flex flex-col gap-0.5 py-1">
       <h2 className={heading}>
         <span className="flex-1">Project manager</span>
-        <IconButton label="New PM session" size="sm" noTooltip className="size-5" onClick={onNew}>
+        <IconButton label="New conversation" size="sm" noTooltip className="size-5" onClick={onNew}>
           <Plus aria-hidden />
         </IconButton>
       </h2>
       {pm.isPending && <Skeleton lines={3} label="Loading the PM" />}
       {pm.isError && <Alert tone="error">The PM could not be loaded: {pm.error.message}</Alert>}
-      <List aria-label="Project manager" onAction={(id) => onSelect(String(id))}>
-        <ListRow
-          id="current"
-          title="Current session"
-          current={selection === 'current'}
-          secondary={current ? `Started ${relativeTime(current.createdAt)}` : 'Ask something to start one'}
-        />
+      <List aria-label="PM conversations" onAction={(id) => onSelect(String(id))}>
+        {open.map((info) => (
+          <ListRow
+            key={info.session.id}
+            id={info.session.id}
+            textValue={info.title}
+            title={renaming === info.session.id ? (
+              <RowField>
+                <InlineRename
+                  label="Conversation name"
+                  initial={info.title}
+                  onCommit={(t) => { setRenaming(null); rename(info.session.id, t); }}
+                  onCancel={() => setRenaming(null)}
+                />
+              </RowField>
+            ) : info.title}
+            current={shown === info.session.id}
+            bold={isUnread(info, shown)}
+            secondary={info.rotation === 'journal' ? 'Writing its journal…'
+              : info.session.activity === 'working' ? 'Working…' : relativeTime(info.lastActivity)}
+            onMenu={(at) => openMenu(at, `Conversation ${info.title}`, [
+              { label: 'Rename', onSelect: () => setRenaming(info.session.id) },
+              { label: 'Close…', onSelect: () => close(info), disabled: info.rotation !== 'none' },
+            ])}
+          />
+        ))}
+        {(open.length === 0 || selection === 'new') && (
+          <ListRow id="new" title="New conversation" current={selection === 'new' || (!shown && selection === 'current')}
+            secondary="Ask something to start one" />
+        )}
       </List>
       {ended.length > 0 && (
         <>
-          <h3 className={heading}>Earlier sessions</h3>
-          <List aria-label="Earlier PM sessions" onAction={(id) => onSelect(String(id))}>
-            {ended.map((s) => (
+          <h3 className={heading}>Ended</h3>
+          <List aria-label="Ended PM conversations" onAction={(id) => onSelect(String(id))}>
+            {ended.slice(0, RECENT_ENDED).map((s) => (
               <ListRow
                 key={s.session.id}
                 id={s.session.id}
-                title={new Date(s.session.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-                current={selection === s.session.id}
+                title={s.title}
+                current={shown === s.session.id}
                 secondary={firstLine(s.journal) || (s.reason ? `Ended: ${REASON_LABEL[s.reason]}` : 'Ended')}
               />
             ))}
+            {ended.length > RECENT_ENDED && (
+              <ListRow id="earlier" title="All ended conversations" current={selection === 'earlier'} secondary={`${ended.length} in all`} />
+            )}
           </List>
         </>
       )}
+      {menu}
     </div>
   );
 }

@@ -26,6 +26,40 @@ pub fn journal_request() -> String {
 /// The journal recorded when a rotating session wrote none.
 pub const NO_JOURNAL: &str = "(no journal)";
 
+/// A PM conversation's title until its first message names it (PDT-149).
+pub const NEW_TITLE: &str = "New conversation";
+/// A title made from a first message is at most this long (characters, with the ellipsis).
+const AUTO_TITLE_CHARS: usize = 60;
+/// A briefing's summary of another conversation is at most this long.
+const SUMMARY_CHARS: usize = 120;
+
+/// The first line of `text` with its Markdown heading or list marks taken off, cut to `max` characters at a word
+/// (with "…"). Empty when the text has no words.
+fn first_line(text: &str, max: usize) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = line.trim_start_matches(['#', '>', '-', '*']).trim();
+    if line.chars().count() <= max {
+        return line.to_string();
+    }
+    let cut: String = line.chars().take(max - 1).collect();
+    let cut = match cut.rfind(char::is_whitespace) {
+        Some(i) if i > max / 2 => cut[..i].trim_end().to_string(),
+        _ => cut,
+    };
+    format!("{cut}…")
+}
+
+/// A PM conversation's title from its first message (its first line, shortened); [`NEW_TITLE`] when it has none.
+pub fn conversation_title(first: &str) -> String {
+    let t = first_line(first, AUTO_TITLE_CHARS);
+    if t.is_empty() { NEW_TITLE.to_string() } else { t }
+}
+
+/// One line saying where a conversation stands, from its last message (the briefing's list of the others).
+pub fn summary_line(last: &str) -> String {
+    first_line(last, SUMMARY_CHARS)
+}
+
 const MAX_TITLE: usize = 200;
 const MAX_BODY: usize = 16 * 1024;
 const MAX_JOURNAL: usize = 8 * 1024;
@@ -231,9 +265,9 @@ pub fn fts_query(q: &str) -> Option<String> {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct PmState {
-    /// The PM session in use; None until the user next writes to the PM.
+    /// The newest open PM conversation (for clients that know only one); None when none is open.
     pub current: Option<Session>,
-    /// Every PM session, newest first (the current one included).
+    /// Every PM conversation: the open ones (latest activity first), then the ended ones (newest first).
     pub sessions: Vec<PmSessionInfo>,
 }
 
@@ -242,6 +276,15 @@ pub struct PmState {
 #[ts(export)]
 pub struct PmSessionInfo {
     pub session: Session,
+    /// Not ended: it takes messages (PDT-149: several can be open at once).
+    pub open: bool,
+    /// Its title: from its first message until the user renames it.
+    pub title: String,
+    /// It has a reply the user hasn't seen.
+    pub unseen: bool,
+    /// When something last happened in it (its last event; its start when it has none).
+    #[ts(type = "number")]
+    pub last_activity: i64,
     pub rotation: Rotation,
     pub reason: Option<RotateReason>,
     /// The journal entry it wrote as it ended.
@@ -253,10 +296,24 @@ pub struct PmSessionInfo {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct StartPm {
-    /// The new session's first message.
+    /// The new conversation's first message.
     #[serde(default)]
     #[ts(optional)]
     pub text: Option<String>,
+    /// Its title; made from the first message when left out.
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
+}
+
+/// `PATCH /api/pm/sessions/{id}`.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PmSessionPatch {
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
 }
 
 /// What an asking tool's call acts on, so the project's policy can be found (PDT-81 spec §4).
@@ -313,6 +370,17 @@ pub struct BriefingData {
     /// Newest first.
     pub journal: Vec<BriefJournal>,
     pub pinned: Vec<BriefNote>,
+    /// The other open PM conversations (PDT-149), latest activity first.
+    pub others: Vec<BriefConversation>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BriefConversation {
+    pub title: String,
+    /// Its last activity.
+    pub at: i64,
+    /// Where it stands ([`summary_line`]); empty when nothing was said yet.
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -522,6 +590,16 @@ pub fn briefing(d: &BriefingData) -> String {
         for j in d.journal.iter().take(BRIEF_JOURNALS) {
             out.push_str(&format!("\n### {}\n\n{}\n", ago(d.now, j.at), j.body.trim()));
         }
+    }
+    if !d.others.is_empty() {
+        out.push_str(
+            "\n## Other open PM conversations\n\nThe user talks to the PM in several conversations, one per topic; \
+             this is one of them. The others have their own context: only notes and journal entries are shared.\n\n",
+        );
+        capped(&d.others, &mut out, |c| match c.summary.as_str() {
+            "" => format!("- {} ({})", c.title, ago(d.now, c.at)),
+            s => format!("- {} ({}): {s}", c.title, ago(d.now, c.at)),
+        });
     }
     out.push_str("\n## Pinned notes\n\n");
     if d.pinned.is_empty() {
@@ -742,7 +820,24 @@ mod tests {
             ],
             journal: vec![BriefJournal { at: 8 * H, body: "Talked about the PM.\n".into() }],
             pinned: vec![BriefNote { id: "n1".into(), project: None, title: "Prefers short answers".into() }],
+            others: vec![
+                BriefConversation { title: "CB cutover".into(), at: 9 * H, summary: "Waiting on DNS.".into() },
+                BriefConversation { title: "Fresh".into(), at: 10 * H, summary: String::new() },
+            ],
         }
+    }
+
+    #[test]
+    fn a_conversation_is_titled_from_its_first_message() {
+        assert_eq!(conversation_title("\n## Plan the CB cutover\nmore"), "Plan the CB cutover");
+        assert_eq!(conversation_title("  "), NEW_TITLE);
+        let long = "Why does the merge queue keep dropping the pull request for the login page after a rebase";
+        let t = conversation_title(long);
+        assert_eq!(t, "Why does the merge queue keep dropping the pull request…");
+        assert!(t.chars().count() <= AUTO_TITLE_CHARS);
+        let word = "x".repeat(80);
+        assert_eq!(conversation_title(&word).chars().count(), AUTO_TITLE_CHARS, "one long word is cut anyway");
+        assert_eq!(summary_line("- Done: the PR merged.\n\nNext"), "Done: the PR merged.");
     }
 
     #[test]
@@ -757,6 +852,9 @@ mod tests {
             "- 1 h ago · pr.ci_failed · PDT-81",
             "### 2 h ago\n\nTalked about the PM.\n",
             "- `n1` · host-wide: Prefers short answers",
+            "## Other open PM conversations",
+            "- CB cutover (1 h ago): Waiting on DNS.",
+            "- Fresh (just now)\n",
         ] {
             assert!(b.contains(want), "missing {want:?} in\n{b}");
         }
@@ -766,7 +864,7 @@ mod tests {
     fn an_empty_briefing_says_so_and_long_sections_are_capped() {
         let b = briefing(&BriefingData { now: 1, ..Default::default() });
         assert!(b.contains("- None yet.") && b.contains("## Recent events") && b.contains("- Nothing happened."));
-        assert!(!b.contains("## Journal"));
+        assert!(!b.contains("## Journal") && !b.contains("## Other open PM conversations"));
         let mut d = data();
         d.inbox = (0..BRIEF_CAP + 3)
             .map(|i| BriefInbox { kind: "gate".into(), ticket: None, title: format!("g{i}") })

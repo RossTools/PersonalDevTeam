@@ -79,13 +79,25 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   runs in the **work folder** (PDT-100, pdt-core `pm::work_folder`): the deepest folder holding every project's
   folder (each checkout's parent) and Host settings' Projects folder (its default `~/work` only while there are no
   projects); the home folder when they share nothing below the root. They have no tab: the PM rail item (`Ctrl+] m`,
-  the palette's Go to) shows them, and opening one from the Inbox goes there. The PM item (rail and phone drawer)
-  carries a dot, "Project manager (new reply)", while a session not yet ended is unseen and not working and isn't
-  the one on screen (PDT-145); the PM view marks the session it shows seen, as a session's tab does.
-- **Sessions.** `GET /api/pm` → `{current, sessions}` (`pm_sessions`: rotation `none` | `journal` | `done`, reason,
-  journal); `POST /api/pm/sessions {text?}` ends the current one (reason `user`, no journal) and starts one of the
-  built-in **PM** persona's current version (its agent and model; permission mode `ask` unless the persona sets one).
-  The web starts one with the first message when there is none; an ended session is read-only.
+  the palette's Go to) shows them, and opening one from the Inbox (whose items name the conversation) goes there. The
+  PM item (rail and phone drawer) carries a dot, "Project manager (new reply)", while any open conversation is unseen
+  and not working and isn't the one on screen (PDT-145); the PM view marks the conversation it shows seen, as a
+  session's tab does.
+- **Conversations** (PDT-149). Several PM sessions can be open at once, one per topic, each with its own transcript,
+  briefing, rotation and journal; notes, pinned notes and journal entries are host-wide, so all of them see the same.
+  `GET /api/pm/sessions` lists them: each with `session`, `open` (not ended), `title`, `unseen`, `lastActivity` (its
+  last event; for an ended one when it ended), rotation (`pm_sessions`: `none` | `journal` | `done`), reason (`context`
+  | `age` | `user`) and journal; the open ones first, the most recently active first, then the ended ones, newest
+  first. `GET /api/pm` → `{current, sessions}` is the same list with `current` the newest open conversation (for
+  clients that know only one). `POST /api/pm/sessions {text?, title?}` starts one beside the open ones (it ends none)
+  as the built-in **PM** persona's current version (its agent and model; permission mode `ask` unless the persona
+  sets one). Its title is `title`, else its first message's first line (pdt-core `pm::conversation_title`, at most 60
+  characters), else "New conversation" until the user's first message names it. `PATCH /api/pm/sessions/{id}
+  {title}` renames one. `DELETE /api/pm/sessions/{id}` closes one: one that has said anything is asked for its
+  journal through the outbox (rotation `journal`, reason `user`, the message reopens a parked conversation) and ends
+  when that turn does, as rotation does; one that never did ends at once with no journal; one already ending is left
+  as it is. An ended conversation is read-only. Idle PM conversations park as every conversation does and wake on a
+  message; PDT's messages to them keep to the host's cap on agents running a turn.
 - **Its agent's own tools** (PDT-100), with the agent's usual permission prompts: read and search checkouts and
   worktrees, git, web search and fetch, commands and installs, file edits, subagents. Claude and Devin keep theirs;
   Codex also gets `web_search = "live"` and network access in its workspace-write sandbox (thread config
@@ -129,7 +141,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
   may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest
-  lines), the last three journal entries, and pinned notes (id, project, title). Sections are capped at 30 lines. The
+  lines), the last three journal entries, the other open PM conversations (title, last activity, and their last
+  message's first line), and pinned notes (id, project, title). Sections are capped at 30 lines. The
   instructions are pdt-core `pm::instructions`: who the PM is, its work folder, its tools (the asking ones named; its
   agent's own), PDT's API and guides, the persona's instructions, the briefing (each project with its folder).
 - **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal | user, host-wide or per
@@ -157,16 +170,24 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   the new-ticket form, as a Draft in the note's project, titled with the note's title, its body the description
   followed by "From the note [title](<origin>/notes/<id>)." Older descriptions link to `/pm/notes/<id>`, which still
   opens the note (the path is replaced by `/notes/<id>`; `/pm/notes` by `/notes/pm`).
-- **Paths and the phone** (PDT-113). `/pm` is the current session (or the start box), `/pm/earlier` the sessions
-  that ended (when, how it ended, the journal's first line) and `/pm/<session id>` one of them, read-only with "Go to
-  the current session". On a phone the conversation is the whole screen (no header: the top bar has the title), ⋯ has
-  New session… (asks first) and Earlier sessions, and the start box shows the usual text but isn't focused (the
-  keyboard would cover it). The Notes view's list is its phone screen; a tap opens a note as a screen with ←, the
+- **The PM view** (PDT-149). Its list column has the open conversations (the most recently active first; one with an
+  unseen reply in bold; each one's menu has Rename and Close…), New conversation (+), and the five newest ended ones
+  (their journal's first line) with "All ended conversations" when there are more. The conversation's header has its
+  title, Rename, Close… (asks first: it writes its journal, then ends) and New conversation; an ended one shows its
+  journal and New conversation. Whatever opens the PM (the rail, the palette, Ctrl+] m) goes back to the conversation
+  last on screen; Make ticket and the approval cards belong to the conversation they are in.
+- **Paths and the phone** (PDT-113, PDT-149). `/pm` is the newest open conversation (the start box when none is
+  open), `/pm/new` the start box for a new conversation (its first message starts it), `/pm/earlier` the ended ones
+  (when, how it ended, the journal's first line) and `/pm/<session id>` one conversation. On a phone `/pm` is the list
+  of conversations and each one a screen of its own with ← (no header: the top bar has its title); ⋯ has New
+  conversation and Ended conversations, and on a conversation Rename and Close…. The start box shows the usual text
+  but isn't focused (the keyboard would cover it). The Notes view's list is its phone screen; a tap opens a note as a screen with ←, the
   save state and Write | Read under the top bar, and its project, pin, Make a ticket and Delete… under ⋯.
 - **Rotation.** When a PM session ends a turn with its context at least 60 % full (the last `usage` event) or 24 h
   old (`AppState.pm_rotate_age_ms`), PDT queues "[PDT] This PM session is ending…" through the outbox (rotation
-  `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). The user's next
-  message starts a new session.
+  `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). Rotation is per
+  conversation; the others carry on. The user starts a new conversation to carry on the topic (its briefing has the
+  journal).
 - **As a workflow step.** The PM persona can be an `agent` node's persona; its asking tools still ask (the approval
   waits in the Inbox's Approvals). The built-in template **Triage new GitHub issues** (`builtin:issue-triage`) runs it
   on each new issue of a repository: it drafts a ticket in the chosen project, marks a duplicate, or leaves it.

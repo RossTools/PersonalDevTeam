@@ -3,7 +3,23 @@ import type { RotateReason } from "./RotateReason";
 import type { Rotation } from "./Rotation";
 import type { Session } from "./Session";
 
-export type PmSessionInfo = { session: Session, rotation: Rotation, reason: RotateReason | null, 
+export type PmSessionInfo = { session: Session, 
+/**
+ * Not ended: it takes messages (PDT-149: several can be open at once).
+ */
+open: boolean, 
+/**
+ * Its title: from its first message until the user renames it.
+ */
+title: string, 
+/**
+ * It has a reply the user hasn't seen.
+ */
+unseen: boolean, 
+/**
+ * When something last happened in it (its last event; its start when it has none).
+ */
+lastActivity: number, rotation: Rotation, reason: RotateReason | null, 
 /**
  * The journal entry it wrote as it ended.
  */

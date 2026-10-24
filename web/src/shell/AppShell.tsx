@@ -56,7 +56,7 @@ import { InboxList } from '../inbox/InboxList';
 import { PhoneInboxList } from '../inbox/PhoneInboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
-import { pmUnread, usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
+import { pmUnread, shownConversation, usePm, type PmSelection } from '../pm/usePm';
 import { NotesList } from '../notes/NotesList';
 import { useNotesFilters } from '../notes/useNotes';
 import type { Whose } from '../notes/model';
@@ -80,7 +80,7 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
 
 /** On a phone, the views whose list column is their top-level screen (PDT-112). The PM's and the Tickets' lists open
  * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
-const PHONE_LIST_SCREENS: readonly ViewId[] = ['sessions', 'inbox', 'notes', 'workflows', 'personas', 'files', 'settings'];
+const PHONE_LIST_SCREENS: readonly ViewId[] = ['pm', 'sessions', 'inbox', 'notes', 'workflows', 'personas', 'files', 'settings'];
 
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
@@ -188,11 +188,9 @@ export function AppShell() {
   const personaId = route.view === 'personas' ? route.personaId : null;
   const setPersonaId = useCallback((personaId: string | null) => go({ view: 'personas', personaId }), []);
   const pm = usePm();
-  // The PM view's session (the current session's own id reads as the current one).
-  const pmRoute: PmSelection = route.view === 'pm' ? route.pm : 'current';
-  const pmSelection: PmSelection = pmRoute === pm.data?.current?.id ? 'current' : pmRoute;
+  // The PM view's conversation (PDT-149): `current` is the newest open one (the list, on a phone).
+  const pmSelection: PmSelection = route.view === 'pm' ? route.pm : 'current';
   const setPmSelection = useCallback((pm: PmSelection) => go({ view: 'pm', pm }), []);
-  const refreshPm = useRefreshPm();
   // The Notes view (PDT-143): the note on show (`new`: one not created yet) and the list's side, scope and search.
   const notes = useNotesFilters();
   const setNotesWhose = notes.setWhose;
@@ -288,35 +286,20 @@ export function AppShell() {
   }, [openTicket]);
   const pmSessions = pm.data?.sessions;
   const openSession = useCallback((s: { id: string; projectId: string }) => {
-    // A PM session has no tab: the PM view shows it.
+    // A PM conversation has no tab: the PM view shows it.
     if (pmSessions?.some((x) => x.session.id === s.id)) {
-      setPmSelection(pm.data?.current?.id === s.id ? 'current' : s.id);
+      setPmSelection(s.id);
       return;
     }
     void runAction(async () => {
       if (await ws.focusItem({ kind: 'session', id: s.id }, s.projectId)) setView('sessions');
     });
-  }, [ws.focusItem, pmSessions, pm.data?.current?.id, setPmSelection, setView]);
-  // A new PM session ends the current one (it writes no journal), so it asks first.
+  }, [ws.focusItem, pmSessions, setPmSelection, setView]);
+  // A new PM conversation starts beside the open ones (PDT-149): its first message starts it.
   const newPmSession = useCallback(() => {
-    setView('pm');
     setSheetOpen(false);
-    if (!pm.data?.current) {
-      setPmSelection('current');
-      return;
-    }
-    void runAction(async () => {
-      const { ok } = await confirm({
-        title: 'Start a new PM session?',
-        body: 'The current one ends and stays readable. The new one starts from a fresh briefing and the notes.',
-        action: 'New session',
-      });
-      if (!ok) return;
-      await api.startPm();
-      await refreshPm();
-      setPmSelection('current');
-    });
-  }, [pm.data?.current, confirm, refreshPm, setView, setPmSelection]);
+    setPmSelection('new');
+  }, [setPmSelection]);
   // After a ticket's tab, in the workspace that has it (its Start workspace).
   const placementNear = useCallback((ticketId: string): TabPlacement | undefined => {
     const hit = findTab(ws.workspaces, { kind: 'ticket', id: ticketId });
@@ -507,8 +490,9 @@ export function AppShell() {
   const updates = useUpdates();
   const readAllUpdates = useReadAllUpdates();
   const unreadUpdates = (updates.data?.unreadUpdates ?? 0) > 0;
-  // The PM's unread reply: no dot for the session on screen.
-  const pmShown = route.view !== 'pm' ? null : pmSelection === 'current' ? pm.data?.current?.id ?? null : pmSelection;
+  // The PM's unread reply: no dot for the conversation on screen (on a phone `/pm` is the list).
+  const pmShown = route.view !== 'pm' || (phone && pmSelection === 'current') ? null
+    : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.session.id ?? null;
   const pmDot = pmUnread(pm.data?.sessions, pmShown);
   const openTarget = useCallback((t: NotificationTarget) => {
     switch (t.kind) {
@@ -723,7 +707,8 @@ export function AppShell() {
   ) : view === 'sessions' && detail ? (shownWorkspace?.ticket ? `${shownWorkspace.ticket.key} ${shownWorkspace.ticket.title}` : shownWorkspace?.name ?? label)
   : view === 'files' && detail && filesRoute?.path ? filesRoute.path.split('/').filter(Boolean).pop() ?? label
   : view === 'settings' && detail ? settingsTitle()
-  : view === 'pm' && detail ? (pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
+  : view === 'pm' && detail ? (pmSelection === 'earlier' ? 'Ended conversations' : pmSelection === 'new' ? 'New conversation'
+    : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.title ?? label)
   : view === 'notes' && detail ? (noteId === 'new' ? 'New note' : 'Note')
   : label;
   function settingsTitle(): string {
@@ -737,8 +722,8 @@ export function AppShell() {
   }
   const shellActions = (): MenuEntry[] =>
     view === 'pm' ? [
-      { label: 'New session…', onSelect: newPmSession },
-      { label: 'Earlier sessions', onSelect: () => setPmSelection('earlier') },
+      { label: 'New conversation', onSelect: newPmSession },
+      { label: 'Ended conversations', onSelect: () => setPmSelection('earlier') },
     ] : view === 'sessions' && detail ? workspaceActions()
     : view === 'sessions' ? [
       { label: 'New workspace', onSelect: () => setAddingWorkspace(true) },

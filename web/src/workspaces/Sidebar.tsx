@@ -18,20 +18,11 @@ import { useOpenTicket } from '../tickets/actions';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { SessionTicketChip } from './SessionTicketChip';
 import { applyDrop } from './WorkspaceBar';
+import { RowField } from '../common/RowField';
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
-
-/** Keeps keys and clicks inside an in-row text field away from the row (typeahead, selection, drag). */
-function RowField({ children }: { children: ReactNode }) {
-  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
-  return (
-    <span className="block" onKeyDown={stop} onKeyUp={stop} onPointerDown={stop} onMouseDown={stop} onClick={stop} onDoubleClick={stop}>
-      {children}
-    </span>
-  );
-}
 
 /** A workspace's rolled-up state: its most urgent item ("Done" when an idle agent is unseen). */
 export function workspaceState(ws: WorkspacesApi, w: Workspace) {

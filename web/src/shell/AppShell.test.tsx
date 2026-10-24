@@ -1099,18 +1099,20 @@ describe('phone', () => {
     await waitFor(() => expect(here()).toBe('/inbox'));
   });
 
-  it("has the PM's New session and earlier sessions under ⋯ (the notes have a view of their own)", async () => {
+  it("has the PM's New conversation and ended conversations under ⋯ (the notes have a view of their own)", async () => {
     stubPhone();
     stubAlpha();
     window.history.replaceState(null, '', '/pm');
     renderWithQuery(<AppShell />);
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Screen actions' }));
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New session…', 'Earlier sessions']);
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New conversation', 'Ended conversations']);
   });
 
-  it("opens earlier PM sessions read-only from ⋯, and Back returns through them", async () => {
+  it('lists the PM conversations at /pm and opens each as a screen of its own (PDT-149)', async () => {
     stubPhone();
-    const pmSession = { ...shell, id: 'pm1', projectId: 'host', kind: 'agent_tui', agent: 'claude', title: 'PM', mode: 'conversation', status: 'finished', createdAt: Date.UTC(2026, 9, 20, 9), persona: { id: 'pm', name: 'PM', version: 1, stepId: null } };
+    const pmSession = (id: string, title: string, more: Record<string, unknown>) => ({ ...shell, id, projectId: 'host', kind: 'agent_tui', agent: 'claude', title, mode: 'conversation', createdAt: Date.UTC(2026, 9, 20, 9), persona: { id: 'pm', name: 'PM', version: 1, stepId: null }, ...more });
+    const old = pmSession('pm1', 'Phone plans', { status: 'finished' });
+    const cb = pmSession('pm2', 'CB cutover', { status: 'running' });
     stubApi({
       ...hostRoutes,
       'GET /api/projects': [project],
@@ -1118,37 +1120,45 @@ describe('phone', () => {
       [`GET /api/projects/${project.id}/sessions`]: [shell],
       [`GET /api/projects/${project.id}/runs`]: [],
       'GET /api/workspaces': [{ id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [] }],
-      'GET /api/pm': { current: null, sessions: [{ session: pmSession, rotation: 'done', reason: 'age', journal: '## Planned the phone' }] },
+      'GET /api/pm': { current: cb, sessions: [
+        { session: cb, open: true, title: 'CB cutover', unseen: false, lastActivity: 1, rotation: 'none', reason: null, journal: null },
+        { session: old, open: false, title: 'Phone plans', unseen: false, lastActivity: 1, rotation: 'done', reason: 'age', journal: '## Planned the phone' },
+      ] },
       'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
     });
     vi.stubGlobal('WebSocket', class { readyState = 0; onopen = null; onmessage = null; onclose = null; close() {} });
     window.history.replaceState(null, '', '/pm');
     renderWithQuery(<AppShell />);
     const bar = () => screen.getByRole('banner', { name: 'Top bar' });
-    // No session yet: today's text and the box, not focused (the keyboard would cover the screen).
-    const box = await screen.findByRole('textbox', { name: 'Ask the PM' });
-    expect(box).not.toHaveFocus();
+    const open = await screen.findByRole('grid', { name: 'PM conversations' });
+    await userEvent.click(await within(open).findByText('CB cutover'));
+    expect(here()).toBe('/pm/pm2');
+    expect(within(bar()).getByRole('heading', { name: 'CB cutover' })).toBeInTheDocument();
     await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Earlier sessions' }));
-    expect(here()).toBe('/pm/earlier');
-    expect(within(bar()).getByRole('heading', { name: 'Earlier sessions' })).toBeInTheDocument();
-    const list = await screen.findByRole('grid', { name: 'Earlier PM sessions' });
-    expect(list).toHaveTextContent('Ended: it was a day old');
-    expect(list).toHaveTextContent('Planned the phone');
-    await userEvent.click(within(list).getByText('Planned the phone'));
-    expect(here()).toBe('/pm/pm1');
-    expect(await screen.findByText('This session has ended.')).toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
-    await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
-    await waitFor(() => expect(here()).toBe('/pm/earlier'));
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Close…']);
+    await userEvent.keyboard('{Escape}');
     await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/pm'));
+    const ended = await screen.findByRole('grid', { name: 'Ended PM conversations' });
+    expect(ended).toHaveTextContent('Planned the phone');
+    await userEvent.click(within(ended).getByText('Phone plans'));
+    expect(here()).toBe('/pm/pm1');
+    expect(await screen.findByText('This conversation has ended.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/pm'));
+    // A new conversation: the box, not focused (the keyboard would cover the screen).
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'New conversation' }));
+    expect(here()).toBe('/pm/new');
+    expect(within(bar()).getByRole('heading', { name: 'New conversation' })).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Ask the PM' })).not.toHaveFocus();
   });
 
   describe("the PM's unread reply (PDT-145)", () => {
     const pmRoutes = (session: Record<string, unknown>) => {
       const pmSession: Record<string, unknown> = { ...shell, id: 'pm1', projectId: 'host', kind: 'agent_tui', agent: 'claude', title: 'PM', mode: 'conversation', persona: { id: 'pm', name: 'PM', version: 1, stepId: null }, ...session };
-      const state = { current: pmSession, sessions: [{ session: pmSession, rotation: 'none', reason: null, journal: null }] };
+      const state = { current: pmSession, sessions: [{ session: pmSession, open: true, title: 'PM', unseen: true, lastActivity: 1, rotation: 'none', reason: null, journal: null }] };
       return {
         ...hostRoutes,
         'GET /api/projects': [],

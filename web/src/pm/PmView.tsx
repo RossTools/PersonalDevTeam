@@ -9,16 +9,19 @@ import { ConversationView } from '../conversation/ConversationView';
 import { enterAddsLine } from '../conversation/ConversationComposer';
 import { loadDraft, saveDraft } from '../conversation/drafts';
 import { useViewTracking } from '../sessions/useViewTracking';
-import { earlier, firstLine, REASON_LABEL, usePm, useRefreshPm, type PmSelection } from './usePm';
+import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
+import { InlineRename } from '../common/InlineRename';
+import { useTopBarActions } from '../shell/PhoneTopBar';
+import { earlier, firstLine, REASON_LABEL, shownConversation, usePm, usePmActions, useRefreshPm, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
 export const PM_START_DRAFT = 'pm-start';
 
 /**
- * The PM view's work area (PDT-81): the selected PM session's conversation (an ended one read-only, with its
- * journal), the list of earlier sessions, or, with no current session, a box whose first message starts one. On a
- * phone (PDT-113) the conversation is the whole screen: the top bar has the title and ⋯. The notes have a view of
- * their own (PDT-143).
+ * The PM view's work area (PDT-81, PDT-149): the conversation on show (an ended one read-only, with its journal), the
+ * list of ended ones, or the box whose first message starts a new conversation (also shown when none is open). On a
+ * phone (PDT-113) the conversation is the whole screen: the top bar has its title, and ⋯ renames or closes it.
+ * The notes have a view of their own (PDT-143).
  */
 export function PmView({ selection, onSelect, onNew }: {
   selection: PmSelection;
@@ -29,42 +32,71 @@ export function PmView({ selection, onSelect, onNew }: {
   const phone = useMediaQuery(PHONE_QUERY);
   if (pm.isPending) return <Skeleton lines={8} className="p-4" />;
   if (selection === 'earlier') return <EarlierSessions onSelect={onSelect} phone={phone} />;
-  const sessions = pm.data?.sessions ?? [];
-  const current = pm.data?.current ?? null;
-  const info = selection === 'current'
-    ? sessions.find((s) => s.session.id === current?.id)
-    : sessions.find((s) => s.session.id === selection);
-  if (!info) return <PmStart phone={phone} onStarted={() => onSelect('current')} />;
+  const info = selection === 'new' ? undefined : shownConversation(pm.data?.sessions, pm.data?.current?.id, selection);
+  if (!info) return <PmStart phone={phone} onStarted={(s) => onSelect(s.id)} />;
+  return <Conversation key={info.session.id} info={info} phone={phone} onSelect={onSelect} onNew={onNew} />;
+}
+
+function Conversation({ info, phone, onSelect, onNew }: {
+  info: PmSessionInfo;
+  phone: boolean;
+  onSelect: (s: PmSelection) => void;
+  onNew: () => void;
+}) {
   const s = info.session;
-  const ended = info.rotation === 'done';
+  const ended = !info.open;
+  const [renaming, setRenaming] = useState(false);
+  const { rename, close } = usePmActions(() => onSelect('current'));
+  const canClose = info.rotation === 'none';
+  useTopBarActions(phone && !ended ? () => [
+    { label: 'Rename', onSelect: () => setRenaming(true) },
+    { label: 'Close…', onSelect: () => close(info), disabled: !canClose },
+  ] : null);
   const meta = [
     `Started ${relativeTime(s.createdAt)}`,
     ended ? `ended: ${info.reason ? REASON_LABEL[info.reason] : 'ended'}` : null,
     s.persona ? `${s.persona.name} v${s.persona.version}` : null,
   ].filter(Boolean).join(' · ');
+  const renameField = (
+    <InlineRename
+      label="Conversation name"
+      initial={info.title}
+      onCommit={(t) => { setRenaming(false); rename(s.id, t); }}
+      onCancel={() => setRenaming(false)}
+    />
+  );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {phone ? (
-        ended && <p className="border-b border-border px-4 py-1.5 text-meta text-muted-foreground">{meta}</p>
+        <>
+          {renaming && <div className="border-b border-border px-3 py-1.5">{renameField}</div>}
+          {ended && <p className="border-b border-border px-4 py-1.5 text-meta text-muted-foreground">{meta}</p>}
+        </>
       ) : (
         <ViewHeader
-          title={ended ? 'Earlier PM session' : 'Project manager'}
+          title={renaming ? renameField : info.title}
+          titleTooltip={info.title}
           leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />}
           meta={<span className="text-meta">{meta}</span>}
-          actions={<Button variant="ghost" size="sm" onClick={onNew}>New session</Button>}
+          actions={(
+            <>
+              {!ended && <Button variant="ghost" size="sm" onClick={() => setRenaming(true)}>Rename</Button>}
+              {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => close(info)}>Close…</Button>}
+              <Button variant="ghost" size="sm" onClick={onNew}>New conversation</Button>
+            </>
+          )}
         />
       )}
       <ViewTracked session={s} />
       <ConversationView
-        key={s.id}
         session={s}
         className="min-h-0 flex-1"
         banner={info.rotation === 'journal' ? (
           <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
-            This session is writing its journal; your next message starts a new one.
+            This conversation is writing its journal and then ends; start a new one to carry on.
           </p>
         ) : undefined}
-        readOnly={ended ? <Ended journal={info.journal} onCurrent={() => onSelect('current')} /> : undefined}
+        readOnly={ended ? <Ended journal={info.journal} onNew={onNew} /> : undefined}
       />
     </div>
   );
@@ -76,39 +108,40 @@ function ViewTracked({ session }: { session: Session }) {
   return null;
 }
 
-function Ended({ journal, onCurrent }: { journal: string | null; onCurrent: () => void }) {
+function Ended({ journal, onNew }: { journal: string | null; onNew: () => void }) {
   return (
     <div className="flex flex-col gap-2 border-t border-border px-4 py-3 text-sm">
       {journal && (
         <p className="line-clamp-4 whitespace-pre-wrap text-muted-foreground"><span className="font-medium text-foreground">Journal: </span>{journal}</p>
       )}
       <div className="flex items-center gap-2">
-        <span className="flex-1 text-muted-foreground">This session has ended.</span>
-        <Button size="sm" onClick={onCurrent}>Go to the current session</Button>
+        <span className="flex-1 text-muted-foreground">This conversation has ended.</span>
+        <Button size="sm" onClick={onNew}>New conversation</Button>
       </div>
     </div>
   );
 }
 
-/** The sessions that ended, newest first: when, how it ended, and its journal's first line; each opens read-only. */
+/** The conversations that ended, newest first: when, how it ended, and its journal's first line; each opens read-only. */
 function EarlierSessions({ onSelect, phone }: { onSelect: (s: PmSelection) => void; phone: boolean }) {
   const pm = usePm();
   const ended = earlier(pm.data?.sessions ?? []);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {!phone && <ViewHeader title="Earlier PM sessions" leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />} />}
+      {!phone && <ViewHeader title="Ended PM conversations" leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />} />}
       <div className="min-h-0 flex-1 overflow-auto px-1 py-1">
         {ended.length === 0 ? (
-          <EmptyState className="mt-16 border-0">No PM session has ended yet.</EmptyState>
+          <EmptyState className="mt-16 border-0">No PM conversation has ended yet.</EmptyState>
         ) : (
-          <List aria-label="Earlier PM sessions" onAction={(id) => onSelect(String(id))}>
+          <List aria-label="Ended PM conversations" onAction={(id) => onSelect(String(id))}>
             {ended.map((s) => (
               <ListRow
                 key={s.session.id}
                 id={s.session.id}
-                title={new Date(s.session.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                title={s.title}
                 secondary={
                   <span className="flex flex-col">
+                    <span>{new Date(s.session.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
                     <span>Ended: {s.reason ? REASON_LABEL[s.reason] : 'ended'}</span>
                     {firstLine(s.journal) && <span className="truncate">{firstLine(s.journal)}</span>}
                   </span>
@@ -123,7 +156,7 @@ function EarlierSessions({ onSelect, phone }: { onSelect: (s: PmSelection) => vo
 }
 
 /**
- * No current session: the first message starts one (its briefing is made then). Unsent text is kept. A phone doesn't
+ * A new conversation, beside the open ones (PDT-149): the first message starts it and names it (its briefing is made then). Unsent text is kept. A phone doesn't
  * focus the box (the keyboard would cover the text) and follows the composer's Enter rule.
  */
 function PmStart({ onStarted, phone }: { onStarted: (s: Session) => void; phone: boolean }) {
@@ -138,10 +171,11 @@ function PmStart({ onStarted, phone }: { onStarted: (s: Session) => void; phone:
   });
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {!phone && <ViewHeader title="Project manager" leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />} />}
+      {!phone && <ViewHeader title="New conversation" leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />} />}
       <EmptyState icon={<BriefcaseBusiness />} className="mt-16 border-0">
         Ask about any project: what's in flight, why something is stuck, or have it draft a ticket or a workflow. It
-        starts from a briefing of PDT's state and its notes, and asks before it changes anything.
+        starts from a briefing of PDT's state, its notes and your other open conversations, and asks before it changes
+        anything. Keep one conversation per topic: the others stay open.
       </EmptyState>
       <div className="mt-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <PromptBox

@@ -10,13 +10,14 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::conversation::{Answer, PermissionMode, SessionMode};
 use pdt_core::pm::{
-    self, AskTarget, BriefEvent, BriefInbox, BriefJournal, BriefNote, BriefProject, BriefTicket, BriefingData, NewNote,
-    NoteKind, NotePatch, PmNote, PmSessionInfo, PmState, RotateReason, Rotation, StartPm,
+    self, AskTarget, BriefConversation, BriefEvent, BriefInbox, BriefJournal, BriefNote, BriefProject, BriefTicket,
+    BriefingData, NewNote, NoteKind, NotePatch, PmNote, PmSessionInfo, PmSessionPatch, PmState, RotateReason, Rotation,
+    StartPm,
 };
 use pdt_core::project::Project;
-use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession};
+use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession, clean_title};
 use pdt_core::ticket::{TicketQuery, TicketStage};
-use pdt_store::NoteFilter;
+use pdt_store::{NoteFilter, PmSessionRow};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -68,35 +69,114 @@ pub(crate) async fn state(State(st): State<AppState>) -> Result<Json<PmState>, A
     Ok(Json(pm_state(&st).await?))
 }
 
+/// `GET /api/pm/sessions`: every PM conversation, the open ones first (PDT-149).
+pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<PmSessionInfo>>, ApiError> {
+    Ok(Json(pm_state(&st).await?.sessions))
+}
+
 async fn pm_state(st: &AppState) -> Result<PmState, ApiError> {
-    let mut sessions = vec![];
+    let mut open = vec![];
+    let mut ended = vec![];
+    // Newest first: the first open one is the newest (`current`, for clients that know only one).
     let mut current = None;
     for row in st.store.list_pm_sessions().await? {
         let Some(session) = st.store.get_session(&row.session_id).await? else { continue };
-        if current.is_none() && row.rotation != Rotation::Done {
+        let is_open = row.rotation != Rotation::Done;
+        if is_open && current.is_none() {
             current = Some(session.clone());
         }
+        let last_activity = if is_open {
+            st.store.last_session_event_ts(&row.session_id).await?.unwrap_or(row.created_at).max(row.created_at)
+        } else {
+            row.ended_at.unwrap_or(row.created_at)
+        };
         let journal = st.store.session_journal(&row.session_id).await?.map(|n| n.body);
-        sessions.push(PmSessionInfo { session, rotation: row.rotation, reason: row.reason, journal });
+        let info = PmSessionInfo {
+            open: is_open,
+            title: session.title.clone(),
+            unseen: session.unseen,
+            last_activity,
+            session,
+            rotation: row.rotation,
+            reason: row.reason,
+            journal,
+        };
+        if is_open { open.push(info) } else { ended.push(info) }
     }
-    Ok(PmState { current, sessions })
+    open.sort_by_key(|i| std::cmp::Reverse(i.last_activity));
+    open.extend(ended);
+    Ok(PmState { current, sessions: open })
 }
 
-/// `POST /api/pm/sessions`: a new PM session, ending the current one.
+/// `POST /api/pm/sessions`: a new PM conversation, beside the open ones (PDT-149: starting one ends none).
 pub(crate) async fn start(
     State(st): State<AppState>,
     payload: Result<Json<StartPm>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Session>), ApiError> {
     let Json(input) = payload?;
     let text = input.text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    if let Some(cur) = pm_state(&st).await?.current {
-        end_session(&st, &cur, Rotation::None, Some(RotateReason::User)).await;
-        end_session(&st, &cur, Rotation::Journal, Some(RotateReason::User)).await;
-    }
-    Ok((StatusCode::CREATED, Json(new_session(&st, text).await?)))
+    let title = match input.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?,
+        None => pm::conversation_title(text.as_deref().unwrap_or("")),
+    };
+    Ok((StatusCode::CREATED, Json(new_session(&st, title, text).await?)))
 }
 
-async fn new_session(st: &AppState, first: Option<String>) -> Result<Session, ApiError> {
+/// A PM conversation by id (404 for any other session).
+async fn pm_session(st: &AppState, id: &str) -> Result<(PmSessionRow, Session), ApiError> {
+    let not_found = || ApiError::not_found("PM conversation");
+    let row = st.store.get_pm_session(id).await?.ok_or_else(not_found)?;
+    let s = st.store.get_session(id).await?.ok_or_else(not_found)?;
+    Ok((row, s))
+}
+
+/// `PATCH /api/pm/sessions/{id}`: renames a PM conversation.
+pub(crate) async fn patch(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<PmSessionPatch>, JsonRejection>,
+) -> Result<Json<Session>, ApiError> {
+    let Json(input) = payload?;
+    let (_, mut s) = pm_session(&st, &id).await?;
+    if let Some(t) = &input.title {
+        let title = clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?;
+        st.store.rename_session(&id, &title).await?;
+        s.title = title;
+    }
+    Ok(Json(s))
+}
+
+/// `DELETE /api/pm/sessions/{id}`: closes a PM conversation. One that said anything is asked for its journal first
+/// and ends when that turn does (as rotation does); one that never did ends at once. Closing one that is already
+/// ending does nothing.
+pub(crate) async fn close(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    let (row, s) = pm_session(&st, &id).await?;
+    if row.rotation != Rotation::None {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if st.store.last_session_event_ts(&id).await?.is_none() {
+        end_session(&st, &s, Rotation::None, Some(RotateReason::User)).await;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if st.store.set_pm_rotation(&id, Rotation::None, Rotation::Journal, Some(RotateReason::User), now_ms()).await? {
+        tracing::info!(session = %id, "closing a PM conversation");
+        // The user's click: it reopens a parked conversation to write its journal.
+        ask_for_journal(&st, &s, true).await;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The user wrote to a PM conversation: one still called [`pm::NEW_TITLE`] is named after the message.
+pub(crate) async fn user_wrote(st: &AppState, s: &Session, text: &str) {
+    if s.title != pm::NEW_TITLE || text.trim().is_empty() || !is_pm_session(st, s).await {
+        return;
+    }
+    if let Err(e) = st.store.rename_session(&s.id, &pm::conversation_title(text)).await {
+        tracing::warn!(session = %s.id, error = %e, "could not title a PM conversation");
+    }
+}
+
+async fn new_session(st: &AppState, title: String, first: Option<String>) -> Result<Session, ApiError> {
     let project = host_project(st).await?;
     let p = persona(st).await?;
     let mode = p.setup.permission_mode.unwrap_or(PermissionMode::Ask);
@@ -114,7 +194,7 @@ async fn new_session(st: &AppState, first: Option<String>) -> Result<Session, Ap
             model: p.setup.model.clone(),
             permission_mode: Some(mode),
         },
-        title: Some(p.name.clone()),
+        title: Some(title),
         attempt_id: None,
         ticket: None,
         tab: None,
@@ -201,30 +281,36 @@ pub(crate) async fn turn_ended(st: &AppState, id: &str) {
                 _ => return,
             }
             tracing::info!(session = %id, reason = reason.as_str(), "rotating the PM session");
-            // Through the outbox (7a's delivery rule), so it never goes into a running turn.
-            let m = pdt_store::SessionMessage {
-                id: uuid::Uuid::now_v7().to_string(),
-                attempt_id: None,
-                session_id: Some(s.id.clone()),
-                ticket_id: None,
-                dedupe: None,
-                text: pm::journal_request(),
-                timeline: serde_json::Value::Null,
-                run_id: None,
-                step_id: None,
-                status: "waiting".into(),
-                told_session: None,
-                created_at: now_ms(),
-                resolved_at: None,
-                by_user: false,
-                pending_id: None,
-                reopens: false,
-            };
-            if let Err(e) = st.store.queue_session_message(&m).await {
-                tracing::warn!(session = %id, error = %e, "could not ask the PM session for its journal");
-                end_session(st, &s, Rotation::Journal, None).await;
-            }
+            ask_for_journal(st, &s, false).await;
         }
+    }
+}
+
+/// Asks a PM conversation now at rotation `journal` for its journal entry, through the outbox (7a's delivery rule) so
+/// it never goes into a running turn; `reopens` wakes a parked one (the user closed it). Ends it at once when the
+/// request can't be queued.
+async fn ask_for_journal(st: &AppState, s: &Session, reopens: bool) {
+    let m = pdt_store::SessionMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        attempt_id: None,
+        session_id: Some(s.id.clone()),
+        ticket_id: None,
+        dedupe: None,
+        text: pm::journal_request(),
+        timeline: serde_json::Value::Null,
+        run_id: None,
+        step_id: None,
+        status: "waiting".into(),
+        told_session: None,
+        created_at: now_ms(),
+        resolved_at: None,
+        by_user: false,
+        pending_id: None,
+        reopens,
+    };
+    if let Err(e) = st.store.queue_session_message(&m).await {
+        tracing::warn!(session = %s.id, error = %e, "could not ask the PM session for its journal");
+        end_session(st, s, Rotation::Journal, None).await;
     }
 }
 
@@ -441,7 +527,33 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
             title: n.title,
         })
         .collect();
-    Ok(BriefingData { now, projects: out_projects, in_flight, inbox, since, events, journal, pinned })
+    let mut others = vec![];
+    for info in pm_state(st).await?.sessions {
+        if !info.open || info.session.id == session_id {
+            continue;
+        }
+        others.push(BriefConversation {
+            title: info.title,
+            at: info.last_activity,
+            summary: last_said(st, &info.session.id).await?,
+        });
+    }
+    Ok(BriefingData { now, projects: out_projects, in_flight, inbox, since, events, journal, pinned, others })
+}
+
+/// Events a conversation's summary line looks back through.
+const SUMMARY_EVENTS: i64 = 50;
+
+/// A conversation's last message (the agent's, else the user's) as one line; empty when nothing was said.
+async fn last_said(st: &AppState, session_id: &str) -> Result<String, ApiError> {
+    use pdt_core::conversation::AgentEvent;
+    let events = st.store.recent_session_events(session_id, SUMMARY_EVENTS).await?;
+    let last = events.iter().rev().find_map(|e| match &e.event {
+        AgentEvent::AgentMessage { markdown, .. } if !markdown.trim().is_empty() => Some(markdown.as_str()),
+        AgentEvent::UserMessage { text, .. } if !text.trim().is_empty() => Some(text.as_str()),
+        _ => None,
+    });
+    Ok(last.map(pm::summary_line).unwrap_or_default())
 }
 
 // ---- notes ----

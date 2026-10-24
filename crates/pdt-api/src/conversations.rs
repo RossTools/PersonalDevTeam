@@ -1459,6 +1459,7 @@ pub(crate) async fn post_message(
     let images = body.images.unwrap_or_default();
     let pending =
         send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), false, None).await?;
+    crate::pm::user_wrote(&st, &session, &body.text).await;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }
 
