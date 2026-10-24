@@ -22,4 +22,8 @@ maxRunningAttempts: number | null, autoStart: AutoStart,
 /**
  * The PM may create and edit the project's tickets and message its sessions without asking (PDT-81).
  */
-pmActs: boolean, };
+pmActs: boolean, 
+/**
+ * Auto-start takes a ticket only once it has gone this long unchanged (PDT-146); 0: at once.
+ */
+startDelaySeconds: number, };

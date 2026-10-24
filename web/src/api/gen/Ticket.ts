@@ -103,6 +103,11 @@ pipelineStage: PipelineStage | null,
  */
 agent: TicketAgent | null, 
 /**
+ * When auto-start takes it, while it waits out the project's start delay (PDT-146; filled in by the API, in
+ * memory).
+ */
+autoStartAt: number | null, 
+/**
  * The issues in other trackers it is linked to (a Jira issue it was imported from).
  */
 external: Array<ExternalLink>, };

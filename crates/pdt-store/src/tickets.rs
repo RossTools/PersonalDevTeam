@@ -223,6 +223,7 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         parts: None,
         pipeline_stage: r.try_get::<Option<String>, _>("pipeline_stage")?.as_deref().and_then(PipelineStage::parse),
         agent: None,
+        auto_start_at: None,
         external: vec![],
     })
 }
@@ -856,6 +857,8 @@ async fn insert_ticket(
                 .bind(now)
                 .execute(&mut *conn)
                 .await?;
+            // A link is a change on both sides: auto-start's quiet period starts again (PDT-146).
+            touch(conn, &prev, now).await?;
             let prev_key = ticket_head(conn, &prev).await?.map(|h| h.1).unwrap_or_default();
             link_events(
                 conn,
@@ -2076,6 +2079,9 @@ impl Store {
             .bind(now)
             .execute(&mut *tx)
             .await?;
+        // A link is a change on both sides: auto-start's quiet period starts again (PDT-146).
+        touch(&mut tx, from, now).await?;
+        touch(&mut tx, to, now).await?;
         link_events(&mut tx, EventKind::Linked, kind, (from, &from_key), (to, &to_key), actor, now).await?;
         tx.commit().await?;
         Ok(self.get_ticket(from).await?)
@@ -2111,6 +2117,8 @@ impl Store {
             return Err(TicketError::NotFound("link"));
         }
         let to_key = ticket_head(&mut tx, to).await?.map(|h| h.1).unwrap_or_default();
+        touch(&mut tx, from, now).await?;
+        touch(&mut tx, to, now).await?;
         link_events(&mut tx, EventKind::Unlinked, kind, (from, &from_key), (to, &to_key), actor, now).await?;
         if kind == LinkKind::Blocks && !from_stage.is_closed() {
             let sql = format!("SELECT {BLOCKED_BY} FROM tickets t WHERE t.id = ?");
@@ -2673,6 +2681,23 @@ mod tests {
         );
         store.delete_ticket("c").await.unwrap();
         assert!(store.get_ticket("b").await.unwrap().unwrap().links.is_empty());
+    }
+
+    #[tokio::test]
+    async fn linking_and_unlinking_change_both_tickets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for id in ["a", "b"] {
+            add(&store, id, new(id)).await;
+        }
+        let updated = |id: &'static str| {
+            let store = &store;
+            async move { store.get_ticket_summary(id).await.unwrap().unwrap().updated_at }
+        };
+        store.add_link("a", "b", LinkKind::Blocks, 9_000).await.unwrap();
+        assert_eq!((updated("a").await, updated("b").await), (9_000, 9_000));
+        store.remove_link("a", "b", LinkKind::Blocks, 9_500).await.unwrap();
+        assert_eq!((updated("a").await, updated("b").await), (9_500, 9_500));
     }
 
     #[tokio::test]

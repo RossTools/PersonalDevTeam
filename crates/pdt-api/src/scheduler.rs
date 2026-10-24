@@ -3,7 +3,7 @@
 
 use crate::routes::AppState;
 use pdt_core::inbox::InboxKind;
-use pdt_core::policy::{AutoStart, pick_next};
+use pdt_core::policy::{AutoStart, auto_start_at, pick_next};
 use pdt_core::start::{StartMode, StartTicket};
 use pdt_core::ticket::{TicketAgent, TicketAgentState, TicketQuery, TicketSummary};
 use pdt_core::workflow::agent::AgentStepState;
@@ -84,8 +84,8 @@ pub(crate) async fn workflow_listens(st: &AppState, project_id: &str, event_type
     false
 }
 
-/// One pass of auto-start: in each project that asks for it, the next candidate while it is under its cap. A ticket
-/// that fails to start is skipped until it changes.
+/// One pass of auto-start: in each project that asks for it, the next candidate while it is under its cap, once it
+/// has gone the project's start delay unchanged. A ticket that fails to start is skipped until it changes.
 pub async fn schedule_tickets(st: &AppState) {
     let Ok(projects) = st.store.list_projects().await else { return };
     for p in projects {
@@ -119,7 +119,7 @@ pub async fn schedule_tickets(st: &AppState) {
                 .map(|t| t.id.clone())
                 .collect()
         };
-        let Some(next) = pick_next(&policy, active, &page.items, &skip) else { continue };
+        let Some(next) = pick_next(&policy, active, &page.items, &skip, crate::routes::now_ms()) else { continue };
         let (id, updated_at, key) = (next.id.clone(), next.updated_at, next.key.clone());
         let no_session = workflow_listens(st, &p.id, pdt_core::workflow::events::ATTEMPT_STARTED).await;
         // A start with its own session runs a turn at once: it waits for a slot like an agent step.
@@ -249,6 +249,20 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
         );
     }
     out
+}
+
+/// Fills in `auto_start_at` on tickets of a list (overlaps first: they decide whether a ticket can start), with each
+/// project's policy.
+pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary]) {
+    let now = crate::routes::now_ms();
+    let mut policies: HashMap<String, Option<pdt_core::policy::ProjectPolicy>> = HashMap::new();
+    for t in items {
+        if !policies.contains_key(&t.project_id) {
+            let p = st.store.get_project_settings(&t.project_id).await.ok().map(|s| s.policy);
+            policies.insert(t.project_id.clone(), p);
+        }
+        t.auto_start_at = policies[&t.project_id].as_ref().and_then(|p| auto_start_at(p, t, now));
+    }
 }
 
 /// Fills in `agent` on tickets of a list.

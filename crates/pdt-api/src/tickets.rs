@@ -37,6 +37,7 @@ pub(crate) async fn list(
     }
     crate::parts::apply_page(&st, &mut page.items).await?;
     crate::scheduler::apply_agents(&st, &mut page.items).await;
+    crate::scheduler::apply_auto_start(&st, &mut page.items).await;
     Ok(Json(page))
 }
 

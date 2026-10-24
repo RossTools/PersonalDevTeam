@@ -102,6 +102,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub pm_acts: Option<bool>,
+    /// Auto-start takes a ticket only once it has gone this many seconds unchanged (PDT-146); 0: at once.
+    #[serde(default)]
+    #[ts(optional)]
+    pub start_delay_seconds: Option<u32>,
     #[serde(default)]
     #[ts(optional)]
     pub jira: Option<JiraInput>,
@@ -112,6 +116,8 @@ pub struct ProjectSettingsInput {
 
 /// The highest running-attempt cap a project can set.
 const MAX_RUNNING_ATTEMPTS: u32 = 100;
+/// The longest start delay a project can set: a day.
+const MAX_START_DELAY_SECONDS: u32 = 24 * 60 * 60;
 
 pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSettingsView, ApiError> {
     st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
@@ -190,6 +196,9 @@ pub(crate) async fn put_settings(
         }
         Some(n) => Some(n),
     };
+    if input.start_delay_seconds.is_some_and(|d| d > MAX_START_DELAY_SECONDS) {
+        return Err(invalid(format!("the start delay is at most {MAX_START_DELAY_SECONDS} seconds")));
+    }
     let approval_exempt_labels = match &input.approval_exempt_labels {
         None => current.policy.approval_exempt_labels,
         Some(l) => pdt_core::ticket::normalize_labels(l)
@@ -202,6 +211,7 @@ pub(crate) async fn put_settings(
         auto_start: input.auto_start.unwrap_or(current.policy.auto_start),
         approval_exempt_labels,
         pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
+        start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),
     };
     let jira = match input.jira {
         None => current.jira,
