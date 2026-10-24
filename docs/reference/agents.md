@@ -126,22 +126,34 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
 - **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal | user, host-wide or per
   project, pinned or not. `GET /api/pm/notes?q=&project=&kind=&limit=` (words are quoted prefixes, all required; a
   project gets its own and host-wide notes, pinned first), `POST` (`kind` note, the default, or user; never journal),
-  `GET`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`. The PM view's Notes page lists,
-  searches, adds, edits, pins and deletes them, with a **Mine | PM's** switch (Mine first; a new note takes the
-  side's kind).
+  `GET`, `PATCH /api/pm/notes/{id}` (`project: ""` makes it host-wide), `DELETE`.
+- **The Notes view** (PDT-143, `web/src/notes`; rail and phone drawer after Tickets, Ctrl+] o, the palette's "Notes")
+  holds both kinds the user sees: a list column with New note, a full-text search (`/` focuses it), a **Mine | PM's
+  memory** switch (`/notes` and `/notes/pm`; the PM's side says pinned notes go in every PM briefing) and a scope (all,
+  host-wide or a project's, filtered in the browser), then the notes in sections (Pinned, Last 7 days, Earlier), each
+  with two lines of its text without the Markdown and Host-wide or its project's key. A note is a page
+  (`/notes/<id>`): its project (a menu; changing it saves at once), the save state (Saved · edited when, Saving…, or
+  Not saved with Retry, which also toasts), **Write | Read**, Pin (amber when pinned; "listed first" for mine, "in
+  every briefing" for the PM's), Make a ticket (mine only) and ⋯ Delete… (asks first). Read renders the Markdown as a
+  document; Write is the title and a plain text box that grows with its text, in the same type (no editor library);
+  Esc goes back to Read. A note with text opens to Read, an empty or new one to Write with its title focused. It
+  saves by itself 800 ms after typing stops, on blur and when the page goes; the text comes from the server once and
+  a polled copy only replaces it when it changed elsewhere and nothing here is unsaved. An empty title is saved as
+  the text's first line (plain, at most 200 characters) or "Untitled". `/notes/new` is a blank note made by its first
+  save (in the switch's kind and the scope's project), which replaces the path with `/notes/<id>`; nothing is made
+  if it's left empty. The PM view no longer lists the notes, and the right panel has no Notes tab.
 - **The user's own notes** (`kind` user, PDT-126): ideas and the like. They are never in a briefing, even pinned (a pin
   only lists them first). The PM's `search_notes` finds them, each result marked `writtenBy` "the user" (or "the
-  PM"); its `save_note` (with that id) and `delete_note` refuse them. A user note has **Make a ticket** (in the list
-  and on its page): the new-ticket form, as a Draft in the note's project, titled with the note's title, its body the
-  description followed by "From the note [title](<origin>/pm/notes/<id>)." The right panel's Notes tab
-  (`web/src/pm/NotesPanel.tsx`) captures one (a title and an optional markdown body; ⌘Enter saves, in the scope's
-  project), searches them, scopes them (everywhere, host-wide or one project's) and opens one at `/pm/notes/<id>`.
-- **Paths and the phone** (PDT-113). `/pm` is the current session (or the start box), `/pm/notes` the notes,
-  `/pm/notes/<id>` one note, `/pm/earlier` the sessions that ended (when, how it ended, the journal's first line) and
-  `/pm/<session id>` one of them, read-only with "Go to the current session". On a phone the conversation is the
-  whole screen (no header: the top bar has the title), ⋯ has New session… (asks first), Notes and Earlier sessions,
-  a tap on a note opens it as its own screen, and the start box shows the usual text but isn't focused (the keyboard
-  would cover it).
+  PM"); its `save_note` (with that id) and `delete_note` refuse them. A user note has **Make a ticket** on its page:
+  the new-ticket form, as a Draft in the note's project, titled with the note's title, its body the description
+  followed by "From the note [title](<origin>/notes/<id>)." Older descriptions link to `/pm/notes/<id>`, which still
+  opens the note (the path is replaced by `/notes/<id>`; `/pm/notes` by `/notes/pm`).
+- **Paths and the phone** (PDT-113). `/pm` is the current session (or the start box), `/pm/earlier` the sessions
+  that ended (when, how it ended, the journal's first line) and `/pm/<session id>` one of them, read-only with "Go to
+  the current session". On a phone the conversation is the whole screen (no header: the top bar has the title), ⋯ has
+  New session… (asks first) and Earlier sessions, and the start box shows the usual text but isn't focused (the
+  keyboard would cover it). The Notes view's list is its phone screen; a tap opens a note as a screen with ←, the
+  save state and Write | Read under the top bar, and its project, pin, Make a ticket and Delete… under ⋯.
 - **Rotation.** When a PM session ends a turn with its context at least 60 % full (the last `usage` event) or 24 h
   old (`AppState.pm_rotate_age_ms`), PDT queues "[PDT] This PM session is ending…" through the outbox (rotation
   `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). The user's next

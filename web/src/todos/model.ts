@@ -1,7 +1,9 @@
 // The todo list's pure rules (PDT-125): filtering, splitting open from done, and the position a moved row takes; due
 // dates (PDT-140): the user's local day, the chip a card shows, the groups open todos fall into and the quick picks;
-// repeating (PDT-141): a rule as text.
+// repeating (PDT-141): a rule as text; the redesign (PDT-143): six groups, Move to today, the due picker's quick picks
+// and repeat presets.
 import type { Recurrence } from '../api/gen/Recurrence';
+import type { RepeatRule } from '../api/gen/RepeatRule';
 import type { Todo } from '../api/gen/Todo';
 
 /** The list's filter: every todo, or the current project's. */
@@ -57,8 +59,7 @@ export function dueState(t: Pick<Todo, 'done' | 'dueOn' | 'dueTime'>, now: Date)
   const today = localDay(now);
   if (t.dueOn < today) return 'overdue';
   if (t.dueOn === today) {
-    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    return t.dueTime && t.dueTime <= hm ? 'overdue' : 'today';
+    return t.dueTime && t.dueTime <= hhmm(now) ? 'overdue' : 'today';
   }
   return t.dueOn === addDays(today, 1) ? 'tomorrow' : 'later';
 }
@@ -80,19 +81,28 @@ export function dueLabel(t: Pick<Todo, 'done' | 'dueOn' | 'dueTime'>, now: Date)
   return t.dueTime && state !== 'overdue' ? `${day} ${t.dueTime}` : day;
 }
 
+/** `HH:MM` of a moment, as the API keeps times. */
+export function hhmm(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** The open list's groups, in this order; each keeps the manual order. */
-export type DueGroupId = 'overdue' | 'today' | 'upcoming' | 'none';
+export type DueGroupId = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later' | 'none';
 export const DUE_GROUPS: readonly { id: DueGroupId; label: string }[] = [
   { id: 'overdue', label: 'Overdue' },
   { id: 'today', label: 'Today' },
-  { id: 'upcoming', label: 'Upcoming' },
+  { id: 'tomorrow', label: 'Tomorrow' },
+  { id: 'week', label: 'Next 7 days' },
+  { id: 'later', label: 'Later' },
   { id: 'none', label: 'No date' },
 ];
 
+/** An open todo's group: Next 7 days is 2–7 days out, Later further. */
 export function dueGroup(t: Todo, now: Date): DueGroupId {
   const state = dueState(t, now);
-  if (state === 'overdue' || state === 'today') return state;
-  return state ? 'upcoming' : 'none';
+  if (!state) return 'none';
+  if (state !== 'later') return state;
+  return t.dueOn! <= addDays(localDay(now), 7) ? 'week' : 'later';
 }
 
 /** Open todos (already in their order) by group, leaving out empty groups. */
@@ -100,14 +110,40 @@ export function grouped(open: readonly Todo[], now: Date): { id: DueGroupId; lab
   return DUE_GROUPS.map((g) => ({ ...g, todos: open.filter((t) => dueGroup(t, now) === g.id) })).filter((g) => g.todos.length > 0);
 }
 
-/** The menu's quick picks: today, tomorrow and next week (the coming Monday). */
-export function quickDays(now: Date): { label: string; day: string }[] {
+/** Move to today's patch for an overdue todo: today, keeping its time only if that is still ahead. */
+export function moveToToday(t: Pick<Todo, 'dueTime'>, now: Date): { dueOn: string; dueTime: string } {
+  return { dueOn: localDay(now), dueTime: t.dueTime && t.dueTime > hhmm(now) ? t.dueTime : '' };
+}
+
+/** "In an hour": now + 60 minutes, to the nearest 5, as a day and a time (late at night, tomorrow's). */
+export function inAnHour(now: Date): { dueOn: string; dueTime: string } {
+  const five = 5 * 60_000;
+  const at = new Date(Math.round((now.getTime() + 60 * 60_000) / five) * five);
+  return { dueOn: localDay(at), dueTime: hhmm(at) };
+}
+
+/** The weekend pick: the coming Saturday, or on a Saturday or Sunday the following one ("Next weekend"). */
+export function weekendPick(now: Date): { label: string; day: string } {
+  const dow = now.getDay();
+  const weekend = dow === 6 || dow === 0;
+  const toSat = weekend ? (dow === 6 ? 7 : 6) : 6 - dow;
+  return { label: weekend ? 'Next weekend' : 'This weekend', day: addDays(localDay(now), toSat) };
+}
+
+/** A quick pick in the due picker: a day, and a time only for In an hour. */
+export type QuickPick = { id: 'hour' | 'today' | 'tomorrow' | 'weekend' | 'week'; label: string; dueOn: string; dueTime?: string };
+
+/** The due picker's quick picks: in an hour, today, tomorrow, the weekend and next week (the coming Monday). */
+export function quickPicks(now: Date): QuickPick[] {
   const today = localDay(now);
   const toMonday = ((8 - now.getDay()) % 7) || 7;
+  const weekend = weekendPick(now);
   return [
-    { label: 'Today', day: today },
-    { label: 'Tomorrow', day: addDays(today, 1) },
-    { label: 'Next week', day: addDays(today, toMonday) },
+    { id: 'hour', label: 'In an hour', ...inAnHour(now) },
+    { id: 'today', label: 'Today', dueOn: today },
+    { id: 'tomorrow', label: 'Tomorrow', dueOn: addDays(today, 1) },
+    { id: 'weekend', label: weekend.label, dueOn: weekend.day },
+    { id: 'week', label: 'Next week', dueOn: addDays(today, toMonday) },
   ];
 }
 
@@ -141,6 +177,24 @@ export function repeatText(r: Recurrence): string {
     case 'month':
       return `Every month on the ${ordinal(rule.day)}`;
   }
+}
+
+/** The due picker's repeat presets, built from the chosen day (`YYYY-MM-DD`). */
+export function repeatPresets(day: string): { label: string; detail: string; rule: RepeatRule }[] {
+  const wd = weekdayOf(day);
+  const on = `on ${WEEKDAYS[wd]}`;
+  return [
+    { label: 'Every day', detail: '', rule: { every: 'day', interval: 1 } },
+    { label: 'Every weekday', detail: 'Mon–Fri', rule: { every: 'weekday' } },
+    { label: 'Every week', detail: on, rule: { every: 'week', interval: 1, days: [wd] } },
+    { label: 'Every 2 weeks', detail: on, rule: { every: 'week', interval: 2, days: [wd] } },
+    { label: 'Every month', detail: `on the ${ordinal(Number(day.slice(8)))}`, rule: { every: 'month', day: Number(day.slice(8)) } },
+  ];
+}
+
+/** Whether two rules are the same. */
+export function sameRule(a: RepeatRule, b: RepeatRule): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** The rule the Repeat editor starts from for a todo without one: weekly on its due day's weekday (today's if undated). */

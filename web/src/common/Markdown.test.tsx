@@ -18,6 +18,15 @@ describe('Markdown', () => {
     ]);
   });
 
+  it('reads as a document with variant="document": roomier text, display-only task boxes', () => {
+    const { container } = render(<Markdown variant="document">{'### Layout\n\n- [x] Ask Sam\n- [ ] Sketch it'}</Markdown>);
+    expect(container.firstElementChild).toHaveAttribute('data-variant', 'document');
+    expect(container.firstElementChild).toHaveClass('text-base');
+    expect(screen.getByRole('heading', { name: 'Layout' })).toHaveClass('font-semibold');
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes.map((b) => [b.getAttribute('aria-checked'), b.getAttribute('aria-disabled')])).toEqual([['true', 'true'], ['false', 'true']]);
+  });
+
   it('links no ticket keys without the projects', () => {
     render(<Markdown>{'Fixes ALP-12'}</Markdown>);
     expect(screen.queryByRole('link')).toBeNull();

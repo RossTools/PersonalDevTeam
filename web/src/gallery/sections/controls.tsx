@@ -128,6 +128,9 @@ function FormDemo() {
         </Checkbox>
         <Checkbox label="Indeterminate" indeterminate />
         <Checkbox label="Disabled" disabled />
+        <Checkbox shape="round" label="Round (todos)" />
+        <Checkbox shape="round" label="Round, ticked" defaultChecked />
+        <Checkbox shape="round" danger label="Round, overdue" />
       </div>
     </div>
   );

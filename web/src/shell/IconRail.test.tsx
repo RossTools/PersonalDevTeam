@@ -14,7 +14,7 @@ describe('IconRail', () => {
     const expand = within(rail()).getByRole('button', { name: 'Expand side rail' });
     expect(expand).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(expand);
-    for (const name of ['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Workflows', 'Personas', 'Files', 'Settings']) {
+    for (const name of ['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Notes', 'Workflows', 'Personas', 'Files', 'Settings']) {
       expect(within(rail()).getByText(name)).toBeInTheDocument();
     }
     // The badge still shows beside the label, and the item keeps its counted name.

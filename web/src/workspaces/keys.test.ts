@@ -34,6 +34,11 @@ describe('prefix keys', () => {
     expect(KEY_HELP.find(([k]) => k === 'i')?.[1]).toMatch(/Inbox/);
   });
 
+  it('opens the notes with o, and lists it in the help', () => {
+    expect(actionFor('o')).toEqual({ type: 'notes' });
+    expect(KEY_HELP.find(([k]) => k === 'o')?.[1]).toBe('Notes');
+  });
+
   it('runs the action for the key after the prefix and hides both from the page', () => {
     const onAction = vi.fn();
     const seen = vi.fn();

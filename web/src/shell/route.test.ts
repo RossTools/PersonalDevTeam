@@ -7,8 +7,6 @@ describe('routes', () => {
   const cases: [string, Route][] = [
     ['/pm', { view: 'pm', pm: 'current' }],
     ['/pm/s1', { view: 'pm', pm: 's1' }],
-    ['/pm/notes', { view: 'pm', pm: 'notes' }],
-    ['/pm/notes/n1', { view: 'pm', pm: 'note:n1' }],
     ['/pm/earlier', { view: 'pm', pm: 'earlier' }],
     ['/sessions', { view: 'sessions', workspaceId: null, tabId: null }],
     ['/sessions/w1', { view: 'sessions', workspaceId: 'w1', tabId: null }],
@@ -19,6 +17,10 @@ describe('routes', () => {
     ['/tickets?view=board', { view: 'tickets', board: true, ticket: null }],
     ['/tickets/PDT-12', { view: 'tickets', board: false, ticket: 'PDT-12' }],
     ['/tickets/PDT-12?view=board', { view: 'tickets', board: true, ticket: 'PDT-12' }],
+    ['/notes', { view: 'notes', memory: false, note: null }],
+    ['/notes/pm', { view: 'notes', memory: true, note: null }],
+    ['/notes/n1', { view: 'notes', memory: false, note: 'n1' }],
+    ['/notes/new', { view: 'notes', memory: false, note: 'new' }],
     ['/workflows', { view: 'workflows', target: null }],
     ['/workflows/wf', { view: 'workflows', target: { kind: 'workflow', id: 'wf' } }],
     ['/workflows/wf/outline', { view: 'workflows', target: { kind: 'workflow', id: 'wf', tab: 'outline' } }],
@@ -59,15 +61,22 @@ describe('routes', () => {
     expect(parseRoute('/pm/%E0%A4%A')).toEqual({ view: 'pm', pm: '%E0%A4%A' });
   });
 
+  it("reads the notes' old paths as the Notes view's (ticket descriptions link to them)", () => {
+    expect(parseRoute('/pm/notes/n1')).toEqual({ view: 'notes', memory: false, note: 'n1' });
+    expect(routePath(parseRoute('/pm/notes/n1'))).toBe('/notes/n1');
+    expect(parseRoute('/pm/notes')).toEqual({ view: 'notes', memory: true, note: null });
+    expect(routePath(parseRoute('/pm/notes'))).toBe('/notes/pm');
+  });
+
   it("gives every view its own path", () => {
     for (const v of VIEWS) expect(parseLocation(routePath(viewRoute(v.id))).view).toBe(v.id);
   });
 
   it('tells detail screens from top-level ones, and where each goes up to', () => {
-    const top = ['/pm', '/sessions', '/inbox', '/tickets?view=board', '/workflows', '/personas', '/files?project=PDT', '/settings', '/'];
+    const top = ['/pm', '/notes', '/notes/pm', '/sessions', '/inbox', '/tickets?view=board', '/workflows', '/personas', '/files?project=PDT', '/settings', '/'];
     for (const p of top) expect(isDetail(parseLocation(p)), p).toBe(false);
     const up: [string, string][] = [
-      ['/pm/notes', '/pm'], ['/pm/notes/n1', '/pm/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm/earlier'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
+      ['/notes/n1', '/notes'], ['/notes/new', '/notes'], ['/pm/earlier', '/pm'], ['/pm/s1', '/pm/earlier'], ['/sessions/w/t', '/sessions'], ['/inbox/i', '/inbox'], ['/tickets/PDT-1?view=board', '/tickets?view=board'],
       ['/workflows/wf/runs/r', '/workflows/wf/runs'], ['/workflows/wf/runs', '/workflows'], ['/workflows/templates/tp', '/workflows'],
       ['/personas/p', '/personas'],
       ['/files/a/b.md?project=PDT', '/files/a/?project=PDT'], ['/files/a/b/', '/files/a/'], ['/files/a/', '/files'], ['/files/b.md', '/files'],

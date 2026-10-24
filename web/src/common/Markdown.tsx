@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSanitize from 'rehype-sanitize';
+import { Check } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { TicketKeysContext } from './ticketKeys';
 
@@ -100,6 +101,56 @@ const components: Components = {
   img: ({ node: _n, alt, ...p }) => <img {...p} alt={alt ?? ''} className="my-2 max-w-full rounded-md" />,
 };
 
+// A document to read (a note, PDT-143): roomier, with headings a step above the body and quieter list markers.
+const documentComponents: Components = {
+  ...components,
+  h1: ({ node: _n, ...p }) => <h1 {...p} className="mt-8 mb-2 text-base font-semibold tracking-tight first:mt-0" />,
+  h2: ({ node: _n, ...p }) => <h2 {...p} className="mt-7 mb-2 text-base font-semibold tracking-tight first:mt-0" />,
+  h3: ({ node: _n, ...p }) => <h3 {...p} className="mt-6 mb-2 text-base font-semibold tracking-tight first:mt-0" />,
+  h4: ({ node: _n, ...p }) => <h4 {...p} className="mt-5 mb-1 text-sm font-semibold first:mt-0" />,
+  p: ({ node: _n, ...p }) => <p {...p} className="my-3.5 first:mt-0 last:mb-0" />,
+  ul: ({ node: _n, className, ...p }) => (
+    <ul {...p} className={cn('my-3.5 marker:text-muted-foreground', className?.includes('contains-task-list') ? 'list-none pl-0' : 'list-disc pl-6')} />
+  ),
+  ol: ({ node: _n, ...p }) => <ol {...p} className="my-3.5 list-decimal pl-6 marker:text-muted-foreground" />,
+  li: ({ node: _n, className, ...p }) => (
+    <li
+      {...p}
+      className={cn('my-1 pl-1', className?.includes('task-list-item') && 'list-none pl-0 has-[[aria-checked=true]]:text-muted-foreground has-[[aria-checked=true]]:line-through')}
+    />
+  ),
+  // A task's box, for show only (a disabled native checkbox greys out): ticked ones fill with the accent, their text
+  // muted and struck through.
+  input: ({ node: _n, checked }) => (
+    <span
+      role="checkbox"
+      aria-checked={!!checked}
+      aria-disabled
+      className={cn(
+        'mr-2.5 inline-grid size-4 place-items-center rounded-sm border-[1.5px] align-[-3px]',
+        checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground',
+      )}
+    >
+      {checked && <Check aria-hidden className="size-3" strokeWidth={3} />}
+    </span>
+  ),
+  code: ({ node: _n, ...p }) => <code {...p} className="rounded-sm bg-surface-2 px-1.5 py-0.5 font-mono text-sm text-foreground" />,
+  blockquote: ({ node: _n, ...p }) => (
+    <blockquote {...p} className="my-3.5 border-l-[3px] border-border pl-4 text-muted-foreground" />
+  ),
+  pre: ({ node: _n, ...p }) => (
+    <pre
+      {...p}
+      className="my-3.5 overflow-x-auto rounded-md border border-border bg-surface-2 p-3 font-mono text-sm leading-relaxed text-foreground [&>code]:bg-transparent [&>code]:p-0"
+    />
+  ),
+  table: ({ node: _n, ...p }) => (
+    <div className="my-3.5 overflow-x-auto">
+      <table {...p} className="border-collapse text-sm" />
+    </div>
+  ),
+};
+
 const plugins = [remarkGfm, remarkHtmlAsText];
 const withBreaks = [...plugins, remarkBreaks];
 
@@ -112,6 +163,8 @@ export interface MarkdownProps {
   /** Keep single line breaks as breaks, as GitHub issues do (ticket descriptions: pasted logs or JSON without a code
    *  fence would otherwise run together). Off for Markdown files, whose lines are wrapped by hand. */
   breaks?: boolean;
+  /** `document`: a page to read (a note): body text-base with a roomy line height, headings a step above it. */
+  variant?: 'default' | 'document';
   className?: string;
 }
 
@@ -120,7 +173,7 @@ export interface MarkdownProps {
  * was written as, and rehype-sanitize (GitHub's schema) strips anything unsafe that remains (`javascript:` links). Links open in a new tab,
  * except the app's own paths (ticket keys, PDT-111), which the app navigates to.
  */
-export const Markdown = memo(function Markdown({ children, breaks, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, breaks, variant = 'default', className }: MarkdownProps) {
   const keys = useContext(TicketKeysContext);
   const keyList = keys.join(' ');
   const remarkPlugins = useMemo(() => {
@@ -128,8 +181,12 @@ export const Markdown = memo(function Markdown({ children, breaks, className }: 
     return keyList ? [...base, remarkTicketKeys(keyList.split(' '))] : base;
   }, [breaks, keyList]);
   return (
-    <div data-slot="markdown" className={cn('min-w-0 text-sm leading-relaxed break-words text-foreground', className)}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={[rehypeSanitize]} components={components}>
+    <div
+      data-slot="markdown"
+      data-variant={variant}
+      className={cn('min-w-0 text-sm leading-relaxed break-words text-foreground', variant === 'document' && 'text-base leading-[1.7]', className)}
+    >
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={[rehypeSanitize]} components={variant === 'document' ? documentComponents : components}>
         {children}
       </ReactMarkdown>
     </div>

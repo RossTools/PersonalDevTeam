@@ -1,7 +1,7 @@
-import { BriefcaseBusiness, Files, Inbox, Settings, TerminalSquare, Ticket, UserCog, Workflow, type LucideIcon } from 'lucide-react';
+import { BriefcaseBusiness, Files, Inbox, NotebookPen, Settings, TerminalSquare, Ticket, UserCog, Workflow, type LucideIcon } from 'lucide-react';
 
 /** The views in the rail. */
-export type ViewId = 'sessions' | 'inbox' | 'pm' | 'tickets' | 'workflows' | 'personas' | 'files' | 'settings';
+export type ViewId = 'sessions' | 'inbox' | 'pm' | 'tickets' | 'notes' | 'workflows' | 'personas' | 'files' | 'settings';
 
 /** The views, in order: the desktop rail and the phone drawer (PDT-112) both list them. */
 /** `dot`: what a dot on the view's item means, for its accessible name. */
@@ -10,6 +10,7 @@ export const VIEWS: { id: ViewId; label: string; icon: LucideIcon; dot?: string 
   { id: 'sessions', label: 'Sessions', icon: TerminalSquare },
   { id: 'inbox', label: 'Inbox', icon: Inbox, dot: 'new updates' },
   { id: 'tickets', label: 'Tickets', icon: Ticket },
+  { id: 'notes', label: 'Notes', icon: NotebookPen },
   { id: 'workflows', label: 'Workflows', icon: Workflow },
   { id: 'personas', label: 'Personas', icon: UserCog },
   { id: 'files', label: 'Files', icon: Files },
