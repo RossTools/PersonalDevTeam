@@ -121,6 +121,7 @@ pub(crate) async fn clear(st: &AppState, dedupe_key: &str) {
 
 /// Keeps the state-made rows in step with their causes, until shutdown.
 pub async fn run_notifier(st: AppState) {
+    st.loops.register(LOOP, SYNC_EVERY, None);
     loop {
         tokio::select! {
             _ = tokio::time::sleep(SYNC_EVERY) => {}
@@ -129,24 +130,33 @@ pub async fn run_notifier(st: AppState) {
         if st.shutting_down.load(Ordering::SeqCst) {
             return;
         }
-        sync(&st).await;
-        let now = now_ms();
-        let due = {
-            let mut last = st.notifier.last_prune.lock().unwrap_or_else(|e| e.into_inner());
-            let due = now - *last >= PRUNE_EVERY_MS;
-            if due {
-                *last = now;
-            }
-            due
-        };
-        if due && let Err(e) = st.store.prune_notifications(now - RETENTION_MS).await {
-            tracing::warn!(error = %e, "could not prune notifications");
+        let pass = st.clone();
+        let ended = crate::loops::contain(LOOP, None, async move { notifier_pass(&pass).await }).await;
+        st.loops.passed(LOOP, now_ms(), ended == crate::loops::Ended::Panicked);
+    }
+}
+
+/// The notifier's name among the background loops.
+const LOOP: &str = "notifier";
+
+async fn notifier_pass(st: &AppState) {
+    sync(st).await;
+    let now = now_ms();
+    let due = {
+        let mut last = st.notifier.last_prune.lock().unwrap_or_else(|e| e.into_inner());
+        let due = now - *last >= PRUNE_EVERY_MS;
+        if due {
+            *last = now;
         }
+        due
+    };
+    if due && let Err(e) = st.store.prune_notifications(now - RETENTION_MS).await {
+        tracing::warn!(error = %e, "could not prune notifications");
     }
 }
 
 /// One pass over the state-made causes: sessions waiting or left unseen, open Inbox items, PRs whose conflict or
-/// queue drop was fixed, sessions restarted or removed after exiting. Never fails; problems are logged.
+/// queue drop was fixed, sessions restarted or removed after exiting, background loops gone stale. Never fails; problems are logged.
 pub async fn sync(st: &AppState) {
     if let Err(e) = sync_inner(st).await {
         tracing::warn!(error = ?e, "could not sync notifications");
@@ -225,6 +235,28 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     }
     wanted.extend(items.iter().map(|i| inbox_key(&i.id)));
 
+    // Background loops without a finished pass for too long (PDT-127). The notifier's own can't be seen here.
+    if cfg.show(K::HostLoopStale).stored() {
+        for l in st.loops.health(now).into_iter().filter(|l| l.stale) {
+            let key = loop_key(&l.name);
+            if !live.contains_key(&key) {
+                let since = l
+                    .last_pass_at
+                    .map_or("since it started".to_string(), |at| format!("for {} min", (now - at) / 60_000));
+                let mut n = NewNotification::new(
+                    K::HostLoopStale,
+                    &key,
+                    format!("PDT's {} loop stopped", l.name),
+                    NotificationTarget::None,
+                );
+                n.severity = Severity::Error;
+                n.body = format!("It has not finished a pass {since}; see pdtd's log. Restarting PDT starts it again.");
+                notify(st, n).await;
+            }
+            wanted.insert(key);
+        }
+    }
+
     // What went away.
     for (key, n) in &live {
         let gone = match n.kind {
@@ -235,6 +267,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
                 None => true,
             },
             K::PrConflict | K::PrQueueLeft => pr_fixed(st, n),
+            K::HostLoopStale => !wanted.contains(key),
             _ => false,
         };
         if gone {
@@ -258,6 +291,10 @@ fn pr_fixed(st: &AppState, n: &Notification) -> bool {
         K::PrConflict => pr.mergeable == Mergeable::Mergeable,
         _ => pr.in_merge_queue,
     }
+}
+
+fn loop_key(name: &str) -> String {
+    format!("loop:{name}:stale")
 }
 
 fn with_ticket(body: &str, key: Option<&str>) -> String {

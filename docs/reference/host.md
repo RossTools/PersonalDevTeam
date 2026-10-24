@@ -12,7 +12,8 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
 - Logs: `<data dir>/logs/pdtd.<date>.log` (daily, 14 kept) and `pdt-host.log`; a spawned pdt-host's and pdtd's
   startup output goes to `<data dir>/logs/pdtd-launch.log`; on macOS launchd's output goes to `pdt-host.launchd.log`.
   pdtd logs to stderr too unless pdt-host started it (`PDT_SUPERVISED=1`), so `pdtd-launch.log` holds only what is
-  written before logging starts and panics. pdt-host moves `pdt-host.log` and `pdtd-launch.log` to `<name>.1`
+  written before logging starts and panics (a panic hook also logs every panic's message and place to
+  `pdtd.<date>.log`). pdt-host moves `pdt-host.log` and `pdtd-launch.log` to `<name>.1`
   (replacing the one before) once they pass 5 MB.
 - Database (`<data dir>/pdt.db`, SQLite in WAL mode, `synchronous=NORMAL`): before applying a pending migration pdtd
   copies it to `<data dir>/backups/pdt-<ms>.db` (`VACUUM INTO`) and keeps the newest 3 copies. Every 10 minutes
@@ -20,9 +21,21 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   readers keep SQLite's own checkpoints from resetting it. Housekeeping prunes events, finished workflow runs,
   resolved outbox messages, ended Inbox items and notifications after 30 days, and conversation frames after 7
   ([workflows.md](workflows.md), [conversations.md](conversations.md)).
+- Background loops (PDT-127, pdt-api `loops.rs`): `poll` (every 60 s, after the startup resume of runs and sessions:
+  gone runs, PRs and CI, Buildkite, merges, watched issues, Jira, workflow upkeep, in that order), `engine` (2 s),
+  `overlaps` (30 s), `activity` (5 s), `notifier` (2 s), `scheduler` (10 s), `conversations` (30 s). Each pass runs in
+  its own task: a panic ends that pass only, logged at error level, and the loop goes on. Each member of `poll` is
+  limited to 2 minutes (aborted and logged past it), so one hung member never holds up merge detection or pruning;
+  the Jira and Buildkite sensors' calls time out after 30 s each, and the shared HTTP client (nodes, sensors, MCP)
+  gives up connecting after 10 s. A loop is stale when its last finished pass (or its start) is more than five
+  periods ago, at least 5 minutes (`poll`: 20 minutes; pdt-core `liveness.rs`); the notifier then raises a
+  `host.loop_stale` notification per loop ([workflows.md](workflows.md#notifications)), cleared by its next pass. The
+  update loop is restarted a minute after a panic. A run's driver that panics fails the run, so its row and Stop
+  never hang.
 - `/api/health` reports `status`, `name`, `version`, `profile` (`dev`/`stable`), `port`, `dev` (dev profile or a
-  non-stable port) and `webBuild` (the first 12 hex digits of the served index.html's SHA-256, read per request; null
-  without a web dir). The UI shows a `DEV · <port>` badge in the rail and a `[dev]` title prefix when `dev` is true.
+  non-stable port), `webBuild` (the first 12 hex digits of the served index.html's SHA-256, read per request; null
+  without a web dir) and `loops` (each background loop's `name`, `everyMs`, `startedAt`, `lastPassAt`,
+  `staleAfterMs`, `panics` and `stale`; `status` stays `ok` with a stale loop, so pdt-host does not restart pdtd). The UI shows a `DEV · <port>` badge in the rail and a `[dev]` title prefix when `dev` is true.
   It polls health every 5 s and reloads when `webBuild` changes from the one it loaded with (a dev instance restarted
   with a rebuilt web/dist; every dev build reports version 0.1.0), held back while a modal is open or a focused text
   field holds text (web/src/host/useReloadOnNewBuild.ts).

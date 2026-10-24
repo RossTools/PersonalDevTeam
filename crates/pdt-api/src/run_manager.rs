@@ -455,12 +455,19 @@ fn reattach(st: &AppState, run: Run, process: String, def: Option<RunDef>) {
     });
 }
 
-/// Registers `ctl` as the run's driver and runs `driver` in the background, recording its outcome.
+/// Registers `ctl` as the run's driver and runs `driver` in the background, recording its outcome. The driver runs
+/// in a task of its own: one that panics fails the run (logged), so its row and control never stay behind.
 fn supervise(st: &AppState, run: Run, ctl: Arc<RunControl>, driver: impl Future<Output = Outcome> + Send + 'static) {
     st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).insert(run.id.clone(), ctl.clone());
     let st = st.clone();
     tokio::spawn(async move {
-        let (state, code, error) = driver.await;
+        let (state, code, error) = match tokio::spawn(driver).await {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                tracing::error!(run = %run.id, error = %e, "the run's driver failed; the run is marked failed");
+                (RunState::Failed, None, Some("PDT's driver of this run failed (see pdtd's log)".to_string()))
+            }
+        };
         // During shutdown the row stays active, so the next pdtd resumes it.
         if !st.shutting_down.load(Ordering::SeqCst)
             && let Err(e) = st.store.finish_run(&run.id, state, code, error.as_deref(), now_ms()).await

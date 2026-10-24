@@ -788,13 +788,11 @@ pub async fn park_idle_conversations(st: &AppState) -> usize {
 
 /// Parks idle conversations every 30 s, until shutdown.
 pub async fn run_conversation_ticker(st: AppState) {
-    loop {
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        if st.shutting_down.load(Ordering::SeqCst) {
-            return;
-        }
+    let every = Duration::from_secs(30);
+    crate::loops::run_every(st, "conversations", every, crate::loops::Start::AfterOnePeriod, |st| async move {
         park_idle_conversations(&st).await;
-    }
+    })
+    .await
 }
 
 /// Closes every conversation process (pdtd is stopping).
