@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BriefcaseBusiness } from 'lucide-react';
 import { Button, EmptyState, List, ListRow, PromptBox, Skeleton, ViewHeader, relativeTime } from '@ui';
 import { api } from '../api/client';
@@ -8,39 +8,24 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { ConversationView } from '../conversation/ConversationView';
 import { enterAddsLine } from '../conversation/ConversationComposer';
 import { loadDraft, saveDraft } from '../conversation/drafts';
-import { earlier, firstLine, noteOf, REASON_LABEL, usePm, useRefreshPm, type PmSelection } from './usePm';
+import { earlier, firstLine, REASON_LABEL, usePm, useRefreshPm, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
 export const PM_START_DRAFT = 'pm-start';
 
-const NotesPage = lazy(() => import('./NotesPage').then((m) => ({ default: m.NotesPage })));
-const NotePage = lazy(() => import('./NotesPage').then((m) => ({ default: m.NotePage })));
-
 /**
  * The PM view's work area (PDT-81): the selected PM session's conversation (an ended one read-only, with its
- * journal), the notes or one note, the list of earlier sessions, or, with no current session, a box whose first
- * message starts one. On a phone (PDT-113) the conversation is the whole screen: the top bar has the title and ⋯, and
- * a tap on a note opens it as a screen of its own.
+ * journal), the list of earlier sessions, or, with no current session, a box whose first message starts one. On a
+ * phone (PDT-113) the conversation is the whole screen: the top bar has the title and ⋯. The notes have a view of
+ * their own (PDT-143).
  */
-export function PmView({ selection, onSelect, onNew, onBack }: {
+export function PmView({ selection, onSelect, onNew }: {
   selection: PmSelection;
   onSelect: (s: PmSelection) => void;
   onNew: () => void;
-  /** Leaves a screen that is gone (a deleted note): Back. */
-  onBack?: () => void;
 }) {
   const pm = usePm();
   const phone = useMediaQuery(PHONE_QUERY);
-  const note = noteOf(selection);
-  if (selection === 'notes' || note) {
-    return (
-      <Suspense fallback={<Skeleton lines={8} className="p-4" />}>
-        {note
-          ? <NotePage key={note} id={note} onGone={onBack ?? (() => onSelect('notes'))} />
-          : <NotesPage onOpen={phone ? (id) => onSelect(`note:${id}`) : undefined} />}
-      </Suspense>
-    );
-  }
   if (pm.isPending) return <Skeleton lines={8} className="p-4" />;
   if (selection === 'earlier') return <EarlierSessions onSelect={onSelect} phone={phone} />;
   const sessions = pm.data?.sessions ?? [];

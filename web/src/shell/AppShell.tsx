@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, PanelBottom, Plus } from 'lucide-react';
+import { ChevronDown, NotebookPen, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
 import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
+import { cn } from '@ui/lib/utils';
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
@@ -55,7 +56,10 @@ import { InboxList } from '../inbox/InboxList';
 import { PhoneInboxList } from '../inbox/PhoneInboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
-import { noteOf, usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
+import { usePm, useRefreshPm, type PmSelection } from '../pm/usePm';
+import { NotesList } from '../notes/NotesList';
+import { useNotesFilters } from '../notes/useNotes';
+import type { Whose } from '../notes/model';
 import { useInbox } from '../inbox/useInbox';
 import { triageTitle } from '../inbox/model';
 import { useDevTitle } from './useInstance';
@@ -76,7 +80,7 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
 
 /** On a phone, the views whose list column is their top-level screen (PDT-112). The PM's and the Tickets' lists open
  * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
-const PHONE_LIST_SCREENS: readonly ViewId[] = ['sessions', 'inbox', 'workflows', 'personas', 'files', 'settings'];
+const PHONE_LIST_SCREENS: readonly ViewId[] = ['sessions', 'inbox', 'notes', 'workflows', 'personas', 'files', 'settings'];
 
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
@@ -123,6 +127,7 @@ const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default
 const PhoneInboxItem = lazy(() => import('../inbox/PhoneInbox').then((m) => ({ default: m.PhoneInboxItem })));
 const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
 const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
+const NoteScreen = lazy(() => import('../notes/NotePage').then((m) => ({ default: m.NoteScreen })));
 
 export function AppShell() {
   // What is on screen comes from the path (PDT-111): selecting things navigates, and Back/Forward and reload restore
@@ -158,6 +163,8 @@ export function AppShell() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [rightOpen, setRightOpen] = useRightPanelOpen();
   const [todosSheetOpen, setTodosSheetOpen] = useState(false);
+  // Bumped when Ctrl+] t opens the todo list: its add box takes the focus.
+  const [todoAddSeq, setTodoAddSeq] = useState(0);
   // A todo a due reminder opened (PDT-140).
   const [todoFocus, setTodoFocus] = useState<TodoFocus | null>(null);
   const clearTodoFocus = useCallback(() => setTodoFocus(null), []);
@@ -181,11 +188,25 @@ export function AppShell() {
   const personaId = route.view === 'personas' ? route.personaId : null;
   const setPersonaId = useCallback((personaId: string | null) => go({ view: 'personas', personaId }), []);
   const pm = usePm();
-  // The PM view's session or the notes (the current session's own id reads as the current one).
+  // The PM view's session (the current session's own id reads as the current one).
   const pmRoute: PmSelection = route.view === 'pm' ? route.pm : 'current';
   const pmSelection: PmSelection = pmRoute === pm.data?.current?.id ? 'current' : pmRoute;
   const setPmSelection = useCallback((pm: PmSelection) => go({ view: 'pm', pm }), []);
   const refreshPm = useRefreshPm();
+  // The Notes view (PDT-143): the note on show (`new`: one not created yet) and the list's side, scope and search.
+  const notes = useNotesFilters();
+  const setNotesWhose = notes.setWhose;
+  const noteId = route.view === 'notes' ? route.note : null;
+  useEffect(() => {
+    if (route.view === 'notes' && route.note === null) setNotesWhose(route.memory ? 'note' : 'user');
+  }, [route, setNotesWhose]);
+  // The notes' old paths (`/pm/notes…`) show the new ones.
+  useEffect(() => {
+    if (route.view === 'notes' && loc.startsWith('/pm/')) go(route, { replace: true });
+  }, [route, loc]);
+  const notesList = (whose: Whose): Route => ({ view: 'notes', memory: whose === 'note', note: null });
+  const openNote = useCallback((id: string) => go({ view: 'notes', memory: false, note: id }), []);
+  const newNote = () => go({ view: 'notes', memory: notes.whose === 'note', note: 'new' });
   const confirm = useConfirm();
   const inbox = useInbox();
   const inboxItems = inbox.data?.items ?? [];
@@ -385,9 +406,18 @@ export function AppShell() {
       setView('pm');
       return;
     }
+    if (a.type === 'notes') {
+      setView('notes');
+      return;
+    }
     if (a.type === 'todos') {
-      if (phone) setTodosSheetOpen(true);
-      else setRightOpen((o) => !o);
+      if (phone) {
+        setTodosSheetOpen(true);
+        setTodoAddSeq((n) => n + 1);
+      } else {
+        if (!rightOpen) setTodoAddSeq((n) => n + 1);
+        setRightOpen(!rightOpen);
+      }
       return;
     }
     setView('sessions');
@@ -538,6 +568,7 @@ export function AppShell() {
     showInbox: () => setView('inbox'),
     showPersonas: () => setView('personas'),
     showPm: () => setView('pm'),
+    showNotes: () => setView('notes'),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
@@ -579,6 +610,8 @@ export function AppShell() {
       onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
   ) : view === 'pm' ? (
     <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
+  ) : view === 'notes' ? (
+    <NotesList filters={notes} selectedId={noteId} onOpen={openNote} onNew={newNote} onWhose={(w) => go(notesList(w))} />
   ) : view === 'personas' ? (
     <PersonasList selectedId={personaId} onSelect={(id) => { setPersonaId(id); setSheetOpen(false); }} />
   ) : view === 'tickets' ? (
@@ -687,7 +720,8 @@ export function AppShell() {
   ) : view === 'sessions' && detail ? (shownWorkspace?.ticket ? `${shownWorkspace.ticket.key} ${shownWorkspace.ticket.title}` : shownWorkspace?.name ?? label)
   : view === 'files' && detail && filesRoute?.path ? filesRoute.path.split('/').filter(Boolean).pop() ?? label
   : view === 'settings' && detail ? settingsTitle()
-  : view === 'pm' && detail ? (pmSelection === 'notes' ? 'Notes' : noteOf(pmSelection) ? 'Note' : pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
+  : view === 'pm' && detail ? (pmSelection === 'earlier' ? 'Earlier sessions' : 'Earlier PM session')
+  : view === 'notes' && detail ? (noteId === 'new' ? 'New note' : 'Note')
   : label;
   function settingsTitle(): string {
     switch (settingsPage.kind) {
@@ -701,7 +735,6 @@ export function AppShell() {
   const shellActions = (): MenuEntry[] =>
     view === 'pm' ? [
       { label: 'New session…', onSelect: newPmSession },
-      { label: 'Notes', onSelect: () => setPmSelection('notes') },
       { label: 'Earlier sessions', onSelect: () => setPmSelection('earlier') },
     ] : view === 'sessions' && detail ? workspaceActions()
     : view === 'sessions' ? [
@@ -736,7 +769,7 @@ export function AppShell() {
             detail={detail}
             onMenu={() => setDrawerOpen(true)}
             menuOpen={drawerOpen}
-            onBack={() => goBack(routePath(upRoute(route)))}
+            onBack={() => goBack(routePath(route.view === 'notes' ? notesList(notes.whose) : upRoute(route)))}
             title={phoneTitle}
             needsYou={inbox.data?.total ?? 0}
             onInbox={() => go(viewRoute('inbox'))}
@@ -757,16 +790,13 @@ export function AppShell() {
             onProject={stored.setProjectId}
             onRenameTab={setRenamingTabId}
           />
-          <Sheet side="right" title="Todos and notes" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
+          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
             <RightPanelContent
               projectId={todoProjectId}
               projects={ws.projects}
               focusTodo={todoFocus}
               onTodoFocused={clearTodoFocus}
-              onOpenNote={(id) => {
-                setPmSelection(`note:${id}`);
-                setTodosSheetOpen(false);
-              }}
+              focusAddSeq={todoAddSeq}
             />
           </Sheet>
           {pickerSheet && (
@@ -784,7 +814,7 @@ export function AppShell() {
             counts={{ inbox: inbox.data?.total ?? 0 }}
             dots={{ inbox: unreadUpdates }}
           />
-          <aside aria-label={`${label} list`} className="flex min-h-0 w-72 flex-col border-r border-border">
+          <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', view === 'notes' && 'w-80')}>
             <div className="flex-1 overflow-auto px-1">{list}</div>
           </aside>
         </>
@@ -870,7 +900,23 @@ export function AppShell() {
             ) : view === 'inbox' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
             ) : view === 'pm' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} onBack={() => goBack(routePath(upRoute(route)))} /></Suspense>
+              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
+            ) : view === 'notes' ? (
+              noteId ? (
+                <Suspense fallback={<Skeleton lines={8} className="p-4" />}><NoteScreen
+                  id={noteId}
+                  whose={notes.whose}
+                  scope={notes.scope}
+                  phone={phone}
+                  onCreated={(id) => go({ view: 'notes', memory: false, note: id }, { replace: true })}
+                  onGone={() => (phone ? goBack(routePath(notesList(notes.whose))) : go(notesList(notes.whose), { replace: true }))}
+                  onKind={setNotesWhose}
+                /></Suspense>
+              ) : (
+                <EmptyState icon={<NotebookPen />} className="mt-16 border-0" action={<Button size="sm" onClick={newNote}>New note</Button>}>
+                  {notes.whose === 'note' ? 'Pick a note from the PM’s memory, or add one.' : 'Pick a note, or start a new one.'}
+                </EmptyState>
+              )
             ) : view === 'personas' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
             ) : view === 'tickets' ? (
@@ -916,7 +962,7 @@ export function AppShell() {
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
       </main>
-      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} onOpenNote={(id) => setPmSelection(`note:${id}`)} focusTodo={todoFocus} onTodoFocused={clearTodoFocus} />}
+      {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} focusTodo={todoFocus} onTodoFocused={clearTodoFocus} focusAddSeq={todoAddSeq} />}
     </div>
     </TopBarEditContext.Provider>
     </TopBarActionsContext.Provider>

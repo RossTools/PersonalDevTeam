@@ -19,6 +19,7 @@ export type KeyAction =
   | { type: 'board' }
   | { type: 'inbox' }
   | { type: 'pm' }
+  | { type: 'notes' }
   | { type: 'todos' }
   | { type: 'help' };
 
@@ -38,6 +39,7 @@ export function actionFor(key: string): KeyAction | null {
     case 'b': return { type: 'board' };
     case 'i': return { type: 'inbox' };
     case 'm': return { type: 'pm' };
+    case 'o': return { type: 'notes' };
     case 't': return { type: 'todos' };
     case '?': return { type: 'help' };
     default: return null;
@@ -57,6 +59,7 @@ export const KEY_HELP: [string, string][] = [
   ['b', 'Tickets (board)'],
   ['i', 'Inbox (then j / k, Enter, o, e)'],
   ['m', 'Project manager'],
+  ['o', 'Notes'],
   ['t', 'Todo list (also ⌘. on a Mac)'],
   ['?', 'Show these keys'],
   ['Ctrl+] twice', 'Send Ctrl+] to the terminal'],

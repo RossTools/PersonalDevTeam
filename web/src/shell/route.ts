@@ -1,5 +1,5 @@
 // The app's URL paths (PDT-111): what each one shows, and the path for a screen. Pure: router.ts does the history.
-import { noteOf, type PmSelection } from '../pm/usePm';
+import type { PmSelection } from '../pm/usePm';
 import type { WorkflowTab } from '../workflows/WorkflowPage';
 import type { WorkflowTarget } from '../workflows/WorkflowsList';
 import type { ViewId } from './views';
@@ -22,6 +22,11 @@ export type Route =
   | { view: 'sessions'; workspaceId: string | null; tabId: string | null }
   | { view: 'inbox'; itemId: string | null }
   | { view: 'tickets'; board: boolean; ticket: string | null }
+  /**
+   * Notes (PDT-143): the user's own (`memory: false`, `/notes`) or the PM's memory (`/notes/pm`), and one note by id
+   * (`/notes/<id>`) or a new one (`note: 'new'`, `/notes/new`). A note's path doesn't say whose it is.
+   */
+  | { view: 'notes'; memory: boolean; note: string | null }
   | { view: 'workflows'; target: WorkflowTarget }
   | { view: 'personas'; personaId: string | null }
   /**
@@ -50,7 +55,11 @@ export function parseRoute(pathname: string, search = ''): Route {
   const [head, a = null, b = null, c = null] = seg;
   switch (head) {
     case 'pm':
-      return { view: 'pm', pm: a === 'notes' && b ? `note:${b}` : a ?? 'current' };
+      // The notes' old paths (ticket descriptions link to `/pm/notes/<id>`): the Notes view's.
+      if (a === 'notes') return b ? { view: 'notes', memory: false, note: b } : { view: 'notes', memory: true, note: null };
+      return { view: 'pm', pm: a ?? 'current' };
+    case 'notes':
+      return a === 'pm' ? { view: 'notes', memory: true, note: null } : { view: 'notes', memory: false, note: a };
     case 'sessions':
       return { view: 'sessions', workspaceId: a, tabId: a ? b : null };
     case 'inbox':
@@ -89,10 +98,10 @@ export function routePath(r: Route): string {
   switch (r.view) {
     case null:
       return '/';
-    case 'pm': {
-      const note = noteOf(r.pm);
-      return r.pm === 'current' ? '/pm' : note ? `/pm/notes/${enc(note)}` : `/pm/${enc(r.pm)}`;
-    }
+    case 'pm':
+      return r.pm === 'current' ? '/pm' : `/pm/${enc(r.pm)}`;
+    case 'notes':
+      return r.note ? `/notes/${enc(r.note)}` : r.memory ? '/notes/pm' : '/notes';
     case 'sessions':
       return r.workspaceId ? `/sessions/${enc(r.workspaceId)}${r.tabId ? `/${enc(r.tabId)}` : ''}` : '/sessions';
     case 'inbox':
@@ -135,6 +144,7 @@ export function viewRoute(view: ViewId): Route {
     case 'sessions': return { view, workspaceId: null, tabId: null };
     case 'inbox': return { view, itemId: null };
     case 'tickets': return { view, board: false, ticket: null };
+    case 'notes': return { view, memory: false, note: null };
     case 'workflows': return { view, target: null };
     case 'personas': return { view, personaId: null };
     case 'files': return { view, path: null, project: null, worktree: null };
@@ -153,6 +163,7 @@ export function isDetail(r: Route): boolean {
     case 'sessions': return r.workspaceId !== null;
     case 'inbox': return r.itemId !== null;
     case 'tickets': return r.ticket !== null;
+    case 'notes': return r.note !== null;
     case 'workflows': return r.target !== null;
     case 'personas': return r.personaId !== null;
     case 'files': return r.path !== null;
@@ -164,9 +175,8 @@ export function isDetail(r: Route): boolean {
 export function upRoute(r: Route): Route {
   if (r.view === null) return r;
   if (r.view === 'tickets') return { ...r, ticket: null };
-  // A note goes up to the notes, an earlier session to the list of them.
-  if (r.view === 'pm' && noteOf(r.pm)) return { view: 'pm', pm: 'notes' };
-  if (r.view === 'pm' && r.pm !== 'current' && r.pm !== 'notes' && r.pm !== 'earlier') return { view: 'pm', pm: 'earlier' };
+  // An earlier session goes up to the list of them.
+  if (r.view === 'pm' && r.pm !== 'current' && r.pm !== 'earlier') return { view: 'pm', pm: 'earlier' };
   // A run goes up to the workflow's runs.
   if (r.view === 'workflows' && r.target?.kind === 'workflow' && r.target.runId) return { view: 'workflows', target: { kind: 'workflow', id: r.target.id, tab: 'runs' } };
   // A file or folder goes up to the folder it is in.

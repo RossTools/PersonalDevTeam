@@ -63,7 +63,7 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Notes', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
     for (const name of ['Board', 'Search']) {
       expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
     }
@@ -765,24 +765,39 @@ describe('phone', () => {
     renderWithQuery(<AppShell />);
     expect(screen.queryByRole('complementary', { name: 'Right panel' })).not.toBeInTheDocument();
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Todos and notes' });
+    const sheet = await screen.findByRole('dialog', { name: 'Todos' });
     expect(await within(sheet).findByText('Call Sam')).toBeInTheDocument();
     expect(within(sheet).getByRole('textbox', { name: 'Add a todo' })).toBeInTheDocument();
   });
 
-  it('opens one of my notes from the Notes tab of the phone sheet', async () => {
+  it('lists the notes as the Notes screen; a tap opens one with ←, its actions under ⋯', async () => {
     stubPhone();
-    stubWorkspaces({
-      'GET /api/todos': [],
-      'GET /api/pm/notes': [{ id: 'n1', projectId: null, kind: 'user', title: 'Dark mode', body: '', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 }],
+    const darkMode = { id: 'n1', projectId: null, kind: 'user', title: 'Dark mode', body: 'Follow the OS.', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 };
+    const calls = stubApi({
+      ...hostRoutes,
+      'GET /api/projects': [project],
+      [`GET /api/projects/${project.id}/worktrees`]: [],
+      [`GET /api/projects/${project.id}/sessions`]: [shell],
+      [`GET /api/projects/${project.id}/runs`]: [],
+      'GET /api/workspaces': [{ id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [] }],
+      'GET /api/pm/notes': [darkMode],
+      'GET /api/pm/notes/n1': darkMode,
+      'PATCH /api/pm/notes/n1': { ...darkMode, pinned: true },
     });
+    window.history.replaceState(null, '', '/notes');
     renderWithQuery(<AppShell />);
-    await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
-    const sheet = await screen.findByRole('dialog', { name: 'Todos and notes' });
-    await userEvent.click(within(sheet).getByRole('tab', { name: 'Notes' }));
-    await userEvent.click(await within(sheet).findByRole('button', { name: /Dark mode/ }));
-    expect(here()).toBe('/pm/notes/n1');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Todos and notes' })).not.toBeInTheDocument());
+    const bar = () => screen.getByRole('banner', { name: 'Top bar' });
+    expect(within(bar()).getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: /Dark mode/ }));
+    expect(here()).toBe('/notes/n1');
+    expect(await screen.findByRole('heading', { name: 'Dark mode', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Make a ticket' })).not.toBeInTheDocument();
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Project: Host-wide', 'Pin (listed first)', 'Make a ticket', 'Delete…']);
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Pin (listed first)' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ pinned: true }));
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(here()).toBe('/notes'));
   });
 
   it("lists the views in the drawer in the rail's order, with the Inbox count, Settings and the host's state", async () => {
@@ -793,7 +808,7 @@ describe('phone', () => {
     const d = await openDrawer();
     const nav = within(d).getByRole('navigation', { name: 'Views' });
     await waitFor(() => expect(within(nav).getAllByRole('button').map((b) => b.getAttribute('aria-label')))
-      .toEqual(['Project manager', 'Sessions', 'Inbox (3)', 'Tickets', 'Workflows', 'Personas', 'Files']));
+      .toEqual(['Project manager', 'Sessions', 'Inbox (3)', 'Tickets', 'Notes', 'Workflows', 'Personas', 'Files']));
     expect(within(nav).getByRole('button', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
     expect(within(d).getByRole('button', { name: 'Settings' })).toBeInTheDocument();
     expect(within(d).getByText('Host connected')).toBeInTheDocument();
@@ -1084,16 +1099,13 @@ describe('phone', () => {
     await waitFor(() => expect(here()).toBe('/inbox'));
   });
 
-  it("has the PM's New session, Notes and earlier sessions under ⋯", async () => {
+  it("has the PM's New session and earlier sessions under ⋯ (the notes have a view of their own)", async () => {
     stubPhone();
     stubAlpha();
     window.history.replaceState(null, '', '/pm');
     renderWithQuery(<AppShell />);
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Screen actions' }));
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New session…', 'Notes', 'Earlier sessions']);
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Notes' }));
-    expect(here()).toBe('/pm/notes');
-    expect(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Back' })).toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New session…', 'Earlier sessions']);
   });
 
   it("opens earlier PM sessions read-only from ⋯, and Back returns through them", async () => {
@@ -1326,6 +1338,49 @@ describe('routes (PDT-111)', () => {
   const at = (path: string) => window.history.replaceState(null, '', path);
   const here = () => window.location.pathname + window.location.search;
   const back = () => act(() => window.history.back());
+
+  it("opens a note's old path (/pm/notes/<id>) at its new one, and the old notes path at the PM's memory", async () => {
+    const pmNote = { id: 'n1', projectId: null, kind: 'note', title: 'Work hours', body: 'Nine to five.', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 };
+    stubWorkspaces({ 'GET /api/pm/notes': [pmNote], 'GET /api/pm/notes/n1': pmNote });
+    at('/pm/notes/n1');
+    const { unmount } = renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/notes/n1'));
+    expect(await within(screen.getByRole('main')).findByRole('heading', { name: 'Work hours', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
+    // The list shows the note's side.
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'PM’s memory' })).toBeChecked());
+    unmount();
+    at('/pm/notes');
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/notes/pm'));
+    expect(await screen.findByText(/Pinned notes go in every PM briefing/)).toBeInTheDocument();
+  });
+
+  it('creates a new note at /notes/new with its first save and replaces the path with its own', async () => {
+    const created = { id: 'c1', projectId: null, kind: 'user', title: 'Idea', body: '', pinned: false, sessionId: null, createdAt: 1, updatedAt: 1 };
+    const calls = stubWorkspaces({ 'GET /api/pm/notes': [], 'POST /api/pm/notes': created, 'GET /api/pm/notes/c1': created });
+    at('/notes');
+    renderWithQuery(<AppShell />);
+    await userEvent.click(await within(screen.getByRole('complementary', { name: 'Notes list' })).findByRole('button', { name: 'New note' }));
+    expect(here()).toBe('/notes/new');
+    const length = window.history.length;
+    const title = await screen.findByRole('textbox', { name: 'Title' });
+    await waitFor(() => expect(title).toHaveFocus());
+    await userEvent.type(title, 'Idea');
+    await waitFor(() => expect(here()).toBe('/notes/c1'), { timeout: 2000 });
+    expect(window.history.length).toBe(length);
+    expect(calls.filter((c) => c.method === 'POST').map((c) => c.body)).toEqual([{ title: 'Idea', body: '', kind: 'user' }]);
+    expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Idea');
+  });
+
+  it('opens the notes with Ctrl+] o', async () => {
+    stubWorkspaces({ 'GET /api/pm/notes': [] });
+    at('/sessions');
+    renderWithQuery(<AppShell />);
+    await userEvent.keyboard('{Control>}]{/Control}o');
+    expect(here()).toBe('/notes');
+    expect(await screen.findByText('Pick a note, or start a new one.')).toBeInTheDocument();
+  });
 
   it('fills in the workspace and tab at / and /sessions', async () => {
     stubWorkspaces();

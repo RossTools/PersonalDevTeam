@@ -5,8 +5,8 @@ import { earlier, firstLine, REASON_LABEL, usePm, type PmSelection } from './use
 const heading = 'flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 
 /**
- * The PM view's list column (PDT-81): the current session, the notes, and the sessions that ended (when, why, and
- * their journal's first line).
+ * The PM view's list column (PDT-81): the current session and the sessions that ended (when, why, and their journal's
+ * first line). The notes have a view of their own (PDT-143).
  */
 export function PmList({ selection, onSelect, onNew }: {
   selection: PmSelection;
@@ -33,7 +33,6 @@ export function PmList({ selection, onSelect, onNew }: {
           current={selection === 'current'}
           secondary={current ? `Started ${relativeTime(current.createdAt)}` : 'Ask something to start one'}
         />
-        <ListRow id="notes" title="Notes" current={selection === 'notes'} secondary="What the PM remembers" />
       </List>
       {ended.length > 0 && (
         <>

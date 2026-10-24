@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
   };
 }
 
@@ -213,6 +213,14 @@ describe('paletteItems', () => {
     const c = ctx();
     byId(paletteItems(c), 'view:files').run!();
     expect(c.handlers.showFiles).toHaveBeenCalled();
+  });
+
+  it('goes to the Notes, with its key', () => {
+    const c = ctx();
+    const notes = byId(paletteItems(c), 'view:notes');
+    expect(notes.shortcut).toBe('Ctrl+] o');
+    notes.run!();
+    expect(c.handlers.showNotes).toHaveBeenCalled();
   });
 
   it('goes to the Inbox, Personas and the PM', () => {
