@@ -200,7 +200,7 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("no_refine_workflow")), "{v}");
     pipeline(&env, json!({}), &[("refine", "ready"), ("code", "submitted"), ("review", "approved"), ("qa", "pass")])
         .await;
-    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 2})).await;
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 2, "startDelaySeconds": 0})).await;
 
     let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/refine"), Some(json!({"by": "user"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -248,13 +248,80 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
     assert!(String::from_utf8_lossy(&log.stdout).contains("Merge"), "merged into main");
 }
 
+async fn todo(env: &Env, title: &str) -> String {
+    let (s, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": title, "stage": "todo"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    t["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
+    let env = setup().await;
+    let (_, v) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
+    assert_eq!(v["policy"]["startDelaySeconds"], 120, "two minutes unless the project says otherwise");
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5})).await;
+
+    // Just created: auto-start leaves it, and the ticket (and the list) says when it will take it.
+    let a = todo(&env, "A").await;
+    pdt_api::schedule_tickets(&env.state).await;
+    let v = get_ticket(&env, &a).await;
+    assert_eq!(v["stage"], "todo");
+    let at = v["autoStartAt"].as_i64().expect("waiting out the delay");
+    assert_eq!(at, v["updatedAt"].as_i64().unwrap() + 120_000);
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}&stage=todo", env.project), None).await;
+    assert_eq!(list["items"][0]["autoStartAt"], at);
+
+    // A link on either side starts the quiet period again.
+    let b = todo(&env, "B").await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{b}/links"), Some(json!({"to": a, "kind": "relates"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(get_ticket(&env, &a).await["autoStartAt"].as_i64().unwrap() > at, "the link restarted A's delay");
+
+    // A person's Start is never delayed.
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{a}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert_eq!(get_ticket(&env, &a).await["autoStartAt"], Value::Null);
+
+    // A blocker linked inside the delay keeps the ticket from starting once it is over.
+    settings(&env, json!({"startDelaySeconds": 1})).await;
+    let c = todo(&env, "C").await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{b}/links"), Some(json!({"to": c, "kind": "blocks"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(get_ticket(&env, &c).await["autoStartAt"], Value::Null, "blocked: auto-start won't take it");
+    tick_until(&env, "B started", || async {
+        let v = get_ticket(&env, &b).await;
+        (v["stage"] == "in_progress").then_some(v)
+    })
+    .await;
+    pdt_api::schedule_tickets(&env.state).await;
+    assert_eq!(get_ticket(&env, &c).await["stage"], "todo", "still blocked by B");
+
+    // 0: at once.
+    settings(&env, json!({"startDelaySeconds": 0})).await;
+    let d = todo(&env, "D").await;
+    assert_eq!(get_ticket(&env, &d).await["autoStartAt"], Value::Null);
+    pdt_api::schedule_tickets(&env.state).await;
+    assert_eq!(get_ticket(&env, &d).await["stage"], "in_progress");
+}
+
 #[tokio::test]
 async fn every_step_session_on_a_ticket_opens_a_tab_and_belongs_to_the_ticket() {
     let env = setup().await;
     let t = ticket(&env, "Tabbed").await;
     pipeline(&env, json!({}), &[("refine", "ready"), ("code", "submitted"), ("review", "approved"), ("qa", "pass")])
         .await;
-    settings(&env, json!({"autoStart": "todo"})).await;
+    settings(&env, json!({"autoStart": "todo", "startDelaySeconds": 0})).await;
     let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/refine"), Some(json!({"by": "user"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     inbox_item(&env, "gate", &t).await;
@@ -316,7 +383,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     assert_eq!(
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
-               "autoStart": "off", "pmActs": false})
+               "autoStart": "off", "pmActs": false, "startDelaySeconds": 120})
     );
 
     let (s, started) =

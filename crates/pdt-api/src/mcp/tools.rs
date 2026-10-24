@@ -427,7 +427,8 @@ fn defs() -> Vec<Def> {
             name: "get_overview",
             title: "What's going on",
             description: "Every project (or one): open tickets per stage, tickets in progress with their branch, PR, CI \
-                          and who has them, the Inbox's open items, and the agent sessions running now.",
+                          and who has them, tickets waiting out the start delay before auto-start takes them, the Inbox's open \
+                          items, and the agent sessions running now.",
             schema: schema::<GetOverview>,
         },
         Def {
@@ -756,8 +757,13 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .items
                 .iter()
                 .map(|t| {
-                    json!({"key": t.key, "id": t.id, "title": t.title, "stage": t.stage, "priority": t.priority,
-                           "labels": t.labels, "state": pdt_core::pm::ticket_state(t)})
+                    let mut v = json!({"key": t.key, "id": t.id, "title": t.title, "stage": t.stage,
+                                       "priority": t.priority, "labels": t.labels,
+                                       "state": pdt_core::pm::ticket_state(t)});
+                    if let Some(at) = t.auto_start_at {
+                        v["autoStartsInSeconds"] = json!(starts_in(at));
+                    }
+                    v
                 })
                 .collect();
             Ok(json!({"tickets": tickets, "total": page.total}))
@@ -1118,7 +1124,33 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
                    "persona": s.persona.as_ref().map(|p| &p.name), "mode": s.mode})
         })
         .collect();
-    Ok(json!({"projects": out_projects, "inProgress": in_flight, "inbox": inbox, "runningSessions": sessions}))
+    // Tickets waiting out their project's start delay before auto-start takes them (PDT-146).
+    let mut auto_starting: Vec<Value> = vec![];
+    for p in &projects {
+        let policy = st.store.get_project_settings(&p.id).await.map_err(store)?.policy;
+        if policy.auto_start == pdt_core::policy::AutoStart::Off || policy.start_delay_seconds == 0 {
+            continue;
+        }
+        let q = pdt_core::ticket::TicketQuery {
+            project: Some(p.id.clone()),
+            stage: Some("todo,ready".into()),
+            limit: Some(100),
+            ..Default::default()
+        };
+        let Json(page) = crate::tickets::list(State(st.clone()), Ok(axum::extract::Query(q))).await.map_err(api)?;
+        auto_starting.extend(page.items.iter().filter_map(|t| {
+            let at = t.auto_start_at?;
+            Some(json!({"key": t.key, "id": t.id, "title": t.title, "project": p.key,
+                        "autoStartsInSeconds": starts_in(at)}))
+        }));
+    }
+    Ok(json!({"projects": out_projects, "inProgress": in_flight, "autoStarting": auto_starting, "inbox": inbox,
+              "runningSessions": sessions}))
+}
+
+/// Whole seconds from now until `at` (ms), rounded up.
+fn starts_in(at: i64) -> i64 {
+    ((at - crate::routes::now_ms()).max(0) + 999) / 1000
 }
 
 /// `get_session`: a session's state, open requests and last messages.

@@ -315,12 +315,21 @@ const AUTO_START: { value: AutoStart; label: string }[] = [
   { value: 'todo', label: 'To do tickets' },
   { value: 'ready', label: 'To do, then Ready tickets' },
 ];
+const START_DELAYS: { value: string; label: string }[] = [
+  { value: '0', label: 'None: at once' },
+  { value: '30', label: '30 seconds' },
+  { value: '60', label: '1 minute' },
+  { value: '120', label: '2 minutes' },
+  { value: '300', label: '5 minutes' },
+  { value: '600', label: '10 minutes' },
+  { value: '1800', label: '30 minutes' },
+];
 const NO_CAP = 'none';
 const CAPS = [1, 2, 3, 4, 5, 6, 8, 10];
 
 /**
  * The project's policies (Phase 7c): who may merge, whether an automated merge needs a person's approval, the cap on
- * running tickets, auto-start, and whether the PM asks before acting (PDT-81). Merge and Start enforce them, whatever
+ * running tickets, auto-start and its quiet period, and whether the PM asks before acting (PDT-81). Merge and Start enforce them, whatever
  * a workflow says. Each saves at once.
  */
 function Pipeline({ project, settings, personal }: { project: Project; settings: ProjectSettingsView | undefined; personal: boolean }) {
@@ -417,6 +426,23 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
           onChange={(a) => save.mutate({ autoStart: a }, done)}
         />
       </SettingsRow>
+      {p && p.autoStart !== 'off' && (
+        <SettingsRow
+          label="Quiet period before auto-start"
+          description="Auto-start takes a ticket only once it has gone this long unchanged since it was created, edited, linked or commented on, so blockers linked just after it was made count. Start is never delayed."
+        >
+          <Select<string>
+            aria-label="Quiet period before auto-start"
+            className="w-56 max-w-full"
+            options={START_DELAYS.some((d) => d.value === String(p.startDelaySeconds))
+              ? START_DELAYS
+              : [...START_DELAYS, { value: String(p.startDelaySeconds), label: `${p.startDelaySeconds} seconds` }]}
+            value={String(p.startDelaySeconds)}
+            disabled={!settings}
+            onChange={(v) => save.mutate({ startDelaySeconds: Number(v) }, done)}
+          />
+        </SettingsRow>
+      )}
       <SettingsRow
         label="The PM acts without asking"
         description="The project manager creates and edits this project's tickets and messages its sessions without asking you first. Off: you confirm each change."

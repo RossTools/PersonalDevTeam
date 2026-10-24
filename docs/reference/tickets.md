@@ -135,6 +135,15 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   then the Reviewer's and QA's); the `started`
   event has `auto: true`. A failed start is logged and skipped until the ticket changes; a start with its own session
   waits for a slot under the host's cap.
+- **Quiet period** (project settings `startDelaySeconds`, default 120, 0 at once, at most a day; PDT-146): auto-start
+  takes a ticket only once it has gone that long unchanged, measured from the later of `createdAt` and `updatedAt`
+  (pdt-core `policy::settles_at`), so tickets created and then linked to their blockers never start early. Anything
+  that bumps `updatedAt` restarts the wait: an edit (title, description, priority, labels, areas, parent), a move, a
+  comment, waiting, and a link or unlink, which touches both tickets. A blocker closing does not (the freed ticket can
+  start at once). While a candidate (a stage auto-start takes, startable) waits it out, ticket responses carry
+  `autoStartAt` (ms; computed in memory, null otherwise) and the card, row and ticket header show "Auto-starts in
+  1:30"; pdt-mcp's `get_overview` lists such tickets under `autoStarting` and `search_tickets` gives
+  `autoStartsInSeconds`. A person's Start is never delayed.
 - A Start whose session cannot be made is undone: the attempt and its timeline events go and the ticket's stage and
   pipeline stage are as they were (the worktree stays, for the next Start to adopt). Workflows only hear of a Start
   (`ticket.stage_changed`, `attempt.started`) once its session exists, so an undone one runs none.

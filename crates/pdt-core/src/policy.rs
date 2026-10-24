@@ -60,8 +60,15 @@ impl AutoStart {
     }
 }
 
+/// How long a ticket goes unchanged before auto-start takes it, unless the project says otherwise (PDT-146).
+pub const DEFAULT_START_DELAY_SECONDS: u32 = 120;
+
+fn default_start_delay() -> u32 {
+    DEFAULT_START_DELAY_SECONDS
+}
+
 /// A project's policies.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ProjectPolicy {
@@ -78,6 +85,23 @@ pub struct ProjectPolicy {
     /// The PM may create and edit the project's tickets and message its sessions without asking (PDT-81).
     #[serde(default)]
     pub pm_acts: bool,
+    /// Auto-start takes a ticket only once it has gone this long unchanged (PDT-146); 0: at once.
+    #[serde(default = "default_start_delay")]
+    pub start_delay_seconds: u32,
+}
+
+impl Default for ProjectPolicy {
+    fn default() -> Self {
+        ProjectPolicy {
+            merge_by: MergeBy::default(),
+            require_approval: false,
+            approval_exempt_labels: vec![],
+            max_running_attempts: None,
+            auto_start: AutoStart::default(),
+            pm_acts: false,
+            start_delay_seconds: DEFAULT_START_DELAY_SECONDS,
+        }
+    }
 }
 
 impl ProjectPolicy {
@@ -161,19 +185,43 @@ pub fn startable(t: &TicketSummary) -> bool {
         && (!t.waiting || t.clear_to_start)
 }
 
+/// When `t` has been quiet for the policy's start delay (PDT-146), in ms: the delay after it was created or last
+/// changed (an edit, a move, a link on either side, a comment: anything that bumps `updated_at`).
+pub fn settles_at(policy: &ProjectPolicy, t: &TicketSummary) -> i64 {
+    t.created_at.max(t.updated_at).saturating_add(i64::from(policy.start_delay_seconds) * 1000)
+}
+
+/// Whether auto-start takes tickets in `t`'s stage under `policy`.
+fn takes_stage(policy: &ProjectPolicy, t: &TicketSummary) -> bool {
+    use crate::ticket::TicketStage;
+    match policy.auto_start {
+        AutoStart::Off => false,
+        AutoStart::Todo => t.stage == TicketStage::Todo,
+        AutoStart::Ready => matches!(t.stage, TicketStage::Todo | TicketStage::Ready),
+    }
+}
+
+/// When auto-start may take `t`, while it is a candidate still waiting out the start delay at `now` (the Board's
+/// "Auto-starts in 1:30"); None once the delay is over, or when auto-start would not take it anyway.
+pub fn auto_start_at(policy: &ProjectPolicy, t: &TicketSummary, now: i64) -> Option<i64> {
+    let at = settles_at(policy, t);
+    (takes_stage(policy, t) && startable(t) && at > now).then_some(at)
+}
+
 /// The next ticket auto-start takes from `candidates` (To do in rank order, then Ready ones when the policy says so),
-/// or None. `skip`: tickets it already failed to start.
+/// or None. `skip`: tickets it already failed to start. A ticket changed within the start delay before `now` waits.
 pub fn pick_next<'a>(
     policy: &ProjectPolicy,
     active: u32,
     candidates: &'a [TicketSummary],
     skip: &[String],
+    now: i64,
 ) -> Option<&'a TicketSummary> {
     use crate::ticket::TicketStage;
     if policy.auto_start == AutoStart::Off || active >= policy.auto_start_cap() {
         return None;
     }
-    let ok = |t: &&TicketSummary| startable(t) && !skip.contains(&t.id);
+    let ok = |t: &&TicketSummary| startable(t) && !skip.contains(&t.id) && settles_at(policy, t) <= now;
     let todo = candidates.iter().filter(|t| t.stage == TicketStage::Todo).find(ok);
     todo.or_else(|| {
         (policy.auto_start == AutoStart::Ready)
@@ -241,6 +289,9 @@ pub(crate) mod tests {
         assert_eq!(MergeBy::parse("robots"), None);
     }
 
+    /// Long after the test tickets were made.
+    const LATER: i64 = 1_000_000_000;
+
     pub(crate) fn ticket(id: &str, stage: TicketStage) -> TicketSummary {
         TicketSummary {
             id: id.into(),
@@ -266,6 +317,7 @@ pub(crate) mod tests {
             parts: None,
             pipeline_stage: None,
             agent: None,
+            auto_start_at: None,
             external: vec![],
         }
     }
@@ -296,17 +348,51 @@ pub(crate) mod tests {
         let waiting = TicketSummary { waiting: true, ..ticket("waiting", TicketStage::Todo) };
         let r1 = ticket("r1", TicketStage::Ready);
         let list = vec![blocked, conflict, started, waiting.clone(), overlap.clone(), r1.clone()];
-        assert_eq!(pick_next(&todo, 0, &list, &[]).map(|t| t.id.as_str()), Some("overlap"));
+        assert_eq!(pick_next(&todo, 0, &list, &[], LATER).map(|t| t.id.as_str()), Some("overlap"));
         // Skipped after a failed start, so Ready is next only when the policy takes Ready.
         let skip = vec!["overlap".to_string()];
-        assert_eq!(pick_next(&todo, 0, &list, &skip), None);
-        assert_eq!(pick_next(&ready, 2, &list, &skip).map(|t| t.id.as_str()), Some("r1"));
+        assert_eq!(pick_next(&todo, 0, &list, &skip, LATER), None);
+        assert_eq!(pick_next(&ready, 2, &list, &skip, LATER).map(|t| t.id.as_str()), Some("r1"));
         // At the cap: nothing.
-        assert_eq!(pick_next(&todo, 1, &list, &[]), None);
-        assert_eq!(pick_next(&ready, 3, &list, &[]), None);
-        assert_eq!(pick_next(&ProjectPolicy::default(), 0, &list, &[]), None);
+        assert_eq!(pick_next(&todo, 1, &list, &[], LATER), None);
+        assert_eq!(pick_next(&ready, 3, &list, &[], LATER), None);
+        assert_eq!(pick_next(&ProjectPolicy::default(), 0, &list, &[], LATER), None);
         // A waiting ticket goes once it is clear.
         let clear = TicketSummary { clear_to_start: true, ..waiting };
-        assert_eq!(pick_next(&todo, 0, &[clear], &[]).map(|t| t.id.as_str()), Some("waiting"));
+        assert_eq!(pick_next(&todo, 0, &[clear], &[], LATER).map(|t| t.id.as_str()), Some("waiting"));
+    }
+
+    #[test]
+    fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_delay() {
+        let todo = ProjectPolicy { auto_start: AutoStart::Todo, ..ProjectPolicy::default() };
+        assert_eq!(todo.start_delay_seconds, 120, "two minutes unless the project says otherwise");
+        let made = 10_000;
+        let fresh = TicketSummary { created_at: made, updated_at: made, ..ticket("fresh", TicketStage::Todo) };
+        let list = vec![fresh.clone()];
+        // Just created: not picked, and it says when it will be.
+        assert_eq!(pick_next(&todo, 0, &list, &[], made + 1_000), None);
+        assert_eq!(auto_start_at(&todo, &fresh, made + 1_000), Some(made + 120_000));
+        // After the delay: picked, and no longer waiting.
+        assert_eq!(pick_next(&todo, 0, &list, &[], made + 120_000).map(|t| t.id.as_str()), Some("fresh"));
+        assert_eq!(auto_start_at(&todo, &fresh, made + 120_000), None);
+        // A change inside the window (a link bumps `updated_at`) restarts it.
+        let linked = TicketSummary { updated_at: made + 90_000, ..fresh.clone() };
+        assert_eq!(pick_next(&todo, 0, std::slice::from_ref(&linked), &[], made + 120_000), None);
+        assert_eq!(auto_start_at(&todo, &linked, made + 120_000), Some(made + 210_000));
+        assert!(pick_next(&todo, 0, std::slice::from_ref(&linked), &[], made + 210_000).is_some());
+        // A blocker linked inside the window keeps it from starting at all, and it shows no countdown.
+        let blocked = TicketSummary { blocked_by: 1, ..linked };
+        assert_eq!(pick_next(&todo, 0, std::slice::from_ref(&blocked), &[], LATER), None);
+        assert_eq!(auto_start_at(&todo, &blocked, made), None);
+        // 0: at once.
+        let now = ProjectPolicy { start_delay_seconds: 0, ..todo.clone() };
+        assert_eq!(pick_next(&now, 0, &list, &[], made).map(|t| t.id.as_str()), Some("fresh"));
+        assert_eq!(auto_start_at(&now, &fresh, made), None);
+        // Only tickets auto-start would take count down.
+        assert_eq!(auto_start_at(&ProjectPolicy::default(), &fresh, made), None);
+        let ready = TicketSummary { stage: TicketStage::Ready, ..fresh };
+        assert_eq!(auto_start_at(&todo, &ready, made), None);
+        let take_ready = ProjectPolicy { auto_start: AutoStart::Ready, ..todo };
+        assert_eq!(auto_start_at(&take_ready, &ready, made), Some(made + 120_000));
     }
 }

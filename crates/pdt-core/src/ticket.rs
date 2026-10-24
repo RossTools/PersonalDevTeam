@@ -299,6 +299,11 @@ pub struct TicketSummary {
     /// Who works on it now in a workflow and in what state (filled in by the API, in memory).
     #[serde(default)]
     pub agent: Option<TicketAgent>,
+    /// When auto-start takes it, while it waits out the project's start delay (PDT-146; filled in by the API, in
+    /// memory).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub auto_start_at: Option<i64>,
     /// The issues in other trackers it is linked to (a Jira issue it was imported from).
     #[serde(default)]
     pub external: Vec<ExternalLink>,
@@ -1193,6 +1198,7 @@ mod tests {
             parts: None,
             pipeline_stage: None,
             agent: None,
+            auto_start_at: None,
             external: vec![],
         };
         let t = Ticket {

@@ -26,4 +26,8 @@ approvalExemptLabels?: Array<string>,
 /**
  * The PM may create and edit tickets and message sessions here without asking (PDT-81).
  */
-pmActs?: boolean, jira?: JiraInput, buildkite?: BuildkiteInput, };
+pmActs?: boolean, 
+/**
+ * Auto-start takes a ticket only once it has gone this many seconds unchanged (PDT-146); 0: at once.
+ */
+startDelaySeconds?: number, jira?: JiraInput, buildkite?: BuildkiteInput, };

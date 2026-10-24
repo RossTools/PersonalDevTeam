@@ -119,6 +119,7 @@ pub(crate) async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, Api
     crate::github::apply(st, &mut t);
     crate::parts::apply(st, &mut t).await?;
     crate::scheduler::apply_agents(st, std::slice::from_mut(&mut t.summary)).await;
+    crate::scheduler::apply_auto_start(st, std::slice::from_mut(&mut t.summary)).await;
     Ok(t)
 }
 

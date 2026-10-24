@@ -283,7 +283,7 @@ function Backlog() {
 const card = (n: number, over: Partial<TicketSummary> = {}): TicketSummary => ({
   id: `g${n}`, projectId: 'gp', key: `PDT-${n}`, number: n, title: 'Board cards show the title on up to two lines, then cut it off with an ellipsis',
   stage: 'ready', priority: 'none', labels: [], areas: [], rank: 'a', waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [],
-  createdAt: NOW, updatedAt: NOW, closedAt: null, parent: null, parts: null, pipelineStage: null, agent: null, external: [], ...over,
+  createdAt: NOW, updatedAt: NOW, closedAt: null, parent: null, parts: null, pipelineStage: null, agent: null, autoStartAt: null, external: [], ...over,
 });
 const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'main', worktreeId: 'gw', state: 'active' as const, createdAt: NOW, endedAt: null, lastHead: null, workspaceId: null, ci: null, pr: null };
 const galleryPr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
