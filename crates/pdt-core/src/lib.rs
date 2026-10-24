@@ -15,6 +15,7 @@ pub mod inbox;
 pub mod instance;
 pub mod jira;
 pub mod links;
+pub mod liveness;
 pub mod mcp;
 pub mod notification;
 pub mod overlap;

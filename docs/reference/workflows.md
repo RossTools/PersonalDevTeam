@@ -232,10 +232,28 @@ secret as a bearer token); without `transport`, a URL and no command means `http
 
 ## Engine
 
-- `run_workflows` (pdtd every 2 s; tests call it; serialized by `AppState.engine_lock`): installs the built-ins once,
+- `run_workflows` (pdtd every 2 s; tests call it): installs the built-ins once,
   emits due schedules ("Sensors and webhooks"), matches unprocessed events to enabled workflows' triggers (scope, `projects`, `where`) and starts a run per match
   unless its run key (default `<node>:<event id>`) already ran, wakes steps waiting for that event, advances runnable
-  runs, delivers the outbox, and advances again.
+  runs, delivers the outbox, and advances again. Enabled workflows' parsed documents are cached in memory by
+  workflow, version and `updated_at` for the schedule and matching passes, and the steps waiting for events are read
+  once per batch of events.
+- Locks (PDT-128): `AppState.engine_lock` is held only around state changes: the tick's passes (schedules, events,
+  slots, outbox, sweep), claiming a step (`running`) and writing its result, and the commands (answer, resume, retry,
+  cancel, `submit_outcome`, `ask_user`, a turn's end, Inbox answers). A node's body (an HTTP request, a command,
+  `gh`, starting an agent session: actions and agent steps) runs outside it, holding only its run's lock
+  (`AppState.run_locks`, shared by the runs of one ticket, so those still go one at a time and one's checks see
+  what the other did); flow, gate, wait and condition kinds and `session.send` (quick, and waited on by the
+  engine's own passes) run under it. Runnable runs advance in their own tasks (a ticket's runs one after another in
+  one task), up to 16 tasks at once; a tick waits for them up to `engine_tick_wait` (pdtd: 1 s; tests: 10 min, so a
+  test's tick ends with its runs) and then goes on, and later ticks skip a run whose lock is held. So a hung step
+  holds up only its own ticket's runs: other runs, the outbox, timers and schedules go on. Commands on a run's steps
+  take its lock first (they never see a step half-run, e.g. an agent step whose session is starting), then the
+  engine lock; cancel takes only the engine lock, so it never waits for a hung step, whose result is dropped when it
+  comes (a step's result is written only while it is still `running` with the same attempt). The limit: as the run
+  lock is the ticket's, a command for one of a ticket's agent steps (`submit_outcome`, `ask_user`, a turn's end, an
+  Inbox answer) still waits while another run of that ticket is in a slow action's body, up to that node's timeout. Agent steps start one
+  at a time (`agent_step_start`), so runs side by side can't both take the host's last slot.
 - `workflow_runs` / `workflow_steps`: a run starts with its trigger's step; each step is written before and after it
   runs (`pending` → `running` → `succeeded` / `waiting` / `failed`), so after a restart a `running` step runs again
   and the rest continue. A step's input is its config with references filled in; its output feeds `{{steps.x}}`.
@@ -641,19 +659,22 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
 - **Kinds and Show.** Needs you: `session.needs_you`, `inbox.question`, `inbox.approval`, `inbox.gate` (gates and Ready
   to accept), `inbox.manual`, `inbox.stalled` (a stalled or timed-out step), `inbox.loop_limit`. Updates: `session.turn_ended`, `session.exited`,
   `pr.ci_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged`, `workflow.failed`, `workflow.notify`, `connection.failed`
-  ("Sensors and webhooks"). Each kind's Show
+  ("Sensors and webhooks"), `host.loop_stale` (a background loop of pdtd stopped finishing passes, [host.md](host.md)).
+  Each kind's Show
   is `off`, `dot` (only the target's own marker: no row), `inbox`, `toast` or `desktop`, each including the ones
   before; defaults in `NotificationKind::default_show`. The Inbox's own kinds (`inbox.*`) never go below `inbox`.
   Overrides live in host value `notifications.show` (kind → Show); `GET /api/notifications/settings` lists every kind
   (section, label, when, show, default, allowed), `PATCH` `{kind: show | null}` (null restores the default).
 - **Rows.** Only `inbox` and up are stored, with the Show at creation. One live row per `dedupe_key`
   (`session:<id>:needs_you|turn_ended|exited`, `inbox:<item>`, `attempt:<id>:ci_failed|conflict|queue_left|merged`,
-  `run:<id>:failed`, `notify:<step>`, `connection:<name>`); a cause firing again updates its row (title, body, `created_at`, unread again).
+  `run:<id>:failed`, `notify:<step>`, `connection:<name>`, `loop:<name>:stale`); a cause firing again updates its row
+  (title, body, `created_at`, unread again).
   `seq` grows on every change (created, updated, cleared). Pruned after 30 days, except live Needs-you rows.
 - **State causes** (`sync`, every 2 s and at once on a kick: activity changes, a session viewed, an Inbox answer or
   dismiss, a settings change): a running agent session that needs the user and is unseen (`session.needs_you`, not
   for a conversation with an open approval: that is `inbox.approval`), or idle and unseen for 30 s
-  (`session.turn_ended`, only above `dot`); open Inbox items and approvals. A row whose cause went away is cleared:
+  (`session.turn_ended`, only above `dot`); open Inbox items and approvals; stale background loops
+  (`host.loop_stale`, severity error, default `toast`). A row whose cause went away is cleared: a loop's next pass,
   the session left that state or was viewed (`last_viewed_at`), the item resolved or closed, an exited session
   restarted or removed, a conflict's PR mergeable again (or closed), a dropped PR back in the queue. Viewing a session
   reads its rows (`POST /api/sessions/{id}/view`).

@@ -91,11 +91,18 @@ pub fn under(base: &str, url: &str) -> bool {
         && url.strip_prefix(base).is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || rest.starts_with('?'))
 }
 
+/// The longest connecting to a service may take, for every call through [`client`].
+pub(crate) const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The HTTP client of workflows' nodes, the sensors and MCP servers. It bounds connecting only: MCP keeps streams open
+/// for as long as a server lives, so each caller bounds its own requests (nodes by the step timeout, sensors by
+/// `AppState::sensor_timeout`).
 pub(crate) fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .user_agent(concat!("pdt-workflows/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .expect("an HTTP client")
     })

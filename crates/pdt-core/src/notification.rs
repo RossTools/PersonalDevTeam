@@ -103,13 +103,15 @@ pub enum NotificationKind {
     WorkflowNotify,
     #[serde(rename = "connection.failed")]
     ConnectionFailed,
+    #[serde(rename = "host.loop_stale")]
+    HostLoopStale,
 }
 
 use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 16] = [
+    pub const ALL: [NotificationKind; 17] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -126,6 +128,7 @@ impl NotificationKind {
         K::WorkflowFailed,
         K::WorkflowNotify,
         K::ConnectionFailed,
+        K::HostLoopStale,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -146,6 +149,7 @@ impl NotificationKind {
             K::WorkflowFailed => "workflow.failed",
             K::WorkflowNotify => "workflow.notify",
             K::ConnectionFailed => "connection.failed",
+            K::HostLoopStale => "host.loop_stale",
         }
     }
 
@@ -183,7 +187,8 @@ impl NotificationKind {
             | K::InboxStalled
             | K::InboxLoopLimit
             | K::WorkflowNotify
-            | K::ConnectionFailed => Show::Toast,
+            | K::ConnectionFailed
+            | K::HostLoopStale => Show::Toast,
             K::SessionTurnEnded => Show::Dot,
             K::SessionExited | K::PrCiFailed | K::PrConflict | K::PrQueueLeft | K::PrMerged | K::WorkflowFailed => {
                 Show::Inbox
@@ -219,6 +224,7 @@ impl NotificationKind {
             K::WorkflowFailed => "Workflow failed",
             K::WorkflowNotify => "Workflow notification",
             K::ConnectionFailed => "Connection failing",
+            K::HostLoopStale => "Background task stalled",
         }
     }
 
@@ -241,6 +247,7 @@ impl NotificationKind {
             K::WorkflowFailed => "A workflow run failed.",
             K::WorkflowNotify => "A workflow's Notify me step.",
             K::ConnectionFailed => "A sensor could not use a connection (a revoked token, the service down).",
+            K::HostLoopStale => "One of PDT's background tasks (PR checks, the workflow engine…) stopped running.",
         }
     }
 

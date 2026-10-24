@@ -38,6 +38,8 @@ pub(crate) struct JiraClient {
     pub conn: Connection,
     email: String,
     token: String,
+    /// The longest one call may take (`AppState::sensor_timeout`).
+    timeout: std::time::Duration,
 }
 
 impl JiraClient {
@@ -55,7 +57,7 @@ impl JiraClient {
             return Err(format!("{} names no email to sign in with", conn.name));
         }
         let token = secret.filter(|s| !s.trim().is_empty()).ok_or_else(|| format!("{} has no API token", conn.name))?;
-        Ok(JiraClient { conn, email, token })
+        Ok(JiraClient { conn, email, token, timeout: st.sensor_timeout })
     }
 
     pub(crate) fn site(&self) -> &str {
@@ -68,7 +70,8 @@ impl JiraClient {
         let mut req = client()
             .request(method.clone(), &url)
             .basic_auth(&self.email, Some(&self.token))
-            .header("accept", "application/json");
+            .header("accept", "application/json")
+            .timeout(self.timeout);
         if let Some(b) = body {
             req = req.json(b);
         }
