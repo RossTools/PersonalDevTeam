@@ -1072,34 +1072,43 @@ async fn deleting_a_workflow_ends_its_runs_and_closes_their_inbox_items() {
 
 #[tokio::test]
 async fn the_runtime_limit_ends_a_waiting_run_and_counts_from_a_retry() {
+    // Long enough that a tick on a busy machine stays well inside it: the test waits it out once, not tick by tick.
+    const LIMIT: i64 = 3000;
     let env = setup().await;
+    let settings = json!({"maxSteps": 200, "maxRuntimeMs": LIMIT});
     let mut doc = gate_doc("slow");
-    doc["settings"] = json!({"maxSteps": 200, "maxRuntimeMs": 300});
-    let wf = create(&env, doc).await;
-    let id = run_now(&env, &wf, json!({})).await;
-    let r = settle(&env, &id).await;
-    assert_eq!(r["status"], "waiting", "{r}");
-    assert!(r["wakeAt"].as_i64().unwrap() <= r["startedAt"].as_i64().unwrap() + 301, "it wakes at its limit: {r}");
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    let r = settle(&env, &id).await;
-    assert_eq!(r["status"], "failed", "{r}");
-    assert!(r["error"].as_str().unwrap().contains("took longer"), "{r}");
-
-    // A retried run gets its time again.
+    doc["settings"] = settings.clone();
+    let slow = create(&env, doc).await;
+    // A run that fails at once, to be retried after its limit.
     let (_, t) =
         call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "x"}))).await;
-    let doc = json!({"name": "mover", "settings": {"maxSteps": 200, "maxRuntimeMs": 300}, "nodes": [
+    let doc = json!({"name": "mover", "settings": settings, "nodes": [
         {"id": "t", "kind": "manual", "version": 1},
         {"id": "move", "kind": "ticket.move", "version": 1, "config": {"ticket": "{{state.ticket}}", "stage": "todo"}}],
         "edges": [{"from": "t", "to": "move"}]});
-    let wf = create(&env, doc).await;
-    let id = run_now(&env, &wf, json!({})).await;
-    assert_eq!(settle(&env, &id).await["status"], "failed");
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    env.state.store.set_workflow_state(&wf, "ticket", &t["id"], false, 1).await.unwrap();
-    let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/retry"), None).await;
+    let mover = create(&env, doc).await;
+    let waits = run_now(&env, &slow, json!({})).await;
+    let fails = run_now(&env, &mover, json!({})).await;
+    pdt_api::run_workflows(&env.state).await;
+    let r = run(&env, &waits).await;
+    assert_eq!(r["status"], "waiting", "{r}");
+    assert_eq!(
+        r["wakeAt"].as_i64().unwrap(),
+        r["startedAt"].as_i64().unwrap() + LIMIT + 1,
+        "it wakes at its limit: {r}"
+    );
+    assert_eq!(run(&env, &fails).await["status"], "failed");
+
+    tokio::time::sleep(Duration::from_millis(u64::try_from(LIMIT).unwrap() + 100)).await;
+    let r = settle(&env, &waits).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r["error"].as_str().unwrap().contains("took longer"), "{r}");
+
+    // Past its limit too, a retried run gets its time again.
+    env.state.store.set_workflow_state(&mover, "ticket", &t["id"], false, 1).await.unwrap();
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{fails}/retry"), None).await;
     assert_eq!(s, StatusCode::OK, "{r}");
-    let r = settle(&env, &id).await;
+    let r = settle(&env, &fails).await;
     assert_eq!(r["status"], "succeeded", "{r}");
     assert!(r["resumedAt"].as_i64().is_some());
 }
