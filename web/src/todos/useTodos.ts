@@ -45,11 +45,12 @@ export function useTodoActions() {
         }
       });
     },
-    remove: (ids: string[]) => {
+    /** `series`, for a repeating todo: `only` makes the next one in its place, `series` stops it repeating. */
+    remove: (ids: string[], series?: 'only' | 'series') => {
       edit((list) => list.filter((t) => !ids.includes(t.id)));
       return runAction(async () => {
         try {
-          await Promise.all(ids.map((id) => api.todos.remove(id)));
+          await Promise.all(ids.map((id) => api.todos.remove(id, series)));
         } finally {
           refresh(qc);
         }
@@ -64,7 +65,8 @@ function local(t: Todo, p: TodoPatch): Todo {
     ...t,
     ...(p.title !== undefined ? { title: p.title } : {}),
     ...(p.position !== undefined ? { position: p.position } : {}),
-    ...(p.dueOn !== undefined ? { dueOn: p.dueOn || null, ...(p.dueOn ? {} : { dueTime: null }) } : {}),
+    ...(p.dueOn !== undefined ? { dueOn: p.dueOn || null, ...(p.dueOn ? {} : { dueTime: null, recurrence: null }) } : {}),
+    ...(p.recurrence !== undefined ? { recurrence: p.recurrence } : {}),
     ...(p.dueTime !== undefined ? { dueTime: p.dueTime || null } : {}),
     ...(p.done !== undefined ? { done: p.done, doneAt: p.done ? (t.doneAt ?? Date.now()) : null } : {}),
   };

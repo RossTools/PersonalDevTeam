@@ -1,5 +1,7 @@
 // The todo list's pure rules (PDT-125): filtering, splitting open from done, and the position a moved row takes; due
-// dates (PDT-140): the user's local day, the chip a card shows, the groups open todos fall into and the quick picks.
+// dates (PDT-140): the user's local day, the chip a card shows, the groups open todos fall into and the quick picks;
+// repeating (PDT-141): a rule as text.
+import type { Recurrence } from '../api/gen/Recurrence';
 import type { Todo } from '../api/gen/Todo';
 
 /** The list's filter: every todo, or the current project's. */
@@ -107,4 +109,41 @@ export function quickDays(now: Date): { label: string; day: string }[] {
     { label: 'Tomorrow', day: addDays(today, 1) },
     { label: 'Next week', day: addDays(today, toMonday) },
   ];
+}
+
+/** Weekday names by the API's numbers (1 = Monday … 7 = Sunday), index 0 unused. */
+export const WEEKDAYS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+
+/** The weekday (1 = Monday … 7 = Sunday) of a `YYYY-MM-DD` day. */
+export function weekdayOf(day: string): number {
+  const [y, m, d] = day.split('-').map(Number);
+  return ((new Date(y!, m! - 1, d!).getDay() + 6) % 7) + 1;
+}
+
+function ordinal(n: number): string {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+}
+
+/** A repeat rule for people (PDT-141): "Every day", "Every 3 days", "Every weekday", "Every Mon, Wed", "Every 2 weeks on Fri", "Every month on the 31st". */
+export function repeatText(r: Recurrence): string {
+  const rule = r.rule;
+  switch (rule.every) {
+    case 'day':
+      return rule.interval === 1 ? 'Every day' : `Every ${rule.interval} days`;
+    case 'weekday':
+      return 'Every weekday';
+    case 'week': {
+      const days = rule.days.map((d) => WEEKDAYS[d] ?? '?').join(', ');
+      return rule.interval === 1 ? `Every ${days}` : `Every ${rule.interval} weeks on ${days}`;
+    }
+    case 'month':
+      return `Every month on the ${ordinal(rule.day)}`;
+  }
+}
+
+/** The rule the Repeat editor starts from for a todo without one: weekly on its due day's weekday (today's if undated). */
+export function defaultRecurrence(dueOn: string | null, now: Date): Recurrence {
+  return { rule: { every: 'week', interval: 1, days: [weekdayOf(dueOn ?? localDay(now))] }, from: 'due' };
 }

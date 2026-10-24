@@ -1,5 +1,5 @@
 //! The user's todo list (PDT-125): `GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`. The PM reads it with the
-//! `list_todos` tool.
+//! `list_todos` tool. Checking off a repeating todo (PDT-141) makes the next one.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -71,6 +71,7 @@ pub(crate) async fn create(
     let due_on = todo::valid_due_on(input.due_on.as_deref().unwrap_or_default()).map_err(bad)?;
     let due_time = todo::valid_due_time(input.due_time.as_deref().unwrap_or_default()).map_err(bad)?;
     let (due_on, due_time) = todo::valid_due(due_on, due_time).map_err(bad)?;
+    let recurrence = todo::valid_recurrence(input.recurrence, due_on.as_deref()).map_err(bad)?;
     let now = now_ms();
     let position = st.store.first_todo_position().await?.map_or(0.0, |p| p - 1.0);
     let id = uuid::Uuid::now_v7().to_string();
@@ -90,6 +91,7 @@ pub(crate) async fn create(
             ticket_title: None,
             due_on,
             due_time,
+            recurrence,
         })
         .await?;
     // A todo added already due reminds at once.
@@ -108,6 +110,7 @@ pub(crate) async fn patch(
 ) -> Result<Json<Todo>, ApiError> {
     let Json(p) = payload?;
     let mut t = st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?;
+    let was_done = t.done;
     let now = now_ms();
     if let Some(title) = &p.title {
         t.title = todo::valid_title(title).map_err(bad)?;
@@ -155,9 +158,22 @@ pub(crate) async fn patch(
             due_time = todo::valid_due_time(d).map_err(bad)?;
         }
         (t.due_on, t.due_time) = todo::valid_due(due_on, due_time).map_err(bad)?;
+        // No date, no repeating.
+        if t.due_on.is_none() {
+            t.recurrence = None;
+        }
     }
+    if let Some(r) = p.recurrence.clone() {
+        t.recurrence = r;
+    }
+    t.recurrence = todo::valid_recurrence(t.recurrence.take(), t.due_on.as_deref()).map_err(bad)?;
     t.updated_at = now;
-    if !st.store.update_todo(&t).await? {
+    let next = if t.done && !was_done { next_todo(&t, now) } else { None };
+    let saved = match &next {
+        Some(next) => st.store.complete_todo(&t, next).await?.is_some(),
+        None => st.store.update_todo(&t).await?,
+    };
+    if !saved {
         return Err(ApiError::not_found("todo"));
     }
     // Done or re-dated: its reminder clears (or a new one comes) now rather than on the next pass.
@@ -165,9 +181,43 @@ pub(crate) async fn patch(
     Ok(Json(st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?))
 }
 
-/// `DELETE /api/todos/{id}`.
-pub(crate) async fn delete(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    if !st.store.delete_todo(&id).await? {
+/// The todo a repeating one makes when it is checked off (or skipped) now: due on the rule's next day, with the same
+/// title, time, links and rule, where it was in the list. None for a todo that doesn't repeat.
+fn next_todo(t: &Todo, now: i64) -> Option<Todo> {
+    let rule = t.recurrence.as_ref()?;
+    let due_on = todo::next_due_on_local(rule, t.due_on.as_deref()?)?;
+    Some(Todo {
+        id: uuid::Uuid::now_v7().to_string(),
+        done: false,
+        created_at: now,
+        updated_at: now,
+        done_at: None,
+        due_on: Some(due_on),
+        ..t.clone()
+    })
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct DeleteQuery {
+    /// For a repeating todo: `only` (the default) skips to the next one, `series` stops it repeating.
+    series: Option<String>,
+}
+
+/// `DELETE /api/todos/{id}?series=only|series`. Deleting an open repeating todo as "only this one" makes its next one,
+/// as checking it off would; "stop the series" doesn't.
+pub(crate) async fn delete(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<DeleteQuery>,
+) -> Result<StatusCode, ApiError> {
+    let stop = match q.series.as_deref().unwrap_or("only") {
+        "only" => false,
+        "series" => true,
+        other => return Err(bad(format!("series is \"only\" or \"series\", not {other:?}"))),
+    };
+    let t = st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?;
+    let next = if stop || t.done { None } else { next_todo(&t, now_ms()) };
+    if !st.store.delete_todo_keeping(&id, next.as_ref()).await? {
         return Err(ApiError::not_found("todo"));
     }
     crate::notifications::kick(&st);

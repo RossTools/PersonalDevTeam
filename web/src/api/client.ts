@@ -440,6 +440,7 @@ export const api = {
     list: (q: { project?: string; done?: boolean } = {}) => request<Todo[]>(`/api/todos${queryString(q)}`),
     create: (t: NewTodo) => request<Todo>('/api/todos', { method: 'POST', body: JSON.stringify(t) }),
     patch: (id: string, p: TodoPatch) => request<Todo>(`/api/todos/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
-    remove: (id: string) => request<void>(`/api/todos/${enc(id)}`, { method: 'DELETE' }),
+    /** `series` (a repeating todo): `only` skips to the next one, `series` stops it repeating. */
+    remove: (id: string, series?: 'only' | 'series') => request<void>(`/api/todos/${enc(id)}${queryString({ series })}`, { method: 'DELETE' }),
   },
 };
