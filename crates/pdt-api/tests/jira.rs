@@ -26,6 +26,10 @@ struct FakeJira {
     seen: Vec<(String, String, Value)>,
     /// A request without the connection's basic auth.
     unauthorized: bool,
+    /// Every request is refused (a revoked token).
+    revoked: bool,
+    /// What `GET /issue/{key}/comment` answers (the newest comments of an issue a search cut short).
+    newest_comments: Vec<Value>,
 }
 
 type Shared = Arc<Mutex<FakeJira>>;
@@ -63,8 +67,8 @@ async fn jira_app(State(j): State<Shared>, req: Request<Body>) -> (StatusCode, a
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     let mut j = j.lock().unwrap();
     j.seen.push((method.clone(), uri, body.clone()));
-    if !authed {
-        j.unauthorized = true;
+    if !authed || j.revoked {
+        j.unauthorized |= !authed;
         return (StatusCode::UNAUTHORIZED, axum::Json(json!({"errorMessages": ["no"]})));
     }
     let parts: Vec<&str> = path.trim_start_matches("/rest/api/3/").split('/').collect();
@@ -86,6 +90,9 @@ async fn jira_app(State(j): State<Shared>, req: Request<Body>) -> (StatusCode, a
                 j.issues[i]["fields"]["status"]["name"] = json!(to);
             }
             (StatusCode::NO_CONTENT, axum::Json(Value::Null))
+        }
+        ("GET", ["issue", _, "comment"]) => {
+            ok(json!({"comments": j.newest_comments, "total": j.newest_comments.len()}))
         }
         ("POST", ["issue", _, "comment"]) => (StatusCode::CREATED, axum::Json(json!({"id": "900"}))),
         ("POST", ["issue"]) => (StatusCode::CREATED, axum::Json(json!({"id": "1", "key": "ABC-99"}))),
@@ -167,10 +174,14 @@ async fn setup() -> Env {
 }
 
 async fn link(env: &Env) {
+    link_project(env, &env.project).await;
+}
+
+async fn link_project(env: &Env, project: &str) {
     let (s, v) = call(
         &env.app,
         "PUT",
-        &format!("/api/projects/{}/settings", env.project),
+        &format!("/api/projects/{project}/settings"),
         Some(json!({"agentCredentials": null, "runOverrides": null,
             "jira": {"connection": "work-jira", "scope": "project = ABC"}})),
     )
@@ -181,9 +192,24 @@ async fn link(env: &Env) {
 
 /// Sets the sensor's last look to `t`, as if it had polled then.
 async fn polled_at(env: &Env, t: &str) {
+    project_polled_at(env, &env.project, t).await;
+}
+
+async fn project_polled_at(env: &Env, project: &str, t: &str) {
     let conn = env.state.store.connection_by_name("work-jira").await.unwrap().unwrap();
     let v = json!({"since": ms(t), "connection": conn.id, "scope": "project = ABC"});
-    env.state.store.put_host_value(&format!("sensor.jira.{}", env.project), &v).await.unwrap();
+    env.state.store.put_host_value(&format!("sensor.jira.{project}"), &v).await.unwrap();
+}
+
+async fn since(env: &Env) -> i64 {
+    let key = format!("sensor.jira.{}", env.project);
+    env.state.store.get_host_value(&key).await.unwrap().unwrap()["since"].as_i64().unwrap()
+}
+
+/// The live notifications of a kind.
+async fn notifications(env: &Env, kind: &str) -> Vec<Value> {
+    let (_, v) = call(&env.app, "GET", "/api/notifications?section=updates", None).await;
+    v["items"].as_array().unwrap().iter().filter(|n| n["kind"] == kind && n["clearedAt"].is_null()).cloned().collect()
 }
 
 async fn events(env: &Env, kind: &str) -> Vec<Value> {
@@ -480,4 +506,101 @@ async fn settings_check_the_connection() {
         call(&env.app, "POST", &format!("/api/projects/{}/jira/import", env.project), Some(json!({"key": "ABC-1"})))
             .await;
     assert_eq!((s, r["code"].clone()), (StatusCode::CONFLICT, json!("jira_not_linked")));
+}
+
+#[tokio::test]
+async fn a_revoked_token_notifies_once_and_clears_when_it_works_again() {
+    let env = setup().await;
+    link(&env).await;
+    polled_at(&env, T0).await;
+    env.jira.lock().unwrap().revoked = true;
+    pdt_api::refresh_jira(&env.state).await;
+    pdt_api::refresh_jira(&env.state).await;
+    let n = notifications(&env, "connection.failed").await;
+    assert_eq!(n.len(), 1, "one per connection, however often it fails: {n:?}");
+    assert_eq!(n[0]["title"], "work-jira is failing");
+    assert!(n[0]["body"].as_str().unwrap().contains("401"), "{}", n[0]["body"]);
+    assert_eq!(n[0]["target"], json!({"kind": "connections"}));
+    let (_, list) = call(&env.app, "GET", "/api/connections", None).await;
+    let c = &list.as_array().unwrap()[0];
+    assert!(c["lastError"].as_str().unwrap().contains("401"), "{c}");
+    assert!(c["lastErrorAt"].as_i64().is_some());
+    assert_eq!(since(&env).await, ms(T0), "nothing read: the mark stays");
+
+    env.jira.lock().unwrap().revoked = false;
+    pdt_api::refresh_jira(&env.state).await;
+    assert!(notifications(&env, "connection.failed").await.is_empty(), "cleared once it works");
+    let (_, list) = call(&env.app, "GET", "/api/connections", None).await;
+    assert!(list[0]["lastError"].is_null());
+}
+
+#[tokio::test]
+async fn two_projects_with_overlapping_scopes_both_get_the_event() {
+    let env = setup().await;
+    let repo = env._tmp.path().join("repo2");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "init"]);
+    let (s, p) =
+        call(&env.app, "POST", "/api/projects", Some(json!({"name": "Other", "repoPath": repo.to_string_lossy()})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let other = p["id"].as_str().unwrap().to_string();
+    link(&env).await;
+    link_project(&env, &other).await;
+    polled_at(&env, T0).await;
+    project_polled_at(&env, &other, T0).await;
+    env.jira.lock().unwrap().issues.push(issue("ABC-1", "Shared", None, T1));
+    pdt_api::refresh_jira(&env.state).await;
+    let mut projects: Vec<String> = events(&env, "jira.issue.created")
+        .await
+        .iter()
+        .map(|e| e["payload"]["projectId"].as_str().unwrap().to_string())
+        .collect();
+    projects.sort();
+    let mut want = vec![env.project.clone(), other];
+    want.sort();
+    assert_eq!(projects, want);
+}
+
+#[tokio::test]
+async fn an_event_that_could_not_be_logged_leaves_the_mark() {
+    let env = setup().await;
+    link(&env).await;
+    polled_at(&env, T0).await;
+    env.jira.lock().unwrap().issues.push(issue("ABC-1", "New", None, T1));
+    let db = env._tmp.path().join("pdt.db");
+    common::fail_events(&db, Some("jira.issue.created")).await;
+    pdt_api::refresh_jira(&env.state).await;
+    assert_eq!(since(&env).await, ms(T0), "the mark stays before what was not logged");
+    assert!(notifications(&env, "connection.failed").await.is_empty(), "PDT's own failure, not the connection's");
+    common::fail_events(&db, None).await;
+    pdt_api::refresh_jira(&env.state).await;
+    assert_eq!(events(&env, "jira.issue.created").await.len(), 1);
+    assert!(since(&env).await > ms(T0));
+}
+
+#[tokio::test]
+async fn comments_a_search_cut_short_are_read_from_the_issue() {
+    let env = setup().await;
+    link(&env).await;
+    polled_at(&env, T1).await;
+    let mut i = issue("ABC-7", "Busy", None, T0);
+    i["fields"]["updated"] = json!(T2);
+    // The search answers the oldest 100 of 150 comments.
+    i["fields"]["comment"] = json!({"comments": [], "total": 150});
+    let text = |t: &str| json!({"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": t}]}]});
+    {
+        let mut j = env.jira.lock().unwrap();
+        j.issues.push(i);
+        j.newest_comments = vec![
+            json!({"id": "150", "author": {"displayName": "Ann", "accountId": "a"}, "created": T2, "body": text("Latest")}),
+        ];
+    }
+    pdt_api::refresh_jira(&env.state).await;
+    let c = events(&env, "jira.issue.commented").await;
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(c[0]["payload"]["body"], "Latest");
 }

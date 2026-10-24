@@ -22,7 +22,7 @@ const passed: CiStatus = { state: 'passed', url: 'https://gh/runs/1', runs: [] }
 const pr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
   number: 12, url: 'https://gh/pull/12', title: 'Fix login', state: 'open', draft: false, baseBranch: 'main', headSha: 'abc',
   mergeable: 'mergeable', behind: false, autoMerge: true, inMergeQueue: false, queuePosition: null, ci: passed, queueCi: null,
-  checkedAt: 1, ...over,
+  checkedAt: 1, error: null, ...over,
 });
 
 const attempt = (p: PullRequestStatus | null): AttemptSummary => ({
@@ -68,13 +68,30 @@ describe('pull request status', () => {
     expect(screen.getByText(/Merge queue: failed/)).toBeInTheDocument();
   });
 
+  it('says when the PR was last read, and why it is stale when reading it fails', () => {
+    const now = Date.now();
+    const { rerender } = render(<PrDetails pr={pr({ checkedAt: now - 3 * 60_000 })} />);
+    expect(screen.getByText('Last checked 3m ago')).toBeInTheDocument();
+    rerender(<PrDetails pr={pr({ checkedAt: now - 3 * 60_000, error: 'gh failed: HTTP 401' })} />);
+    expect(screen.getByText('Not updated: gh failed: HTTP 401 (last checked 3m ago)')).toHaveClass('text-destructive');
+    render(
+      <ul>
+        <BoardCard ticket={summary(1, { stage: 'in_progress', attempt: attempt(pr({ ci: { ...passed, state: 'running' }, error: 'gh failed' })) })}
+          onOpen={() => {}} entries={() => []} />
+      </ul>,
+    );
+    const badge = screen.getByText(/#12 · CI running/);
+    expect(within(badge).getByLabelText('Not updated')).toBeInTheDocument();
+    expect(badge.getAttribute('title')).toContain('Not updated: gh failed');
+  });
+
   it('puts the PR on the board card and in the ticket Attempt section', async () => {
     render(
       <ul>
         <BoardCard ticket={summary(1, { stage: 'in_progress', attempt: attempt(pr({ ci: failed })) })} onOpen={() => {}} entries={() => []} />
       </ul>,
     );
-    expect(screen.getByText(/#12 · CI failed/)).toHaveAttribute('title', 'PR #12: Fix login — failed: test (linux)');
+    expect(screen.getByText(/#12 · CI failed/)).toHaveAttribute('title', expect.stringMatching(/^PR #12: Fix login — failed: test \(linux\)\nLast checked /));
 
     const t = ticket(1, { stage: 'in_progress', attempt: attempt(pr()), attempts: [attempt(pr())] });
     stubApi({

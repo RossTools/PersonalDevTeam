@@ -117,3 +117,20 @@ pub async fn park_once_idle(st: &pdt_api::AppState) {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }
+
+/// Makes every insert of an event of type `kind` into the store at `db` fail, as a full disk would; None: inserts work
+/// again.
+pub async fn fail_events(db: &std::path::Path, kind: Option<&str>) {
+    use sqlx::Connection;
+    let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(db);
+    let mut c = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
+    sqlx::query("DROP TRIGGER IF EXISTS test_fail_events").execute(&mut c).await.unwrap();
+    if let Some(k) = kind {
+        let sql = format!(
+            "CREATE TRIGGER test_fail_events BEFORE INSERT ON events WHEN NEW.type = '{k}' \
+             BEGIN SELECT RAISE(ABORT, 'disk full'); END"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&mut c).await.unwrap();
+    }
+    c.close().await.unwrap();
+}

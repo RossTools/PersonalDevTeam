@@ -24,7 +24,7 @@ const STEP_COLUMNS: &str = "id, run_id, seq, node_id, kind, status, input, outpu
                             wait, started_at, ended_at";
 const MSG_COLUMNS: &str = "id, attempt_id, session_id, ticket_id, dedupe, text, timeline, run_id, step_id, status, \
                            told_session, created_at, resolved_at, by_user, pending_id";
-const CONN_COLUMNS: &str = "id, name, kind, url, config, has_secret, created_at, updated_at";
+const CONN_COLUMNS: &str = "id, name, kind, url, config, has_secret, created_at, updated_at, last_error, last_error_at";
 
 fn corrupt(what: &str, e: impl std::fmt::Display) -> StoreError {
     StoreError::Corrupt(format!("{what}: {e}"))
@@ -175,6 +175,8 @@ fn to_connection(r: &SqliteRow) -> Result<Connection, StoreError> {
         has_secret: r.try_get::<i64, _>("has_secret")? != 0,
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
+        last_error: r.try_get("last_error")?,
+        last_error_at: r.try_get("last_error_at")?,
     })
 }
 
@@ -925,10 +927,12 @@ impl Store {
         Ok(())
     }
 
-    /// Writes a connection's name, kind, URL, config and secret flag.
+    /// Writes a connection's name, kind, URL, config and secret flag, and forgets its last error (the next use tells
+    /// whether the change fixed it).
     pub async fn update_connection(&self, c: &Connection) -> Result<bool, StoreError> {
         let r = sqlx::query(
-            "UPDATE connections SET name = ?, kind = ?, url = ?, config = ?, has_secret = ?, updated_at = ? WHERE id = ?",
+            "UPDATE connections SET name = ?, kind = ?, url = ?, config = ?, has_secret = ?, updated_at = ?, \
+             last_error = NULL, last_error_at = NULL WHERE id = ?",
         )
         .bind(&c.name)
         .bind(&c.kind)
@@ -958,6 +962,35 @@ impl Store {
         let sql = format!("SELECT {CONN_COLUMNS} FROM connections ORDER BY name COLLATE NOCASE");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         rows.iter().map(to_connection).collect()
+    }
+
+    /// Records how a sensor's use of a connection went: `error` on failure, None once it works. True when that changed
+    /// whether it is failing, or why (so the caller notifies, or clears, once).
+    pub async fn set_connection_error(&self, id: &str, error: Option<&str>, now: i64) -> Result<bool, StoreError> {
+        let r = match error {
+            Some(e) => {
+                sqlx::query(
+                    "UPDATE connections SET last_error = ?, last_error_at = ? \
+                     WHERE id = ? AND last_error IS NOT ?",
+                )
+                .bind(e)
+                .bind(now)
+                .bind(id)
+                .bind(e)
+                .execute(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "UPDATE connections SET last_error = NULL, last_error_at = NULL \
+                     WHERE id = ? AND last_error IS NOT NULL",
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await?
+            }
+        };
+        Ok(r.rows_affected() > 0)
     }
 
     pub async fn delete_connection(&self, id: &str) -> Result<bool, StoreError> {
@@ -1285,6 +1318,8 @@ mod tests {
             has_secret: false,
             created_at: 1,
             updated_at: 1,
+            last_error: None,
+            last_error_at: None,
         };
         store.insert_connection(&c).await.unwrap();
         assert!(matches!(
@@ -1294,6 +1329,17 @@ mod tests {
         store.update_connection(&Connection { has_secret: true, ..c.clone() }).await.unwrap();
         assert!(store.connection_by_name("discord").await.unwrap().unwrap().has_secret);
         assert_eq!(store.list_connections().await.unwrap().len(), 1);
+        // A failing connection changes once per new error, and once when it works again.
+        assert!(store.set_connection_error("c", Some("401"), 5).await.unwrap());
+        assert!(!store.set_connection_error("c", Some("401"), 6).await.unwrap(), "the same error again");
+        let failing = store.get_connection("c").await.unwrap().unwrap();
+        assert_eq!((failing.last_error.as_deref(), failing.last_error_at), (Some("401"), Some(5)));
+        assert!(store.set_connection_error("c", Some("timed out"), 7).await.unwrap(), "a new reason");
+        assert!(store.set_connection_error("c", None, 8).await.unwrap());
+        assert!(!store.set_connection_error("c", None, 9).await.unwrap(), "already working");
+        store.set_connection_error("c", Some("401"), 10).await.unwrap();
+        store.update_connection(&c).await.unwrap();
+        assert_eq!(store.get_connection("c").await.unwrap().unwrap().last_error, None, "saving it forgets the error");
         assert!(store.delete_connection("c").await.unwrap());
     }
 }

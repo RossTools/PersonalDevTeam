@@ -26,6 +26,8 @@ struct FakeBuildkite {
     /// Method, path and query, JSON body.
     seen: Vec<(String, String, Value)>,
     unauthorized: bool,
+    /// Every request is refused (a revoked token).
+    revoked: bool,
 }
 
 type Shared = Arc<Mutex<FakeBuildkite>>;
@@ -38,8 +40,8 @@ async fn bk_app(State(b): State<Shared>, req: Request<Body>) -> (StatusCode, axu
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     let mut b = b.lock().unwrap();
     b.seen.push((method.clone(), uri.to_string(), body.clone()));
-    if !authed {
-        b.unauthorized = true;
+    if !authed || b.revoked {
+        b.unauthorized |= !authed;
         return (StatusCode::UNAUTHORIZED, axum::Json(json!({"message": "no"})));
     }
     let query: std::collections::HashMap<String, String> = uri
@@ -205,6 +207,39 @@ async fn a_branch_without_a_pr_gets_its_builds_once_per_state() {
     assert_eq!(passed.len(), 1);
     assert_eq!(passed[0]["payload"]["provider"], "buildkite");
     assert_eq!(attempt(&env).await["ci"]["state"], "passed", "the newest build of the pipeline");
+}
+
+#[tokio::test]
+async fn a_revoked_token_notifies_once_until_it_works_again() {
+    let env = setup().await;
+    env.bk.lock().unwrap().builds = vec![build(1, "running", &env.head, 0)];
+    env.bk.lock().unwrap().revoked = true;
+    let live = || async {
+        let (_, v) = call(&env.app, "GET", "/api/notifications?section=updates", None).await;
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|n| n["kind"] == "connection.failed" && n["clearedAt"].is_null())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    for _ in 0..3 {
+        pdt_api::refresh_buildkite(&env.state).await;
+    }
+    let n = live().await;
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert_eq!(n[0]["title"], "bk is failing");
+    assert!(n[0]["body"].as_str().unwrap().contains("401"));
+    let (_, list) = call(&env.app, "GET", "/api/connections", None).await;
+    assert!(list[0]["lastError"].as_str().unwrap().contains("401"), "{list}");
+
+    env.bk.lock().unwrap().revoked = false;
+    pdt_api::refresh_buildkite(&env.state).await;
+    assert!(live().await.is_empty());
+    assert_eq!(attempt(&env).await["ci"]["state"], "running");
+    let (_, list) = call(&env.app, "GET", "/api/connections", None).await;
+    assert!(list[0]["lastError"].is_null());
 }
 
 #[tokio::test]

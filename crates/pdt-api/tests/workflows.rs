@@ -355,6 +355,47 @@ async fn a_dry_run_says_what_the_pr_notices_would_do() {
     assert!(r["run"]["status"].is_null());
 }
 
+/// A PR notice nobody was told does not spend its key (PDT-129): the timeline's `pr` events count only when told.
+#[tokio::test]
+async fn an_untold_pr_notice_does_not_spend_its_key() {
+    let env = setup().await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
+    let id = list.as_array().unwrap().iter().find(|w| w["builtin"] == "pr-notices").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (_, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "x"}))).await;
+    let ticket = t["id"].as_str().unwrap().to_string();
+    let tell = async |key: &str| {
+        let event = json!({"type": "pr.conflict", "payload": {"attemptId": "a1", "ticketId": ticket,
+                           "notice": {"key": key, "text": "[PDT] fix it"}}});
+        let (s, r) =
+            call(&env.app, "POST", "/api/workflows/dry-run", Some(json!({"workflowId": id, "event": event}))).await;
+        assert_eq!(s, StatusCode::OK, "{r}");
+        let steps = r["run"]["steps"].as_array().unwrap().clone();
+        steps.iter().find(|s| s["nodeId"] == "tell").unwrap()["port"].as_str().unwrap().to_string()
+    };
+    for (key, told) in [("conflict:untold", false), ("conflict:told", true)] {
+        let data = json!({"attemptId": "a1", "notice": "conflict", "key": key, "told": told, "sessionId": null});
+        env.state
+            .store
+            .add_ticket_event(
+                &ticket,
+                pdt_core::ticket::EventKind::Pr,
+                pdt_core::ticket::Actor::System,
+                None,
+                Some(data),
+                1,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(tell("conflict:untold").await, "sent", "nobody was told: it goes again");
+    assert_eq!(tell("conflict:told").await, "skipped", "told once is enough");
+}
+
 /// PDT-104: a pull request that was set to merge gets an agent on its failure (unless one is on it already), a CI pass
 /// with auto-merge off merges it again, and after 3 tries a comment instead.
 #[tokio::test]

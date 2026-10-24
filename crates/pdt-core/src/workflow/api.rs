@@ -319,6 +319,12 @@ pub struct Connection {
     pub created_at: i64,
     #[ts(type = "number")]
     pub updated_at: i64,
+    /// Why a sensor's last use of it failed (a revoked token, the service down); None once a use works again.
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub last_error_at: Option<i64>,
 }
 
 #[cfg(test)]

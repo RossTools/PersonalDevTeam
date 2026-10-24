@@ -481,6 +481,7 @@ export function AppShell() {
       case 'inbox': go({ view: 'inbox', itemId: t.id }); break;
       case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); break;
       case 'url': window.open(t.url, '_blank', 'noopener'); break;
+      case 'connections': go({ view: 'settings', page: { kind: 'connections' } }); break;
       case 'none': break;
     }
   }, [openSession, openTicket, openTicketByKey, setWorkflowTarget]);

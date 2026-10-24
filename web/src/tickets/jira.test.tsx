@@ -14,7 +14,7 @@ import { CiBadge } from './PullRequest';
 vi.mock('../files/CodeViewer', () => ({ CodeViewer: ({ text }: { text: string }) => <pre>{text}</pre> }));
 
 const project: Project = { id: 'p', name: 'Work', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'WRK', githubRepo: null, kind: 'repo' };
-const conn = (name: string, kind: string): Connection => ({ id: `c-${name}`, name, kind, url: '', config: {}, hasSecret: true, createdAt: 0, updatedAt: 0 });
+const conn = (name: string, kind: string): Connection => ({ id: `c-${name}`, name, kind, url: '', config: {}, hasSecret: true, createdAt: 0, updatedAt: 0, lastError: null, lastErrorAt: null });
 const config = { filePath: '/r/.pdt/project.toml', file: '', overrides: null, error: null, effective: { runs: [], tests: [] } };
 
 describe('Jira and Buildkite', () => {

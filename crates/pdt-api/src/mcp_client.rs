@@ -1,7 +1,9 @@
 //! PDT as an MCP client (Phase 7e spec §7.2): MCP servers configured as connections of kind `mcp`, whose tools
 //! workflows call (`mcp.tool`) and the catalog lists. One live client per server, started on first use and dropped
-//! after 5 minutes idle; each server's tool list cached in memory, refreshed when its connection is saved and every
-//! 10 minutes.
+//! after 5 minutes idle (never during a call); each server's tool list cached in memory, listed when pdtd starts and
+//! when its connection is saved, and again every 10 minutes while its client is live (an unused server is not started
+//! just to list it). A call that times out, or whose step gave up on it, marks the client broken: the next use starts
+//! the server again.
 //!
 //! A connection's `config.transport` is `stdio` (`command`, `args`, `env`, `cwd`; the secret, if any, in the env var
 //! `config.secretEnv`) or `http` (the connection's `url`, streamable HTTP; the secret as a bearer token).
@@ -67,6 +69,49 @@ struct Live {
     /// The connection's settings and secret it was started with; a change starts it again.
     fingerprint: String,
     last_used: Instant,
+    /// What calls on it share: how many are in flight, and whether one timed out or was given up on.
+    health: Arc<Health>,
+}
+
+#[derive(Default)]
+struct Health {
+    in_flight: std::sync::atomic::AtomicUsize,
+    broken: std::sync::atomic::AtomicBool,
+}
+
+impl Health {
+    fn is_broken(&self) -> bool {
+        self.broken.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn busy(&self) -> bool {
+        self.in_flight.load(std::sync::atomic::Ordering::SeqCst) > 0
+    }
+}
+
+/// One call in flight on a client. Dropped before [`InFlight::done`] (its step timed out, or pdtd gave up on it) it
+/// marks the client broken: the server may be wedged, and the call's late answer has no one to go to.
+struct InFlight {
+    health: Arc<Health>,
+    done: bool,
+}
+
+impl InFlight {
+    fn start(health: Arc<Health>) -> Self {
+        health.in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        InFlight { health, done: false }
+    }
+    fn done(mut self) {
+        self.done = true;
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        if !self.done {
+            self.health.broken.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.health.in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// The live clients and the tool cache.
@@ -227,8 +272,13 @@ fn broken(e: &ServiceError) -> bool {
 
 impl McpPool {
     /// A live client for the `mcp` connection called `name`, started if need be.
-    async fn peer(&self, st: &AppState, name: &str) -> Result<(String, Peer<RoleClient>), String> {
-        let (first, _) = crate::workflow::routes::connection_with_secret(st, name.trim()).await?;
+    async fn peer(&self, st: &AppState, name: &str) -> Result<(String, Peer<RoleClient>, Arc<Health>), String> {
+        let first = st
+            .store
+            .connection_by_name(name.trim())
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("no connection is called {}", name.trim()))?;
         // One start at a time per server (others are not held up), with its settings read again under the lock: a
         // caller that read them before a change (a listing begun before the secret was saved) then finds the newer
         // client instead of replacing it while it is in use.
@@ -243,9 +293,10 @@ impl McpPool {
         {
             let mut live = self.live.lock().await;
             if let Some(l) = live.get_mut(&conn.id) {
-                if l.fingerprint == fp && !l.service.is_closed() && !l.service.is_transport_closed() {
+                let usable = !l.health.is_broken() && !l.service.is_closed() && !l.service.is_transport_closed();
+                if l.fingerprint == fp && usable {
                     l.last_used = Instant::now();
-                    return Ok((conn.id, l.service.peer().clone()));
+                    return Ok((conn.id, l.service.peer().clone(), l.health.clone()));
                 }
                 if let Some(old) = live.remove(&conn.id) {
                     tokio::spawn(stop(old));
@@ -254,11 +305,18 @@ impl McpPool {
         }
         let service = connect(&conn, secret.as_deref()).await?;
         let peer = service.peer().clone();
+        let health = Arc::new(Health::default());
         let mut live = self.live.lock().await;
-        if let Some(old) = live.insert(conn.id.clone(), Live { service, fingerprint: fp, last_used: Instant::now() }) {
+        let new = Live { service, fingerprint: fp, last_used: Instant::now(), health: health.clone() };
+        if let Some(old) = live.insert(conn.id.clone(), new) {
             tokio::spawn(stop(old));
         }
-        Ok((conn.id, peer))
+        Ok((conn.id, peer, health))
+    }
+
+    /// Whether the server has a live client now.
+    async fn is_live(&self, id: &str) -> bool {
+        self.live.lock().await.get(id).is_some_and(|l| !l.health.is_broken() && !l.service.is_closed())
     }
 
     async fn forget(&self, id: &str) {
@@ -270,8 +328,11 @@ impl McpPool {
     /// Lists the server's tools now and caches them (on failure, the error, keeping the tools from before).
     pub async fn refresh(&self, st: &AppState, name: &str) -> McpTools {
         let listed = async {
-            let (id, peer) = self.peer(st, name).await?;
-            match tokio::time::timeout(CONNECT_TIMEOUT, peer.list_all_tools()).await {
+            let (id, peer, health) = self.peer(st, name).await?;
+            let call = InFlight::start(health);
+            let r = tokio::time::timeout(CONNECT_TIMEOUT, peer.list_all_tools()).await;
+            call.done();
+            match r {
                 Ok(Ok(tools)) => Ok(tools),
                 Ok(Err(e)) => {
                     if broken(&e) {
@@ -279,7 +340,10 @@ impl McpPool {
                     }
                     Err(format!("{name}: listing its tools failed: {e}"))
                 }
-                Err(_) => Err(format!("{name}: listing its tools took too long")),
+                Err(_) => {
+                    self.forget(&id).await;
+                    Err(format!("{name}: listing its tools took too long"))
+                }
             }
         }
         .await;
@@ -306,23 +370,36 @@ impl McpPool {
         entry.clone()
     }
 
-    /// Calls `tool` on the server called `name`; the result is MCP's `CallToolResult` as JSON.
+    /// Calls `tool` on the server called `name`, waiting at most `timeout`; the result is MCP's `CallToolResult` as
+    /// JSON. A call that times out (or is dropped unfinished) leaves the client broken, so the next use starts the
+    /// server again.
     pub async fn call(
         &self,
         st: &AppState,
         name: &str,
         tool: &str,
         arguments: Map<String, Value>,
+        timeout: Duration,
     ) -> Result<Value, String> {
-        let (id, peer) = self.peer(st, name).await?;
+        let (id, peer, health) = self.peer(st, name).await?;
         let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
-        match peer.call_tool(params).await {
-            Ok(r) => serde_json::to_value(r).map_err(|e| e.to_string()),
-            Err(e) => {
+        let call = InFlight::start(health);
+        let r = tokio::time::timeout(timeout, peer.call_tool(params)).await;
+        call.done();
+        match r {
+            Ok(Ok(r)) => serde_json::to_value(r).map_err(|e| e.to_string()),
+            Ok(Err(e)) => {
                 if broken(&e) {
                     self.forget(&id).await;
                 }
                 Err(format!("{name}: {tool}: {e}"))
+            }
+            Err(_) => {
+                self.forget(&id).await;
+                Err(format!(
+                    "{name}: {tool} did not answer in {} s; the server is started again on next use",
+                    timeout.as_secs()
+                ))
             }
         }
     }
@@ -344,13 +421,18 @@ impl McpPool {
         self.tools.lock().unwrap().retain(|n, _| names.contains(n));
     }
 
-    /// Stops servers unused for `idle`, and those whose connection is gone.
+    /// Stops servers unused for `idle` (none with a call in flight), broken ones, and those whose connection is gone.
     pub async fn reap(&self, idle: Duration, ids: &[String]) {
         self.starting.lock().unwrap().retain(|id, _| ids.contains(id));
         let mut live = self.live.lock().await;
         let gone: Vec<String> = live
             .iter()
-            .filter(|(id, l)| l.last_used.elapsed() >= idle || !ids.contains(id) || l.service.is_closed())
+            .filter(|(id, l)| {
+                (l.last_used.elapsed() >= idle && !l.health.busy())
+                    || !ids.contains(id)
+                    || l.service.is_closed()
+                    || (l.health.is_broken() && !l.health.busy())
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in gone {
@@ -383,8 +465,8 @@ async fn mcp_connections(st: &AppState) -> Vec<Connection> {
     }
 }
 
-/// Housekeeping (every minute): stops idle servers, forgets deleted ones, and lists again the tools of servers whose
-/// list is older than 10 minutes (in the background, one refresh at a time).
+/// Housekeeping (every minute): stops idle servers, forgets deleted ones, and lists the tools of servers never listed
+/// and, with a live client, of those whose list is older than 10 minutes (in the background, one refresh at a time).
 pub async fn maintain(st: &AppState) {
     let conns = mcp_connections(st).await;
     let ids: Vec<String> = conns.iter().map(|c| c.id.clone()).collect();
@@ -392,8 +474,16 @@ pub async fn maintain(st: &AppState) {
     st.mcp.reap(IDLE, &ids).await;
     st.mcp.keep_only(&names);
     let now = now_ms();
-    let due: Vec<String> =
-        names.into_iter().filter(|n| st.mcp.cached(n).is_none_or(|t| now - t.tried_at >= RELIST_MS)).collect();
+    let mut due: Vec<String> = vec![];
+    for c in &conns {
+        let stale = match st.mcp.cached(&c.name) {
+            None => true,
+            Some(t) => now - t.tried_at >= RELIST_MS && st.mcp.is_live(&c.id).await,
+        };
+        if stale {
+            due.push(c.name.clone());
+        }
+    }
     if due.is_empty() || st.mcp.refreshing.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
@@ -432,6 +522,8 @@ mod tests {
             has_secret: false,
             created_at: 0,
             updated_at: 0,
+            last_error: None,
+            last_error_at: None,
         }
     }
 
@@ -457,6 +549,17 @@ mod tests {
         assert_eq!(fingerprint(&a, Some("s")), fingerprint(&a, Some("s")));
         assert_ne!(fingerprint(&a, Some("s")), fingerprint(&a, Some("t")));
         assert_ne!(fingerprint(&a, None), fingerprint(&b, None));
+    }
+
+    #[test]
+    fn a_call_given_up_on_marks_the_client_broken() {
+        let h = Arc::new(Health::default());
+        let call = InFlight::start(h.clone());
+        assert!(h.busy(), "the reaper waits");
+        call.done();
+        assert!(!h.busy() && !h.is_broken());
+        drop(InFlight::start(h.clone()));
+        assert!(h.is_broken() && !h.busy(), "dropped unfinished: its step timed out");
     }
 
     #[test]
