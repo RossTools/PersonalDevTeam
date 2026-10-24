@@ -54,6 +54,12 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   (read-only `tailscale status` still runs for the checks); turning it off removes only the mappings that process
   made. `PDT_TAILSCALE_BIN` sets the tailscale CLI path (tests point it at `fake-tailscale` or a missing file so they
   never touch the real Tailscale); otherwise it is found on PATH or in the standard install location.
+- pdtd applies the setting once at startup, then the `remote` loop (`run_remote_watch`, pdt-api remote.rs; in
+  /api/health's `loops`) keeps it in step with Tailscale, which often comes up after pdtd at login (PDT-148). While
+  the setting is on but remote access is not active (Tailscale stopped or not logged in, the CLI timing out) it applies
+  the setting again after 30 s, doubling to at most 5 min; while active it asks `tailscale status` every 3 min and
+  applies again only when Tailscale stopped answering, HTTPS went off or the DNS name changed (the old name leaves the
+  allowlist). With the setting off it runs no tailscale command. `POST /api/host/remote/refresh` still applies at once.
 - Remote requests must carry the owner's Tailscale-User-Login (case-insensitive); tagged/Funnel/proxied requests
   without it get 403 `forbidden_identity`. The exception is `/api/hooks/*` (workflow webhooks, Phase 7e): any request but a
   Funnel one gets through, and the hook's secret authenticates it ([workflows.md](workflows.md) "Sensors and
@@ -72,6 +78,10 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   beside its exe; on macOS always the bundle's) when /api/health doesn't answer, then opens the UI (not when pdt-host
   started it after an update). On a first launch of the installed stable app on macOS it registers the LaunchAgent
   itself (`pdt-host install`, desktop/src-tauri/src/daemon.rs).
+- Start at login (PDT-148): the stable app registers itself to start at login (with `--no-open`, so a login opens no
+  browser window) at every start, unless the "Start at login" item was turned off (that leaves
+  `<data dir>/tray-login-off`). See "pdt-host at login". Not offered for dev, outside an app bundle on macOS, or from a
+  misplaced bundle.
 - Open (also left-click on Windows) opens `http://127.0.0.1:<port>/` in the default browser. Restart daemon posts
   /api/shutdown and pdt-host starts pdtd again. The version item shows pdtd's version. Quit exits only the tray;
   pdt-host and pdtd keep running.
@@ -125,6 +135,11 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   has gone is misplaced (PDT-51, pdt-host `placement.rs`): it is never registered at login, `installer_for` refuses it
   and pdt-host passes the reason to pdtd as `PDT_UPDATES_UNSUPPORTED` (updates then show as off with it); the tray says
   to move the app to Applications.
+- The tray app has its own login item (PDT-148, pdt-host `tray_login.rs`): a LaunchAgent
+  `~/Library/LaunchAgents/<TRAY_LABEL>.plist` running the bundle's tray exe with `--no-open` (RunAtLoad, no KeepAlive,
+  so Quit stays quit; only written, never bootstrapped: launchd reads it at the next login), or an HKCU Run value
+  `<TRAY_AUTOSTART_NAME>` (Windows). The tray writes it at startup and removes it when "Start at login" is turned off;
+  `pdt-host uninstall` removes it too.
 - pdt-host writes its program path to `<data dir>/pdt-host.program`; a tray whose bundle differs from the running
   pdt-host's offers "switch to this one" (asking at startup when the other copy is misplaced), which runs
   `pdt-host install --replace` (boots out and stops the other pdt-host, bootstraps this bundle's) and restarts pdtd.

@@ -186,6 +186,67 @@ fn ensure_registered_with(
     runner.status(cmd).unwrap_or(false)
 }
 
+/// The tray's own login item (PDT-148): the stable app, on macOS only from a bundle that can stay where it is.
+pub struct TrayLogin {
+    os: pdt_host::register::Os,
+    exe: PathBuf,
+    home: Option<PathBuf>,
+    data_dir: PathBuf,
+}
+
+impl TrayLogin {
+    fn target(&self) -> pdt_host::tray_login::Target<'_> {
+        pdt_host::tray_login::Target {
+            os: self.os,
+            exe: &self.exe,
+            home: self.home.as_deref(),
+            data_dir: &self.data_dir,
+        }
+    }
+
+    /// Registers the tray at login unless the user turned it off: whether it is registered.
+    pub fn ensure(&self) -> bool {
+        let mut runner = pdt_host::register::System;
+        match pdt_host::tray_login::ensure(&self.target(), &mut runner) {
+            Ok(on) => on,
+            Err(e) => {
+                eprintln!("could not start the tray at login: {e}");
+                pdt_host::tray_login::registered(&self.target(), &mut runner)
+            }
+        }
+    }
+
+    /// Turns starting at login on or off (the "Start at login" item).
+    pub fn set(&self, on: bool) -> Result<(), String> {
+        pdt_host::tray_login::set(&self.target(), on, &mut pdt_host::register::System)
+    }
+}
+
+pub fn tray_login(profile: Profile) -> Option<TrayLogin> {
+    let exe = std::env::current_exe().ok()?;
+    tray_login_with(pdt_host::register::Os::current(), profile, exe, std::env::home_dir(), data_dir(profile)?)
+}
+
+fn tray_login_with(
+    os: pdt_host::register::Os,
+    profile: Profile,
+    exe: PathBuf,
+    home: Option<PathBuf>,
+    data_dir: PathBuf,
+) -> Option<TrayLogin> {
+    use pdt_host::register::Os;
+    if profile != Profile::Stable || os == Os::Other {
+        return None;
+    }
+    if os == Os::Mac {
+        let dir = exe.parent()?;
+        if pdt_host::install::bundle_of(dir).is_none() || pdt_host::placement::bundle_problem(dir).is_some() {
+            return None;
+        }
+    }
+    Some(TrayLogin { os, exe, home, data_dir })
+}
+
 /// macOS: why this app cannot stay where it runs from (translocated, read-only folder; PDT-51), so it is never
 /// registered at login and cannot update.
 pub fn own_problem() -> Option<String> {
@@ -467,5 +528,20 @@ mod tests {
         assert_eq!(host_to_run(Os::Windows, Some(&data), Some(&app)), copy);
         assert_eq!(host_to_run(Os::Mac, Some(&data), Some(&app)), app.join(&file), "macOS runs the bundle's");
         assert_eq!(host_to_run(Os::Windows, None, None), PathBuf::from(&file), "else whatever is on PATH");
+    }
+
+    #[test]
+    fn only_the_stable_app_from_a_bundle_that_can_stay_starts_at_login() {
+        use pdt_host::register::Os;
+        let tmp = tempfile::tempdir().unwrap();
+        let macos = tmp.path().join("P.app").join("Contents").join("MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        let (exe, data) = (macos.join("tray"), tmp.path().join("data"));
+        let login = |os, profile, exe: &Path| tray_login_with(os, profile, exe.to_path_buf(), None, data.clone());
+        assert!(login(Os::Mac, Profile::Stable, &exe).is_some());
+        assert!(login(Os::Mac, Profile::Dev, &exe).is_none(), "a dev app never registers");
+        assert!(login(Os::Mac, Profile::Stable, &tmp.path().join("tray")).is_none(), "outside a bundle (cargo run)");
+        assert!(login(Os::Windows, Profile::Stable, &tmp.path().join("tray.exe")).is_some());
+        assert!(login(Os::Other, Profile::Stable, &exe).is_none());
     }
 }

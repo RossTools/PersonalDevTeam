@@ -12,6 +12,8 @@ use axum::extract::State;
 use pdt_tailscale::TsError;
 use serde::Serialize;
 use std::collections::BTreeSet;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 use ts_rs::TS;
 
 pub const HOST_HTTPS_PORT: u16 = 443;
@@ -210,10 +212,116 @@ async fn disable(st: &AppState, previous: RemoteStatus) -> RemoteStatus {
     RemoteStatus { enabled: false, error, tailscale_login: previous.tailscale_login, ..Default::default() }
 }
 
+/// How often [`run_remote_watch`] looks at remote access (PDT-148).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteWatch {
+    /// The first retry after remote access is enabled but not active; each failed retry doubles the wait, up to
+    /// `retry_max`.
+    pub retry_first: Duration,
+    pub retry_max: Duration,
+    /// How often active remote access is checked (one `tailscale status`), and how often the loop looks while the
+    /// setting is off (then it runs no tailscale command).
+    pub check_every: Duration,
+}
+
+impl Default for RemoteWatch {
+    fn default() -> Self {
+        Self {
+            retry_first: Duration::from_secs(30),
+            retry_max: Duration::from_secs(5 * 60),
+            check_every: Duration::from_secs(3 * 60),
+        }
+    }
+}
+
+impl RemoteWatch {
+    /// The wait before the next pass after `failures` passes in a row left remote access enabled but not active.
+    pub fn next_wait(&self, failures: u32) -> Duration {
+        match failures {
+            0 => self.check_every,
+            n => self.retry_first.saturating_mul(1 << (n - 1).min(16)).min(self.retry_max),
+        }
+    }
+}
+
+/// The remote-access watch's name among the background loops.
+const WATCH_LOOP: &str = "remote";
+
+/// Keeps remote access in step with Tailscale, until shutdown (PDT-148). While the setting is on but remote access
+/// is not active (Tailscale stopped or not logged in yet, a CLI timing out), it applies the setting again, backing
+/// off from [`RemoteWatch::retry_first`] to [`RemoteWatch::retry_max`]; while it is active, it asks `tailscale status`
+/// every [`RemoteWatch::check_every`] and applies again only when Tailscale stopped or its name changed. With the
+/// setting off it runs no tailscale command (ruling F1). pdtd starts it after the startup apply.
+pub async fn run_remote_watch(st: AppState) {
+    let timing = st.remote_watch;
+    let longest = timing.check_every.max(timing.retry_max);
+    let stale = pdt_core::liveness::stale_after(i64::try_from(longest.as_millis()).unwrap_or(i64::MAX));
+    st.loops.register(WATCH_LOOP, timing.check_every, Some(stale));
+    let mut failures = u32::from(not_active(&st));
+    loop {
+        tokio::time::sleep(timing.next_wait(failures)).await;
+        if st.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
+        let pass = st.clone();
+        let ended = crate::loops::contain(WATCH_LOOP, None, async move { watch_pass(&pass).await }).await;
+        st.loops.passed(WATCH_LOOP, crate::routes::now_ms(), ended == crate::loops::Ended::Panicked);
+        failures = if not_active(&st) { failures.saturating_add(1) } else { 0 };
+    }
+}
+
+/// The last apply left remote access enabled but not active.
+fn not_active(st: &AppState) -> bool {
+    let r = st.remote.lock().unwrap_or_else(|e| e.into_inner());
+    r.enabled && !r.active
+}
+
+/// One look: nothing with the setting off; a `tailscale status` while active, applying again only on a change;
+/// otherwise an apply.
+async fn watch_pass(st: &AppState) {
+    match st.store.get_host_settings().await {
+        Ok(s) if s.remote_access => {}
+        Ok(_) => return,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the host settings to check remote access");
+            return;
+        }
+    }
+    let current = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if current.active {
+        let seen = blocking(st, |t| t.status()).await;
+        match &seen {
+            Ok(s) if s.https_enabled && current.dns_name.as_deref() == Some(s.dns_name.as_str()) => return,
+            Ok(s) => tracing::info!(dns_name = %s.dns_name, "Tailscale changed; applying remote access again"),
+            Err(e) => tracing::info!(error = %e, "Tailscale stopped answering; applying remote access again"),
+        }
+    }
+    let r = apply_remote_access(st).await;
+    if r.active != current.active {
+        tracing::info!(active = r.active, url = ?r.url, error = ?r.error, "remote access changed");
+    } else if !r.active {
+        tracing::debug!(error = ?r.error, "remote access is still not active");
+    }
+}
+
 pub(crate) async fn get_remote(State(st): State<AppState>) -> Json<RemoteStatus> {
     Json(st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 pub(crate) async fn refresh(State(st): State<AppState>) -> Result<Json<RemoteStatus>, ApiError> {
     Ok(Json(apply_remote_access(&st).await))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retries_back_off_to_the_cap_and_active_access_is_checked_steadily() {
+        let w = RemoteWatch::default();
+        let secs = |n| w.next_wait(n).as_secs();
+        assert_eq!(secs(0), 180, "active (or off): one check every three minutes");
+        assert_eq!([secs(1), secs(2), secs(3), secs(4), secs(5)], [30, 60, 120, 240, 300]);
+        assert_eq!(secs(u32::MAX), 300, "never past the cap, never overflowing");
+    }
 }

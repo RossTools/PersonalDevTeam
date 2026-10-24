@@ -68,7 +68,7 @@ pub use jira::refresh_jira;
 pub use loops::poll_pass;
 pub use notifications::{Notifier, run_notifier, sync as sync_notifications};
 pub use overlap::refresh_overlaps;
-pub use remote::{RemoteStatus, apply_remote_access};
+pub use remote::{RemoteStatus, RemoteWatch, apply_remote_access, run_remote_watch};
 pub use routes::{AppState, Health, router};
 pub use run_manager::{log_path as run_log_path, resume_runs, sweep_gone_runs};
 pub use scheduler::{run_scheduler, schedule_tickets};

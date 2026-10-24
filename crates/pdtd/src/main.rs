@@ -152,6 +152,9 @@ async fn run() -> anyhow::Result<()> {
                 let st = startup;
                 let r = apply_remote_access(&st).await;
                 tracing::info!(enabled = r.enabled, active = r.active, error = ?r.error, "remote access applied");
+                // From here on remote access follows Tailscale: retried while it is not active (Tailscale often comes
+                // up after pdtd at login), checked while it is (PDT-148).
+                tokio::spawn(pdt_api::run_remote_watch(st.clone()));
                 let runs = resume_runs(&st).await;
                 if runs > 0 {
                     tracing::info!(runs, "resumed runs from the previous daemon");

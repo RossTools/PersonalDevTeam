@@ -4,6 +4,8 @@
 //! runs. On macOS it runs from the app bundle: a bundle can be swapped while its programs run, and a login item whose
 //! program is rewritten after every update looks like malware hiding in a persistence item (PDT-40, SentinelOne).
 //!
+//! The tray app's own login item is in [`crate::tray_login`]; uninstalling removes it too.
+//!
 //! Every command goes through a [`Runner`], so tests check the exact command lines without registering anything.
 
 use crate::config::HostConfig;
@@ -365,6 +367,10 @@ pub fn uninstall_with(cfg: &HostConfig, os: Os, home: Option<&Path>, runner: &mu
             let _ = runner.status(reg);
         }
         Os::Other => {}
+    }
+    // The tray's own login item goes too (PDT-148); it would only start an app that is gone.
+    if let Err(e) = crate::tray_login::unregister(os, home, runner) {
+        eprintln!("could not remove the tray's login item: {e}");
     }
     Ok(())
 }
@@ -788,16 +794,22 @@ mod tests {
         uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).unwrap();
         assert_eq!(
             r.ran,
-            [r"reg | delete | HKCU\Software\Microsoft\Windows\CurrentVersion\Run | /v | Personal Dev Team host | /f"]
+            [
+                r"reg | delete | HKCU\Software\Microsoft\Windows\CurrentVersion\Run | /v | Personal Dev Team host | /f",
+                r"reg | delete | HKCU\Software\Microsoft\Windows\CurrentVersion\Run | /v | Personal Dev Team | /f",
+            ],
+            "the tray's login item goes too"
         );
 
         let plist = launch_agent_path(&s.home);
+        let tray = crate::tray_login::launch_agent_path(&s.home);
         std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
         std::fs::write(&plist, "x").unwrap();
+        std::fs::write(&tray, "x").unwrap();
         let mut r = Recorder::default();
         uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut r).unwrap();
         assert_eq!(r.ran, ["id | -u", "launchctl | bootout | gui/501/dev.personaldevteam.host"]);
-        assert!(!plist.exists());
+        assert!(!plist.exists() && !tray.exists());
     }
 
     /// Answers health as ours, records each request line, and accepts a shutdown.
