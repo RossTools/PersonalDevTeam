@@ -96,6 +96,28 @@ describe('connections', () => {
     });
   });
 
+  it('sets up Scryer: its address, an API key, and whether the PM adds without asking', async () => {
+    const created = { ...conn('media', 'scryer', false), url: 'http://nas:8080' };
+    const calls = stubApi({
+      'GET /api/connections': [],
+      'POST /api/connections': created,
+      'PUT /api/connections/c-media/secret': { ...created, hasSecret: true },
+    });
+    renderWithQuery(<ConnectionsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Add scryer' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'media');
+    await userEvent.type(within(dialog).getByLabelText('Address'), 'http://nas:8080');
+    await userEvent.type(within(dialog).getByLabelText('API key'), 'ska_abc');
+    await userEvent.click(within(dialog).getByRole('switch', { name: /adds to this library without asking/ }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      name: 'media', kind: 'scryer', url: 'http://nas:8080', config: { pmActs: true },
+    });
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ secret: 'ska_abc' });
+  });
+
   it('keeps what PDT saved in a connection when it is edited', async () => {
     const made = { ...conn('briefs', 'discord_webhook'), config: { webhookId: '9', channel: 'ai-briefs' } };
     const calls = stubApi({ 'GET /api/connections': [made], 'PATCH /api/connections/c-briefs': made });

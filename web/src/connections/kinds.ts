@@ -32,6 +32,8 @@ export interface ConnectionKind {
   fields?: ConfigField[];
   /** Asks for a Discord server and its bot's application (a Discord bot). */
   discordBot?: boolean;
+  /** The PM acts through it: the switch that lets it act without asking (`config.pmActs`). */
+  pmActs?: string;
 }
 
 /** One setting of a connection kind. */
@@ -75,6 +77,7 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     secretLabel: 'Bot token',
     secretHint: 'Discord Developer Portal → your application → Bot → Reset Token → Copy.',
     discordBot: true,
+    pmActs: 'The PM changes this server without asking',
   },
   {
     id: 'webhook',
@@ -148,6 +151,19 @@ export const CONNECTION_KINDS: ConnectionKind[] = [
     secretLabel: 'API key',
     secretHint: 'In Sonarr: Settings → General → Security → API Key.',
     fields: arrFields('/tv'),
+  },
+  {
+    id: 'scryer',
+    label: 'Scryer',
+    plural: 'Scryer',
+    setup: 'A Scryer media manager (films, series and anime): the PM browses its library, looks titles up and adds them, and Search, Add, queue and library steps use it.',
+    description: 'Films, series and anime: library, search, add, what’s downloading (the PM and the Scryer actions).',
+    url: true,
+    urlPlaceholder: 'http://192.168.1.10:8080',
+    urlHint: 'Scryer’s address, with its base path if it has one (http://nas/scryer).',
+    secretLabel: 'API key',
+    secretHint: 'In Scryer: Settings → API keys → Create. It starts with ska_.',
+    pmActs: 'The PM adds to this library without asking',
   },
   {
     id: 'plex',

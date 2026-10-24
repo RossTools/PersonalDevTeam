@@ -363,6 +363,7 @@ pub fn catalog() -> &'static Catalog {
         kinds.push(Box::new(plex::Search));
         kinds.push(Box::new(plex::RecentlyAdded));
         kinds.push(Box::new(plex::Refresh));
+        kinds.extend(crate::scryer::kinds());
         kinds.push(Box::new(brief::Archive));
         kinds.push(Box::new(brief::Read));
         kinds.push(Box::new(mcp_tool::McpToolKind));
@@ -411,6 +412,7 @@ mod tests {
         assert_eq!(prop("plex.search", "connection")["x-connection-kind"], "plex");
         assert_eq!(prop("radarr.add", "connection")["x-connection-kind"], "radarr");
         assert_eq!(prop("sonarr.queue", "connection")["x-connection-kind"], "sonarr");
+        assert_eq!(prop("scryer.add", "connection")["x-connection-kind"], "scryer");
         assert_eq!(prop("mcp.tool", "server")["x-connection-kind"], "mcp");
         assert_eq!(prop("discord.channel.ensure", "connection")["x-connection-kind"], "discord_bot");
         assert_eq!(

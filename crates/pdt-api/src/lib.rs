@@ -36,6 +36,7 @@ mod run_manager;
 mod runconfig;
 mod runs;
 mod scheduler;
+mod scryer;
 pub mod secrets;
 mod sessions;
 mod slow;

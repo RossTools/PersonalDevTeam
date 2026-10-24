@@ -30,6 +30,7 @@ pub mod release;
 pub mod review;
 pub mod run;
 pub mod runconfig;
+pub mod scryer;
 pub mod session;
 pub mod start;
 pub mod ticket;

@@ -1,5 +1,5 @@
 //! Phase 7e's triggers and actions through the API: schedules, webhooks, GitHub issues, `command`, `http.request`,
-//! `discord.post` and `notify`, the Hermes templates, Radarr, Sonarr, Plex and the brief archive. External services are local fake servers and `FakeGithub`.
+//! `discord.post` and `notify`, the Hermes templates, Radarr, Sonarr, Plex, Scryer and the brief archive. External services are local fake servers and `FakeGithub`.
 
 mod common;
 
@@ -1077,6 +1077,9 @@ async fn media_dry_runs_call_nothing() {
         json!({"id": "a", "kind": "radarr.add", "version": 1, "config": {"connection": "films", "tmdbId": 693134}}),
         json!({"id": "a", "kind": "radarr.search", "version": 1, "config": {"connection": "films", "term": "x"}}),
         json!({"id": "a", "kind": "plex.refresh", "version": 1, "config": {"connection": "films"}}),
+        json!({"id": "a", "kind": "scryer.add", "version": 1,
+               "config": {"connection": "films", "facet": "movie", "tmdbId": 693134}}),
+        json!({"id": "a", "kind": "scryer.library", "version": 1, "config": {"connection": "films"}}),
     ] {
         let doc = manual_then(node);
         let (s, d) =
@@ -1086,6 +1089,106 @@ async fn media_dry_runs_call_nothing() {
         assert!(d["run"]["steps"][1]["output"]["would"].is_string(), "{d}");
     }
     assert!(seen.all().is_empty());
+}
+
+// ---- Scryer (PDT-147) ----
+
+#[tokio::test]
+async fn scryer_searches_adds_once_and_reads_its_queue_and_library() {
+    use common::scryer::{FakeScryer, KEY};
+    let (url, scryer) = FakeScryer::serve().await;
+    let env = setup().await;
+    connection(&env, "media", "scryer", &url, json!({}), Some(KEY)).await;
+
+    // A series search says which result the library has.
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "find", "kind": "scryer.search", "version": 1,
+            "config": {"connection": "media", "term": "{{trigger.term}}", "facet": "series"}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({"term": "severance"})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let results = &step(&r, "find")["output"]["results"];
+    assert_eq!((&results[0]["tvdbId"], &results[0]["tmdbId"]), (&json!("371980"), &json!(95396)));
+    assert_eq!((&results[0]["inLibrary"], &results[0]["titleId"]), (&json!(true), &json!("t1")));
+    assert_eq!(results[1]["inLibrary"], false);
+    let seen = scryer.seen.lock().unwrap().clone();
+    assert!(seen.iter().all(|(path, _, _, auth)| path == "/scryer/graphql" && *auth == format!("Bearer {KEY}")));
+
+    // A new film by its TMDB id: named by Scryer's metadata, put in the named library, monitored.
+    let add = |config: Value| manual_then(json!({"id": "add", "kind": "scryer.add", "version": 1, "config": config}));
+    let wf = create(
+        &env,
+        add(json!({"connection": "media", "facet": "movie", "tmdbId": "{{trigger.id}}", "library": "kids"})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({"id": 438631})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(step(&r, "add")["port"], "added");
+    assert_eq!(
+        (&step(&r, "add")["output"]["name"], &step(&r, "add")["output"]["library"]),
+        (&json!("Dune"), &json!("Kids"))
+    );
+    let input = scryer.title("Dune").unwrap()["input"].clone();
+    assert_eq!(
+        (&input["facet"], &input["libraryId"], &input["monitored"]),
+        (&json!("MOVIE"), &json!("L2"), &json!(true))
+    );
+    assert_eq!((&input["tmdbId"], &input["imdbId"], &input["smgId"]), (&json!(438631), &json!("tt1160419"), &json!(7)));
+    assert_eq!(input["options"], json!({"monitorType": "ALL_EPISODES"}));
+
+    // Again: it is there now, so `exists` and nothing added.
+    let r = run_now(&env, &wf, json!({"id": 438631})).await;
+    assert_eq!(step(&r, "add")["port"], "exists", "{r}");
+    assert_eq!(scryer.ops().iter().filter(|o| *o == "PdtAddTitle").count(), 1);
+
+    // An id Scryer doesn't know, or a library it doesn't have, fails; a missing id fails validation.
+    let r = run_now(&env, &wf, json!({"id": 1})).await;
+    assert!(r["error"].as_str().unwrap().contains("no metadata for that id"), "{r}");
+    let wf =
+        create(&env, add(json!({"connection": "media", "facet": "movie", "tmdbId": 693134, "library": "4K"}))).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("no movie library \"4K\" (libraries: Films, Kids)"), "{r}");
+    let doc = add(json!({"connection": "media", "facet": "series"}));
+    let (_, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+    assert!(v.to_string().contains("tvdbId, tmdbId or imdbId"), "{v}");
+
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "q", "kind": "scryer.queue", "version": 1, "config": {"connection": "media"}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({})).await;
+    let out = &step(&r, "q")["output"];
+    assert_eq!(
+        (&out["total"], &out["items"][0]["status"], &out["items"][0]["secondsLeft"]),
+        (&json!(3), &json!("downloading"), &json!(600))
+    );
+    assert_eq!(
+        (&out["items"][1]["status"], &out["items"][1]["attention"]),
+        (&json!("importBlocked"), &json!("no matching file"))
+    );
+
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "lib", "kind": "scryer.library", "version": 1,
+            "config": {"connection": "media", "facet": "movie", "monitored": true}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({})).await;
+    let out = &step(&r, "lib")["output"];
+    assert_eq!((&out["total"], &out["titles"][0]["name"], &out["hasMore"]), (&json!(1), &json!("Dune"), &json!(false)));
+
+    // A wrong key says so.
+    connection(&env, "bad", "scryer", &url, json!({}), Some("ska_wrong")).await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "q", "kind": "scryer.queue", "version": 1, "config": {"connection": "bad"}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("(the API key is wrong)"), "{r}");
 }
 
 // ---- brief archive (7e-3) ----

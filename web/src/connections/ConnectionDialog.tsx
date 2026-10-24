@@ -49,7 +49,8 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
     mutationFn: async () => {
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
-        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), pmActs } : fieldsConfig(k?.fields ?? [], settings);
+        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim() } : fieldsConfig(k?.fields ?? [], settings);
+      if (k?.pmActs) own.pmActs = pmActs;
       // Keeps what PDT put there (a webhook the PM made records its channel), but not a setting the form left empty.
       const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
       const config = { ...kept, ...own };
@@ -133,9 +134,9 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
                 <div className="text-xs text-muted-foreground">Open it, pick the server, and keep the permissions it asks for.</div>
               </Alert>
             )}
-            <Switch checked={pmActs} onChange={setPmActs}>The PM changes this server without asking</Switch>
           </>
         )}
+        {k?.pmActs && <Switch checked={pmActs} onChange={setPmActs}>{k.pmActs}</Switch>}
         {k?.auth && (
           <Field label="Send it as">
             <Select className="w-full" aria-label="Send it as" options={AUTH_MODES} value={auth} onChange={setAuth} />

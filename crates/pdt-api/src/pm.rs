@@ -250,10 +250,10 @@ pub(crate) async fn request_opened(
 
 /// Whether the project an asking tool's call acts on lets the PM act without asking.
 pub(crate) async fn acts_without_asking(st: &AppState, target: &AskTarget) -> bool {
-    if let AskTarget::Connection(name) = target {
-        return crate::discord::bot_connection(st, name.as_deref())
+    if let AskTarget::Connection { kind, name } = target {
+        return crate::workflow::routes::connection_of_kind(st, kind, name.as_deref())
             .await
-            .is_ok_and(|c| pdt_core::discord::bot_config(&c.config).is_ok_and(|c| c.pm_acts));
+            .is_ok_and(|c| pm::connection_lets_pm_act(&c.config));
     }
     let project = match target {
         AskTarget::Project(p) => project_id(st, p).await.ok(),
@@ -262,7 +262,7 @@ pub(crate) async fn acts_without_asking(st: &AppState, target: &AskTarget) -> bo
             Err(_) => None,
         },
         AskTarget::Session(s) => st.store.get_session(s).await.ok().flatten().map(|s| s.project_id),
-        AskTarget::Connection(_) => None,
+        AskTarget::Connection { .. } => None,
     };
     let Some(project) = project else { return false };
     st.store.get_project_settings(&project).await.is_ok_and(|s| s.policy.pm_acts)

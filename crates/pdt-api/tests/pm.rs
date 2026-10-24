@@ -1,6 +1,7 @@
 //! PDT-81 end to end: the PM's sessions in the host project, its tools, asking before acting (and the project policy
-//! that lets it act), notes, the journal, the briefing and rotation, with `fake-agent` standing in for Claude (it calls
-//! pdt-mcp tools when a message says `mcp: <tool> <json>`, asking first for tools `--allowedTools` leaves out).
+//! that lets it act), Discord and Scryer, notes, the journal, the briefing and rotation, with `fake-agent` standing in
+//! for Claude (it calls pdt-mcp tools when a message says `mcp: <tool> <json>`, asking first for tools
+//! `--allowedTools` leaves out).
 
 mod common;
 
@@ -752,6 +753,67 @@ async fn the_pm_sets_up_a_discord_channel_and_webhook_that_a_workflow_posts_to()
         "{said}"
     );
     assert!(discord.channel("notes").is_some() && discord.channel("later").is_none());
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+// ---- Scryer (PDT-147) ----
+
+#[tokio::test]
+async fn the_pm_browses_scryer_and_adds_a_title_after_a_yes() {
+    use common::scryer::{FakeScryer, KEY};
+    let env = setup(None).await;
+    let (base, scryer) = FakeScryer::serve().await;
+    let (s, c) = call(
+        &env.app,
+        "POST",
+        "/api/connections",
+        Some(json!({"name": "media", "kind": "scryer", "url": base, "config": {}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{c}");
+    let conn_id = c["id"].as_str().unwrap().to_string();
+    call(&env.app, "PUT", &format!("/api/connections/{conn_id}/secret"), Some(json!({"secret": KEY}))).await;
+
+    let id = start_pm(&env, "hi").await;
+    wait_said(&env, &id, 1).await;
+    assert!(instructions(&env, &id).contains("`scryer_add`"));
+
+    // Browsing, searching and the queue need no yes.
+    let said = ask(&env, &id, r#"mcp: scryer_library {"facet": "series"}"#).await;
+    assert!(said.contains("\"name\": \"Severance\"") && said.contains("\"episodesOwned\": 9"), "{said}");
+    let said = ask(&env, &id, r#"mcp: scryer_search {"term": "dune"}"#).await;
+    assert!(said.contains("\"tmdbId\": 438631") && said.contains("\"inLibrary\": false"), "{said}");
+    let said = ask(&env, &id, "mcp: scryer_queue {}").await;
+    assert!(said.contains("\"status\": \"downloading\""), "{said}");
+
+    // Adding asks first, and the user sees what is added.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: scryer_add {"facet": "movie", "tmdbId": 438631, "name": "Dune"}"#).await;
+    let req = open_request(&env, &id).await;
+    let title = events(&env, &id)
+        .await
+        .iter()
+        .find(|e| e["event"]["kind"] == "request")
+        .map(|e| e["event"]["title"].as_str().unwrap_or_default().to_string())
+        .unwrap();
+    assert_eq!(title, "Scryer: add the movie Dune (tmdb 438631), monitored");
+    assert!(scryer.title("Dune").is_none(), "nothing before the yes");
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(said.contains("\"added\": true"), "{said}");
+    assert!(!said.contains(KEY), "the API key never reaches the agent: {said}");
+    assert_eq!(scryer.title("Dune").unwrap()["monitored"], true);
+
+    // A connection that lets the PM act: PDT says yes for the user; a title already there is left alone.
+    let (s, v) =
+        call(&env.app, "PATCH", &format!("/api/connections/{conn_id}"), Some(json!({"config": {"pmActs": true}})))
+            .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let said =
+        ask(&env, &id, r#"mcp: scryer_add {"connection": "media", "facet": "series", "tvdbId": "371980"}"#).await;
+    assert!(said.contains("\"alreadyInLibrary\": true"), "{said}");
+    assert_eq!(scryer.ops().iter().filter(|o| *o == "PdtAddTitle").count(), 1);
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
