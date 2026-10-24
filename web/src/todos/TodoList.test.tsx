@@ -393,6 +393,18 @@ describe('TodoList with due dates', () => {
       await waitFor(() => expect(sent('POST', '/api/todos')).toEqual([{ title: 'Call Sam tomorrow soon', dueOn: '2026-10-26' }]));
     });
 
+    it('puts the cursor in the text from a click on the + circle', async () => {
+      stubDated();
+      show(null);
+      await screen.findByText('Todo late');
+      expect(box()).not.toHaveFocus();
+      // The line the input sits on: the + circle is its first child.
+      await userEvent.click(box().parentElement!.parentElement!.querySelector('svg')!);
+      expect(box()).toHaveFocus();
+      await userEvent.keyboard('Pay rent');
+      expect(box()).toHaveValue('Pay rent');
+    });
+
     it('sets a date with the Date tag', async () => {
       stubDated();
       show(null);

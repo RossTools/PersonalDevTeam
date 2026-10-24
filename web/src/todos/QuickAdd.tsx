@@ -111,7 +111,15 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
         expanded ? 'border-primary ring-3 ring-ring/40' : 'border-border',
       )}
     >
-      <div className="flex min-h-9.5 items-center gap-2.5 px-3">
+      {/* A click anywhere on the line (the + circle too) puts the cursor in the text. */}
+      <div
+        onMouseDown={(e) => {
+          if (e.target === input.current) return;
+          e.preventDefault();
+          input.current?.focus();
+        }}
+        className="flex min-h-9.5 cursor-text items-center gap-2.5 px-3"
+      >
         {expanded ? (
           <span aria-hidden className="size-4.5 shrink-0 rounded-full border-[1.5px] border-muted-foreground" />
         ) : (
