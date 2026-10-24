@@ -267,8 +267,17 @@ pub enum AskTarget {
     /// A ticket id or key.
     Ticket(String),
     Session(String),
-    /// A `discord_bot` connection's name (None: the only one).
-    Connection(Option<String>),
+    /// A connection of `kind` (`discord_bot`, `scryer`) by name (None: the only one of its kind), whose
+    /// `config.pmActs` says whether the PM acts without asking.
+    Connection {
+        kind: &'static str,
+        name: Option<String>,
+    },
+}
+
+/// Whether a connection the PM acts through (a Discord bot, a Scryer) lets it act without asking (`config.pmActs`).
+pub fn connection_lets_pm_act(config: &Value) -> bool {
+    config.get("pmActs").and_then(Value::as_bool) == Some(true)
 }
 
 /// The target of an asking tool's input, from its arguments (Claude's tool name `mcp__pdt__<tool>` or the bare name).
@@ -279,7 +288,13 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
         "create_ticket" => field("project").map(|p| AskTarget::Project(p.into())),
         "edit_ticket" | "link_tickets" | "unlink_tickets" => field("ticket").map(|t| AskTarget::Ticket(t.into())),
         "send_to_session" => field("session").map(|s| AskTarget::Session(s.into())),
-        "discord_change" | "discord_webhook" => Some(AskTarget::Connection(field("connection").map(String::from))),
+        "discord_change" | "discord_webhook" => Some(AskTarget::Connection {
+            kind: crate::discord::DISCORD_BOT,
+            name: field("connection").map(String::from),
+        }),
+        "scryer_add" => {
+            Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
+        }
         _ => None,
     }
 }
@@ -583,7 +598,7 @@ pub fn instructions(ctx: &PmContext) -> String {
     if !asking.is_empty() {
         out.push_str(&format!(
             "- These act for the user, so each call waits for their yes (they see the call and its arguments) unless \
-             the project (for Discord, the bot connection) lets you act without asking: {asking}. A refusal is an \
+             the project (for Discord and Scryer, the connection) lets you act without asking: {asking}. A refusal is an \
              answer: don't retry it unchanged.\n"
         ));
     }
@@ -650,9 +665,16 @@ mod tests {
         assert_eq!(t("create_ticket", json!({})), None);
         assert_eq!(
             t("discord_change", json!({"connection": "home"})),
-            Some(AskTarget::Connection(Some("home".into())))
+            Some(AskTarget::Connection { kind: "discord_bot", name: Some("home".into()) })
         );
-        assert_eq!(t("mcp__pdt__discord_webhook", json!({})), Some(AskTarget::Connection(None)));
+        assert_eq!(
+            t("mcp__pdt__discord_webhook", json!({})),
+            Some(AskTarget::Connection { kind: "discord_bot", name: None })
+        );
+        assert_eq!(
+            t("mcp__pdt__scryer_add", json!({"connection": "media"})),
+            Some(AskTarget::Connection { kind: "scryer", name: Some("media".into()) })
+        );
         assert_eq!(t("get_ticket", json!({"ticket": "PDT-4"})), None);
     }
 

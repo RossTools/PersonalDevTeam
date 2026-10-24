@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 29] = [
+pub const ALL_TOOLS: [&str; 33] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -42,12 +42,16 @@ pub const ALL_TOOLS: [&str; 29] = [
     "discord_get",
     "discord_change",
     "discord_webhook",
+    "scryer_library",
+    "scryer_search",
+    "scryer_queue",
+    "scryer_add",
 ];
 
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
-/// card) unless the project's policy (for Discord, the bot connection) lets the PM act, so they are never in Claude's
+/// card) unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so they are never in Claude's
 /// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 7] = [
+pub const ASKING_TOOLS: [&str; 8] = [
     "create_ticket",
     "edit_ticket",
     "link_tickets",
@@ -55,10 +59,11 @@ pub const ASKING_TOOLS: [&str; 7] = [
     "send_to_session",
     "discord_change",
     "discord_webhook",
+    "scryer_add",
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 27] = [
+pub const PM_TOOLS: [&str; 31] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -86,10 +91,14 @@ pub const PM_TOOLS: [&str; 27] = [
     "discord_get",
     "discord_change",
     "discord_webhook",
+    "scryer_library",
+    "scryer_search",
+    "scryer_queue",
+    "scryer_add",
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 29] = [
+const TOOL_DOES: [(&str, &str); 33] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
@@ -119,6 +128,10 @@ const TOOL_DOES: [(&str, &str); 29] = [
     ("discord_get", "Look at the Discord server: its channels and webhooks"),
     ("discord_change", "Create, rename, move or archive Discord channels"),
     ("discord_webhook", "Make a Discord webhook for discord.post steps"),
+    ("scryer_library", "Browse the Scryer media library"),
+    ("scryer_search", "Look up films, series and anime to add to Scryer"),
+    ("scryer_queue", "See what Scryer is downloading"),
+    ("scryer_add", "Add a film, series or anime to Scryer"),
 ];
 
 /// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).
@@ -575,7 +588,11 @@ done) when planning or asked what is on their plate. You can't change it: sugges
 - Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` creates, renames, \
 moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it as a \
 `discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \
-user's yes unless the bot connection lets you act; say what you will change first.
+user's yes unless the bot connection lets you act; say what you will change first.\n\
+- Media (Scryer): `scryer_library` browses the user's library (films, series, anime; search, monitored or not), \
+`scryer_queue` shows what is downloading, and `scryer_search` looks titles up to add, each saying whether it is in the \
+library already. `scryer_add` adds one by the ids the search gave (monitored unless told otherwise; Scryer then finds \
+it); it waits for the user's yes unless the Scryer connection lets you act.
 - In a workflow step, finish with `submit_outcome` and one of the step's outcomes.\n\
 - Be brief: short answers, lists over prose.\n";
 

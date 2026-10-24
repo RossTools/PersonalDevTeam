@@ -775,6 +775,33 @@ async fn mcp_connection(st: &AppState, id: &str) -> Result<Connection, ApiError>
     Ok(c)
 }
 
+/// The connection of `kind` that `name` means: that one, or the only one of its kind there is (the PM's tools).
+pub(crate) async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&str>) -> Result<Connection, String> {
+    let label = match kind {
+        pdt_core::discord::DISCORD_BOT => "Discord bot",
+        pdt_core::scryer::SCRYER => "Scryer",
+        other => other,
+    };
+    let all: Vec<Connection> =
+        st.store.list_connections().await.map_err(|e| e.to_string())?.into_iter().filter(|c| c.kind == kind).collect();
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => {
+            let c = all.into_iter().find(|c| c.name.eq_ignore_ascii_case(n));
+            c.ok_or_else(|| format!("no {label} connection is called {n}"))
+        }
+        None => match <[Connection; 1]>::try_from(all) {
+            Ok([one]) => Ok(one),
+            Err(all) if all.is_empty() => {
+                Err(format!("there is no {label} connection: the user adds one in Settings → Connections"))
+            }
+            Err(all) => Err(format!(
+                "there are several {label} connections; name one (`connection`): {}",
+                all.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+            )),
+        },
+    }
+}
+
 /// A connection and its secret by name, for node kinds that call external services (7e).
 pub(crate) async fn connection_with_secret(st: &AppState, name: &str) -> Result<(Connection, Option<String>), String> {
     let c = st

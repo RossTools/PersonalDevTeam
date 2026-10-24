@@ -6,9 +6,12 @@ use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::Category;
 use axum::Json;
 use axum::extract::State;
+use pdt_core::discord::DISCORD_BOT;
 use pdt_core::inbox::Question;
 use pdt_core::mcp::{ToolInfo, input_schema};
+use pdt_core::pm::AskTarget;
 use pdt_core::review::{CommentSide, NewReviewComment};
+use pdt_core::scryer::SCRYER;
 use pdt_core::session::Session;
 use pdt_core::ticket::{Actor, valid_comment};
 use pdt_core::workflow::agent::OutcomeComment;
@@ -318,7 +321,7 @@ struct Def {
 }
 
 /// Tools that change nothing.
-const READ_ONLY: [&str; 13] = [
+const READ_ONLY: [&str; 16] = [
     "get_ticket",
     "catalog_search",
     "catalog_get",
@@ -332,6 +335,9 @@ const READ_ONLY: [&str; 13] = [
     "search_notes",
     "list_todos",
     "discord_get",
+    "scryer_library",
+    "scryer_search",
+    "scryer_queue",
 ];
 
 fn schema<T: JsonSchema>() -> Value {
@@ -550,6 +556,38 @@ fn defs() -> Vec<Def> {
                           The user confirms each call unless the bot connection lets you act.",
             schema: schema::<crate::discord::DiscordWebhookArgs>,
         },
+        Def {
+            name: "scryer_library",
+            title: "Browse the Scryer library",
+            description: "Titles in the user's Scryer media library: films, series and anime, by facet, words in the \
+                          title and whether they are monitored, a page at a time (limit, offset), with each one's \
+                          library, status and episodes on disk.",
+            schema: crate::scryer::tool_schema::<crate::scryer::ScryerLibraryConfig>,
+        },
+        Def {
+            name: "scryer_search",
+            title: "Look up titles to add to Scryer",
+            description: "Searches Scryer's metadata for films, series and anime by title (one facet, or all): each \
+                          result's ids (tvdbId, tmdbId, imdbId) for scryer_add, and whether it is in the library \
+                          already.",
+            schema: crate::scryer::tool_schema::<crate::scryer::ScryerSearchConfig>,
+        },
+        Def {
+            name: "scryer_queue",
+            title: "See Scryer's downloads",
+            description: "What Scryer is downloading: each item's title, progress, status, time left and client, \
+                          and why one needs the user.",
+            schema: crate::scryer::tool_schema::<crate::scryer::ScryerQueueConfig>,
+        },
+        Def {
+            name: "scryer_add",
+            title: "Add to Scryer",
+            description: "Adds a film, series or anime to the user's Scryer library by the ids scryer_search gave \
+                          (facet and at least one id; give name too so the user sees it), monitored unless told, so \
+                          Scryer finds and downloads it. A title already in the library is left as it is. The user \
+                          confirms each call unless the Scryer connection lets you act.",
+            schema: crate::scryer::tool_schema::<crate::scryer::ScryerAddConfig>,
+        },
     ]
 }
 
@@ -563,7 +601,7 @@ pub(crate) fn infos() -> Vec<ToolInfo> {
             input_schema: (d.schema)(),
             annotations: json!({"title": d.title, "readOnlyHint": READ_ONLY.contains(&d.name),
                                 "destructiveHint": d.name == "delete_note",
-                                "openWorldHint": d.name.starts_with("discord_")}),
+                                "openWorldHint": d.name.starts_with("discord_") || d.name.starts_with("scryer_")}),
         })
         .collect()
 }
@@ -1029,13 +1067,23 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "discord_get" => crate::discord::get(st, args(a)?).await,
         "discord_change" => {
             let a: crate::discord::DiscordChange = args(a)?;
-            confirmable(cx, name, &pdt_core::pm::AskTarget::Connection(a.connection.clone())).await?;
+            let target = AskTarget::Connection { kind: DISCORD_BOT, name: a.connection.clone() };
+            confirmable(cx, name, &target).await?;
             crate::discord::change(st, a).await
         }
         "discord_webhook" => {
             let a: crate::discord::DiscordWebhookArgs = args(a)?;
-            confirmable(cx, name, &pdt_core::pm::AskTarget::Connection(a.connection.clone())).await?;
+            let target = AskTarget::Connection { kind: DISCORD_BOT, name: a.connection.clone() };
+            confirmable(cx, name, &target).await?;
             crate::discord::webhook_tool(st, a).await
+        }
+        "scryer_library" => crate::scryer::library_tool(st, a).await,
+        "scryer_search" => crate::scryer::search_tool(st, a).await,
+        "scryer_queue" => crate::scryer::queue_tool(st, a).await,
+        "scryer_add" => {
+            let given = a.get("connection").and_then(Value::as_str).map(String::from);
+            confirmable(cx, name, &AskTarget::Connection { kind: SCRYER, name: given }).await?;
+            crate::scryer::add_tool(st, a).await
         }
         other => Err(format!("no tool is called {other}")),
     }
@@ -1053,7 +1101,7 @@ async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) 
     }
     Err(format!(
         "{tool} needs the user's yes, and PDT can only ask for it in a Claude session. Tell the user what you would \
-         do so they can do it, or ask them to let the PM act (the project's settings, or the Discord bot connection's)."
+         do so they can do it, or ask them to let the PM act (the project's settings, or the Discord bot's or Scryer's connection)."
     ))
 }
 

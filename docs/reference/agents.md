@@ -111,12 +111,21 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   called `name` that `discord.post` uses; the URL goes to the keychain and never into the result; a taken name is
   refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
   line per change (pdt-core `discord::ask_title`).
+- **Scryer** (PDT-147; pdt-api `scryer.rs`, pdt-core `scryer.rs`). Through a `scryer` connection (`connection`: its
+  name, or the only one), the same calls as the `scryer.*` nodes ([workflows.md](workflows.md)), each tool's schema
+  its node's config with `connection` optional: `scryer_library` (the library a page at a time: facet, words in the
+  title, monitored), `scryer_search` (metadata by title, each result's ids and whether the library has it),
+  `scryer_queue` (what is downloading), and the asking tool `scryer_add` (a title by facet and ids, monitored by
+  default; one already in the library is left as it is and the result says `alreadyInLibrary`). The approval card's
+  title is pdt-core `scryer::ask_title` ("Scryer: add the movie Dune (tmdb 438631), monitored"). The API key never
+  reaches the agent.
 - **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
   Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s, `link_tickets`' and `unlink_tickets`' ticket,
   `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
   project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`); for the Discord tools the
-  setting is the bot connection's `config.pmActs` (a Discord server is in no project). Codex and Devin can't ask per
-  tool, so there the asking tools are refused unless the project (or the bot connection) lets the PM act.
+  setting is the bot connection's `config.pmActs` (a Discord server is in no project), and for `scryer_add` the
+  Scryer connection's (`AskTarget::Connection` with the connection's kind). Codex and Devin can't ask per tool, so
+  there the asking tools are refused unless the project (or the connection) lets the PM act.
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
   may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest

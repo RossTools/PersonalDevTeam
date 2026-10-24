@@ -1,6 +1,6 @@
 // Settings → Connections (Phase 7e): the services workflows use by name, a section per kind (a Discord channel's
 // webhook, a bot that lets the PM manage a Discord server, an incoming webhook and its secret, an HTTP service and its
-// token, Radarr, Sonarr, Plex, MCP servers and their tools). Secrets stay in the OS keychain.
+// token, Radarr, Sonarr, Plex, Scryer, MCP servers and their tools). Secrets stay in the OS keychain.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Page, Section, Skeleton, relativeTime, useConfirm } from '@ui';
@@ -37,7 +37,7 @@ function Row({ c, onEdit, onDelete }: { c: Connection; onEdit: () => void; onDel
       {c.kind === 'webhook' && <code className="min-w-0 truncate text-xs text-muted-foreground">{hookUrl(c.name)}</code>}
       {c.kind === 'discord_webhook' && typeof c.config.channel === 'string' && <span className="text-xs text-muted-foreground">#{c.config.channel}</span>}
       {c.kind === 'discord_bot' && typeof c.config.guildId === 'string' && <span className="text-xs text-muted-foreground">Server {c.config.guildId}</span>}
-      {c.kind === 'discord_bot' && c.config.pmActs === true && <Badge>PM acts without asking</Badge>}
+      {(c.kind === 'discord_bot' || c.kind === 'scryer') && c.config.pmActs === true && <Badge>PM acts without asking</Badge>}
       {c.url && c.kind !== 'discord_bot' && <span className="min-w-0 truncate text-xs text-muted-foreground">{c.url}</span>}
       <span className="flex-1" />
       <Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>

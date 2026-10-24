@@ -143,6 +143,8 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `radarr.search` / `sonarr.search` (`connection`, `term`, `limit`) | `out` |
 | `radarr.add` (`connection`, `tmdbId`, `qualityProfile`, `rootFolder`, `search`, `minimumAvailability`) / `sonarr.add` (`connection`, `tvdbId`, `qualityProfile`, `rootFolder`, `monitor`, `search`) | `added`, `exists` |
 | `radarr.queue` / `sonarr.queue` (`connection`) | `out` |
+| `scryer.search` (`connection`, `term`, `facet`, `limit`), `scryer.queue` (`connection`, `limit`), `scryer.library` (`connection`, `facet`, `query`, `monitored`, `limit`, `offset`) | `out` |
+| `scryer.add` (`connection`, `facet`, `tvdbId`, `tmdbId`, `imdbId`, `name`, `library`, `monitored`, `monitor`) | `added`, `exists` |
 | `plex.search` (`connection`, `query`, `limit`), `plex.recently_added` (`connection`, `section`, `limit`), `plex.refresh` (`connection`, `section`) | `out` |
 | `mcp.tool` (`server`: an `mcp` connection, `tool`, `arguments`) | `out` |
 | `brief.archive` (`brief`, `title`, `body`, `items [{title, link, note}]`, `date`), `brief.read` (`brief`, `since`, `last`) | `out` |
@@ -190,6 +192,22 @@ notify itself forever.
   `monitor` (default `all`), `seasonFolder` and `searchForMissingEpisodes` (`search`, default true), and posts it:
   `added`, the film or series as output. Queue: `{items [{title (film and year, or series and SxxEyy), release,
   progress (percent), eta, timeLeft, status}]}`.
+- **Scryer** (PDT-147; pdt-api `scryer.rs`, pdt-core `scryer.rs`; connection `url` Scryer's address with its base
+  path, secret an API key (`ska_…`), sent as a bearer token in a POST to `<url>/graphql`; GraphQL `errors` fail the
+  step, a 401 says the key is wrong). `facet` is `movie`, `series` or `anime`. Search: `searchMetadata` for one facet,
+  else `searchMetadataMulti` (10 per facet by default): `{results [{facet, name, year, tvdbId, tmdbId, imdbId,
+  inLibrary, titleId, overview}]}`, `inLibrary` from `titlesByExternalIds` (same facet, a shared id). Add: by at least
+  one id; a title of that facet sharing an id takes `exists`; else `metadataMovie` / `metadataSeries` names it and
+  fills in its other ids, `library` (a name, slug or id among `libraries(facet)`; Scryer's default when left out)
+  is resolved first, and `addTitle` adds it as Scryer's own web does (`monitored` default true; `monitorType`
+  `ALL_EPISODES` when monitored, else `NONE`, or a series' `monitor`: `all`, `future`, `missingAndFuture`, `none`;
+  season folders for series and anime; anime without specials, with inter-season films; a series' TMDB id kinded
+  `series`): `added`, the title as output (`{titleId, facet, name, year, monitored, library, status, episodesOwned,
+  episodesTotal, sizeBytes}`). Scryer then searches for a monitored title itself. Queue: `downloadQueuePage` (50 by
+  default): `{items [{title, progress, status (`downloading`, `importPending`, …), secondsLeft, client, attention}],
+  total}`. Library: `titles` (50 a page by default, at most 300): `{titles, total, hasMore}`.
+  Every operation is checked against Scryer's published schema, vendored in
+  `crates/pdt-api/tests/fixtures/scryer-schema.graphql` (a unit test with apollo-compiler).
 - **Plex** (`plex.rs`; `url` the server, secret the `X-Plex-Token`, JSON asked for). Search: `/hub/search`, the hubs'
   items flattened: `{items [{title, type, year, ratingKey, section, show, addedAt}]}`. Recently added:
   `/library/sections/<key>/recentlyAdded` (or `/library/recentlyAdded`), `limit` default 20. Refresh:
@@ -390,10 +408,11 @@ on save, `applicationId` for the invite link, `pmActs`; `url` empty means Discor
 `webhook` (secret: the shared secret), `http` (`url`, `config.auth` and its field; secret: the token or password),
 `jira` (`url` the site `https://<site>.atlassian.net`, `config.email`; secret: an API token), `buildkite` (`url`
 empty for Buildkite's own API, `config.org`; secret: an API token with read builds, and write builds to retry or start
-them), `radarr` and `sonarr` (`url`, `config.qualityProfile`, `config.rootFolder`; secret: the API key), `plex` (`url`;
+them), `radarr` and `sonarr` (`url`, `config.qualityProfile`, `config.rootFolder`; secret: the API key), `scryer`
+(`url`, `config.pmActs`; secret: an API key), `plex` (`url`;
 secret: the token) and `mcp` ("MCP tools as actions"; `GET/POST /api/connections/{id}/tools`, `409 not_mcp` for
 another kind). A config field holding a connection's name says its kind in its schema (`x-connection-kind`:
-`discord_webhook`, `discord_bot`, `webhook`, `jira`, `buildkite`, `radarr`, `sonarr`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+`discord_webhook`, `discord_bot`, `webhook`, `jira`, `buildkite`, `radarr`, `sonarr`, `scryer`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned). A connection carries `lastError` and `lastErrorAt` while a sensor cannot use it
 ("Sensors and webhooks"); saving it (or its secret) clears them until the next use.
@@ -467,7 +486,7 @@ another kind). A config field holding a connection's name says its kind in its s
 
 Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
 has a section per kind (Discord webhooks, Discord bots, Incoming webhooks, Jira Cloud sites, Buildkite organizations,
-HTTP services, Radarr, Sonarr, Plex servers, MCP servers, and Other for kinds no action uses), each saying how to set
+HTTP services, Radarr, Sonarr, Scryer, Plex servers, MCP servers, and Other for kinds no action uses), each saying how to set
 one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address `/api/hooks/<name>`
 show on its row, and why a sensor's last use of it failed, and since when; an MCP server's row shows its tools, or why
 listing them failed, with List again). The dialog asks
@@ -477,7 +496,8 @@ variable; a setting shown is required unless marked optional) and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
 Webhook URL); an incoming webhook can generate its secret. A Discord bot asks for the server's id, the application's id
 (which makes the invite link with View Channels, Manage Channels, Send Messages and Manage Webhooks) and whether the PM
-changes the server without asking. Saving keeps config keys the dialog doesn't show. The secret is written to the keychain and never shown again
+changes the server without asking; Scryer asks for its address, an API key and whether the PM adds to the library
+without asking (both rows then show "PM acts without asking"). Saving keeps config keys the dialog doesn't show. The secret is written to the keychain and never shown again
 (empty when editing keeps it). A template's `connection` param and a node field with `x-connection-kind` use
 `ConnectionPicker`: the connections of that kind, and Add… for a new one.
 

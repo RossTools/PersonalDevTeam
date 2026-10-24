@@ -39,30 +39,7 @@ pub(crate) struct Webhook {
 
 /// The `discord_bot` connection `name` means: that one, or the only one there is.
 pub(crate) async fn bot_connection(st: &AppState, name: Option<&str>) -> Result<Connection, String> {
-    let bots: Vec<Connection> = st
-        .store
-        .list_connections()
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter(|c| c.kind == DISCORD_BOT)
-        .collect();
-    match name.map(str::trim).filter(|n| !n.is_empty()) {
-        Some(n) => {
-            let c = bots.into_iter().find(|c| c.name.eq_ignore_ascii_case(n));
-            c.ok_or_else(|| format!("no Discord bot connection is called {n}"))
-        }
-        None => match <[Connection; 1]>::try_from(bots) {
-            Ok([one]) => Ok(one),
-            Err(bots) if bots.is_empty() => Err("there is no Discord bot connection: the user adds one in Settings → \
-                                                 Connections"
-                .into()),
-            Err(bots) => Err(format!(
-                "there are several Discord bot connections; name one (`connection`): {}",
-                bots.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
-            )),
-        },
-    }
+    crate::workflow::routes::connection_of_kind(st, DISCORD_BOT, name).await
 }
 
 impl Bot {
