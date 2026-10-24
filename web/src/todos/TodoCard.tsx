@@ -1,7 +1,7 @@
-// One todo as a card (PDT-140): checkbox, title (click to rename), project/ticket chips, its due chip, and a hover
-// menu. Drag (or Alt+↑/↓) reorders it within its group. Pure: the list hands it its actions.
+// One todo as a card (PDT-140): checkbox, title (click to rename), project/ticket chips, its due chip, its repeat
+// rule (PDT-141), and a hover menu. Drag (or Alt+↑/↓) reorders it within its group. Pure: the list hands it its actions.
 import { useState, type DragEvent, type KeyboardEvent } from 'react';
-import { CalendarDays, GripVertical } from 'lucide-react';
+import { CalendarDays, GripVertical, Repeat } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Badge, Checkbox, dragData, MenuButton, parseDragData, type MenuEntry } from '@ui';
 import type { Project } from '../api/gen/Project';
@@ -10,7 +10,7 @@ import type { TodoPatch } from '../api/gen/TodoPatch';
 import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
 import { TicketKey } from '../common/TicketKey';
-import { dueLabel, dueState, formatDay, quickDays } from './model';
+import { dueLabel, dueState, formatDay, quickDays, repeatText } from './model';
 
 export const TODO_DRAG_KIND = 'todo';
 
@@ -28,6 +28,19 @@ export function DueChip({ todo: t, now }: { todo: Pick<Todo, 'done' | 'dueOn' | 
   );
 }
 
+/** A repeating todo's rule: a repeat icon and "Every Mon, Wed". Nothing for done todos or ones that don't repeat. */
+export function RepeatChip({ todo: t }: { todo: Pick<Todo, 'done' | 'recurrence'> }) {
+  if (t.done || !t.recurrence) return null;
+  const text = repeatText(t.recurrence);
+  const title = `Repeats: ${text}${t.recurrence.from === 'done' ? ', counting from when it’s done' : ''}`;
+  return (
+    <Badge tone="neutral" title={title} aria-label={title} className="gap-1">
+      <Repeat aria-hidden className="size-3" />
+      {text}
+    </Badge>
+  );
+}
+
 /** The menu entries that set a due date: the quick picks (a day without a time), a date of the user's choosing, none. */
 export function dueEntries(current: Pick<Todo, 'dueOn'>, now: Date, set: (dueOn: string) => void, pick: () => void): MenuEntry[] {
   return [
@@ -40,7 +53,7 @@ export function dueEntries(current: Pick<Todo, 'dueOn'>, now: Date, set: (dueOn:
   ];
 }
 
-export function TodoCard({ todo: t, now, showProject, projects, highlighted, onPatch, onDelete, onLink, onPickDate, onOpenTicket, onMove, onDropHere }: {
+export function TodoCard({ todo: t, now, showProject, projects, highlighted, onPatch, onDelete, onLink, onPickDate, onRepeat, onOpenTicket, onMove, onDropHere }: {
   todo: Todo;
   now: Date;
   /** The All filter: show the project's chip. */
@@ -53,6 +66,8 @@ export function TodoCard({ todo: t, now, showProject, projects, highlighted, onP
   onLink: () => void;
   /** Opens the date picker. */
   onPickDate: () => void;
+  /** Opens the repeat editor. */
+  onRepeat: () => void;
   onOpenTicket: (t: { id: string; projectId: string }) => void;
   /** Open cards: Alt+↑/↓ moves the card past its neighbour in its group. */
   onMove?: (where: 'before' | 'after') => void;
@@ -73,7 +88,11 @@ export function TodoCard({ todo: t, now, showProject, projects, highlighted, onP
   };
   const entries = (): MenuEntry[] => [
     { label: 'Edit', onSelect: () => setEditing(true) },
-    ...(t.done ? [] : [{ submenu: 'Due date', icon: <CalendarDays aria-hidden />, entries: dueEntries(t, now, (dueOn) => onPatch({ dueOn, dueTime: '' }), onPickDate) }]),
+    ...(t.done ? [] : [
+      { submenu: 'Due date', icon: <CalendarDays aria-hidden />, entries: dueEntries(t, now, (dueOn) => onPatch({ dueOn, dueTime: '' }), onPickDate) },
+      { label: 'Repeat…', icon: <Repeat aria-hidden />, onSelect: onRepeat },
+      ...(t.recurrence ? [{ label: 'Stop repeating', onSelect: () => onPatch({ recurrence: null }) }] : []),
+    ]),
     { label: t.ticketId ? 'Link to another ticket…' : 'Link to a ticket…', onSelect: onLink },
     ...(t.ticketId ? [{ label: `Unlink ${t.ticketKey ?? 'the ticket'}`, onSelect: () => onPatch({ ticket: '' }) }] : []),
     {
@@ -86,7 +105,7 @@ export function TodoCard({ todo: t, now, showProject, projects, highlighted, onP
     { separator: true },
     { label: 'Delete', danger: true, onSelect: onDelete },
   ];
-  const chips = (showProject && t.projectKey && !t.ticketKey) || t.ticketKey || dueLabel(t, now);
+  const chips = (showProject && t.projectKey && !t.ticketKey) || t.ticketKey || dueLabel(t, now) || (!t.done && t.recurrence);
   return (
     <li
       id={`todo-${t.id}`}
@@ -149,6 +168,7 @@ export function TodoCard({ todo: t, now, showProject, projects, highlighted, onP
         {chips && (
           <div className="flex min-w-0 flex-wrap items-center gap-1">
             <DueChip todo={t} now={now} />
+            <RepeatChip todo={t} />
             {showProject && t.projectKey && !t.ticketKey && <ProjectKey projectKey={t.projectKey} />}
             {t.ticketKey && t.ticketId && t.projectId && (
               <TicketKey

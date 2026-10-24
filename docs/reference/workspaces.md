@@ -61,8 +61,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
 - The todo list (web/src/todos): "Add a todo…" (Enter adds it at the top; the calendar button beside it gives the new
   todo a due date), a filter (All, or the project on screen, which new todos then join; kept as `pdt.todos.filter`),
   and a card per todo (TodoCard.tsx; in the gallery): a checkbox, the title (click to edit), a drag handle (also
-  Alt+↑/↓) and ⋯ (Edit, Due date, Link to a ticket…, Unlink, Project, Delete), chips for the due date, the project key
-  and the linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
+  Alt+↑/↓) and ⋯ (Edit, Due date, Repeat…, Stop repeating, Link to a ticket…, Unlink, Project, Delete), chips for the
+  due date, the repeat rule, the project key and the linked ticket (which opens it). Done todos fold into "Done (n)" with Clear done.
 - Due dates (PDT-140): optional, the user's local day (`dueOn`, `YYYY-MM-DD`) with an optional time (`dueTime`,
   `HH:MM`). Due date offers Today, Tomorrow, Next week (the coming Monday), each a day without a time (a quick pick
   drops one set before), Pick a date… (a date and an optional time) and No due date. The chip says **Overdue** (red), **Today**, **Tomorrow** or the date (with the time if set); done
@@ -74,9 +74,23 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   the card, switching the filter to All if it hid it. The list uses each such request once (AppShell drops it), so
   reopening the panel later doesn't ring the card or change the filter again. Done, deleted or re-dated clears it; a new date reminds again.
   pdtd works out the moment in the host's own time zone.
+- Repeating todos (PDT-141): a todo with a due date can repeat: every N days (daily), every weekday (Mon–Fri), every
+  N weeks on chosen days (weekly), or each month on a day (1–31; a shorter month uses its last day, and the next month
+  goes back to the rule's day). The rule is `recurrence` (`{rule: {every: "day", interval} | {every: "weekday"} |
+  {every: "week", interval, days: [1–7, Monday first]} | {every: "month", day}, from: "due" | "done"}`), stored as
+  JSON on the todo and validated and computed in pdt-core `todo.rs`. Checking it off marks it done and makes the next
+  todo (same title, time, project, ticket, rule and place in the list), due on the rule's next day: from the due date
+  (the default) the series keeps its schedule but skips days already past, so the next one is never due today or
+  earlier; from when it's done, it counts from the day it was checked off. A todo makes its next one once (the store
+  remembers it as `next_id`, in the same transaction), so two checks at once, or un-checking and checking it again,
+  don't make another. The next one gets its own due reminder. Its card shows a repeat icon and the rule ("Every Mon,
+  Wed"); ⋯ has Repeat… (the editor: the rule, what the next one counts from, and a first due date for an undated
+  todo) and Stop repeating (`recurrence: null`). Deleting an open repeating todo asks: Only this one
+  (`DELETE /api/todos/{id}?series=only`, the default: the next one takes its place) or Stop the series
+  (`?series=series`). Clearing the due date stops it repeating. Done cards show no rule.
 - The server keeps them in `todos` (`GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`; GET filters by `project`
   and `done`). `dueOn`/`dueTime` are validated in pdt-core `todo.rs`; in a PATCH `dueOn: ""` clears the date and its
-  time, `dueTime: ""` only the time, and a time needs a date. Order is a float `position` (a move takes the midpoint of its new neighbours). A linked ticket is always
+  time (and recurrence), `dueTime: ""` only the time, and a time needs a date. Order is a float `position` (a move takes the midpoint of its new neighbours). A linked ticket is always
   in the todo's project: linking one sets the project, moving the todo to another project drops the link, and deleting
   the ticket or project only removes the link. The PM reads them with `list_todos` ([agents.md](agents.md) "The PM").
 

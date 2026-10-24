@@ -261,3 +261,125 @@ async fn a_reminder_missed_while_pdtd_was_down_comes_once_on_start() {
         store.close().await;
     }
 }
+
+/// PDT-141: a repeating todo's rule.
+fn weekly(days: &[u8]) -> Value {
+    json!({"rule": {"every": "week", "interval": 1, "days": days}, "from": "due"})
+}
+
+async fn open_todos(env: &Env) -> Vec<Value> {
+    let (s, v) = call(&env.app, "GET", "/api/todos?done=false", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v.as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn checking_off_a_repeating_todo_makes_exactly_one_next_one() {
+    let env = setup().await;
+    let t = add(
+        &env,
+        json!({"title": "Water plants", "dueOn": "2999-01-04", "dueTime": "08:00", "ticket": "PX-1",
+               "recurrence": weekly(&[4, 1])}),
+    )
+    .await;
+    assert_eq!(t["recurrence"], weekly(&[1, 4]), "days sorted");
+    let id = t["id"].as_str().unwrap();
+
+    // Two checks at once (2999-01-04 is a Friday): one next todo, due the Monday after.
+    let (body, uri) = (json!({"done": true}), format!("/api/todos/{id}"));
+    let (a, b) =
+        tokio::join!(call(&env.app, "PATCH", &uri, Some(body.clone())), call(&env.app, "PATCH", &uri, Some(body)),);
+    assert_eq!((a.0, b.0), (StatusCode::OK, StatusCode::OK), "{a:?} {b:?}");
+    let open = open_todos(&env).await;
+    assert_eq!(open.len(), 1, "{open:?}");
+    let next = &open[0];
+    assert_ne!(next["id"], t["id"]);
+    assert_eq!(
+        (&next["title"], &next["dueOn"], &next["dueTime"], &next["ticketKey"], &next["projectId"], &next["recurrence"]),
+        (
+            &json!("Water plants"),
+            &json!("2999-01-07"),
+            &json!("08:00"),
+            &json!("PX-1"),
+            &json!(env.project),
+            &weekly(&[1, 4])
+        )
+    );
+    // Its reminder is its own, made when it comes due.
+    let dated = env.state.store.dated_open_todos().await.unwrap();
+    assert_eq!(
+        dated.iter().map(|(t, k)| (t.id.as_str(), k.as_deref())).collect::<Vec<_>>(),
+        [(next["id"].as_str().unwrap(), None)]
+    );
+
+    // Un-checking doesn't make another, and nor does checking it off again.
+    patch(&env, id, json!({"done": false})).await;
+    assert_eq!(open_todos(&env).await.len(), 2);
+    patch(&env, id, json!({"done": true})).await;
+    assert_eq!(open_todos(&env).await.len(), 1);
+
+    // A todo that doesn't repeat just gets done.
+    let once = add(&env, json!({"title": "Once", "dueOn": "2999-01-04"})).await;
+    patch(&env, once["id"].as_str().unwrap(), json!({"done": true})).await;
+    assert_eq!(open_todos(&env).await.len(), 1);
+}
+
+#[tokio::test]
+async fn repeating_is_set_stopped_and_validated() {
+    let env = setup().await;
+    let t = add(&env, json!({"title": "Standup", "dueOn": "2999-01-04"})).await;
+    let id = t["id"].as_str().unwrap();
+    assert_eq!(t["recurrence"], Value::Null);
+    let daily = json!({"rule": {"every": "day", "interval": 1}, "from": "done"});
+    let set = patch(&env, id, json!({"recurrence": daily})).await;
+    assert_eq!(set["recurrence"], daily);
+    let kept = patch(&env, id, json!({"title": "Daily standup"})).await;
+    assert_eq!(kept["recurrence"], daily, "absent leaves it");
+    let stopped = patch(&env, id, json!({"recurrence": null})).await;
+    assert_eq!(stopped["recurrence"], Value::Null);
+    patch(&env, id, json!({"recurrence": daily})).await;
+    let undated = patch(&env, id, json!({"dueOn": ""})).await;
+    assert_eq!(undated["recurrence"], Value::Null, "no date, no repeating");
+
+    for bad in [
+        json!({"recurrence": daily}),
+        json!({"dueOn": "2999-01-04", "recurrence": weekly(&[])}),
+        json!({"dueOn": "2999-01-04", "recurrence": {"rule": {"every": "month", "day": 32}, "from": "due"}}),
+        json!({"dueOn": "2999-01-04", "recurrence": {"rule": {"every": "fortnight"}}}),
+    ] {
+        let (s, v) = call(&env.app, "PATCH", &format!("/api/todos/{id}"), Some(bad.clone())).await;
+        assert!(s == StatusCode::BAD_REQUEST || s == StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {s} {v}");
+    }
+    let (s, _) = call(&env.app, "POST", "/api/todos", Some(json!({"title": "x", "recurrence": daily}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "a repeating todo needs a date");
+}
+
+#[tokio::test]
+async fn deleting_a_repeating_todo_skips_it_or_stops_the_series() {
+    let env = setup().await;
+    let monthly = json!({"rule": {"every": "month", "day": 31}, "from": "due"});
+    let t = add(&env, json!({"title": "Pay rent", "dueOn": "2999-01-31", "recurrence": monthly})).await;
+
+    // Only this one: the next takes its place.
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/todos/{}?series=only", t["id"].as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let open = open_todos(&env).await;
+    assert_eq!(open.len(), 1);
+    assert_eq!((&open[0]["title"], &open[0]["dueOn"]), (&json!("Pay rent"), &json!("2999-02-28")));
+
+    // Stop the series: it goes, and nothing follows.
+    let (s, _) =
+        call(&env.app, "DELETE", &format!("/api/todos/{}?series=series", open[0]["id"].as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(open_todos(&env).await.is_empty());
+
+    // A done one is just deleted; a bad choice is refused.
+    let d = add(&env, json!({"title": "Done", "dueOn": "2999-01-31", "recurrence": monthly})).await;
+    let id = d["id"].as_str().unwrap();
+    patch(&env, id, json!({"done": true})).await;
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/todos/{id}?series=maybe"), None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/todos/{id}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert_eq!(open_todos(&env).await.len(), 1, "only the next one the check made");
+}

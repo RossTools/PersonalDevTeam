@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Todo } from '../api/gen/Todo';
-import { addDays, dueLabel, dueState, grouped, localDay, positionFor, quickDays, shown } from './model';
+import { addDays, defaultRecurrence, dueLabel, dueState, grouped, localDay, positionFor, quickDays, repeatText, shown, weekdayOf } from './model';
 
 function todo(id: string, position: number, more: Partial<Todo> = {}): Todo {
   return {
     id, title: id.toUpperCase(), position, done: false, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1,
-    doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, ...more,
+    doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null, ...more,
   };
 }
 
@@ -96,5 +96,26 @@ describe('due dates', () => {
   it('offers today, tomorrow and the coming Monday', () => {
     expect(quickDays(now).map((q) => q.day)).toEqual(['2026-10-23', '2026-10-24', '2026-10-26']);
     expect(quickDays(new Date(2026, 9, 26, 9)).map((q) => q.day)[2], 'a Monday picks the next one').toBe('2026-11-02');
+  });
+});
+
+describe('repeatText', () => {
+  it('says each rule', () => {
+    const text = (rule: Parameters<typeof repeatText>[0]['rule']) => repeatText({ rule, from: 'due' });
+    expect(text({ every: 'day', interval: 1 })).toBe('Every day');
+    expect(text({ every: 'day', interval: 3 })).toBe('Every 3 days');
+    expect(text({ every: 'weekday' })).toBe('Every weekday');
+    expect(text({ every: 'week', interval: 1, days: [1, 3] })).toBe('Every Mon, Wed');
+    expect(text({ every: 'week', interval: 2, days: [5] })).toBe('Every 2 weeks on Fri');
+    expect(text({ every: 'month', day: 31 })).toBe('Every month on the 31st');
+    expect(text({ every: 'month', day: 2 })).toBe('Every month on the 2nd');
+    expect(text({ every: 'month', day: 13 })).toBe('Every month on the 13th');
+    expect(text({ every: 'month', day: 23 })).toBe('Every month on the 23rd');
+  });
+  it('starts a new rule on the due day', () => {
+    expect(weekdayOf('2026-10-25')).toBe(7);
+    expect(weekdayOf('2026-10-26')).toBe(1);
+    expect(defaultRecurrence('2026-10-28', new Date(2026, 9, 23))).toEqual({ rule: { every: 'week', interval: 1, days: [3] }, from: 'due' });
+    expect(defaultRecurrence(null, new Date(2026, 9, 23)).rule).toEqual({ every: 'week', interval: 1, days: [5] });
   });
 });

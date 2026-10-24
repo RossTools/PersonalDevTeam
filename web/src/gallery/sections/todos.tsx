@@ -18,7 +18,7 @@ const TODAY = localDay(NOW);
 const PROJECTS = [{ id: 'p1', key: 'PDT', name: 'Personal Dev Team' }] as Project[];
 const todo = (id: string, title: string, more: Partial<Todo> = {}): Todo => ({
   id, title, position: 0, done: false, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1, doneAt: null,
-  projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, ...more,
+  projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null, ...more,
 });
 
 const CARDS: [string, Todo][] = [
@@ -28,6 +28,7 @@ const CARDS: [string, Todo][] = [
   })],
   ['Tomorrow', todo('c', 'Call Sam about the release', { dueOn: addDays(TODAY, 1), projectId: 'p1', projectKey: 'PDT' })],
   ['Later', todo('d', 'Write the quarterly plan', { dueOn: addDays(TODAY, 12) })],
+  ['Repeating', todo('g', 'Water the plants', { dueOn: addDays(TODAY, 2), recurrence: { rule: { every: 'week', interval: 1, days: [1, 3] }, from: 'due' } })],
   ['No date', todo('e', 'A long title that wraps onto a second line so the card shows how the chips sit under it')],
   ['Done (no chip)', todo('f', 'Pay the rent', { done: true, doneAt: 1, dueOn: addDays(TODAY, -1) })],
 ];
@@ -50,6 +51,7 @@ function Card({ initial }: { initial: Todo }) {
         onDelete={() => {}}
         onLink={() => {}}
         onPickDate={() => {}}
+        onRepeat={() => {}}
         onOpenTicket={() => {}}
         {...(t.done ? {} : { onMove: () => {}, onDropHere: () => {} })}
       />
@@ -68,7 +70,7 @@ function render() {
       <Demo label="Highlighted (opened from a reminder)">
         <ul className="flex flex-col">
           <TodoCard todo={todo('g', 'Opened from the Inbox', { dueOn: TODAY })} now={NOW} showProject projects={PROJECTS} highlighted
-            onPatch={() => {}} onDelete={() => {}} onLink={() => {}} onPickDate={() => {}} onOpenTicket={() => {}} />
+            onPatch={() => {}} onDelete={() => {}} onLink={() => {}} onPickDate={() => {}} onRepeat={() => {}} onOpenTicket={() => {}} />
         </ul>
       </Demo>
     </div>

@@ -1,4 +1,5 @@
-//! The user's todo list (PDT-125), with the project and ticket keys its chips show.
+//! The user's todo list (PDT-125), with the project and ticket keys its chips show. A repeating todo (PDT-141) makes
+//! its next one when it is checked off (or deleted as "only this one"), once, in the same transaction.
 
 use crate::{Store, StoreError};
 use pdt_core::todo::Todo;
@@ -6,7 +7,7 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
 const SELECT: &str = "SELECT t.id, t.project_id, t.ticket_id, t.title, t.done, t.position, t.created_at, \
-                      t.updated_at, t.done_at, t.due_on, t.due_time, p.key AS project_key, k.number AS ticket_number, \
+                      t.updated_at, t.done_at, t.due_on, t.due_time, t.recurrence, p.key AS project_key, k.number AS ticket_number, \
                       kp.key AS ticket_project_key, k.title AS ticket_title \
                       FROM todos t \
                       LEFT JOIN projects p ON p.id = t.project_id \
@@ -34,7 +35,77 @@ fn to_todo(r: &SqliteRow) -> Result<Todo, StoreError> {
         ticket_title: r.try_get("ticket_title")?,
         due_on: r.try_get("due_on")?,
         due_time: r.try_get("due_time")?,
+        // A rule this build can't read is no rule (rather than a list that won't load).
+        recurrence: r.try_get::<Option<String>, _>("recurrence")?.and_then(|j| serde_json::from_str(&j).ok()),
     })
+}
+
+fn recurrence_json(t: &Todo) -> Option<String> {
+    t.recurrence.as_ref().map(|r| serde_json::to_string(r).expect("a recurrence serializes"))
+}
+
+/// Adds `t` (its keys are ignored: they come from the links).
+async fn insert(e: impl sqlx::SqliteExecutor<'_>, t: &Todo) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO todos (id, project_id, ticket_id, title, done, position, created_at, updated_at, done_at, \
+         due_on, due_time, recurrence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&t.id)
+    .bind(&t.project_id)
+    .bind(&t.ticket_id)
+    .bind(&t.title)
+    .bind(t.done)
+    .bind(t.position)
+    .bind(t.created_at)
+    .bind(t.updated_at)
+    .bind(t.done_at)
+    .bind(&t.due_on)
+    .bind(&t.due_time)
+    .bind(recurrence_json(t))
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+async fn update(e: impl sqlx::SqliteExecutor<'_>, t: &Todo) -> Result<bool, StoreError> {
+    let r = sqlx::query(
+        "UPDATE todos SET project_id = ?, ticket_id = ?, title = ?, done = ?, position = ?, updated_at = ?, \
+         done_at = ?, due_on = ?, due_time = ?, recurrence = ? WHERE id = ?",
+    )
+    .bind(&t.project_id)
+    .bind(&t.ticket_id)
+    .bind(&t.title)
+    .bind(t.done)
+    .bind(t.position)
+    .bind(t.updated_at)
+    .bind(t.done_at)
+    .bind(&t.due_on)
+    .bind(&t.due_time)
+    .bind(recurrence_json(t))
+    .bind(&t.id)
+    .execute(e)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// What a todo was before a change: open, and whether it already made its next one. None: it is gone.
+async fn before(tx: &mut sqlx::SqliteConnection, id: &str) -> Result<Option<(bool, bool)>, StoreError> {
+    let row: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT done, next_id FROM todos WHERE id = ?").bind(id).fetch_optional(&mut *tx).await?;
+    Ok(row.map(|(done, next)| (done == 0, next.is_some())))
+}
+
+/// Adds `next` as `id`'s next todo when `id` was open and hasn't made one yet. True if it did.
+async fn make_next(
+    tx: &mut sqlx::SqliteConnection,
+    id: &str,
+    was: (bool, bool),
+    next: Option<&Todo>,
+) -> Result<bool, StoreError> {
+    let (Some(next), (true, false)) = (next, was) else { return Ok(false) };
+    insert(&mut *tx, next).await?;
+    sqlx::query("UPDATE todos SET next_id = ? WHERE id = ?").bind(&next.id).bind(id).execute(&mut *tx).await?;
+    Ok(true)
 }
 
 /// What `list_todos` filters on.
@@ -74,45 +145,24 @@ impl Store {
 
     /// Adds a todo (its keys are ignored: they come from the links).
     pub async fn insert_todo(&self, t: &Todo) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT INTO todos (id, project_id, ticket_id, title, done, position, created_at, updated_at, done_at, \
-             due_on, due_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&t.id)
-        .bind(&t.project_id)
-        .bind(&t.ticket_id)
-        .bind(&t.title)
-        .bind(t.done)
-        .bind(t.position)
-        .bind(t.created_at)
-        .bind(t.updated_at)
-        .bind(t.done_at)
-        .bind(&t.due_on)
-        .bind(&t.due_time)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        insert(&self.pool, t).await
     }
 
     /// Replaces a todo's fields (the caller merged the patch). False if it is gone.
     pub async fn update_todo(&self, t: &Todo) -> Result<bool, StoreError> {
-        let r = sqlx::query(
-            "UPDATE todos SET project_id = ?, ticket_id = ?, title = ?, done = ?, position = ?, updated_at = ?, \
-             done_at = ?, due_on = ?, due_time = ? WHERE id = ?",
-        )
-        .bind(&t.project_id)
-        .bind(&t.ticket_id)
-        .bind(&t.title)
-        .bind(t.done)
-        .bind(t.position)
-        .bind(t.updated_at)
-        .bind(t.done_at)
-        .bind(&t.due_on)
-        .bind(&t.due_time)
-        .bind(&t.id)
-        .execute(&self.pool)
-        .await?;
-        Ok(r.rows_affected() > 0)
+        update(&self.pool, t).await
+    }
+
+    /// [`Store::update_todo`] for a repeating todo being checked off: `next` is added too if the todo was open and
+    /// hasn't made one before (so two racing completes, or checking it off again, make one). None if it is gone;
+    /// otherwise whether `next` was added.
+    pub async fn complete_todo(&self, t: &Todo, next: &Todo) -> Result<Option<bool>, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let Some(was) = before(&mut tx, &t.id).await? else { return Ok(None) };
+        update(&mut *tx, t).await?;
+        let made = make_next(&mut tx, &t.id, was, Some(next)).await?;
+        tx.commit().await?;
+        Ok(Some(made))
     }
 
     /// Open todos with a due day, each with the due key its reminder was last made for.
@@ -132,8 +182,18 @@ impl Store {
     }
 
     pub async fn delete_todo(&self, id: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("DELETE FROM todos WHERE id = ?").bind(id).execute(&self.pool).await?;
-        Ok(r.rows_affected() > 0)
+        self.delete_todo_keeping(id, None).await
+    }
+
+    /// Deletes a todo; `next` (a repeating one deleted as "only this one") takes its place if it was open and hasn't
+    /// made its next one already. False if it was gone.
+    pub async fn delete_todo_keeping(&self, id: &str, next: Option<&Todo>) -> Result<bool, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let Some(was) = before(&mut tx, id).await? else { return Ok(false) };
+        sqlx::query("DELETE FROM todos WHERE id = ?").bind(id).execute(&mut *tx).await?;
+        make_next(&mut tx, id, was, next).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 }
 
@@ -158,6 +218,7 @@ mod tests {
             ticket_title: None,
             due_on: None,
             due_time: None,
+            recurrence: None,
         }
     }
 
@@ -255,5 +316,41 @@ mod tests {
             (t.due_on.as_deref(), t.due_time, k.as_deref()),
             (Some("2026-10-24"), None, Some("todo:a:2026-10-23T09:00"))
         );
+    }
+
+    #[tokio::test]
+    async fn a_repeating_todo_makes_its_next_one_once() {
+        use pdt_core::todo::{Recurrence, RepeatFrom, RepeatRule};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let daily = Recurrence { rule: RepeatRule::Day { interval: 1 }, from: RepeatFrom::Due };
+        let a = Todo { due_on: Some("2026-10-23".into()), recurrence: Some(daily.clone()), ..todo("a", 1.0) };
+        store.insert_todo(&a).await.unwrap();
+        assert_eq!(store.get_todo("a").await.unwrap().unwrap().recurrence, Some(daily.clone()), "kept as JSON");
+
+        let done = Todo { done: true, done_at: Some(2), ..a.clone() };
+        let next = |id: &str| Todo { id: id.into(), due_on: Some("2026-10-24".into()), ..a.clone() };
+        // Two completes at once: one makes the next todo.
+        let (b1, b2) = (next("b1"), next("b2"));
+        let (x, y) = tokio::join!(store.complete_todo(&done, &b1), store.complete_todo(&done, &b2));
+        let mut made = [x.unwrap(), y.unwrap()];
+        made.sort();
+        assert_eq!(made, [Some(false), Some(true)]);
+        let open = store.list_todos(&TodoFilter { done: Some(false), ..Default::default() }).await.unwrap();
+        assert_eq!(open.len(), 1, "{open:?}");
+        assert_eq!(open[0].recurrence, Some(daily.clone()));
+
+        // Reopened and checked off again: no second one.
+        assert!(store.update_todo(&a).await.unwrap());
+        assert_eq!(store.complete_todo(&done, &next("b3")).await.unwrap(), Some(false));
+        assert_eq!(store.complete_todo(&todo("gone", 0.0), &next("b4")).await.unwrap(), None);
+
+        // Deleted as "only this one": the next takes its place, once.
+        let c = Todo { due_on: Some("2026-10-23".into()), recurrence: Some(daily), ..todo("c", 3.0) };
+        store.insert_todo(&c).await.unwrap();
+        assert!(store.delete_todo_keeping("c", Some(&Todo { id: "c2".into(), ..c.clone() })).await.unwrap());
+        assert!(store.get_todo("c2").await.unwrap().is_some());
+        assert!(!store.delete_todo_keeping("c", Some(&Todo { id: "c3".into(), ..c })).await.unwrap());
+        assert!(store.get_todo("c3").await.unwrap().is_none());
     }
 }

@@ -1,13 +1,16 @@
 // The user's todo list (PDT-125): the right panel's Todos tab on desktop and the phone's checklist sheet. Cards, due
-// dates and their groups (PDT-140).
+// dates and their groups (PDT-140); repeating todos (PDT-141).
 import { useEffect, useRef, useState } from 'react';
 import { CalendarPlus, ChevronDown, ChevronRight, X } from 'lucide-react';
-import { Alert, Button, Dialog, EmptyState, Field, IconButton, Input, MenuButton, SegmentedControl, Skeleton } from '@ui';
+import { Alert, Button, Checkbox, Dialog, EmptyState, Field, IconButton, Input, MenuButton, SegmentedControl, Select, Skeleton } from '@ui';
 import type { Project } from '../api/gen/Project';
+import type { Recurrence } from '../api/gen/Recurrence';
+import type { RepeatFrom } from '../api/gen/RepeatFrom';
+import type { RepeatRule } from '../api/gen/RepeatRule';
 import type { Todo } from '../api/gen/Todo';
 import { useOpenTicket } from '../tickets/actions';
 import { TicketPicker } from '../tickets/TicketPicker';
-import { formatDay, grouped, localDay, positionFor, shown, type TodoFilter } from './model';
+import { defaultRecurrence, formatDay, grouped, localDay, positionFor, repeatText, shown, weekdayOf, WEEKDAYS, type TodoFilter } from './model';
 import { dueEntries, TodoCard } from './TodoCard';
 import { useTodoActions, useTodos } from './useTodos';
 
@@ -58,6 +61,8 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
   const [doneOpen, setDoneOpen] = useState(false);
   const [linking, setLinking] = useState<Todo | null>(null);
   const [dating, setDating] = useState<Todo | null>(null);
+  const [repeating, setRepeating] = useState<Todo | null>(null);
+  const [deleting, setDeleting] = useState<Todo | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const now = new Date();
   const project = projects.find((p) => p.id === projectId) ?? null;
@@ -112,9 +117,10 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
       projects={projects}
       highlighted={highlight === t.id}
       onPatch={(p) => void actions.patch(t.id, p)}
-      onDelete={() => void actions.remove([t.id])}
+      onDelete={() => (!t.done && t.recurrence ? setDeleting(t) : void actions.remove([t.id]))}
       onLink={() => setLinking(t)}
       onPickDate={() => setDating(t)}
+      onRepeat={() => setRepeating(t)}
       onOpenTicket={openTicket}
       {...(group ? {
         onMove: (where: 'before' | 'after') => {
@@ -208,7 +214,142 @@ export function TodoList({ projectId, projects, focus, onFocused }: {
           }}
         />
       )}
+      {repeating && (
+        <RepeatDialog
+          title={repeating.title}
+          initial={repeating.recurrence ?? defaultRecurrence(repeating.dueOn, now)}
+          dueOn={repeating.dueOn}
+          now={now}
+          onClose={() => setRepeating(null)}
+          onSave={(recurrence, dueOn) => {
+            setRepeating(null);
+            void actions.patch(repeating.id, { recurrence, ...(dueOn ? { dueOn } : {}) });
+          }}
+        />
+      )}
+      {deleting && (
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setDeleting(null)}
+          title="Delete a repeating todo"
+          description={`${deleting.title} repeats ${deleting.recurrence ? repeatText(deleting.recurrence).toLowerCase() : ''}.`}
+          size="sm"
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setDeleting(null)}>Cancel</Button>
+              <Button onClick={() => { setDeleting(null); void actions.remove([deleting.id], 'only'); }}>Only this one</Button>
+              <Button variant="danger" onClick={() => { setDeleting(null); void actions.remove([deleting.id], 'series'); }}>Stop the series</Button>
+            </>
+          }
+        >
+          <p className="text-sm text-muted-foreground">
+            Only this one skips to the next; stopping the series deletes it and none come after it.
+          </p>
+        </Dialog>
+      )}
     </div>
+  );
+}
+
+type Every = RepeatRule['every'];
+
+/** The Repeat… editor: a rule, what it counts from, and a first due date for a todo without one. */
+export function RepeatDialog({ title, initial, dueOn: givenDueOn, now, onSave, onClose }: {
+  title: string;
+  initial: Recurrence;
+  /** The todo's due date; without one the editor asks for it. */
+  dueOn: string | null;
+  now: Date;
+  onSave: (r: Recurrence, dueOn: string | null) => void;
+  onClose: () => void;
+}) {
+  const r0 = initial.rule;
+  const [every, setEvery] = useState<Every>(r0.every);
+  const [interval, setIntervalText] = useState(String(r0.every === 'day' || r0.every === 'week' ? r0.interval : 1));
+  const [days, setDays] = useState<number[]>(r0.every === 'week' ? r0.days : [weekdayOf(givenDueOn ?? localDay(now))]);
+  const [monthDay, setMonthDay] = useState(String(r0.every === 'month' ? r0.day : Number((givenDueOn ?? localDay(now)).slice(8))));
+  const [from, setFrom] = useState<RepeatFrom>(initial.from);
+  const [dueOn, setDueOn] = useState(givenDueOn ?? localDay(now));
+  const n = Number(interval);
+  const day = Number(monthDay);
+  const rule: RepeatRule | null =
+    every === 'day' ? (Number.isInteger(n) && n >= 1 && n <= 365 ? { every, interval: n } : null)
+    : every === 'weekday' ? { every }
+    : every === 'week' ? (Number.isInteger(n) && n >= 1 && n <= 365 && days.length ? { every, interval: n, days: [...days].sort((a, b) => a - b) } : null)
+    : Number.isInteger(day) && day >= 1 && day <= 31 ? { every, day } : null;
+  const valid = !!rule && /^\d{4}-\d{2}-\d{2}$/.test(dueOn);
+  const save = () => {
+    if (rule && valid) onSave({ rule, from }, givenDueOn ? null : dueOn);
+  };
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title="Repeat"
+      description={title}
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={!valid} onClick={save}>Save</Button>
+        </>
+      }
+    >
+      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save(); }}>
+        <Field label="Repeats">
+          <Select<Every>
+            value={every}
+            onChange={setEvery}
+            options={[
+              { value: 'day', label: 'Daily' },
+              { value: 'weekday', label: 'Every weekday (Mon–Fri)' },
+              { value: 'week', label: 'Weekly' },
+              { value: 'month', label: 'Monthly' },
+            ]}
+          />
+        </Field>
+        {(every === 'day' || every === 'week') && (
+          <Field label={every === 'day' ? 'Every … days' : 'Every … weeks'}>
+            <Input type="number" min={1} max={365} value={interval} onChange={(e) => setIntervalText(e.target.value)} />
+          </Field>
+        )}
+        {every === 'week' && (
+          <fieldset className="flex flex-col gap-1">
+            <legend className="mb-1 text-sm font-medium">On</legend>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {WEEKDAYS.slice(1).map((name, i) => (
+                <Checkbox
+                  key={name}
+                  label={name}
+                  checked={days.includes(i + 1)}
+                  onChange={(on) => setDays((d) => (on ? [...d, i + 1] : d.filter((x) => x !== i + 1)))}
+                />
+              ))}
+            </div>
+          </fieldset>
+        )}
+        {every === 'month' && (
+          <Field label="On day" hint="A shorter month uses its last day.">
+            <Input type="number" min={1} max={31} value={monthDay} onChange={(e) => setMonthDay(e.target.value)} />
+          </Field>
+        )}
+        <fieldset className="flex flex-col gap-1">
+          <legend className="mb-1 text-sm font-medium">Next one counts from</legend>
+          <SegmentedControl<RepeatFrom>
+            aria-label="Next one counts from"
+            size="sm"
+            value={from}
+            onChange={setFrom}
+            options={[{ value: 'due', label: 'The due date' }, { value: 'done', label: 'When it’s done' }]}
+          />
+        </fieldset>
+        {!givenDueOn && (
+          <Field label="First due" hint="A repeating todo needs a due date.">
+            <Input type="date" value={dueOn} required onChange={(e) => setDueOn(e.target.value)} />
+          </Field>
+        )}
+      </form>
+    </Dialog>
   );
 }
 

@@ -10,7 +10,7 @@ import { TodoList, type TodoFocus } from './TodoList';
 
 const todo = (id: string, position: number, more: Partial<Todo> = {}): Todo => ({
   id, title: `Todo ${id}`, position, done: false, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1,
-  doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, ...more,
+  doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null, ...more,
 });
 const project = { id: 'p1', key: 'PX', name: 'P' } as Project;
 const list = [
@@ -271,5 +271,95 @@ describe('TodoList with due dates', () => {
     show('p1', vi.fn(), { id: 'late', seq: 1 });
     const card = await screen.findByRole('listitem', { name: 'Todo late' });
     expect(card.className).toMatch(/ring-2/);
+  });
+
+  describe('repeating (PDT-141)', () => {
+    const weekly = { rule: { every: 'week' as const, interval: 1, days: [1, 3] }, from: 'due' as const };
+    const repeating = [
+      todo('rep', 1, { dueOn: '2026-10-26', recurrence: weekly }),
+      todo('plain', 2, { dueOn: '2026-10-26' }),
+      todo('undated', 3),
+      todo('was', 0, { done: true, doneAt: 5, dueOn: '2026-10-19', recurrence: weekly }),
+    ];
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 23, 10, 0));
+      calls = stubApi({
+        'GET /api/todos': repeating,
+        'PATCH /api/todos/rep': (c: Call) => ({ ...repeating[0], ...(c.body as object) }),
+        'PATCH /api/todos/plain': (c: Call) => ({ ...repeating[1], ...(c.body as object) }),
+        'PATCH /api/todos/undated': (c: Call) => ({ ...repeating[2], ...(c.body as object) }),
+        'DELETE /api/todos/rep': undefined,
+        'DELETE /api/todos/plain': undefined,
+      });
+    });
+    afterEach(() => vi.useRealTimers());
+    const card = (name: string) => screen.getByRole('listitem', { name });
+    const menu = async (name: string, item: string) => {
+      await userEvent.click(within(card(name)).getByRole('button', { name: `Actions for ${name}` }));
+      await userEvent.click(await screen.findByRole('menuitem', { name: item }));
+    };
+
+    it('shows the repeat icon and rule on open cards only', async () => {
+      show(null);
+      await screen.findByText('Todo rep');
+      expect(within(card('Todo rep')).getByLabelText('Repeats: Every Mon, Wed')).toHaveTextContent('Every Mon, Wed');
+      expect(within(card('Todo plain')).queryByLabelText(/^Repeats/)).toBeNull();
+      await userEvent.click(screen.getByRole('button', { name: /Done \(1\)/ }));
+      expect(within(card('Todo was')).queryByLabelText(/^Repeats/), 'not on a done card').toBeNull();
+    });
+
+    it('sets a rule with the Repeat editor, and stops it', async () => {
+      show(null);
+      await screen.findByText('Todo plain');
+      await menu('Todo plain', 'Repeat…');
+      let dialog = await screen.findByRole('dialog');
+      // Starts weekly on the due day (2026-10-26 is a Monday).
+      expect(within(dialog).getByRole('checkbox', { name: 'Mon' })).toBeChecked();
+      await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Fri' }));
+      fireEvent.change(within(dialog).getByLabelText('Every … weeks'), { target: { value: '2' } });
+      await userEvent.click(within(dialog).getByRole('radio', { name: 'When it’s done' }));
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+      expect(sent('PATCH', '/api/todos/plain')).toEqual([{ recurrence: { rule: { every: 'week', interval: 2, days: [1, 5] }, from: 'done' } }]);
+
+      // Monthly; a todo without a date gets one with its rule.
+      await menu('Todo undated', 'Repeat…');
+      dialog = await screen.findByRole('dialog');
+      await userEvent.click(within(dialog).getByRole('button', { name: /Weekly/ }));
+      await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Monthly' }));
+      fireEvent.change(within(dialog).getByLabelText(/^On day/), { target: { value: '31' } });
+      fireEvent.change(within(dialog).getByLabelText(/^First due/), { target: { value: '2026-10-31' } });
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+      expect(sent('PATCH', '/api/todos/undated')).toEqual([{ recurrence: { rule: { every: 'month', day: 31 }, from: 'due' }, dueOn: '2026-10-31' }]);
+
+      // A weekly rule needs a day.
+      await menu('Todo rep', 'Repeat…');
+      dialog = await screen.findByRole('dialog');
+      await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Mon' }));
+      await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Wed' }));
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+      await menu('Todo rep', 'Stop repeating');
+      expect(sent('PATCH', '/api/todos/rep')).toEqual([{ recurrence: null }]);
+    });
+
+    it('asks how to delete a repeating todo: only this one, or the series', async () => {
+      show(null);
+      await screen.findByText('Todo rep');
+      await menu('Todo plain', 'Delete');
+      expect(screen.queryByRole('dialog'), 'a plain todo just goes').toBeNull();
+      expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual(['/api/todos/plain']);
+
+      await menu('Todo rep', 'Delete');
+      let dialog = await screen.findByRole('dialog');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Only this one' }));
+      await menu('Todo rep', 'Delete');
+      dialog = await screen.findByRole('dialog');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Stop the series' }));
+      await waitFor(() => expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([
+        '/api/todos/plain', '/api/todos/rep?series=only', '/api/todos/rep?series=series',
+      ]));
+    });
   });
 });
