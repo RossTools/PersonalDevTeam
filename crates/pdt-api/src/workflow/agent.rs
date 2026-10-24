@@ -766,6 +766,13 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
 pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
     let run = session_run(st, session_id).await;
     let _locked = super::engine::lock_run(st, run.as_deref()).await;
+    // A session being removed ends its turn as it closes: not a turn without an outcome (the sweep stalls its step as
+    // removed).
+    match st.store.get_session(session_id).await {
+        Ok(Some(s)) if s.mode != SessionMode::Conversation || crate::conversations::is_loaded(st, session_id) => {}
+        Ok(_) => return,
+        Err(_) => {}
+    }
     let Ok(Some(mut a)) = st.store.active_agent_step(session_id).await else { return };
     if a.state != AgentStepState::Working {
         return;
