@@ -8,8 +8,9 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::ticket::{
-    Actor, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket, PipelineStage, RankMove,
-    Ticket, TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, TicketStage, valid_comment,
+    Actor, AttemptState, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket,
+    PipelineStage, RankMove, Ticket, TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, TicketStage,
+    valid_comment,
 };
 use pdt_core::workflow::api::{NewLogEvent, RunStatus};
 use pdt_store::{DeleteTicket, TicketError};
@@ -69,14 +70,24 @@ pub(crate) async fn update(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(patch) = payload?;
     let patch = patch.validate()?;
-    let t = st.store.patch_ticket(&id, &patch, now_ms()).await?.ok_or_else(unknown_ticket)?;
-    // Closing a ticket ends its attempt (tickets spec §6), once the close went through.
-    match patch.stage.filter(|s| s.is_closed()) {
-        Some(stage) => {
+    let since = now_ms();
+    let t = st.store.patch_ticket(&id, &patch, since).await?.ok_or_else(unknown_ticket)?;
+    // Closing a ticket ends its attempt (tickets spec §6), once the close went through; moving it back before work
+    // stops its work (PDT-159).
+    match patch.stage {
+        Some(stage) if stage.is_closed() => {
             crate::start::end_for_close(&st, &id, stage, Actor::User).await?;
             reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
         }
-        None => reply(&st, t).await,
+        Some(stage) if stage.is_before_work() && t.attempts.iter().any(|a| a.state == AttemptState::Active) => {
+            let task = tokio::spawn({
+                let (st, id) = (st.clone(), id.clone());
+                async move { crate::stop::after_move(&st, &id, stage, since, Actor::User).await }
+            });
+            task.await.map_err(ApiError::internal)?;
+            reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+        }
+        _ => reply(&st, t).await,
     }
 }
 
@@ -113,7 +124,8 @@ pub(crate) async fn bulk(
 ) -> Result<Json<BulkResult>, ApiError> {
     let Json(req) = payload?;
     let action = req.validate()?;
-    let count = st.store.bulk_tickets(&req.ids, &action, now_ms()).await?;
+    let since = now_ms();
+    let count = st.store.bulk_tickets(&req.ids, &action, since).await?;
     if let pdt_core::ticket::ValidBulk::Stage(stage) = action
         && stage.is_closed()
     {
@@ -123,6 +135,18 @@ pub(crate) async fn bulk(
                 tracing::warn!(ticket = %id, error = %e.message(), "could not end the closed ticket's attempt");
             }
         }
+    } else if let pdt_core::ticket::ValidBulk::Stage(stage) = action {
+        // Moved back before work: their work stops (PDT-159).
+        let ids = req.ids.clone();
+        let task = tokio::spawn({
+            let st = st.clone();
+            async move {
+                for id in &ids {
+                    crate::stop::after_move(&st, id, stage, since, Actor::User).await;
+                }
+            }
+        });
+        task.await.map_err(ApiError::internal)?;
     }
     Ok(Json(BulkResult { count }))
 }

@@ -454,11 +454,15 @@ async fn open_tabs(
     }
 }
 
-/// `POST /api/attempts/{id}/abandon`: ends the attempt (the worktree stays). Abandoning an ended attempt changes
-/// nothing.
+/// `POST /api/attempts/{id}/abandon`: stops the ticket's work and ends the attempt (PDT-159: its runs are cancelled
+/// and its sessions stop; the worktree and sessions stay). Abandoning an ended attempt changes nothing.
 pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
     let info = st.store.get_attempt(&id).await?.ok_or_else(|| ApiError::not_found("attempt"))?;
-    st.store.end_attempt(&id, AttemptState::Abandoned, Actor::User, None, None, now_ms()).await?;
+    if info.attempt.state == AttemptState::Active {
+        let (st, ticket) = (st.clone(), info.ticket_id.clone());
+        let task = tokio::spawn(async move { crate::stop::stop_work(&st, &ticket, now_ms(), Actor::User).await });
+        task.await.map_err(ApiError::internal)??;
+    }
     Ok(Json(load_ticket(&st, &info.ticket_id).await?))
 }
 

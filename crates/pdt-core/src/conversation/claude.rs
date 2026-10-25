@@ -243,6 +243,12 @@ pub fn tool_title(tool: &str, input: &Value) -> String {
                 .collect();
             format!("Edit {}: {}", field("ticket"), changes.join(", "))
         }
+        (_, Some("stop_ticket")) => {
+            let removes = input.get("removeWorktree").and_then(Value::as_bool) == Some(true);
+            let to = input.get("stage").and_then(Value::as_str).map(|s| format!(", moving it to {s}"));
+            let gone = if removes { ", removing its worktree" } else { "" };
+            format!("Stop {}'s work{}{gone}", field("ticket"), to.unwrap_or_default())
+        }
         (_, Some("send_to_session")) => format!("To session {}: {}", field("session"), field("text")),
         (_, Some(t @ ("discord_change" | "discord_webhook"))) => {
             crate::discord::ask_title(t, input).unwrap_or_else(|| "Discord".into())
@@ -1718,6 +1724,11 @@ not json"#,
         assert_eq!(t, "New ticket in PDT: Add a logout");
         let t = tool_title("mcp__pdt__edit_ticket", &json!({"ticket": "PDT-4", "stage": "ready", "title": null}));
         assert_eq!(t, "Edit PDT-4: stage");
+        let t = tool_title("mcp__pdt__stop_ticket", &json!({"ticket": "PDT-4"}));
+        assert_eq!(t, "Stop PDT-4's work");
+        let t =
+            tool_title("mcp__pdt__stop_ticket", &json!({"ticket": "PDT-4", "stage": "ready", "removeWorktree": true}));
+        assert_eq!(t, "Stop PDT-4's work, moving it to ready, removing its worktree");
         let long = "x".repeat(300);
         assert_eq!(tool_title("Bash", &json!({"command": long})).chars().count(), 201);
         let l = user_line("s", "hi", &[], true);

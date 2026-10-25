@@ -1382,3 +1382,87 @@ async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge()
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_unreadable")), "{v}");
     assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")), "nothing merged");
 }
+
+/// PDT-159: moving an in-progress ticket back to To do stops its work: the Pipeline's run is cancelled, the Coder's
+/// session stops and the attempt is abandoned. An abandoned attempt doesn't hold the ticket back: once it is clear,
+/// auto-start takes it again.
+#[tokio::test]
+async fn moving_a_started_ticket_back_to_todo_stops_its_work_and_auto_start_takes_it_again() {
+    let env = setup().await;
+    // The Coder never submits: it is still at work when the ticket moves.
+    pipeline(&env, json!({}), &[("review", "approved"), ("qa", "pass")]).await;
+    settings(&env, json!({"autoStart": "todo", "startDelaySeconds": 0})).await;
+    let t = todo(&env, "Started by mistake").await;
+    let coder = step_session(&env, "code").await;
+    assert_eq!(session_status(&env, &coder).await, "running");
+    assert_eq!(get_ticket(&env, &t).await["stage"], "in_progress");
+
+    // Blocked first, so auto-start leaves it until the blocker closes.
+    let blocker = ticket(&env, "Blocker").await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{blocker}/links"), Some(json!({"to": t, "kind": "blocks"})))
+            .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["stage"], "todo");
+    assert_eq!(v["attempts"][0]["state"], "abandoned", "{v}");
+    let runs = runs_of(&env, &t, "Pipeline").await;
+    assert!(!runs.is_empty() && runs.iter().all(|r| r["status"] == "cancelled"), "{runs:?}");
+    assert_ne!(session_status(&env, &coder).await, "running");
+    assert!(env.state.store.active_agent_steps().await.unwrap().iter().all(|a| a.ticket_id.as_deref() != Some(&t)));
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+        pdt_api::schedule_tickets(&env.state).await;
+    }
+    assert_eq!(get_ticket(&env, &t).await["stage"], "todo", "still blocked");
+
+    // Clear: auto-start takes it again, with a new attempt.
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{blocker}"), Some(json!({"stage": "done"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let v = tick_until(&env, "the ticket started again", || async {
+        let v = get_ticket(&env, &t).await;
+        (v["stage"] == "in_progress").then_some(v)
+    })
+    .await;
+    let states: Vec<&Value> = v["attempts"].as_array().unwrap().iter().map(|a| &a["state"]).collect();
+    assert!(states.contains(&&json!("active")) && states.contains(&&json!("abandoned")), "{v}");
+}
+
+/// PDT-159: Abandon stops the attempt's work too, and `POST /tickets/{id}/stop` with `removeWorktree` also removes
+/// the worktree, so the next start begins clean.
+#[tokio::test]
+async fn abandon_and_stop_end_the_run_and_sessions_and_stop_can_remove_the_worktree() {
+    let env = setup().await;
+    pipeline(&env, json!({}), &[("review", "approved"), ("qa", "pass")]).await;
+    let t = ticket(&env, "Abandoned").await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let coder = step_session(&env, "code").await;
+    let attempt = get_ticket(&env, &t).await["attempts"][0]["id"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{attempt}/abandon"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["attempts"][0]["state"], "abandoned");
+    assert_eq!(v["stage"], "in_progress", "Abandon leaves the stage alone");
+    assert!(runs_of(&env, &t, "Pipeline").await.iter().all(|r| r["status"] == "cancelled"));
+    assert_ne!(session_status(&env, &coder).await, "running");
+
+    // Stop: an in-progress ticket goes back to To do; the worktree the abandoned attempt left goes, changes and all.
+    let wt = v["attempts"][0]["worktreeId"].as_str().unwrap().to_string();
+    let (_, w) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.project), None).await;
+    let path =
+        w.as_array().unwrap().iter().find(|x| x["id"] == wt.as_str()).unwrap()["path"].as_str().unwrap().to_string();
+    std::fs::write(Path::new(&path).join("left-over.txt"), "x").unwrap();
+    let (s, r) = call(&env.app, "POST", &format!("/api/tickets/{t}/stop"), Some(json!({"removeWorktree": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert_eq!(
+        (r["stage"].as_str(), r["abandoned"].is_null(), r["worktreeRemoved"].as_bool()),
+        (Some("todo"), true, Some(true)),
+        "{r}"
+    );
+    assert!(!Path::new(&path).exists());
+    let (s, r) = call(&env.app, "POST", &format!("/api/tickets/{t}/stop"), Some(json!({"stage": "done"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{r}");
+}

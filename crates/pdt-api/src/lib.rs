@@ -43,6 +43,7 @@ pub mod secrets;
 mod sessions;
 mod slow;
 mod start;
+mod stop;
 mod tickets;
 mod todos;
 pub mod update;

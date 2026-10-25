@@ -57,7 +57,7 @@ notifications get 202; `GET`/`DELETE` 405).
   results with `isError`. Every result and error is redacted of known secrets' values (PDT-158).
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
   `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
-  less the asking tools (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `send_to_session`,
+  less the asking tools (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session`,
   `discord_change`, `discord_webhook`:
   pdt-core `ASKING_TOOLS`), which Claude
   asks about per call;
@@ -113,7 +113,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   list with due dates, `dueOn`/`dueTime`, and repeat rules, `recurrence`; read-only: the PM never changes it), the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
-  attempt, as the API; `parent` takes a key or id, `""` detaches), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
+  attempt and moving back to Draft, Ready or To do stops its work, as the API; `parent` takes a key or id, `""`
+  detaches), `stop_ticket` (`ticket`, `stage?`, `removeWorktree?`, `deleteBranch?`: `POST /api/tickets/{id}/stop`,
+  [tickets.md](tickets.md) "Stopping a ticket's work"; the timeline gets "The PM stopped its work."), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
   `blocks`, `blockedBy` or `relates`, and `other` in the same project; the store's link rules, so self-links, blocking
   cycles and unknown tickets are errors; the `linked`/`unlinked` and `parted` events are the agent's) and
   `send_to_session` (through the outbox, "[PDT] From the project manager: …"), and `report_bug` (a bug in PDT itself,
@@ -170,7 +172,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
     Scryer answers is redacted the same way, also any secret PDT sent that it echoes. The log line for a change names
     the connection and the mutation only.
 - **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
-  Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s, `link_tickets`' and `unlink_tickets`' ticket,
+  Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s, `link_tickets`', `unlink_tickets`' and `stop_ticket`'s ticket,
   `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
   project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`); for the Discord tools the
   setting is the bot connection's `config.pmActs` (a Discord server is in no project), and for `scryer_add` and

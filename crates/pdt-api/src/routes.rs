@@ -398,6 +398,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))
         .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
         .route("/tickets/{id}/finish", axum::routing::post(crate::finish::finish_route))
+        .route("/tickets/{id}/stop", axum::routing::post(crate::stop::stop_route))
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
         .route("/attempts/{id}/approve", axum::routing::post(crate::review::approve))
         .route("/attempts/{id}/merge", get(crate::review::merge_preview).post(crate::review::merge))
