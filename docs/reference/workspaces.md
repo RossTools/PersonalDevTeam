@@ -176,7 +176,9 @@ its tab, the Inbox picking an item) replace it.
 - Editing in the Files view (PDT-157, not on phones): **Edit** turns the file's CodeMirror editable (same
   highlighting; a file with CRLF endings keeps them), with Save (⌘S / Ctrl+S) and Cancel (Done once saved); a Markdown
   file gets an Edit | Preview switch. While there are unsaved changes, navigating in the app asks first (the router's
-  `useNavigationGuard`; browser Back is not held) and closing the page asks the browser's question. The file's
+  `useNavigationGuard`), Back and Forward are undone and taken again only once the user says to discard (by the
+  history entries' `n`), and closing the page asks the browser's question; Rename and Delete of the edited file
+  (or its folders) are held until the edits are saved or cancelled. The file's
   content carries `hash` (SHA-256 of its bytes); `PUT /api/projects/{id}/files/content` `{path, worktreeId?, text,
   baseHash?}` writes only when the file on disk still has `baseHash`, else 409 `file_changed`, and the UI offers
   Reload (the file as it is now) or Show diff (on disk → yours, the review's `CodeDiff`) + Overwrite (saves against

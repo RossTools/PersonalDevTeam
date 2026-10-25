@@ -44,6 +44,8 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
   const place = picked ?? initial ?? (projects[0] ? { projectId: projects[0].id, worktreeId: null } : null);
   const placeKey = place ? `${place.projectId}:${place.worktreeId}` : '';
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // The file with unsaved edits, if any: it can't be renamed or deleted under the editor.
+  const [unsaved, setUnsaved] = useState<string | null>(null);
   // Another checkout starts with its folders closed (not the first one shown once projects load: a linked file's
   // folders are open in it).
   const shownPlace = useRef(placeKey);
@@ -67,6 +69,8 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
     toggle: (path: string) => setOpen((s) => { const n = new Set(s); if (n.has(path)) n.delete(path); else n.add(path); return n; }),
     file,
     setFile: (f: string | null) => change(picked, f),
+    unsaved,
+    setUnsaved,
   };
 }
 
@@ -188,13 +192,24 @@ function useFileOps(state: FolderViewState, place: Place) {
       if (state.file === path) state.setFile(null);
     } catch (e) { fail(e); }
   };
-  const entries = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => [
-    e.dir
-      ? { input: `New file in ${e.path}…`, onSubmit: (name) => void create(`${e.path}/${name}`) }
-      : { input: 'New file here…', onSubmit: (name) => void create(parentOf(e.path) ? `${parentOf(e.path)}/${name}` : name) },
-    { input: 'Rename…', defaultValue: e.path, onSubmit: (to) => void rename(e.path, to) },
-    ...(e.dir ? [] : [{ separator: true } as const, { label: 'Delete…', danger: true, onSelect: () => void remove(e.path) }]),
-  ];
+  const entries = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => {
+    const held = !!state.unsaved && (state.unsaved === e.path || state.unsaved.startsWith(`${e.path}/`));
+    return [
+      e.dir
+        ? { input: `New file in ${e.path}…`, onSubmit: (name) => void create(`${e.path}/${name}`) }
+        : { input: 'New file here…', onSubmit: (name) => void create(parentOf(e.path) ? `${parentOf(e.path)}/${name}` : name) },
+      ...(held
+        ? [
+            { heading: 'Save or cancel your edits first' } as const,
+            { label: 'Rename…', disabled: true, onSelect: () => {} },
+            ...(e.dir ? [] : [{ label: 'Delete…', disabled: true, onSelect: () => {} }]),
+          ]
+        : [
+            { input: 'Rename…', defaultValue: e.path, onSubmit: (to: string) => void rename(e.path, to) },
+            ...(e.dir ? [] : [{ separator: true } as const, { label: 'Delete…', danger: true, onSelect: () => void remove(e.path) }]),
+          ]),
+    ];
+  };
   return { create, rename, remove, entries };
 }
 
@@ -298,6 +313,12 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   const dirty = !!edit && edit.text !== edit.base.text;
   const fileKey = ['file', place.projectId, place.worktreeId, f.path];
   const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
+  const { setUnsaved } = state;
+  useEffect(() => {
+    if (!dirty) return;
+    setUnsaved(f.path);
+    return () => setUnsaved(null);
+  }, [dirty, f.path]);
 
   useNavigationGuard(dirty, async () => (await confirm({
     title: 'Discard unsaved changes?',

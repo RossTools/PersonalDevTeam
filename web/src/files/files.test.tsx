@@ -251,6 +251,22 @@ describe('editing files', () => {
     await waitFor(() => expect(calls.find((c) => c.path === '/api/projects/p/files/tell')?.body).toEqual({ sessionId: 's1', paths: ['a.rs'] }));
   });
 
+  it('holds Rename and Delete of a file with unsaved edits', async () => {
+    stubApi(editRoutes());
+    renderWithQuery(<Harness />);
+    const editor = await startEditing(/a\.rs/);
+    await userEvent.type(editor, 'x');
+    await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByRole('row', { name: /a\.rs/ }) });
+    const menu = await screen.findByRole('menu', { name: 'a.rs actions' });
+    expect(within(menu).getByRole('menuitem', { name: 'Rename…' })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(menu).getByRole('menuitem', { name: 'Delete…' })).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.keyboard('{Escape}');
+    // Other files are not held.
+    await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByRole('row', { name: /b\.rs/ }) });
+    const other = await screen.findByRole('menu', { name: 'b.rs actions' });
+    expect(within(other).getByRole('menuitem', { name: 'Delete…' })).not.toHaveAttribute('aria-disabled');
+  });
+
   it('edits Markdown with a preview', async () => {
     stubApi(editRoutes({
       'GET /api/projects/p/files?path=': [entry('README.md')],

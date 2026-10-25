@@ -6,12 +6,39 @@ const notify = () => listeners.forEach((l) => l());
 
 function subscribe(l: () => void) {
   listeners.add(l);
-  if (listeners.size === 1) window.addEventListener('popstate', notify);
   return () => {
     listeners.delete(l);
-    if (listeners.size === 0) window.removeEventListener('popstate', notify);
   };
 }
+
+// Back and Forward: shown, unless a guard holds the screen (unsaved edits). Then the step is undone (by the entries'
+// `n`, so the history stays as it was), the guard asks, and the step is taken again once it says yes.
+let shownN = 0;
+/** A held step being undone: once the undo lands, the guard asks. */
+let undoing: { delta: number; ask: () => Promise<boolean> } | null = null;
+let passing = false;
+function onPop() {
+  if (undoing) {
+    const { delta, ask } = undoing;
+    undoing = null;
+    void ask().then((ok) => {
+      if (!ok) return;
+      passing = true;
+      window.history.go(-delta);
+    });
+    return;
+  }
+  const delta = shownN - (entry().n ?? 0);
+  if (guard && !passing && overlays === 0 && delta !== 0) {
+    undoing = { delta, ask: guard };
+    window.history.go(delta);
+    return;
+  }
+  passing = false;
+  shownN = entry().n ?? 0;
+  notify();
+}
+if (typeof window !== 'undefined') window.addEventListener('popstate', onPop);
 
 /** The current path and query string. */
 export const currentLocation = () => window.location.pathname + window.location.search;
@@ -49,6 +76,7 @@ function navigateNow(to: string, opts?: { replace?: boolean }) {
     pushedThisTask = true;
     setTimeout(() => { pushedThisTask = false; }, 0);
   }
+  shownN = entry().n ?? 0;
   notify();
 }
 
@@ -62,8 +90,8 @@ export function whenAllowed(go: () => void) {
 }
 
 /**
- * While `active` (unsaved changes), navigating in the app first asks `ask` (a confirm), and closing or reloading the
- * page asks the browser's own question. Browser Back is not held.
+ * While `active` (unsaved changes), navigating in the app, Back and Forward first ask `ask` (a confirm), and closing
+ * or reloading the page asks the browser's own question.
  */
 export function useNavigationGuard(active: boolean, ask: () => Promise<boolean>) {
   const askRef = useRef(ask);
@@ -72,6 +100,7 @@ export function useNavigationGuard(active: boolean, ask: () => Promise<boolean>)
     if (!active) return;
     const mine = () => askRef.current();
     guard = mine;
+    shownN = entry().n ?? 0;
     const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener('beforeunload', onUnload);
     return () => {
