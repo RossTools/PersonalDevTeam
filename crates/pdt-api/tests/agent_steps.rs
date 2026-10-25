@@ -262,6 +262,85 @@ async fn pdt_mcp_needs_the_session_token_and_lists_its_tools() {
     );
 }
 
+/// PDT-163: a Coder working on one ticket edits and comments on another; both name the Coder, its session and the
+/// ticket it works on, in the timeline and in `get_ticket`.
+#[tokio::test]
+async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket() {
+    let env = setup().await;
+    let (_, list) = call(&env.app, "GET", "/api/personas", None).await;
+    let mut coder = list.as_array().unwrap().iter().find(|p| p["name"] == "Coder").unwrap().clone();
+    let mut tools: Vec<&str> = pdt_core::persona::DEFAULT_TOOLS.to_vec();
+    tools.push("edit_ticket");
+    coder["tools"] = json!(tools);
+    // edit_ticket asks first; here nothing asks.
+    coder["permissionMode"] = json!("bypass");
+    let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", coder["id"].as_str().unwrap()), Some(coder)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let mine = ticket(&env, "Mine").await;
+    let other = ticket(&env, "Other").await;
+    let (_, m) = call(&env.app, "GET", &format!("/api/tickets/{mine}"), None).await;
+    let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+    let (mine_key, other_key) = (m["key"].as_str().unwrap().to_string(), o["key"].as_str().unwrap().to_string());
+    let wf = create_workflow(&env, review_doc("Get going.", json!({"persona": "Coder"}))).await;
+    let run_id = run_now(&env, &wf, json!({"ticketId": mine})).await;
+    let session = step_session(&env, &run_id).await;
+    let say = |text: String| {
+        let (env, session) = (&env, session.clone());
+        async move {
+            let before = agent_says(env, &session).await.len();
+            let (s, v) =
+                call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+            tick_until(env, "the agent's answer", || async {
+                let said = agent_says(env, &session).await;
+                said.iter().skip(before).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+            })
+            .await
+            .as_str()
+            .unwrap()
+            .to_string()
+        }
+    };
+    let said =
+        say(format!(r#"mcp: edit_ticket {{"ticket": "{other_key}", "title": "Renamed", "stage": "ready"}}"#)).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    let said = say(format!(r#"mcp: add_ticket_comment {{"ticket": "{other_key}", "body": "Mine needs this."}}"#)).await;
+    assert!(said.contains("\"commented\": true"), "{said}");
+
+    let want = json!({"sessionId": session, "projectId": env.project, "persona": "Coder", "fromTicket": mine_key,
+                      "fromTicketId": mine});
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{other}/events"), None).await;
+    let items = events["items"].as_array().unwrap();
+    for kind in ["edited", "moved", "comment"] {
+        let e = items.iter().find(|e| e["kind"] == kind).unwrap_or_else(|| panic!("no {kind} in {events:#}"));
+        assert_eq!((&e["actor"], &e["agent"]), (&json!("agent"), &want), "{kind}: {e:#}");
+    }
+    let edited = items.iter().find(|e| e["kind"] == "edited").unwrap();
+    assert_eq!(edited["data"]["fields"], json!(["title"]));
+    // The user's own changes name nobody.
+    let created = items.iter().find(|e| e["kind"] == "created").unwrap();
+    assert_eq!((&created["actor"], &created["agent"]), (&json!("user"), &Value::Null));
+
+    let said = say(format!(r#"mcp: get_ticket {{"ticket": "{other_key}"}}"#)).await;
+    let got: Value = serde_json::from_str(said.strip_prefix("mcp get_ticket: ").unwrap_or(&said)).unwrap_or_else(|e| {
+        panic!("{e}: {said}");
+    });
+    let comment = &got["comments"][0];
+    assert_eq!(
+        (&comment["by"], &comment["sessionId"], &comment["fromTicket"], &comment["body"]),
+        (&json!("Coder"), &json!(session), &json!(mine_key), &json!("Mine needs this."))
+    );
+    let history = got["history"].as_array().unwrap();
+    let kinds: Vec<&str> = history.iter().map(|h| h["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["created", "edited", "moved"], "{got:#}");
+    assert_eq!((&history[0]["by"], &history[0].get("sessionId")), (&json!("user"), &None));
+    for h in &history[1..] {
+        assert_eq!((&h["by"], &h["sessionId"], &h["fromTicket"]), (&json!("Coder"), &json!(session), &json!(mine_key)));
+        assert!(h["data"].get("agent").is_none(), "{h}");
+    }
+    assert_eq!(history[1]["data"]["fields"], json!(["title"]));
+}
+
 #[tokio::test]
 async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     let env = setup().await;

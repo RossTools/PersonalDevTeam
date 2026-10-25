@@ -13,7 +13,7 @@ use pdt_core::pm::AskTarget;
 use pdt_core::review::{CommentSide, NewReviewComment};
 use pdt_core::scryer::SCRYER;
 use pdt_core::session::Session;
-use pdt_core::ticket::{Actor, valid_comment};
+use pdt_core::ticket::{Actor, AgentBy, By, EventKind, TicketEvent, valid_comment};
 use pdt_core::workflow::agent::OutcomeComment;
 use pdt_core::workflow::api::{Author, Scope};
 use pdt_core::workflow::doc::WorkflowDoc;
@@ -785,10 +785,9 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: AddTicketComment = args(a)?;
             let id = ticket_for(cx, a.ticket.as_deref()).await?;
             let body = valid_comment(&a.body).map_err(|e| api(e.into()))?;
-            let data = json!({"sessionId": cx.session.id, "persona": cx.session.persona.as_ref().map(|p| &p.name)});
             let e = st
                 .store
-                .add_comment_by(&id, &body, Actor::Agent, Some(data), now_ms())
+                .add_comment_by(&id, &body, agent_by(st, cx.session).await, None, now_ms())
                 .await
                 .map_err(store)?
                 .ok_or("that ticket no longer exists")?;
@@ -812,7 +811,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let valid = patch.validate().map_err(|e| api(e.into()))?;
             let t = st
                 .store
-                .patch_ticket_by(&id, &valid, Actor::Agent, now_ms())
+                .patch_ticket_by(&id, &valid, agent_by(st, cx.session).await, now_ms())
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
@@ -1104,7 +1103,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             };
             let valid = input.validate().map_err(|e| api(e.into()))?;
             let id = uuid::Uuid::now_v7().to_string();
-            let t = st.store.create_ticket(&id, &project, &valid, now_ms()).await.map_err(|e| api(e.into()))?;
+            let by = agent_by(st, cx.session).await;
+            let t = st.store.create_ticket_by(&id, &project, &valid, by, now_ms()).await.map_err(|e| api(e.into()))?;
             record_agent_change(cx, &t.summary.id, "Created by the PM.").await;
             Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage}))
         }
@@ -1132,18 +1132,19 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 return Err("give at least one field to change".into());
             }
             let since = now_ms();
+            let by = agent_by(st, cx.session).await;
             let t = st
                 .store
-                .patch_ticket_by(&id, &valid, Actor::Agent, since)
+                .patch_ticket_by(&id, &valid, &by, since)
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
             match valid.stage {
                 Some(stage) if stage.is_closed() => {
-                    crate::start::end_for_close(st, &id, stage, Actor::Agent).await.map_err(api)?;
+                    crate::start::end_for_close(st, &id, stage, &by).await.map_err(api)?;
                 }
                 // Back before work: the ticket's work stops (PDT-159).
-                Some(stage) => crate::stop::after_move(st, &id, stage, since, Actor::Agent).await,
+                Some(stage) => crate::stop::after_move(st, &id, stage, since, &by).await,
                 None => {}
             }
             Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
@@ -1158,9 +1159,10 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 remove_worktree: a.remove_worktree,
                 delete_branch: a.delete_branch,
             };
+            let by = agent_by(st, cx.session).await;
             let task = tokio::spawn({
                 let (st, id) = (st.clone(), id.clone());
-                async move { crate::stop::stop_ticket(&st, &id, &req, Actor::Agent).await }
+                async move { crate::stop::stop_ticket(&st, &id, &req, by).await }
             });
             let r = task.await.map_err(|e| e.to_string())?.map_err(api)?;
             record_agent_change(cx, &id, "The PM stopped its work.").await;
@@ -1180,9 +1182,10 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 LinkAs::Relates => (&id, &other, pdt_core::ticket::LinkKind::Relates),
             };
             let linked = name == "link_tickets";
+            let by = agent_by(st, cx.session).await;
             let done = match linked {
-                true => st.store.add_link_by(from, to, kind, Actor::Agent, now_ms()).await,
-                false => st.store.remove_link_by(from, to, kind, Actor::Agent, now_ms()).await,
+                true => st.store.add_link_by(from, to, kind, by, now_ms()).await,
+                false => st.store.remove_link_by(from, to, kind, by, now_ms()).await,
             };
             done.map_err(|e| match e {
                 pdt_store::TicketError::NotFound("link") => "there is no such link between them".to_string(),
@@ -1319,8 +1322,8 @@ async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) 
 
 /// Notes on the ticket's timeline that an agent changed it through PDT's tools (principle 5: changes are on record).
 async fn record_agent_change(cx: &Cx<'_>, ticket_id: &str, text: &str) {
-    let data = json!({"sessionId": cx.session.id, "persona": cx.session.persona.as_ref().map(|p| &p.name)});
-    if let Err(e) = cx.st.store.add_comment_by(ticket_id, text, Actor::Agent, Some(data), now_ms()).await {
+    let by = agent_by(cx.st, cx.session).await;
+    if let Err(e) = cx.st.store.add_comment_by(ticket_id, text, by, None, now_ms()).await {
         tracing::warn!(ticket = %ticket_id, error = %e, "could not record the PM's change on the timeline");
     }
 }
@@ -1500,6 +1503,21 @@ async fn ticket_for(cx: &Cx<'_>, given: Option<&str>) -> Result<String, String> 
         .ok_or_else(|| "this session works on no ticket; name one (`ticket`: a key such as PDT-12)".to_string())
 }
 
+/// Who a session's ticket changes and comments are by (PDT-163): the agent, its persona and the ticket it works on.
+pub(crate) async fn agent_by(st: &AppState, s: &Session) -> By {
+    let from = match session_ticket(st, s).await {
+        Some(id) => st.store.get_ticket_summary(&id).await.ok().flatten(),
+        None => None,
+    };
+    By::agent(AgentBy {
+        session_id: s.id.clone(),
+        project_id: Some(s.project_id.clone()),
+        persona: s.persona.as_ref().map(|p| p.name.clone()),
+        from_ticket: from.as_ref().map(|t| t.key.clone()),
+        from_ticket_id: from.map(|t| t.id),
+    })
+}
+
 /// The ticket a session works on: its attempt's, else its agent step's.
 pub(crate) async fn session_ticket(st: &AppState, s: &Session) -> Option<String> {
     if let Some(t) = &s.ticket {
@@ -1508,17 +1526,73 @@ pub(crate) async fn session_ticket(st: &AppState, s: &Session) -> Option<String>
     st.store.active_agent_step(&s.id).await.ok().flatten().and_then(|a| a.ticket_id)
 }
 
+/// The changes `get_ticket` lists as a ticket's history, and how many (the newest).
+const HISTORY: &[EventKind] = &[
+    EventKind::Created,
+    EventKind::Edited,
+    EventKind::Moved,
+    EventKind::Linked,
+    EventKind::Unlinked,
+    EventKind::Parted,
+    EventKind::Waiting,
+    EventKind::Started,
+    EventKind::Merged,
+    EventKind::Abandoned,
+];
+const HISTORY_LEN: u32 = 50;
+
+/// Who made an event and when, for `get_ticket`: `by` is the agent's persona (`agent` when it had none or nothing is
+/// known), `user` or `system`, with the agent's session and the ticket it works on (PDT-163).
+fn who(e: &TicketEvent) -> Value {
+    let mut v = json!({"by": e.actor, "at": e.created_at});
+    if let Some(a) = &e.agent {
+        if e.actor == Actor::Agent
+            && let Some(p) = &a.persona
+        {
+            v["by"] = json!(p);
+        }
+        v["sessionId"] = json!(a.session_id);
+        if let Some(t) = &a.from_ticket {
+            v["fromTicket"] = json!(t);
+        }
+    }
+    v
+}
+
 async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     let st = cx.st;
     let Json(ticket) =
         crate::tickets::get_one(State(st.clone()), axum::extract::Path(id.to_string())).await.map_err(api)?;
     let comments: Vec<Value> = st
         .store
-        .comments(id)
+        .events_of(id, &[EventKind::Comment], 1000)
         .await
         .map_err(store)?
-        .into_iter()
-        .map(|(actor, body, at)| json!({"by": actor, "body": body, "at": at}))
+        .iter()
+        .filter(|e| e.body.is_some())
+        .map(|e| {
+            let mut v = who(e);
+            v["body"] = json!(e.body);
+            v
+        })
+        .collect();
+    let history: Vec<Value> = st
+        .store
+        .events_of(id, HISTORY, HISTORY_LEN)
+        .await
+        .map_err(store)?
+        .iter()
+        .map(|e| {
+            let mut v = who(e);
+            v["kind"] = json!(e.kind);
+            if let Some(Value::Object(mut d)) = e.data.clone() {
+                d.remove("agent");
+                if !d.is_empty() {
+                    v["data"] = Value::Object(d);
+                }
+            }
+            v
+        })
         .collect();
     let outcomes: Vec<Value> = st
         .store
@@ -1539,6 +1613,7 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     };
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
     v["comments"] = json!(comments);
+    v["history"] = json!(history);
     v["outcomes"] = json!(outcomes);
     if !step.is_null() {
         v["step"] = step;
