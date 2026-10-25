@@ -6,6 +6,8 @@ export interface TimelineItem {
   id: string;
   /** Who did it: `user` (you), `system` (PDT itself), `agent` (an agent through the API), or a persona name. */
   actor: 'user' | 'system' | 'agent' | (string & {});
+  /** Shown in place of the actor's name (an agent's persona and ticket, linking to its session). */
+  actorLabel?: ReactNode;
   /** Overrides the actor's default icon (a lucide icon at 12px). */
   icon?: ReactNode;
   /** When it happened (ms since the epoch). */
@@ -100,7 +102,7 @@ export function Timeline({ items, empty = 'No activity yet.', now, 'aria-label':
             <div className="flex min-h-5 flex-wrap items-baseline gap-x-1.5 text-xs">
               <span className="min-w-0 font-medium text-foreground">{item.title}</span>
               <span className="text-meta text-muted-foreground">
-                {actorName(item.actor)} · <RelativeTime time={item.time} now={now} />
+                {item.actorLabel ?? actorName(item.actor)} · <RelativeTime time={item.time} now={now} />
               </span>
             </div>
             {item.body != null && <div className="min-w-0 text-sm">{item.body}</div>}

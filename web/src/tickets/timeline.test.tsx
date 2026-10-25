@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { event } from './fixtures';
+import { OpenSessionContext } from './actions';
 import { TicketTimeline } from './TicketParts';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -45,5 +46,33 @@ describe('TicketTimeline', () => {
     expect(screen.getByText('Which login page?')).toBeInTheDocument();
     expect(screen.getAllByText(/^Refiner ·/)).toHaveLength(2);
     expect(screen.queryByText(/^You ·/)).toBeNull();
+  });
+
+  it("names an agent's edits and comments by its persona and ticket, opening its session", async () => {
+    const agent = { sessionId: 's9', projectId: 'p1', persona: 'Coder', fromTicket: 'CB-34', fromTicketId: 't34' };
+    stubApi({
+      'GET /api/tickets/t1/events': {
+        items: [
+          event('e3', { kind: 'comment', actor: 'agent', body: 'CB-34 needs this.', agent, createdAt: 3 }),
+          event('e2', { kind: 'edited', actor: 'agent', data: { fields: ['title', 'description'], agent }, agent, createdAt: 2 }),
+          // Before PDT-163: only the persona.
+          event('e1', { kind: 'comment', actor: 'agent', body: 'Old one.', data: { persona: 'Refiner' }, createdAt: 1 }),
+        ],
+        nextCursor: null,
+      },
+    });
+    const onSession = vi.fn();
+    renderWithQuery(
+      <OpenSessionContext.Provider value={onSession}>
+        <TicketTimeline ticketId="t1" />
+      </OpenSessionContext.Provider>,
+    );
+    expect(await screen.findByText('Edited title, description')).toBeInTheDocument();
+    const labels = screen.getAllByRole('button', { name: 'Coder · CB-34' });
+    expect(labels).toHaveLength(2);
+    await userEvent.click(labels[0]!);
+    expect(onSession).toHaveBeenCalledWith({ id: 's9', projectId: 'p1' });
+    expect(screen.getByText(/^Refiner ·/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Refiner/ })).toBeNull();
   });
 });

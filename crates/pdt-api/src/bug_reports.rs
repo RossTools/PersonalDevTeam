@@ -280,13 +280,12 @@ pub(crate) async fn file(
             };
             let valid = input.validate()?;
             let id = uuid::Uuid::now_v7().to_string();
-            let t = st.store.create_ticket(&id, &p.id, &valid, now_ms()).await?;
             let (by, text) = match by_session {
-                Some(_) => (pdt_core::ticket::Actor::Agent, "Filed by an agent with report_bug."),
-                None => (pdt_core::ticket::Actor::User, "Filed with Report a bug."),
+                Some(s) => (crate::mcp::tools::agent_by(st, s).await, "Filed by an agent with report_bug."),
+                None => (pdt_core::ticket::Actor::User.into(), "Filed with Report a bug."),
             };
-            let data = by_session.map(|s| serde_json::json!({"sessionId": s.id}));
-            if let Err(e) = st.store.add_comment_by(&t.summary.id, text, by, data, now_ms()).await {
+            let t = st.store.create_ticket_by(&id, &p.id, &valid, &by, now_ms()).await?;
+            if let Err(e) = st.store.add_comment_by(&t.summary.id, text, by, None, now_ms()).await {
                 tracing::warn!(ticket = %t.summary.id, error = %e, "could not note the bug report on the ticket");
             }
             BugReportFiled::Ticket { key: t.summary.key, id: t.summary.id, project_id: p.id }

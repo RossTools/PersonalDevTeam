@@ -27,7 +27,7 @@ person confirms per call unless the project lets the PM act. Use them for what t
 
 | Tool | Does |
 |---|---|
-| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments, the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
 | `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes |
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |

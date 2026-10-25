@@ -10,10 +10,10 @@ use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
 use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
-    Actor, AttemptSession, AttemptState, AttemptSummary, EventKind, EventPage, ExternalLink, LinkDirection, LinkKind,
-    LinkedTicket, MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge, Ticket, TicketEvent,
-    TicketFilter, TicketPage, TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket, ValidPatch,
-    format_key, parse_key,
+    Actor, AgentBy, AttemptSession, AttemptState, AttemptSummary, By, EventKind, EventPage, ExternalLink,
+    LinkDirection, LinkKind, LinkedTicket, MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge,
+    Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket,
+    ValidPatch, format_key, parse_key,
 };
 use serde_json::json;
 use sqlx::sqlite::SqliteRow;
@@ -463,11 +463,13 @@ async fn insert_event(
     conn: &mut SqliteConnection,
     ticket_id: &str,
     kind: EventKind,
-    actor: Actor,
+    by: impl Into<By>,
     body: Option<&str>,
     data: Option<serde_json::Value>,
     now: i64,
 ) -> Result<String, StoreError> {
+    let by = by.into();
+    let (actor, data) = (by.actor, by.stamp(data));
     let id = uuid::Uuid::now_v7().to_string();
     sqlx::query(
         "INSERT INTO ticket_events (id, ticket_id, kind, actor, body, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -489,14 +491,18 @@ async fn insert_event(
 fn to_event(r: &SqliteRow) -> Result<TicketEvent, StoreError> {
     let kind: String = r.try_get("kind")?;
     let actor: String = r.try_get("actor")?;
-    let data: Option<String> = r.try_get("data")?;
+    let data: Option<serde_json::Value> =
+        r.try_get::<Option<String>, _>("data")?.and_then(|d| serde_json::from_str(&d).ok());
+    let kind = EventKind::parse(&kind).ok_or_else(|| corrupt("event kind", &kind))?;
+    let actor = Actor::parse(&actor).ok_or_else(|| corrupt("event actor", &actor))?;
     Ok(TicketEvent {
         id: r.try_get("id")?,
         ticket_id: r.try_get("ticket_id")?,
-        kind: EventKind::parse(&kind).ok_or_else(|| corrupt("event kind", &kind))?,
-        actor: Actor::parse(&actor).ok_or_else(|| corrupt("event actor", &actor))?,
+        kind,
+        actor,
         body: r.try_get("body")?,
-        data: data.and_then(|d| serde_json::from_str(&d).ok()),
+        agent: AgentBy::of_event(kind, actor, data.as_ref()),
+        data,
         created_at: r.try_get("created_at")?,
     })
 }
@@ -633,7 +639,7 @@ async fn change_stage_by(
     id: &str,
     from: TicketStage,
     to: TicketStage,
-    actor: Actor,
+    by: impl Into<By>,
     extra: Option<&serde_json::Value>,
     now: i64,
 ) -> Result<(), StoreError> {
@@ -656,7 +662,7 @@ async fn change_stage_by(
     if let (Some(d), Some(serde_json::Value::Object(x))) = (data.as_object_mut(), extra) {
         d.extend(x.clone());
     }
-    insert_event(conn, id, EventKind::Moved, actor, None, Some(data), now).await?;
+    insert_event(conn, id, EventKind::Moved, by, None, Some(data), now).await?;
     if to.is_closed() && !from.is_closed() {
         let sql = format!(
             "SELECT t.id FROM ticket_links l JOIN tickets t ON t.id = l.to_id \
@@ -766,13 +772,13 @@ async fn parted_events(
     (parent, parent_key): (&str, &str),
     (part, part_key): (&str, &str),
     removed: bool,
-    actor: Actor,
+    by: &By,
     now: i64,
 ) -> Result<(), StoreError> {
     let data =
         json!({"parentId": parent, "parentKey": parent_key, "partId": part, "partKey": part_key, "removed": removed});
-    insert_event(conn, parent, EventKind::Parted, actor, None, Some(data.clone()), now).await?;
-    insert_event(conn, part, EventKind::Parted, actor, None, Some(data), now).await?;
+    insert_event(conn, parent, EventKind::Parted, by, None, Some(data.clone()), now).await?;
+    insert_event(conn, part, EventKind::Parted, by, None, Some(data), now).await?;
     Ok(())
 }
 
@@ -784,6 +790,7 @@ async fn insert_ticket(
     id: &str,
     project_id: &str,
     t: &ValidNewTicket,
+    by: &By,
     now: i64,
 ) -> TResult<()> {
     let number: Option<(i64,)> = sqlx::query_as(
@@ -843,14 +850,14 @@ async fn insert_ticket(
     if rank::needs_rebalance(&key) {
         rebalance(conn, project_id).await?;
     }
-    insert_event(conn, id, EventKind::Created, Actor::User, None, Some(json!({"stage": t.stage})), now).await?;
+    insert_event(conn, id, EventKind::Created, by, None, Some(json!({"stage": t.stage})), now).await?;
     if let Some(parent) = &t.parent {
         let (pkey,): (String,) = sqlx::query_as("SELECT COALESCE(key, '') FROM projects WHERE id = ?")
             .bind(project_id)
             .fetch_one(&mut *conn)
             .await?;
         let own_key = format_key(&pkey, u32::try_from(number).unwrap_or(0));
-        parted_events(conn, (parent, &parent_key), (id, &own_key), false, Actor::User, now).await?;
+        parted_events(conn, (parent, &parent_key), (id, &own_key), false, by, now).await?;
         if let (true, Some(prev)) = (t.blocked_by_previous, previous) {
             sqlx::query("INSERT INTO ticket_links (from_id, to_id, kind, created_at) VALUES (?, ?, 'blocks', ?)")
                 .bind(&prev)
@@ -861,16 +868,7 @@ async fn insert_ticket(
             // A link is a change on both sides: auto-start's quiet period starts again (PDT-146).
             touch(conn, &prev, now).await?;
             let prev_key = ticket_head(conn, &prev).await?.map(|h| h.1).unwrap_or_default();
-            link_events(
-                conn,
-                EventKind::Linked,
-                LinkKind::Blocks,
-                (&prev, &prev_key),
-                (id, &own_key),
-                Actor::User,
-                now,
-            )
-            .await?;
+            link_events(conn, EventKind::Linked, LinkKind::Blocks, (&prev, &prev_key), (id, &own_key), by, now).await?;
         }
     }
     Ok(())
@@ -938,7 +936,7 @@ impl Store {
         if let Some((other,)) = existing {
             return Ok(Err(other));
         }
-        insert_ticket(&mut tx, id, project_id, t, now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &Actor::User.into(), now).await?;
         sqlx::query(
             "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -998,8 +996,20 @@ impl Store {
     /// Adds a ticket with the project's next number, at the top of its stage (or where `before`/`after` say), with a
     /// `created` event. NotFound("project") if there is no such project.
     pub async fn create_ticket(&self, id: &str, project_id: &str, t: &ValidNewTicket, now: i64) -> TResult<Ticket> {
+        self.create_ticket_by(id, project_id, t, Actor::User, now).await
+    }
+
+    /// [`Store::create_ticket`] on behalf of `by` (the PM's `create_ticket`), who the `created` event names.
+    pub async fn create_ticket_by(
+        &self,
+        id: &str,
+        project_id: &str,
+        t: &ValidNewTicket,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Ticket> {
         let mut tx = self.write_tx().await?;
-        insert_ticket(&mut tx, id, project_id, t, now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &by.into(), now).await?;
         tx.commit().await?;
         self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))
     }
@@ -1026,7 +1036,7 @@ impl Store {
                 parent: Some(parent.to_string()),
                 blocked_by_previous: v.blocked_by_previous,
             };
-            insert_ticket(&mut tx, &id, &project_id, &t, now).await?;
+            insert_ticket(&mut tx, &id, &project_id, &t, &Actor::User.into(), now).await?;
             ids.push(id);
         }
         tx.commit().await?;
@@ -1226,9 +1236,15 @@ impl Store {
         self.patch_ticket_by(id, p, Actor::User, now).await
     }
 
-    /// [`Store::patch_ticket`] on behalf of `actor` (an agent's `update_ticket`, Phase 7c), who the `edited` event
-    /// names.
-    pub async fn patch_ticket_by(&self, id: &str, p: &ValidPatch, actor: Actor, now: i64) -> TResult<Option<Ticket>> {
+    /// [`Store::patch_ticket`] on behalf of `by` (an agent's `update_ticket` or `edit_ticket`), who its events name.
+    pub async fn patch_ticket_by(
+        &self,
+        id: &str,
+        p: &ValidPatch,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Option<Ticket>> {
+        let by = by.into();
         let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
         let (description,): (String,) =
@@ -1260,18 +1276,18 @@ impl Store {
         }
         if !fields.is_empty() {
             touch(&mut tx, id, now).await?;
-            insert_event(&mut tx, id, EventKind::Edited, actor, None, Some(json!({"fields": fields})), now).await?;
+            insert_event(&mut tx, id, EventKind::Edited, &by, None, Some(json!({"fields": fields})), now).await?;
         }
         if let Some(parent) = &p.parent {
             let current = cur.parent.as_ref().map(|x| x.id.as_str());
             if current != parent.as_deref() {
                 if let Some(old) = &cur.parent {
-                    parted_events(&mut tx, (&old.id, &old.key), (id, &cur.key), true, actor, now).await?;
+                    parted_events(&mut tx, (&old.id, &old.key), (id, &cur.key), true, &by, now).await?;
                 }
                 if let Some(new) = parent {
                     let (facts, key, _) = parent_facts(&mut tx, Some((id, &cur.project_id)), new).await?;
                     valid_parent(&facts)?;
-                    parted_events(&mut tx, (new, &key), (id, &cur.key), false, actor, now).await?;
+                    parted_events(&mut tx, (new, &key), (id, &cur.key), false, &by, now).await?;
                 }
                 sqlx::query("UPDATE tickets SET parent_id = ?, updated_at = ? WHERE id = ?")
                     .bind(parent)
@@ -1289,7 +1305,7 @@ impl Store {
                     return Err(TicketError::PartsOpen { key: cur.key.clone(), open });
                 }
             }
-            change_stage(&mut tx, id, cur.stage, stage, now).await?;
+            change_stage_by(&mut tx, id, cur.stage, stage, &by, None, now).await?;
         }
         if let Some(waiting) = p.waiting {
             if waiting && stage.is_closed() {
@@ -1307,16 +1323,8 @@ impl Store {
                     .bind(id)
                     .execute(&mut *tx)
                     .await?;
-                insert_event(
-                    &mut tx,
-                    id,
-                    EventKind::Waiting,
-                    Actor::User,
-                    None,
-                    Some(json!({"waiting": waiting})),
-                    now,
-                )
-                .await?;
+                insert_event(&mut tx, id, EventKind::Waiting, &by, None, Some(json!({"waiting": waiting})), now)
+                    .await?;
                 if waiting {
                     // A waiting ticket sits at the top of its stage.
                     let key = rank_for(&mut tx, &cur.project_id, Some(id), &Place::Edge(RankEdge::Top, stage)).await?;
@@ -1668,7 +1676,7 @@ impl Store {
         &self,
         id: &str,
         stage: TicketStage,
-        actor: Actor,
+        by: impl Into<By>,
         extra: Option<&serde_json::Value>,
         now: i64,
     ) -> TResult<Option<Ticket>> {
@@ -1681,7 +1689,7 @@ impl Store {
                     return Err(TicketError::PartsOpen { key: cur.key.clone(), open });
                 }
             }
-            change_stage_by(&mut tx, id, cur.stage, stage, actor, extra, now).await?;
+            change_stage_by(&mut tx, id, cur.stage, stage, by, extra, now).await?;
         }
         tx.commit().await?;
         Ok(self.get_ticket(id).await?)
@@ -1693,7 +1701,7 @@ impl Store {
         &self,
         id: &str,
         state: AttemptState,
-        actor: Actor,
+        by: impl Into<By>,
         via: Option<pdt_core::workflow::events::MergeVia>,
         pr: Option<u32>,
         now: i64,
@@ -1719,7 +1727,7 @@ impl Store {
             data["via"] = json!(via.unwrap_or(pdt_core::workflow::events::MergeVia::Detected));
             data["pr"] = json!(pr);
         }
-        insert_event(&mut tx, &ticket_id, kind, actor, None, Some(data), now).await?;
+        insert_event(&mut tx, &ticket_id, kind, by, None, Some(data), now).await?;
         touch(&mut tx, &ticket_id, now).await?;
         tx.commit().await?;
         Ok(Some(ticket_id))
@@ -1951,7 +1959,7 @@ impl Store {
         &self,
         ticket_id: &str,
         kind: EventKind,
-        actor: Actor,
+        by: impl Into<By>,
         body: Option<&str>,
         data: Option<serde_json::Value>,
         now: i64,
@@ -1959,7 +1967,7 @@ impl Store {
         let body = body.map(|b| self.redactor.string(b));
         let data = data.map(|d| self.redactor.json(&d));
         let mut conn = self.pool.acquire().await?;
-        insert_event(&mut conn, ticket_id, kind, actor, body.as_deref(), data, now).await?;
+        insert_event(&mut conn, ticket_id, kind, by, body.as_deref(), data, now).await?;
         Ok(())
     }
 
@@ -1994,7 +2002,7 @@ impl Store {
     pub async fn created_by_session(&self, ticket_id: &str, session_id: &str) -> Result<bool, StoreError> {
         let row: Option<(i64,)> = sqlx::query_as(
             "SELECT 1 FROM ticket_events WHERE ticket_id = ? AND kind = ? \
-             AND json_extract(data, '$.sessionId') = ? AND json_extract(data, '$.created') = 1 LIMIT 1",
+             AND COALESCE(json_extract(data, '$.agent.sessionId'), json_extract(data, '$.sessionId')) = ? AND json_extract(data, '$.created') = 1 LIMIT 1",
         )
         .bind(ticket_id)
         .bind(EventKind::Comment.as_str())
@@ -2004,16 +2012,29 @@ impl Store {
         Ok(row.is_some())
     }
 
-    /// A ticket's comments, oldest first: `(actor, body, created_at)`.
-    pub async fn comments(&self, ticket_id: &str) -> Result<Vec<(String, String, i64)>, StoreError> {
-        let rows: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-            "SELECT actor, body, created_at FROM ticket_events WHERE ticket_id = ? AND kind = ? ORDER BY created_at, id",
-        )
-        .bind(ticket_id)
-        .bind(EventKind::Comment.as_str())
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().filter_map(|(a, b, at)| b.map(|b| (a, b, at))).collect())
+    /// A ticket's events of `kinds`, oldest first (its comments, its history for `get_ticket`): the newest `limit`.
+    pub async fn events_of(
+        &self,
+        ticket_id: &str,
+        kinds: &[EventKind],
+        limit: u32,
+    ) -> Result<Vec<TicketEvent>, StoreError> {
+        if kinds.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE ticket_id = ",
+        );
+        qb.push_bind(ticket_id.to_string()).push(" AND kind IN (");
+        let mut sep = qb.separated(", ");
+        for k in kinds {
+            sep.push_bind(k.as_str());
+        }
+        qb.push(") ORDER BY created_at DESC, id DESC LIMIT ").push_bind(limit as i64);
+        let rows = qb.build().fetch_all(&self.pool).await?;
+        let mut out = rows.iter().map(to_event).collect::<Result<Vec<_>, _>>()?;
+        out.reverse();
+        Ok(out)
     }
 
     /// The id of a project's ticket by number.
@@ -2050,7 +2071,7 @@ impl Store {
         from: &str,
         to: &str,
         kind: LinkKind,
-        actor: Actor,
+        by: impl Into<By>,
         now: i64,
     ) -> TResult<Option<Ticket>> {
         if from == to {
@@ -2103,7 +2124,7 @@ impl Store {
         // A link is a change on both sides: auto-start's quiet period starts again (PDT-146).
         touch(&mut tx, from, now).await?;
         touch(&mut tx, to, now).await?;
-        link_events(&mut tx, EventKind::Linked, kind, (from, &from_key), (to, &to_key), actor, now).await?;
+        link_events(&mut tx, EventKind::Linked, kind, (from, &from_key), (to, &to_key), &by.into(), now).await?;
         tx.commit().await?;
         Ok(self.get_ticket(from).await?)
     }
@@ -2120,7 +2141,7 @@ impl Store {
         from: &str,
         to: &str,
         kind: LinkKind,
-        actor: Actor,
+        by: impl Into<By>,
         now: i64,
     ) -> TResult<Option<Ticket>> {
         let mut tx = self.write_tx().await?;
@@ -2140,7 +2161,7 @@ impl Store {
         let to_key = ticket_head(&mut tx, to).await?.map(|h| h.1).unwrap_or_default();
         touch(&mut tx, from, now).await?;
         touch(&mut tx, to, now).await?;
-        link_events(&mut tx, EventKind::Unlinked, kind, (from, &from_key), (to, &to_key), actor, now).await?;
+        link_events(&mut tx, EventKind::Unlinked, kind, (from, &from_key), (to, &to_key), &by.into(), now).await?;
         if kind == LinkKind::Blocks && !from_stage.is_closed() {
             let sql = format!("SELECT {BLOCKED_BY} FROM tickets t WHERE t.id = ?");
             let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(to).fetch_one(&mut *tx).await?;
@@ -2208,13 +2229,13 @@ impl Store {
         row.as_ref().map(to_event).transpose()
     }
 
-    /// A comment by `actor`; `data` names the workflow and run that wrote a system comment. Known secrets' values are
+    /// A comment by `by`; `data` names the workflow and run that wrote a system comment. Known secrets' values are
     /// redacted from its body.
     pub async fn add_comment_by(
         &self,
         ticket_id: &str,
         body: &str,
-        actor: Actor,
+        by: impl Into<By>,
         data: Option<serde_json::Value>,
         now: i64,
     ) -> Result<Option<TicketEvent>, StoreError> {
@@ -2224,7 +2245,7 @@ impl Store {
         if ticket_head(&mut tx, ticket_id).await?.is_none() {
             return Ok(None);
         }
-        let id = insert_event(&mut tx, ticket_id, EventKind::Comment, actor, Some(&body), data, now).await?;
+        let id = insert_event(&mut tx, ticket_id, EventKind::Comment, by, Some(&body), data, now).await?;
         touch(&mut tx, ticket_id, now).await?;
         let row =
             sqlx::query("SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE id = ?")
@@ -2244,14 +2265,14 @@ async fn link_events(
     kind: LinkKind,
     (from, from_key): (&str, &str),
     (to, to_key): (&str, &str),
-    actor: Actor,
+    by: &By,
     now: i64,
 ) -> Result<(), StoreError> {
     let data = |dir: LinkDirection, other: &str, key: &str| {
         Some(json!({"kind": kind, "direction": dir, "ticketId": other, "key": key}))
     };
-    insert_event(conn, from, event, actor, None, data(LinkDirection::Outgoing, to, to_key), now).await?;
-    insert_event(conn, to, event, actor, None, data(LinkDirection::Incoming, from, from_key), now).await?;
+    insert_event(conn, from, event, by, None, data(LinkDirection::Outgoing, to, to_key), now).await?;
+    insert_event(conn, to, event, by, None, data(LinkDirection::Incoming, from, from_key), now).await?;
     Ok(())
 }
 

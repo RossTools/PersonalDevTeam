@@ -8,6 +8,7 @@ import {
   type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
+import type { AgentBy } from '../api/gen/AgentBy';
 import type { LinkedTicket } from '../api/gen/LinkedTicket';
 import type { Priority } from '../api/gen/Priority';
 import type { Ticket } from '../api/gen/Ticket';
@@ -21,7 +22,7 @@ import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { actionError, useAction } from '../common/useAction';
-import { moveTicket, patchTicket, useOpenTicket } from './actions';
+import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
 import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
@@ -456,8 +457,27 @@ interface OutcomeData {
 /** Who the timeline names: an agent's events read as by its persona (or "Agent"), never as by you. */
 function actorOf(e: TicketEvent): string {
   if (e.actor !== 'agent') return e.actor;
+  if (e.agent?.persona) return e.agent.persona;
   const persona = (e.data as { persona?: unknown } | null)?.persona;
   return typeof persona === 'string' && persona ? persona : 'Agent';
+}
+
+/** An agent's persona and the ticket its session works on ("Coder · PDT-34"), opening that session (PDT-163). */
+function AgentLabel({ agent, name }: { agent: AgentBy; name: string }) {
+  const openSession = useOpenSession();
+  const text = agent.fromTicket ? `${name} · ${agent.fromTicket}` : name;
+  const projectId = agent.projectId;
+  if (!projectId) return <>{text}</>;
+  return (
+    <button
+      type="button"
+      title={`Open the ${name} session`}
+      onClick={() => openSession({ id: agent.sessionId, projectId })}
+      className="rounded-sm outline-none hover:text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {text}
+    </button>
+  );
 }
 
 /** An outcome's summary and the workflow it came from. */
@@ -478,6 +498,7 @@ function toItem(e: TicketEvent): TimelineItem {
   return {
     id: e.id,
     actor: actorOf(e),
+    ...(e.actor === 'agent' && e.agent ? { actorLabel: <AgentLabel agent={e.agent} name={actorOf(e)} /> } : {}),
     time: e.createdAt,
     title: eventTitle(e),
     ...(icon ? { icon } : {}),
