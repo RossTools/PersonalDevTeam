@@ -303,6 +303,62 @@ async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     assert!(inbox(&env).await.is_empty());
 }
 
+/// PDT-152: a personal workflow's agent step, with no project or ticket, runs in the host project as the PM does, and
+/// its dry run says so (and fails where the real run would).
+#[tokio::test]
+async fn an_agent_step_in_a_personal_workflow_runs_in_the_host_project() {
+    let env = setup().await;
+    let doc = json!({
+        "name": "Sweeper",
+        "nodes": [
+            {"id": "go", "kind": "manual", "version": 1},
+            {"id": "sweep", "kind": "agent", "version": 1, "config": {"persona": "PM",
+                "prompt": r#"mcp: submit_outcome {"outcome": "nothing_ready", "summary": "None to import."}"#,
+                "outcomes": [{"id": "imported"}, {"id": "nothing_ready"}, {"id": "needs_user"}]}},
+            {"id": "done", "kind": "end", "version": 1, "config": {"output": {"result": "{{steps.sweep.outcome}}"}}},
+        ],
+        "edges": [{"from": "go", "to": "sweep"}, {"from": "sweep", "port": "nothing_ready", "to": "done"}],
+    });
+    let (s, dry) =
+        call(&env.app, "POST", "/api/workflows/dry-run", Some(json!({"doc": doc, "event": {"type": "manual"}}))).await;
+    assert_eq!(s, StatusCode::OK, "{dry}");
+    let step = dry["run"]["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "sweep").unwrap().clone();
+    assert!(step["error"].is_null(), "{dry:#}");
+    assert!(step["output"]["would"].as_str().unwrap().contains("in the host project"), "{dry:#}");
+    let mut missing = doc.clone();
+    missing["nodes"][1]["config"]["persona"] = json!("Nobody");
+    let (_, dry) =
+        call(&env.app, "POST", "/api/workflows/dry-run", Some(json!({"doc": missing, "event": {"type": "manual"}})))
+            .await;
+    let step = dry["run"]["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "sweep").unwrap().clone();
+    assert_eq!(step["error"], "no persona is called Nobody", "{dry:#}");
+
+    let (s, w) =
+        call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "scope": "host", "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    assert!(w["projectId"].is_null(), "{w}");
+    let id = run_now(&env, w["id"].as_str().unwrap(), json!({})).await;
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r:#}");
+    assert_eq!(r["output"]["result"], "nothing_ready");
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "sweep").unwrap().clone();
+    let session = step["output"]["sessionId"].as_str().unwrap().to_string();
+    let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(s["persona"]["name"], "PM", "{s}");
+    assert!(s["ticket"].is_null() && s["attemptId"].is_null(), "{s}");
+    let host = env.state.store.host_project().await.unwrap().unwrap();
+    assert_eq!(s["projectId"].as_str(), Some(host.id.as_str()), "{s}");
+    // The PM's work folder: the folder holding the projects' checkouts.
+    let work = std::path::PathBuf::from(s["cwd"].as_str().unwrap());
+    assert_eq!(work.canonicalize().unwrap(), env._tmp.path().canonicalize().unwrap(), "{s}");
+    let instructions =
+        std::fs::read_to_string(env.state.data_dir.join("sessions").join(&session).join("instructions.md")).unwrap();
+    for want in ["project manager", "# Your role: PM", "`nothing_ready`", "scryer_query"] {
+        assert!(instructions.contains(want), "missing {want:?} in\n{instructions}");
+    }
+    assert!(inbox(&env).await.is_empty());
+}
+
 #[tokio::test]
 async fn questions_nudges_stalls_and_take_over_go_through_the_inbox() {
     let env = setup().await;

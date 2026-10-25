@@ -592,7 +592,13 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   sending step's outcome and summary, or the user's gate choice and note: pdt-core `next_pass_message`) and the
   outcomes, not the task and rules again.
 - **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
-  A step with neither runs in the run's (or workflow's) project.
+  A step with neither runs in the run's (or workflow's) project. One with no project either (a personal or scheduled
+  workflow, PDT-152) runs in the host project as the PM does ([agents.md](agents.md) "The PM"): no ticket, attempt or
+  tab, the PM's work folder as its folder, the PM's context and briefing in its instructions with the step's "Your
+  role" section in place of the persona's, and its persona's tools (the PM's Scryer tools, say). It is not one of the
+  PM's conversations (no rotation or journal). A dry run resolves the step as a real run does: a missing or archived
+  persona is its error, and it says when the step would run in the host project (a ticket or attempt id it can't
+  find, as in a hand-written event, counts as one that would be there).
 - **Permission mode** of a new session: the project's `agentPermissionMode` (project settings), else the persona
   version's, else the host default (`ticketPermissionMode` on a ticket, `sessionPermissionMode` otherwise).
 - **Instructions and first message.** The session's instructions get a "Your role: <persona>" section (the persona's

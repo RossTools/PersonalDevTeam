@@ -181,10 +181,14 @@ impl NodeKind for Agent {
                     );
                     return Ok(Outcome::next(&first, json!({"would": would})));
                 }
+                // What a real run would check first (PDT-152): the persona, and where the step runs.
+                let persona = crate::workflow::agent::step_persona(cx.st, &c.persona).await?;
+                let t = crate::workflow::agent::target(cx, &c, true).await?;
                 let would = format!(
-                    "run {} ({} session) and wait for one of: {}",
-                    c.persona,
+                    "run {} ({} session{}) and wait for one of: {}",
+                    persona.name,
                     if c.session == SessionChoice::Reuse { "reused" } else { "a new" },
+                    if t.host { ", in the host project with no ticket, as the PM runs" } else { "" },
                     c.outcomes.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
                 );
                 return Ok(Outcome::next(&first, json!({"would": would})));
