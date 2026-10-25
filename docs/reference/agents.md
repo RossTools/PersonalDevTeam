@@ -16,7 +16,9 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   `agentInstructions` in the settings API; kept when a PUT leaves it out, max 16 KB), written to
   `<data dir>/sessions/<id>/instructions.md`.
 - A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
-  follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
+  follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's; outside Personal
+  projects, read CI from the attempt's `pr.ci` or Actions runs (`gh run list --branch`, `gh run view`), never `gh pr
+  checks` or the check-runs API, which fine-grained tokens can't read, PDT-165) and, when enabled
   workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how
   to act on each kind, and, for any `ci.*` / `pr.*` / `attempt.merged` one, that PDT watches the pull request so CI
   isn't watched in a shell. The events come from pdt-core `workflow::news::agent_news`: enabled project and

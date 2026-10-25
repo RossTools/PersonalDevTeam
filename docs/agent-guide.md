@@ -86,7 +86,14 @@ workflow the person enabled, for example the built-in "PR notices" (CI failed, a
 queue, merged); each says what happened and what to do. When the pull request was set to merge, PR notices sends
 the failure as a workflow step instead: fix it, push, and finish with `submit_outcome` (PDT turns auto-merge back on). A session started on a ticket is told in its instructions
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
-shell. Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
+shell.
+
+To read CI yourself, use the ticket's attempt (`pr.ci`: the head commit's state, URL and runs, once PDT has seen the
+pull request) or GitHub Actions: `gh run list --branch <branch>`, `gh run view <id> --json jobs,conclusion` and
+`gh run view <id> --log-failed`. Not `gh pr checks` or the check-runs API: fine-grained `gh` tokens can't read checks,
+so both fail with 403 "Resource not accessible by personal access token".
+
+Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
 `{"doc": …, "note": "what and why", "propose": true}`. It is validated like a save but doesn't take effect: the person
 reviews its diff in the Workflows view and accepts or discards it. Never turn a workflow on (`PATCH {"enabled": true}`):
 that is the person's consent. Check a document with `/check` or `/validate` and try it with `/dry-run` before proposing.

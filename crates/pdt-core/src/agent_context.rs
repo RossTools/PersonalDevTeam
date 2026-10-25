@@ -88,7 +88,7 @@ pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> Stri
         ));
     }
     if let Some(t) = &ctx.ticket {
-        out.push_str(&ticket_section(&api, t));
+        out.push_str(&ticket_section(&api, t, ctx.personal));
     }
     if let Some(step) = ctx.step {
         out.push_str(step);
@@ -103,7 +103,7 @@ pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> Stri
     out
 }
 
-fn ticket_section(api: &str, t: &TicketWork) -> String {
+fn ticket_section(api: &str, t: &TicketWork, personal: bool) -> String {
     let (key, branch) = (t.key, t.branch);
     let mut out = format!(
         "\n## This session's ticket\n\n\
@@ -114,6 +114,15 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
          or the user does that once the work is merged.\n",
         id = t.ticket_id,
     );
+    if !personal {
+        // PDT-165: fine-grained `gh` tokens can't read the Checks API, so `gh pr checks` fails with a 403.
+        out.push_str(&format!(
+            "- Read CI from the ticket's attempt (`pr.ci`: state, URL and runs, when {SHORT_NAME} has seen the pull \
+             request) or from GitHub Actions: `gh run list --branch {branch}`, `gh run view <id> --json \
+             jobs,conclusion` and `gh run view <id> --log-failed`. Not `gh pr checks` or the check-runs API: \
+             fine-grained tokens can't read checks, so they fail with 403.\n"
+        ));
+    }
     let has = |kind: &str| t.news.contains(kind);
     let merged = has(ev::PR_MERGED) || has(ev::ATTEMPT_MERGED);
     let base = format!("`{}`", t.base);
@@ -177,7 +186,7 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
         [ev::CI_RUN_FAILED, ev::CI_RUN_PASSED, ev::PR_CONFLICT, ev::PR_QUEUE_LEFT, ev::PR_MERGED, ev::PR_BEHIND];
     if merged || watched.iter().any(|k| has(k)) {
         out.push_str(&format!(
-            "\n{SHORT_NAME} watches the pull request and sends these, so don't poll or watch CI in a shell (`gh run watch`, `gh pr checks --watch`, sleep loops): push, then carry \
+            "\n{SHORT_NAME} watches the pull request and sends these, so don't poll or watch CI in a shell (`gh run watch`, sleep loops): push, then carry \
              on or end your turn.\n"
         ));
     }
@@ -245,6 +254,21 @@ mod tests {
         let plain = session_instructions(&ctx(Some("pdt-WA-7-x")), None);
         assert!(!plain.contains("This session's ticket"), "{plain}");
         assert!(plain.contains("/projects/p1/worktrees") && plain.contains("/projects/p1/runs"), "{plain}");
+    }
+
+    #[test]
+    fn ticket_work_reads_ci_from_actions_runs() {
+        let t = on_ticket(&[ev::CI_RUN_FAILED]);
+        assert!(t.contains("`gh run list --branch pdt-WA-7-x`"), "{t}");
+        assert!(t.contains("`gh run view <id> --json jobs,conclusion`") && t.contains("--log-failed"), "{t}");
+        assert!(t.contains("Not `gh pr checks` or the check-runs API"), "{t}");
+        assert!(!t.contains("gh pr checks --watch"), "{t}");
+        assert!(on_ticket(&[]).contains("gh run list --branch"), "with or without PR notices");
+        let mut p = ctx(None);
+        p.personal = true;
+        p.ticket =
+            Some(TicketWork { ticket_id: "t7", key: "WA-7", branch: "x", base: "main", news: Default::default() });
+        assert!(!session_instructions(&p, None).contains("gh run list"), "a Personal project has no CI");
     }
 
     #[test]
