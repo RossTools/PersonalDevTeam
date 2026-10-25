@@ -393,7 +393,12 @@ notices' old rule: the attempt's newest running agent session (a terminal with a
 terminal idle with no typing for 20 s (counted from when PDT started watching it, so a TUI still starting isn't typed
 into; focus reports and the terminal's replies to queries are not typing), a conversation `ready_for_notice` (idle,
 nothing queued, no open request, no rate limit, terminal closed; a parked one reopens); all of a session's waiting
-messages in one message; no running agent session → `untold`, except while a pdtd restart is about to resume the
+messages in one message. Workflows' messages (`session.send`: PR notices' CI failed, conflict, queue drop, base moved)
+that meet an agent step handing in work (one with a `submitted` outcome: a Coder's) are folded into it (PDT-161,
+pdt-core `fold_messages`): in one batch with the step's message (a QA-fail or changes-requested pass waiting for the
+Coder) they come after it, under "Also for this pass, once each point above is addressed", never ahead of the
+findings; on their own while such a step works they say they are one more item of the step, after what its message
+asked. No running agent session → `untold`, except while a pdtd restart is about to resume the
 session (`AppState::pending_resume`): its messages wait for it. What the user sent to a session (an Inbox answer, a
 Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart), reopening it as typing
 would. So does a message that `reopens` (`session_messages.reopens`, PDT-144: an agent step's message to its reused
@@ -664,8 +669,9 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   sessions. A step with no ticket opens no tab. A reused session gets the step through the outbox
   (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
   On a later pass in the same session (sent back by Review, QA or a rejection) it gets only why it is back (the
-  sending step's outcome and summary, or the user's gate choice and note: pdt-core `next_pass_message`) and the
-  outcomes, not the task and rules again.
+  sending step's outcome and summary, then its line comments as a list of findings, PDT-161; or the user's gate
+  choice and note: pdt-core `next_pass_message`), the ask to address each point, and the outcomes, not the task and
+  rules again.
 - **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
   A step with neither runs in the run's (or workflow's) project. One with no project either (a personal or scheduled
   workflow, PDT-152) runs in the host project as the PM does ([agents.md](agents.md) "The PM"): no ticket, attempt or
@@ -683,7 +689,11 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   `state` `working | asking | stalled | done`, turns, nudges, the background-task wait) is what pdt-mcp and the Inbox read. The step waits
   (`wait: {agent: …}`) until `maxRuntimeMs` (4 h), then `timeout` (the Inbox has it: [Timeouts and
   Resume](#timeouts-and-resume-pdt-123)); a step re-run after a restart waits again.
-- **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), adds its line
+- **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), refuses
+  `submitted` (the outcome that hands work on, PDT-161; a timed-out step's late one too) while the attempt's worktree
+  has uncommitted changes to tracked files or commits its upstream lacks (pdt-git `unpushed`; the upstream, else
+  `origin/<branch>` when that exists; a branch on neither is refused as not pushed when the repository has an
+  `origin` remote, and only checked for uncommitted changes when it has none; untracked files don't count; the error names the files and commits: pdt-core `not_handed_in`), adds its line
   comments as review comments on the attempt's worktree (author: the persona), records an `outcome` timeline event
   and completes the step by that port with `{outcome, summary, comments, data, sessionId, persona, personaVersion,
   turns, by}`. `data` (PDT-154) is the object the agent handed in with `submit_outcome` (fields the prompt asks for,
@@ -774,7 +784,9 @@ deleted (`409 persona_in_use`).
   enabled); an untouched instance follows newer versions of it (Templates, above). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
   `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
   | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (new) → QA
-  (new); `changes_requested` and `fail` go back to Code; `pass` → a switch on `{{params.accept}}`: `user` → a
+  (new); `changes_requested` and `fail` go back to Code (whose pass lists the Reviewer's or QA's findings first; a PR
+  notice for the attempt that comes meanwhile goes in after them, and `submitted` needs the worktree committed and
+  pushed, PDT-161: see "Agent steps" and the outbox above); `pass` → a switch on `{{params.accept}}`: `user` → a
   condition (`{{trigger.labels}}` `contains_any` `{{params.autoAcceptLabels}}`): a ticket with one of those labels
   goes straight on, any other to Accept (a gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`;
   `reject` → Code); `auto` → straight on; then

@@ -689,6 +689,8 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     let env = setup_as(tmp.path(), "conversation").await;
     wait_turns(&env, 1).await;
     let attempt = ticket(&env).await["attempt"]["id"].as_str().unwrap().to_string();
+    // Its fixes are pushed (`submitted` needs that, PDT-161).
+    common::mark_pushed(&env.repo.join(".worktrees").join(BRANCH));
 
     // The user merges it (auto-merge on, finish once it merges), then CI fails: the Coder session gets a step.
     env.gh.set_pr(BRANCH, Some(pr()));

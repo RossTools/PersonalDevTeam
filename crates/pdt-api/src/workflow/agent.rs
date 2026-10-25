@@ -11,8 +11,8 @@ use pdt_core::persona::{Persona, effective_permission_mode};
 use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession};
 use pdt_core::ticket::{Actor, AttemptState, EventKind};
 use pdt_core::workflow::agent::{
-    AgentStep, AgentStepState, OutcomeSpec, STOPPED, StepTicket, TIMEOUT, back_because, first_message,
-    next_pass_message, nudge_message, resumable_step, resume_message, step_section,
+    AgentStep, AgentStepState, OutcomeSpec, STOPPED, SUBMITTED, StepTicket, TIMEOUT, back_because, first_message,
+    next_pass_message, not_handed_in, nudge_message, resumable_step, resume_message, step_section,
 };
 use pdt_core::workflow::api::{Step, StepStatus};
 use pdt_core::workspace::TabPlacement;
@@ -32,8 +32,11 @@ const QUOTE_CHARS: usize = 300;
 
 /// The dedupe key of a step's first message to a reused session: until it is delivered, the session's turns are
 /// its earlier work, not the step's.
+pub(crate) const PROMPT_KEY: &str = "agent:";
+
+/// [`PROMPT_KEY`] and the step.
 fn prompt_key(step_id: &str) -> String {
-    format!("agent:{step_id}")
+    format!("{PROMPT_KEY}{step_id}")
 }
 
 /// What an agent node's step resolves to before it starts.
@@ -670,6 +673,7 @@ pub(crate) async fn submit_outcome(st: &AppState, s: &Session, input: crate::mcp
         return late_outcome(st, s, input).await;
     };
     let summary = checked_outcome(&a, &input)?;
+    handed_in(st, &a, &input.outcome).await?;
     let step = waiting_step(st, &a).await?;
     if !input.comments.is_empty() {
         let cx = crate::mcp::tools::Cx { st, session: s };
@@ -698,6 +702,34 @@ fn checked_outcome(a: &AgentStep, input: &crate::mcp::tools::SubmitOutcome) -> R
     Ok(summary)
 }
 
+/// `submitted` hands the work on (PDT-161): refused while the attempt's worktree has uncommitted changes to tracked
+/// files or commits its upstream doesn't have, since the next step (and CI) sees only what is pushed. A worktree git
+/// can't read is let through.
+async fn handed_in(st: &AppState, a: &AgentStep, outcome: &str) -> R<()> {
+    if outcome != SUBMITTED {
+        return Ok(());
+    }
+    let Some(attempt) = &a.attempt_id else { return Ok(()) };
+    let Some(path) = st.store.get_attempt(attempt).await.map_err(err)?.and_then(|i| i.worktree_path) else {
+        return Ok(());
+    };
+    let path = std::path::PathBuf::from(path);
+    if !path.is_dir() {
+        return Ok(());
+    }
+    let up = match tokio::task::spawn_blocking(move || pdt_git::unpushed(&path)).await.map_err(err)? {
+        Ok(up) => up,
+        Err(e) => {
+            tracing::warn!(attempt = %attempt, error = %e, "could not read whether the worktree is pushed");
+            return Ok(());
+        }
+    };
+    match not_handed_in(&up.changed, up.ahead, up.upstream.as_deref(), up.unpushed_branch) {
+        Some(why) => Err(why),
+        None => Ok(()),
+    }
+}
+
 /// A `submit_outcome` from the session of a step that timed out, while its run hasn't moved on from it (PDT-123): the
 /// run goes on from that step's outcome port, as if the outcome had come in time.
 async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::SubmitOutcome) -> R<Value> {
@@ -709,6 +741,7 @@ async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::Subm
         .cloned()
         .ok_or(NONE)?;
     let summary = checked_outcome(&old, &input)?;
+    handed_in(st, &old, &input.outcome).await?;
     let run = super::engine::reopen_at(st, &timed_out, json!({"lateOutcome": input.outcome})).await?;
     // The node's step again, waiting as if it had never timed out, and ended at once by the outcome.
     let now = now_ms();

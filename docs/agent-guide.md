@@ -28,7 +28,7 @@ person confirms per call unless the project lets the PM act. Use them for what t
 | Tool | Does |
 |---|---|
 | `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
-| `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes |
+| `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes. `submitted` is refused while the worktree has uncommitted changes to tracked files, commits not pushed to its upstream, or a branch not pushed to `origin`: commit and push first |
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
 | `list_secrets` | the secrets (API keys, tokens, passwords) this session may use: names and descriptions, never values |
@@ -84,7 +84,8 @@ PDT reacts to what happens (CI results, pull request news, merges, comments) thr
 event, then conditions, gates, waits and actions. Messages that start with `[PDT]` in your session come from a
 workflow the person enabled, for example the built-in "PR notices" (CI failed, a conflict, dropped from the merge
 queue, merged); each says what happened and what to do. When the pull request was set to merge, PR notices sends
-the failure as a workflow step instead: fix it, push, and finish with `submit_outcome` (PDT turns auto-merge back on). A session started on a ticket is told in its instructions
+the failure as a workflow step instead: fix it, push, and finish with `submit_outcome` (PDT turns auto-merge back on). A notice that comes while you are on a step that hands in work (a Coder's pass sent back by review or QA) goes in
+with that step's message, after the review and QA findings: address the findings first, then the notice. A session started on a ticket is told in its instructions
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
 shell.
 
