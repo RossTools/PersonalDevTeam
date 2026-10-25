@@ -1,5 +1,6 @@
 mod activity;
 mod attachments;
+mod bug_reports;
 mod buildkite;
 mod checks;
 mod connection_health;

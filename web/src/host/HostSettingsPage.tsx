@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
+import type { BugReportSetting } from '../api/gen/BugReportSetting';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
@@ -13,6 +14,7 @@ import { FolderField } from '../common/FolderField';
 import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
+import { BugReportDialog } from './BugReportDialog';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -410,6 +412,45 @@ function Checks() {
   );
 }
 
+const bugReportChoices: { value: BugReportSetting; label: string }[] = [
+  { value: 'auto', label: 'Automatic' },
+  { value: 'github', label: 'GitHub issue' },
+  { value: 'local', label: 'Local ticket' },
+  { value: 'off', label: 'Off' },
+];
+
+/** Where Report a bug sends reports (PDT-153), and the form itself. */
+function BugReports({ v }: { v: HostSettingsView }) {
+  const qc = useQueryClient();
+  const save = useSaveSettings();
+  const preview = useQuery({ queryKey: ['bug-report-preview'], queryFn: api.bugReportPreview });
+  const [open, setOpen] = useState(false);
+  const p = preview.data;
+  const where = !p ? null
+    : p.route === 'github' ? `Reports go to ${p.repo} on GitHub as issues, filed with the update token.`
+    : p.route === 'local' ? `Reports become Draft bug tickets in ${p.project ? `${p.project.key} · ${p.project.name}` : 'the project whose origin is ' + p.repo}; nothing goes to GitHub.`
+    : 'Report a bug is turned off.';
+  return (
+    <Section
+      label="Bug reports"
+      description="Where Report a bug sends a report. Automatic files a GitHub issue, except on an instance with PDT's own repository as a project, where it files a local ticket."
+      actions={<Button size="sm" onClick={() => setOpen(true)}>Report a bug…</Button>}
+    >
+      <SettingsRow label="Send reports to" description={where ?? 'Finding where reports go…'}>
+        <SaveNote s={save} />
+        <Select
+          aria-label="Send bug reports to"
+          className="w-48"
+          options={bugReportChoices}
+          value={v.settings.bugReports}
+          onChange={(b) => save.mutate({ bugReports: b }, { onSuccess: () => void qc.invalidateQueries({ queryKey: ['bug-report-preview'] }) })}
+        />
+      </SettingsRow>
+      {open && <BugReportDialog onClose={() => setOpen(false)} onOpenSettings={() => setOpen(false)} />}
+    </Section>
+  );
+}
+
 /** Destructive host actions, apart from everything else. Shown only when there is something to remove. */
 function DangerZone({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
@@ -437,7 +478,7 @@ function DangerZone({ v }: { v: HostSettingsView }) {
 }
 
 /** This host's sections, in page order (their `Section` labels): the phone's list of them and its top bar titles. */
-export const HOST_SECTIONS = ['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Checks', 'Danger zone'] as const;
+export const HOST_SECTIONS = ['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone'] as const;
 
 export interface HostSettingsPageProps {
   /** A phone: one screen per section, the list of them while `section` is null. */
@@ -475,6 +516,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'Agents': <Agents v={v} />,
     'Runs': <Runs v={v} />,
     'Projects folder': <ProjectsFolder v={v} />,
+    'Bug reports': <BugReports v={v} />,
     'Checks': <Checks />,
     // Only when there is something to remove.
     'Danger zone': v.tokenPresent ? <DangerZone v={v} /> : null,

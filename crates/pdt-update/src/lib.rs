@@ -1,5 +1,6 @@
-//! The GitHub REST client for updates (remote-host spec §3.2–3.3; verified fact 6). The token goes only to the API
-//! host: asset redirects are followed by hand, without it (decision 13).
+//! The GitHub REST client for updates (remote-host spec §3.2–3.3; verified fact 6) and bug reports (PDT-153: issues on
+//! the release repository, with the same token). The token goes only to the API host: asset redirects are followed by
+//! hand, without it (decision 13).
 
 use futures_util::StreamExt;
 use pdt_core::release::{HostOs, SUMS_ASSET, Version, parse_sums, parse_version, select_asset};
@@ -37,6 +38,15 @@ pub struct Latest {
     pub release: Release,
     /// From `GitHub-Authentication-Token-Expiration` (ms); None for tokens without an expiry.
     pub token_expires_at: Option<i64>,
+}
+
+/// An issue `create_issue` made.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Issue {
+    pub number: u64,
+    /// Its page on github.com.
+    #[serde(rename = "html_url")]
+    pub url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -137,6 +147,34 @@ impl GitHubClient {
             .bearer_auth(token)
             .header(ACCEPT, accept)
             .header("X-GitHub-Api-Version", "2022-11-28")
+    }
+
+    /// The repository (`owner/name`) this client talks to.
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    /// Opens an issue on the repository. The token needs Issues: write; without it GitHub answers 403 or 404.
+    pub async fn create_issue(
+        &self,
+        token: &str,
+        title: &str,
+        body: &str,
+        labels: &[&str],
+    ) -> Result<Issue, UpdateError> {
+        let res = self
+            .http
+            .post(format!("{}/repos/{}/issues", self.api, self.repo))
+            .bearer_auth(token)
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .timeout(Duration::from_secs(30))
+            .json(&serde_json::json!({"title": title, "body": body, "labels": labels}))
+            .send()
+            .await
+            .map_err(net)?;
+        let text = check(res).await?.text().await.map_err(net)?;
+        serde_json::from_str(&text).map_err(|e| UpdateError::Http(200, format!("an answer that is not an issue: {e}")))
     }
 
     pub async fn latest(&self, token: &str) -> Result<Latest, UpdateError> {

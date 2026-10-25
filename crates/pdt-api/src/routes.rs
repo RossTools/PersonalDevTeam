@@ -153,6 +153,8 @@ pub struct AppState {
     pub typing_quiet: std::time::Duration,
     /// When each session's outbox messages were first seen waiting on it while it was not working (ms).
     pub(crate) outbox_stuck: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// Bug reports filed in the last minute, by nonce (PDT-153).
+    pub(crate) bug_report_nonces: crate::bug_reports::Nonces,
 }
 
 impl AppState {
@@ -225,6 +227,7 @@ impl AppState {
             outbox_deadline: crate::workflow::outbox::DEADLINE,
             typing_quiet: std::time::Duration::from_secs(20),
             outbox_stuck: Default::default(),
+            bug_report_nonces: Default::default(),
         }
     }
 }
@@ -334,6 +337,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
         .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
+        .route("/bug-reports", axum::routing::post(crate::bug_reports::create))
+        .route("/bug-reports/preview", get(crate::bug_reports::preview))
         .route("/guides", get(crate::guides::list))
         .route("/guides/{name}", get(crate::guides::get_one))
         .route("/projects", get(crate::projects::list).post(crate::projects::create))

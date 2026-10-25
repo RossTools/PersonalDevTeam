@@ -13,7 +13,7 @@ use pdt_git::FastForward;
 use std::path::PathBuf;
 
 /// Fills in `github_repo` from each project's `origin` (git runs off the async runtime).
-async fn with_github(mut projects: Vec<Project>) -> Vec<Project> {
+pub(crate) async fn with_github(mut projects: Vec<Project>) -> Vec<Project> {
     let paths: Vec<Option<PathBuf>> =
         projects.iter().map(|p| p.has_repo().then(|| PathBuf::from(&p.repo_path))).collect();
     let repos = tokio::task::spawn_blocking(move || {

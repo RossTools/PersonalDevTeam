@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod agent_context;
 pub mod brand;
+pub mod bug_report;
 pub mod buildkite;
 pub mod conversation;
 pub mod discord;

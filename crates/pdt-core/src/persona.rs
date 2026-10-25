@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 36] = [
+pub const ALL_TOOLS: [&str; 37] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -49,12 +49,13 @@ pub const ALL_TOOLS: [&str; 36] = [
     "scryer_schema",
     "scryer_query",
     "scryer_mutate",
+    "report_bug",
 ];
 
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
 /// card) unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so they are never in Claude's
 /// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 9] = [
+pub const ASKING_TOOLS: [&str; 10] = [
     "create_ticket",
     "edit_ticket",
     "link_tickets",
@@ -64,10 +65,11 @@ pub const ASKING_TOOLS: [&str; 9] = [
     "discord_webhook",
     "scryer_add",
     "scryer_mutate",
+    "report_bug",
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 34] = [
+pub const PM_TOOLS: [&str; 35] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -102,10 +104,11 @@ pub const PM_TOOLS: [&str; 34] = [
     "scryer_schema",
     "scryer_query",
     "scryer_mutate",
+    "report_bug",
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 36] = [
+const TOOL_DOES: [(&str, &str); 37] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
@@ -142,6 +145,7 @@ const TOOL_DOES: [(&str, &str); 36] = [
     ("scryer_schema", "Find Scryer's settings and operations in its API"),
     ("scryer_query", "Read anything from Scryer's API (settings, indexers, download clients)"),
     ("scryer_mutate", "Change Scryer's settings through its API"),
+    ("report_bug", "Report a bug in PDT (an issue on its repository, or a local ticket)"),
 ];
 
 /// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).

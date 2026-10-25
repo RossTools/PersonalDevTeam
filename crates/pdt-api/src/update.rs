@@ -122,7 +122,7 @@ impl UpdateService {
         self.status.lock().unwrap_or_else(|e| e.into_inner()).last_result = r;
     }
 
-    fn snapshot(&self) -> UpdateStatus {
+    pub(crate) fn snapshot(&self) -> UpdateStatus {
         self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 

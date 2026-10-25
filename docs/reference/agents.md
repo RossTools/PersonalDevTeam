@@ -113,7 +113,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   attempt, as the API; `parent` takes a key or id, `""` detaches), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
   `blocks`, `blockedBy` or `relates`, and `other` in the same project; the store's link rules, so self-links, blocking
   cycles and unknown tickets are errors; the `linked`/`unlinked` and `parted` events are the agent's) and
-  `send_to_session` (through the outbox, "[PDT] From the project manager: …").
+  `send_to_session` (through the outbox, "[PDT] From the project manager: …"), and `report_bug` (a bug in PDT itself,
+  routed as Host settings' Bug reports say: [host.md](host.md) "Bug reports"; it always asks, `AskTarget::Always`, so
+  Codex and Devin can't call it).
 - **Discord** (PDT-98; pdt-api `discord.rs`, pdt-core `discord.rs`). Through a `discord_bot` connection (`connection`:
   its name, or the only one), with Discord's REST API (no gateway): `discord_get` (the server, its categories,
   channels and webhooks, each webhook with the connection it is saved as), and the asking tools `discord_change`

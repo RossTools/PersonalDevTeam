@@ -1040,7 +1040,7 @@ describe('phone', () => {
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
-    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual(['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Checks', 'Danger zone']);
+    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual(['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone']);
     await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
     expect(here()).toBe('/settings/host/runs');
     expect(screen.getByRole('banner', { name: 'Top bar' })).toHaveTextContent('Runs');

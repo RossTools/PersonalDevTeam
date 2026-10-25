@@ -24,6 +24,11 @@ struct Env {
 
 /// A project `P` (key `PX`) with one ticket, served on a free local port (the agent's pdt-mcp calls come over TCP).
 async fn setup(rotate_age_ms: Option<i64>) -> Env {
+    setup_with(rotate_age_ms, |_| {}).await
+}
+
+/// `setup`, with `tweak` applied to the state before it is served.
+async fn setup_with(rotate_age_ms: Option<i64>, tweak: impl FnOnce(&mut AppState)) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -49,6 +54,7 @@ async fn setup(rotate_age_ms: Option<i64>) -> Env {
     if let Some(ms) = rotate_age_ms {
         state.pm_rotate_age_ms = ms;
     }
+    tweak(&mut state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
     let app = router(state.clone(), None);
@@ -1076,4 +1082,30 @@ async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
     let said = ask(&env, &pm, r#"mcp: list_todos {"done": true}"#).await;
     assert!(said.contains("\"todos\": []"), "{said}");
     call(&env.app, "POST", &format!("/api/sessions/{pm}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn the_pm_reports_a_bug_after_a_yes() {
+    use common::issues::{FakeIssues, TOKEN};
+    let (base, gh) = FakeIssues::serve().await;
+    let env = setup_with(None, |st| {
+        st.update = std::sync::Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
+        st.secrets.set(&st.update_token_account, TOKEN).unwrap();
+    })
+    .await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: report_bug {"title": "The board flickers", "description": "On every poll.", "includeDiagnostics": true}"#).await;
+    let req = open_request(&env, &id).await;
+    assert_eq!(gh.request_count(), 0, "nothing before the yes");
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    let (s, _) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(said.starts_with("mcp report_bug:") && said.contains("\"kind\": \"issue\""), "{said}");
+    let issue = gh.created.lock().unwrap()[0].clone();
+    assert_eq!(issue["title"], "The board flickers");
+    assert_eq!(issue["labels"], json!(["bug", "from-pdt"]));
+    assert!(issue["body"].as_str().unwrap().contains("PDT version:"), "{issue}");
 }
