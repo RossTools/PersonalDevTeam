@@ -208,7 +208,7 @@ interface LinkData { kind?: string; direction?: string; key?: string }
 interface MovedData { from?: string; to?: string }
 interface EditedData { fields?: string[] }
 interface WaitingData { waiting?: boolean }
-interface OverlapData { files?: string[]; level?: string }
+interface OverlapData { files?: string[]; level?: string; cleared?: boolean }
 
 const stageName = (s: string | undefined) => (s && s in STAGE_LABEL ? STAGE_LABEL[s as TicketStage] : s ?? '?');
 
@@ -246,6 +246,7 @@ export function eventTitle(e: TicketEvent): string {
     case 'merged': return 'Merged';
     case 'abandoned': return 'Abandoned';
     case 'overlap': {
+      if (data.cleared) return `No longer overlaps ${data.key ?? 'a ticket'}`;
       const n = data.files?.length ?? 0;
       const what = data.level === 'conflict' ? 'Conflicts with' : 'Overlaps';
       return `${what} ${data.key ?? 'a ticket'}${n > 0 ? `: ${n} shared file${n === 1 ? '' : 's'}` : ''}`;

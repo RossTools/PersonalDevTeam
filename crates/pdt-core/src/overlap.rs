@@ -125,6 +125,50 @@ pub fn level_of(list: &[OverlapWith]) -> OverlapLevel {
     list.iter().map(|o| o.level).max().unwrap_or_default()
 }
 
+/// What one ticket's timeline has said about its file overlap with another since the pair last cleared: the files
+/// reported and the worst level. Built from the ticket's `overlap` events, oldest first ([`Reported::add`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reported {
+    pub files: BTreeSet<String>,
+    pub level: OverlapLevel,
+    /// The last event said the overlap cleared.
+    pub cleared: bool,
+}
+
+impl Reported {
+    /// Adds the next `overlap` event: a clear forgets what came before, a report adds its files.
+    pub fn add(&mut self, files: impl IntoIterator<Item = String>, level: OverlapLevel, cleared: bool) {
+        if cleared || self.cleared {
+            *self = Reported { cleared, ..Reported::default() };
+        }
+        if !cleared {
+            self.files.extend(files);
+            self.level = self.level.max(level);
+        }
+    }
+}
+
+/// What a file overlap check adds to a ticket's timeline about one other ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlapNews {
+    /// A new overlap, a file not reported since it began, or a worse level.
+    Found,
+    /// A reported overlap no longer shares any file.
+    Cleared,
+}
+
+/// Compares the files a pair shares now with what was reported: the same files again, fewer of them, or files that
+/// come back after dropping out are no news (pdtd checks every 30 s, and agents edit, revert and rebase).
+pub fn overlap_news(reported: Option<&Reported>, files: &[String], level: OverlapLevel) -> Option<OverlapNews> {
+    let open = reported.filter(|r| !r.cleared);
+    match open {
+        None if files.is_empty() => None,
+        None => Some(OverlapNews::Found),
+        Some(_) if files.is_empty() => Some(OverlapNews::Cleared),
+        Some(r) => (level > r.level || files.iter().any(|f| !r.files.contains(f))).then_some(OverlapNews::Found),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +285,41 @@ mod tests {
                 files: vec!["web/ui/x.tsx".into()]
             }]
         );
+    }
+
+    fn files(f: &[&str]) -> Vec<String> {
+        f.iter().map(|f| f.to_string()).collect()
+    }
+
+    fn reported(events: &[(&[&str], OverlapLevel, bool)]) -> Reported {
+        let mut r = Reported::default();
+        for (f, level, cleared) in events {
+            r.add(files(f), *level, *cleared);
+        }
+        r
+    }
+
+    #[test]
+    fn an_overlap_is_news_once_per_new_file_and_when_it_clears() {
+        use OverlapLevel::{Conflict, Overlap};
+        let news = |r: Option<&Reported>, f: &[&str], level| overlap_news(r, &files(f), level);
+        assert_eq!(news(None, &[], Overlap), None);
+        assert_eq!(news(None, &["a"], Overlap), Some(OverlapNews::Found));
+
+        let r = reported(&[(&["a"], Overlap, false), (&["a", "b"], Overlap, false)]);
+        assert_eq!(r.files, files(&["a", "b"]).into_iter().collect());
+        assert_eq!(news(Some(&r), &["a", "b"], Overlap), None, "the same files again");
+        assert_eq!(news(Some(&r), &["b"], Overlap), None, "fewer files");
+        assert_eq!(news(Some(&r), &["b", "a"], Overlap), None, "a file that came back");
+        assert_eq!(news(Some(&r), &["a", "c"], Overlap), Some(OverlapNews::Found), "a new file");
+        assert_eq!(news(Some(&r), &["a"], Conflict), Some(OverlapNews::Found), "a worse level");
+        assert_eq!(news(Some(&r), &[], Overlap), Some(OverlapNews::Cleared));
+
+        let cleared = reported(&[(&["a"], Conflict, false), (&[], OverlapLevel::None, true)]);
+        assert_eq!(cleared, Reported { cleared: true, ..Reported::default() });
+        assert_eq!(news(Some(&cleared), &[], Overlap), None, "cleared once");
+        assert_eq!(news(Some(&cleared), &["a"], Overlap), Some(OverlapNews::Found), "back after clearing");
+        let again = reported(&[(&["a"], Conflict, false), (&[], OverlapLevel::None, true), (&["b"], Overlap, false)]);
+        assert_eq!((again.files, again.level, again.cleared), (files(&["b"]).into_iter().collect(), Overlap, false));
     }
 }

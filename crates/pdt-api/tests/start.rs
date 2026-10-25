@@ -769,3 +769,80 @@ async fn files_changed_by_two_attempts_overlap_and_are_recorded_once() {
     assert_eq!(keys(&list(&env, "&conflicts=true").await), ["PDT-1", "PDT-2"]);
     env.state.ptys.shutdown().await;
 }
+
+#[tokio::test]
+async fn repeated_checks_and_commits_with_the_same_overlap_log_one_event_and_a_clear_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let a = ticket(&env, json!({"title": "A"})).await;
+    let b = ticket(&env, json!({"title": "B"})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    started(&env, &b, json!({"agent": "claude"})).await;
+    let wb = env.repo.join(".worktrees").join("pdt-PDT-2-b");
+    let logged = |kind: &'static str| {
+        let app = env.app.clone();
+        async move {
+            let (_, v) = call(&app, "GET", &format!("/api/events?type={kind}"), None).await;
+            v.as_array().unwrap().iter().map(|e| e["ticketId"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+        }
+    };
+    let found = || logged("ticket.overlap_found");
+    let check = || pdt_api::refresh_overlaps(&env.state);
+
+    work_in(&env, "pdt-PDT-1-a", "a.txt");
+    work_in(&env, "pdt-PDT-1-a", "b.txt");
+    std::fs::write(wb.join("a.txt"), "mine\n").unwrap();
+    std::fs::write(wb.join("b.txt"), "mine\n").unwrap();
+    check().await;
+    assert_eq!(found().await.len(), 2, "one on each ticket");
+
+    // Polls, a commit (a push changes nothing that is shared), fewer files and a file coming back: no news.
+    check().await;
+    git(&wb, &["add", "-A"]);
+    git(&wb, &["commit", "-q", "-m", "b's work"]);
+    check().await;
+    git(&wb, &["rm", "-q", "b.txt"]);
+    check().await;
+    assert_eq!(get_ticket(&env, &a).await["overlaps"][0]["files"], json!(["a.txt"]));
+    git(&wb, &["checkout", "-q", "HEAD", "--", "b.txt"]);
+    check().await;
+    check().await;
+    assert_eq!(found().await.len(), 2, "the same overlap is logged once");
+
+    // A newly shared file is news, on both tickets.
+    work_in(&env, "pdt-PDT-1-a", "c.txt");
+    std::fs::write(wb.join("c.txt"), "mine\n").unwrap();
+    check().await;
+    check().await;
+    assert_eq!(found().await.len(), 4);
+
+    // B puts every shared file back: the overlap clears, once.
+    git(&wb, &["reset", "-q", "--hard", "main"]);
+    git(&wb, &["clean", "-qfd"]);
+    check().await;
+    check().await;
+    assert_eq!(get_ticket(&env, &a).await["overlap"], "none");
+    let mut cleared = logged("ticket.overlap_cleared").await;
+    cleared.sort();
+    let mut both = vec![a.clone(), b.clone()];
+    both.sort();
+    assert_eq!(cleared, both);
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{a}/events"), None).await;
+    let clears: Vec<&Value> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "overlap" && e["data"]["cleared"] == true)
+        .collect();
+    assert_eq!(clears.len(), 1);
+    assert_eq!(
+        clears[0]["data"],
+        json!({"ticketId": b, "key": "PDT-2", "files": [], "level": "none", "cleared": true})
+    );
+
+    // Overlapping again is news again.
+    std::fs::write(wb.join("a.txt"), "again\n").unwrap();
+    check().await;
+    assert_eq!(found().await.len(), 6);
+    env.state.ptys.shutdown().await;
+}

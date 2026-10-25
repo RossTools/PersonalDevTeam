@@ -4,6 +4,7 @@
 use crate::{Store, StoreError};
 use pdt_core::conversation::SessionMode;
 use pdt_core::links::would_cycle;
+use pdt_core::overlap::Reported;
 use pdt_core::parts::{ParentFacts, TicketParent, ValidParts, open_parts, valid_parent};
 use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
@@ -1902,25 +1903,29 @@ impl Store {
         Ok(rows)
     }
 
-    /// The files of the ticket's latest `overlap` event with `other` (a ticket id), if it has one.
-    pub async fn last_overlap_files(&self, ticket_id: &str, other: &str) -> Result<Option<Vec<String>>, StoreError> {
-        let rows: Vec<(Option<String>,)> = sqlx::query_as(
-            "SELECT data FROM ticket_events WHERE ticket_id = ? AND kind = 'overlap' ORDER BY created_at DESC, id DESC",
+    /// What the timelines of open tickets have said about their file overlaps, by (ticket id, other ticket id): every
+    /// `overlap` event folded in order ([`Reported::add`]).
+    pub async fn overlap_reports(&self) -> Result<HashMap<(String, String), Reported>, StoreError> {
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT e.ticket_id, e.data FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id \
+             WHERE e.kind = 'overlap' AND t.stage NOT IN ('done', 'wont_do') ORDER BY e.created_at, e.id",
         )
-        .bind(ticket_id)
         .fetch_all(&self.pool)
         .await?;
-        for (data,) in rows {
+        let mut out: HashMap<(String, String), Reported> = HashMap::new();
+        for (ticket_id, data) in rows {
             let Some(v) = data.and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok()) else { continue };
-            if v.get("ticketId").and_then(|t| t.as_str()) == Some(other) {
-                let files = v
-                    .get("files")
-                    .and_then(|f| f.as_array())
-                    .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect::<Vec<_>>());
-                return Ok(Some(files.unwrap_or_default()));
-            }
+            let Some(other) = v.get("ticketId").and_then(|t| t.as_str()) else { continue };
+            let files = v.get("files").and_then(|f| f.as_array()).into_iter().flatten();
+            let level = v.get("level").and_then(|l| serde_json::from_value(l.clone()).ok()).unwrap_or_default();
+            let cleared = v.get("cleared").and_then(|c| c.as_bool()).unwrap_or(false);
+            out.entry((ticket_id, other.to_string())).or_default().add(
+                files.filter_map(|f| f.as_str().map(String::from)),
+                level,
+                cleared,
+            );
         }
-        Ok(None)
+        Ok(out)
     }
 
     /// The keys of the pull-request notices told to an attempt (`pr` events; untold ones do not count), so each is told once,
@@ -3138,21 +3143,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_last_overlap_event_with_a_ticket_is_found() {
+    async fn overlap_reports_fold_each_open_tickets_events_per_other_ticket() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         add(&store, "a", new("A")).await;
-        assert_eq!(store.last_overlap_files("a", "b").await.unwrap(), None);
-        let ev = |other: &str, files: &[&str], now| {
-            let data = json!({"ticketId": other, "key": "PX-9", "files": files, "level": "overlap"});
+        add(&store, "d", ValidNewTicket { stage: TicketStage::Done, ..new("D") }).await;
+        assert!(store.overlap_reports().await.unwrap().is_empty());
+        let ev = |t: &'static str, other: &str, files: &[&str], level: &str, cleared: bool, now| {
+            let mut data = json!({"ticketId": other, "key": "PX-9", "files": files, "level": level});
+            if cleared {
+                data["cleared"] = json!(true);
+            }
             let store = store.clone();
-            async move { store.add_ticket_event("a", EventKind::Overlap, Actor::System, None, Some(data), now).await }
+            async move { store.add_ticket_event(t, EventKind::Overlap, Actor::System, None, Some(data), now).await }
         };
-        ev("b", &["x"], 2).await.unwrap();
-        ev("c", &["y"], 3).await.unwrap();
-        ev("b", &["x", "z"], 4).await.unwrap();
-        assert_eq!(store.last_overlap_files("a", "b").await.unwrap(), Some(vec!["x".into(), "z".into()]));
-        assert_eq!(store.last_overlap_files("a", "c").await.unwrap(), Some(vec!["y".into()]));
+        ev("a", "b", &["x"], "overlap", false, 2).await.unwrap();
+        ev("a", "c", &["y"], "conflict", false, 3).await.unwrap();
+        ev("a", "b", &["z"], "overlap", false, 4).await.unwrap();
+        ev("a", "c", &[], "none", true, 5).await.unwrap();
+        ev("d", "b", &["x"], "overlap", false, 6).await.unwrap();
+        let r = store.overlap_reports().await.unwrap();
+        let key = |t: &str, o: &str| (t.to_string(), o.to_string());
+        assert_eq!(r.len(), 2, "done tickets are left out: {r:?}");
+        let ab = &r[&key("a", "b")];
+        assert_eq!(ab.files.iter().map(String::as_str).collect::<Vec<_>>(), ["x", "z"]);
+        assert_eq!((ab.level, ab.cleared), (OverlapLevel::Overlap, false));
+        assert_eq!(r[&key("a", "c")], Reported { cleared: true, ..Reported::default() });
     }
 
     #[tokio::test]
