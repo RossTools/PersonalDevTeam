@@ -279,7 +279,7 @@ struct CreateTicket {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EditTicket {
-    /// The ticket's key (`PDT-12`) or id.
+    /// The ticket's key (`PDT-12`) or id. Outside the PM, a ticket other than the session's own needs its exact key.
     ticket: String,
     #[serde(default)]
     title: Option<String>,
@@ -595,7 +595,10 @@ fn defs() -> Vec<Def> {
             name: "edit_ticket",
             title: "Edit a ticket",
             description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
-                          agent's. The user confirms each call unless the project lets you act.",
+                          agent's. Outside the PM, a ticket other than the session's own needs its exact key \
+                          (`PDT-12`), and one in progress or done keeps its title and description unless this \
+                          session created it: comment on it instead. The user confirms each call unless the project \
+                          lets you act.",
             schema: schema::<EditTicket>,
         },
         Def {
@@ -1105,14 +1108,33 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let valid = input.validate().map_err(|e| api(e.into()))?;
             let id = uuid::Uuid::now_v7().to_string();
             let t = st.store.create_ticket(&id, &project, &valid, now_ms()).await.map_err(|e| api(e.into()))?;
-            record_agent_change(cx, &t.summary.id, "Created by the PM.").await;
+            let by = match crate::pm::is_pm_session(st, cx.session).await {
+                true => "the PM".to_string(),
+                false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
+            };
+            // `created` lets the session edit it later as its own (PDT-162).
+            record_agent_note(cx, &t.summary.id, &format!("Created by {by}."), json!({"created": true})).await;
             Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage}))
         }
         "edit_ticket" => {
             let a: EditTicket = args(a)?;
             let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+            let current = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+            if !crate::pm::is_pm_session(st, cx.session).await {
+                let rewrites = a.title.as_deref().is_some_and(|t| t.trim() != current.summary.title)
+                    || a.description.as_deref().is_some_and(|d| d.trim() != current.description.trim());
+                let edit = pdt_core::ticket::AgentEdit {
+                    given: &a.ticket,
+                    key: &current.summary.key,
+                    stage: current.summary.stage,
+                    own: session_ticket(st, cx.session).await.as_deref() == Some(id.as_str()),
+                    created: st.store.created_by_session(&id, &cx.session.id).await.map_err(store)?,
+                    rewrites,
+                };
+                pdt_core::ticket::agent_may_edit(&edit)?;
+            }
             confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
-            let project = st.store.get_ticket(&id).await.map_err(store)?.map(|t| t.summary.project_id);
+            let project = Some(current.summary.project_id.clone());
             let parent = match a.parent.as_deref().map(str::trim) {
                 Some("") => Some(String::new()),
                 Some(p) => Some(resolve_ticket(st, p, project.as_deref()).await?),
@@ -1319,7 +1341,15 @@ async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) 
 
 /// Notes on the ticket's timeline that an agent changed it through PDT's tools (principle 5: changes are on record).
 async fn record_agent_change(cx: &Cx<'_>, ticket_id: &str, text: &str) {
-    let data = json!({"sessionId": cx.session.id, "persona": cx.session.persona.as_ref().map(|p| &p.name)});
+    record_agent_note(cx, ticket_id, text, json!({})).await;
+}
+
+/// [`record_agent_change`] with more fields in the note's data.
+async fn record_agent_note(cx: &Cx<'_>, ticket_id: &str, text: &str, extra: Value) {
+    let mut data = json!({"sessionId": cx.session.id, "persona": cx.session.persona.as_ref().map(|p| &p.name)});
+    if let (Some(d), Value::Object(more)) = (data.as_object_mut(), extra) {
+        d.extend(more);
+    }
     if let Err(e) = cx.st.store.add_comment_by(ticket_id, text, Actor::Agent, Some(data), now_ms()).await {
         tracing::warn!(ticket = %ticket_id, error = %e, "could not record the PM's change on the timeline");
     }
