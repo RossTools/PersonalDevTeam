@@ -54,6 +54,18 @@ pub fn git(dir: &std::path::Path, args: &[&str]) {
     assert!(ok, "git {args:?}");
 }
 
+/// Records the checkout's branch as pushed to `origin` at HEAD (a remote-tracking ref, no remote needed), as an agent
+/// that pushed would leave it: `submitted` is refused for a branch that isn't on `origin` (PDT-161).
+pub fn mark_pushed(worktree: &std::path::Path) {
+    let out = std::process::Command::new("git")
+        .current_dir(worktree)
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .output()
+        .unwrap();
+    let branch = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    git(worktree, &["update-ref", &format!("refs/remotes/origin/{branch}"), "HEAD"]);
+}
+
 /// A stand-in agent program that records each launch's arguments in `<dir>/<name>.args` and then waits for input.
 /// On Unix every argument is followed by a `<<END>>` line and every launch by a `<<LAUNCH>>` line (see
 /// [`recorded_launches`]); on Windows (a `.cmd` shim, run through cmd.exe) each launch is one `echo %*` line.

@@ -691,8 +691,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
 - **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), refuses
   `submitted` (the outcome that hands work on, PDT-161; a timed-out step's late one too) while the attempt's worktree
   has uncommitted changes to tracked files or commits its upstream lacks (pdt-git `unpushed`; the upstream, else
-  `origin/<branch>` when that exists; a branch on neither is only checked for uncommitted changes; untracked files
-  don't count; the error names the files and commits: pdt-core `not_handed_in`), adds its line
+  `origin/<branch>` when that exists; a branch on neither is refused as not pushed when the repository has an
+  `origin` remote, and only checked for uncommitted changes when it has none; untracked files don't count; the error names the files and commits: pdt-core `not_handed_in`), adds its line
   comments as review comments on the attempt's worktree (author: the persona), records an `outcome` timeline event
   and completes the step by that port with `{outcome, summary, comments, data, sessionId, persona, personaVersion,
   turns, by}`. `data` (PDT-154) is the object the agent handed in with `submit_outcome` (fields the prompt asks for,

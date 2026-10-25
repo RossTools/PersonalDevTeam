@@ -90,11 +90,13 @@ pub struct Unpushed {
     pub upstream: Option<String>,
     /// Commits on HEAD that `upstream` doesn't have.
     pub ahead: u32,
+    /// The repository has an `origin` remote while `upstream` is None: the branch was never pushed.
+    pub unpushed_branch: bool,
 }
 
 impl Unpushed {
     pub fn is_clean(&self) -> bool {
-        self.changed.is_empty() && self.ahead == 0
+        self.changed.is_empty() && self.ahead == 0 && !self.unpushed_branch
     }
 }
 
@@ -126,7 +128,8 @@ pub fn unpushed(dir: &Path) -> Result<Unpushed, GitError> {
         Some(u) => run(dir, &["rev-list", "--count", &format!("{u}..HEAD")])?.trim().parse().unwrap_or(0),
         None => 0,
     };
-    Ok(Unpushed { changed, upstream, ahead })
+    let unpushed_branch = upstream.is_none() && remote_url(dir, "origin").is_some();
+    Ok(Unpushed { changed, upstream, ahead, unpushed_branch })
 }
 
 /// `git worktree remove [--force] <path>`.
@@ -231,10 +234,13 @@ mod tests {
         assert_eq!(unpushed(&dir).unwrap(), Unpushed::default());
         git(tmp.path(), &["init", "-q", "--bare", &remote.to_string_lossy()]);
         git(&dir, &["remote", "add", "origin", &remote.to_string_lossy()]);
+        // With origin, a branch that isn't on it is unpushed.
+        assert!(unpushed(&dir).unwrap().unpushed_branch);
         git(&dir, &["push", "-q", "-u", "origin", "main"]);
         let up = unpushed(&dir).unwrap();
         assert!(up.is_clean(), "{up:?}");
         assert_eq!(up.upstream.as_deref(), Some("origin/main"));
+        assert!(!up.unpushed_branch);
         // An untracked file doesn't count; a changed tracked one does.
         std::fs::write(dir.join("scratch.txt"), "x\n").unwrap();
         assert!(unpushed(&dir).unwrap().is_clean());
@@ -250,6 +256,7 @@ mod tests {
         std::fs::write(dir.join("b.txt"), "b\n").unwrap();
         git(&dir, &["add", "b.txt"]);
         git(&dir, &["commit", "-q", "-m", "b"]);
+        assert!(unpushed(&dir).unwrap().unpushed_branch);
         git(&dir, &["push", "-q", "origin", "topic"]);
         let up = unpushed(&dir).unwrap();
         assert_eq!((up.upstream.as_deref(), up.ahead), (Some("origin/topic"), 0), "{up:?}");

@@ -715,7 +715,7 @@ async fn handed_in(st: &AppState, a: &AgentStep, outcome: &str) -> R<()> {
             return Ok(());
         }
     };
-    match not_handed_in(&up.changed, up.ahead, up.upstream.as_deref()) {
+    match not_handed_in(&up.changed, up.ahead, up.upstream.as_deref(), up.unpushed_branch) {
         Some(why) => Err(why),
         None => Ok(()),
     }

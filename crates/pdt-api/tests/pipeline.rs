@@ -5,7 +5,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, git, mark_pushed};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
 use pdt_github::PullRequest;
@@ -189,6 +189,7 @@ fn commit_file(worktree: &Path, name: &str) {
     std::fs::write(worktree.join(name), "built\n").unwrap();
     git(worktree, &["add", "."]);
     git(worktree, &["commit", "-m", "build", "-q"]);
+    mark_pushed(worktree);
 }
 
 #[tokio::test]
@@ -1574,18 +1575,23 @@ async fn submitted_needs_a_clean_pushed_worktree() {
     );
     assert!(!r.contains("scratch.txt"), "{r}");
 
+    // Committed, but the branch was never pushed.
     git(&wt, &["commit", "-q", "-am", "change"]);
+    submit_in(&env, &coder, "submitted").await;
+    let r = submitted_reply(&env, &coder, 1).await;
+    assert!(r.contains("still has a branch that isn't pushed (it is not on `origin`)"), "{r}");
+
     git(&wt, &["push", "-q", "-u", "origin", &branch]);
     std::fs::write(wt.join("a.txt"), "again\n").unwrap();
     git(&wt, &["commit", "-q", "-am", "again"]);
     submit_in(&env, &coder, "submitted").await;
-    let r = submitted_reply(&env, &coder, 1).await;
+    let r = submitted_reply(&env, &coder, 2).await;
     assert!(r.contains(&format!("1 commit not pushed to `origin/{branch}`")), "{r}");
     assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "code");
 
     git(&wt, &["push", "-q"]);
     submit_in(&env, &coder, "submitted").await;
-    let r = submitted_reply(&env, &coder, 2).await;
+    let r = submitted_reply(&env, &coder, 3).await;
     assert!(r.starts_with("mcp submit_outcome:"), "{r}");
     let review = inbox_item(&env, "manual", &t).await;
     assert_eq!(review["title"], "Your turn: Review");

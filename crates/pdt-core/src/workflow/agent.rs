@@ -244,8 +244,7 @@ pub fn fold_messages(own: &[&str], notices: &[&str], mid_step: bool) -> String {
         ),
         (true, false) if mid_step => format!(
             "[{SHORT_NAME}] This came in while you work on your step. Take it in as one more item of the step, after \
-             what the step's message asked (the review and QA findings come first), and finish the step as that \
-             message says.\n\n{}",
+             what the step's message asked, and finish the step as that message says.\n\n{}",
             join(notices)
         ),
         (true, false) => join(notices),
@@ -290,9 +289,10 @@ pub fn resumable_step(steps: &[super::api::Step]) -> Option<&super::api::Step> {
 }
 
 /// Why `submitted` is refused (PDT-161), or None when the worktree is clean and pushed: `changed` tracked files with
-/// uncommitted changes, `ahead` commits `upstream` doesn't have.
-pub fn not_handed_in(changed: &[String], ahead: u32, upstream: Option<&str>) -> Option<String> {
-    if changed.is_empty() && ahead == 0 {
+/// uncommitted changes, `ahead` commits `upstream` doesn't have, or a branch never pushed to the repository's remote
+/// (`unpushed_branch`).
+pub fn not_handed_in(changed: &[String], ahead: u32, upstream: Option<&str>, unpushed_branch: bool) -> Option<String> {
+    if changed.is_empty() && ahead == 0 && !unpushed_branch {
         return None;
     }
     let mut what = vec![];
@@ -307,6 +307,9 @@ pub fn not_handed_in(changed: &[String], ahead: u32, upstream: Option<&str>) -> 
     if ahead > 0 {
         let commits = if ahead == 1 { "1 commit".to_string() } else { format!("{ahead} commits") };
         what.push(format!("{commits} not pushed to `{}`", upstream.unwrap_or("its upstream")));
+    }
+    if unpushed_branch {
+        what.push("a branch that isn't pushed (it is not on `origin`)".to_string());
     }
     Some(format!(
         "`{SUBMITTED}` is refused: the worktree still has {}. The next step only sees what is committed and pushed: \
@@ -418,22 +421,25 @@ mod tests {
         assert!(m.find("Too slow").unwrap() < m.find("CI failed").unwrap());
         let mid = fold_messages(&[], &[ci], true);
         assert!(mid.starts_with("[PDT] This came in while you work on your step.") && mid.ends_with(ci), "{mid}");
+        assert!(!mid.contains("findings"), "a first pass has none: {mid}");
         assert_eq!(fold_messages(&[], &[ci, "two"], false), format!("{ci}\n\ntwo"));
         assert_eq!(fold_messages(&[pass, "nudge"], &[], true), format!("{pass}\n\nnudge"));
     }
 
     #[test]
     fn submitted_needs_a_clean_pushed_worktree() {
-        assert_eq!(not_handed_in(&[], 0, Some("origin/x")), None);
+        assert_eq!(not_handed_in(&[], 0, Some("origin/x"), false), None);
         let files: Vec<String> = (1..=7).map(|i| format!("f{i}.rs")).collect();
-        let m = not_handed_in(&files, 2, Some("origin/x")).unwrap();
+        let m = not_handed_in(&files, 2, Some("origin/x"), false).unwrap();
         assert!(
             m.starts_with("`submitted` is refused: the worktree still has uncommitted changes to tracked files"),
             "{m}"
         );
         assert!(m.contains("`f5.rs` and 2 more) and 2 commits not pushed to `origin/x`."), "{m}");
-        let m = not_handed_in(&[], 1, None).unwrap();
+        let m = not_handed_in(&[], 1, None, false).unwrap();
         assert!(m.contains("still has 1 commit not pushed to `its upstream`."), "{m}");
+        let m = not_handed_in(&["a.rs".into()], 0, None, true).unwrap();
+        assert!(m.contains("(`a.rs`) and a branch that isn't pushed (it is not on `origin`)."), "{m}");
     }
 
     #[test]
