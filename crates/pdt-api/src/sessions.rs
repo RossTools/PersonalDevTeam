@@ -218,10 +218,15 @@ pub(crate) async fn agent_instructions(
     });
     let tools = if crate::mcp::offered(s) { crate::mcp::session_tools(st, s).await } else { vec![] };
     let step = crate::workflow::agent::step_section_for(st, s).await;
+    let ci_branch = match &attempt {
+        Some(a) => Some(a.attempt.branch.clone()),
+        None => crate::workflow::agent::step_attempt_branch(st, s).await,
+    };
     let ctx = pdt_core::agent_context::SessionContext {
         personal: project.is_personal(),
         tools: &tools,
         step: step.as_deref(),
+        ci_branch: ci_branch.as_deref(),
         port: st.listen_port,
         session_id: &s.id,
         project_id: &project.id,
