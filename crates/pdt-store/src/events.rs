@@ -36,14 +36,21 @@ pub struct NewEvent<'a> {
 }
 
 impl Store {
-    /// Adds an event, or updates the row with the same `item_id` (it keeps its `pos` and gets a new `seq`).
+    /// Adds an event, or updates the row with the same `item_id` (it keeps its `pos` and gets a new `seq`). Known
+    /// secrets' values are redacted from it first (PDT-158); the event returned is the redacted one.
     pub async fn upsert_session_event(
         &self,
         session_id: &str,
         e: NewEvent<'_>,
     ) -> Result<ConversationEvent, StoreError> {
         let body = serde_json::to_string(e.event).map_err(|err| StoreError::Corrupt(err.to_string()))?;
-        let raw = e.raw.map(|r| cap_text(r, MAX_RAW));
+        let redacted = self.redactor.text(&body);
+        let event = match &redacted {
+            std::borrow::Cow::Borrowed(_) => e.event.clone(),
+            std::borrow::Cow::Owned(b) => serde_json::from_str(b).unwrap_or_else(|_| e.event.clone()),
+        };
+        let body = redacted.into_owned();
+        let raw = e.raw.map(|r| self.redactor.string(&cap_text(r, MAX_RAW)));
         // IMMEDIATE: this reads then writes, and a deferred transaction that another writer gets ahead of cannot be
         // upgraded (SQLITE_BUSY_SNAPSHOT, which the busy timeout does not retry).
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -107,14 +114,7 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await?;
         tx.commit().await?;
-        Ok(ConversationEvent {
-            seq,
-            pos,
-            ts: e.ts,
-            item_id: e.item_id.map(String::from),
-            turn_id,
-            event: e.event.clone(),
-        })
+        Ok(ConversationEvent { seq, pos, ts: e.ts, item_id: e.item_id.map(String::from), turn_id, event })
     }
 
     /// Events with `seq > after`, oldest first, at most `limit`.

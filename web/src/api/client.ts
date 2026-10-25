@@ -93,6 +93,10 @@ import type { Instantiate } from './gen/Instantiate';
 import type { KindSpec } from './gen/KindSpec';
 import type { LogEvent } from './gen/LogEvent';
 import type { Connection } from './gen/Connection';
+import type { NewSecret } from './gen/NewSecret';
+import type { Secret } from './gen/Secret';
+import type { SecretPatch } from './gen/SecretPatch';
+import type { SecretUse } from './gen/SecretUse';
 import type { ConnectionInput } from './gen/ConnectionInput';
 import type { McpTools } from './gen/McpTools';
 import type { NewWorkflow } from './gen/NewWorkflow';
@@ -353,6 +357,12 @@ export const api = {
   answerWorkflowStep: (run: string, step: string, choice: string) =>
     request<WorkflowRunDetail>(`/api/workflow-runs/${enc(run)}/steps/${enc(step)}/answer`, { method: 'POST', body: JSON.stringify({ choice }) }),
   listLogEvents: (q: { type?: string; limit?: number; after?: number } = {}) => request<LogEvent[]>(`/api/events${queryString(q)}`),
+  listSecrets: () => request<Secret[]>('/api/secrets'),
+  createSecret: (s: NewSecret) => request<Secret>('/api/secrets', { method: 'POST', body: JSON.stringify(s) }),
+  patchSecret: (id: string, p: SecretPatch) =>
+    request<Secret>(`/api/secrets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteSecret: (id: string) => request<void>(`/api/secrets/${enc(id)}`, { method: 'DELETE' }),
+  secretUses: (id: string) => request<SecretUse[]>(`/api/secrets/${enc(id)}/uses`),
   listConnections: () => request<Connection[]>('/api/connections'),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
   updateConnection: (id: string, c: Partial<ConnectionInput>) =>

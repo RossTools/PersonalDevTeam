@@ -499,7 +499,14 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
                 rerun: job.rerun,
             };
             // A timeout drops the body wherever it was: it may have done its work (PDT-131).
-            match tokio::time::timeout(job.limit, job.kind.run(&cx, job.input)).await {
+            // Secrets are filled in only now, from the node's own config, and never stored with the step's input
+            // (PDT-158).
+            let (kind, input) = (job.kind, job.input.clone());
+            let body = async {
+                let input = crate::vault::fill_step(&cx, &job.config, input).await?;
+                kind.run(&cx, input).await
+            };
+            match tokio::time::timeout(job.limit, body).await {
                 Ok(r) => (r, false),
                 Err(_) => (Err(format!("timed out after {} ms", job.limit.as_millis())), true),
             }
@@ -531,6 +538,8 @@ struct Job<'a> {
     step: Step,
     node: &'a pdt_core::workflow::doc::Node,
     kind: &'static dyn super::catalog::NodeKind,
+    /// The node's config as written (its secret references are filled in from it, PDT-158).
+    config: Value,
     input: Value,
     ctx: Value,
     limit: std::time::Duration,
@@ -586,7 +595,7 @@ async fn claim<'a>(
     };
     let state = st.store.workflow_state(&wf.id).await.map_err(err)?;
     let ctx = context(wf, run, steps, state, false);
-    let input = resolve_keeping(&config, &ctx, Some("event"));
+    let input = resolve_keeping(&config, &ctx, &["event", "secret"]);
     // Found running, it was cut short by a restart (PDT-131); a retry after a timeout says so in its wait. A restart
     // doesn't use up one of the node's retries.
     let restarted = step.status == StepStatus::Running;
@@ -608,7 +617,7 @@ async fn claim<'a>(
     let limit = std::time::Duration::from_millis(node.timeout_ms.unwrap_or_else(|| kind.default_timeout_ms()));
     let outside = matches!(catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
     let locked = !outside || kind.in_engine_lock();
-    Ok(Claim::Run(Box::new(Job { step, node, kind, input, ctx, limit, locked, rerun })))
+    Ok(Claim::Run(Box::new(Job { step, node, kind, config, input, ctx, limit, locked, rerun })))
 }
 
 /// Writes what a step's body came to, under the engine lock. True when the run ended.
@@ -1185,7 +1194,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
             break;
         };
         let ctx = context(wf, &run, &done, state.clone(), true);
-        let input = resolve_keeping(&config, &ctx, Some("event"));
+        let input = resolve_keeping(&config, &ctx, &["event", "secret"]);
         ds.input = input.clone();
         let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true, rerun: false };
         let result = kind.dry_run(&cx, input).await;

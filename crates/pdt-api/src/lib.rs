@@ -46,6 +46,7 @@ mod start;
 mod tickets;
 mod todos;
 pub mod update;
+pub mod vault;
 mod workflow;
 mod workspaces;
 mod worktrees;

@@ -7,17 +7,31 @@ use crate::session::AgentKind;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// The pdt-mcp tools a session gets when it runs no persona (spec §2.2).
-pub const DEFAULT_TOOLS: [&str; 5] =
-    ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
-
-/// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 39] = [
+/// The pdt-mcp tools a session gets when it runs no persona (spec §2.2). The secret tools (PDT-158) are here so any
+/// agent can use the secrets the user lets it; each secret says which projects and personas may.
+pub const DEFAULT_TOOLS: [&str; 9] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
     "add_ticket_comment",
     "add_review_comment",
+    "list_secrets",
+    "request_secret",
+    "run_with_secrets",
+    "write_secret_file",
+];
+
+/// Every pdt-mcp tool, in the order `tools/list` gives them.
+pub const ALL_TOOLS: [&str; 43] = [
+    "get_ticket",
+    "submit_outcome",
+    "ask_user",
+    "add_ticket_comment",
+    "add_review_comment",
+    "list_secrets",
+    "request_secret",
+    "run_with_secrets",
+    "write_secret_file",
     "update_ticket",
     "catalog_search",
     "catalog_get",
@@ -72,11 +86,15 @@ pub const ASKING_TOOLS: [&str; 11] = [
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 37] = [
+pub const PM_TOOLS: [&str; 41] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
     "add_ticket_comment",
+    "list_secrets",
+    "request_secret",
+    "run_with_secrets",
+    "write_secret_file",
     "catalog_search",
     "catalog_get",
     "workflow_get",
@@ -113,12 +131,16 @@ pub const PM_TOOLS: [&str; 37] = [
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 39] = [
+const TOOL_DOES: [(&str, &str); 43] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
     ("add_ticket_comment", "Comment on the ticket"),
     ("add_review_comment", "Comment on a line of the attempt's changes"),
+    ("list_secrets", "See the names of the secrets it may use"),
+    ("request_secret", "Ask you for a secret (you type it into the Inbox, never the chat)"),
+    ("run_with_secrets", "Run a command with secrets in its environment (it never sees them)"),
+    ("write_secret_file", "Write a file (a .env) with secrets filled in, without seeing it"),
     ("update_ticket", "Rewrite its own ticket's title and description"),
     ("catalog_search", "Search the workflow node catalog"),
     ("catalog_get", "Read a catalog node"),

@@ -359,6 +359,9 @@ async fn pump(
             }
             AdapterOutput::Delta { item_id, field, text } => {
                 c.state().partial.entry(item_id.clone()).or_insert((field, String::new())).1.push_str(&text);
+                // Shown live, never stored: a secret's value in one chunk is redacted here, its whole message once it
+                // is stored (PDT-158).
+                let text = st.store.redactor().string(&text);
                 let _ = c.tx.send(ConversationServerMessage::Delta { item_id, field, text });
             }
             AdapterOutput::Info(info) => {
@@ -1406,7 +1409,8 @@ async fn stream(st: AppState, c: Arc<Conv>, mut socket: WebSocket, after: i64) {
     }
     let (state, partial) = {
         let s = c.state();
-        (s.snapshot(), s.partial.iter().map(|(k, (f, t))| (k.clone(), *f, t.clone())).collect::<Vec<_>>())
+        let r = st.store.redactor();
+        (s.snapshot(), s.partial.iter().map(|(k, (f, t))| (k.clone(), *f, r.string(t))).collect::<Vec<_>>())
     };
     if !send_frame(&mut socket, &ConversationServerMessage::State { state }).await {
         return;

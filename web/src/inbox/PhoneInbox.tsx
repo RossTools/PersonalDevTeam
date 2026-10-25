@@ -11,6 +11,7 @@ import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { Markdown } from '../common/Markdown';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
+import { SecretRequest } from './SecretRequest';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { PrDetails } from '../tickets/PullRequest';
@@ -192,7 +193,7 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
   item: InboxItem;
   busy: boolean;
   className?: string;
-  onAnswer: (a: { choice: string; text?: string } | { answers: string[] }) => Promise<void>;
+  onAnswer: (a: { choice: string; text?: string } | { answers: string[] } | { secret: string }) => Promise<void>;
   onApproved: () => void;
   onOpenSession: () => void;
   onOpenTicket: () => void;
@@ -231,6 +232,9 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
         onPick={() => void onAnswer({ answers })} />;
       break;
     }
+    case 'secret':
+      content = <SecretRequest item={item} busy={busy} onSend={(secret) => onAnswer({ secret })} />;
+      break;
     case 'approval': {
       const tool = typeof item.body.tool === 'string' ? item.body.tool : 'tool';
       const diff = typeof item.body.diff === 'string' ? item.body.diff : null;

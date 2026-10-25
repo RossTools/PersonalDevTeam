@@ -31,6 +31,10 @@ person confirms per call unless the project lets the PM act. Use them for what t
 | `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes |
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
+| `list_secrets` | the secrets (API keys, tokens, passwords) this session may use: names and descriptions, never values |
+| `request_secret` | `{name, purpose}`: asks the person for a secret; they type it into PDT's Inbox, never the chat. You get `stored: true` once it is (at once if it already is), never the value: end your turn after asking |
+| `run_with_secrets` | `{command, env, cwd?, timeoutSecs?}`: runs a command line with `env` values `secret:<name>` set to the secrets; the output comes back with each value replaced by `[secret:<name>]` |
+| `write_secret_file` | `{path, template}`: writes a file (a `.env`, an `.npmrc`) with `{{secret.<name>}}` filled in, without echoing it |
 | `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
 | `update_ticket` | `{title?, description?}`: rewrites this session's own ticket (the Refiner's tool; a session gets it when its persona lists it) |
 | `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save` | the workflow catalog and documents, for sessions whose persona has them (the catalog includes each MCP server's tools as `mcp:<server>/<tool>`, used as an `mcp.tool` node); a change to a workflow is a proposal the person accepts, and a new workflow starts disabled |
@@ -38,6 +42,10 @@ person confirms per call unless the project lets the PM act. Use them for what t
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (host-wide or per project; pinned ones go in every PM briefing) and the journal entry a PM session writes as it ends |
 | `list_todos` | `{project?, done?}`: the person's own todo list (title, done, project, linked ticket, due date `dueOn` and time `dueTime`, repeat rule `recurrence`, dates), read-only |
 | `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket (also its parent), a link between two tickets (`blocks`, `blockedBy`, `relates`) or its removal, a message to a session; each waits for the person's yes unless the project lets the PM act |
+
+Never ask the person to paste a secret into the chat, and never print, log or commit one: ask with `request_secret`
+and use it through `run_with_secrets` or `write_secret_file` (keep files they write out of git). PDT replaces every
+known value with `[secret:<name>]` in what it stores and shows.
 
 A session that runs a step of a workflow (a **persona** such as the Reviewer) has a section "Your role" in its
 instructions: it finishes the step with `submit_outcome`, never by what it writes, and asks the person with

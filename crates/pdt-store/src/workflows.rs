@@ -2,6 +2,7 @@
 //! §3–§5, §7).
 
 use crate::{Store, StoreError};
+use pdt_core::secret::Redactor;
 use pdt_core::workflow::api::{
     Author, Connection, Run, RunStatus, Scope, Source, Step, StepStatus, VersionStatus, Workflow, WorkflowVersion,
 };
@@ -510,7 +511,7 @@ impl Store {
         .bind(&run.run_key)
         .bind(&run.trigger_event_id)
         .bind(&run.trigger_node)
-        .bind(run.trigger.to_string())
+        .bind(self.redactor.string(&run.trigger.to_string()))
         .bind(&run.project_id)
         .bind(&run.ticket_id)
         .bind(&run.attempt_id)
@@ -527,7 +528,7 @@ impl Store {
             return Ok(false);
         }
         for s in steps {
-            put_step(&mut tx, s).await?;
+            put_step(&mut tx, &self.redactor, s).await?;
         }
         tx.commit().await?;
         Ok(true)
@@ -578,8 +579,8 @@ impl Store {
              WHERE id = ?",
         )
         .bind(run.status.as_str())
-        .bind(&run.error)
-        .bind(opt_json(&run.output))
+        .bind(run.error.as_deref().map(|e| self.redactor.string(e)))
+        .bind(opt_json(&self.redactor.json(&run.output)))
         .bind(run.wake_at)
         .bind(run.resumed_at)
         .bind(run.ended_at)
@@ -615,9 +616,9 @@ impl Store {
     /// waiting, wakes.
     pub async fn complete_workflow_step(&self, step: &Step, next: &[Step], now: i64) -> Result<(), StoreError> {
         let mut tx = self.write_tx().await?;
-        put_step(&mut tx, step).await?;
+        put_step(&mut tx, &self.redactor, step).await?;
         for n in next {
-            put_step(&mut tx, n).await?;
+            put_step(&mut tx, &self.redactor, n).await?;
         }
         sqlx::query("UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND step_id = ?")
             .bind(now)
@@ -642,7 +643,7 @@ impl Store {
     pub async fn set_step_progress(&self, id: &str, attempts: u32, output: &Value) -> Result<bool, StoreError> {
         let r =
             sqlx::query("UPDATE workflow_steps SET output = ? WHERE id = ? AND status = 'running' AND attempts = ?")
-                .bind(opt_json(output))
+                .bind(opt_json(&self.redactor.json(output)))
                 .bind(id)
                 .bind(i64::from(attempts))
                 .execute(&self.pool)
@@ -666,7 +667,7 @@ impl Store {
     /// Writes a step that is to run now, and wakes its run if it waits, in one transaction.
     pub async fn put_step_and_wake(&self, s: &Step) -> Result<(), StoreError> {
         let mut tx = self.write_tx().await?;
-        put_step(&mut tx, s).await?;
+        put_step(&mut tx, &self.redactor, s).await?;
         sqlx::query("UPDATE workflow_runs SET status = 'running', wake_at = NULL WHERE id = ? AND status = 'waiting'")
             .bind(&s.run_id)
             .execute(&mut *tx)
@@ -678,7 +679,7 @@ impl Store {
     /// Adds or replaces a step.
     pub async fn put_step(&self, s: &Step) -> Result<(), StoreError> {
         let mut conn = self.pool.acquire().await?;
-        put_step(&mut conn, s).await
+        put_step(&mut conn, &self.redactor, s).await
     }
 
     pub async fn get_step(&self, id: &str) -> Result<Option<Step>, StoreError> {
@@ -815,7 +816,7 @@ impl Store {
         .bind(&m.session_id)
         .bind(&m.ticket_id)
         .bind(&m.dedupe)
-        .bind(&m.text)
+        .bind(self.redactor.string(&m.text))
         .bind(opt_json(&m.timeline))
         .bind(&m.run_id)
         .bind(&m.step_id)
@@ -1100,7 +1101,8 @@ impl Store {
     }
 }
 
-async fn put_step(conn: &mut sqlx::SqliteConnection, s: &Step) -> Result<(), StoreError> {
+/// Known secrets' values are redacted from what a step took and made (PDT-158).
+async fn put_step(conn: &mut sqlx::SqliteConnection, r: &Redactor, s: &Step) -> Result<(), StoreError> {
     sqlx::query(
         "INSERT INTO workflow_steps (id, run_id, seq, node_id, kind, status, input, output, port, attempts, error, \
          wake_at, wait, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
@@ -1114,13 +1116,13 @@ async fn put_step(conn: &mut sqlx::SqliteConnection, s: &Step) -> Result<(), Sto
     .bind(&s.node_id)
     .bind(&s.kind)
     .bind(s.status.as_str())
-    .bind(opt_json(&s.input))
-    .bind(opt_json(&s.output))
+    .bind(opt_json(&r.json(&s.input)))
+    .bind(opt_json(&r.json(&s.output)))
     .bind(&s.port)
     .bind(i64::from(s.attempts))
-    .bind(&s.error)
+    .bind(s.error.as_deref().map(|e| r.string(e)))
     .bind(s.wake_at)
-    .bind(opt_json(&s.wait))
+    .bind(opt_json(&r.json(&s.wait)))
     .bind(s.started_at)
     .bind(s.ended_at)
     .execute(&mut *conn)

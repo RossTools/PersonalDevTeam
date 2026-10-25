@@ -38,15 +38,15 @@ fn text_of(v: &Value) -> String {
 
 /// `s` with its references filled in from `ctx`.
 pub fn resolve_str(s: &str, ctx: &Value) -> Value {
-    resolve_str_keeping(s, ctx, None)
+    resolve_str_keeping(s, ctx, &[])
 }
 
 fn root_of(path: &str) -> &str {
     path.trim().split('.').next().unwrap_or_default()
 }
 
-fn resolve_str_keeping(s: &str, ctx: &Value, keep: Option<&str>) -> Value {
-    resolve_str_if(s, ctx, &|path| keep != Some(root_of(path)))
+fn resolve_str_keeping(s: &str, ctx: &Value, keep: &[&str]) -> Value {
+    resolve_str_if(s, ctx, &|path| !keep.contains(&root_of(path)))
 }
 
 /// `s` with the references `fill` accepts filled in; the others are left as written.
@@ -79,11 +79,12 @@ fn resolve_str_if(s: &str, ctx: &Value, fill: &dyn Fn(&str) -> bool) -> Value {
 
 /// A config with every string's references filled in (objects and arrays recursively).
 pub fn resolve(v: &Value, ctx: &Value) -> Value {
-    resolve_keeping(v, ctx, None)
+    resolve_keeping(v, ctx, &[])
 }
 
-/// [`resolve`], leaving references under `keep` (`event`: what a wait is waiting for) as they are.
-pub fn resolve_keeping(v: &Value, ctx: &Value, keep: Option<&str>) -> Value {
+/// [`resolve`], leaving references under the roots in `keep` as they are (`event`: what a wait is waiting for;
+/// `secret`: filled in only as the node runs, PDT-158).
+pub fn resolve_keeping(v: &Value, ctx: &Value, keep: &[&str]) -> Value {
     match v {
         Value::String(s) => resolve_str_keeping(s, ctx, keep),
         Value::Array(a) => Value::Array(a.iter().map(|x| resolve_keeping(x, ctx, keep)).collect()),
@@ -162,7 +163,7 @@ mod tests {
     #[test]
     fn keeps_references_under_a_root_for_later() {
         let cfg = json!({"left": "{{event.pr}}", "right": "{{trigger.pr}}", "t": "#{{event.pr}} vs {{trigger.pr}}"});
-        let got = resolve_keeping(&cfg, &ctx(), Some("event"));
+        let got = resolve_keeping(&cfg, &ctx(), &["event"]);
         assert_eq!(got, json!({"left": "{{event.pr}}", "right": 12, "t": "#{{event.pr}} vs 12"}));
         assert_eq!(resolve(&got, &json!({"event": {"pr": 12}}))["left"], json!(12));
     }

@@ -42,6 +42,7 @@ describe('routes', () => {
     ['/settings/host', { view: 'settings', page: { kind: 'host', section: null } }],
     ['/settings/host/updates', { view: 'settings', page: { kind: 'host', section: 'updates' } }],
     ['/settings/connections', { view: 'settings', page: { kind: 'connections' } }],
+    ['/settings/secrets', { view: 'settings', page: { kind: 'secrets' } }],
     ['/settings/notifications', { view: 'settings', page: { kind: 'notifications' } }],
     ['/settings/projects/PDT', { view: 'settings', page: { kind: 'project', key: 'PDT', section: null } }],
     ['/settings/projects/PDT/worktrees', { view: 'settings', page: { kind: 'project', key: 'PDT', section: 'worktrees' } }],
