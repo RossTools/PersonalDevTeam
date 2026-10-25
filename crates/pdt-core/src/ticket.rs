@@ -1004,6 +1004,54 @@ pub fn format_key(project_key: &str, number: u32) -> String {
     format!("{project_key}-{number}")
 }
 
+/// What a non-PM agent session (a Coder, Reviewer, QA…) asks of `edit_ticket` on a ticket (PDT-162).
+#[derive(Debug, Clone)]
+pub struct AgentEdit<'a> {
+    /// The ticket as the agent named it.
+    pub given: &'a str,
+    /// The ticket's key (`PDT-12`).
+    pub key: &'a str,
+    pub stage: TicketStage,
+    /// It is the session's own ticket.
+    pub own: bool,
+    /// The session created it.
+    pub created: bool,
+    /// The edit changes its title or replaces its description.
+    pub rewrites: bool,
+}
+
+/// Whether a non-PM agent may make an edit: its own ticket freely; another only named by its exact key, and never
+/// rewriting the title or description of one in progress or closed that it didn't create. The error says why and
+/// points at `add_ticket_comment`.
+pub fn agent_may_edit(e: &AgentEdit) -> Result<(), String> {
+    if e.own {
+        return Ok(());
+    }
+    let exact = parse_key(e.given).and_then(|k| k.key.map(|key| format_key(&key, k.number)));
+    if exact.as_deref() != Some(e.key) {
+        return Err(format!(
+            "{} is not this session's ticket: name another ticket by its exact key (such as {}), not an id, a \
+             number or a search result. To tell its owner something, use add_ticket_comment.",
+            e.given.trim(),
+            e.key
+        ));
+    }
+    let worked_on = e.stage == TicketStage::InProgress || e.stage.is_closed();
+    if worked_on && e.rewrites && !e.created {
+        return Err(format!(
+            "{} is {} and isn't this session's ticket, so its title and description stay as they are. Use \
+             add_ticket_comment to say what should change.",
+            e.key,
+            match e.stage {
+                TicketStage::InProgress => "in progress",
+                TicketStage::Done => "done",
+                _ => "closed",
+            }
+        ));
+    }
+    Ok(())
+}
+
 fn split_list(s: Option<&str>) -> impl Iterator<Item = &str> {
     s.unwrap_or("").split(',').map(str::trim).filter(|x| !x.is_empty())
 }
@@ -1130,6 +1178,33 @@ impl BulkRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agents_edit_their_own_ticket_and_others_only_by_exact_key() {
+        let e = |given, stage, own, created, rewrites| {
+            agent_may_edit(&AgentEdit { given, key: "CB-42", stage, own, created, rewrites })
+        };
+        use TicketStage::*;
+        // Its own ticket: any way it names it, any field.
+        assert!(e("01a1-uuid", InProgress, true, false, true).is_ok());
+        // Another, by its exact key (any case): fine while nobody works on it, or for fields other than the text.
+        assert!(e("CB-42", Todo, false, false, true).is_ok());
+        assert!(e(" cb-42 ", Draft, false, false, true).is_ok());
+        assert!(e("CB-42", InProgress, false, false, false).is_ok());
+        assert!(e("CB-42", Done, false, false, false).is_ok());
+        // One it created, even once work starts.
+        assert!(e("CB-42", InProgress, false, true, true).is_ok());
+        // An id, a bare number or another key is refused.
+        for given in ["01a1-uuid", "42", "#42", "CB-33"] {
+            let err = e(given, Todo, false, false, false).unwrap_err();
+            assert!(err.contains("exact key") && err.contains("add_ticket_comment"), "{err}");
+        }
+        // Rewriting one in progress or closed that it didn't create.
+        for (stage, word) in [(InProgress, "in progress"), (Done, "done"), (WontDo, "closed")] {
+            let err = e("CB-42", stage, false, false, true).unwrap_err();
+            assert!(err.contains(word) && err.contains("add_ticket_comment"), "{err}");
+        }
+    }
 
     #[test]
     fn stages_round_trip_and_know_when_they_are_closed() {
