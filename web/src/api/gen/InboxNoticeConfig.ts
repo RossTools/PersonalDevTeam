@@ -2,9 +2,10 @@
 
 export type InboxNoticeConfig = { 
 /**
- * The attempt (`{{trigger.attemptId}}`).
+ * The attempt (`{{trigger.attemptId}}`); without one the notice is the workflow's (once per key), in the run's
+ * project.
  */
-attempt: string, 
+attempt: string | null, 
 /**
  * What happened (`{{trigger.notice.text}}`).
  */

@@ -107,6 +107,10 @@ pub struct AgentStep {
     pub outcome: Option<String>,
     pub summary: Option<String>,
     pub comments: Vec<OutcomeComment>,
+    /// What the agent handed in with its outcome beyond the summary (`submit_outcome`'s `data`), for later steps.
+    #[serde(default)]
+    #[ts(type = "Record<string, unknown> | null")]
+    pub data: Option<serde_json::Value>,
     /// The user took it over and picked the outcome.
     pub by_user: bool,
     #[ts(type = "number")]

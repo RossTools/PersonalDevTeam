@@ -33,6 +33,10 @@ background: Array<string>,
  */
 backgroundWaitMs: number, outcome: string | null, summary: string | null, comments: Array<OutcomeComment>, 
 /**
+ * What the agent handed in with its outcome beyond the summary (`submit_outcome`'s `data`), for later steps.
+ */
+data: Record<string, unknown> | null, 
+/**
  * The user took it over and picked the outcome.
  */
 byUser: boolean, createdAt: number, updatedAt: number, };

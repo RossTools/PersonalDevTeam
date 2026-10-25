@@ -3,6 +3,7 @@
 //! disabled, not deleted.
 
 use crate::routes::{AppState, now_ms};
+use pdt_core::brand::RELEASE_REPO;
 use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
 use pdt_core::workflow::doc::WorkflowDoc;
 use serde_json::json;
@@ -22,6 +23,8 @@ pub const PR_FEEDBACK: &str = "pr-feedback";
 pub const JIRA_IMPORT: &str = "jira-import";
 pub const JIRA_DONE: &str = "jira-done";
 pub const LATE_COMMITS: &str = "late-commits";
+pub const PDT_BUG_TRIAGE: &str = "pdt-bug-triage";
+pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, doc: pr_notices },
@@ -32,6 +35,9 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
     Builtin { id: JIRA_IMPORT, enabled: true, doc: jira_import },
     Builtin { id: JIRA_DONE, enabled: true, doc: jira_done },
+    // Enabled when installed only on a host with a project whose repository is the release repository (PDT's own).
+    Builtin { id: PDT_BUG_TRIAGE, enabled: false, doc: pdt_bug_triage },
+    Builtin { id: GITHUB_ISSUE_DONE, enabled: true, doc: github_issue_done },
 ];
 
 fn doc(v: serde_json::Value) -> WorkflowDoc {
@@ -534,6 +540,168 @@ fn jira_done() -> WorkflowDoc {
     }))
 }
 
+/// What the triage step asks of the PM (PDT-154).
+const BUG_TRIAGE_PROMPT: &str = "A bug report from another PDT instance arrived as issue #{{trigger.number}} on \
+{{trigger.repo}}: \"{{trigger.title}}\" by {{trigger.author}} ({{trigger.url}}).\n\n{{trigger.body}}\n\nTriage it \
+against this project: read the code it touches (your working folder is the project's checkout), its tickets \
+(`search_tickets`, open and closed) and the repository's open and closed issues (`gh issue list --repo \
+{{trigger.repo}} --state all --search \"<words>\"`, `gh issue view <n> --repo {{trigger.repo}}`). Change nothing: make \
+no ticket, comment or issue change yourself; the workflow does that from your outcome.\n\nThen call `submit_outcome` \
+with one of:\n- `accept`: a real bug no ticket covers yet. `summary`: your triage notes (where in the code, how bad, \
+how to reproduce). `data`: `{\"priority\": \"low|medium|high|urgent\", \"labels\": [\"bug\"]}`.\n- `duplicate`: a \
+ticket already covers it. `summary`: why it is the same bug. `data`: `{\"ticket\": \"<that ticket's key>\", \
+\"duplicateOf\": <issue number>}`, where the issue is the one linked to that ticket (`get_ticket` shows its links), \
+else the earliest issue reporting the same bug; leave `duplicateOf` out when there is none.\n- `reject`: not a bug or \
+nothing to do (a question, spam, works as intended, can't be reproduced). `summary`: the reason, written for the \
+reporter: it is posted on the issue, which is then closed as not planned.";
+
+/// Bug reports from other PDT instances (PDT-153 files them as issues labelled `from-pdt` on the release repository)
+/// come in through triage (PDT-154): accepted ones become linked Draft tickets, duplicates are closed as GitHub
+/// duplicates of the canonical issue, rejected ones are closed as not planned with a notice in the Inbox.
+fn pdt_bug_triage() -> WorkflowDoc {
+    use pdt_core::github_issue::FROM_PDT;
+    let triage = "{{steps.triage.summary}}";
+    doc(json!({
+        "name": "PDT bug triage",
+        "description": format!("Each new issue labelled {FROM_PDT} on {RELEASE_REPO} (a bug report from another PDT \
+                        instance) is triaged by the PM against the code, the tickets and the other issues. Accepted: \
+                        a Draft ticket linked to the issue, with the triage notes, and a comment with its key on the \
+                        issue. A duplicate: the issue is closed at once as a duplicate of the canonical issue (or as \
+                        not planned when there is none), and the existing ticket notes the extra report. Rejected: \
+                        closed as not planned with the reason, and a notice in your Inbox so you can overrule it. \
+                        Enabled where a project's repository is {RELEASE_REPO}.", RELEASE_REPO = RELEASE_REPO),
+        "nodes": [
+            {"id": "opened", "kind": "github.issue.opened", "version": 1, "position": {"x": 0, "y": 160}, "config": {
+                "repos": [RELEASE_REPO],
+                "where": [
+                    {"left": "{{trigger.labels}}", "op": "contains", "right": FROM_PDT},
+                    {"left": "{{trigger.projectId}}", "op": "exists"}]}},
+            {"id": "triage", "kind": "agent", "version": 1, "position": {"x": 300, "y": 160}, "title": "Triage",
+             "config": {
+                "persona": "PM", "session": "new", "ticket": "", "attempt": "", "prompt": BUG_TRIAGE_PROMPT,
+                "outcomes": [
+                    {"id": "accept", "description": "a real bug no ticket covers: it becomes a Draft ticket"},
+                    {"id": "duplicate", "description": "a ticket already covers it (data: ticket, duplicateOf)"},
+                    {"id": "reject", "description": "not a bug or nothing to do: closed as not planned"},
+                ]}},
+            // accept
+            {"id": "import", "kind": "github.import", "version": 1, "position": {"x": 600, "y": 0}, "config": {
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "project": "{{trigger.projectId}}",
+                "priority": "{{steps.triage.data.priority}}", "labels": "{{steps.triage.data.labels}}"}},
+            {"id": "notes", "kind": "ticket.comment", "version": 1, "position": {"x": 900, "y": 0},
+             "title": "Triage notes", "config": {"ticket": "{{steps.import.ticketId}}",
+                "body": format!("Triage of {{{{trigger.url}}}} (from-pdt, by {{{{trigger.author}}}}):\n\n{triage}")}},
+            {"id": "tell", "kind": "github.comment", "version": 1, "position": {"x": 1200, "y": 0},
+             "title": "Comment the ticket key", "config": {
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}",
+                "body": "Thanks for the report. It is tracked as {{steps.import.ticketKey}}; this issue is closed \
+                         when that ticket is done."}},
+            {"id": "imported", "kind": "end", "version": 1, "position": {"x": 1500, "y": 0}, "title": "Imported"},
+            {"id": "known", "kind": "end", "version": 1, "position": {"x": 900, "y": -140},
+             "title": "Already a ticket", "config": {"quiet": true}},
+            // duplicate
+            {"id": "canonical", "kind": "condition", "version": 1, "position": {"x": 600, "y": 160},
+             "title": "Duplicates an issue?", "config": {"conditions": [
+                {"left": "{{steps.triage.data.duplicateOf}}", "op": "truthy"}]}},
+            {"id": "close_dup", "kind": "github.close", "version": 1, "position": {"x": 900, "y": 160},
+             "title": "Close as duplicate", "config": {
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "reason": "duplicate",
+                "duplicateOf": "{{steps.triage.data.duplicateOf}}",
+                "comment": "Thanks for the report. This is a duplicate of #{{steps.triage.data.duplicateOf}}, \
+                            tracked as {{steps.triage.data.ticket}}."}},
+            {"id": "close_known", "kind": "github.close", "version": 1, "position": {"x": 900, "y": 300},
+             "title": "Close as not planned", "config": {
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "reason": "not_planned",
+                "comment": "Thanks for the report. This is already tracked as {{steps.triage.data.ticket}}."}},
+            {"id": "extra", "kind": "ticket.comment", "version": 1, "position": {"x": 1200, "y": 230},
+             "title": "Note the extra report", "config": {"ticket": "{{steps.triage.data.ticket}}",
+                "body": format!("Another report of this bug: {{{{trigger.url}}}} (by {{{{trigger.author}}}}), \
+                                 closed as a duplicate.\n\n{triage}")}},
+            {"id": "duplicate", "kind": "end", "version": 1, "position": {"x": 1500, "y": 230}, "title": "Duplicate"},
+            // reject
+            {"id": "close_rejected", "kind": "github.close", "version": 1, "position": {"x": 600, "y": 460},
+             "title": "Close as not planned", "config": {
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "reason": "not_planned",
+                "comment": format!("Thanks for the report. Closing it: {triage}")}},
+            {"id": "notice", "kind": "inbox.notice", "version": 1, "position": {"x": 900, "y": 460},
+             "title": "Tell me", "config": {
+                "key": "{{trigger.repo}}#{{trigger.number}}",
+                "title": "Triage closed {{trigger.repo}}#{{trigger.number}} as not planned",
+                "text": format!("PDT bug triage closed [{{{{trigger.repo}}}}#{{{{trigger.number}}}}]({{{{trigger.url}}}}) \
+                                 \"{{{{trigger.title}}}}\" as not planned:\n\n{triage}\n\nTo overrule it, reopen the \
+                                 issue on GitHub and import it.")}},
+            {"id": "rejected", "kind": "end", "version": 1, "position": {"x": 1200, "y": 460}, "title": "Rejected"},
+            {"id": "untriaged", "kind": "end", "version": 1, "position": {"x": 600, "y": 620},
+             "title": "Not triaged", "config": {"output": {"issue": "{{trigger.url}}"}}},
+        ],
+        "edges": [
+            {"from": "opened", "to": "triage"},
+            {"from": "triage", "port": "accept", "to": "import"},
+            {"from": "triage", "port": "duplicate", "to": "canonical"},
+            {"from": "triage", "port": "reject", "to": "close_rejected"},
+            {"from": "triage", "port": "timeout", "to": "untriaged"},
+            {"from": "triage", "port": "stopped", "to": "untriaged"},
+            {"from": "import", "port": "imported", "to": "notes"},
+            {"from": "import", "port": "exists", "to": "known"},
+            {"from": "notes", "to": "tell"},
+            {"from": "tell", "to": "imported"},
+            {"from": "canonical", "port": "true", "to": "close_dup"},
+            {"from": "canonical", "port": "false", "to": "close_known"},
+            {"from": "close_dup", "to": "extra"},
+            {"from": "close_known", "to": "extra"},
+            {"from": "extra", "to": "duplicate"},
+            {"from": "close_rejected", "to": "notice"},
+            {"from": "notice", "port": "added", "to": "rejected"},
+            {"from": "notice", "port": "skipped", "to": "rejected"},
+        ],
+    }))
+}
+
+/// A ticket linked to a GitHub issue that finishes closes it (PDT-154): Done as completed, Won't do as not planned,
+/// each with a comment, once per ticket (the run key).
+fn github_issue_done() -> WorkflowDoc {
+    let trigger = |to: &str| {
+        json!({"runKey": "{{trigger.ticketId}}", "where": [
+            {"left": "{{trigger.to}}", "op": "eq", "right": to},
+            {"left": "{{trigger.githubIssue}}", "op": "exists"}]})
+    };
+    doc(json!({
+        "name": "Done closes the GitHub issue",
+        "description": "Moving a ticket linked to a GitHub issue to Done closes the issue as completed, with a comment \
+                        naming the ticket; Won't do closes it as not planned. Once per ticket: moving it again \
+                        changes nothing on GitHub. An issue closed already is left as it is.",
+        "nodes": [
+            {"id": "done", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 0},
+             "config": trigger("done")},
+            {"id": "wont_do", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 160},
+             "config": trigger("wont_do")},
+            {"id": "fixed", "kind": "github.close", "version": 1, "position": {"x": 320, "y": 0},
+             "title": "Close as completed", "config": {"ticket": "{{trigger.ticketId}}", "reason": "completed",
+                "comment": "Fixed in {{trigger.ticketKey}}; it ships in the next PDT release."}},
+            {"id": "dropped", "kind": "github.close", "version": 1, "position": {"x": 320, "y": 160},
+             "title": "Close as not planned", "config": {"ticket": "{{trigger.ticketId}}", "reason": "not_planned",
+                "comment": "{{trigger.ticketKey}} won't be done, so this is closed as not planned."}},
+            {"id": "end", "kind": "end", "version": 1, "position": {"x": 640, "y": 80}, "config": {"quiet": true}},
+        ],
+        "edges": [
+            {"from": "done", "to": "fixed"},
+            {"from": "wont_do", "to": "dropped"},
+            {"from": "fixed", "port": "unlinked", "to": "end"},
+            {"from": "dropped", "port": "unlinked", "to": "end"},
+        ],
+    }))
+}
+
+/// Whether a project on this host is PDT's own repository (the release repository): where bug triage runs.
+async fn builds_pdt(st: &AppState) -> bool {
+    for p in st.store.list_projects().await.unwrap_or_default() {
+        if crate::github::github_repo(&p.repo_path).await.is_some_and(|r| r.eq_ignore_ascii_case(RELEASE_REPO)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Installs or updates the built-ins (once per pdtd; callers hold the engine lock).
 pub(crate) async fn ensure_installed(st: &AppState) {
     use std::sync::atomic::Ordering;
@@ -560,13 +728,14 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
     let now = now_ms();
     match st.store.workflow_by_builtin(b.id).await? {
         None => {
+            let enabled = b.enabled || (b.id == PDT_BUG_TRIAGE && builds_pdt(st).await);
             let w = Workflow {
                 id: uuid::Uuid::now_v7().to_string(),
                 name: template.name.clone(),
                 description: template.description.clone(),
                 scope: Scope::Host,
                 project_id: None,
-                enabled: b.enabled,
+                enabled,
                 builtin: Some(b.id.into()),
                 source: Source::Host,
                 repo_file: None,
@@ -576,7 +745,7 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
                 updated_at: now,
             };
             st.store.insert_workflow(&w, &template, Author::Builtin, "installed").await?;
-            tracing::info!(builtin = b.id, enabled = b.enabled, "installed a built-in workflow");
+            tracing::info!(builtin = b.id, enabled, "installed a built-in workflow");
         }
         Some(w) => {
             let current = st.store.workflow_doc(&w.id, w.version).await?;

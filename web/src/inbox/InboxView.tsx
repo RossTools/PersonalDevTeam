@@ -178,11 +178,18 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
         )}
         {item.kind === 'notice' && (
           <section aria-label="Unheard notice" className="flex flex-col gap-3">
-            <p className="text-sm">
-              No agent session was open to tell{typeof item.body.workflow === 'string' ? ` (from ${item.body.workflow})` : ''}, so
-              it waits for you: fix it yourself, or start the ticket's agent and pass it on. It goes away once the pull request is
-              fixed, merged or closed.
-            </p>
+            {item.attemptId ? (
+              <p className="text-sm">
+                No agent session was open to tell{typeof item.body.workflow === 'string' ? ` (from ${item.body.workflow})` : ''}, so
+                it waits for you: fix it yourself, or start the ticket's agent and pass it on. It goes away once the pull request is
+                fixed, merged or closed.
+              </p>
+            ) : (
+              <p className="text-sm">
+                {typeof item.body.workflow === 'string' ? item.body.workflow : 'A workflow'} wants you to know. Act on it if you
+                disagree, then dismiss it.
+              </p>
+            )}
             <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
             {item.ticketId && (
               <div>

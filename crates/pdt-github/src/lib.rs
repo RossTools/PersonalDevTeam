@@ -2,6 +2,7 @@
 //! user's own `gh` login. Check runs are not read: the fine-grained token PDT's users have cannot see them, so CI
 //! comes from the Actions runs API. Blocking; call from `spawn_blocking` in async code.
 
+pub use pdt_core::github_issue::CloseReason;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 use serde_json::Value;
 use std::io::Read;
@@ -66,6 +67,19 @@ pub struct Issue {
     pub author: String,
     pub labels: Vec<String>,
     pub created_at: String,
+}
+
+/// One issue as `gh api repos/<repo>/issues/<n>` gives it, with what closing it needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueDetail {
+    pub issue: Issue,
+    /// GitHub's numeric id (what `duplicate_issue_id` names), not its number.
+    pub id: u64,
+    pub closed: bool,
+    /// Why it was closed (`completed`, `not_planned`, `duplicate`), when it is.
+    pub state_reason: Option<String>,
+    /// It is a pull request (they share issue numbers).
+    pub pull_request: bool,
 }
 
 /// A comment on a pull request: on its conversation, or on a line in a review.
@@ -136,6 +150,110 @@ pub trait GithubApi: Send + Sync {
     fn pr_reviews(&self, _repo: &str, _number: u32) -> Result<Vec<PrReview>, GhError> {
         Err(GhError::NotInstalled)
     }
+    /// Issue `number` of `repo`; None when there is none (or gh can't see it).
+    fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueDetail>, GhError> {
+        Err(GhError::NotInstalled)
+    }
+    /// Adds a comment to issue `number`; its URL.
+    fn comment_issue(&self, _repo: &str, _number: u64, _body: &str) -> Result<String, GhError> {
+        Err(GhError::NotInstalled)
+    }
+    /// Adds labels to issue `number`, keeping the ones it has.
+    fn add_labels(&self, _repo: &str, _number: u64, _labels: &[String]) -> Result<(), GhError> {
+        Err(GhError::NotInstalled)
+    }
+    /// Closes issue `number` with `reason`; `duplicate_of` (the canonical issue's id, [`IssueDetail::id`]) with
+    /// `duplicate`.
+    fn close_issue(
+        &self,
+        _repo: &str,
+        _number: u64,
+        _reason: CloseReason,
+        _duplicate_of: Option<u64>,
+    ) -> Result<(), GhError> {
+        Err(GhError::NotInstalled)
+    }
+}
+
+const ISSUE_JQ: &str = "{id, number, title, body, url: .html_url, author: .user.login, labels: [.labels[].name], \
+created_at, state, state_reason, pr: (.pull_request != null)}";
+
+/// The longest comment PDT sends (a command line has a limit; GitHub's own is 65536).
+pub const MAX_COMMENT: usize = 20_000;
+
+pub fn issue_args(repo: &str, number: u64) -> Vec<String> {
+    vec!["api".into(), format!("repos/{repo}/issues/{number}"), "--jq".into(), ISSUE_JQ.into()]
+}
+
+/// The answer to [`issue_args`].
+pub fn parse_issue(out: &str) -> Result<IssueDetail, GhError> {
+    let v = json(out.trim())?;
+    let issue = issue_of(&v).ok_or_else(|| GhError::BadOutput("no issue number in the answer".into()))?;
+    Ok(IssueDetail {
+        issue,
+        id: v["id"].as_u64().ok_or_else(|| GhError::BadOutput("no issue id in the answer".into()))?,
+        closed: v["state"] == "closed",
+        state_reason: v["state_reason"].as_str().filter(|r| !r.is_empty()).map(String::from),
+        pull_request: v["pr"] == true,
+    })
+}
+
+/// A comment cut to [`MAX_COMMENT`] characters.
+fn comment_body(body: &str) -> String {
+    if body.chars().count() <= MAX_COMMENT {
+        return body.to_string();
+    }
+    let mut out: String = body.chars().take(MAX_COMMENT - 1).collect();
+    out.push('…');
+    out
+}
+
+pub fn comment_issue_args(repo: &str, number: u64, body: &str) -> Vec<String> {
+    vec![
+        "api".into(),
+        "-X".into(),
+        "POST".into(),
+        format!("repos/{repo}/issues/{number}/comments"),
+        "-f".into(),
+        format!("body={}", comment_body(body)),
+        "--jq".into(),
+        ".html_url".into(),
+    ]
+}
+
+/// POST of the labels: GitHub adds them to the issue's (a PATCH of `labels` would replace the set).
+pub fn add_labels_args(repo: &str, number: u64, labels: &[String]) -> Vec<String> {
+    let mut a = vec!["api".into(), "-X".into(), "POST".into(), format!("repos/{repo}/issues/{number}/labels")];
+    for l in labels {
+        a.extend(["-f".into(), format!("labels[]={l}")]);
+    }
+    a.extend(["--jq".into(), ".[].name".into()]);
+    a
+}
+
+/// REST's update an issue: `state=closed` with `state_reason`, and `duplicate_issue_id` for a duplicate (GitHub's
+/// "Close as duplicate").
+pub fn close_issue_args(repo: &str, number: u64, reason: CloseReason, duplicate_of: Option<u64>) -> Vec<String> {
+    let mut a = vec![
+        "api".into(),
+        "-X".into(),
+        "PATCH".into(),
+        format!("repos/{repo}/issues/{number}"),
+        "-f".into(),
+        "state=closed".into(),
+        "-f".into(),
+        format!("state_reason={}", reason.as_str()),
+    ];
+    if let (CloseReason::Duplicate, Some(id)) = (reason, duplicate_of) {
+        a.extend(["-F".into(), format!("duplicate_issue_id={id}")]);
+    }
+    a.extend(["--jq".into(), ".state".into()]);
+    a
+}
+
+/// gh's error for a 404.
+fn not_found(e: &GhError) -> bool {
+    matches!(e, GhError::Command(m) if m.contains("HTTP 404") || m.contains("Not Found"))
 }
 
 const BOT: &str = "(.user.type == \"Bot\" or (.user.login | endswith(\"[bot]\")))";
@@ -220,24 +338,22 @@ pub fn parse_issues(out: &str) -> Result<Vec<Issue>, GhError> {
 }
 
 fn issues_of(items: &[Value]) -> Vec<Issue> {
-    items
-        .iter()
-        .filter(|v| v["pr"] != true)
-        .filter_map(|v| {
-            Some(Issue {
-                number: v["number"].as_u64()?,
-                title: s(v, "title"),
-                body: s(v, "body"),
-                url: s(v, "url"),
-                author: s(v, "author"),
-                labels: v["labels"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect())
-                    .unwrap_or_default(),
-                created_at: s(v, "created_at"),
-            })
-        })
-        .collect()
+    items.iter().filter(|v| v["pr"] != true).filter_map(issue_of).collect()
+}
+
+fn issue_of(v: &Value) -> Option<Issue> {
+    Some(Issue {
+        number: v["number"].as_u64()?,
+        title: s(v, "title"),
+        body: s(v, "body"),
+        url: s(v, "url"),
+        author: s(v, "author"),
+        labels: v["labels"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        created_at: s(v, "created_at"),
+    })
 }
 
 /// Conversation comments (`in_review: false`) or review comments.
@@ -572,6 +688,31 @@ impl GithubApi for GhCli {
     fn pr_reviews(&self, repo: &str, number: u32) -> Result<Vec<PrReview>, GhError> {
         parse_reviews(&self.run(&reviews_args(repo, number))?)
     }
+    fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, GhError> {
+        match self.run(&issue_args(repo, number)) {
+            Ok(out) => parse_issue(&out).map(Some),
+            Err(e) if not_found(&e) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, GhError> {
+        Ok(self.run(&comment_issue_args(repo, number, body))?.trim().to_string())
+    }
+    fn add_labels(&self, repo: &str, number: u64, labels: &[String]) -> Result<(), GhError> {
+        if labels.is_empty() {
+            return Ok(());
+        }
+        self.run(&add_labels_args(repo, number, labels)).map(|_| ())
+    }
+    fn close_issue(
+        &self,
+        repo: &str,
+        number: u64,
+        reason: CloseReason,
+        duplicate_of: Option<u64>,
+    ) -> Result<(), GhError> {
+        self.run(&close_issue_args(repo, number, reason, duplicate_of)).map(|_| ())
+    }
 }
 
 fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
@@ -652,7 +793,22 @@ pub mod testing {
         /// Comments and reviews by PR number.
         pub comments: Mutex<HashMap<u32, Vec<PrComment>>>,
         pub reviews: Mutex<HashMap<u32, Vec<PrReview>>>,
+        /// Issues closed (by `close_issue` or [`FakeGithub::set_closed`]): by repo and number, the reason and the
+        /// duplicate's canonical issue id.
+        pub closed: Mutex<HashMap<(String, u64), Closed>>,
+        /// Comments added to issues: repo, number, body.
+        pub issue_comments: Mutex<Vec<(String, u64, String)>>,
+        /// Labels added to issues: repo, number, labels.
+        pub added_labels: Mutex<Vec<(String, u64, Vec<String>)>>,
         pub calls: Mutex<Vec<String>>,
+    }
+
+    /// How an issue was closed: the reason, and the duplicate's canonical issue id.
+    pub type Closed = (CloseReason, Option<u64>);
+
+    /// The id the fake gives issue `number` ([`IssueDetail::id`]).
+    pub fn fake_issue_id(number: u64) -> u64 {
+        1_000_000 + number
     }
 
     impl FakeGithub {
@@ -677,6 +833,14 @@ pub mod testing {
         }
         pub fn set_reviews(&self, pr: u32, reviews: Vec<PrReview>) {
             self.reviews.lock().unwrap().insert(pr, reviews);
+        }
+        pub fn set_closed(&self, repo: &str, number: u64, reason: CloseReason) {
+            self.closed.lock().unwrap().insert((repo.into(), number), (reason, None));
+        }
+        /// Issue `number`'s comments so far.
+        pub fn comments_on(&self, repo: &str, number: u64) -> Vec<String> {
+            let all = self.issue_comments.lock().unwrap();
+            all.iter().filter(|(r, n, _)| r == repo && *n == number).map(|(_, _, b)| b.clone()).collect()
         }
         fn call(&self, what: String) {
             self.calls.lock().unwrap().push(what);
@@ -738,6 +902,47 @@ pub mod testing {
         fn pr_reviews(&self, repo: &str, number: u32) -> Result<Vec<PrReview>, GhError> {
             self.call(format!("reviews {repo} {number}"));
             Ok(self.reviews.lock().unwrap().get(&number).cloned().unwrap_or_default())
+        }
+        fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, GhError> {
+            self.call(format!("issue {repo} {number}"));
+            self.failing()?;
+            let issues = self.issues.lock().unwrap();
+            let Some(issue) = issues.get(repo).and_then(|l| l.iter().find(|i| i.number == number)).cloned() else {
+                return Ok(None);
+            };
+            let closed = self.closed.lock().unwrap().get(&(repo.to_string(), number)).map(|(r, _)| *r);
+            Ok(Some(IssueDetail {
+                issue,
+                id: fake_issue_id(number),
+                closed: closed.is_some(),
+                state_reason: closed.map(|r| r.as_str().to_string()),
+                pull_request: false,
+            }))
+        }
+        fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, GhError> {
+            self.call(format!("comment-issue {repo} {number}"));
+            self.failing()?;
+            let mut all = self.issue_comments.lock().unwrap();
+            all.push((repo.into(), number, body.into()));
+            Ok(format!("https://github.com/{repo}/issues/{number}#issuecomment-{}", all.len()))
+        }
+        fn add_labels(&self, repo: &str, number: u64, labels: &[String]) -> Result<(), GhError> {
+            self.call(format!("labels {repo} {number} {}", labels.join(",")));
+            self.failing()?;
+            self.added_labels.lock().unwrap().push((repo.into(), number, labels.to_vec()));
+            Ok(())
+        }
+        fn close_issue(
+            &self,
+            repo: &str,
+            number: u64,
+            reason: CloseReason,
+            duplicate_of: Option<u64>,
+        ) -> Result<(), GhError> {
+            self.call(format!("close {repo} {number} {}", reason.as_str()));
+            self.failing()?;
+            self.closed.lock().unwrap().insert((repo.into(), number), (reason, duplicate_of));
+            Ok(())
         }
     }
 }
@@ -861,6 +1066,44 @@ mod tests {
         assert!(a[1].ends_with("per_page=100&page=2"), "{a:?}");
         let a = issue_comments_args("o/r", 3);
         assert_eq!(&a[..3], &["api", "--paginate", "repos/o/r/issues/3/comments?per_page=100"].map(String::from));
+    }
+
+    #[test]
+    fn issues_are_read_commented_labelled_and_closed() {
+        let out = r#"{"id":901,"number":12,"title":"Crash","body":null,"url":"https://github.com/o/r/issues/12",
+          "author":"al","labels":["from-pdt"],"created_at":"t","state":"closed","state_reason":"not_planned","pr":false}"#;
+        let i = parse_issue(&out.replace('\n', "")).unwrap();
+        assert_eq!((i.id, i.issue.number, i.closed, i.state_reason.as_deref()), (901, 12, true, Some("not_planned")));
+        assert_eq!((i.issue.body.as_str(), i.issue.labels.clone()), ("", vec!["from-pdt".to_string()]));
+        let open = out.replace("\"closed\"", "\"open\"").replace("\"not_planned\"", "null").replace('\n', "");
+        let i = parse_issue(&open).unwrap();
+        assert!(!i.closed && i.state_reason.is_none());
+        assert!(parse_issue("{}").is_err());
+        assert_eq!(issue_args("o/r", 12)[1], "repos/o/r/issues/12");
+
+        let a = comment_issue_args("o/r", 12, "@here: hi");
+        assert_eq!(
+            &a[..6],
+            &["api", "-X", "POST", "repos/o/r/issues/12/comments", "-f", "body=@here: hi"].map(String::from)
+        );
+        let long = comment_issue_args("o/r", 12, &"x".repeat(MAX_COMMENT + 5));
+        assert_eq!(long[5].chars().count(), "body=".len() + MAX_COMMENT, "cut to the limit");
+
+        let a = add_labels_args("o/r", 12, &["bug".into(), "p1".into()]);
+        assert_eq!(
+            &a[2..8],
+            &["POST", "repos/o/r/issues/12/labels", "-f", "labels[]=bug", "-f", "labels[]=p1"].map(String::from),
+            "added, not replaced (POST)"
+        );
+
+        let a = close_issue_args("o/r", 12, CloseReason::Duplicate, Some(901));
+        assert_eq!(&a[2..4], &["PATCH", "repos/o/r/issues/12"].map(String::from));
+        assert!(a.contains(&"state=closed".into()) && a.contains(&"state_reason=duplicate".into()));
+        assert!(a.contains(&"duplicate_issue_id=901".into()), "{a:?}");
+        let a = close_issue_args("o/r", 12, CloseReason::NotPlanned, Some(901));
+        assert!(a.contains(&"state_reason=not_planned".into()) && !a.iter().any(|x| x.starts_with("duplicate")));
+        assert!(not_found(&GhError::Command("gh: Not Found (HTTP 404)".into())));
+        assert!(!not_found(&GhError::Command("HTTP 401".into())));
     }
 
     #[test]

@@ -36,7 +36,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `agentWorking` (an agent step is open on the attempt); CI events also `mergeWaiting` (a workflow's merge waits for
   this CI, PDT-151). The merge check logs `attempt.late_commits` (key `<attempt>:late_commits:<head>`, PDT-151:
   commits pushed after the attempt's PR merged; [tickets.md](tickets.md)). `ticket.stage_changed` carries `jiraKey` when the ticket is linked to
-  a Jira issue.
+  a Jira issue, and `githubIssue` (`owner/name#12`) when it is linked to a GitHub issue.
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
 - `GET /api/events?type=&project=&ticket=&attempt=&limit=` (newest first) or `&after=<seq>` (oldest first, to
@@ -110,6 +110,21 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     links Jira.
   - **Done moves the Jira issue** (on, 7e-2): `ticket.stage_changed` to `done` with a `jiraKey` →
     `jira.transition` (`ticket`: the project's done mapping). Nothing else is pushed to Jira.
+  - **PDT bug triage** (PDT-154; on when installed only where a project's repository is `RELEASE_REPO`, PDT's own;
+    off elsewhere): `github.issue.opened` on `RELEASE_REPO` where `labels` contains `from-pdt` (the bug reports other
+    PDT instances file, PDT-153) and `projectId` exists → an `agent` step (the PM, a new session in that project, no
+    ticket) that triages against the code, the tickets and the repository's issues, changing nothing itself, with
+    outcomes `accept` (`data` `{priority, labels}`), `duplicate` (`data` `{ticket, duplicateOf}`) and `reject` (the
+    summary is the reason, for the reporter). `accept` → `github.import` (the suggested priority and labels) → a
+    `ticket.comment` with the triage notes → `github.comment` with the ticket key. `duplicate` → `github.close`
+    `duplicate` of `duplicateOf` (the issue linked to the existing ticket, else the earliest one reporting the same
+    bug; a comment names it and the ticket), or `not_planned` naming the ticket when there is none → a
+    `ticket.comment` on the existing ticket noting the extra report; no ticket is made. `reject` → `github.close`
+    `not_planned` with the reason → `inbox.notice` (no attempt) so the user can overrule it (reopen and import).
+  - **Done closes the GitHub issue** (on, PDT-154): `ticket.stage_changed` to `done` (→ `github.close` `completed`,
+    commenting "Fixed in <key>; it ships in the next PDT release") or `wont_do` (→ `not_planned`, with a comment),
+    both where `githubIssue` exists and with `runKey` `{{trigger.ticketId}}`: once per ticket, so moving it again
+    changes nothing on GitHub. The release isn't known when a ticket moves to Done, so the comment doesn't name one.
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
   are told.
@@ -135,10 +150,10 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `state.set` (`key`, `value`, `ifMissing`; or `add`: a counter, output `value`) | `out` |
 | `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`, `reopen`) | `sent`, `untold`, `skipped` |
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
-| `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`, `body`) | `out` |
+| `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`: its id or key, `body`) | `out` |
 | `ticket.create` (`project`, `title`, `description`, `stage` default Draft, `labels`; PDT-151; output `id`, `key`; not run again on its own) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`, `pipelineStage`; Phase 7c) | `merged`, `queued`, `refused` |
-| `inbox.notice` (`attempt`, `text`, `key`, `title`; PDT-139): an Inbox item (kind and group `notice`, Unheard notices) on the attempt's ticket, once per attempt and key (`inbox_items.dedupe_key` `notice:<attempt>:<key>`, also once it closed); body `notice` (the trigger's notice kind), `key`, `text`, `pr`, `url`, `workflow`; the default title says what happened and that no agent session is open | `added`, `skipped` |
+| `inbox.notice` (`attempt`, `text`, `key`, `title`; PDT-139): an Inbox item (kind and group `notice`, Unheard notices) on the attempt's ticket, once per attempt and key (`inbox_items.dedupe_key` `notice:<attempt>:<key>`, also once it closed); body `notice` (the trigger's notice kind), `key`, `text`, `pr`, `url`, `workflow`; the default title says what happened and that no agent session is open. Without `attempt` (PDT-154) it is the workflow's notice, in the run's project (and ticket, if any), once per workflow and key (`notice:workflow:<workflow>:<key>`), titled by `title` or the text's first line, open until dismissed | `added`, `skipped` |
 | `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
@@ -152,6 +167,9 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | `jira.create` (`connection`, `project`: a Jira project key, `issueType` default `Task`, `summary`, `description`, `fields`) | `out` |
 | `jira.transition` (`connection` + `key`, or `ticket`; `to`: a transition or status, with `ticket` default the project's done mapping) | `out`, `unavailable` |
 | `jira.comment` (`connection`, `key`, `body`) | `out` |
+| `github.import` (`repo`, `number`, `project`: a PDT project, `priority`, `labels`; PDT-154) | `imported`, `exists` |
+| `github.comment` (`repo` + `number`, or `ticket`: its linked issue; `body`) | `out`, `unlinked` |
+| `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
 | `buildkite.retry` (`connection`, `build`: a build URL, or a number with `pipeline`) | `out` |
 | `buildkite.trigger` (`connection`, `pipeline`, `branch`, `commit` default `HEAD`, `message`, `env`) | `out` |
 | `radarr.search` / `sonarr.search` (`connection`, `term`, `limit`) | `out` |
@@ -194,6 +212,19 @@ notify itself forever.
   (quiet), picks the transition named `to` or the one leading to that status, and otherwise leaves by `unavailable`
   (quiet, with the `available` names); a ticket without a Jira link also leaves by `unavailable`. `jira.create`
   outputs `{key, url}`, `jira.comment` `{key, commentId}`.
+- GitHub issue actions (`workflow/nodes/github.rs`, PDT-154) go through the user's own `gh` (pdt-github, the access
+  the `github.issue.opened` trigger uses; `FakeGithub` in tests). `number` is a number or text: `12`, `#12`,
+  `owner/name#12` or the issue's URL. `github.import` makes a Draft ticket (title the issue's, description its text
+  then "Reported by @author in <url>"; a priority or label PDT can't take is left out) linked to the issue as
+  `owner/name#12`, or leaves by `exists` (quiet) when a ticket already links it; output `{ticketId, ticketKey, issue,
+  url}`. A pull request's number is an error. With `ticket`, `github.comment` and `github.close` act on the ticket's
+  linked issue (the repository as its URL spells it) and leave by `unlinked` (quiet) without one. `github.comment`
+  outputs `{issue, url}` (comments over 20000 characters are cut). `github.close` reads the issue first: one already
+  closed counts as done (quiet, `alreadyClosed`, nothing changed); otherwise it adds `labels` (a POST, so the issue
+  keeps its others), posts `comment`, then closes it with REST's `state_reason` (`PATCH /repos/{repo}/issues/{n}`);
+  `duplicate` reads `duplicateOf` (a number in the same repository, or `owner/name#n`) for its id and sends it as
+  `duplicate_issue_id`, which is GitHub's Close as duplicate. Output `{issue, reason, duplicateOf, commentUrl,
+  labels}`. Neither is run again on its own.
 - Buildkite actions (`workflow/nodes/buildkite.rs`, client in `buildkite.rs`; bearer token, the connection's `url`
   or `https://api.buildkite.com`, `config.org`): `buildkite.retry` retries the build's failed retryable jobs (output
   `retried`), else rebuilds it (`rebuilt`, the new build); `buildkite.trigger` starts a build (message default
@@ -320,7 +351,7 @@ secret as a bearer token); without `transport`, a URL and no command means `http
   of commenting again; `attempt.merge` takes `merged` when its attempt already merged (a pull request already set to
   merge is `queued` anyway); `notify`, `session.send`, gates and agent steps are keyed by their step. Not safe, so
   never run again on their own: `command`, `http.request` other than GET, HEAD, PUT, DELETE and OPTIONS,
-  `buildkite.trigger`, `buildkite.retry`, `jira.create` and `jira.comment`. Cut short, such a step fails without its
+  `buildkite.trigger`, `buildkite.retry`, `jira.create`, `jira.comment`, `github.comment` and `github.close`. Cut short, such a step fails without its
   retries ("PDT stopped while this step ran… Retry the run to run it once more"; a timeout keeps its own error) and
   takes its error port, else the run fails; Retry on the run is the user's choice to run it once more. A definite
   failure (an error answer) is still retried as the node says.
@@ -610,8 +641,10 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   Resume](#timeouts-and-resume-pdt-123)); a step re-run after a restart waits again.
 - **Outcome.** `submit_outcome` checks the outcome is one of the step's (else an error the agent sees), adds its line
   comments as review comments on the attempt's worktree (author: the persona), records an `outcome` timeline event
-  and completes the step by that port with `{outcome, summary, comments, sessionId, persona, personaVersion, turns,
-  by}`. The session stays as it is.
+  and completes the step by that port with `{outcome, summary, comments, data, sessionId, persona, personaVersion,
+  turns, by}`. `data` (PDT-154) is the object the agent handed in with `submit_outcome` (fields the prompt asks for,
+  such as an issue number; `{}` without), kept on the binding (`agent_steps.data`), so later steps read
+  `{{steps.<id>.data.<field>}}`. The session stays as it is.
 - **Turns.** A conversation's turn end (pdt-api `conversations.rs`) or a terminal going idle (`activity.rs`) is
   reported for a working binding (a reused session's turn before the step's message was delivered doesn't count):
   `turns + 1`; at `maxTurns` (10) the step takes `timeout`; while `nudges` (1) remain PDT sends "[PDT] You ended your

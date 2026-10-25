@@ -95,4 +95,12 @@ describe('Jira and Buildkite', () => {
     expect(screen.getByText('ABC-1')).toBeTruthy();
     expect(screen.getByText('CI failed').closest('[title]')?.getAttribute('title')).toBe('Failed: test');
   });
+
+  it("shows a ticket's GitHub issue by its number, naming the repository", () => {
+    const links = [{ system: 'github', key: 'o/r#12', url: 'https://github.com/o/r/issues/12' }];
+    renderWithQuery(<ExternalKeys links={links} linked />);
+    const link = screen.getByRole('link', { name: /#12/ });
+    expect(link.getAttribute('href')).toBe(links[0].url);
+    expect(link.closest('[title]')?.getAttribute('title')).toBe('GitHub issue o/r#12');
+  });
 });
