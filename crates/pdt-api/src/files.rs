@@ -1,5 +1,7 @@
-//! The read-only folder view (workspaces spec §6.5): a checkout's files as git sees them (`.gitignore` honoured)
-//! and a file's text. Paths never leave the checkout, symlinks included, and `.git` is off limits.
+//! The Files view (workspaces spec §6.5, editing PDT-157): a checkout's files as git sees them (`.gitignore`
+//! honoured), a file's text, and saving, creating, renaming and deleting files. Paths never leave the checkout,
+//! symlinks included, and `.git` is off limits. A save names the hash of the text it started from, so a file that
+//! changed on disk since is never overwritten silently.
 
 use crate::error::ApiError;
 use crate::routes::AppState;
@@ -11,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::{Path as FsPath, PathBuf};
 use ts_rs::TS;
 
-/// Files larger than this are not sent.
+/// Files larger than this are not sent, nor saved.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +49,45 @@ pub struct FileContent {
     pub text: Option<String>,
     pub binary: bool,
     pub too_large: bool,
+    /// The SHA-256 of the file's bytes (hex), when they were read: a save sends it back as `baseHash`.
+    pub hash: Option<String>,
+}
+
+/// `PUT /projects/{id}/files/content`: writes `text` to `path`. `baseHash` is the hash of the file as it was opened;
+/// leave it out to create a file that must not exist yet.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SaveFile {
+    #[serde(default)]
+    #[ts(optional)]
+    pub worktree_id: Option<String>,
+    pub path: String,
+    pub text: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub base_hash: Option<String>,
+}
+
+/// `POST /projects/{id}/files/rename`: moves a file or folder to a path that is free.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RenameFile {
+    #[serde(default)]
+    #[ts(optional)]
+    pub worktree_id: Option<String>,
+    pub from: String,
+    pub to: String,
+}
+
+/// `POST /projects/{id}/files/tell`: tells an agent session working in the checkout that the user changed files.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TellFilesChanged {
+    pub session_id: String,
+    pub paths: Vec<String>,
 }
 
 fn outside() -> ApiError {
@@ -68,6 +109,25 @@ pub(crate) fn clean_path(raw: &str) -> Result<String, ApiError> {
         return Err(outside());
     }
     Ok(parts.join("/"))
+}
+
+/// A path to write, as `clean_path` takes it but with no `.git` anywhere in it (a submodule's or a nested repo's),
+/// and naming something.
+fn clean_write_path(raw: &str) -> Result<String, ApiError> {
+    let rel = clean_path(raw)?;
+    if rel.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
+    }
+    // Windows drops trailing dots and spaces from names, so `.git.` is `.git` there.
+    if rel.split('/').any(|seg| seg.trim_end_matches(['.', ' ']).eq_ignore_ascii_case(".git")) {
+        return Err(outside());
+    }
+    Ok(rel)
+}
+
+fn hash_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
 }
 
 /// The entries directly in a plain folder (a Personal project's), as `entries` takes them: a folder as `<dir>/.`.
@@ -110,6 +170,49 @@ pub(crate) fn contained(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiErro
         Ok(real) if !real.starts_with(&root) => Err(outside()),
         _ => Ok(full),
     }
+}
+
+/// Like [`contained`], for a path that may not exist yet: its nearest existing folder must resolve inside the
+/// checkout too (so a symlinked folder can't lead out). Blocking.
+fn writable(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
+    let root = std::fs::canonicalize(checkout).map_err(|_| ApiError::not_found("checkout"))?;
+    let full = contained(checkout, rel)?;
+    let mut dir = full.parent();
+    while let Some(d) = dir {
+        if let Ok(real) = std::fs::canonicalize(d) {
+            if !real.starts_with(&root) {
+                return Err(outside());
+            }
+            break;
+        }
+        dir = d.parent();
+    }
+    Ok(full)
+}
+
+fn file_changed() -> ApiError {
+    ApiError::new(StatusCode::CONFLICT, "file_changed", "the file changed on disk since it was opened")
+}
+
+/// The file as the view shows it. Blocking.
+fn read_file(checkout: &FsPath, full: &FsPath, rel: String, personal: bool) -> Result<FileContent, ApiError> {
+    let meta = std::fs::metadata(full).ok().filter(|m| m.is_file()).ok_or_else(|| ApiError::not_found("file"))?;
+    let status = if personal {
+        None
+    } else {
+        // Asked of the file's folder: git's status takes folders.
+        let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
+        pdt_git::status(checkout, dir)?.into_iter().find(|(p, _)| *p == rel).map(|(_, c)| c)
+    };
+    let size = meta.len();
+    if size > MAX_FILE_BYTES {
+        return Ok(FileContent { path: rel, size, status, text: None, binary: false, too_large: true, hash: None });
+    }
+    let bytes = std::fs::read(full).map_err(ApiError::internal)?;
+    let hash = Some(hash_of(&bytes));
+    let binary = bytes.iter().take(8000).any(|b| *b == 0);
+    let text = if binary { None } else { String::from_utf8(bytes).ok() };
+    Ok(FileContent { path: rel, size, status, binary: text.is_none(), text, too_large: false, hash })
 }
 
 /// The entries directly inside `dir`, from git's file list and status (folders first, then by name).
@@ -172,24 +275,167 @@ pub(crate) async fn content(
     }
     let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
         let full = contained(&checkout, &rel)?;
-        let meta = std::fs::metadata(&full).ok().filter(|m| m.is_file()).ok_or_else(|| ApiError::not_found("file"))?;
-        let status = if personal {
-            None
-        } else {
-            pdt_git::status(&checkout, &rel)?.into_iter().find(|(p, _)| *p == rel).map(|(_, c)| c)
-        };
-        let size = meta.len();
-        if size > MAX_FILE_BYTES {
-            return Ok(FileContent { path: rel, size, status, text: None, binary: false, too_large: true });
-        }
-        let bytes = std::fs::read(&full).map_err(ApiError::internal)?;
-        let binary = bytes.iter().take(8000).any(|b| *b == 0);
-        let text = if binary { None } else { String::from_utf8(bytes).ok() };
-        Ok(FileContent { path: rel, size, status, binary: text.is_none(), text, too_large: false })
+        read_file(&checkout, &full, rel, personal)
     })
     .await
     .map_err(ApiError::internal)??;
     Ok(Json(file))
+}
+
+/// Saves a file (or creates one, without `baseHash`). Refused with 409 `file_changed` when the file on disk is not
+/// the one the editor started from, and `file_exists` when a new file's name is taken; binary and too-large files
+/// stay read-only.
+pub(crate) async fn save(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<SaveFile>,
+) -> Result<Json<FileContent>, ApiError> {
+    let rel = clean_write_path(&b.path)?;
+    let q = FilesQuery { worktree_id: b.worktree_id, path: rel.clone() };
+    let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
+    if b.text.len() as u64 > MAX_FILE_BYTES {
+        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "files over 1 MB can't be edited here"));
+    }
+    let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
+        let full = writable(&checkout, &rel)?;
+        match std::fs::symlink_metadata(&full) {
+            Ok(_) => {
+                let meta = std::fs::metadata(&full).map_err(ApiError::internal)?;
+                if meta.is_dir() {
+                    return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "a folder has that name"));
+                }
+                let Some(base) = b.base_hash.as_deref() else {
+                    return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "a file with that name exists"));
+                };
+                if meta.len() > MAX_FILE_BYTES {
+                    return Err(not_editable());
+                }
+                let bytes = std::fs::read(&full).map_err(ApiError::internal)?;
+                if bytes.iter().take(8000).any(|b| *b == 0) || std::str::from_utf8(&bytes).is_err() {
+                    return Err(not_editable());
+                }
+                if hash_of(&bytes) != base {
+                    return Err(file_changed());
+                }
+            }
+            Err(_) if b.base_hash.is_some() => return Err(file_changed()),
+            Err(_) => {
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+                }
+            }
+        }
+        std::fs::write(&full, b.text.as_bytes()).map_err(ApiError::internal)?;
+        read_file(&checkout, &full, rel, personal)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    Ok(Json(file))
+}
+
+fn not_editable() -> ApiError {
+    ApiError::new(StatusCode::BAD_REQUEST, "not_editable", "binary files and files over 1 MB can't be edited here")
+}
+
+/// Renames (moves) a file or folder inside the checkout; the new path must be free.
+pub(crate) async fn rename(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<RenameFile>,
+) -> Result<StatusCode, ApiError> {
+    let from = clean_write_path(&b.from)?;
+    let to = clean_write_path(&b.to)?;
+    let q = FilesQuery { worktree_id: b.worktree_id, path: from.clone() };
+    let (checkout, from, _) = resolve(&st, &id, &q).await?;
+    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+        let src = writable(&checkout, &from)?;
+        let dst = writable(&checkout, &to)?;
+        if std::fs::symlink_metadata(&src).is_err() {
+            return Err(ApiError::not_found("file"));
+        }
+        if std::fs::symlink_metadata(&dst).is_ok() {
+            return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "something already has that name"));
+        }
+        if to.starts_with(&format!("{from}/")) {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "a folder can't move into itself"));
+        }
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+        }
+        std::fs::rename(&src, &dst).map_err(ApiError::internal)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a file (not a folder).
+pub(crate) async fn delete(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<FilesQuery>,
+) -> Result<StatusCode, ApiError> {
+    clean_write_path(&q.path)?;
+    let (checkout, rel, _) = resolve(&st, &id, &q).await?;
+    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+        let full = writable(&checkout, &rel)?;
+        let meta = std::fs::symlink_metadata(&full).map_err(|_| ApiError::not_found("file"))?;
+        if meta.is_dir() {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "only files can be deleted here"));
+        }
+        std::fs::remove_file(&full).map_err(ApiError::internal)
+    })
+    .await
+    .map_err(ApiError::internal)??;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The message an agent gets when the user changed files under it.
+fn tell_text(paths: &[String]) -> String {
+    let list = paths.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ");
+    let (these, them) = if paths.len() == 1 { ("this file", "it") } else { ("these files", "them") };
+    format!(
+        "[{}] The user edited {these} in the Files view: {list}. Read {them} again before you change {them}.",
+        pdt_core::brand::SHORT_NAME
+    )
+}
+
+/// Tells an agent session of the project which files the user changed, through the outbox (it waits for the agent
+/// to be free, as `session.send` does).
+pub(crate) async fn tell(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<TellFilesChanged>,
+) -> Result<StatusCode, ApiError> {
+    let s = st.store.get_session(&b.session_id).await?.filter(|s| s.project_id == id);
+    let s = s.ok_or_else(|| ApiError::not_found("session"))?;
+    if !crate::pm::takes_messages(&s) {
+        return Err(ApiError::new(StatusCode::CONFLICT, "session_ended", "that session has ended or is not an agent"));
+    }
+    let paths = b.paths.iter().map(|p| clean_write_path(p)).collect::<Result<Vec<_>, _>>()?;
+    if paths.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
+    }
+    let m = pdt_store::SessionMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        attempt_id: None,
+        session_id: Some(s.id.clone()),
+        ticket_id: s.ticket.as_ref().map(|t| t.id.clone()),
+        dedupe: None,
+        text: tell_text(&paths),
+        timeline: serde_json::Value::Null,
+        run_id: None,
+        step_id: None,
+        status: "waiting".into(),
+        told_session: None,
+        created_at: crate::routes::now_ms(),
+        resolved_at: None,
+        by_user: true,
+        pending_id: None,
+        reopens: false,
+    };
+    st.store.queue_session_message(&m).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
@@ -206,6 +452,27 @@ mod tests {
             assert!(clean_path(bad).is_err(), "{bad}");
         }
         assert_eq!(clean_path("docs/.git-notes").unwrap(), "docs/.git-notes");
+    }
+
+    #[test]
+    fn written_paths_never_reach_any_git_folder() {
+        assert_eq!(clean_write_path("src/new.rs").unwrap(), "src/new.rs");
+        assert_eq!(clean_write_path("docs/.gitignore").unwrap(), "docs/.gitignore");
+        for bad in ["", "/", ".git/HEAD", "sub/.git/config", "sub/.GIT", "x/.git./y", "x/.git /y", "../x"] {
+            assert!(clean_write_path(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_agent_is_told_which_files_changed() {
+        assert_eq!(
+            tell_text(&["a.rs".into()]),
+            "[PDT] The user edited this file in the Files view: `a.rs`. Read it again before you change it."
+        );
+        assert!(
+            tell_text(&["a.rs".into(), "b.rs".into()])
+                .contains("these files in the Files view: `a.rs`, `b.rs`. Read them")
+        );
     }
 
     #[test]

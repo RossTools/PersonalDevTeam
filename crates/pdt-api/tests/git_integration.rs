@@ -337,6 +337,184 @@ async fn the_folder_view_lists_files_and_reads_them() {
     }
 }
 
+/// Saves `text` over the file opened with `hash` (none: a new file).
+async fn save(env: &Env, wt: Option<&str>, path: &str, text: &str, hash: Option<&str>) -> (StatusCode, Value) {
+    let body = json!({"worktreeId": wt, "path": path, "text": text, "baseHash": hash});
+    call(&env.app, "PUT", &format!("/api/projects/{}/files/content", env.pid), Some(body)).await
+}
+
+#[tokio::test]
+async fn the_files_view_saves_files_and_refuses_stale_saves() {
+    let env = setup().await;
+    let base = format!("/api/projects/{}/files", env.pid);
+    let (_, f) = call(&env.app, "GET", &format!("{base}/content?path=README.md"), None).await;
+    let opened = f["hash"].as_str().unwrap().to_string();
+
+    let (s, f) = save(&env, None, "README.md", "hello, edited\n", Some(&opened)).await;
+    assert_eq!(
+        (s, f["text"].as_str(), f["status"].as_str()),
+        (StatusCode::OK, Some("hello, edited\n"), Some("M")),
+        "{f}"
+    );
+    assert_eq!(std::fs::read_to_string(env.repo.join("README.md")).unwrap(), "hello, edited\n");
+    let saved = f["hash"].as_str().unwrap().to_string();
+    assert_ne!(saved, opened);
+
+    // Saving again from the old text: the file changed since, so nothing is written.
+    let (s, v) = save(&env, None, "README.md", "stale", Some(&opened)).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("file_changed")));
+    assert_eq!(std::fs::read_to_string(env.repo.join("README.md")).unwrap(), "hello, edited\n");
+    // Changed underneath (an agent wrote it): refused too.
+    std::fs::write(env.repo.join("README.md"), "by the agent\n").unwrap();
+    let (s, _) = save(&env, None, "README.md", "mine", Some(&saved)).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    // A file that exists can't be "created".
+    let (s, v) = save(&env, None, "README.md", "mine", None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("file_exists")));
+
+    // New files (with their folders), rename, delete.
+    let (s, f) = save(&env, None, "notes/todo.md", "", None).await;
+    assert_eq!((s, f["status"].as_str()), (StatusCode::OK, Some("??")), "{f}");
+    assert_eq!(std::fs::read_to_string(env.repo.join("notes").join("todo.md")).unwrap(), "");
+    let rename = |from: &str, to: &str| json!({"from": from, "to": to});
+    let (s, _) =
+        call(&env.app, "POST", &format!("{base}/rename"), Some(rename("notes/todo.md", "notes/done.md"))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(env.repo.join("notes").join("done.md").is_file() && !env.repo.join("notes").join("todo.md").exists());
+    let (s, v) = call(&env.app, "POST", &format!("{base}/rename"), Some(rename("notes/done.md", "README.md"))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("file_exists")));
+    let (s, _) = call(&env.app, "POST", &format!("{base}/rename"), Some(rename("nope.md", "x.md"))).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = call(&env.app, "DELETE", &format!("{base}/content?path=notes/done.md"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(!env.repo.join("notes").join("done.md").exists());
+    let (s, _) = call(&env.app, "DELETE", &format!("{base}/content?path=notes"), None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "folders are not deleted");
+
+    // Binary and too-large files stay read-only.
+    std::fs::write(env.repo.join("blob.bin"), [0u8, 1, 2]).unwrap();
+    let (_, f) = call(&env.app, "GET", &format!("{base}/content?path=blob.bin"), None).await;
+    let (s, v) = save(&env, None, "blob.bin", "text", f["hash"].as_str()).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("not_editable")));
+    let (s, _) = save(&env, None, "big.txt", &"x".repeat(1024 * 1024 + 1), None).await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(!env.repo.join("big.txt").exists());
+
+    // In a worktree: written there, not in the main checkout.
+    let w = worktree(&env, "edit").await;
+    let wid = w["id"].as_str().unwrap();
+    let wpath = PathBuf::from(w["path"].as_str().unwrap());
+    let (_, f) = call(&env.app, "GET", &format!("{base}/content?path=README.md&worktreeId={wid}"), None).await;
+    let (s, _) = save(&env, Some(wid), "README.md", "in the worktree\n", f["hash"].as_str()).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(wpath.join("README.md")).unwrap(), "in the worktree\n");
+    assert_eq!(std::fs::read_to_string(env.repo.join("README.md")).unwrap(), "by the agent\n");
+    assert!(pdt_git::status(&wpath, "").unwrap().iter().any(|(p, c)| p == "README.md" && c == "M"));
+}
+
+#[tokio::test]
+async fn the_files_view_never_writes_outside_the_checkout_or_into_git() {
+    let env = setup().await;
+    let base = format!("/api/projects/{}/files", env.pid);
+    let w = worktree(&env, "edit").await;
+    let wid = w["id"].as_str().unwrap();
+    for (wt, bad) in [
+        (None, "../escape.txt"),
+        (None, "src/../../escape.txt"),
+        (None, ".git/config"),
+        (None, ".git/hooks/pre-commit"),
+        (None, "vendor/.git/config"),
+        (Some(wid), ".git"),
+        (None, "C:\\escape.txt"),
+    ] {
+        let (s, v) = save(&env, wt, bad, "x", None).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("path_outside")), "{bad}");
+        let (s, _) = call(
+            &env.app,
+            "POST",
+            &format!("{base}/rename"),
+            Some(json!({"worktreeId": wt, "from": "README.md", "to": bad})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "rename to {bad}");
+    }
+    let (s, _) = call(&env.app, "DELETE", &format!("{base}/content?path=.git/HEAD"), None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert!(!env.tmp.path().join("escape.txt").exists());
+    assert!(env.repo.join(".git").join("HEAD").is_file());
+
+    // Symlinks that lead out: a linked file, and a linked folder for a new file.
+    #[cfg(unix)]
+    {
+        let outside = env.tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), env.repo.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(&outside, env.repo.join("linkdir")).unwrap();
+        for bad in ["link.txt", "linkdir/new.txt", "linkdir/deeper/new.txt"] {
+            let (s, v) = save(&env, None, bad, "x", None).await;
+            assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("path_outside")), "{bad}");
+        }
+        let (s, _) = call(&env.app, "DELETE", &format!("{base}/content?path=linkdir/secret.txt"), None).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read_to_string(outside.join("secret.txt")).unwrap(), "secret");
+        assert!(!outside.join("new.txt").exists() && !outside.join("deeper").exists());
+    }
+}
+
+#[tokio::test]
+async fn an_agent_can_be_told_which_files_the_user_changed() {
+    let env = setup().await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/files/tell", env.pid),
+        Some(json!({"sessionId": "nope", "paths": ["README.md"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+    let session = pdt_core::session::Session {
+        id: "agent".into(),
+        project_id: env.pid.clone(),
+        worktree_id: None,
+        kind: pdt_core::session::SessionKind::AgentTui,
+        agent: Some(pdt_core::session::AgentKind::Claude),
+        bypass_permissions: false,
+        title: "Coder".into(),
+        cwd: env.repo.to_string_lossy().into(),
+        status: pdt_core::session::SessionStatus::Running,
+        exit_code: None,
+        created_at: 1,
+        ended_at: None,
+        external_session_id: None,
+        fresh_started_at: None,
+        activity: Some(pdt_core::activity::Activity::Working),
+        attention_at: None,
+        last_viewed_at: None,
+        unseen: false,
+        attempt_id: None,
+        ticket: None,
+        mode: pdt_core::conversation::SessionMode::Terminal,
+        model: None,
+        permission_mode: None,
+        persona: None,
+    };
+    env.state.store.insert_session(&session).await.unwrap();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/files/tell", env.pid),
+        Some(json!({"sessionId": "agent", "paths": ["README.md"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let waiting = env.state.store.waiting_session_messages().await.unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].session_id.as_deref(), Some("agent"));
+    assert!(waiting[0].by_user);
+    assert!(waiting[0].text.contains("`README.md`"), "{}", waiting[0].text);
+}
+
 #[tokio::test]
 async fn pull_fast_forwards_the_base_branch_from_origin() {
     let env = setup().await;

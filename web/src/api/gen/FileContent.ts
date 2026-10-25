@@ -4,4 +4,8 @@ export type FileContent = { path: string, size: number, status: string | null,
 /**
  * Set when the file is shown: not binary and at most 1 MB.
  */
-text: string | null, binary: boolean, tooLarge: boolean, };
+text: string | null, binary: boolean, tooLarge: boolean, 
+/**
+ * The SHA-256 of the file's bytes (hex), when they were read: a save sends it back as `baseHash`.
+ */
+hash: string | null, };

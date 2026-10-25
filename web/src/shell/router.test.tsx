@@ -1,11 +1,16 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { isAppPath, navigate, useAppLinks, useLocation } from './router';
+import { isAppPath, navigate, useAppLinks, useLocation, useNavigationGuard } from './router';
 
 function Where() {
   useAppLinks();
   return <><p data-testid="loc">{useLocation()}</p><a href="/inbox/i1">item</a><a href="/api/health">api</a><a href="/pm" target="_blank">pm</a></>;
+}
+
+function Guarded({ answer }: { answer: { ok: boolean; asked: number } }) {
+  useNavigationGuard(true, async () => { answer.asked++; return answer.ok; });
+  return <p data-testid="loc">{useLocation()}</p>;
 }
 
 describe('router', () => {
@@ -41,5 +46,51 @@ describe('router', () => {
     expect(isAppPath('/apiary')).toBe(true);
     expect(isAppPath('//evil.test/x')).toBe(false);
     expect(isAppPath('https://x.test/')).toBe(false);
+  });
+  it('asks a guard (unsaved edits) before navigating, and holds the page while it is set', async () => {
+    const answer = { ok: false, asked: 0 };
+    const { unmount } = render(<Guarded answer={answer} />);
+    const before = window.location.pathname;
+    await act(async () => navigate('/guarded'));
+    expect(answer.asked).toBe(1);
+    expect(window.location.pathname).toBe(before);
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    answer.ok = true;
+    await act(async () => navigate('/guarded'));
+    expect(screen.getByTestId('loc')).toHaveTextContent('/guarded');
+    unmount();
+    // Gone with the component.
+    await act(async () => navigate('/free'));
+    expect(answer.asked).toBe(2);
+    expect(window.location.pathname).toBe('/free');
+  });
+
+  it('holds Back and Forward while a guard is set, and takes the step once it says yes', async () => {
+    act(() => navigate('/one'));
+    await new Promise((r) => setTimeout(r, 0));
+    act(() => navigate('/two'));
+    await new Promise((r) => setTimeout(r, 0));
+    const answer = { ok: false, asked: 0 };
+    const { unmount } = render(<Guarded answer={answer} />);
+    const length = window.history.length;
+    await act(() => window.history.back());
+    await waitFor(() => expect(answer.asked).toBe(1));
+    // Refused: still on the page, the history unchanged.
+    await waitFor(() => expect(window.location.pathname).toBe('/two'));
+    expect(screen.getByTestId('loc')).toHaveTextContent('/two');
+    expect(window.history.length).toBe(length);
+    answer.ok = true;
+    await act(() => window.history.back());
+    await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('/one'));
+    expect(answer.asked).toBe(2);
+    // Forward is held the same way.
+    answer.ok = false;
+    await act(() => window.history.forward());
+    await waitFor(() => expect(answer.asked).toBe(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByTestId('loc')).toHaveTextContent('/one');
+    unmount();
   });
 });
