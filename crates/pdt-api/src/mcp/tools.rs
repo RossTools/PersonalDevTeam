@@ -282,7 +282,8 @@ struct EditTicket {
     /// The new description, replacing the old one: keep what still holds.
     #[serde(default)]
     description: Option<String>,
-    /// draft, ready, todo, in_progress, done or wont_do. Done and wont_do end its attempt.
+    /// draft, ready, todo, in_progress, done or wont_do. Done and wont_do end its attempt; draft, ready and todo stop
+    /// its work like `stop_ticket` (keeping the worktree).
     #[serde(default)]
     stage: Option<pdt_core::ticket::TicketStage>,
     #[serde(default)]
@@ -293,6 +294,22 @@ struct EditTicket {
     /// Make it a part of this ticket (key or id), or `""` to detach it from its parent.
     #[serde(default)]
     parent: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StopTicket {
+    /// The ticket's key (`PDT-12`) or id.
+    ticket: String,
+    /// Where it goes: draft, ready or todo. Left out, an in-progress ticket goes to todo.
+    #[serde(default)]
+    stage: Option<pdt_core::ticket::TicketStage>,
+    /// Also remove its worktree (uncommitted changes too) and the workspace Start made, so the next start is clean.
+    #[serde(default)]
+    remove_worktree: bool,
+    /// With removeWorktree: delete its branch too.
+    #[serde(default)]
+    delete_branch: bool,
 }
 
 /// How `ticket` stands to `other` in a link.
@@ -561,6 +578,16 @@ fn defs() -> Vec<Def> {
             description: "Removes a link made with link_tickets (or in the UI): the same ticket, kind and other. The \
                           user confirms each call unless the project lets you act.",
             schema: schema::<LinkTickets>,
+        },
+        Def {
+            name: "stop_ticket",
+            title: "Stop a ticket's work",
+            description: "Stops the work on a ticket: cancels its workflow runs, stops its agent sessions, abandons its \
+                          attempt and moves it back to To do (or the stage you give: draft, ready or todo). The \
+                          worktree stays unless removeWorktree (then uncommitted changes go). Use it for work that \
+                          started by mistake; a busy agent can't be told to stop with send_to_session. The user \
+                          confirms each call unless the project lets you act.",
+            schema: schema::<StopTicket>,
         },
         Def {
             name: "send_to_session",
@@ -1062,17 +1089,42 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             if valid == Default::default() {
                 return Err("give at least one field to change".into());
             }
+            let since = now_ms();
             let t = st
                 .store
-                .patch_ticket_by(&id, &valid, Actor::Agent, now_ms())
+                .patch_ticket_by(&id, &valid, Actor::Agent, since)
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
-            if let Some(stage) = valid.stage.filter(|s| s.is_closed()) {
-                crate::start::end_for_close(st, &id, stage, Actor::Agent).await.map_err(api)?;
+            match valid.stage {
+                Some(stage) if stage.is_closed() => {
+                    crate::start::end_for_close(st, &id, stage, Actor::Agent).await.map_err(api)?;
+                }
+                // Back before work: the ticket's work stops (PDT-159).
+                Some(stage) => crate::stop::after_move(st, &id, stage, since, Actor::Agent).await,
+                None => {}
             }
             Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
                       "parent": t.summary.parent.map(|p| p.key)}))
+        }
+        "stop_ticket" => {
+            let a: StopTicket = args(a)?;
+            let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+            confirmable(cx, name, &AskTarget::Ticket(id.clone())).await?;
+            let req = crate::stop::StopRequest {
+                stage: a.stage,
+                remove_worktree: a.remove_worktree,
+                delete_branch: a.delete_branch,
+            };
+            let task = tokio::spawn({
+                let (st, id) = (st.clone(), id.clone());
+                async move { crate::stop::stop_ticket(&st, &id, &req, Actor::Agent).await }
+            });
+            let r = task.await.map_err(|e| e.to_string())?.map_err(api)?;
+            record_agent_change(cx, &id, "The PM stopped its work.").await;
+            Ok(json!({"stopped": true, "key": r.key, "stage": r.stage, "abandonedAttempt": r.abandoned,
+                      "runsCancelled": r.runs_cancelled, "sessionsStopped": r.sessions_stopped,
+                      "worktreeRemoved": r.worktree_removed, "branchNote": r.branch_note}))
         }
         "link_tickets" | "unlink_tickets" => {
             let a: LinkTickets = args(a)?;

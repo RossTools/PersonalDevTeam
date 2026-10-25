@@ -48,6 +48,12 @@ impl TicketStage {
     pub fn is_closed(self) -> bool {
         matches!(self, TicketStage::Done | TicketStage::WontDo)
     }
+
+    /// Draft, Ready and To do: the stages before work starts. Moving a ticket with an active attempt to one stops its
+    /// work (PDT-159).
+    pub fn is_before_work(self) -> bool {
+        matches!(self, TicketStage::Draft | TicketStage::Ready | TicketStage::Todo)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS, schemars::JsonSchema)]
@@ -1056,6 +1062,8 @@ mod tests {
         assert!(TicketStage::Done.is_closed() && TicketStage::WontDo.is_closed());
         assert!(!TicketStage::Draft.is_closed() && !TicketStage::Ready.is_closed());
         assert!(!TicketStage::Todo.is_closed() && !TicketStage::InProgress.is_closed());
+        let before: Vec<TicketStage> = TicketStage::ALL.iter().copied().filter(|s| s.is_before_work()).collect();
+        assert_eq!(before, [TicketStage::Draft, TicketStage::Ready, TicketStage::Todo]);
         assert_eq!(TicketStage::parse("todo"), Some(TicketStage::Todo));
         assert_eq!(TicketStage::parse("wont_do"), Some(TicketStage::WontDo));
         assert_eq!(TicketStage::parse("Done"), None);

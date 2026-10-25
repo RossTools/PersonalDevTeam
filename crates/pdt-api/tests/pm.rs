@@ -1109,3 +1109,60 @@ async fn the_pm_reports_a_bug_after_a_yes() {
     assert_eq!(issue["labels"], json!(["bug", "from-pdt"]));
     assert!(issue["body"].as_str().unwrap().contains("PDT version:"), "{issue}");
 }
+
+/// PDT-159: a ticket the PM creates in To do and links as blocked right after waits out the start delay, so the link
+/// holds it back; `stop_ticket` asks first, then cancels the ticket's work, stops its session, abandons its attempt
+/// and moves it back to To do.
+#[tokio::test]
+async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_back() {
+    let env = setup(None).await;
+    let settings = |body: Value| {
+        let url = format!("/api/projects/{}/settings", env.project);
+        let app = env.app.clone();
+        async move {
+            let (s, v) = call(&app, "PUT", &url, Some(body)).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+        }
+    };
+    settings(json!({"pmActs": true, "autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 1})).await;
+    let id = start_pm(&env, "hello").await;
+    wait_said(&env, &id, 1).await;
+    let said =
+        ask(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "After the login", "stage": "todo"}"#).await;
+    assert!(said.contains("\"key\": \"PX-2\""), "{said}");
+    let said = ask(&env, &id, r#"mcp: link_tickets {"ticket": "PX-2", "kind": "blockedBy", "other": "PX-1"}"#).await;
+    assert!(said.starts_with("mcp link_tickets:"), "{said}");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    for _ in 0..3 {
+        pdt_api::schedule_tickets(&env.state).await;
+    }
+    let stage = |key: &'static str| {
+        let app = env.app.clone();
+        async move {
+            let (_, v) = call(&app, "GET", &format!("/api/tickets?project=&q={key}"), None).await;
+            v["items"][0].clone()
+        }
+    };
+    assert_eq!(stage("PX-1").await["stage"], "in_progress", "the blocker started");
+    assert_eq!(stage("PX-2").await["stage"], "todo", "the link held it back");
+
+    // Stopping asks (the project no longer lets the PM act), then stops PX-1's session and abandons its attempt.
+    settings(json!({"pmActs": false, "autoStart": "off"})).await;
+    let t = stage("PX-1").await;
+    let (_, full) = call(&env.app, "GET", &format!("/api/tickets/{}", t["id"].as_str().unwrap()), None).await;
+    let session = full["sessions"][0]["id"].as_str().expect("Start made a session").to_string();
+    let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(s["status"], "running");
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: stop_ticket {"ticket": "PX-1"}"#).await;
+    let req = open_request(&env, &id).await;
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(said.contains("\"stopped\": true") && said.contains("\"sessionsStopped\": 1"), "{said}");
+    let t = stage("PX-1").await;
+    assert_eq!((&t["stage"], &t["attempt"]["state"]), (&json!("todo"), &json!("abandoned")), "{t}");
+    let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_ne!(s["status"], "running");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}

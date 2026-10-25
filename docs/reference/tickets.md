@@ -128,7 +128,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   (`overCap` on the `started` event).
 - **Auto-start** (project settings `autoStart`: `off`, `todo`, `ready`; pdt-api `scheduler.rs`, every 10 s in pdtd,
   `schedule_tickets` in tests): while a project is under its cap (one when it has none) it starts its next To do
-  ticket by rank (then Ready with `ready`), skipping parents, tickets that ever had an attempt, blocked ones, `conflict`
+  ticket by rank (then Ready with `ready`), skipping parents, tickets with an active attempt (an abandoned or merged one doesn't count, PDT-159: a ticket
+  stopped and moved back to To do starts again once clear), blocked ones, `conflict`
   overlaps and waiting tickets that aren't clear (pdt-core `policy::pick_next`). It starts in a new workspace with the
   host's default agent, view and ticket permission mode, or with no session when an enabled workflow for the project
   has an `attempt.started` trigger (the Pipeline's Coder step starts one, its tab after the ticket's,
@@ -152,6 +153,17 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as
   merged, to Won't do as merged if detected, else abandoned, once the move went through (a PATCH or bulk move that is
   refused ends nothing; a bulk move ends each ticket's attempt on its own).
+- **Stopping a ticket's work** (PDT-159, pdt-api `stop.rs`): moving a ticket with an active attempt back to Draft,
+  Ready or To do (a PATCH, a bulk move, the PM's `edit_ticket`), Abandon and `POST /api/tickets/{id}/stop` cancel the
+  ticket's open workflow runs (the attempt's, and the ticket's that started before the stop, so a run the move itself
+  triggers goes on), stop the attempt's running sessions (they and their tabs stay) and abandon the attempt, runs
+  first so no step starts a session meanwhile. The UI asks first ("Stop ALP-1's work?") when a move would do this.
+  `/stop` takes `{stage?, removeWorktree?, deleteBranch?}`: `stage` is `draft`, `ready` or `todo` (else 400
+  `invalid_stage`; left out, an in-progress ticket goes to To do); `removeWorktree` also stops and removes the
+  sessions and runs in the latest attempt's worktree and workspace, removes the worktree (uncommitted changes too; the
+  branch with `deleteBranch`) and deletes the workspace Start made (`finish::clean_up`, shared with Finish), so the
+  next Start begins clean instead of adopting it. It answers `StopResult` (`abandoned`, `runsCancelled`,
+  `sessionsStopped`, `worktreeRemoved`, …). The PM's `stop_ticket` is the same call, asking first.
 - **Personal projects** (Phase 7b, [workspaces.md](workspaces.md#projects-and-git-workspaces-spec-6)): Start makes no
   branch or worktree. The attempt has an empty branch and no worktree, and the session runs in the ticket's folder
   `<project folder>/<KEY>-<n>` (made on Start, kept across attempts: it is the work's output); the prompt says to work

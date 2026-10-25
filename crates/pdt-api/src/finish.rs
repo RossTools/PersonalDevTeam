@@ -100,16 +100,17 @@ pub(crate) async fn finish_route(
     Ok(Json(task.await.map_err(ApiError::internal)??))
 }
 
-/// What finishing would stop and remove.
-struct Plan {
-    running: Vec<String>,
-    remove: HashSet<String>,
-    runs: Vec<String>,
-    workspace: Option<pdt_core::workspace::Workspace>,
-    dirty: bool,
+/// What finishing (or stopping, PDT-159) would stop and remove: the attempt's running sessions, the sessions in its
+/// worktree and workspace, the runs there, the workspace Start made and whether the worktree has uncommitted changes.
+pub(crate) struct Plan {
+    pub running: Vec<String>,
+    pub remove: HashSet<String>,
+    pub runs: Vec<String>,
+    pub workspace: Option<pdt_core::workspace::Workspace>,
+    pub dirty: bool,
 }
 
-async fn plan(st: &AppState, info: &AttemptInfo) -> Result<Plan, ApiError> {
+pub(crate) async fn plan(st: &AppState, info: &AttemptInfo) -> Result<Plan, ApiError> {
     let attempt = &info.attempt;
     let worktree_id = attempt.worktree_id.as_deref();
     let workspace = match &attempt.workspace_id {
@@ -256,7 +257,42 @@ pub(crate) async fn finish_ticket(
         return Ok(result);
     }
     move_to_done(st, ticket_id, by).await?;
+    let done = clean_up(st, &info, &p, req.discard_changes, req.delete_branch).await;
+    (result.worktree_removed, result.workspace_removed, result.branch_note) =
+        (done.worktree_removed, done.workspace_removed, done.branch_note);
+    // The ticket's tabs elsewhere close too.
+    if let Ok(all) = st.store.list_workspaces().await {
+        for tab in all.iter().flat_map(|w| &w.tabs) {
+            if tab.ticket_id.as_deref() == Some(ticket_id) {
+                let _ = st.store.close_tab(&tab.id).await;
+            }
+        }
+    }
+    result.pull = pull(st, &info.project_id, base).await;
+    tracing::info!(ticket = %key, by = ?by.map(|b| &b.workflow_name), "finished: moved to Done and cleaned up");
+    Ok(result)
+}
 
+/// What [`clean_up`] removed.
+pub(crate) struct Cleanup {
+    pub worktree_removed: bool,
+    pub workspace_removed: bool,
+    /// Why the branch stayed when it was to be deleted.
+    pub branch_note: Option<String>,
+}
+
+/// Stops and removes what `p` found running in the attempt's worktree and workspace, removes the worktree (with
+/// `discard`, uncommitted changes too; with `delete_branch`, the branch) and deletes the workspace Start made. Problems
+/// are logged, not failed. Finishing and stopping a ticket with its worktree (PDT-159) share it.
+pub(crate) async fn clean_up(
+    st: &AppState,
+    info: &AttemptInfo,
+    p: &Plan,
+    discard: bool,
+    delete_branch: bool,
+) -> Cleanup {
+    let key = &info.ticket_key;
+    let mut out = Cleanup { worktree_removed: false, workspace_removed: false, branch_note: None };
     // The attempt's own sessions elsewhere only stop; the worktree's and the workspace's go.
     for id in p.running.iter().filter(|id| !p.remove.contains(*id)) {
         if let Err(e) = crate::sessions::stop(st, id).await {
@@ -275,49 +311,36 @@ pub(crate) async fn finish_ticket(
             tracing::warn!(ticket = %key, run = %id, error = %e.message(), "could not remove the run");
         }
     }
-
     if let Some(id) = info.attempt.worktree_id.as_deref() {
         // A stopped process takes a moment to let go of the worktree.
         let mut tries = 0;
         loop {
-            match crate::worktrees::remove_worktree(st, id, req.discard_changes, req.delete_branch).await {
+            match crate::worktrees::remove_worktree(st, id, discard, delete_branch).await {
                 Err(e) if e.code() == "worktree_busy" && tries < 20 => {
                     tries += 1;
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 }
                 Err(e) if e.code() == "branch_not_deleted" => {
-                    result.worktree_removed = true;
-                    result.branch_note = Some(e.message().to_string());
+                    out.worktree_removed = true;
+                    out.branch_note = Some(e.message().to_string());
                     break;
                 }
                 Err(e) if e.code() != "not_found" => {
-                    tracing::warn!(ticket = %key, error = %e.message(), "could not remove the merged worktree");
+                    tracing::warn!(ticket = %key, error = %e.message(), "could not remove the worktree");
                     break;
                 }
                 _ => {
-                    result.worktree_removed = true;
+                    out.worktree_removed = true;
                     break;
                 }
-            }
-        }
-    }
-
-    // The ticket's tabs elsewhere close; the workspace Start made goes with every tab in it.
-    let own = p.workspace.as_ref().map(|w| w.id.as_str());
-    if let Ok(all) = st.store.list_workspaces().await {
-        for tab in all.iter().flat_map(|w| &w.tabs) {
-            if Some(tab.workspace_id.as_str()) != own && tab.ticket_id.as_deref() == Some(ticket_id) {
-                let _ = st.store.close_tab(&tab.id).await;
             }
         }
     }
     if let Some(w) = &p.workspace {
         match st.store.delete_workspace(&w.id, true).await {
-            Ok(r) => result.workspace_removed = r == pdt_store::DeleteWorkspace::Deleted,
+            Ok(r) => out.workspace_removed = r == pdt_store::DeleteWorkspace::Deleted,
             Err(e) => tracing::warn!(ticket = %key, error = %e, "could not delete the ticket's workspace"),
         }
     }
-    result.pull = pull(st, &info.project_id, base).await;
-    tracing::info!(ticket = %key, by = ?by.map(|b| &b.workflow_name), "finished: moved to Done and cleaned up");
-    Ok(result)
+    out
 }

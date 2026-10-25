@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AttemptSummary } from '../api/gen/AttemptSummary';
 import type { Ticket } from '../api/gen/Ticket';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
-import { OpenSessionContext, StartTicketContext } from './actions';
+import { QueryClient } from '@tanstack/react-query';
+import { moveTicket, OpenSessionContext, StartTicketContext } from './actions';
 import { project, ticket } from './fixtures';
 import { TicketView } from './TicketView';
 
@@ -93,6 +94,26 @@ describe('ticket attempt', () => {
     const dialog = await screen.findByRole('alertdialog', { name: /Abandon ALP-1/ });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Abandon attempt' }));
     await waitFor(() => expect(count(calls, 'POST', '/api/attempts/a1/abandon')).toBe(1));
+  });
+
+  it('asks before moving a ticket at work back before work, which stops it (PDT-159)', async () => {
+    const calls = stub(active);
+    const qc = new QueryClient();
+    const no = vi.fn().mockResolvedValue({ ok: false });
+    // Without its attempt at hand, it looks the ticket up.
+    expect(await moveTicket(qc, { id: 't1' }, 'todo', no)).toBeNull();
+    expect(no).toHaveBeenCalledWith(expect.objectContaining({ title: "Stop ALP-1's work?", action: 'Stop and move to To do' }));
+    expect(count(calls, 'PATCH', '/api/tickets/t1')).toBe(0);
+    const yes = vi.fn().mockResolvedValue({ ok: true });
+    await moveTicket(qc, active, 'ready', yes);
+    expect(yes).toHaveBeenCalledOnce();
+    expect(count(calls, 'PATCH', '/api/tickets/t1')).toBe(1);
+    // Closing it, or a ticket whose attempt already ended: nothing to ask.
+    const ask = vi.fn();
+    await moveTicket(qc, active, 'done', ask);
+    await moveTicket(qc, { ...active, attempt: attempt({ state: 'abandoned' }) }, 'todo', ask);
+    expect(ask).not.toHaveBeenCalled();
+    expect(count(calls, 'PATCH', '/api/tickets/t1')).toBe(3);
   });
 
   it('checks for a merge once when it opens on an active attempt', async () => {

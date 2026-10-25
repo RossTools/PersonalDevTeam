@@ -64,11 +64,38 @@ export async function startNextPart(start: (t: { id: string; projectId: string }
   start(next);
 }
 
+/** Draft, Ready and To do: moving a ticket with an active attempt to one stops its work (PDT-159). */
+export const isBeforeWork = (s: TicketStage) => s === 'draft' || s === 'ready' || s === 'todo';
+
 /**
  * Moves a ticket to another stage. A parent whose parts are still open can't close (409 `parts_open`): with
- * `confirm`, PDT offers to close the open parts as Won't do first, then moves the parent.
+ * `confirm`, PDT offers to close the open parts as Won't do first, then moves the parent. Moving a ticket with an
+ * active attempt back to Draft, Ready or To do stops its work (the server cancels its workflow runs, stops its
+ * sessions and abandons the attempt): with `confirm`, PDT asks first. `t.attempt` saves looking the ticket up.
  */
-export async function moveTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>, stage: TicketStage, confirm?: Confirm) {
+export async function moveTicket(
+  qc: QueryClient,
+  t: Pick<TicketRef, 'id'> & { key?: string; attempt?: Pick<AttemptSummary, 'state' | 'branch'> | null },
+  stage: TicketStage,
+  confirm?: Confirm,
+) {
+  let key = t.key ?? '';
+  if (confirm && isBeforeWork(stage)) {
+    let attempt = t.attempt;
+    if (attempt === undefined) {
+      const full = await api.getTicket(t.id);
+      (attempt = full.attempt), (key = full.key);
+    }
+    if (attempt?.state === 'active') {
+      const { ok } = await confirm({
+        title: `Stop ${key}'s work?`,
+        body: `Moving it to ${STAGE_LABEL[stage]} cancels its workflow run, stops its sessions and abandons the attempt on ${attempt.branch}. The worktree, branch and sessions are kept.`,
+        action: `Stop and move to ${STAGE_LABEL[stage]}`,
+        danger: true,
+      });
+      if (!ok) return null;
+    }
+  }
   try {
     return await patchTicket(qc, t.id, { stage });
   } catch (e) {
@@ -76,8 +103,8 @@ export async function moveTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key
     const p = await api.getTicket(t.id);
     const open = p.partList.filter((x) => !isClosed(x.stage));
     const { ok } = await confirm({
-      title: `${t.key} still has open parts`,
-      body: `${open.map((x) => `${x.key} ${x.title}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} not closed. Close ${open.length === 1 ? 'it' : 'them'} as Won't do and move ${t.key} to ${STAGE_LABEL[stage]}?`,
+      title: `${p.key} still has open parts`,
+      body: `${open.map((x) => `${x.key} ${x.title}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} not closed. Close ${open.length === 1 ? 'it' : 'them'} as Won't do and move ${p.key} to ${STAGE_LABEL[stage]}?`,
       action: `Close ${open.length === 1 ? 'it' : 'them'} and move`,
     });
     if (!ok) return null;
@@ -126,8 +153,11 @@ export async function deleteTicket(confirm: Confirm, qc: QueryClient, t: Pick<Ti
   return true;
 }
 
-/** "Move to ›": every stage but the ticket's own (with `confirm`, closing a parent offers to close its parts). */
-export function moveToEntries(qc: QueryClient, t: TicketRef, confirm?: Confirm): MenuEntry[] {
+/**
+ * "Move to ›": every stage but the ticket's own (with `confirm`, closing a parent offers to close its parts, and
+ * moving one at work back asks before stopping it).
+ */
+export function moveToEntries(qc: QueryClient, t: TicketRef & { attempt?: Pick<AttemptSummary, 'state' | 'branch'> | null }, confirm?: Confirm): MenuEntry[] {
   return STAGES.filter((s) => s !== t.stage).map((s) => ({
     label: STAGE_LABEL[s],
     onSelect: () => void runAction(() => moveTicket(qc, t, s, confirm)),
@@ -201,11 +231,11 @@ export async function refineTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'k
   toast.success(`${t.key} is being refined.`);
 }
 
-/** Asks, then abandons the ticket's active attempt (its worktree and sessions are kept). */
+/** Asks, then abandons the ticket's active attempt: its workflow run is cancelled and its sessions stop (the worktree and sessions are kept). */
 export async function abandonAttempt(confirm: Confirm, qc: QueryClient, t: Pick<Ticket, 'id' | 'key'>, attempt: Pick<AttemptSummary, 'id' | 'branch'>) {
   const { ok } = await confirm({
     title: `Abandon ${t.key}'s attempt?`,
-    body: `The attempt on ${attempt.branch} ends. Its worktree, branch and sessions are kept; the ticket can be started again.`,
+    body: `The attempt on ${attempt.branch} ends: its workflow run is cancelled and its sessions stop. Its worktree, branch and sessions are kept; the ticket can be started again.`,
     action: 'Abandon attempt',
     danger: true,
   });

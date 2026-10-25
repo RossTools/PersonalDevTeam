@@ -184,11 +184,12 @@ pub fn may_merge(
     }
 }
 
-/// Whether auto-start may take this ticket (spec §6.1): not a parent, never started, not blocked, no conflict, and
-/// not waiting unless it is clear to start.
+/// Whether auto-start may take this ticket (spec §6.1): not a parent, no active attempt (an abandoned or merged one
+/// doesn't count: a ticket stopped and moved back to To do starts again, PDT-159), not blocked, no conflict, and not
+/// waiting unless it is clear to start.
 pub fn startable(t: &TicketSummary) -> bool {
     t.parts.is_none()
-        && t.attempt.is_none()
+        && t.attempt.as_ref().is_none_or(|a| a.state != crate::ticket::AttemptState::Active)
         && t.blocked_by == 0
         && t.overlap != OverlapLevel::Conflict
         && (!t.waiting || t.clear_to_start)
@@ -344,9 +345,9 @@ pub(crate) mod tests {
                 branch: "b".into(),
                 base_branch: "main".into(),
                 worktree_id: None,
-                state: AttemptState::Abandoned,
+                state: AttemptState::Active,
                 created_at: 0,
-                ended_at: Some(1),
+                ended_at: None,
                 last_head: None,
                 workspace_id: None,
                 pr: None,
@@ -356,8 +357,19 @@ pub(crate) mod tests {
         };
         let waiting = TicketSummary { waiting: true, ..ticket("waiting", TicketStage::Todo) };
         let r1 = ticket("r1", TicketStage::Ready);
-        let list = vec![blocked, conflict, started, waiting.clone(), overlap.clone(), r1.clone()];
+        let list = vec![blocked, conflict, started.clone(), waiting.clone(), overlap.clone(), r1.clone()];
         assert_eq!(pick_next(&todo, 0, &list, &[], LATER).map(|t| t.id.as_str()), Some("overlap"));
+        // Only an active attempt holds a ticket back (PDT-159): one stopped and moved back to To do starts again.
+        let mut stopped = started.clone();
+        stopped.id = "stopped".into();
+        for (state, ended) in [(AttemptState::Abandoned, Some(1)), (AttemptState::Merged, Some(1))] {
+            let a = stopped.attempt.as_mut().unwrap();
+            (a.state, a.ended_at) = (state, ended);
+            assert_eq!(
+                pick_next(&todo, 0, std::slice::from_ref(&stopped), &[], LATER).map(|t| t.id.as_str()),
+                Some("stopped")
+            );
+        }
         // Skipped after a failed start, so Ready is next only when the policy takes Ready.
         let skip = vec!["overlap".to_string()];
         assert_eq!(pick_next(&todo, 0, &list, &skip, LATER), None);

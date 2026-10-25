@@ -21,7 +21,7 @@ import { STAGE_LABEL } from '../common/StageStepper';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
 import { runAction } from '../common/useAction';
-import { canStart, patchTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { canStart, moveTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { buildLanes, laneIds, lanePr, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
 import { useAllSessions, useTicketPages } from './queries';
 import { useClearToStartToasts } from './clearToStart';
@@ -321,6 +321,7 @@ function Cell({ label, stage, items, lane, env, height, children }: {
   children?: ReactNode;
 }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [over, setOver] = useState(false);
   const dropTarget = !env.cards.phone;
   const onDragOver = (e: DragEvent) => {
@@ -335,7 +336,8 @@ function Cell({ label, stage, items, lane, env, height, children }: {
     if (!d || d.kind !== CARD_DRAG_KIND) return;
     e.preventDefault();
     if (!lane.has(d.id) || items.some((t) => t.id === d.id)) return;
-    void runAction(() => patchTicket(qc, d.id, { stage }));
+    // Back to To do from In progress asks before stopping its work.
+    void runAction(() => moveTicket(qc, { id: d.id }, stage, confirm));
   };
   return (
     <section

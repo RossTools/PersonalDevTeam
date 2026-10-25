@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 39] = [
+pub const ALL_TOOLS: [&str; 40] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -40,6 +40,7 @@ pub const ALL_TOOLS: [&str; 39] = [
     "edit_ticket",
     "link_tickets",
     "unlink_tickets",
+    "stop_ticket",
     "send_to_session",
     "discord_get",
     "discord_change",
@@ -57,11 +58,12 @@ pub const ALL_TOOLS: [&str; 39] = [
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
 /// card) unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so they are never in Claude's
 /// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 11] = [
+pub const ASKING_TOOLS: [&str; 12] = [
     "create_ticket",
     "edit_ticket",
     "link_tickets",
     "unlink_tickets",
+    "stop_ticket",
     "send_to_session",
     "discord_change",
     "discord_webhook",
@@ -72,7 +74,7 @@ pub const ASKING_TOOLS: [&str; 11] = [
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 37] = [
+pub const PM_TOOLS: [&str; 38] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -98,6 +100,7 @@ pub const PM_TOOLS: [&str; 37] = [
     "edit_ticket",
     "link_tickets",
     "unlink_tickets",
+    "stop_ticket",
     "send_to_session",
     "discord_get",
     "discord_change",
@@ -113,7 +116,7 @@ pub const PM_TOOLS: [&str; 37] = [
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 39] = [
+const TOOL_DOES: [(&str, &str); 40] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
@@ -141,6 +144,7 @@ const TOOL_DOES: [(&str, &str); 39] = [
     ("edit_ticket", "Edit any ticket"),
     ("link_tickets", "Link two tickets (blocks, relates to)"),
     ("unlink_tickets", "Remove a link between tickets"),
+    ("stop_ticket", "Stop a ticket's work: its workflow run, sessions and attempt"),
     ("send_to_session", "Message a session"),
     ("discord_get", "Look at the Discord server: its channels and webhooks"),
     ("discord_change", "Create, rename, move or archive Discord channels"),
@@ -585,8 +589,11 @@ pub const PM_INSTRUCTIONS: &str = "You are the PM: the user's project manager ac
 messages), its workflow runs and the Inbox, then say what it waits on and who can unblock it.\n\
 - Drafting a ticket: write the title and description (scope, out of scope, \"Done when\") in your reply first, then \
 call `create_ticket`; the user confirms it (PDT shows them the call) unless the project lets you act. The same for \
-`edit_ticket`, `link_tickets`, `unlink_tickets` and `send_to_session`. Never claim you made a change the tool did not \
-report.\n\
+`edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket` and `send_to_session`. Never claim you made a change \
+the tool did not report.\n\
+- Stopping work: `stop_ticket` cancels a ticket's workflow run, stops its sessions, abandons its attempt and moves \
+it back to To do (or the stage you give); `removeWorktree` also discards its worktree so the next start is clean. \
+`send_to_session` waits for an idle agent, so it can't stop a busy one, and neither can a comment.\n\
 - Links: \"make A blocked by B\" is `link_tickets` (`blocks`, `blockedBy` or `relates`), and `unlink_tickets` removes \
 one; a ticket's parent is `edit_ticket`'s `parent` (`\"\"` detaches it). Never fall back to a comment asking the user \
 to link them.\n\

@@ -19,7 +19,7 @@ import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { actionError, runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { canStart, deleteTicket, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import { canStart, deleteTicket, isBeforeWork, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
 import { AgentDot } from '../common/AgentState';
@@ -434,6 +434,20 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
 
   const bulk = (action: Parameters<typeof api.bulkTickets>[0]['action'], value?: string, keep = true) =>
     void runAction(async () => {
+      // Moving tickets at work back before work stops it (PDT-159): ask first.
+      const working = action === 'stage' && value && isBeforeWork(value as TicketStage)
+        ? selected.filter((t) => t.attempt?.state === 'active')
+        : [];
+      if (working.length > 0) {
+        const n = working.length;
+        const { ok } = await confirm({
+          title: `Stop the work on ${n} ticket${n === 1 ? '' : 's'}?`,
+          body: `${working.slice(0, 5).map((t) => t.key).join(', ')}${n > 5 ? '…' : ''} ${n === 1 ? 'has an attempt' : 'have attempts'} in progress. Moving ${n === 1 ? 'it' : 'them'} cancels ${n === 1 ? 'its workflow run' : 'their workflow runs'}, stops ${n === 1 ? 'its' : 'their'} sessions and abandons the ${n === 1 ? 'attempt' : 'attempts'}. Worktrees, branches and sessions are kept.`,
+          action: 'Stop and move',
+          danger: true,
+        });
+        if (!ok) return;
+      }
       await api.bulkTickets({ ids: selectedIds, action, ...(value !== undefined ? { value } : {}) });
       invalidateTickets(qc, selectedIds);
       if (!keep) clearSelection();
