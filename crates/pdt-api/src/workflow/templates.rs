@@ -587,6 +587,25 @@ mod tests {
         }
     }
 
+    /// PDT-165: fine-grained `gh` tokens can't read checks, so no built-in prompt tells an agent to run `gh pr checks`
+    /// (saying not to is fine).
+    #[test]
+    fn no_builtin_prompt_runs_gh_pr_checks() {
+        let mut texts: Vec<(String, String)> =
+            builtin_templates().into_iter().map(|t| (t.id, serde_json::to_string(&t.doc).unwrap())).collect();
+        texts.extend(pdt_core::persona::BUILTIN_PERSONAS.iter().map(|p| (p.id.into(), p.instructions.into())));
+        texts.push(("pm".into(), pdt_core::persona::PM_INSTRUCTIONS.into()));
+        for g in ["agents", "run-config", "set-up-project", "set-up-workflow"] {
+            texts.push((g.into(), crate::guides::guide_text(g).unwrap().into()));
+        }
+        for (id, text) in &texts {
+            let lower = text.to_lowercase();
+            for (at, _) in lower.match_indices("gh pr checks") {
+                assert!(lower[..at].ends_with("not `"), "{id} tells agents to run `gh pr checks`");
+            }
+        }
+    }
+
     #[test]
     fn a_filled_in_pipeline_gives_back_its_params() {
         let t = builtin_templates().into_iter().find(|t| t.id == "builtin:pipeline").unwrap();

@@ -580,6 +580,15 @@ pub(crate) async fn step_section_for(st: &AppState, s: &Session) -> Option<Strin
     Some(step_section(&p.name, &version.setup.instructions, &binding.outcomes))
 }
 
+/// The branch of the attempt a session's workflow step is about (PDT-165): a new Reviewer or QA session has no attempt
+/// of its own but reads that attempt's CI.
+pub(crate) async fn step_attempt_branch(st: &AppState, s: &Session) -> Option<String> {
+    let step = s.persona.as_ref()?.step_id.as_ref()?;
+    let binding = st.store.get_agent_step(step).await.ok()??;
+    let attempt = st.store.get_attempt(binding.attempt_id.as_deref()?).await.ok()??;
+    Some(attempt.attempt.branch)
+}
+
 /// The waiting step of a binding, or why the binding is over.
 async fn waiting_step(st: &AppState, a: &AgentStep) -> R<Step> {
     let step = st.store.get_step(&a.step_id).await.map_err(err)?.ok_or("the workflow step is gone")?;
