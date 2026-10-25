@@ -19,6 +19,7 @@ mod host_guard;
 mod identity_guard;
 mod inbox;
 mod jira;
+mod local_network;
 pub mod loops;
 mod mcp;
 mod mcp_client;
@@ -66,6 +67,7 @@ pub async fn shutdown_mcp(st: &AppState) {
 }
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use jira::refresh_jira;
+pub use local_network::prompt as prompt_local_network;
 pub use loops::poll_pass;
 pub use notifications::{Notifier, run_notifier, sync as sync_notifications};
 pub use overlap::refresh_overlaps;

@@ -159,6 +159,19 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   naming `<data dir>/host/pdt-host` is rewritten by pdt-host at startup, which then execs the bundle's pdt-host
   (`--from-copy`); the old copy is removed once launchd starts the bundle's directly (next login) or on
   install/uninstall.
+- macOS Local Network permission (PDT-156): since macOS 15 a program needs the user's permission to connect to an
+  address on the local network (private ranges, link-local, `.local`), or the connection fails with "No route to
+  host" (os error 65). launchd's own exemption is for daemons, not LaunchAgents (Apple's TN3179), so the agent names
+  the app bundle in `AssociatedBundleIdentifiers` (`APP_BUNDLE_ID`): pdt-host and the pdtd it starts count as the app,
+  macOS asks once with the app's `NSLocalNetworkUsageDescription` (desktop/src-tauri/Info.plist, merged into the
+  bundle's by Tauri) and lists "Personal Dev Team" in System Settings › Privacy & Security › Local Network. An older
+  agent without the key is rewritten at startup like the one naming the copy (launchd reads it at the next login). The
+  choice is recorded against the app's code signature, so updates signed with the same certificate and bundle id keep
+  it. pdtd brings the alert up while the user is at the Mac: at startup and when a connection is saved it connects a
+  UDP socket (no packet sent) to the first connection address on the local network (pdt-api `local_network.rs`); with
+  no local connection nothing asks. A request blocked by it (EHOSTUNREACH to a local host on macOS) fails with "macOS
+  Local Network permission is blocking Personal Dev Team: System Settings › …" instead of the raw error
+  (`send_error`), in the connection's `lastError`, steps and the MCP tools (`scryer_*`).
 - A bundle macOS runs from an App Translocation folder, a folder pdt-host cannot write to (e.g. a disk image) or that
   has gone is misplaced (PDT-51, pdt-host `placement.rs`): it is never registered at login, `installer_for` refuses it
   and pdt-host passes the reason to pdtd as `PDT_UPDATES_UNSUPPORTED` (updates then show as off with it); the tray says

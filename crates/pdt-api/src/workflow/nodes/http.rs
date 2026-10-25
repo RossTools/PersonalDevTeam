@@ -110,9 +110,15 @@ pub(crate) fn client() -> &'static reqwest::Client {
 
 /// A request's error without its URL, with its causes. reqwest's own message ends with the URL, and a URL can be a
 /// secret (a Discord webhook's token, a key sent as a query parameter): every outbound call's error goes through
-/// this before it reaches a step, a run, a notification or the log.
+/// this before it reaches a step, a run, a notification or the log. A connection macOS's Local Network permission
+/// blocked names the setting instead of "No route to host" (PDT-156).
 pub(crate) fn send_error(e: reqwest::Error) -> String {
+    let host = e.url().and_then(|u| u.host_str()).map(String::from);
     let e = e.without_url();
+    if let Some(m) = pdt_core::local_network::explain_failure(cfg!(target_os = "macos"), host.as_deref(), os_error(&e))
+    {
+        return m;
+    }
     let mut out = e.to_string();
     let mut cause = std::error::Error::source(&e);
     while let Some(c) = cause {
@@ -121,6 +127,18 @@ pub(crate) fn send_error(e: reqwest::Error) -> String {
         cause = c.source();
     }
     out
+}
+
+/// The OS error code somewhere in an error's causes (hyper wraps a failed connect's `io::Error`).
+fn os_error(e: &(dyn std::error::Error + 'static)) -> Option<i32> {
+    let mut cause = Some(e);
+    while let Some(c) = cause {
+        if let Some(code) = c.downcast_ref::<std::io::Error>().and_then(std::io::Error::raw_os_error) {
+            return Some(code);
+        }
+        cause = c.source();
+    }
+    None
 }
 
 /// Adds a connection's secret to a request, the way its config says.
@@ -324,6 +342,24 @@ impl NodeKind for Http {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn os_error_is_found_among_the_causes() {
+        #[derive(Debug)]
+        struct Wrap(std::io::Error);
+        impl std::fmt::Display for Wrap {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("tcp connect error")
+            }
+        }
+        impl std::error::Error for Wrap {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        assert_eq!(os_error(&Wrap(std::io::Error::from_raw_os_error(65))), Some(65));
+        assert_eq!(os_error(&Wrap(std::io::Error::other("no code"))), None);
+    }
 
     #[test]
     fn expect_takes_a_class_any_or_a_list() {

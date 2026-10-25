@@ -10,7 +10,7 @@
 
 use crate::config::HostConfig;
 use crate::health::{Probe, probe, request_shutdown};
-use pdt_core::brand::{DAEMON_BIN, HOST_AUTOSTART_NAME, HOST_BIN, HOST_LABEL};
+use pdt_core::brand::{APP_BUNDLE_ID, DAEMON_BIN, HOST_AUTOSTART_NAME, HOST_BIN, HOST_LABEL};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,6 +39,9 @@ fn xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
+/// `AssociatedBundleIdentifiers` makes the app bundle the responsible code for pdt-host and the pdtd it starts: macOS
+/// asks for (and lists) the Local Network permission as the app's, with its Info.plist's usage description (Apple's
+/// TN3179; PDT-156). Without it a LaunchAgent is a standalone program that macOS silently denies the local network.
 pub fn launchd_plist(program: &Path, install_dir: &Path, log: &Path) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -56,12 +59,17 @@ pub fn launchd_plist(program: &Path, install_dir: &Path, log: &Path) -> String {
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Interactive</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>{app}</string>
+  </array>
   <key>StandardOutPath</key><string>{log}</string>
   <key>StandardErrorPath</key><string>{log}</string>
 </dict>
 </plist>
 "#,
         label = xml(HOST_LABEL),
+        app = xml(APP_BUNDLE_ID),
         program = xml(&program.to_string_lossy()),
         dir = xml(&install_dir.to_string_lossy()),
         log = xml(&log.to_string_lossy()),
@@ -320,9 +328,9 @@ pub fn remove_old_copy(data_dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// macOS, at startup: an agent written by an older version still names the data folder copy; it is rewritten to name
-/// the bundle's pdt-host (launchd reads it again at the next login, or when `install` bootstraps it). Returns whether it
-/// was rewritten. A missing agent (pdt-host started by the tray or by hand) is left missing.
+/// macOS, at startup: an agent written by an older version still names the data folder copy, or lacks
+/// `AssociatedBundleIdentifiers` (PDT-156); it is rewritten to name the bundle's pdt-host and the app (launchd reads it
+/// again at the next login, or when `install` bootstraps it). Returns whether it was rewritten. A missing agent (pdt-host started by the tray or by hand) is left missing.
 pub fn migrate_launch_agent(cfg: &HostConfig, home: &Path) -> Result<bool, String> {
     let plist = launch_agent_path(home);
     let Ok(text) = std::fs::read_to_string(&plist) else { return Ok(false) };
@@ -330,7 +338,8 @@ pub fn migrate_launch_agent(cfg: &HostConfig, home: &Path) -> Result<bool, Strin
     if cfg.dev
         || !program.is_file()
         || crate::placement::bundle_problem(&cfg.install_dir).is_some()
-        || text.contains(&format!("<string>{}</string>", xml(&program.to_string_lossy())))
+        || (text.contains(&format!("<string>{}</string>", xml(&program.to_string_lossy())))
+            && text.contains("<key>AssociatedBundleIdentifiers</key>"))
     {
         return Ok(false);
     }
@@ -419,6 +428,12 @@ mod tests {
         assert!(p.contains("<string>/Users/me/Applications/A &amp; B.app/Contents/MacOS/pdt-host</string>"));
         assert!(p.contains("<string>/Users/me/Applications/A &amp; B.app/Contents/MacOS</string>"));
         assert!(p.contains("<key>RunAtLoad</key><true/>") && p.contains("<key>KeepAlive</key><true/>"));
+        assert!(
+            p.contains(
+                "<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>dev.personaldevteam.desktop</string>"
+            ),
+            "{p}"
+        );
         assert_eq!(
             launch_agent_path(Path::new("/Users/me")),
             Path::new("/Users/me/Library/LaunchAgents/dev.personaldevteam.host.plist")
@@ -680,6 +695,14 @@ mod tests {
         assert!(text.contains(&format!("<string>{}</string>", program.display())), "{text}");
         assert!(!text.contains(&copy.display().to_string()), "{text}");
         assert!(!migrate_launch_agent(&s.cfg, &s.home).unwrap(), "already the bundle's");
+
+        // An agent from before PDT-156 names the bundle's pdt-host but not the app.
+        let block = "  <key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>dev.personaldevteam.desktop</string>\n  </array>\n";
+        assert!(text.contains(block), "{text}");
+        let without_app = text.replace(block, "");
+        std::fs::write(&plist, &without_app).unwrap();
+        assert!(migrate_launch_agent(&s.cfg, &s.home).unwrap(), "{without_app}");
+        assert!(std::fs::read_to_string(&plist).unwrap().contains("<key>AssociatedBundleIdentifiers</key>"));
 
         std::fs::write(&plist, "old").unwrap();
         s.cfg.dev = true;

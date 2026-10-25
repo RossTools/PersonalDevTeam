@@ -182,6 +182,11 @@ async fn run() -> anyhow::Result<()> {
     tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
     // Notifications (PDT-108): rows made from sessions' and the Inbox's state, cleared when their cause goes away.
     tokio::spawn(pdt_api::run_notifier(state.clone()));
+    // macOS asks for the Local Network permission now, while the user is likely at the Mac (PDT-156).
+    tokio::spawn({
+        let st = state.clone();
+        async move { pdt_api::prompt_local_network(&st).await }
+    });
     // Auto-start of To do / Ready tickets, per project policy (Phase 7c).
     tokio::spawn(pdt_api::run_scheduler(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
