@@ -15,6 +15,8 @@ struct Fake {
     sums: Arc<std::sync::Mutex<String>>,
     token_leaked: Arc<AtomicBool>,
     storage_hits: Arc<AtomicUsize>,
+    /// The issues posted (their JSON bodies).
+    issues: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
 }
 
 const WIN: &[u8] = b"windows installer bytes";
@@ -80,17 +82,34 @@ async fn storage(State(f): State<Fake>, Path(id): Path<u64>, h: HeaderMap) -> Re
     (if id == 1 { WIN } else { MAC }).to_vec().into_response()
 }
 
+async fn issue(State(f): State<Fake>, h: HeaderMap, axum::Json(body): axum::Json<serde_json::Value>) -> Response {
+    if h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) == Some("Bearer read-only") {
+        let msg = r#"{"message":"Resource not accessible by personal access token"}"#;
+        return (StatusCode::FORBIDDEN, msg).into_response();
+    }
+    if !authed(&h) {
+        return (StatusCode::UNAUTHORIZED, r#"{"message":"Bad credentials"}"#).into_response();
+    }
+    f.issues.lock().unwrap().push(body);
+    let number = f.issues.lock().unwrap().len() + 40;
+    let url = format!("https://github.com/o/r/issues/{number}");
+    (StatusCode::CREATED, axum::Json(serde_json::json!({"number": number, "html_url": url, "state": "open"})))
+        .into_response()
+}
+
 async fn serve() -> (GitHubClient, Fake) {
     let fake = Fake {
         base: Default::default(),
         sums: Arc::new(std::sync::Mutex::new(good_sums())),
         token_leaked: Default::default(),
         storage_hits: Default::default(),
+        issues: Default::default(),
     };
     let app = Router::new()
         .route("/repos/o/r/releases/latest", get(latest))
         .route("/repos/o/r/releases/assets/{id}", get(asset))
         .route("/storage/{id}", get(storage))
+        .route("/repos/o/r/issues", axum::routing::post(issue))
         .with_state(fake.clone());
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
@@ -228,4 +247,25 @@ async fn an_already_verified_download_is_reused() {
     std::fs::write(dir.path().join("Personal.Dev.Team_0.1.7_x64-setup.exe"), b"tampered").unwrap();
     let p = fetch_verified(&c, "good", &release, HostOs::Windows, dir.path()).await.unwrap();
     assert_eq!(std::fs::read(p).unwrap(), WIN, "a file that no longer matches is downloaded again");
+}
+
+#[tokio::test]
+async fn issues_are_created_with_title_body_and_labels() {
+    let (c, fake) = serve().await;
+    assert_eq!(c.repo(), "o/r");
+    let i = c.create_issue("good", "It broke", "Steps", &["bug", "from-pdt"]).await.unwrap();
+    assert_eq!(i, pdt_update::Issue { number: 41, url: "https://github.com/o/r/issues/41".into() });
+    let posted = fake.issues.lock().unwrap().clone();
+    assert_eq!(posted, vec![serde_json::json!({"title": "It broke", "body": "Steps", "labels": ["bug", "from-pdt"]})]);
+}
+
+#[tokio::test]
+async fn issue_errors_say_why_and_never_hold_the_token() {
+    let (c, fake) = serve().await;
+    let e = c.create_issue("read-only", "t", "b", &[]).await.unwrap_err();
+    assert!(matches!(e, UpdateError::Http(403, ref m) if m.contains("not accessible")), "{e:?}");
+    let e = c.create_issue("bad-token-value", "t", "b", &[]).await.unwrap_err();
+    assert_eq!(e, UpdateError::Unauthorized);
+    assert!(!format!("{e} {e:?}").contains("bad-token-value"));
+    assert!(fake.issues.lock().unwrap().is_empty());
 }

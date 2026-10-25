@@ -18,7 +18,7 @@ export const ACTIONS = 'Actions';
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
   | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'shell' | 'run' | 'rename' | 'close'
-  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes' | 'workflows' | 'inbox' | 'personas' | 'pm' | 'notes';
+  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes' | 'workflows' | 'inbox' | 'personas' | 'pm' | 'notes' | 'bug';
 
 /**
  * A second step: another list (Move tab → workspaces), a text field (New workspace → its name), or a ticket search
@@ -69,6 +69,8 @@ export interface PaletteHandlers {
   moveTabToNewWorkspace: (tab: Tab, name: string) => void;
   setTheme: (pref: ThemePref) => void;
   showKeys: () => void;
+  /** The Report a bug form. */
+  reportBug: () => void;
   /** The Files view (not in the phone rail). */
   showFiles: () => void;
   showWorkflows: () => void;
@@ -309,6 +311,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
     });
   }
   actions.push({ id: 'keys', label: 'Keyboard shortcuts', group: ACTIONS, icon: 'keys', shortcut: key('?'), keywords: ['help', 'keys'], run: h.showKeys });
+  actions.push({ id: 'report-bug', label: 'Report a bug', group: ACTIONS, icon: 'bug', keywords: ['help', 'issue', 'feedback', 'problem'], run: h.reportBug });
 
   return [...goTo, ...actions];
 }

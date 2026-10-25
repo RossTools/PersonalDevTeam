@@ -38,6 +38,7 @@ import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
 import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
 import { KeyHelp } from '../workspaces/KeyHelp';
+import { BugReportDialog } from '../host/BugReportDialog';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
 import { findTab, nextNeedingYou, type Item } from '../workspaces/model';
 import { TicketTabsContext } from '../workspaces/ticketTabs';
@@ -161,6 +162,7 @@ export function AppShell() {
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [reportingBug, setReportingBug] = useState(false);
   const [rightOpen, setRightOpen] = useRightPanelOpen();
   const [todosSheetOpen, setTodosSheetOpen] = useState(false);
   // Bumped when Ctrl+] t opens the todo list: its add box takes the focus.
@@ -550,6 +552,7 @@ export function AppShell() {
     }),
     setTheme,
     showKeys: () => setHelpOpen(true),
+    reportBug: () => setReportingBug(true),
     showFiles: () => setView('files'),
     showWorkflows: () => setView('workflows'),
     showInbox: () => setView('inbox'),
@@ -830,7 +833,10 @@ export function AppShell() {
           <Suspense fallback={null}><WorkspaceMergedBanner key={mergedTicketId} ticketId={mergedTicketId} /></Suspense>
         )}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
-        {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} />}
+        {helpOpen && <KeyHelp onClose={() => setHelpOpen(false)} onReportBug={() => { setHelpOpen(false); setReportingBug(true); }} />}
+        {reportingBug && (
+          <BugReportDialog onClose={() => setReportingBug(false)} onOpenSettings={() => { setReportingBug(false); showProjectSettings(null); }} />
+        )}
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} onQueryChange={setPaletteQuery} />
         {newTicket && (
           <Suspense fallback={null}><NewTicketDialog

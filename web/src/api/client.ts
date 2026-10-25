@@ -1,4 +1,7 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
+import type { BugReportFiled } from './gen/BugReportFiled';
+import type { BugReportPreview } from './gen/BugReportPreview';
+import type { NewBugReport } from './gen/NewBugReport';
 import type { GuideInfo } from './gen/GuideInfo';
 import type { Health } from './gen/Health';
 import type { TicketDraft } from './gen/TicketDraft';
@@ -399,6 +402,10 @@ export const api = {
   saveToken: (token: string) => request<UpdateStatus>('/api/host/token', { method: 'PUT', body: JSON.stringify({ token }) }),
   deleteToken: () => request<void>('/api/host/token', { method: 'DELETE' }),
   hostChecks: () => request<HostChecks>('/api/host/checks'),
+  /** Where a bug report would go, and the redacted diagnostics it would carry (PDT-153). */
+  bugReportPreview: () => request<BugReportPreview>('/api/bug-reports/preview'),
+  reportBug: (r: NewBugReport) =>
+    request<BugReportFiled>('/api/bug-reports', { method: 'POST', body: JSON.stringify(r) }),
   refreshChecks: () => request<HostChecks>('/api/host/checks/refresh', { method: 'POST' }),
   /** What waits on the user: questions, approvals, stalled steps, loop limits, gates (Phase 7b). */
   inbox: (project?: string) => request<InboxList>(`/api/inbox${queryString({ project })}`),

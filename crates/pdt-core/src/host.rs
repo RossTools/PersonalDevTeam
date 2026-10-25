@@ -84,6 +84,8 @@ pub struct HostSettings {
     /// The most agents running a turn at once before PDT's own work (agent steps, workflow messages) waits for a
     /// slot; 0: no cap. What the user does is never held (Phase 7c spec §6.2).
     pub max_agent_turns: u32,
+    /// Where "Report a bug" sends reports (PDT-153).
+    pub bug_reports: crate::bug_report::BugReportSetting,
 }
 
 impl Default for HostSettings {
@@ -102,6 +104,7 @@ impl Default for HostSettings {
             session_permission_mode: PermissionMode::Ask,
             update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
             max_agent_turns: DEFAULT_MAX_AGENT_TURNS,
+            bug_reports: Default::default(),
         }
     }
 }
@@ -152,6 +155,9 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub max_agent_turns: Option<u32>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub bug_reports: Option<crate::bug_report::BugReportSetting>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -241,6 +247,9 @@ impl HostSettings {
                 return Err(HostSettingsError::BadMaxAgentTurns);
             }
             s.max_agent_turns = n;
+        }
+        if let Some(b) = p.bug_reports {
+            s.bug_reports = b;
         }
         Ok(s)
     }

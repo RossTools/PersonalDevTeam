@@ -121,6 +121,34 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   (polled every 2 s while downloading/installing, else every 60 s and on window focus); index.html is `no-cache`, so
   the reload gets the new bundle.
 
+## Bug reports (PDT-153)
+
+"Report a bug" (the palette's Actions, the Keyboard shortcuts dialog, Host settings → Bug reports; pdt-api
+`bug_reports.rs`, pdt-core `bug_report.rs`, web `host/BugReportDialog.tsx`) files a report about PDT itself.
+
+- **Where it goes.** Host settings' `bugReports`: `auto` (default), `github`, `local` or `off`. `auto` is `github`,
+  except when a project here has `origin` on the release repository (`RELEASE_REPO`; the update client's repository):
+  the instance PDT is developed on, where it is `local`. `GET /api/bug-reports/preview` says which (`setting`,
+  `route`, `repo`, `project`, `tokenPresent`) and returns the diagnostics as they would be sent; the form says where
+  the report goes before it is sent.
+- **Filing.** `POST /api/bug-reports {title, description?, includeDiagnostics?, nonce?}`. `github`: an issue on the
+  release repository with labels `bug` and `from-pdt`, filed with the update token (pdt-update `create_issue`; the
+  token goes only to the API host and is never logged) → `{kind: "issue", number, url}`. `local`: a Draft ticket
+  labelled `bug` in that project (diagnostics in its description), with no GitHub request → `{kind: "ticket", key, id,
+  projectId}`. `off` → 409 `bug_reports_off`; `local` with no such project → 409 `no_bug_project`. The same `nonce`
+  within a minute returns the first report instead of filing another (the form sends one per form; pdt-mcp's
+  `report_bug` uses the session and title).
+- **Errors.** No token → 409 `no_token`; GitHub rejecting it → 409 `token_rejected`; a 403/404 (no Issues: write) →
+  409 `token_no_issue_access`; each names Host settings → Updates, and the form offers a Host settings button. GitHub
+  unreachable → 502 `github_unreachable` ("Try again").
+- **Diagnostics** (opt-in, shown in the form): version, profile (and whether it is a development instance), OS and
+  architecture, supervised by pdt-host, update state and token state, and the last 50 lines of the newest
+  `logs/pdtd.<date>.log`. No ticket or project content. The log lines and update error are redacted
+  (`bug_report::redact`): the update token and owner login by value, token-shaped words (`ghp_`, `github_pat_`,
+  `sk-`…), values after secret-looking keys (`token=`, `"apiKey":`, `Authorization: Bearer …`), long random-looking
+  words, the home folder (as `~`) and other users' (`/Users/[user]`), and this machine's names (hostname, its short
+  form, the tailnet name, any `*.ts.net`) as `[host]`.
+
 ## pdt-host at login
 
 - `pdt-host install` registers a LaunchAgent that runs the app bundle's pdt-host (macOS), or copies itself to

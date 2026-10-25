@@ -619,6 +619,15 @@ fn defs() -> Vec<Def> {
                           ask.",
             schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerMutateConfig>,
         },
+        Def {
+            name: "report_bug",
+            title: "Report a bug in PDT",
+            description: "Reports a bug in PDT itself (not in the project you work on), as Host settings route it: an \
+                          issue on PDT's GitHub repository, or a Draft bug ticket on the instance PDT is developed on. \
+                          includeDiagnostics adds this instance's version, OS, update state and the end of its log, \
+                          redacted. The user confirms each call.",
+            schema: schema::<crate::bug_reports::NewBugReport>,
+        },
     ]
 }
 
@@ -632,7 +641,8 @@ pub(crate) fn infos() -> Vec<ToolInfo> {
             input_schema: (d.schema)(),
             annotations: json!({"title": d.title, "readOnlyHint": READ_ONLY.contains(&d.name),
                                 "destructiveHint": d.name == "delete_note",
-                                "openWorldHint": d.name.starts_with("discord_") || d.name.starts_with("scryer_")}),
+                                "openWorldHint": d.name.starts_with("discord_") || d.name.starts_with("scryer_")
+                                    || d.name == "report_bug"}),
         })
         .collect()
 }
@@ -1122,6 +1132,14 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let target = pdt_core::pm::ask_target(name, &a).unwrap_or(AskTarget::Always);
             confirmable(cx, name, &target).await?;
             crate::scryer::graphql::mutate_tool(st, a).await
+        }
+        "report_bug" => {
+            let mut a: crate::bug_reports::NewBugReport = args(a)?;
+            confirmable(cx, name, &AskTarget::Always).await?;
+            // A retried call within a minute files nothing new.
+            a.nonce = Some(format!("mcp:{}:{}", cx.session.id, a.title.trim()));
+            let filed = crate::bug_reports::file(st, a, Some(cx.session)).await.map_err(api)?;
+            Ok(serde_json::to_value(filed).map_err(|e| e.to_string())?)
         }
         other => Err(format!("no tool is called {other}")),
     }

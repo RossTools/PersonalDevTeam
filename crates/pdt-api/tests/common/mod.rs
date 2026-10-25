@@ -134,4 +134,5 @@ pub async fn fail_events(db: &std::path::Path, kind: Option<&str>) {
     }
     c.close().await.unwrap();
 }
+pub mod issues;
 pub mod scryer;

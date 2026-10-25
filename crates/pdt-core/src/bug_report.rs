@@ -1,0 +1,448 @@
+//! Bug reports (PDT-153): where "Report a bug" sends a report, what its diagnostics hold, and how they are redacted
+//! before anyone sees them. Pure: pdt-api gathers the facts, files the issue or ticket.
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+/// The host setting: where reports go. `Auto` is GitHub, except on an instance with a project whose origin is the
+/// release repository (the instance PDT is developed on), where it is a local ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BugReportSetting {
+    #[default]
+    Auto,
+    Github,
+    Local,
+    Off,
+}
+
+/// Where a report actually goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BugReportRoute {
+    /// An issue on the release repository.
+    Github,
+    /// A Draft ticket labelled `bug` in the project whose origin is the release repository; never a GitHub request.
+    Local,
+    Off,
+}
+
+impl BugReportSetting {
+    /// The route: `Auto` is `Local` when a project here has the release repository as its origin, else `Github`.
+    pub fn route(self, has_release_project: bool) -> BugReportRoute {
+        match self {
+            BugReportSetting::Auto if has_release_project => BugReportRoute::Local,
+            BugReportSetting::Auto | BugReportSetting::Github => BugReportRoute::Github,
+            BugReportSetting::Local => BugReportRoute::Local,
+            BugReportSetting::Off => BugReportRoute::Off,
+        }
+    }
+}
+
+/// The labels an issue gets; a local ticket gets [`TICKET_LABEL`].
+pub const ISSUE_LABELS: [&str; 2] = ["bug", "from-pdt"];
+pub const TICKET_LABEL: &str = "bug";
+/// How many lines of the pdtd log the diagnostics end with.
+pub const LOG_LINES: usize = 50;
+/// How long a report's nonce is remembered: the same nonce again within it gets the first report back.
+pub const NONCE_TTL_MS: i64 = 60_000;
+const MAX_TITLE: usize = 200;
+const MAX_DESCRIPTION: usize = 20_000;
+
+/// The title and description trimmed, or why they can't be sent.
+pub fn validate(title: &str, description: &str) -> Result<(String, String), String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("give the report a title".into());
+    }
+    if title.contains(['\n', '\r']) || title.chars().count() > MAX_TITLE {
+        return Err(format!("the title must be one line of at most {MAX_TITLE} characters"));
+    }
+    let description = description.trim();
+    if description.chars().count() > MAX_DESCRIPTION {
+        return Err(format!("the description must be at most {MAX_DESCRIPTION} characters"));
+    }
+    Ok((title.to_string(), description.to_string()))
+}
+
+/// What the diagnostics say about this instance. No ticket or project content.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Diagnostics {
+    pub version: String,
+    /// `stable` or `dev`.
+    pub profile: String,
+    pub dev: bool,
+    pub os: String,
+    pub arch: String,
+    pub supervised: bool,
+    /// The update state (`idle`, `available`, `disabled`…) and its last error.
+    pub update: String,
+    /// `missing`, `valid`, `expiring`, `expired`.
+    pub token: String,
+    /// The last lines of the pdtd log, oldest first.
+    pub log_tail: Vec<String>,
+}
+
+impl Diagnostics {
+    /// The diagnostics as text. Only `log_tail` can hold anything private: redact it before it goes in.
+    pub fn render(&self) -> String {
+        let mut out = format!(
+            "PDT version: {}\nProfile: {}{}\nOS: {} ({})\nSupervised by pdt-host: {}\nUpdates: {}\nUpdate token: {}\n",
+            self.version,
+            self.profile,
+            if self.dev { " (development instance)" } else { "" },
+            self.os,
+            self.arch,
+            if self.supervised { "yes" } else { "no" },
+            self.update,
+            self.token,
+        );
+        if self.log_tail.is_empty() {
+            out.push_str("\npdtd log: (none found)\n");
+        } else {
+            out.push_str(&format!("\nLast {} lines of the pdtd log:\n", self.log_tail.len()));
+            for l in &self.log_tail {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+        out
+    }
+}
+
+/// The last `n` lines of `text`.
+pub fn tail(text: &str, n: usize) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
+}
+
+/// The issue's (or ticket's) body: the description, the diagnostics in a collapsed block, and where it came from.
+pub fn body(description: &str, diagnostics: Option<&str>, version: &str) -> String {
+    let mut out = String::new();
+    if description.is_empty() {
+        out.push_str("_No description._\n");
+    } else {
+        out.push_str(description);
+        out.push('\n');
+    }
+    if let Some(d) = diagnostics {
+        let fence = "`".repeat(longest_backtick_run(d).max(2) + 1);
+        out.push_str(&format!(
+            "\n<details><summary>Diagnostics</summary>\n\n{fence}text\n{}\n{fence}\n\n</details>\n",
+            d.trim_end()
+        ));
+    }
+    out.push_str(&format!("\n_Reported with Report a bug in {} {version}._\n", crate::brand::PRODUCT_NAME));
+    out
+}
+
+fn longest_backtick_run(s: &str) -> usize {
+    s.split(|c| c != '`').map(str::len).max().unwrap_or(0)
+}
+
+/// What [`redact`] takes out besides what looks like a secret anywhere.
+#[derive(Debug, Clone, Default)]
+pub struct Redactions {
+    /// Secrets known by value (the update token): replaced wherever they appear.
+    pub secrets: Vec<String>,
+    /// The home folder: written as `~`.
+    pub home: Option<String>,
+    /// This machine's names (hostname, tailnet name): written as `[host]`.
+    pub hostnames: Vec<String>,
+}
+
+pub const REDACTED: &str = "[redacted]";
+const HOST: &str = "[host]";
+/// Prefixes of well-known token formats (GitHub, OpenAI/Anthropic, Slack, AWS).
+const TOKEN_PREFIXES: [&str; 10] =
+    ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "sk-", "xoxb-", "xoxp-", "AKIA"];
+/// Key names whose value is a secret (`token=…`, `"apiKey": "…"`, `Authorization: …`).
+const SECRET_KEYS: [&str; 8] =
+    ["token", "secret", "password", "passwd", "apikey", "api_key", "api-key", "authorization"];
+
+/// `text` without secrets, home paths or this machine's names. Lossy on purpose: a long random-looking word goes too.
+pub fn redact(text: &str, r: &Redactions) -> String {
+    let mut s = text.to_string();
+    for secret in r.secrets.iter().map(|x| x.trim()).filter(|x| x.len() >= 6) {
+        s = s.replace(secret, REDACTED);
+    }
+    if let Some(home) = r.home.as_deref().map(|h| h.trim_end_matches(['/', '\\'])).filter(|h| h.len() > 1) {
+        s = s.replace(home, "~");
+        let flipped = if home.contains('\\') { home.replace('\\', "/") } else { home.replace('/', "\\") };
+        s = s.replace(&flipped, "~");
+    }
+    for host in r.hostnames.iter().map(|h| h.trim()).filter(|h| h.len() >= 2) {
+        s = replace_ignore_case(&s, host, HOST);
+    }
+    s = user_folders(&s);
+    s.lines().map(redact_line).collect::<Vec<_>>().join("\n") + if text.ends_with('\n') { "\n" } else { "" }
+}
+
+fn replace_ignore_case(hay: &str, needle: &str, with: &str) -> String {
+    let (h, n) = (hay.to_ascii_lowercase(), needle.to_ascii_lowercase());
+    let mut out = String::with_capacity(hay.len());
+    let mut at = 0;
+    while let Some(i) = h[at..].find(&n) {
+        out.push_str(&hay[at..at + i]);
+        out.push_str(with);
+        at += i + n.len();
+    }
+    out.push_str(&hay[at..]);
+    out
+}
+
+/// Another user's (or an unknown) home folder: `/Users/<name>`, `/home/<name>`, `C:\Users\<name>` → `<name>` hidden.
+fn user_folders(s: &str) -> String {
+    let mut out = s.to_string();
+    for prefix in ["/Users/", "/home/", "\\Users\\", "\\users\\"] {
+        let mut result = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(i) = rest.find(prefix) {
+            result.push_str(&rest[..i + prefix.len()]);
+            rest = &rest[i + prefix.len()..];
+            let end = rest.find(['/', '\\', ' ', '"', '\'', ':', '\n', ')', ',']).unwrap_or(rest.len());
+            if end > 0 && !rest.starts_with("[user]") && &rest[..end] != "Shared" {
+                result.push_str("[user]");
+                rest = &rest[end..];
+            }
+        }
+        result.push_str(rest);
+        out = result;
+    }
+    out
+}
+
+enum Seg {
+    Word(String),
+    Other(char),
+}
+
+fn is_word(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
+}
+
+fn segments(line: &str) -> Vec<Seg> {
+    let mut out = vec![];
+    let mut word = String::new();
+    for c in line.chars() {
+        if is_word(c) {
+            word.push(c);
+        } else {
+            if !word.is_empty() {
+                out.push(Seg::Word(std::mem::take(&mut word)));
+            }
+            out.push(Seg::Other(c));
+        }
+    }
+    if !word.is_empty() {
+        out.push(Seg::Word(word));
+    }
+    out
+}
+
+fn looks_secret(w: &str) -> bool {
+    let token = TOKEN_PREFIXES.iter().any(|p| w.starts_with(p)) && w.len() >= 16;
+    let random = w.len() >= 40
+        && w.chars().any(|c| c.is_ascii_digit())
+        && w.chars().any(|c| c.is_ascii_alphabetic())
+        && !w.contains('.');
+    token || random
+}
+
+fn redact_line(line: &str) -> String {
+    let segs = segments(line);
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < segs.len() {
+        match &segs[i] {
+            Seg::Other(c) => {
+                out.push(*c);
+                i += 1;
+            }
+            Seg::Word(w) => {
+                let lower = w.to_ascii_lowercase();
+                if lower.ends_with(".ts.net") {
+                    out.push_str(HOST);
+                } else if looks_secret(w) {
+                    out.push_str(REDACTED);
+                } else {
+                    out.push_str(w);
+                }
+                i += 1;
+                if is_auth_scheme(&lower) && followed_by_word(&segs, i) {
+                    out.push(' ');
+                    i = skip_value(&segs, i + 1);
+                    out.push_str(REDACTED);
+                } else if SECRET_KEYS.iter().any(|k| lower.contains(k))
+                    && let Some(start) = value_start(&segs, i)
+                {
+                    for s in &segs[i..start] {
+                        if let Seg::Other(c) = s {
+                            out.push(*c);
+                        }
+                    }
+                    i = skip_value(&segs, start);
+                    // `Authorization: Bearer <token>`: the scheme and its token both go.
+                    if let Some(Seg::Word(v)) = segs.get(start)
+                        && i == start + 1
+                        && is_auth_scheme(&v.to_ascii_lowercase())
+                        && followed_by_word(&segs, i)
+                    {
+                        i = skip_value(&segs, i + 1);
+                    }
+                    out.push_str(REDACTED);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn is_auth_scheme(lower: &str) -> bool {
+    lower == "bearer" || lower == "basic"
+}
+
+/// A single space then a word at `i`.
+fn followed_by_word(segs: &[Seg], i: usize) -> bool {
+    matches!(segs.get(i), Some(Seg::Other(' '))) && matches!(segs.get(i + 1), Some(Seg::Word(_)))
+}
+
+/// After a secret key at `i`: where its value starts, when what follows is a `=` or `:` (with quotes and spaces).
+fn value_start(segs: &[Seg], i: usize) -> Option<usize> {
+    let mut j = i;
+    let mut assigned = false;
+    while let Some(Seg::Other(c)) = segs.get(j) {
+        match c {
+            '=' | ':' => assigned = true,
+            '"' | '\'' | ' ' => {}
+            _ => return None,
+        }
+        j += 1;
+        if j - i > 4 {
+            return None;
+        }
+    }
+    (assigned && matches!(segs.get(j), Some(Seg::Word(_)))).then_some(j)
+}
+
+/// The end of a value starting at `i`: up to whitespace, a quote or a separator.
+fn skip_value(segs: &[Seg], mut i: usize) -> usize {
+    while let Some(s) = segs.get(i) {
+        if let Seg::Other(c) = s
+            && (c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&' | '}' | ')' | ']'))
+        {
+            break;
+        }
+        i += 1;
+    }
+    i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_is_local_only_with_the_release_project() {
+        assert_eq!(BugReportSetting::Auto.route(false), BugReportRoute::Github);
+        assert_eq!(BugReportSetting::Auto.route(true), BugReportRoute::Local);
+        assert_eq!(BugReportSetting::Github.route(true), BugReportRoute::Github);
+        assert_eq!(BugReportSetting::Local.route(false), BugReportRoute::Local);
+        assert_eq!(BugReportSetting::Off.route(true), BugReportRoute::Off);
+    }
+
+    #[test]
+    fn titles_are_one_line_and_required() {
+        assert_eq!(validate("  Crash  ", " details "), Ok(("Crash".into(), "details".into())));
+        assert!(validate("  ", "x").is_err());
+        assert!(validate("a\nb", "").is_err());
+        assert!(validate(&"x".repeat(201), "").is_err());
+        assert!(validate("t", &"x".repeat(20_001)).is_err());
+    }
+
+    #[test]
+    fn redaction_strips_the_token_and_home_paths() {
+        let r = Redactions {
+            secrets: vec!["github_pat_11ABCDEF0123456789_secretvalue".into()],
+            home: Some("/Users/rwest".into()),
+            hostnames: vec!["rosss-mac-mini".into()],
+        };
+        let text = "loaded github_pat_11ABCDEF0123456789_secretvalue from keychain\n\
+                    opened /Users/rwest/work/repo/file.rs\n\
+                    another /Users/alice/x and /home/bob/y and C:\\Users\\carol\\z\n\
+                    serving on Rosss-Mac-Mini.tail1234.ts.net:443 and box.tail99.ts.net\n\
+                    header Authorization: Bearer abc.def-123 and bearer qq.rr\n\
+                    {\"apiKey\": \"k-123456\", \"name\": \"ok\"} token=xyz&other=1\n\
+                    stray ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa and sk-ant-0123456789abcdefghij\n\
+                    sha 0123456789abcdef0123456789abcdef01234567 version 0.1.42 time 12:30:01\n";
+        let out = redact(text, &r);
+        for leaked in [
+            "secretvalue",
+            "rwest",
+            "alice",
+            "bob",
+            "carol",
+            "Rosss-Mac-Mini",
+            "tail99",
+            "abc.def-123",
+            "qq.rr",
+            "k-123456",
+            "xyz",
+            "ghp_a",
+            "sk-ant",
+            "0123456789abcdef0123",
+        ] {
+            assert!(!out.contains(leaked), "{leaked} leaked:\n{out}");
+        }
+        for kept in [
+            "~/work/repo/file.rs",
+            "/Users/[user]/x",
+            "/home/[user]/y",
+            "\"name\": \"ok\"",
+            "other=1",
+            "0.1.42",
+            "12:30:01",
+        ] {
+            assert!(out.contains(kept), "{kept} missing:\n{out}");
+        }
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn windows_home_paths_are_hidden_with_either_slash() {
+        let r = Redactions { home: Some("C:\\Users\\Ross".into()), ..Default::default() };
+        assert_eq!(redact("C:\\Users\\Ross\\work and C:/Users/Ross/x", &r), "~\\work and ~/x");
+    }
+
+    #[test]
+    fn the_body_fences_diagnostics_safely() {
+        let b = body("It broke.", Some("log ``` line"), "0.1.42");
+        assert!(b.starts_with("It broke.\n"));
+        assert!(b.contains("<details><summary>Diagnostics</summary>"));
+        assert!(b.contains("````text\nlog ``` line\n````"));
+        assert!(b.contains("0.1.42"));
+        assert!(!body("", None, "1").contains("<details>"));
+    }
+
+    #[test]
+    fn diagnostics_render_and_tail() {
+        assert_eq!(tail("a\nb\nc\n", 2), vec!["b", "c"]);
+        assert_eq!(tail("a", 5), vec!["a"]);
+        let d = Diagnostics {
+            version: "0.1.42".into(),
+            profile: "stable".into(),
+            os: "macos".into(),
+            arch: "aarch64".into(),
+            supervised: true,
+            update: "idle".into(),
+            token: "valid".into(),
+            log_tail: vec!["INFO started".into()],
+            ..Default::default()
+        };
+        let t = d.render();
+        assert!(t.contains("PDT version: 0.1.42") && t.contains("Supervised by pdt-host: yes"));
+        assert!(t.ends_with("INFO started\n"));
+    }
+}
