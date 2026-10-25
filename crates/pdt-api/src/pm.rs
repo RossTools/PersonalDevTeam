@@ -40,7 +40,7 @@ pub(crate) async fn host_project(st: &AppState) -> Result<Project, ApiError> {
 
 /// Where a new PM session runs (PDT-100): the folder holding the projects' checkouts and the Projects folder (the host
 /// setting; its default `~/work` only while there are no projects), else the home folder, else the PM's own folder.
-async fn work_folder(st: &AppState, own: &str) -> Result<String, ApiError> {
+pub(crate) async fn work_folder(st: &AppState, own: &str) -> Result<String, ApiError> {
     let projects = st.store.list_projects().await?;
     let setting = st.store.get_host_settings().await?.projects_dir;
     let projects_dir = match &setting {
@@ -388,6 +388,8 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
     }
     .unwrap_or_else(|| pdt_core::persona::PM_INSTRUCTIONS.to_string());
     let tools = crate::mcp::session_tools(st, s).await;
+    // An agent step of a personal workflow runs here too (PDT-152): its role and outcome rules.
+    let step = crate::workflow::agent::step_section_for(st, s).await;
     Ok(pm::instructions(&pm::PmContext {
         session_id: &s.id,
         port: st.listen_port,
@@ -395,6 +397,7 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
         tools: &tools,
         persona: &persona_text,
         briefing: &briefing,
+        step: step.as_deref(),
     }))
 }
 

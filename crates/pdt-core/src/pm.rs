@@ -647,6 +647,9 @@ pub struct PmContext<'a> {
     pub tools: &'a [String],
     /// The persona's instructions.
     pub persona: &'a str,
+    /// A workflow step's section (`workflow::agent::step_section`, PDT-152): the role and its outcome rules, in place
+    /// of the persona's instructions.
+    pub step: Option<&'a str>,
     /// [`briefing`]'s text.
     pub briefing: &'a str,
 }
@@ -686,9 +689,12 @@ pub fn instructions(ctx: &PmContext) -> String {
              answer: don't retry it unchanged.\n"
         ));
     }
+    let role = match ctx.step {
+        Some(step) => step.trim().to_string(),
+        None => format!("## Your role\n\n{}", ctx.persona.trim()),
+    };
     out.push_str(&format!(
-        "- Messages starting `[{SHORT_NAME}]` come from {SHORT_NAME}, not the user.\n\n## Your role\n\n{}\n\n{}",
-        ctx.persona.trim(),
+        "- Messages starting `[{SHORT_NAME}]` come from {SHORT_NAME}, not the user.\n\n{role}\n\n{}",
         ctx.briefing.trim_end()
     ));
     out.push('\n');
@@ -893,6 +899,7 @@ mod tests {
             tools: &tools,
             persona: "You are the PM.",
             briefing: "# Briefing\n",
+            step: None,
         });
         assert!(text.contains("are how you see and change PDT: `get_overview`."), "{text}");
         assert!(text.contains("lets you act without asking: `create_ticket`."), "{text}");
@@ -902,6 +909,21 @@ mod tests {
         {
             assert!(text.contains(want), "missing {want:?} in\n{text}");
         }
+        // A workflow step's session (PDT-152): the step's role and outcome rules instead of the persona's text.
+        let step = instructions(&PmContext {
+            session_id: "s1",
+            port: 7421,
+            work_folder: "/w",
+            tools: &tools,
+            persona: "You are the PM.",
+            briefing: "# Briefing\n",
+            step: Some("\n# Your role: PM\n\nFinish by calling `submit_outcome`.\n"),
+        });
+        assert!(
+            step.contains("not the user.\n\n# Your role: PM\n\nFinish by calling `submit_outcome`.\n\n# Briefing\n"),
+            "{step}"
+        );
+        assert!(!step.contains("## Your role"), "{step}");
     }
 
     #[test]

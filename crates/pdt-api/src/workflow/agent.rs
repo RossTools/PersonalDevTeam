@@ -37,13 +37,18 @@ fn prompt_key(step_id: &str) -> String {
 }
 
 /// What an agent node's step resolves to before it starts.
-struct Target {
+pub(crate) struct Target {
     project_id: String,
+    /// No ticket and no project (a personal workflow, PDT-152): the step runs in the host project, as the PM does.
+    pub(crate) host: bool,
     ticket: Option<(String, String, String)>,
     attempt: Option<pdt_store::AttemptInfo>,
 }
 
-async fn target(cx: &StepCx<'_>, c: &AgentConfig) -> R<Target> {
+/// Where a step runs: its ticket's project, else the run's or the workflow's, else the host project. A dry run
+/// (`dry`) never makes the host project, and takes a ticket or attempt it can't find (a hand-written event's) as one
+/// that would be there: the step runs on it, not in the host project.
+pub(crate) async fn target(cx: &StepCx<'_>, c: &AgentConfig, dry: bool) -> R<Target> {
     let st = cx.st;
     let pick = |given: &Option<String>, key: &str| {
         given
@@ -52,13 +57,20 @@ async fn target(cx: &StepCx<'_>, c: &AgentConfig) -> R<Target> {
             .or_else(|| cx.ctx.pointer(&format!("/trigger/{key}")).and_then(Value::as_str).map(String::from))
             .filter(|v| !v.trim().is_empty())
     };
-    let mut attempt = match pick(&c.attempt, "attemptId") {
-        Some(a) => Some(st.store.get_attempt(&a).await.map_err(err)?.ok_or_else(|| format!("no attempt {a}"))?),
+    let attempt_id = pick(&c.attempt, "attemptId");
+    let mut attempt = match &attempt_id {
+        Some(a) => match st.store.get_attempt(a).await.map_err(err)? {
+            Some(x) => Some(x),
+            None => missing(dry, "attempt", a)?,
+        },
         None => None,
     };
     let ticket_id = pick(&c.ticket, "ticketId").or_else(|| attempt.as_ref().map(|a| a.ticket_id.clone()));
     let ticket = match &ticket_id {
-        Some(t) => Some(st.store.get_ticket(t).await.map_err(err)?.ok_or_else(|| format!("no ticket {t}"))?),
+        Some(t) => match st.store.get_ticket(t).await.map_err(err)? {
+            Some(x) => Some(x),
+            None => missing(dry, "ticket", t)?,
+        },
         None => None,
     };
     if attempt.is_none()
@@ -71,13 +83,36 @@ async fn target(cx: &StepCx<'_>, c: &AgentConfig) -> R<Target> {
         .as_ref()
         .map(|t| t.summary.project_id.clone())
         .or_else(|| cx.run.project_id.clone())
-        .or_else(|| cx.workflow.project_id.clone())
-        .ok_or("the step has no project to run in: give it a ticket, or use it in a project's workflow")?;
+        .or_else(|| cx.workflow.project_id.clone());
+    let host = project_id.is_none() && attempt_id.is_none() && ticket_id.is_none();
+    let project_id = match project_id {
+        Some(p) => p,
+        None if dry => st.store.host_project().await.map_err(err)?.map(|p| p.id).unwrap_or_default(),
+        None => crate::pm::host_project(st).await.map_err(|e| e.message().to_string())?.id,
+    };
     Ok(Target {
         project_id,
+        host,
         ticket: ticket.map(|t| (t.summary.id.clone(), t.summary.key.clone(), t.summary.title.clone())),
         attempt,
     })
+}
+
+/// A ticket or attempt a step names that isn't there: an error, or nothing in a dry run.
+fn missing<T>(dry: bool, what: &str, id: &str) -> R<Option<T>> {
+    if dry { Ok(None) } else { Err(format!("no {what} {id}")) }
+}
+
+/// The persona a step names, while it is there and not archived.
+pub(crate) async fn step_persona(st: &AppState, name: &str) -> R<Persona> {
+    // A dry run may come before the engine's first tick installs the built-ins.
+    crate::personas::ensure_builtins(st).await;
+    let persona =
+        st.store.find_persona(name).await.map_err(err)?.ok_or_else(|| format!("no persona is called {name}"))?;
+    if persona.archived {
+        return Err(format!("the persona {} is archived", persona.name));
+    }
+    Ok(persona)
 }
 
 /// Runs an `agent` node: the loop limit, then the persona's session and its first message, then a wait for the
@@ -111,16 +146,8 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     if limit > 0 && passes.len() > usize::try_from(limit).unwrap_or(usize::MAX) && !allowed {
         return loop_limit(cx, &c, &passes).await;
     }
-    let persona = st
-        .store
-        .find_persona(&c.persona)
-        .await
-        .map_err(err)?
-        .ok_or_else(|| format!("no persona is called {}", c.persona))?;
-    if persona.archived {
-        return Err(format!("the persona {} is archived", persona.name));
-    }
-    let t = target(cx, &c).await?;
+    let persona = step_persona(st, &c.persona).await?;
+    let t = target(cx, &c, false).await?;
     if let (Some(stage), Some((ticket_id, _, _))) = (c.pipeline_stage, &t.ticket)
         && let Err(e) = st.store.set_pipeline_stage(ticket_id, Some(stage)).await
     {
@@ -400,6 +427,8 @@ async fn new_session(
     let worktree_id = t.attempt.as_ref().and_then(|a| a.attempt.worktree_id.clone());
     let cwd = match (&t.ticket, project.is_personal()) {
         (Some((_, key, _)), true) => Some(crate::start::personal_folder(&project, key).map_err(err)?),
+        // In the host project (PDT-152): the PM's work folder.
+        _ if t.host => Some(crate::pm::work_folder(st, &project.repo_path).await.map_err(|e| e.message().to_string())?),
         _ => None,
     };
     let title = match &t.ticket {
