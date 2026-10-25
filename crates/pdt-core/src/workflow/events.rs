@@ -19,6 +19,7 @@ pub const ATTEMPT_LATE_COMMITS: &str = "attempt.late_commits";
 pub const TICKET_STAGE_CHANGED: &str = "ticket.stage_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
+pub const TICKET_OVERLAP_CLEARED: &str = "ticket.overlap_cleared";
 pub const PR_COMMENTED: &str = "pr.commented";
 pub const PR_REVIEWED: &str = "pr.reviewed";
 pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
@@ -132,8 +133,15 @@ pub const EVENT_TYPES: &[EventType] = &[
     EventType {
         id: TICKET_OVERLAP_FOUND,
         title: "Overlap found",
-        description: "Two tickets in flight change the same files.",
+        description: "Two tickets in flight change the same files (once when it starts, then once per newly shared \
+                      file or worse level; one event on each ticket).",
         schema: schema_of::<TicketOverlapFound>,
+    },
+    EventType {
+        id: TICKET_OVERLAP_CLEARED,
+        title: "Overlap cleared",
+        description: "Two tickets that changed the same files no longer do (one finished, or the files were put back).",
+        schema: schema_of::<TicketOverlapCleared>,
     },
     EventType {
         id: AGENT_OUTCOME,
@@ -416,6 +424,18 @@ pub struct TicketOverlapFound {
     pub files: Vec<String>,
     /// `overlap` or `conflict`.
     pub level: String,
+}
+
+/// `ticket.overlap_cleared`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketOverlapCleared {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub other_ticket_id: String,
+    pub other_key: String,
 }
 
 /// `agent.outcome`.

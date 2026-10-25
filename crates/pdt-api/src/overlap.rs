@@ -5,7 +5,7 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::{Path, State};
-use pdt_core::overlap::{AreaSet, Participant, compute};
+use pdt_core::overlap::{AreaSet, OverlapNews, Participant, compute, overlap_news};
 use pdt_core::project::Project;
 use pdt_core::runconfig::ProjectAreas;
 use pdt_core::ticket::{Actor, EventKind, MAX_OVERLAP_FILES, OverlapLevel, Ticket, TicketOverlap, TicketSummary};
@@ -65,8 +65,12 @@ impl OverlapIndex {
 /// Computes the overlaps of every open ticket (or one project's).
 pub(crate) async fn index(st: &AppState, project: Option<&str>) -> Result<OverlapIndex, ApiError> {
     let rows = st.store.overlap_rows(project).await?;
+    index_of(st, &rows).await
+}
+
+async fn index_of(st: &AppState, rows: &[OverlapRow]) -> Result<OverlapIndex, ApiError> {
     let mut by_project: HashMap<&str, Vec<&OverlapRow>> = HashMap::new();
-    for r in &rows {
+    for r in rows {
         by_project.entry(r.project_id.as_str()).or_default().push(r);
     }
     let files = st.changed_files.read().map(|m| m.clone()).unwrap_or_default();
@@ -123,8 +127,9 @@ pub(crate) async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, Api
     Ok(t)
 }
 
-/// Recomputes every active attempt's changed files, then records new actual overlaps on both tickets' timelines
-/// (once per pair and file set). pdtd runs it every 30 s. Never fails; problems are logged.
+/// Recomputes every active attempt's changed files, then records news about actual overlaps on both tickets'
+/// timelines: a new overlapping pair, a file not reported for the pair since it began, a worse level, or the pair no
+/// longer sharing files ([`overlap_news`]). pdtd runs it every 30 s. Never fails; problems are logged.
 pub async fn refresh_overlaps(st: &AppState) {
     let active = match st.store.list_active_attempts().await {
         Ok(v) => v,
@@ -133,6 +138,7 @@ pub async fn refresh_overlaps(st: &AppState) {
             return;
         }
     };
+    let old = st.changed_files.read().map(|m| m.clone()).unwrap_or_default();
     let mut fresh: HashMap<String, Vec<String>> = HashMap::new();
     for info in active {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
@@ -143,12 +149,20 @@ pub async fn refresh_overlaps(st: &AppState) {
         let found =
             tokio::task::spawn_blocking(move || pdt_git::changed_files(std::path::Path::new(&path), &base, &start))
                 .await;
-        match found {
-            Ok(Ok(files)) => {
-                fresh.insert(info.attempt.id.clone(), files);
+        let files = match found {
+            Ok(Ok(files)) => Some(files),
+            Ok(Err(e)) => {
+                tracing::debug!(attempt = %info.attempt.id, error = %e, "could not list changed files");
+                None
             }
-            Ok(Err(e)) => tracing::debug!(attempt = %info.attempt.id, error = %e, "could not list changed files"),
-            Err(e) => tracing::warn!(error = %e, "the changed-files task failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, "the changed-files task failed");
+                None
+            }
+        };
+        // A failed listing keeps the last one, so one bad check doesn't clear an overlap and find it again.
+        if let Some(files) = files.or_else(|| old.get(&info.attempt.id).cloned()) {
+            fresh.insert(info.attempt.id.clone(), files);
         }
     }
     if let Ok(mut m) = st.changed_files.write() {
@@ -159,16 +173,38 @@ pub async fn refresh_overlaps(st: &AppState) {
     }
 }
 
-async fn record_overlap_events(st: &AppState) -> Result<(), ApiError> {
-    let idx = index(st, None).await?;
+/// Compares every open ticket's file overlaps with what its timeline already says, and adds what is news.
+pub(crate) async fn record_overlap_events(st: &AppState) -> Result<(), ApiError> {
+    let rows = st.store.overlap_rows(None).await?;
+    let idx = index_of(st, &rows).await?;
+    let mut reported = st.store.overlap_reports().await?;
+    let files = st.changed_files.read().map(|m| m.clone()).unwrap_or_default();
+    let attempt: HashMap<&str, Option<&str>> =
+        rows.iter().map(|r| (r.ticket_id.as_str(), r.attempt_id.as_deref())).collect();
+    // A ticket whose active attempt has no file list yet (pdtd just started, or it never listed) can't tell a
+    // cleared overlap from an unknown one.
+    let unknown = |ticket: &str| attempt.get(ticket).copied().flatten().is_some_and(|a| !files.contains_key(a));
+    let mut news = vec![];
     for (ticket_id, list) in &idx.by_ticket {
         for o in list.iter().filter(|o| !o.files.is_empty()) {
-            if st.store.last_overlap_files(ticket_id, &o.ticket_id).await?.as_deref() == Some(o.files.as_slice()) {
-                continue;
+            let r = reported.remove(&(ticket_id.clone(), o.ticket_id.clone()));
+            if overlap_news(r.as_ref(), &o.files, o.level) == Some(OverlapNews::Found) {
+                let data = json!({"ticketId": o.ticket_id, "key": o.key, "files": o.files, "level": o.level});
+                news.push((ticket_id.clone(), data));
             }
-            let data = json!({"ticketId": o.ticket_id, "key": o.key, "files": o.files, "level": o.level});
-            st.store.add_ticket_event(ticket_id, EventKind::Overlap, Actor::System, None, Some(data), now_ms()).await?;
         }
+    }
+    // What is left was reported but shares no file now.
+    for ((ticket_id, other), r) in reported {
+        if unknown(&ticket_id) || unknown(&other) || overlap_news(Some(&r), &[], OverlapLevel::None).is_none() {
+            continue;
+        }
+        let key = st.store.get_ticket(&other).await?.map(|t| t.summary.key).unwrap_or_default();
+        let data = json!({"ticketId": other, "key": key, "files": [], "level": OverlapLevel::None, "cleared": true});
+        news.push((ticket_id, data));
+    }
+    for (ticket_id, data) in news {
+        st.store.add_ticket_event(&ticket_id, EventKind::Overlap, Actor::System, None, Some(data), now_ms()).await?;
     }
     Ok(())
 }

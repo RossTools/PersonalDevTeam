@@ -23,7 +23,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `ticket.stage_changed`, `ticket.commented`, `attempt.started`, `attempt.merged` (key `<attempt>:merged`, with `via`
   `detected` / `merged_here` / `closed`, `pr`, `finishOnMerge`, `finishDeleteBranch` and the merged `notice`),
   `attempt.abandoned` (every `attempt.*` carries the ticket's `labels` at the time, for `{{trigger.labels}}`
-  `contains` `<label>`) and `ticket.overlap_found`, in the same transaction, except Start's: its `ticket.stage_changed`
+  `contains` `<label>`) and `ticket.overlap_found` (or `ticket.overlap_cleared` for an `overlap` event with
+  `cleared`), in the same transaction, except Start's: its `ticket.stage_changed`
   and `attempt.started` are logged once Start has made its session (`announce_start`), so a Start that fails and is
   undone never runs a workflow for an attempt that is gone; an agent step's `outcome` timeline event
   becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e

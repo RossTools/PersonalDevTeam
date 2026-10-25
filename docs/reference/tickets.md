@@ -321,8 +321,15 @@ Tickets spec §7; the config format is in docs/run-config.md "Areas".
   declares its areas (migrations is the exclusive one).
 - A ticket's overlap is always against the project's tickets with an active attempt: shared areas (planned) and, when
   both are active, shared changed files (actual; pdtd's 30 s `refresh_overlaps` runs `pdt_git::changed_files` per
-  active attempt and keeps them in memory; new file overlaps add an `overlap` event once per pair and file set). A
-  shared exclusive area or a file inside one is a `conflict`, else `overlap`.
+  active attempt and keeps them in memory, keeping an attempt's last list when git fails). A shared exclusive area or a
+  file inside one is a `conflict`, else `overlap`.
+- File overlaps are recorded on both tickets' timelines as `overlap` events (`{ticketId, key, files, level}`, mirrored
+  as `ticket.overlap_found`) only when they are news: a new pair, a file not reported for the pair since it began, or
+  a worse level (pdt-core `overlap_news`, against the ticket's earlier events folded by the store's
+  `overlap_reports`). The same files again, fewer of them, or a file coming back after a revert or rebase add nothing.
+  A reported pair that no longer shares a file (one attempt ended, or the files were put back) adds one `overlap`
+  event with `cleared: true`, `files: []`, `level: none` (`ticket.overlap_cleared`); a later overlap is a new pair.
+  No clear is recorded while either attempt has no file list yet (pdtd just started), nor on done or won't-do tickets.
 - Computed in pdt-api `overlap.rs` (pure rules in pdt-core `overlap.rs`) and applied to every ticket response:
   `overlap`, `overlapWith`, `clearToStart` on summaries, `overlaps` on the full ticket; `GET
   /api/tickets?conflicts=true|false`.
