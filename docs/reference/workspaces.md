@@ -10,7 +10,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   elsewhere moves it), and closing that tab stops and removes it (`DELETE /api/tabs/{id}`; the UI asks first while it
   runs; ticket and changes tabs only close).
 - New sessions/runs open a tab at the end of their project workspace unless the request has
-  `tab: {workspaceId, position}`. The workspace and tab on screen are in the URL (`/sessions/<workspace>/<tab>`, see
+  `tab: {workspaceId, position}`; a run on the worktree or branch of an active attempt that has a workspace opens in
+  that workspace instead (PDT-160). The workspace and tab on screen are in the URL (`/sessions/<workspace>/<tab>`, see
   "URLs" below), and per browser (localStorage) for when the URL doesn't say; workspaces and tabs are shared.
 - The Sessions sidebar is herdr-style (web/src/workspaces/Sidebar.tsx): workspaces on top, then Tickets (the
   workspaces a ticket's Start made, `Workspace.ticket` from `attempts.workspace_id`: ticket title, key chip that opens
@@ -214,6 +215,9 @@ its tab, the Inbox picking an item) replace it.
 - "Run" on a worktree/branch starts a `.pdt/project.toml` run on a port from the host's range (stable 8400–8499, dev
   profile 8500–8599) with its own data folder; this repo's "pdt" run is a dev instance of PDT. Steps run in the
   checkout (`sh -c` on macOS, a generated .cmd on Windows); only `$NAME`/`${NAME}` of PDT's variables are expanded.
+- Starting a run (`POST /api/projects/{id}/runs`) whose checkout (worktree, or the main checkout on the same branch),
+  name and kind already have a finished run restarts that run in its tab and answers 200 instead of making a second
+  one (PDT-160); a run still going gets a new one beside it (201). A run by `branch` records the branch's worktree.
 - A run with `detach = true` (PDT-32) starts its command outside any PTY (pdt-agents `detached`: Windows job object,
   unix `setsid` process group; stdout/stderr to `<data dir>/runs/logs/<run id>.log`, which the Output terminal follows
   read-only), so it survives pdtd restarts and updates: `resume_runs` reattaches while any of its processes lives
