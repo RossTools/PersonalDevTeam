@@ -43,7 +43,11 @@ mergeRefused: boolean,
 /**
  * An agent step is working on the attempt (a workflow already has an agent on it).
  */
-agentWorking: boolean, projectId: string, ticketId: string, 
+agentWorking: boolean, 
+/**
+ * A workflow's merge of the attempt waits for this CI (PDT-151): it handles a failure itself.
+ */
+mergeWaiting: boolean, projectId: string, ticketId: string, 
 /**
  * `PDT-42`.
  */

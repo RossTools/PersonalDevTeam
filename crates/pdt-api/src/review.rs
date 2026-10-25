@@ -11,7 +11,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::conversation::SessionMode;
 use pdt_core::policy::{Merger, may_merge};
-use pdt_core::pr::{Mergeable, PrState};
+use pdt_core::pr::{CiGate, Mergeable, PrState};
 use pdt_core::project::Project;
 use pdt_core::review::{
     ChangeStatus, ChangedFile, Changes, FeedbackItem, FeedbackResult, FileSides, MAX_COMMENT_BYTES, MAX_SIDE_BYTES,
@@ -622,6 +622,18 @@ pub(crate) async fn merge_attempt(
         }
     }
     if let Some(pr) = &p.pr {
+        // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
+        // asks: `gh pr merge --auto` merges at once where nothing is required.
+        let no_ci = if automated && policy.require_green_ci {
+            match ci_gate(&st, &info).await {
+                CiGate::Passed => false,
+                CiGate::NoCi => true,
+                CiGate::Pending(reason) => return Ok(Err(Refusal { code: "ci_pending", reason, fixable: false })),
+                CiGate::Failed(reason) => return Ok(Err(Refusal { code: "ci_failed", reason, fixable: true })),
+            }
+        } else {
+            false
+        };
         let repo = crate::github::github_repo(&info.repo_path).await.unwrap_or_default();
         let (gh, base, number) = (st.github.clone(), p.base.clone(), pr.number);
         tokio::task::spawn_blocking(move || {
@@ -636,6 +648,16 @@ pub(crate) async fn merge_attempt(
         .map_err(ApiError::internal)?
         .map_err(|e| conflict("merge_failed", e.to_string()))?;
         record_merge(&st, &info, input).await?;
+        if no_ci {
+            let body = format!(
+                "Set PR #{} to merge without waiting for CI: the repository has no CI (no GitHub Actions workflows, \
+                 no Buildkite pipeline).",
+                pr.number
+            );
+            if let Err(e) = st.store.add_comment_by(&info.ticket_id, &body, Actor::System, None, now_ms()).await {
+                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not note a merge without CI");
+            }
+        }
         crate::github::refresh_attempt(&st, &info).await;
         return Ok(Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
     }
@@ -664,6 +686,31 @@ pub(crate) async fn merge_attempt(
     let actor = if merger == Merger::User { Actor::User } else { Actor::System };
     st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, via, pr, now_ms()).await?;
     Ok(Ok(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
+}
+
+/// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from GitHub now.
+/// The repository has CI when the head (or the branch) has GitHub Actions workflows or the project a Buildkite
+/// pipeline, so no run yet is CI still to come.
+async fn ci_gate(st: &AppState, info: &AttemptInfo) -> CiGate {
+    crate::github::refresh_attempt(st, info).await;
+    let Some((pr, ci)) = crate::github::head_ci(st, &info.attempt.id) else {
+        return CiGate::Pending("PDT couldn't read the pull request's CI from GitHub".into());
+    };
+    // A failed read keeps the last look, which may be older than the head's CI.
+    if let Some(e) = &pr.error {
+        return CiGate::Pending(format!("PDT couldn't read the pull request's CI from GitHub: {e}"));
+    }
+    let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite).is_some();
+    let has_ci = buildkite || {
+        let repo = PathBuf::from(&info.repo_path);
+        let (head, branch) = (pr.head_sha.clone(), format!("refs/heads/{}", info.attempt.branch));
+        tokio::task::spawn_blocking(move || {
+            [head, branch].iter().any(|rev| pdt_git::has_files_under(&repo, rev, ".github/workflows"))
+        })
+        .await
+        .unwrap_or(true)
+    };
+    pdt_core::pr::ci_gate(&pr, ci.as_ref(), has_ci)
 }
 
 /// `POST /api/attempts/{id}/ask-agent`: asks the coder session to clear what stops the merge: merge the base in and

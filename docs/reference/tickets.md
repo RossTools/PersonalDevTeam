@@ -172,6 +172,13 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   check has seen the branch hold commits not in the base (`attempts.own_commits`, sticky; PDT-45: a branch that only
   fast-forwarded to a newer main is not merged), or GitHub says its PR merged at that head (`attempt.pr`; the merge
   queue squashes onto a newer base, which the patch check can miss).
+- Commits pushed after the merge (PDT-151): when GitHub says the attempt's PR merged at a head older than the
+  branch's, the commits since (`<merged head>..<head>`, pdt-git `commits_between`) are in no merged PR, so the attempt
+  stays active and Finish merged tickets never runs. The merge check (with `news`: the sweep and `check-merge`, not a
+  close) logs `attempt.late_commits` once per branch head (`mergedHead`, `head`, `commits` newest first, `summary`
+  "CB-25: 1 commit pushed after PR #308 merged: cd5d0b7 …", `list`, and the `notice` for the agent). The built-in
+  "Commits pushed after a merge" ([workflows.md](workflows.md#workflows)) tells the agent and asks the user in the
+  Inbox.
 - Ending an attempt as merged logs `attempt.merged` (with `via`: `detected` by this check, `merged_here` by a local
   Merge…, `closed` when the ticket was moved to Done or Won't do) for workflows (docs/reference/workflows.md).
 - Finishing is one server command, `POST /api/tickets/{id}/finish {stopRunning, discardChanges, deleteBranch,
@@ -250,6 +257,10 @@ crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
   the same fix step for the PR's later failures, but a CI pass alone never turns auto-merge on for it; being set to
   merge replaces it, and a person turning auto-merge off clears it with `merge_requested`. A failure while an
   agent already fixes the attempt (checked as the run gets there) is told to that agent instead of a second fix.
+  A CI failure notice says when a merge is in flight ("Auto-merge is on for the pull request, so it merges once the
+  fix passes", or the merge queue). CI events carry `mergeWaiting` when a workflow's merge waits for that CI (PDT-151:
+  a waiting step of an active run of the attempt that has an `attempt.merge` step waits for a `ci.*` event); PR
+  notices leaves those failures to that run, so the Coder hears of them once.
   Details: [workflows.md](workflows.md) "Workflows".
 - A user's comment on a ticket with an active attempt goes to its agent session the same way (built-in "Ticket comments
   to the agent"; an agent's own comments, actor `agent`, are not sent); Start already puts the earlier comments in the

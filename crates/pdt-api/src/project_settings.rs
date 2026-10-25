@@ -106,6 +106,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub start_delay_seconds: Option<u32>,
+    /// An automated merge waits for green CI on the pull request's head (PDT-151).
+    #[serde(default)]
+    #[ts(optional)]
+    pub require_green_ci: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub jira: Option<JiraInput>,
@@ -212,6 +216,7 @@ pub(crate) async fn put_settings(
         approval_exempt_labels,
         pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
         start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),
+        require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
     };
     let jira = match input.jira {
         None => current.jira,

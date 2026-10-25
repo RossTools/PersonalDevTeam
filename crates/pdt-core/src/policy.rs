@@ -88,6 +88,14 @@ pub struct ProjectPolicy {
     /// Auto-start takes a ticket only once it has gone this long unchanged (PDT-146); 0: at once.
     #[serde(default = "default_start_delay")]
     pub start_delay_seconds: u32,
+    /// An automated merge of a pull request waits for its head's CI to pass, and is refused while it fails (PDT-151),
+    /// whatever GitHub's branch protection requires.
+    #[serde(default = "yes")]
+    pub require_green_ci: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for ProjectPolicy {
@@ -100,6 +108,7 @@ impl Default for ProjectPolicy {
             auto_start: AutoStart::default(),
             pm_acts: false,
             start_delay_seconds: DEFAULT_START_DELAY_SECONDS,
+            require_green_ci: true,
         }
     }
 }

@@ -21,15 +21,19 @@ const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: t
 Put each finding on its line (`comments` in `submit_outcome`).";
 
 const FIX_PROMPT: &str = "QA passed, but the merge was refused: {{steps.merge.reason}}. Clear it on the branch: \
-merge the base branch in and resolve the conflicts (or commit what the worktree has uncommitted), run the project's \
-checks, commit and push. Change nothing else. A Reviewer looks at the fix before PDT merges again.";
+for a conflict, merge the base branch in and resolve it; for uncommitted changes, commit them; for failing CI, read \
+the failure and fix its cause. Run the project's checks, commit and push. Change nothing else. A Reviewer looks at \
+the fix before PDT merges again, once CI passes.";
 
-const FIX_REVIEW_PROMPT: &str = "QA passed on this attempt, then its merge was refused (a conflict, or uncommitted \
-changes) and the Coder fixed that. Review the fix: the commits since your earlier review, and the branch's diff \
+const FIX_REVIEW_PROMPT: &str = "QA passed on this attempt, then its merge was refused (a conflict, uncommitted \
+changes or failing CI) and the Coder fixed that. Review the fix: the commits since your earlier review, and the branch's diff \
 against its base, against the ticket. Put each finding on its line (`comments` in `submit_outcome`).";
 
 /// How long a merge may wait (for a person, or for someone to clear what blocks it) before the Inbox asks again.
 const MERGE_WAIT_MS: i64 = 3 * 24 * 60 * 60 * 1000;
+
+/// How long a merge waits for CI on the pull request's head to finish before the Inbox asks (PDT-151).
+const CI_WAIT_MS: i64 = 6 * 60 * 60 * 1000;
 
 const QA_PROMPT: &str = "Check that this attempt's change works: run the project's tests and try each point of the \
 ticket's \"Done when\".";
@@ -86,6 +90,13 @@ fn edge(from: &str, port: &str, to: &str) -> Value {
 /// This run's attempt merging (by anyone, anywhere).
 fn merged_event() -> Value {
     json!({"type": "attempt.merged", "where": [{"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}]})
+}
+
+/// CI on this run's attempt passing or failing while its merge waits for it (`mergeWaiting`: not an older run's).
+fn ci_event() -> Value {
+    json!({"type": "ci.run_passed", "also": ["ci.run_failed"], "where": [
+        {"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"},
+        {"left": "{{event.mergeWaiting}}", "op": "truthy"}]})
 }
 
 pub fn doc() -> WorkflowDoc {
@@ -215,7 +226,24 @@ pub fn doc() -> WorkflowDoc {
             "Merge",
             json!({"attempt": "{{trigger.attemptId}}", "finishOnMerge": true, "pipelineStage": "merge"}),
         ),
-        // A refused merge: the Coder fixes what an agent can (then a Reviewer checks the fix); anything else asks you.
+        // A refused merge: CI still running waits for it (PDT-151); the Coder fixes what an agent can (a conflict,
+        // failing CI; then a Reviewer checks the fix); anything else asks you.
+        node(
+            "merge_why",
+            "switch",
+            2100,
+            100,
+            "Waiting for CI?",
+            json!({"value": "{{steps.merge.code}}", "cases": [{"port": "ci_pending", "equals": "ci_pending"}]}),
+        ),
+        node(
+            "wait_ci",
+            "wait",
+            2400,
+            -60,
+            "Wait for CI",
+            json!({"event": ci_event(), "timeoutMs": CI_WAIT_MS, "pipelineStage": "merge"}),
+        ),
         node(
             "fixable",
             "condition",
@@ -340,7 +368,11 @@ pub fn doc() -> WorkflowDoc {
         edge("merge_mode", "default", "wait_merge"),
         edge("merge", "merged", "finish"),
         edge("merge", "queued", "done"),
-        edge("merge", "refused", "fixable"),
+        edge("merge", "refused", "merge_why"),
+        edge("merge_why", "ci_pending", "wait_ci"),
+        edge("merge_why", "default", "fixable"),
+        edge("wait_ci", "event", "merge"),
+        edge("wait_ci", "timeout", "blocked"),
         edge("fixable", "true", "fix"),
         edge("fixable", "false", "blocked"),
         edge("fix", "submitted", "fix_review"),
@@ -371,9 +403,9 @@ pub fn doc() -> WorkflowDoc {
         "name": "Pipeline",
         "description": "Draft → Refine → Ready → Code → Review → QA → Accept → Done. Refine (on a ticket) runs the \
                         Refiner; starting a ticket runs the Coder, then a fresh Reviewer and QA, sending it back to the \
-                        Coder on changes or a failure; then you accept and the run merges. A merge refused for a \
-                        conflict goes back to the Coder and a Reviewer; one refused for anything else asks you in the \
-                        Inbox. Any stage can be yours instead of an agent's.",
+                        Coder on changes or a failure; then you accept and the run merges once CI on the pull \
+                        request passes. A merge refused for a conflict or failing CI goes back to the Coder and a \
+                        Reviewer; one refused for anything else asks you in the Inbox. Any stage can be yours instead of an agent's.",
         "nodes": nodes,
         "edges": edges,
         "settings": {"maxSteps": 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},

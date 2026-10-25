@@ -220,6 +220,12 @@ pub fn file_at(worktree: &Path, rev: &str, path: &str) -> Result<Option<Vec<u8>>
     }
 }
 
+/// Whether commit `rev` has any file under the folder `dir` (e.g. `.github/workflows`); false when it can't tell.
+pub fn has_files_under(repo: &Path, rev: &str, dir: &str) -> bool {
+    let dir = format!("{}/", dir.trim_end_matches('/'));
+    matches!(git_bytes(repo, &["ls-tree", "--name-only", rev, "--", &dir], None), Ok(Ok(out)) if !out.trim_ascii().is_empty())
+}
+
 /// What merging `branch` into `base` would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergePreview {
@@ -439,6 +445,18 @@ mod tests {
             ]
         );
         assert!(files.iter().all(|f| f.version.contains(':')));
+    }
+
+    #[test]
+    fn has_files_under_looks_in_the_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_repo, wt, _base) = setup(tmp.path());
+        assert!(!has_files_under(&wt, "HEAD", ".github/workflows"));
+        write(&wt, ".github/workflows/ci.yml", b"on: push\n");
+        assert!(!has_files_under(&wt, "HEAD", ".github/workflows"), "not committed yet");
+        commit_all(&wt, "ci");
+        assert!(has_files_under(&wt, "HEAD", ".github/workflows"));
+        assert!(!has_files_under(&wt, "nope", ".github/workflows"), "an unknown commit");
     }
 
     #[test]

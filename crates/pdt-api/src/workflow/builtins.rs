@@ -21,10 +21,12 @@ pub const BASE_MOVED: &str = "base-moved";
 pub const PR_FEEDBACK: &str = "pr-feedback";
 pub const JIRA_IMPORT: &str = "jira-import";
 pub const JIRA_DONE: &str = "jira-done";
+pub const LATE_COMMITS: &str = "late-commits";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, doc: pr_notices },
     Builtin { id: FINISH_MERGED, enabled: true, doc: finish_merged },
+    Builtin { id: LATE_COMMITS, enabled: true, doc: late_commits },
     Builtin { id: COMMENTS_TO_AGENT, enabled: true, doc: comments_to_agent },
     Builtin { id: BASE_MOVED, enabled: false, doc: base_moved },
     Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
@@ -75,7 +77,8 @@ fn pr_notices() -> WorkflowDoc {
     let comment = |body: &str| json!({"ticket": "{{trigger.ticketId}}", "body": body});
     let null = serde_json::Value::Null;
     let nodes = vec![
-        node("ci", "ci.run_failed", 0, 0, "", null.clone()),
+        // A workflow's merge waiting for this CI handles its failure itself (PDT-151).
+        node("ci", "ci.run_failed", 0, 0, "", json!({"where": [cond("{{trigger.mergeWaiting}}", "falsy", None)]})),
         node("conflict", "pr.conflict", 0, 100, "", null.clone()),
         node("queue", "pr.queue_left", 0, 200, "", null.clone()),
         node("behind", "pr.behind", 0, 300, "", null.clone()),
@@ -193,10 +196,22 @@ fn pr_notices() -> WorkflowDoc {
             "Merge again",
             json!({"attempt": "{{trigger.attemptId}}", "again": true}),
         ),
+        // Merged again before the fix's CI passed (PDT-151): set to merge, so CI passing merges it.
+        node(
+            "ci_wait",
+            "condition",
+            2520,
+            140,
+            "Waiting for CI?",
+            json!({"match": "any", "conditions": [
+            cond("{{steps.remerge.code}}", "eq", Some(json!("ci_pending"))),
+            cond("{{steps.remerge.code}}", "eq", Some(json!("ci_failed")))]}),
+        ),
+        node("after_ci", "end", 2800, 280, "Merges once CI passes", json!({"quiet": true})),
         node(
             "refused_note",
             "ticket.comment",
-            2520,
+            2800,
             140,
             "Note the refusal",
             comment("PR notices could not turn auto-merge back on for PR #{{trigger.pr}}: {{steps.remerge.reason}}"),
@@ -286,7 +301,9 @@ fn pr_notices() -> WorkflowDoc {
         e("push", "stopped", "stuck"),
         e("remerge", "queued", "merging"),
         e("remerge", "merged", "merging"),
-        e("remerge", "refused", "refused_note"),
+        e("remerge", "refused", "ci_wait"),
+        e("ci_wait", "true", "after_ci"),
+        e("ci_wait", "false", "refused_note"),
         e("tell", "untold", "unheard"),
         e("unheard", "true", "inbox"),
         e("unheard", "false", "heard"),
@@ -333,6 +350,90 @@ fn finish_merged() -> WorkflowDoc {
             {"from": "ask", "port": "timeout", "to": "banner"},
             {"from": "finish", "port": "blocked", "to": "banner"},
         ],
+    }))
+}
+
+const FOLLOW_UP: &str = "{{trigger.summary}}.\n\nPR #{{trigger.pr}} ({{trigger.url}}) merged {{trigger.ticketKey}} \
+into {{trigger.baseBranch}} at {{trigger.mergedHead}}, and these commits on {{trigger.branch}} came after it, so \
+they are not in {{trigger.baseBranch}}:\n\n{{trigger.list}}\n\nCherry-pick them onto this ticket's branch (`git \
+cherry-pick {{trigger.mergedHead}}..{{trigger.head}}`; the branch {{trigger.branch}} is kept for this), check that \
+they still make sense on {{trigger.baseBranch}}, run the checks and open a pull request.\n\n## Done when\n- What \
+those commits change is in {{trigger.baseBranch}}, or found not to be needed there.";
+
+/// Commits pushed to an attempt's branch after its pull request merged (PDT-151): the attempt's agent hears that its
+/// push came too late, and the Inbox asks the user what becomes of them: a follow-up ticket that cherry-picks them
+/// (the ticket finishes, keeping the branch), discard them and finish (after confirming), or keep the ticket open.
+fn late_commits() -> WorkflowDoc {
+    let ended = json!({"type": "attempt.merged", "also": ["attempt.abandoned"],
+        "where": [{"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}]});
+    let comment = |body: &str| json!({"ticket": "{{trigger.ticketId}}", "body": body});
+    doc(json!({
+        "name": "Commits pushed after a merge",
+        "description": "When commits reach a ticket's branch after its pull request merged, the ticket stays open: \
+                        this tells the attempt's agent, and asks you in the Inbox whether to open a follow-up ticket \
+                        that cherry-picks them (finishing this one and keeping its branch), discard them and finish \
+                        (after you confirm), or keep the ticket open.",
+        "nodes": [
+            {"id": "late", "kind": "attempt.late_commits", "version": 1, "position": {"x": 0, "y": 0}},
+            {"id": "tell", "kind": "session.send", "version": 1, "position": {"x": 280, "y": -140},
+             "title": "Tell the agent", "config": {
+                "attempt": "{{trigger.attemptId}}", "text": "{{trigger.notice.text}}",
+                "dedupe": "{{trigger.notice.key}}", "timeline": "pr"}},
+            {"id": "ask", "kind": "gate", "version": 1, "position": {"x": 280, "y": 0}, "title": "What becomes of them?",
+             "config": {
+                "question": "{{trigger.summary}}. The pull request merged without them, so the ticket is still open. \
+                             Open a follow-up ticket that cherry-picks them, discard them and finish the ticket, or \
+                             keep it open.",
+                "choices": ["open_follow_up", "discard_and_finish", "keep_open"], "event": ended}},
+            {"id": "follow_up", "kind": "ticket.create", "version": 1, "position": {"x": 560, "y": -140},
+             "title": "Open a follow-up", "config": {
+                "project": "{{trigger.projectId}}", "stage": "todo", "description": FOLLOW_UP,
+                "title": "Follow-up to {{trigger.ticketKey}}: commits pushed after PR #{{trigger.pr}} merged"}},
+            {"id": "follow_note", "kind": "ticket.comment", "version": 1, "position": {"x": 840, "y": -140},
+             "title": "Note the follow-up", "config": comment(
+                "{{steps.follow_up.key}} takes the commits pushed after PR #{{trigger.pr}} merged; the branch \
+                 {{trigger.branch}} stays for it.")},
+            {"id": "finish_keep", "kind": "ticket.finish", "version": 1, "position": {"x": 1120, "y": -140},
+             "title": "Finish, keeping the branch", "config": {
+                "ticket": "{{trigger.ticketId}}", "stopRunning": true, "deleteBranch": false}},
+            {"id": "confirm", "kind": "gate", "version": 1, "position": {"x": 560, "y": 0}, "title": "Really discard?",
+             "config": {
+                "question": "Discard {{trigger.summary}}? They are not in {{trigger.baseBranch}}: finishing \
+                             {{trigger.ticketKey}} deletes its branch {{trigger.branch}} and its worktree.",
+                "choices": ["discard", "back"], "event": ended}},
+            {"id": "finish_drop", "kind": "ticket.finish", "version": 1, "position": {"x": 840, "y": 0},
+             "title": "Finish, deleting the branch", "config": {
+                "ticket": "{{trigger.ticketId}}", "stopRunning": true, "deleteBranch": true}},
+            {"id": "blocked", "kind": "ticket.comment", "version": 1, "position": {"x": 1400, "y": 0},
+             "title": "Note what blocks it", "config": comment(
+                "Couldn't finish {{trigger.ticketKey}}: its worktree has uncommitted changes. Commit or discard them, \
+                 then move it to Done.")},
+            {"id": "done", "kind": "end", "version": 1, "position": {"x": 1400, "y": -140}, "title": "Finished"},
+            {"id": "kept", "kind": "end", "version": 1, "position": {"x": 560, "y": 140}, "title": "Kept open",
+             "config": {"quiet": true}},
+        ],
+        "edges": [
+            {"from": "late", "to": "tell"},
+            {"from": "late", "to": "ask"},
+            {"from": "ask", "port": "open_follow_up", "to": "follow_up"},
+            {"from": "ask", "port": "discard_and_finish", "to": "confirm"},
+            {"from": "ask", "port": "keep_open", "to": "kept"},
+            {"from": "ask", "port": "event", "to": "kept"},
+            {"from": "ask", "port": "unanswered", "to": "kept"},
+            {"from": "ask", "port": "timeout", "to": "kept"},
+            {"from": "follow_up", "to": "follow_note"},
+            {"from": "follow_note", "to": "finish_keep"},
+            {"from": "finish_keep", "port": "finished", "to": "done"},
+            {"from": "finish_keep", "port": "blocked", "to": "blocked"},
+            {"from": "confirm", "port": "discard", "to": "finish_drop"},
+            {"from": "confirm", "port": "back", "to": "ask"},
+            {"from": "confirm", "port": "event", "to": "kept"},
+            {"from": "confirm", "port": "unanswered", "to": "kept"},
+            {"from": "confirm", "port": "timeout", "to": "kept"},
+            {"from": "finish_drop", "port": "finished", "to": "done"},
+            {"from": "finish_drop", "port": "blocked", "to": "blocked"},
+        ],
+        "settings": {"maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
     }))
 }
 

@@ -354,6 +354,21 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Whether a workflow's merge of the attempt waits for its CI (PDT-151): a step of an active run of the attempt
+    /// that has an `attempt.merge` step waits for a `ci.*` event. That run handles a failure itself.
+    pub async fn attempt_merge_waits_for_ci(&self, attempt_id: &str) -> Result<bool, StoreError> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM workflow_steps s JOIN workflow_runs r ON r.id = s.run_id \
+             WHERE r.attempt_id = ? AND r.status IN ('running', 'waiting') AND s.status = 'waiting' \
+             AND json_extract(s.wait, '$.event.type') LIKE 'ci.%' \
+             AND EXISTS (SELECT 1 FROM workflow_steps m WHERE m.run_id = r.id AND m.kind = 'attempt.merge')",
+        )
+        .bind(attempt_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n > 0)
+    }
+
     /// Whether an agent step works on the attempt now, outside run `except`: one not done, or a run's agent step not
     /// yet bound (waiting for a slot, or about to start) in an active run of the attempt (PDT-104).
     pub async fn attempt_agent_busy(&self, attempt_id: &str, except: &str) -> Result<bool, StoreError> {

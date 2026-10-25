@@ -467,7 +467,7 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
     st.store.get_ticket_summary(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
     if let Some(info) = st.store.active_attempt(&id).await? {
         crate::github::refresh_attempt(&st, &info).await;
-        if is_merged(&st, &info, true).await {
+        if is_merged(&st, &info, true, true).await {
             let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
             st.store
                 .end_attempt(
@@ -494,7 +494,7 @@ pub(crate) async fn end_for_close(
     actor: Actor,
 ) -> Result<(), ApiError> {
     if let Some(info) = st.store.active_attempt(ticket_id).await? {
-        let merged = stage == TicketStage::Done || is_merged(st, &info, false).await;
+        let merged = stage == TicketStage::Done || is_merged(st, &info, false, false).await;
         let state = if merged { AttemptState::Merged } else { AttemptState::Abandoned };
         let via = merged.then_some(MergeVia::Closed);
         let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
@@ -507,8 +507,10 @@ pub(crate) async fn end_for_close(
 /// judged by its last known head. Merged means GitHub merged the attempt's PR at that head (the merge queue squashes
 /// onto a newer base, which git's patch check can miss), or git finds the head or its whole patch in the base (locally
 /// or on `origin`, fetched first with `fetch`; for projects not on GitHub) after the branch has been seen with commits
-/// of its own. Git runs on a blocking thread; any failure counts as not merged.
-async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool) -> bool {
+/// of its own. Git runs on a blocking thread; any failure counts as not merged. With `news`, a PR that merged at an
+/// older head than the branch's logs `attempt.late_commits` (PDT-151): the commits pushed after the merge keep the
+/// attempt open, and the user decides what becomes of them.
+async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool, news: bool) -> bool {
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
     let (base_commit, last_head) = (info.base_commit.clone(), info.attempt.last_head.clone());
@@ -523,21 +525,34 @@ async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool) -> bool {
             tracing::info!(attempt = %attempt, error = %e, "could not fetch the base branch; checking the local refs");
         }
         let head = pdt_git::rev_parse(&repo, &format!("refs/heads/{branch}")).or(last_head)?;
-        if pr.is_some_and(|p| p.merged_at(&head)) {
-            return Some((head, seen_own, true));
+        if pr.as_ref().is_some_and(|p| p.merged_at(&head)) {
+            return Some((head, seen_own, true, vec![]));
         }
+        // Merged on GitHub at an older head: the commits since aren't in the base.
+        let late =
+            match pr.as_ref().filter(|p| news && p.state == pdt_core::pr::PrState::Merged && !p.head_sha.is_empty()) {
+                Some(p) => pdt_git::commits_between(&repo, &p.head_sha, &head)
+                    .unwrap_or_else(|| vec![(head.clone(), String::new())]),
+                None => vec![],
+            };
         let origin = format!("origin/{base}");
         let bases = [base.as_str(), origin.as_str()];
         // A head already in the base when first seen only caught up with it (PDT-45): not merged until the branch
         // has held commits of its own.
         let own = seen_own || pdt_git::has_own_commits(&repo, &head, &base_commit, &bases);
         let merged = own && pdt_git::is_merged(&repo, &head, &base_commit, &bases);
-        Some((head, own, merged))
+        Some((head, own, merged, late))
     })
     .await
     .ok()
     .flatten();
-    let Some((head, own, merged)) = found else { return false };
+    let Some((head, own, merged, late)) = found else { return false };
+    if !merged
+        && !late.is_empty()
+        && let Some(pr) = crate::github::watched_pr(st, &info.attempt.id)
+    {
+        crate::github::log_late_commits(st, info, &pr, &head, late).await;
+    }
     if (info.attempt.last_head.as_deref() != Some(head.as_str()) || own != info.own_commits)
         && let Err(e) = st.store.set_attempt_head(&info.attempt.id, &head, own).await
     {
@@ -566,7 +581,7 @@ pub async fn check_merges(st: &AppState) {
             continue;
         }
         let fetch = fetched.insert((info.project_id.clone(), info.attempt.base_branch.clone()));
-        if is_merged(st, &info, fetch).await {
+        if is_merged(st, &info, fetch, true).await {
             let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
             let via = Some(MergeVia::Detected);
             match st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, via, pr, now_ms()).await {

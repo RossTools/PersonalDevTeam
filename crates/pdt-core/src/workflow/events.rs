@@ -15,6 +15,7 @@ pub const PR_BEHIND: &str = "pr.behind";
 pub const ATTEMPT_STARTED: &str = "attempt.started";
 pub const ATTEMPT_MERGED: &str = "attempt.merged";
 pub const ATTEMPT_ABANDONED: &str = "attempt.abandoned";
+pub const ATTEMPT_LATE_COMMITS: &str = "attempt.late_commits";
 pub const TICKET_STAGE_CHANGED: &str = "ticket.stage_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
@@ -108,6 +109,13 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Attempt abandoned",
         description: "An attempt was abandoned (by the user, or because its ticket was closed unmerged).",
         schema: schema_of::<AttemptEvent>,
+    },
+    EventType {
+        id: ATTEMPT_LATE_COMMITS,
+        title: "Commits pushed after the merge",
+        description: "An attempt's pull request merged, and its branch has commits the merged pull request doesn't \
+                      (pushed after the merge), so the attempt stays open (once per branch head).",
+        schema: schema_of::<LateCommitsEvent>,
     },
     EventType {
         id: TICKET_STAGE_CHANGED,
@@ -264,6 +272,33 @@ pub struct CiEvent {
     /// An agent step is working on the attempt (a workflow already has an agent on it).
     #[serde(default)]
     pub agent_working: bool,
+    /// A workflow's merge of the attempt waits for this CI (PDT-151): it handles a failure itself.
+    #[serde(default)]
+    pub merge_waiting: bool,
+}
+
+/// `attempt.late_commits` (PDT-151).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LateCommitsEvent {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub attempt: AttemptRef,
+    pub pr: u32,
+    pub url: String,
+    /// The head the pull request merged at.
+    pub merged_head: String,
+    /// The branch's head now.
+    pub head: String,
+    /// The commits after `mergedHead`, newest first.
+    pub commits: Vec<crate::pr::LateCommit>,
+    /// One line for the Inbox: "CB-25: 1 commit pushed after PR #308 merged: cd5d0b7 …".
+    pub summary: String,
+    /// What PDT tells the attempt's agent.
+    pub notice: Notice,
+    /// The commits as a list for a ticket's description (`- cd5d0b7 Fix the build`).
+    pub list: String,
 }
 
 /// `pr.*`.

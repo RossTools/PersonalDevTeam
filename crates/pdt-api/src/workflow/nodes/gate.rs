@@ -124,8 +124,8 @@ impl NodeKind for Gate {
         {
             return Err("choices can't be empty, unanswered, timeout, event or error".into());
         }
-        if let Some(e) = c.event.as_ref().filter(|e| pdt_core::workflow::events::event_type(&e.kind).is_none()) {
-            return Err(format!("no event type is called {}", e.kind));
+        if let Some(e) = &c.event {
+            e.check()?;
         }
         if let Some(a) = c.ahead.iter().find(|a| !c.choices.contains(&a.choice)) {
             return Err(format!("ahead names {}, which is not a choice", a.choice));
@@ -186,7 +186,7 @@ impl NodeKind for Gate {
             cx.st.store.open_inbox_item(&item).await.map_err(|e| e.to_string())?;
             let mut wait = json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve}});
             if let Some(e) = c.event {
-                wait["event"] = json!({"type": e.kind, "where": e.conditions});
+                wait["event"] = e.wait();
             }
             Ok(Outcome::Wait {
                 wait,

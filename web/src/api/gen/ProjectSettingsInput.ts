@@ -30,4 +30,8 @@ pmActs?: boolean,
 /**
  * Auto-start takes a ticket only once it has gone this many seconds unchanged (PDT-146); 0: at once.
  */
-startDelaySeconds?: number, jira?: JiraInput, buildkite?: BuildkiteInput, };
+startDelaySeconds?: number, 
+/**
+ * An automated merge waits for green CI on the pull request's head (PDT-151).
+ */
+requireGreenCi?: boolean, jira?: JiraInput, buildkite?: BuildkiteInput, };

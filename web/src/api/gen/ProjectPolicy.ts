@@ -26,4 +26,9 @@ pmActs: boolean,
 /**
  * Auto-start takes a ticket only once it has gone this long unchanged (PDT-146); 0: at once.
  */
-startDelaySeconds: number, };
+startDelaySeconds: number, 
+/**
+ * An automated merge of a pull request waits for its head's CI to pass, and is refused while it fails (PDT-151),
+ * whatever GitHub's branch protection requires.
+ */
+requireGreenCi: boolean, };

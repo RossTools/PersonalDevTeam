@@ -734,20 +734,31 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     submit(&env, &reviewer, "approved").await;
     assert_eq!(step_of(&env, "push").await, env.session);
     assert_eq!(merges(&env), 1, "not before the push");
+    // The push's CI is still running (PDT-151): set to merge, it merges once CI passes, not before.
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Running)]);
     submit(&env, &env.session, "submitted").await;
     let r = finished_run(&env, 2).await;
-    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(r["status"], "quiet", "{r}");
     let p = path(&r);
-    assert_eq!(p[5..], ["fix:review", "review:approved", "push:submitted", "remerge:queued", "merging:-"], "{p:?}");
-    assert_eq!(merges(&env), 2, "auto-merge on again");
+    assert_eq!(
+        p[5..],
+        ["fix:review", "review:approved", "push:submitted", "remerge:refused", "ci_wait:true", "after_ci:-"],
+        "{p:?}"
+    );
+    assert_eq!(merges(&env), 1, "not while CI runs");
     let info = env.state.store.get_attempt(&attempt).await.unwrap().unwrap();
     assert!(info.finish_on_merge && info.merge_requested, "the first merge's choice stays");
-
-    // Fixed by hand: CI passes with auto-merge off, and PR notices turns it back on.
-    env.gh.set_pr(BRANCH, Some(pr()));
     env.gh.set_runs(BRANCH, vec![run(8, CiState::Passed)]);
     pdt_api::refresh_prs(&env.state).await;
     let r = finished_run(&env, 3).await;
+    assert_eq!(path(&r), ["passed:out", "remerge:queued", "merging:-"], "{r}");
+    assert_eq!(merges(&env), 2, "auto-merge on again");
+
+    // Fixed by hand: CI passes with auto-merge off, and PR notices turns it back on.
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(10, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let r = finished_run(&env, 4).await;
     assert_eq!(path(&r), ["passed:out", "remerge:queued", "merging:-"], "{r}");
     assert_eq!(merges(&env), 3);
 
@@ -756,9 +767,9 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     let body = json!({"agentCredentials": null, "runOverrides": null, "mergeBy": "user"});
     let (s, v) = call(&env.app, "PUT", &format!("/api/projects/{pid}/settings"), Some(body)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    env.gh.set_runs(BRANCH, vec![run(9, CiState::Passed)]);
+    env.gh.set_runs(BRANCH, vec![run(11, CiState::Passed)]);
     pdt_api::refresh_prs(&env.state).await;
-    let r = finished_run(&env, 4).await;
+    let r = finished_run(&env, 5).await;
     assert_eq!(path(&r)[1], "remerge:refused", "{r}");
     assert!(comments(&env).await.iter().any(|c| c.contains("could not turn auto-merge back on for PR #12")));
 
@@ -769,7 +780,7 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     conflicting.mergeable = Mergeable::Conflicting;
     env.gh.set_pr(BRANCH, Some(conflicting));
     pdt_api::refresh_prs(&env.state).await;
-    let r = finished_run(&env, 5).await;
+    let r = finished_run(&env, 6).await;
     let p = path(&r);
     assert_eq!(p[4..8], ["over:true", "first_over:true", "limit_note:out", "tell:sent"], "{p:?}");
     assert!(comments(&env).await.iter().any(|c| c.contains("after 3 tries")), "{:?}", comments(&env).await);

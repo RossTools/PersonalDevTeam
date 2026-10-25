@@ -78,7 +78,11 @@ impl NodeKind for Merge {
              locally (`merged`). The project's policy may not let a workflow merge, or may need a person's approval \
              first; that, and anything that stops the merge, leaves by `refused`. With `again` (after a fix), a pull \
              request already set to merge counts as `queued`, and the first merge's finishing choice stays. A refusal \
-             says `fixable` when the attempt's agent can clear it with a commit (a conflict, uncommitted changes).",
+             says `fixable` when the attempt's agent can clear it with a commit (a conflict, uncommitted changes, \
+             failing CI). With the project's `requireGreenCi` (on by default) a pull request merges only once CI on \
+             its head passed: `code` `ci_failed` (fixable) or `ci_pending` otherwise; a repository with no CI \
+             merges as before, noted on the ticket. Merging `again` before CI passed sets the pull request to merge, \
+             so CI passing merges it.",
             &[("merged", "Merged"), ("queued", "Auto-merge on"), ("refused", "Refused")],
             false,
         )
@@ -123,6 +127,14 @@ impl NodeKind for Merge {
                 Ok(Err(r)) => {
                     if r.fixable && !c.again {
                         refused_fixable(cx, &c.attempt, &req).await;
+                    }
+                    // Merging again after a fix, before the fix's CI passed (PDT-151): set to merge, so CI passing
+                    // merges it (PR notices) and a failure gets fixed again.
+                    if c.again
+                        && r.code.starts_with("ci_")
+                        && let Err(e) = cx.st.store.set_attempt_merge_requested(&c.attempt).await
+                    {
+                        tracing::warn!(attempt = %c.attempt, error = %e, "could not record a merge waiting for CI");
                     }
                     Ok(Outcome::next("refused", json!({"code": r.code, "reason": r.reason, "fixable": r.fixable})))
                 }

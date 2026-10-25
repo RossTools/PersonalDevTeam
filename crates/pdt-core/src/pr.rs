@@ -251,6 +251,12 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
             text.push_str(&format!(" Read the failure with `gh run view {id} --log-failed`,"));
         }
         text.push_str(" fix it, run the checks and push.");
+        // A merge in flight (PDT-151): the fix is what it merges.
+        if now.in_merge_queue {
+            text.push_str(" The pull request is in the merge queue, so it merges once the fix passes.");
+        } else if now.auto_merge {
+            text.push_str(" Auto-merge is on for the pull request, so it merges once the fix passes.");
+        }
         out.push(Notice {
             kind: NoticeKind::CiFailed,
             key: format!("ci_failed:{}", ids.join(",")),
@@ -431,6 +437,95 @@ pub fn notice_settled(kind: NoticeKind, now: &PullRequestStatus) -> bool {
     }
 }
 
+/// Whether CI lets an automated merge of an open pull request go ahead (PDT-151): its head's CI, from every provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CiGate {
+    /// Every run on the head passed.
+    Passed,
+    /// The repository has no CI: nothing to wait for.
+    NoCi,
+    /// Runs on the head are queued or running, or none has started yet though the repository has CI.
+    Pending(String),
+    /// A run on the head failed or was cancelled: the attempt's agent fixes it.
+    Failed(String),
+}
+
+/// The gate for `pr` with `ci` on its head (GitHub Actions and Buildkite together). `has_ci`: the repository has CI
+/// (workflow files, a Buildkite pipeline), so no run yet means one is still to come.
+pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> CiGate {
+    let (n, at) = (pr.number, short(&pr.head_sha));
+    let Some(ci) = ci else {
+        return if has_ci {
+            CiGate::Pending(format!("CI hasn't started on PR #{n} at {at} yet"))
+        } else {
+            CiGate::NoCi
+        };
+    };
+    match ci.state {
+        CiState::Passed => CiGate::Passed,
+        CiState::Queued | CiState::Running => {
+            CiGate::Pending(format!("CI is still running on PR #{n} at {at}: {}", ci.url))
+        }
+        CiState::Cancelled => CiGate::Failed(format!(
+            "CI was cancelled on PR #{n} at {at} ({}); run it again (`gh run rerun`) or push a fix",
+            ci.url
+        )),
+        CiState::Failed => {
+            let failed: Vec<&CiRun> = ci.failed().collect();
+            let jobs: Vec<String> = failed.iter().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
+            let mut why = format!("CI failed on PR #{n} at {at}");
+            if !jobs.is_empty() {
+                why.push_str(&format!(" ({})", jobs.join(", ")));
+            }
+            why.push_str(&format!(": {}", ci.url));
+            if let Some(r) = failed.iter().find(|r| r.url.contains("github.com")) {
+                why.push_str(&format!(". Read it with `gh run view {} --log-failed`", r.id));
+            }
+            CiGate::Failed(why)
+        }
+    }
+}
+
+/// A commit on an attempt's branch that its merged pull request doesn't have.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LateCommit {
+    pub sha: String,
+    pub subject: String,
+}
+
+/// What to say when commits were pushed to the branch after its pull request merged (PDT-151): `summary` for the
+/// Inbox ("CB-25: 1 commit pushed after PR #308 merged: cd5d0b7 Fix the build"), `notice` for the attempt's agent.
+pub fn late_commits_notice(key: &str, pr: u32, branch: &str, base: &str, commits: &[LateCommit]) -> (String, Notice) {
+    let n = commits.len();
+    let list: Vec<String> =
+        commits.iter().take(5).map(|c| format!("{} {}", short(&c.sha), c.subject).trim_end().to_string()).collect();
+    let mut listed = list.join("; ");
+    if n > list.len() {
+        listed.push_str(&format!("; and {} more", n - list.len()));
+    }
+    let what = if n == 1 { "1 commit".to_string() } else { format!("{n} commits") };
+    let summary = format!("{key}: {what} pushed after PR #{pr} merged: {listed}");
+    let head = commits.first().map(|c| c.sha.clone()).unwrap_or_default();
+    let text = format!(
+        "[PDT] PR #{pr} ({branch}) merged into {base} before you pushed {what} ({listed}): {} not in {base}. Push \
+         nothing more to {branch}. The user decides in PDT's Inbox whether {} into a follow-up ticket or {} dropped.",
+        if n == 1 { "it is" } else { "they are" },
+        if n == 1 { "it goes" } else { "they go" },
+        if n == 1 { "is" } else { "are" },
+    );
+    let notice = Notice {
+        kind: NoticeKind::Merged,
+        key: format!("late_commits:{head}"),
+        pr: Some(pr),
+        url: None,
+        jobs: vec![],
+        text,
+    };
+    (summary, notice)
+}
+
 fn short(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
 }
@@ -476,6 +571,53 @@ pub(crate) mod tests {
             created_at: at.into(),
             failed_jobs: vec![],
         }
+    }
+
+    #[test]
+    fn the_ci_gate_waits_for_green_ci_on_the_head() {
+        let mut p = pr();
+        p.number = 308;
+        p.head_sha = "abcdef1234".into();
+        let ci = |runs: Vec<CiRun>| CiStatus::of(&runs, "abcdef1234");
+        let at = "2026-10-25T00:00:00Z";
+        let passed = ci(vec![run(1, "ci", "abcdef1234", at, CiState::Passed)]);
+        assert_eq!(ci_gate(&p, passed.as_ref(), true), CiGate::Passed);
+        assert_eq!(ci_gate(&p, None, false), CiGate::NoCi, "a repository without CI merges as before");
+        assert_eq!(ci_gate(&p, None, true), CiGate::Pending("CI hasn't started on PR #308 at abcdef1 yet".into()));
+        let running = ci(vec![
+            run(1, "ci", "abcdef1234", at, CiState::Passed),
+            run(2, "macos", "abcdef1234", at, CiState::Running),
+        ]);
+        assert!(matches!(ci_gate(&p, running.as_ref(), true), CiGate::Pending(r) if r.contains("still running")));
+        let mut red = run(3, "ci", "abcdef1234", at, CiState::Failed);
+        red.url = "https://github.com/o/r/actions/runs/3".into();
+        red.failed_jobs = vec!["test (linux)".into()];
+        let failed = ci(vec![red, run(2, "macos", "abcdef1234", at, CiState::Running)]);
+        assert_eq!(
+            ci_gate(&p, failed.as_ref(), true),
+            CiGate::Failed(
+                "CI failed on PR #308 at abcdef1 (test (linux)): https://github.com/o/r/actions/runs/3. Read it with \
+                 `gh run view 3 --log-failed`"
+                    .into()
+            ),
+            "a failure wins over a run still going"
+        );
+        let cancelled = ci(vec![run(4, "ci", "abcdef1234", at, CiState::Cancelled)]);
+        assert!(matches!(ci_gate(&p, cancelled.as_ref(), true), CiGate::Failed(r) if r.contains("cancelled")));
+    }
+
+    #[test]
+    fn late_commits_say_what_was_pushed_after_the_merge() {
+        let c = |sha: &str, subject: &str| LateCommit { sha: sha.into(), subject: subject.into() };
+        let (summary, notice) = late_commits_notice("CB-25", 308, "b", "main", &[c("cd5d0b7aaaa", "Fix the build")]);
+        assert_eq!(summary, "CB-25: 1 commit pushed after PR #308 merged: cd5d0b7 Fix the build");
+        assert_eq!(notice.key, "late_commits:cd5d0b7aaaa");
+        assert!(notice.text.contains("before you pushed 1 commit (cd5d0b7 Fix the build): it is not in main"));
+        let many: Vec<LateCommit> = (0..7).map(|i| c(&format!("{i}000000"), "x")).collect();
+        let (summary, notice) = late_commits_notice("CB-25", 308, "b", "main", &many);
+        assert!(summary.starts_with("CB-25: 7 commits pushed after PR #308 merged: 0000000 x;"));
+        assert!(summary.ends_with("; and 2 more"));
+        assert!(notice.text.contains("they are not in main"));
     }
 
     #[test]

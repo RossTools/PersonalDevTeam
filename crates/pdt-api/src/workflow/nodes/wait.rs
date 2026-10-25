@@ -17,9 +17,41 @@ pub struct EventWait {
     #[serde(rename = "type")]
     #[ts(rename = "type")]
     pub kind: String,
+    /// More event types that end the wait too (PDT-151: CI passing or failing).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    pub also: Vec<String>,
     #[serde(default, rename = "where")]
     #[ts(rename = "where")]
     pub conditions: Vec<Condition>,
+}
+
+impl EventWait {
+    /// Every type is a known event type.
+    pub fn check(&self) -> Result<(), String> {
+        match std::iter::once(&self.kind)
+            .chain(&self.also)
+            .find(|k| pdt_core::workflow::events::event_type(k).is_none())
+        {
+            Some(k) => Err(format!("no event type is called {k}")),
+            None => Ok(()),
+        }
+    }
+
+    /// The step's `wait` for it.
+    pub fn wait(&self) -> Value {
+        let mut w = json!({"type": self.kind, "where": self.conditions});
+        if !self.also.is_empty() {
+            w["also"] = json!(self.also);
+        }
+        w
+    }
+}
+
+/// The event types a step's `wait.event` takes: its `type` and `also`.
+pub fn wait_types(w: &Value) -> Vec<&str> {
+    let also = w.get("also").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
+    w.get("type").and_then(Value::as_str).into_iter().chain(also).collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -60,9 +92,7 @@ impl NodeKind for Wait {
         let c: WaitConfig = parse(config)?;
         match (&c.ms, &c.until, &c.event) {
             (None, None, None) => Err("say how long (ms), until when (until) or for what (event)".into()),
-            (_, _, Some(e)) if pdt_core::workflow::events::event_type(&e.kind).is_none() => {
-                Err(format!("no event type is called {}", e.kind))
-            }
+            (_, _, Some(e)) => e.check(),
             _ => Ok(()),
         }
     }
@@ -79,7 +109,7 @@ impl NodeKind for Wait {
             if let Some(e) = c.event {
                 let until = c.timeout_ms.map(|ms| now + i64::try_from(ms).unwrap_or(i64::MAX / 2));
                 return Ok(Outcome::Wait {
-                    wait: json!({"event": {"type": e.kind, "where": e.conditions}}),
+                    wait: json!({"event": e.wait()}),
                     until,
                     timeout_port: Some("timeout".into()),
                     output: Value::Null,
