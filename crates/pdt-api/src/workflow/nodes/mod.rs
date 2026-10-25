@@ -11,6 +11,7 @@ pub mod condition;
 pub mod discord;
 pub mod end;
 pub mod gate;
+pub mod github;
 pub mod http;
 pub mod inbox_notice;
 pub mod jira;

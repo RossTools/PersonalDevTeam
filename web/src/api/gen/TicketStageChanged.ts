@@ -7,4 +7,8 @@ export type TicketStageChanged = { projectId: string, ticketId: string, ticketKe
 /**
  * The Jira issue the ticket is linked to, if any (`ABC-123`).
  */
-jiraKey: string | null, };
+jiraKey: string | null, 
+/**
+ * The GitHub issue the ticket is linked to, if any (`owner/name#12`).
+ */
+githubIssue: string | null, };

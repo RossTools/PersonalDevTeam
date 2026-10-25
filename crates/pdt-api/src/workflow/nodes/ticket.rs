@@ -136,6 +136,7 @@ impl NodeKind for Move {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct CommentConfig {
+    /// The ticket's id or key (`PDT-12`).
     pub ticket: String,
     pub body: String,
 }
@@ -149,7 +150,7 @@ impl NodeKind for Comment {
             1,
             Category::Action,
             "Comment on the ticket",
-            "Adds a comment to a ticket's timeline, from the workflow.",
+            "Adds a comment to a ticket's timeline (by its id or key), from the workflow.",
             &[("out", "Then")],
             false,
         )
@@ -172,8 +173,9 @@ impl NodeKind for Comment {
                     json!({"would": format!("comment on ticket {}: {}", c.ticket, c.body)}),
                 ));
             }
+            let ticket = crate::mcp::tools::resolve_ticket(cx.st, &c.ticket, cx.run.project_id.as_deref()).await?;
             // The comment carries its step, so the step run again after a restart finds it (PDT-131).
-            if let Some(e) = cx.st.store.comment_by_step(&c.ticket, &cx.step.id).await.map_err(|e| e.to_string())? {
+            if let Some(e) = cx.st.store.comment_by_step(&ticket, &cx.step.id).await.map_err(|e| e.to_string())? {
                 return Ok(Outcome::next("out", json!({"eventId": e.id})));
             }
             let mut data = cx.by().data();
@@ -181,7 +183,7 @@ impl NodeKind for Comment {
             let e = cx
                 .st
                 .store
-                .add_comment_by(&c.ticket, &c.body, Actor::System, Some(data), now_ms())
+                .add_comment_by(&ticket, &c.body, Actor::System, Some(data), now_ms())
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or("no such ticket")?;

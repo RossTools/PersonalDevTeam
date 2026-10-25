@@ -289,6 +289,12 @@ pdt-api `jira.rs`, `buildkite.rs`; the sensors and actions are in [workflows.md]
   jira_issue_not_found`, `409 jira_not_linked`, `502 jira_failed`.
 - **Outgoing**: moving a linked ticket to Done moves its issue (built-in "Done moves the Jira issue", the project's
   done mapping). Other changes stay in PDT unless a workflow says otherwise (`jira.comment`, `jira.transition`).
+- **GitHub issues** (PDT-154): a ticket can link a GitHub issue the same way (`system 'github'`, `connection_id` the
+  repository `owner/name` and `key` `owner/name#12`, both lower case; `url` the issue's). `github.import` makes such
+  tickets (the built-in "PDT bug triage" for the `from-pdt` bug reports on the release repository); the card and the
+  ticket page show it as `#12` (titled "GitHub issue owner/name#12", the page linking it), and `get_ticket` lists it
+  in `external`. Moving a linked ticket to Done or Won't do closes the issue once (built-in "Done closes the GitHub
+  issue", [workflows.md](workflows.md) "Built-in workflows").
 - **Buildkite CI** shows on the attempt like GitHub's: with an open PR at the same head, in `attempt.pr.ci` (the PR
   badge rolls up both providers); without a PR, as `attempt.ci` (board card `CiBadge`, Attempt section `CiDetails`).
   Failures are `ci.run_failed` with `provider: buildkite`, so "PR notices" tells the agent.

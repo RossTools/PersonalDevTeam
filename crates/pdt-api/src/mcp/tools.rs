@@ -46,6 +46,9 @@ pub(crate) struct SubmitOutcome {
     /// Line comments on the attempt's changes (a review's findings).
     #[serde(default)]
     pub comments: Vec<OutcomeComment>,
+    /// Fields the step's prompt asks for (an issue number, a ticket key), for the workflow's later steps.
+    #[serde(default)]
+    pub data: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -361,7 +364,7 @@ fn defs() -> Vec<Def> {
             name: "submit_outcome",
             title: "Submit the step's outcome",
             description: "Ends this session's workflow step with one of the outcomes it allows; PDT moves the work on \
-                          from it. Give a short summary, and line comments for a review.",
+                          from it. Give a short summary, line comments for a review, and `data` when the step's prompt asks for fields.",
             schema: schema::<SubmitOutcome>,
         },
         Def {

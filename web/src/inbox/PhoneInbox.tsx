@@ -346,8 +346,9 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
       content = (
         <>
           <p className="text-sm">
-            No agent session was open to tell, so it waits for you. It goes away once the pull request is fixed, merged or
-            closed.
+            {item.attemptId
+              ? 'No agent session was open to tell, so it waits for you. It goes away once the pull request is fixed, merged or closed.'
+              : `${typeof item.body.workflow === 'string' ? item.body.workflow : 'A workflow'} wants you to know. Act on it if you disagree, then dismiss it.`}
           </p>
           <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
         </>

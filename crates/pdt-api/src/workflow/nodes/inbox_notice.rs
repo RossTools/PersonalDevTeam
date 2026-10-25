@@ -16,8 +16,10 @@ pub const KIND: &str = "inbox.notice";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct InboxNoticeConfig {
-    /// The attempt (`{{trigger.attemptId}}`).
-    pub attempt: String,
+    /// The attempt (`{{trigger.attemptId}}`); without one the notice is the workflow's (once per key), in the run's
+    /// project.
+    #[serde(default)]
+    pub attempt: Option<String>,
     /// What happened (`{{trigger.notice.text}}`).
     pub text: String,
     /// One item per attempt and key (`{{trigger.notice.key}}`).
@@ -77,22 +79,29 @@ impl NodeKind for InboxNotice {
             let notice = cx.ctx.pointer("/trigger/notice").cloned().unwrap_or(Value::Null);
             let kind: Option<NoticeKind> = notice.get("kind").cloned().and_then(|k| serde_json::from_value(k).ok());
             let pr = notice.get("pr").and_then(Value::as_u64).or_else(|| cx.ctx.pointer("/trigger/pr")?.as_u64());
-            let title = c.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| title_of(kind, pr));
+            let attempt = c.attempt.as_deref().map(str::trim).filter(|a| !a.is_empty());
+            let title = c.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| match attempt {
+                Some(_) => title_of(kind, pr),
+                None => c.text.lines().next().unwrap_or_default().chars().take(120).collect(),
+            });
             if cx.dry_run {
                 return Ok(Outcome::next("added", json!({"would": format!("put in the Inbox: {title}")})));
             }
             let store = &cx.st.store;
-            let info = store.get_attempt(&c.attempt).await.map_err(|e| e.to_string())?.ok_or("no such attempt")?;
+            let info = match attempt {
+                Some(a) => Some(store.get_attempt(a).await.map_err(|e| e.to_string())?.ok_or("no such attempt")?),
+                None => None,
+            };
             let item = InboxItem {
                 id: uuid::Uuid::now_v7().to_string(),
                 kind: InboxKind::Notice,
                 group: InboxGroup::Notice,
                 status: InboxStatus::Open,
-                project_id: Some(info.project_id.clone()),
-                ticket_id: Some(info.ticket_id.clone()),
+                project_id: info.as_ref().map(|i| i.project_id.clone()).or_else(|| cx.run.project_id.clone()),
+                ticket_id: info.as_ref().map(|i| i.ticket_id.clone()).or_else(|| cx.run.ticket_id.clone()),
                 ticket_key: None,
                 ticket_title: None,
-                attempt_id: Some(info.attempt.id.clone()),
+                attempt_id: info.as_ref().map(|i| i.attempt.id.clone()),
                 session_id: None,
                 run_id: Some(cx.run.id.clone()),
                 // Not the step's: the item outlives the run.
@@ -109,7 +118,10 @@ impl NodeKind for InboxNotice {
                 created_at: now_ms(),
                 resolved_at: None,
             };
-            let key = format!("notice:{}:{}", info.attempt.id, c.key);
+            let key = match &info {
+                Some(i) => format!("notice:{}:{}", i.attempt.id, c.key),
+                None => format!("notice:workflow:{}:{}", cx.workflow.id, c.key),
+            };
             match store.add_inbox_item_once(&item, &key).await.map_err(|e| e.to_string())? {
                 Some(i) => {
                     crate::notifications::kick(cx.st);

@@ -203,6 +203,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         outcome: None,
         summary: None,
         comments: vec![],
+        data: None,
         by_user: false,
         created_at: now,
         updated_at: now,
@@ -522,7 +523,8 @@ async fn queue_message(
 
 fn outcome_output(a: &AgentStep) -> Value {
     json!({
-        "outcome": a.outcome, "summary": a.summary, "comments": a.comments, "sessionId": a.session_id,
+        "outcome": a.outcome, "summary": a.summary, "comments": a.comments, "data": a.data.clone().unwrap_or_else(|| json!({})),
+        "sessionId": a.session_id,
         "persona": a.persona_name, "personaVersion": a.persona_version, "turns": a.turns,
         "by": if a.by_user { "user" } else { "agent" },
     })
@@ -667,6 +669,7 @@ pub(crate) async fn submit_outcome(st: &AppState, s: &Session, input: crate::mcp
         }
     }
     a.comments = input.comments;
+    a.data = input.data.map(Value::Object);
     finish_with(st, a, &step, &input.outcome, summary, false).await?;
     tracing::info!(session = %s.id, outcome = %input.outcome, "an agent submitted an outcome");
     Ok(json!({"accepted": true, "outcome": input.outcome,
@@ -718,6 +721,7 @@ async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::Subm
         outcome: None,
         summary: None,
         comments: vec![],
+        data: None,
         by_user: false,
         created_at: now,
         updated_at: now,
@@ -731,6 +735,7 @@ async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::Subm
         }
     }
     a.comments = input.comments;
+    a.data = input.data.map(Value::Object);
     finish_with(st, a, &step, &input.outcome, summary, false).await?;
     tracing::info!(session = %s.id, outcome = %input.outcome, run = %run.id, "a late outcome resumed a workflow run");
     Ok(json!({"accepted": true, "outcome": input.outcome,

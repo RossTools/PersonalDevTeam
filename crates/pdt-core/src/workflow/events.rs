@@ -380,6 +380,9 @@ pub struct TicketStageChanged {
     /// The Jira issue the ticket is linked to, if any (`ABC-123`).
     #[serde(default)]
     pub jira_key: Option<String>,
+    /// The GitHub issue the ticket is linked to, if any (`owner/name#12`).
+    #[serde(default)]
+    pub github_issue: Option<String>,
 }
 
 /// `ticket.commented`.

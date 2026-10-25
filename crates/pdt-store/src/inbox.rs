@@ -12,7 +12,7 @@ const ITEM_COLUMNS: &str = "id, kind, grp, status, project_id, ticket_id, attemp
 const STEP_COLUMNS: &str = "step_id, run_id, node_id, session_id, persona_id, persona_name, persona_version, \
                             project_id, ticket_id, attempt_id, outcomes, state, turns, nudges, max_turns, auto_nudges, \
                             outcome, summary, comments, by_user, created_at, updated_at, background_since, \
-                            background, background_wait_ms";
+                            background, background_wait_ms, data";
 
 fn corrupt(what: &str, v: &str) -> StoreError {
     StoreError::Corrupt(format!("{what} {v:?}"))
@@ -81,6 +81,7 @@ fn to_step(r: &SqliteRow) -> Result<AgentStep, StoreError> {
         background_since: r.try_get("background_since")?,
         background: serde_json::from_value(json(r.try_get("background")?)).unwrap_or_default(),
         background_wait_ms: u64::try_from(r.try_get::<i64, _>("background_wait_ms")?).unwrap_or(0),
+        data: Some(json(r.try_get("data")?)).filter(|d| !d.is_null()),
     })
 }
 
@@ -277,13 +278,13 @@ impl Store {
         sqlx::query(
             "INSERT INTO agent_steps (step_id, run_id, node_id, session_id, persona_id, persona_name, persona_version, \
              project_id, ticket_id, attempt_id, outcomes, state, turns, nudges, max_turns, auto_nudges, outcome, \
-             summary, comments, by_user, created_at, updated_at, background_since, background, background_wait_ms) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             summary, comments, by_user, created_at, updated_at, background_since, background, background_wait_ms, data) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(step_id) DO UPDATE SET session_id = excluded.session_id, state = excluded.state, \
              turns = excluded.turns, nudges = excluded.nudges, outcome = excluded.outcome, \
              summary = excluded.summary, comments = excluded.comments, by_user = excluded.by_user, \
              updated_at = excluded.updated_at, background_since = excluded.background_since, \
-             background = excluded.background",
+             background = excluded.background, data = excluded.data",
         )
         .bind(&a.step_id)
         .bind(&a.run_id)
@@ -310,6 +311,7 @@ impl Store {
         .bind(a.background_since)
         .bind(serde_json::to_string(&a.background).unwrap_or_else(|_| "[]".into()))
         .bind(i64::try_from(a.background_wait_ms).unwrap_or(i64::MAX))
+        .bind(a.data.as_ref().map(|d| d.to_string()))
         .execute(&self.pool)
         .await?;
         Ok(())

@@ -7,6 +7,7 @@ pub mod buildkite;
 pub mod conversation;
 pub mod discord;
 pub mod git_url;
+pub mod github_issue;
 pub mod handoff;
 pub mod host;
 pub mod host_path;

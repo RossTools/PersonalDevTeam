@@ -102,8 +102,10 @@ async fn the_catalog_and_the_builtins_are_served() {
         .iter()
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
-    assert_eq!(builtins.len(), 8, "{list}");
+    assert_eq!(builtins.len(), 10, "{list}");
     assert!(builtins.contains(&("jira-import", true)) && builtins.contains(&("jira-done", true)));
+    // Bug triage is on only where a project is PDT's own repository (PDT-154).
+    assert!(builtins.contains(&("github-issue-done", true)) && builtins.contains(&("pdt-bug-triage", false)));
     assert!(builtins.contains(&("late-commits", true)));
     assert!(builtins.contains(&("pr-notices", true)) && builtins.contains(&("base-moved", false)));
     let id = list[0]["id"].as_str().unwrap();
