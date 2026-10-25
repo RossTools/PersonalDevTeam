@@ -14,6 +14,7 @@ use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::project::Project;
 use pdt_core::run::{NewRun, RestartRun, Run, RunKind, RunState, RunStep, pty_id, run_data_dir};
 use pdt_core::runconfig::{RunConfig, RunDef};
+use pdt_core::workspace::TabPlacement;
 use pdt_core::worktree::{WORKTREES_DIR, Worktree, worktree_path};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -204,6 +205,29 @@ async fn check_run_limit(st: &AppState, stop_run_id: Option<&str>) -> Result<(),
     }
 }
 
+/// Where the tab of a run started without a placement goes: the workspace of the active attempt working in its
+/// worktree or on its branch (PDT-160). None leaves it to the project's workspace.
+async fn attempt_placement(
+    st: &AppState,
+    project_id: &str,
+    worktree_id: Option<&str>,
+    branch: &str,
+) -> Result<Option<TabPlacement>, ApiError> {
+    let attempt = st.store.list_active_attempts().await?.into_iter().find(|i| {
+        i.project_id == project_id
+            && ((worktree_id.is_some() && i.attempt.worktree_id.as_deref() == worktree_id)
+                || i.attempt.branch == branch)
+    });
+    let Some(workspace_id) = attempt.and_then(|i| i.attempt.workspace_id) else { return Ok(None) };
+    if st.store.get_workspace(&workspace_id).await?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(TabPlacement { workspace_id, position: None }))
+}
+
+/// Starts a run or test. One that already ran in the same checkout under the same name and has finished starts again
+/// in its tab (200); otherwise a new run opens a tab (201): where asked, else in its attempt's workspace, else in its
+/// project's.
 pub(crate) async fn create(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
@@ -230,6 +254,25 @@ pub(crate) async fn create(
         Place::NewBranch(branch) => Some(worktree_for(&st, &project, branch).await?),
     };
     let (cwd, branch) = crate::runconfig::checkout_dir(&st, &project, worktree_id.as_deref()).await?;
+    let tab = match input.tab {
+        Some(t) => Some(t),
+        None => attempt_placement(&st, &project.id, worktree_id.as_deref(), &branch).await?,
+    };
+    // Starting a run again restarts its finished run in the same checkout, in its tab, instead of adding one (PDT-160).
+    let again = st.store.list_runs(&project.id).await?.into_iter().find(|r| {
+        r.worktree_id == worktree_id
+            && r.branch == branch
+            && r.kind == input.kind
+            && r.name == def.name
+            && !r.state.is_active()
+    });
+    if let Some(run) = again {
+        let item = pdt_core::workspace::TabItem::Run(run.id.clone());
+        if st.store.tab_for(&item).await?.is_none() {
+            crate::workspaces::open_for_new(&st, &run.project_id, item, tab.as_ref()).await;
+        }
+        return Ok((StatusCode::OK, Json(run_manager::relaunch(&st, run, def).await?)));
+    }
     let port = if def.web {
         Some(run_manager::allocate_port(&st, None, None).await.ok_or_else(run_manager::no_free_port)?)
     } else {
@@ -259,7 +302,7 @@ pub(crate) async fn create(
     };
     st.store.insert_run(&run).await?;
     let item = pdt_core::workspace::TabItem::Run(run.id.clone());
-    crate::workspaces::open_for_new(&st, &run.project_id, item, input.tab.as_ref()).await;
+    crate::workspaces::open_for_new(&st, &run.project_id, item, tab.as_ref()).await;
     run_manager::start(&st, run.clone(), def);
     Ok((StatusCode::CREATED, Json(run)))
 }

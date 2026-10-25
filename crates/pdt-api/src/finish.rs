@@ -101,11 +101,14 @@ pub(crate) async fn finish_route(
 }
 
 /// What finishing (or stopping, PDT-159) would stop and remove: the attempt's running sessions, the sessions in its
-/// worktree and workspace, the runs there, the workspace Start made and whether the worktree has uncommitted changes.
+/// worktree and workspace, the attempt's runs, the workspace Start made and whether the worktree has uncommitted changes.
 pub(crate) struct Plan {
     pub running: Vec<String>,
     pub remove: HashSet<String>,
+    /// Every run of the attempt, in any state.
     pub runs: Vec<String>,
+    /// How many of `runs` are still going.
+    pub active_runs: usize,
     pub workspace: Option<pdt_core::workspace::Workspace>,
     pub dirty: bool,
 }
@@ -140,24 +143,35 @@ pub(crate) async fn plan(st: &AppState, info: &AttemptInfo) -> Result<Plan, ApiE
             running.push(s.id);
         }
     }
+    // Every run of the attempt, in any state (PDT-160): in its worktree, on its branch or in its workspace.
     let run_tabs: HashSet<&str> = tabs.iter().filter_map(|t| t.run_id.as_deref()).collect();
-    let runs = st
+    let mut runs: Vec<pdt_core::run::Run> = st
         .store
-        .list_active_runs()
+        .list_runs(&info.project_id)
         .await?
         .into_iter()
         .filter(|r| {
-            (worktree_id.is_some() && r.worktree_id.as_deref() == worktree_id) || run_tabs.contains(r.id.as_str())
+            (worktree_id.is_some() && r.worktree_id.as_deref() == worktree_id)
+                || r.branch == attempt.branch
+                || run_tabs.contains(r.id.as_str())
         })
-        .map(|r| r.id)
         .collect();
+    // Runs in the workspace that belong to another project.
+    let elsewhere: Vec<&str> = run_tabs.into_iter().filter(|id| !runs.iter().any(|r| r.id == *id)).collect();
+    for id in elsewhere {
+        if let Some(r) = st.store.get_run(id).await? {
+            runs.push(r);
+        }
+    }
+    let active_runs = runs.iter().filter(|r| r.state.is_active()).count();
+    let runs = runs.into_iter().map(|r| r.id).collect();
     let dirty = match info.worktree_path.clone().map(PathBuf::from) {
         Some(path) => tokio::task::spawn_blocking(move || path.is_dir() && pdt_git::is_dirty(&path).unwrap_or(true))
             .await
             .unwrap_or(true),
         None => false,
     };
-    Ok(Plan { running, remove, runs, workspace, dirty })
+    Ok(Plan { running, remove, runs, active_runs, workspace, dirty })
 }
 
 /// Moves the ticket to Done, then ends its active attempt (as merged: Done says the work landed) and cancels its open
@@ -248,7 +262,7 @@ pub(crate) async fn finish_ticket(
     let p = plan(st, &info).await?;
     let blocked = FinishBlocked {
         sessions: if req.stop_running { 0 } else { u32::try_from(p.running.len()).unwrap_or(u32::MAX) },
-        runs: if req.stop_running { 0 } else { u32::try_from(p.runs.len()).unwrap_or(u32::MAX) },
+        runs: if req.stop_running { 0 } else { u32::try_from(p.active_runs).unwrap_or(u32::MAX) },
         dirty: p.dirty && !req.discard_changes,
     };
     if blocked != FinishBlocked::default() {

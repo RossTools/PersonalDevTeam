@@ -41,6 +41,10 @@ name = "idle"
 command = "node -e \"setTimeout(() => {}, 120000)\""
 
 [[run]]
+name = "idle2"
+command = "node -e \"setTimeout(() => {}, 120000)\""
+
+[[run]]
 name = "app"
 command = "node -e \"console.log('app up on ' + process.env.PDT_RUN_BRANCH); setTimeout(() => {}, 120000)\""
 detach = true
@@ -209,7 +213,7 @@ async fn a_run_opens_a_tab_in_its_project_workspace_or_where_asked() {
     let home = list[0]["id"].as_str().unwrap().to_string();
     let (_, first) = start(&env, json!({"name": "ok", "kind": "test"})).await;
     let (s, second) =
-        start(&env, json!({"name": "ok", "kind": "test", "tab": {"workspaceId": home, "position": 0}})).await;
+        start(&env, json!({"name": "bad", "kind": "test", "tab": {"workspaceId": home, "position": 0}})).await;
     assert_eq!(s, StatusCode::CREATED, "{second}");
     let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
     assert_eq!(tabs(&list[0]), [second["id"].as_str().unwrap(), first["id"].as_str().unwrap()]);
@@ -261,7 +265,7 @@ async fn restarting_a_run_counts_toward_the_limit() {
     let a = a["id"].as_str().unwrap().to_string();
     call(&env.app, "POST", &format!("/api/runs/{a}/stop"), None).await;
     wait_state(&env.app, &a, &["stopped"]).await;
-    let (_, b) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    let (_, b) = start(&env, json!({"name": "idle2", "kind": "run"})).await;
     let b = b["id"].as_str().unwrap().to_string();
     let restart = format!("/api/runs/{a}/restart");
     let (s, v) = call(&env.app, "POST", &restart, None).await;
@@ -551,10 +555,124 @@ async fn a_branch_without_a_worktree_gets_one() {
     let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
     assert_eq!(wts.as_array().unwrap().len(), 1);
     wait_state(&env.app, r["id"].as_str().unwrap(), &["passed"]).await;
-    let (s, r2) = start(&env, json!({"branch": "feature/x", "name": "ok", "kind": "test"})).await;
+    let (s, r2) = start(&env, json!({"branch": "feature/x", "name": "bad", "kind": "test"})).await;
     assert_eq!((s, &r2["worktreeId"]), (StatusCode::CREATED, &r["worktreeId"]), "reuses the worktree");
     let (s, r3) = start(&env, json!({"branch": "main", "name": "ok", "kind": "test"})).await;
     assert_eq!((s, &r3["worktreeId"]), (StatusCode::CREATED, &Value::Null), "the main checkout's branch");
+}
+
+/// Starting a run that already ran in the same checkout and has finished restarts it in its tab (PDT-160); a run
+/// still going, another checkout or another name gets a run of its own.
+#[tokio::test]
+async fn starting_a_finished_run_again_reuses_it_and_its_tab() {
+    let env = setup().await;
+    let (s, first) = start(&env, json!({"name": "ok", "kind": "test"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{first}");
+    let id = first["id"].as_str().unwrap().to_string();
+    wait_state(&env.app, &id, &["passed"]).await;
+    let (s, again) = start(&env, json!({"name": "ok", "kind": "test"})).await;
+    assert_eq!((s, again["id"].as_str()), (StatusCode::OK, Some(id.as_str())), "{again}");
+    wait_state(&env.app, &id, &["passed"]).await;
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let tabs: Vec<&Value> = list[0]["tabs"].as_array().unwrap().iter().collect();
+    assert_eq!(tabs.len(), 1, "one tab: {list}");
+    assert_eq!(tabs[0]["runId"], id.as_str());
+
+    let (_, idle) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    wait_state(&env.app, idle["id"].as_str().unwrap(), &["running", "ready"]).await;
+    let (s, other) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    assert_eq!(s, StatusCode::CREATED, "a run still going is not restarted: {other}");
+    assert_ne!(other["id"], idle["id"]);
+    git(&env.repo, &["branch", "feature/y"]);
+    let (s, there) = start(&env, json!({"branch": "feature/y", "name": "ok", "kind": "test"})).await;
+    assert_eq!(s, StatusCode::CREATED, "another checkout: {there}");
+    assert_ne!(there["id"], id.as_str());
+    let (_, runs) = call(&env.app, "GET", &format!("/api/projects/{}/runs", env.pid), None).await;
+    assert_eq!(runs.as_array().unwrap().len(), 4, "{runs}");
+    wait_state(&env.app, there["id"].as_str().unwrap(), &["passed"]).await;
+    env.state.ptys.shutdown().await;
+}
+
+/// A run started for an attempt's worktree or branch opens in the attempt's workspace, and finishing the ticket
+/// removes every run of the attempt, in any state: by worktree, branch or tab (PDT-160).
+#[tokio::test]
+async fn an_attempts_runs_open_in_its_workspace_and_go_when_it_finishes() {
+    let env = setup().await;
+    let (s, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.pid), Some(json!({"title": "Runs"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let ticket = t["id"].as_str().unwrap().to_string();
+    let (s, st) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{ticket}/start"),
+        Some(json!({"agent": "claude", "noSession": true, "newWorkspace": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{st}");
+    let (wt, branch) = (st["attempt"]["worktreeId"].clone(), st["attempt"]["branch"].as_str().unwrap().to_string());
+    let mine = st["attempt"]["workspaceId"].as_str().unwrap().to_string();
+
+    let (_, ok) = start(&env, json!({"name": "ok", "kind": "test", "worktreeId": wt})).await;
+    let (_, bad) = start(&env, json!({"name": "bad", "kind": "test", "branch": branch})).await;
+    assert_eq!(bad["worktreeId"], wt, "a run by branch records the attempt's worktree: {bad}");
+    let (_, idle) = start(&env, json!({"name": "idle", "kind": "run", "worktreeId": wt})).await;
+    let (_, main_run) = start(&env, json!({"name": "ok", "kind": "test"})).await;
+    let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
+    let ws_of = |id: &Value| -> String {
+        let w =
+            list.as_array().unwrap().iter().find(|w| w["tabs"].as_array().unwrap().iter().any(|t| t["runId"] == *id));
+        w.expect("the run has a tab")["id"].as_str().unwrap().to_string()
+    };
+    for r in [&ok, &bad, &idle] {
+        assert_eq!(ws_of(&r["id"]), mine, "in the attempt's workspace: {r}");
+    }
+    assert_ne!(ws_of(&main_run["id"]), mine, "the main checkout's run is not the attempt's");
+
+    // A run on the branch with no worktree recorded (left by an older version), finished.
+    let mut stray = pdt_core::run::Run {
+        id: "stray".into(),
+        project_id: env.pid.clone(),
+        worktree_id: None,
+        branch: branch.clone(),
+        name: "web".into(),
+        kind: pdt_core::run::RunKind::Run,
+        state: pdt_core::run::RunState::Stopped,
+        port: None,
+        url: None,
+        data_dir: None,
+        cwd: env.repo.to_string_lossy().into_owned(),
+        exit_code: None,
+        error: None,
+        detached: false,
+        process: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    env.state.store.insert_run(&stray).await.unwrap();
+    stray.id = "stray-tab".into();
+    stray.branch = "elsewhere".into();
+    env.state.store.insert_run(&stray).await.unwrap();
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/workspaces/{mine}/tabs"), Some(json!({"runId": "stray-tab"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    wait_state(&env.app, ok["id"].as_str().unwrap(), &["passed"]).await;
+    wait_state(&env.app, bad["id"].as_str().unwrap(), &["failed"]).await;
+    wait_state(&env.app, idle["id"].as_str().unwrap(), &["running", "ready"]).await;
+    wait_state(&env.app, main_run["id"].as_str().unwrap(), &["passed"]).await;
+    let finish = format!("/api/tickets/{ticket}/finish");
+    let (_, r) = call(&env.app, "POST", &finish, Some(json!({}))).await;
+    assert_eq!((r["outcome"].as_str(), r["blocked"]["runs"].as_u64()), (Some("blocked"), Some(1)), "{r}");
+    let (_, r) = call(&env.app, "POST", &finish, Some(json!({"stopRunning": true}))).await;
+    assert_eq!(r["outcome"], "finished", "{r}");
+    for id in [&ok["id"], &bad["id"], &idle["id"], &json!("stray"), &json!("stray-tab")] {
+        let (s, _) = call(&env.app, "GET", &format!("/api/runs/{}", id.as_str().unwrap()), None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "run {id} is removed");
+    }
+    let (s, _) = call(&env.app, "GET", &format!("/api/runs/{}", main_run["id"].as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::OK, "the main checkout's run stays");
+    env.state.ptys.shutdown().await;
 }
 
 /// A start that is refused creates no worktree; a branch whose worktree folder another branch already has is a

@@ -136,7 +136,7 @@ overrides, which keep the whole configuration out of the repository. `GET /api/g
 | Call | Does |
 |---|---|
 | `GET /api/projects/<id>/run-config?worktreeId=<id>` | the configuration: `file`, `overrides`, the merged `effective` (`runs`, `tests`, `areas`), or `error` |
-| `POST /api/projects/<id>/runs` | `{name, kind: "run" \| "test", worktreeId?}`; starts it (main checkout without `worktreeId`) |
+| `POST /api/projects/<id>/runs` | `{name, kind: "run" \| "test", worktreeId?}`; starts it (main checkout without `worktreeId`) in the worktree's ticket workspace; the same run finished earlier in that checkout restarts in its tab (200) instead of adding one. Finishing the ticket removes its runs |
 | `GET /api/runs/<id>` | `state` (`setting_up`, `starting`, `ready`, `running`, `passed`, `failed`, `stopped`), `url`, `exitCode`, `error` |
 | `POST /api/runs/<id>/stop` · `/restart` | as named |
 

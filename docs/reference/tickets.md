@@ -160,7 +160,7 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   first so no step starts a session meanwhile. The UI asks first ("Stop ALP-1's work?") when a move would do this.
   `/stop` takes `{stage?, removeWorktree?, deleteBranch?}`: `stage` is `draft`, `ready` or `todo` (else 400
   `invalid_stage`; left out, an in-progress ticket goes to To do); `removeWorktree` also stops and removes the
-  sessions and runs in the latest attempt's worktree and workspace, removes the worktree (uncommitted changes too; the
+  sessions in the latest attempt's worktree and workspace and every run of the attempt (as Finish does), removes the worktree (uncommitted changes too; the
   branch with `deleteBranch`) and deletes the workspace Start made (`finish::clean_up`, shared with Finish), so the
   next Start begins clean instead of adopting it. It answers `StopResult` (`abandoned`, `runsCancelled`,
   `sessionsStopped`, `worktreeRemoved`, …). The PM's `stop_ticket` is the same call, asking first.
@@ -198,9 +198,10 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   `outcome: blocked` with `blocked {sessions, runs, dirty}` for sessions or runs still going (unless `stopRunning`)
   or uncommitted changes (unless `discardChanges`). Otherwise it moves the ticket to Done, ends its active attempt (as merged, `via: closed`), cancels the
   ticket's workflow runs still going (but the run finishing it and the runs that called that one; error "cancelled:
-  the ticket was finished"), stops every session and run
+  the ticket was finished"), stops every session
   in the worktree, the attempt's sessions and everything in the workspace Start made for the ticket
-  (`attempts.workspace_id`), removes the worktree (and the branch with `deleteBranch`; `branchNote` when it stayed),
+  (`attempts.workspace_id`), stops and removes every run of the attempt in any state (stopped, passed and failed too:
+  in its worktree, on its branch or with a tab in its workspace, PDT-160), removes the worktree (and the branch with `deleteBranch`; `branchNote` when it stayed),
   closes the ticket's tab elsewhere, deletes that workspace with its tabs, and pulls the base branch (`pull`).
   `keepWorktree` only moves to Done (ending the attempt and cancelling the runs as above) and pulls (`outcome: kept`). The route runs it in a task of its own, so it
   completes when the caller goes away first (PDT-97: an agent finishing its own ticket is stopped by it).
