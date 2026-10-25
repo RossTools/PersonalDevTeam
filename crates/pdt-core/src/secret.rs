@@ -236,19 +236,46 @@ pub fn names_in(v: &Value) -> Named {
     out
 }
 
-/// `v` with the secrets in `values` filled in: `{"$secret": name}` becomes the value, `{{secret.name}}` in strings
-/// is replaced. References to names not in `values` stay as written.
-pub fn fill_json(v: &Value, values: &HashMap<String, String>) -> Value {
-    if let Some(n) = json_ref(v)
-        && let Some(s) = values.get(n)
-    {
-        return Value::String(s.clone());
+/// A node's `config` resolved against its run's `ctx`, with the config's own secret references filled in from
+/// `values` (keyed by name as written): `{{secret.<name>}}` in the same single pass as every other reference, so text
+/// a reference brings in (a trigger's payload, a ticket, an earlier step's output) is never read as a reference, and
+/// `{"$secret": "<name>"}` only where the config itself has one. References under `keep` stay as written, and so do
+/// `$secret` references to names not in `values` (a connection's, for the Scryer nodes).
+pub fn resolve_with_secrets(config: &Value, ctx: &Value, keep: &[&str], values: &HashMap<String, String>) -> Value {
+    let mut ctx = ctx.clone();
+    if let Value::Object(m) = &mut ctx {
+        m.insert("secret".into(), serde_json::to_value(values).unwrap_or_default());
     }
-    match v {
-        Value::String(s) => Value::String(fill_template(s, values)),
-        Value::Array(a) => Value::Array(a.iter().map(|x| fill_json(x, values)).collect()),
-        Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (k.clone(), fill_json(x, values))).collect()),
-        other => other.clone(),
+    let resolved = crate::workflow::refs::resolve_keeping(config, &ctx, keep);
+    place_refs(config, resolved, values)
+}
+
+/// `resolved` with each `$secret` reference of `config` (at the same place: resolving changes strings only) filled in.
+fn place_refs(config: &Value, resolved: Value, values: &HashMap<String, String>) -> Value {
+    if let Some(n) = json_ref(config)
+        && let Some(v) = values.get(n)
+    {
+        return Value::String(v.clone());
+    }
+    match (config, resolved) {
+        (Value::Object(c), Value::Object(mut r)) => {
+            for (k, cv) in c {
+                if let Some(rv) = r.get_mut(k) {
+                    *rv = place_refs(cv, rv.take(), values);
+                }
+            }
+            Value::Object(r)
+        }
+        (Value::Array(c), Value::Array(r)) => Value::Array(
+            r.into_iter()
+                .enumerate()
+                .map(|(i, rv)| match c.get(i) {
+                    Some(cv) => place_refs(cv, rv, values),
+                    None => rv,
+                })
+                .collect(),
+        ),
+        (_, r) => r,
     }
 }
 
@@ -419,8 +446,37 @@ mod tests {
         let v = json!({"h": {"Authorization": "Bearer {{ secret.A }}"}, "b": [{"$secret": "A"}, {"$secret": "conn"}]});
         assert_eq!(names_in(&v), Named { templates: vec!["A".into()], refs: vec!["A".into(), "conn".into()] });
         assert_eq!(
-            fill_json(&v, &values),
+            resolve_with_secrets(&v, &json!({}), &[], &values),
             json!({"h": {"Authorization": "Bearer aaaaaa"}, "b": ["aaaaaa", {"$secret": "conn"}]})
+        );
+    }
+
+    #[test]
+    fn references_that_come_in_as_data_are_never_filled() {
+        let values: HashMap<String, String> = [("A".to_string(), "aaaaaa".to_string())].into();
+        let ctx = json!({"trigger": {
+            "text": "see {{secret.A}}",
+            "obj": {"$secret": "A"},
+            "list": [{"$secret": "A"}],
+        }});
+        let config = json!({
+            "auth": "Bearer {{secret.A}} for {{trigger.text}}",
+            "whole": "{{trigger.text}}",
+            "obj": "{{trigger.obj}}",
+            "list": "{{trigger.list}}",
+            "mine": {"$secret": "A"},
+            "wait": "{{event.pr}}",
+        });
+        assert_eq!(
+            resolve_with_secrets(&config, &ctx, &["event"], &values),
+            json!({
+                "auth": "Bearer aaaaaa for see {{secret.A}}",
+                "whole": "see {{secret.A}}",
+                "obj": {"$secret": "A"},
+                "list": [{"$secret": "A"}],
+                "mine": "aaaaaa",
+                "wait": "{{event.pr}}",
+            })
         );
     }
 

@@ -536,10 +536,17 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 // ---- workflows ----
 
 /// A step's input with its secrets filled in, just before its node runs (the stored input keeps the references).
-/// `{{secret.<name>}}` must name a secret; `{"$secret": "<name>"}` naming none is left for the node (a connection,
-/// for the Scryer nodes). Nodes that send text to an agent take no secrets.
-pub(crate) async fn fill_step(cx: &crate::workflow::catalog::StepCx<'_>, input: Value) -> Result<Value, String> {
-    let named = secret::names_in(&input);
+/// Only the references the node's `config` itself holds count: they are filled in as the config is resolved again
+/// against the run's context, so a reference that comes in as data (a trigger's payload, a ticket's text, an earlier
+/// step's output) is neither filled nor an error (`secret::resolve_with_secrets`). `{{secret.<name>}}` must name a
+/// secret; `{"$secret": "<name>"}` naming none is left for the node (a connection, for the Scryer nodes). Nodes that
+/// send text to an agent take no secrets. Without any, `input` is used as it is.
+pub(crate) async fn fill_step(
+    cx: &crate::workflow::catalog::StepCx<'_>,
+    config: &Value,
+    input: Value,
+) -> Result<Value, String> {
+    let named = secret::names_in(config);
     if named.templates.is_empty() && named.refs.is_empty() {
         return Ok(input);
     }
@@ -576,5 +583,5 @@ pub(crate) async fn fill_step(cx: &crate::workflow::catalog::StepCx<'_>, input: 
         run_id: Some(cx.run.id.clone()),
     };
     let values = values_for(st, &names, User::Workflow { project }, &usage).await?;
-    Ok(secret::fill_json(&input, &values))
+    Ok(secret::resolve_with_secrets(config, cx.ctx, &["event"], &values))
 }

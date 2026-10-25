@@ -266,12 +266,29 @@ async fn api_server() -> String {
 }
 
 async fn run_workflow(env: &Env, doc: Value) -> Value {
+    run_workflow_with(env, doc, json!({})).await
+}
+
+/// A local server that answers `POST /echo` with what it got: its JSON body and its `Authorization` header.
+async fn echo_server() -> String {
+    async fn handle(headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+        let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+        axum::Json(json!({"body": body, "auth": auth}))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new().route("/echo", axum::routing::post(handle));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
+}
+
+async fn run_workflow_with(env: &Env, doc: Value, input: Value) -> Value {
     let (s, w) =
         call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "projectId": env.project, "enabled": true})))
             .await;
     assert_eq!(s, StatusCode::CREATED, "{w}");
     let wf = w["id"].as_str().unwrap();
-    let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": {}}))).await;
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": input}))).await;
     assert_eq!(s, StatusCode::OK, "{r}");
     let id = r["runId"].as_str().unwrap().to_string();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -379,4 +396,45 @@ async fn a_workflow_request_authenticates_with_a_secret_and_stores_none() {
     assert!(step(&r, "call")["error"].as_str().unwrap().contains("may not be used here"), "{r:#}");
 
     assert!(!in_database(&env, VALUE), "the database never holds the value");
+}
+
+/// Only references the node's own config holds are filled in: one that comes in as data (here the run's trigger, as a
+/// ticket's text, a webhook's payload or an earlier step's output would) is passed on as written, and one naming no
+/// secret doesn't fail the step.
+#[tokio::test]
+async fn secret_references_that_come_in_as_data_are_neither_filled_nor_an_error() {
+    let env = setup().await;
+    let url = echo_server().await;
+    let (st, s) =
+        call(&env.app, "POST", "/api/secrets", Some(json!({"name": "API", "value": VALUE, "projects": [env.project]})))
+            .await;
+    assert_eq!(st, StatusCode::CREATED, "{s}");
+    let data = json!({"text": "send {{secret.API}} and {{secret.NOPE}}", "obj": {"$secret": "API"}});
+    let forward = |own: bool| {
+        let mut config = json!({"url": format!("{url}/echo"), "method": "POST",
+            "body": {"text": "{{trigger.text}}", "obj": "{{trigger.obj}}"}});
+        if own {
+            config["headers"] = json!({"Authorization": "Bearer {{secret.API}}"});
+        }
+        json!({
+            "name": if own { "Forward with a secret" } else { "Forward" },
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "call", "kind": "http.request", "version": 1, "config": config},
+            ],
+            "edges": [{"from": "go", "to": "call"}],
+        })
+    };
+    for own in [false, true] {
+        let r = run_workflow_with(&env, forward(own), data.clone()).await;
+        assert_eq!(r["status"], "succeeded", "{r:#}");
+        let got = &step(&r, "call")["output"]["body"];
+        assert_eq!(got["body"]["text"], "send {{secret.API}} and {{secret.NOPE}}", "{got:#}");
+        assert_eq!(got["body"]["obj"], json!({"$secret": "API"}), "{got:#}");
+        let auth = if own { "Bearer [secret:API]" } else { "" };
+        assert_eq!(got["auth"], auth, "only the node's own reference is filled (the echo is redacted)");
+    }
+    let (_, uses) = call(&env.app, "GET", &format!("/api/secrets/{}/uses", s["id"].as_str().unwrap()), None).await;
+    assert_eq!(uses.as_array().unwrap().len(), 1, "only the run whose node names it used it: {uses}");
+    assert!(!in_database(&env, VALUE));
 }

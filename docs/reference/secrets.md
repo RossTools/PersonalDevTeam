@@ -72,12 +72,16 @@ Each named secret must exist and be allowed, else the call fails naming it; each
 
 ## Workflows
 
-`{{secret.<name>}}` in any config string and `{"$secret": "<name>"}` as a value are filled in only as the node runs
-(`vault::fill_step`, from the engine): the engine's template pass keeps `secret.` references, the step's stored
-`input` keeps them as written, and its output and error are redacted when stored. `{{secret.x}}` must name a secret;
-a `$secret` naming none is left for the node (the Scryer nodes' connection references). `agent` steps and
-`session.send` take no secrets (the step fails). Dry runs fill nothing. Uses are recorded as `workflow <name>` with
-the node kind.
+`{{secret.<name>}}` in a node's config strings and `{"$secret": "<name>"}` as a config value are filled in only as
+the node runs (`vault::fill_step`, from the engine): the engine's template pass keeps `secret.` references, the step's
+stored `input` keeps them as written, and its output and error are redacted when stored. Only references the node's
+**config** holds count: at run time the config is resolved again against the run's context with the secrets added
+(`secret::resolve_with_secrets`), in one pass, so text a reference brings in (a trigger's payload, a ticket's text, an
+earlier step's output) is passed on as written, never filled and never an error; a `$secret` is filled only where the
+config has one. Otherwise anyone who can put text in data a workflow forwards could have a secret sent out.
+`{{secret.x}}` must name a secret; a `$secret` naming none is left for the node (the Scryer nodes' connection
+references). `agent` steps and `session.send` take no secrets (the step fails). Dry runs fill nothing. Uses are
+recorded as `workflow <name>` with the node kind.
 
 Tests: crates/pdt-api/tests/secrets.rs (the done-when: request, masked answer, `run_with_secrets` echo, a pasted
-value, comments, `http.request` with both forms, access, and a grep of the database files for the value).
+value, comments, `http.request` with both forms, references arriving as data passed on unfilled, access, and a grep of the database files for the value).
