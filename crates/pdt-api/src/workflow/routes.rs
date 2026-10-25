@@ -59,9 +59,16 @@ pub(crate) fn validate_with_tools(st: &AppState, doc: &WorkflowDoc) -> Vec<Issue
     issues
 }
 
+/// [`validate_with_tools`], with warnings for the connections, personas and projects it names that are not here.
+pub(crate) async fn doc_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Issue> {
+    let mut issues = validate_with_tools(st, doc);
+    issues.extend(super::transfer::reference_issues(st, doc).await);
+    issues
+}
+
 pub(crate) async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
     let doc = st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
-    let issues = validate_with_tools(st, &doc);
+    let issues = doc_issues(st, &doc).await;
     Ok(WorkflowDetail { workflow: w, doc, issues })
 }
 
@@ -364,7 +371,7 @@ pub(crate) async fn check_doc(
 ) -> Result<Json<WorkflowCheck>, ApiError> {
     let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
     let ports = doc.nodes.iter().filter_map(|n| Some((n.id.clone(), catalog().node_ports(n)?))).collect();
-    Ok(Json(WorkflowCheck { issues: validate_with_tools(&st, &doc), ports }))
+    Ok(Json(WorkflowCheck { issues: doc_issues(&st, &doc).await, ports }))
 }
 
 pub(crate) async fn validate_doc(
@@ -372,7 +379,7 @@ pub(crate) async fn validate_doc(
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<Vec<Issue>>, ApiError> {
     let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
-    Ok(Json(validate_with_tools(&st, &doc)))
+    Ok(Json(doc_issues(&st, &doc).await))
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
@@ -827,6 +834,9 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/workflows/validate", post(validate_doc))
         .route("/workflows/check", post(check_doc))
         .route("/workflows/dry-run", post(dry_run))
+        .route("/workflows/export", post(super::transfer::export_many))
+        .route("/workflows/import", post(super::transfer::import_route))
+        .route("/workflows/{id}/export", get(super::transfer::export_one))
         .route("/workflows/{id}", get(get_one).put(save).patch(patch).delete(remove))
         .route("/workflows/{id}/versions", get(versions))
         .route("/workflows/{id}/versions/{v}", get(version))

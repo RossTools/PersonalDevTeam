@@ -91,9 +91,22 @@ that is the person's consent. Check a document with `/check` or `/validate` and 
 | `GET /api/workflow-runs?ticket=<id>` | the runs about a ticket; `GET /api/workflow-runs/<id>` has each step's input, output and port |
 | `POST /api/workflows/validate` · `/dry-run` | `{doc}` checks a document; `{doc or workflowId, event: {type, payload}}` shows what each step would do, changing nothing |
 | `GET /api/workflows/<id>/versions` · `/diff?from=&to=` | the versions (`status`: `saved`, `proposed`, `discarded`) and what changed between two |
+| `GET /api/workflows/<id>/export` · `POST /api/workflows/export {ids}` | workflows as one export (below), to paste into another PDT |
+| `POST /api/workflows/import` | `{text, check: true}` reports what an export needs here; `{text, mapping, targets}` imports it, off |
 | `GET /api/workflow-templates` | templates (`params`, a `doc` with `{{params.<id>}}`); `POST …/<id>/instantiate {params, name, scope, projectId}` makes a workflow from one, off |
 | `GET /api/personas` | the personas agent steps run (Refiner, Coder, Reviewer, QA, PM and the person's own): agent, model, instructions, permission mode, tools |
 | `GET /api/inbox` | what waits on the person: questions, approvals, stalled steps, loop limits and gates |
+
+**Moving a workflow to another PDT.** An export is pretty-printed JSON, the same text copied or downloaded:
+`{format: "pdt-workflow", formatVersion: 1, pdtVersion, exportedAt, workflows: [{name, description, scope, project?,
+doc}], requires: {connections: [{name, kind, tools}], personas, projects: [{key, name}]}}`. It has the current
+documents only (no runs, state, versions or secrets); project ids in a document are `{"$project": "<KEY>"}`, and MCP
+servers and webhook hooks are connections of kind `mcp` and `webhook`. Import also takes a bare document. Importing
+checks first (`check: true`: each needed name `found`, `missing` or `kind_mismatch`, and same-named workflows here),
+then needs every missing connection, persona and project mapped to one here or to `null` (left unmapped) in
+`mapping: {connections, personas, projects}`; `targets` (one per workflow) give `scope`/`projectId` and, on a name
+clash, `copy: true` (`<name> (imported)`) or `versionOf: <id>`. New workflows start off; the answer's `warnings` say
+what is left to set up. With pdt-mcp: `workflow_export` and `workflow_import` (the person confirms it).
 
 ## Worktrees
 

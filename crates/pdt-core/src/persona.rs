@@ -12,7 +12,7 @@ pub const DEFAULT_TOOLS: [&str; 5] =
     ["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "add_review_comment"];
 
 /// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 37] = [
+pub const ALL_TOOLS: [&str; 39] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -25,6 +25,8 @@ pub const ALL_TOOLS: [&str; 37] = [
     "workflow_validate",
     "workflow_dry_run",
     "workflow_save",
+    "workflow_export",
+    "workflow_import",
     "get_overview",
     "search_tickets",
     "get_session",
@@ -55,7 +57,7 @@ pub const ALL_TOOLS: [&str; 37] = [
 /// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
 /// card) unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so they are never in Claude's
 /// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 10] = [
+pub const ASKING_TOOLS: [&str; 11] = [
     "create_ticket",
     "edit_ticket",
     "link_tickets",
@@ -66,10 +68,11 @@ pub const ASKING_TOOLS: [&str; 10] = [
     "scryer_add",
     "scryer_mutate",
     "report_bug",
+    "workflow_import",
 ];
 
 /// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 35] = [
+pub const PM_TOOLS: [&str; 37] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -80,6 +83,8 @@ pub const PM_TOOLS: [&str; 35] = [
     "workflow_validate",
     "workflow_dry_run",
     "workflow_save",
+    "workflow_export",
+    "workflow_import",
     "get_overview",
     "search_tickets",
     "get_session",
@@ -108,7 +113,7 @@ pub const PM_TOOLS: [&str; 35] = [
 ];
 
 /// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 37] = [
+const TOOL_DOES: [(&str, &str); 39] = [
     ("get_ticket", "Read the ticket, its comments and attempt"),
     ("submit_outcome", "Finish the step with an outcome and a summary"),
     ("ask_user", "Ask you questions (they wait in the Inbox)"),
@@ -121,6 +126,8 @@ const TOOL_DOES: [(&str, &str); 37] = [
     ("workflow_validate", "Check a workflow document"),
     ("workflow_dry_run", "Try a workflow without running it"),
     ("workflow_save", "Save a workflow (a new version)"),
+    ("workflow_export", "Export workflows as text to paste into another PDT"),
+    ("workflow_import", "Import pasted workflows (disabled)"),
     ("get_overview", "See every project's board, tickets in flight, the Inbox and running sessions"),
     ("search_tickets", "Search tickets in every project"),
     ("get_session", "Read a session's state and last messages"),
@@ -593,7 +600,9 @@ checkout (`get_ticket` gives the branch and base). Hand broad digging to a subag
 `run-config` guide) when the user asks. Changing a project's code is a coding agent's work: draft a ticket for it \
 instead of editing or committing in a checkout.\n\
 - Workflows: find node kinds with `catalog_search`/`catalog_get`, check documents with `workflow_validate` and \
-`workflow_dry_run`; `workflow_save` only proposes a version or saves a disabled workflow for the user to enable.\n\
+`workflow_dry_run`; `workflow_save` only proposes a version or saves a disabled workflow for the user to enable. \
+To move workflows to another PDT, `workflow_export` gives text to paste there; `workflow_import` takes such text \
+(check it first, then map what is missing), and what it imports starts disabled.\n\
 - Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
 with `save_note` (pin what every session should see); look things up with `search_notes`. When PDT tells you the \
 session is ending, write your journal with `write_journal`.\n\
