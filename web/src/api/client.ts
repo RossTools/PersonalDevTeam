@@ -98,6 +98,10 @@ import type { Started } from './gen/Started';
 import type { TemplateInput } from './gen/TemplateInput';
 import type { WorkflowCheck } from './gen/WorkflowCheck';
 import type { WorkflowDetail } from './gen/WorkflowDetail';
+import type { WorkflowExport } from './gen/WorkflowExport';
+import type { ImportCheck } from './gen/ImportCheck';
+import type { ImportRequest } from './gen/ImportRequest';
+import type { ImportResult } from './gen/ImportResult';
 import type { WorkflowDoc } from './gen/WorkflowDoc';
 import type { WorkflowRunDetail } from './gen/WorkflowRunDetail';
 import type { WorkflowTemplate } from './gen/WorkflowTemplate';
@@ -308,6 +312,13 @@ export const api = {
   saveWorkflow: (id: string, s: SaveWorkflow) =>
     request<WorkflowDetail>(`/api/workflows/${enc(id)}`, { method: 'PUT', body: JSON.stringify(s) }),
   deleteWorkflow: (id: string) => request<void>(`/api/workflows/${enc(id)}`, { method: 'DELETE' }),
+  exportWorkflow: (id: string) => request<WorkflowExport>(`/api/workflows/${enc(id)}/export`),
+  exportWorkflows: (ids: string[]) =>
+    request<WorkflowExport>('/api/workflows/export', { method: 'POST', body: JSON.stringify({ ids }) }),
+  checkImport: (text: string) =>
+    request<ImportCheck>('/api/workflows/import', { method: 'POST', body: JSON.stringify({ text, check: true }) }),
+  importWorkflows: (r: Omit<ImportRequest, 'check'>) =>
+    request<ImportResult>('/api/workflows/import', { method: 'POST', body: JSON.stringify({ ...r, check: false }) }),
   checkWorkflow: (doc: WorkflowDoc) =>
     request<WorkflowCheck>('/api/workflows/check', { method: 'POST', body: JSON.stringify({ doc }) }),
   dryRunWorkflow: (r: DryRunRequest) =>

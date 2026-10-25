@@ -36,6 +36,10 @@ impl ApiError {
         &self.message
     }
 
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
     pub fn code(&self) -> &'static str {
         self.code
     }

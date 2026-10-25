@@ -1,5 +1,7 @@
-// The Workflows view's list column (Phase 7d spec §2): New workflow, the workflows by where they apply, and the
-// templates. On a phone there is no New workflow (workflows are view-only there, PDT-120).
+// The Workflows view's list column (Phase 7d spec §2): New workflow, Import and Export (PDT-155), the workflows by
+// where they apply, and the templates. On a phone there is no New workflow or Import (workflows are view-only there,
+// PDT-120).
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Badge, Button, List, ListRow, StatusDot } from '@ui';
@@ -7,6 +9,8 @@ import { api } from '../api/client';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import type { Project } from '../api/gen/Project';
 import type { Workflow } from '../api/gen/Workflow';
+import { ExportDialog } from './ExportDialog';
+import { ImportDialog } from './ImportDialog';
 import { scopeLabel } from './scope';
 import type { WorkflowTab } from './WorkflowPage';
 
@@ -33,13 +37,20 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
   const templates = useQuery({ queryKey: ['workflow-templates'], queryFn: () => api.listWorkflowTemplates() });
   const groups = groupWorkflows(workflows.data ?? [], projects);
   const phone = useMediaQuery(PHONE_QUERY);
+  const [moving, setMoving] = useState<'import' | 'export' | null>(null);
   return (
     <nav aria-label="Workflows" className="flex flex-col gap-0.5 py-1">
       {!phone && (
-        <div className="px-2 pt-2">
+        <div className="flex flex-col gap-1 px-2 pt-2">
           <Button size="sm" className="w-full" onClick={onNew}><Plus aria-hidden /> New workflow</Button>
+          <div className="flex gap-1">
+            <Button size="sm" variant="secondary" className="flex-1" onClick={() => setMoving('import')}>Import…</Button>
+            <Button size="sm" variant="secondary" className="flex-1" disabled={!workflows.data?.length} onClick={() => setMoving('export')}>Export…</Button>
+          </div>
         </div>
       )}
+      {moving === 'import' && <ImportDialog projects={projects} onClose={() => setMoving(null)} onImported={(id) => onOpen({ kind: 'workflow', id })} />}
+      {moving === 'export' && <ExportDialog workflows={groups.flatMap((g) => g.items)} onClose={() => setMoving(null)} />}
       {workflows.error && <p className="px-3 text-sm text-destructive">Workflows could not be loaded: {workflows.error.message}</p>}
       {groups.map((g) => (
         <section key={g.label} aria-label={g.label}>

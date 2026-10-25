@@ -108,6 +108,17 @@ struct WorkflowGet {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkflowExport {
+    /// The workflows' ids.
+    #[serde(default)]
+    ids: Vec<String>,
+    /// Or their names, when you don't know the ids.
+    #[serde(default)]
+    names: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WorkflowSave {
     /// The workflow to save a new version of; a new (disabled) workflow when left out.
     #[serde(default)]
@@ -324,11 +335,12 @@ struct Def {
 }
 
 /// Tools that change nothing.
-const READ_ONLY: [&str; 18] = [
+const READ_ONLY: [&str; 19] = [
     "get_ticket",
     "catalog_search",
     "catalog_get",
     "workflow_get",
+    "workflow_export",
     "workflow_validate",
     "workflow_dry_run",
     "get_overview",
@@ -433,6 +445,25 @@ fn defs() -> Vec<Def> {
             description: "Proposes a document as a new version of a workflow (the user reviews and accepts it), or \
                           saves it as a new workflow, which starts disabled: the user reviews and enables it.",
             schema: schema::<WorkflowSave>,
+        },
+        Def {
+            name: "workflow_export",
+            title: "Export workflows",
+            description: "Workflows' current documents as one export text (format pdt-workflow): project ids become \
+                          {\"$project\": \"<KEY>\"} placeholders and `requires` lists the connections, personas and \
+                          projects they need. Paste it into Import on another PDT, or give it to workflow_import there.",
+            schema: schema::<WorkflowExport>,
+        },
+        Def {
+            name: "workflow_import",
+            title: "Import workflows",
+            description: "Imports an export text (or a bare workflow document). With `check: true` it only reports \
+                          the workflows, names that clash, and how each connection, persona and project they need \
+                          stands here (found, missing, kind_mismatch). Then `mapping` maps each missing one to a local \
+                          name (a project key to a local project's key or id) or null to leave it unmapped, and \
+                          `targets` (one per workflow, in order) give scope/projectId and, on a name clash, `copy` or \
+                          `versionOf` (a proposed version). New workflows start disabled. The user confirms each call.",
+            schema: schema::<pdt_core::workflow::transfer::ImportRequest>,
         },
         Def {
             name: "get_overview",
@@ -748,24 +779,35 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: WorkflowGet = args(a)?;
             let id = match (a.id, a.name) {
                 (Some(id), _) => id,
-                (None, Some(name)) => st
-                    .store
-                    // The PM looks across every project.
-                    .list_workflows(match crate::pm::is_pm_session(st, cx.session).await {
-                        true => None,
-                        false => Some(&cx.session.project_id),
-                    })
-                    .await
-                    .map_err(store)?
-                    .into_iter()
-                    .find(|w| w.name.eq_ignore_ascii_case(name.trim()))
-                    .map(|w| w.id)
-                    .ok_or_else(|| format!("no workflow is called {name}"))?,
+                (None, Some(name)) => workflow_by_name(cx, &name).await?,
                 (None, None) => return Err("give the workflow's id or name".into()),
             };
             let w = crate::workflow::routes::load(st, &id).await.map_err(api)?;
             let d = crate::workflow::routes::detail(st, w).await.map_err(api)?;
             serde_json::to_value(d).map_err(|e| e.to_string())
+        }
+        "workflow_export" => {
+            let a: WorkflowExport = args(a)?;
+            let mut ids = a.ids;
+            for n in &a.names {
+                ids.push(workflow_by_name(cx, n).await?);
+            }
+            if ids.is_empty() {
+                return Err("give the workflows' ids or names".into());
+            }
+            let e = crate::workflow::transfer::export(st, &ids).await.map_err(api)?;
+            Ok(json!({"text": pdt_core::workflow::transfer::export_text(&e), "workflows": e.workflows.len(),
+                      "requires": e.requires}))
+        }
+        "workflow_import" => {
+            let a: pdt_core::workflow::transfer::ImportRequest = args(a)?;
+            if a.check {
+                let c = crate::workflow::transfer::check(st, &a.text).await.map_err(api)?;
+                return serde_json::to_value(c).map_err(|e| e.to_string());
+            }
+            confirmable(cx, name, &AskTarget::Always).await?;
+            let r = crate::workflow::transfer::import(st, &a, Author::Agent).await.map_err(api)?;
+            serde_json::to_value(r).map_err(|e| e.to_string())
         }
         "workflow_validate" => {
             let a: crate::workflow::routes::ValidateRequest = args(a)?;
@@ -1146,6 +1188,23 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         other => Err(format!("no tool is called {other}")),
     }
+}
+
+/// A workflow's id from its name: in the session's project (with host-wide and personal ones), or for the PM anywhere.
+async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
+    let st = cx.st;
+    st.store
+        // The PM looks across every project.
+        .list_workflows(match crate::pm::is_pm_session(st, cx.session).await {
+            true => None,
+            false => Some(&cx.session.project_id),
+        })
+        .await
+        .map_err(store)?
+        .into_iter()
+        .find(|w| w.name.eq_ignore_ascii_case(name.trim()))
+        .map(|w| w.id)
+        .ok_or_else(|| format!("no workflow is called {name}"))
 }
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking

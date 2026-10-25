@@ -45,7 +45,9 @@ notifications get 202; `GET`/`DELETE` 405).
 - **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`
   (the default set), and `update_ticket` (Phase 7c: title and description of the session's own ticket, the store's
   `patch_ticket_by` as the agent; the built-in Refiner lists it), `catalog_search`, `catalog_get`, `workflow_get`,
-  `workflow_validate`, `workflow_dry_run`, `workflow_save` for personas that list them, and the PM's tools ([The
+  `workflow_validate`, `workflow_dry_run`, `workflow_save`, `workflow_export` (read-only: the export's text) and
+  `workflow_import` (asking: imports an export, new workflows off; `check: true` only reports) for personas that list
+  them, and the PM's tools ([The
   PM](#the-pm-pdt-81)). Inputs are the API's request types (schemars schemas) and each tool
   runs the route's own function (ticket `get_one`, the store's comment, review `add_comment`, workflow
   `create_workflow` with author `agent`, so a new workflow starts disabled, and `save` with `propose`, so a change is a

@@ -471,6 +471,47 @@ another kind). A config field holding a connection's name says its kind in its s
 `hasSecret` is ever returned). A connection carries `lastError` and `lastErrorAt` while a sensor cannot use it
 ("Sensors and webhooks"); saving it (or its secret) clears them until the next use.
 
+## Export and import (PDT-155)
+
+Workflows move between PDTs as text (pdt-core `workflow::transfer`, pdt-api `workflow/transfer.rs`). An export is
+`{format: "pdt-workflow", formatVersion: 1, pdtVersion, exportedAt, workflows: [{name, description, scope, project?,
+doc}], requires}`, pretty-printed, the same whether copied or downloaded: current documents only (no runs, state,
+`_pdt.template`, versions, proposals or secrets). Every config string that is a project id here becomes `{"$project":
+"<KEY>"}`; a project workflow's own project travels as `project` (its key). `requires` lists what the documents name:
+`connections` `{name, kind, tools}` (each field with `x-connection-kind`, so MCP servers and webhook hooks too;
+`tools` are an MCP server's tools that `mcp.tool` steps call), `personas` (agent steps) and `projects` `{key, name}`.
+Templated names (`{{…}}`) are left out.
+
+`GET /api/workflows/{id}/export`, `POST /api/workflows/export {ids}` (one envelope, in order). `POST
+/api/workflows/import {text, check: true}` parses the text (an export, or a bare document as one host workflow) and
+answers `{pdtVersion, workflows: [{name, description, scope, project, nodes, existing, issues}], connections,
+personas, projects, warnings}`: what the documents need, worked out from the documents themselves (so a bare
+document is matched too), each `found`, `missing` or `kind_mismatch` (a connection of that name of another kind; `any`
+fits every kind), and the workflows here with the same name. Text that isn't JSON, another `format`, a
+`formatVersion` other than 1 or no workflows are `400 invalid_export` saying which. `{text, mapping, targets}`
+imports: `mapping` `{connections, personas, projects}` maps each needed name (a project's key) to one here (a
+project's id or key) or to null to leave it unmapped; one that is missing and unanswered is `409 needs_mapping` naming
+them all. The documents' names are rewritten, placeholders filled (an unmapped project stays its key, so it matches
+nothing), each document is validated, and only then are they written: new workflows disabled (authored by the user,
+noted "imported from PDT <version>"), or with `versionOf` a new version of that workflow (an agent's is proposed;
+never a repo workflow, `409 workflow_in_repo`). A name already taken here is `409 workflow_exists` unless the target
+says `copy` (`<name> (imported)`, then `(imported 2)` …). A target's `scope`/`projectId` default to the export's, a
+project workflow's project through the mapping. The answer is `{workflows, warnings}`: names left unmapped, webhook
+connections without a secret, and `command` steps whose `cwd` is an absolute folder (from the other machine; not
+rewritten). The workflow's detail and `/check` / `/validate` add warnings for what a document names that is not here:
+`missing_connection`, `connection_kind`, `hook_secret` (a webhook connection with no secret), `missing_persona`,
+`missing_project` (a trigger's `projects`, `ticket.create` / `github.import` `project`).
+
+pdt-mcp: `workflow_export {ids | names}` → `{text, workflows, requires}` (read-only); `workflow_import` takes the
+import request (`check: true` reports without asking), asks the user, and imports as `agent`.
+
+Web: the workflow's ⋯ menu has Copy export (the text on the clipboard, "Copied") and Export… (the text to select and
+copy, with Download, `<name>.pdt-workflow.json`); the Workflows list has Import… and Export… (pick the workflows; all
+to start with). Import… is a paste box (Choose file or drop a file fills it), Check, then each workflow's Applies to
+and, on a clash, a copy or a new version of one, and a Map to… for each missing name (connections of the kind needed,
+personas, projects, or Leave unmapped): Import stays off until each is answered. With warnings it shows them before
+opening the first workflow. The workflow page shows the reference warnings in a "Not set up on this host yet" banner.
+
 ## Sensors and webhooks (Phase 7e)
 
 - **Schedules** (`workflow/nodes/schedule.rs`, pdt-core `workflow/schedule.rs`): each engine tick, every enabled

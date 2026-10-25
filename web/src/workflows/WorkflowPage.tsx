@@ -17,6 +17,7 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { DryRunDialog } from './DryRunDialog';
 import { EnableDialog, EnableSwitch, useEnable } from './EnableSwitch';
+import { ExportDialog } from './ExportDialog';
 import { GraphView } from './GraphView';
 import { hasErrors, type Catalog } from './model';
 import { NodePanel } from './NodePanel';
@@ -24,10 +25,14 @@ import { OutlineView } from './OutlineView';
 import { RunsView } from './RunsView';
 import { scopeLabel } from './scope';
 import { TextView } from './TextView';
+import { copyExport } from './transfer';
 import { useCheck, useDraft } from './useDraft';
 import { VersionsView } from './VersionsView';
 
 export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
+
+/** Issue codes for what the workflow names that is not on this host (an imported workflow's, PDT-155). */
+const SETUP_CODES = ['missing_connection', 'connection_kind', 'hook_secret', 'missing_persona', 'missing_project'];
 
 /** The workflow's own settings, shown beside the builder when no node is selected. */
 function DetailsPanel({ doc, onChange, readOnly }: { doc: WorkflowDoc; onChange: (d: WorkflowDoc) => void; readOnly: boolean }) {
@@ -116,6 +121,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
   const [dryRun, setDryRun] = useState(false);
   const [note, setNote] = useState('');
   const [templating, setTemplating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   // Workflows are view-only on a phone.
   const readOnly = w.source === 'repo' || phone;
   const enable = useEnable(w);
@@ -153,6 +159,9 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
 
   const hasManual = w.doc.nodes.some((n) => n.kind === 'manual');
   const menu = (): MenuEntry[] => [
+    { label: 'Copy export', onSelect: () => void copyExport([w.id]) },
+    { label: 'Export…', onSelect: () => setExporting(true) },
+    { separator: true },
     { label: 'Save as template…', onSelect: () => setTemplating(true) },
     {
       label: 'Duplicate', onSelect: () => void runAction(async () => {
@@ -186,6 +195,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
     <DetailsPanel doc={draft.doc} onChange={draft.set} readOnly={readOnly} />
   );
   const issueCount = (check?.issues ?? []).filter((i) => i.severity === 'error').length;
+  const setup = w.issues.filter((i) => SETUP_CODES.includes(i.code));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -212,6 +222,14 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
         )}
       />
       {w.source === 'repo' && <Banner tone="neutral">This workflow lives in the repo ({w.repoFile}): edit the file to change it.</Banner>}
+      {setup.length > 0 && (
+        <Banner tone="waiting">
+          <span className="flex flex-col">
+            <span>Not set up on this host yet:</span>
+            {setup.map((i) => <span key={`${i.node}:${i.code}`}>{i.message}</span>)}
+          </span>
+        </Banner>
+      )}
       {w.proposed !== null && (
         <Banner tone="waiting" actions={<Button size="sm" variant="secondary" onClick={() => setTab('versions')}>Review</Button>}>
           An agent proposed version {w.proposed}.
@@ -256,6 +274,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
       )}
       {phone && <EnableDialog w={w} catalog={catalog} enable={enable} />}
       {dryRun && <DryRunDialog open onOpenChange={setDryRun} doc={draft.doc} workflowId={w.id} catalog={catalog} />}
+      {exporting && <ExportDialog ids={[w.id]} onClose={() => setExporting(false)} />}
       {templating && <SaveAsTemplateDialog w={w} doc={draft.doc} onClose={() => setTemplating(false)} onSaved={(tid) => { setTemplating(false); void qc.invalidateQueries({ queryKey: ['workflow-templates'] }); onOpen({ kind: 'template', id: tid }); }} />}
     </div>
   );
