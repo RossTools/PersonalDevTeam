@@ -328,7 +328,8 @@ const NO_CAP = 'none';
 const CAPS = [1, 2, 3, 4, 5, 6, 8, 10];
 
 /**
- * The project's policies (Phase 7c): who may merge, whether an automated merge needs a person's approval, the cap on
+ * The project's policies (Phase 7c): who may merge, whether an automated merge needs a person's approval or green CI
+ * (PDT-151), the cap on
  * running tickets, auto-start and its quiet period, and whether the PM asks before acting (PDT-81). Merge and Start enforce them, whatever
  * a workflow says. Each saves at once.
  */
@@ -398,6 +399,17 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
               />
             </SettingsRow>
           )}
+          <SettingsRow
+            label="An automated merge waits for green CI"
+            description="A workflow's or an agent's merge of a pull request waits for CI on its head to pass, and goes back to the coder when it fails, whatever GitHub's branch protection requires. A repository without CI merges at once."
+          >
+            <Switch
+              aria-label="An automated merge waits for green CI"
+              checked={p?.requireGreenCi ?? true}
+              disabled={!settings || save.isPending}
+              onChange={(on) => save.mutate({ requireGreenCi: on }, done)}
+            />
+          </SettingsRow>
         </>
       )}
       <SettingsRow

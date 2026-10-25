@@ -1,4 +1,5 @@
-//! Ticket actions: `ticket.finish` (the domain command, Phase 7a spec §5.1), `ticket.move`, `ticket.comment`.
+//! Ticket actions: `ticket.finish` (the domain command, Phase 7a spec §5.1), `ticket.move`, `ticket.comment`,
+//! `ticket.create`.
 
 use crate::finish::{FinishOutcome, FinishRequest};
 use crate::routes::now_ms;
@@ -186,5 +187,81 @@ impl NodeKind for Comment {
                 .ok_or("no such ticket")?;
             Ok(Outcome::next("out", json!({"eventId": e.id})))
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct CreateConfig {
+    /// The project's id (`{{trigger.projectId}}`).
+    pub project: String,
+    pub title: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub description: Option<String>,
+    /// Draft when left out.
+    #[serde(default)]
+    #[ts(optional)]
+    pub stage: Option<TicketStage>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub labels: Option<Vec<String>>,
+}
+
+pub struct Create;
+
+impl NodeKind for Create {
+    fn spec(&self) -> KindSpec {
+        spec::<CreateConfig, Value>(
+            "ticket.create",
+            1,
+            Category::Action,
+            "Create a ticket",
+            "Creates a ticket in a project (at the top of its stage), e.g. a follow-up. Output: its `id` and `key`.",
+            &[("out", "Then")],
+            false,
+        )
+    }
+
+    fn check(&self, config: &Value) -> Result<(), String> {
+        let c: CreateConfig = parse(config)?;
+        if c.title.trim().is_empty() {
+            return Err("title is empty".into());
+        }
+        Ok(())
+    }
+
+    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
+        Box::pin(async move {
+            let c: CreateConfig = parse(&input)?;
+            if cx.dry_run {
+                return Ok(Outcome::next(
+                    "out",
+                    json!({"would": format!("create ticket {} in {}", c.title, c.project)}),
+                ));
+            }
+            let input = pdt_core::ticket::NewTicket {
+                title: c.title,
+                description: c.description,
+                stage: c.stage,
+                priority: None,
+                labels: c.labels,
+                areas: None,
+                before: None,
+                after: None,
+                parent: None,
+                blocked_by_previous: None,
+            };
+            let valid = input.validate().map_err(|e| e.to_string())?;
+            let id = uuid::Uuid::now_v7().to_string();
+            let t = cx.st.store.create_ticket(&id, &c.project, &valid, now_ms()).await.map_err(|e| e.to_string())?;
+            Ok(Outcome::next("out", json!({"id": t.summary.id, "key": t.summary.key})))
+        })
+    }
+
+    /// A second run would make a second ticket.
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        false
     }
 }

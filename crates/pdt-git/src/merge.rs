@@ -22,6 +22,21 @@ pub fn is_ancestor(repo: &Path, a: &str, b: &str) -> bool {
     matches!(git_with_env(repo, &["merge-base", "--is-ancestor", a, b], &[]), Ok(Ok(_)))
 }
 
+/// The commits `head` has that `from` doesn't (`from..head`), newest first, as (sha, subject). None when git can't
+/// tell (an unknown commit).
+pub fn commits_between(repo: &Path, from: &str, head: &str) -> Option<Vec<(String, String)>> {
+    let range = format!("{from}..{head}");
+    match git_with_env(repo, &["log", "--format=%H%x09%s", &range, "--"], &[]) {
+        Ok(Ok(s)) => Some(
+            s.lines()
+                .filter_map(|l| l.split_once('\t'))
+                .map(|(sha, subject)| (sha.to_string(), subject.to_string()))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 /// The best common ancestor of `a` and `b`.
 pub fn merge_base(repo: &Path, a: &str, b: &str) -> Option<String> {
     match git_with_env(repo, &["merge-base", a, b], &[]) {
@@ -168,6 +183,21 @@ mod tests {
         git(dir, &["add", "-A"]);
         git(dir, &["commit", "-q", "-m", &format!("edit {file}")]);
         git(dir, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn commits_between_lists_the_newer_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, _) = repo_with_branch(tmp.path());
+        let merged = commit(&repo, "a.txt", "1");
+        assert_eq!(commits_between(&repo, &merged, &merged), Some(vec![]));
+        let late = commit(&repo, "b.txt", "2");
+        let later = commit(&repo, "c.txt", "3");
+        assert_eq!(
+            commits_between(&repo, &merged, &later),
+            Some(vec![(later.clone(), "edit c.txt".to_string()), (late, "edit b.txt".to_string())])
+        );
+        assert_eq!(commits_between(&repo, "0123456789abcdef0123456789abcdef01234567", &later), None);
     }
 
     /// A repo on `main` with a file, and branch `feature` (checked out) started there. Returns (repo, base commit).

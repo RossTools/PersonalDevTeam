@@ -121,13 +121,15 @@ async fn head_of(st: &AppState, info: &AttemptInfo) -> Option<String> {
 }
 
 /// The `ci.*` events of an attempt's Buildkite CI (each once: its key names the builds and their retries).
-/// `pr`: the attempt's open pull request; `agent_working`: an agent step works on the attempt now.
+/// `pr`: the attempt's open pull request; `agent_working`: an agent step works on the attempt now; `merge_waiting`: a
+/// workflow's merge waits for this CI.
 pub(crate) fn ci_events(
     info: &AttemptInfo,
     ci: &CiStatus,
     pr: Option<&PullRequestStatus>,
     head: &str,
     agent_working: bool,
+    merge_waiting: bool,
 ) -> Vec<NewLogEvent> {
     let a = crate::github::attempt_ref(info);
     let merge_requested = pr.is_some_and(|p| crate::github::merge_requested(info, p));
@@ -148,6 +150,7 @@ pub(crate) fn ci_events(
         merge_requested,
         merge_refused,
         agent_working,
+        merge_waiting,
     };
     match ci.state {
         CiState::Failed => failed_notice(ci, &info.attempt.branch, pr, head)
@@ -223,7 +226,8 @@ async fn refresh_attempt(
     let Some(ci) = ci else { return Ok(true) };
     let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == PrState::Open);
     let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
-    for e in ci_events(info, &ci, pr.as_ref(), &head, agent_working) {
+    let merge_waiting = st.store.attempt_merge_waits_for_ci(&info.attempt.id).await.unwrap_or(false);
+    for e in ci_events(info, &ci, pr.as_ref(), &head, agent_working, merge_waiting) {
         match st.store.emit_event(&e, now_ms()).await {
             Ok(Some(logged)) => crate::notifications::on_event(st, &logged).await,
             Ok(None) => {}

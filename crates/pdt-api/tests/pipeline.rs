@@ -383,7 +383,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     assert_eq!(
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
-               "autoStart": "off", "pmActs": false, "startDelaySeconds": 120})
+               "autoStart": "off", "pmActs": false, "startDelaySeconds": 120, "requireGreenCi": true})
     );
 
     let (s, started) =
@@ -1072,4 +1072,313 @@ async fn conflicting_pr(abandon: bool) {
     let v = get_ticket(&env, &t).await;
     assert_eq!((v["stage"].as_str(), v["pipelineStage"].as_str()), (Some("in_progress"), Some("merge")), "merging");
     assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "nobody was asked");
+}
+
+fn ci_run(id: u64, branch: &str, state: CiState) -> CiRun {
+    CiRun {
+        id,
+        attempt: 1,
+        workflow: "ci".into(),
+        state,
+        url: format!("https://github.com/o/r/actions/runs/{id}"),
+        head_sha: "abcdef1234".into(),
+        head_branch: branch.into(),
+        created_at: format!("2026-10-25T00:00:{id:02}Z"),
+        failed_jobs: vec![],
+    }
+}
+
+/// The session of the agent step at `node`, once it runs.
+async fn step_session(env: &Env, node: &'static str) -> String {
+    tick_until(env, &format!("the {node} step"), || async {
+        let steps = env.state.store.active_agent_steps().await.unwrap();
+        steps.into_iter().find(|a| a.node_id == node).and_then(|a| a.session_id).map(Value::from)
+    })
+    .await
+    .as_str()
+    .unwrap()
+    .to_string()
+}
+
+async fn submit_in(env: &Env, session: &str, outcome: &str) {
+    let text = format!(r#"mcp: submit_outcome {{"outcome": "{outcome}", "summary": "{outcome}"}}"#);
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+}
+
+async fn runs_of(env: &Env, t: &str, workflow: &str) -> Vec<Value> {
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={t}"), None).await;
+    let mut out = vec![];
+    for r in runs.as_array().unwrap().iter().filter(|r| r["workflowName"] == workflow) {
+        out.push(call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["id"].as_str().unwrap()), None).await.1);
+    }
+    out
+}
+
+/// PDT-151: a Pipeline never merges a pull request whose CI is pending or red, whatever GitHub would allow. Pending:
+/// the merge waits for CI; red: the Coder fixes it (PR notices leaves the failure to the waiting merge) and a
+/// Reviewer checks the fix; green: it merges.
+#[tokio::test]
+async fn a_pipeline_merge_waits_for_pending_ci_and_sends_red_ci_back_to_the_coder() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change it", &["agentic"]).await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let merges = || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count();
+
+    // Pending: the merge waits for CI.
+    let waiting = tick_until(&env, "the merge waiting for CI", || async {
+        let runs = runs_of(&env, &t, "Pipeline").await;
+        let steps = runs.first()?["steps"].as_array()?.clone();
+        steps.into_iter().find(|s| s["nodeId"] == "wait_ci" && s["status"] == "waiting")
+    })
+    .await;
+    assert_eq!(waiting["wait"]["event"]["also"], json!(["ci.run_failed"]), "{waiting}");
+    let merge = runs_of(&env, &t, "Pipeline").await[0]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["nodeId"] == "merge")
+        .unwrap()
+        .clone();
+    assert_eq!(merge["output"]["code"], "ci_pending", "{merge}");
+    assert_eq!(merges(), 0, "not while CI runs");
+    assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "merge");
+    assert!(env.state.store.attempt_merge_waits_for_ci(attempt["id"].as_str().unwrap()).await.unwrap());
+
+    // Red: the waiting merge takes it to the Coder; PR notices doesn't also tell it.
+    let mut red = ci_run(2, &branch, CiState::Failed);
+    red.failed_jobs = vec!["test (linux)".into()];
+    gh.set_runs(&branch, vec![red]);
+    gh.set_jobs(2, &["test (linux)"]);
+    pdt_api::refresh_prs(&env.state).await;
+    let fix = step_session(&env, "fix").await;
+    let said = tick_until(&env, "the fix reaching the coder", || async {
+        agent_says(&env, &fix).await.into_iter().find(|m| m.contains("merge was refused")).map(Value::from)
+    })
+    .await;
+    assert!(said.as_str().unwrap().contains("CI failed on PR #12 at abcdef1 (test (linux))"), "{said}");
+    assert_eq!(merges(), 0);
+    assert!(runs_of(&env, &t, "PR notices").await.is_empty(), "the waiting merge handles the failure");
+
+    // Fixed, reviewed, green: it merges.
+    gh.set_runs(&branch, vec![ci_run(3, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    submit_in(&env, &fix, "submitted").await;
+    let reviewer = step_session(&env, "fix_review").await;
+    submit_in(&env, &reviewer, "approved").await;
+    tick_until(&env, "auto-merge on", || async { (merges() == 1).then_some(Value::Null) }).await;
+}
+
+/// PDT-151: a repository with no CI at all merges as before, and the ticket says so.
+#[tokio::test]
+async fn a_repository_without_ci_merges_and_says_so() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change it", &["agentic"]).await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    pdt_api::refresh_prs(&env.state).await;
+    let merges = || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count();
+    tick_until(&env, "auto-merge on", || async { (merges() == 1).then_some(Value::Null) }).await;
+    let events = timeline(&env, &t).await;
+    let said =
+        events["events"].as_array().unwrap().iter().any(|e| {
+            e["kind"] == "comment" && e["body"].as_str().is_some_and(|b| b.contains("without waiting for CI"))
+        });
+    assert!(said, "{events}");
+}
+
+/// PDT-151: with CI turned off for the project, a merge doesn't wait for it.
+#[tokio::test]
+async fn a_project_can_merge_without_waiting_for_ci() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    settings(&env, json!({"requireGreenCi": false})).await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change it", &["agentic"]).await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let merges = || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count();
+    tick_until(&env, "auto-merge on", || async { (merges() == 1).then_some(Value::Null) }).await;
+}
+
+/// A started ticket whose PR merged at its first commit, with a second commit pushed after: its gate item.
+async fn merged_then_pushed(env: &Env, gh: &FakeGithub, title: &str) -> (String, String, Value) {
+    let t = ticket(env, title).await;
+    let attempt = start_with_a_commit(env, &t, &format!("{title}.txt")).await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    let worktree = env.repo.join(".worktrees").join(&branch);
+    let mut pr = pull_request(Mergeable::Mergeable);
+    pr.state = PrState::Merged;
+    let head = std::process::Command::new("git").current_dir(&worktree).args(["rev-parse", "HEAD"]).output().unwrap();
+    pr.head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    gh.set_pr(&branch, Some(pr));
+    commit_file(&worktree, &format!("{title}-late.txt"));
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_merges(&env.state).await;
+    let item = inbox_item(env, "gate", &t).await;
+    (t, branch, item)
+}
+
+fn branch_exists(env: &Env, branch: &str) -> bool {
+    std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+/// PDT-151: commits pushed after the PR merged keep the attempt open; the Inbox says so and asks what becomes of them.
+/// Open follow-up makes a ticket that cherry-picks them and finishes this one (keeping the branch); Discard and finish
+/// asks again, then finishes and deletes the branch; Keep open leaves it as it is.
+#[tokio::test]
+async fn commits_pushed_after_a_merge_ask_in_the_inbox() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+
+    let (t, branch, item) = merged_then_pushed(&env, &gh, "follow").await;
+    let v = get_ticket(&env, &t).await;
+    assert_eq!(v["attempts"][0]["state"], "active", "not merged: a commit isn't in the PR");
+    let question = item["body"]["question"].as_str().unwrap_or_default().to_string();
+    let key = v["key"].as_str().unwrap();
+    assert!(question.starts_with(&format!("{key}: 1 commit pushed after PR #12 merged: ")), "{item}");
+    assert!(question.contains("build"), "{question}");
+    // The agent is told too (with no session here, it is recorded as untold).
+    let run = &runs_of(&env, &t, "Commits pushed after a merge").await[0];
+    let tell = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "tell").unwrap();
+    assert!(tell["input"]["text"].as_str().unwrap().contains("before you pushed 1 commit"), "{tell}");
+    // Checking again doesn't ask again.
+    pdt_api::check_merges(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(inbox(&env).await.iter().filter(|i| i["ticketId"] == t.as_str()).count(), 1);
+
+    answer(&env, &item, json!({"choice": "open_follow_up"})).await;
+    let done = until_done(&env, &t).await;
+    assert_eq!(done["attempts"][0]["state"], "merged");
+    assert!(branch_exists(&env, &branch), "the follow-up cherry-picks from it");
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}&stage=todo", env.project), None).await;
+    let follow =
+        list["items"].as_array().unwrap().iter().find(|i| i["title"].as_str().unwrap().starts_with("Follow-up to"));
+    let follow = get_ticket(&env, follow.expect("a follow-up ticket")["id"].as_str().unwrap()).await;
+    assert!(follow["description"].as_str().unwrap().contains("git cherry-pick"), "{follow}");
+
+    let (t, branch, item) = merged_then_pushed(&env, &gh, "drop").await;
+    answer(&env, &item, json!({"choice": "discard_and_finish"})).await;
+    let confirm = tick_until(&env, "the confirmation", || async {
+        inbox(&env).await.into_iter().find(|i| i["ticketId"] == t.as_str() && i["id"] != item["id"])
+    })
+    .await;
+    assert!(confirm["body"]["question"].as_str().unwrap().starts_with("Discard "), "{confirm}");
+    assert!(branch_exists(&env, &branch));
+    answer(&env, &confirm, json!({"choice": "discard"})).await;
+    until_done(&env, &t).await;
+    assert!(!branch_exists(&env, &branch), "the commits are dropped");
+
+    let (t, _, item) = merged_then_pushed(&env, &gh, "keep").await;
+    answer(&env, &item, json!({"choice": "keep_open"})).await;
+    tick_until(&env, "the item closed", || async {
+        inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()).then_some(Value::Null)
+    })
+    .await;
+    let v = get_ticket(&env, &t).await;
+    assert_eq!((v["stage"].as_str(), v["attempts"][0]["state"].as_str()), (Some("in_progress"), Some("active")));
+}
+
+/// PDT-151: a CI event logged before the wait began (between the merge's read and the wait, so not marked
+/// `mergeWaiting`) still ends the wait: it is on the head the merge was refused at.
+#[tokio::test]
+async fn a_ci_event_logged_before_the_wait_still_ends_it() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"], "codeBy": "user"}),
+        &[("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change it", &["agentic"]).await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    // The run has started (it looks back only to its start) and waits at Code, the user's.
+    let code = inbox_item(&env, "manual", &t).await;
+    // CI passed and was logged (no merge waiting then); a re-run is going when the merge reads it.
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=ci.run_passed", None).await;
+    let early = logged.as_array().unwrap()[0].clone();
+    assert_eq!(early["payload"]["mergeWaiting"], false, "{early}");
+    let mut rerun = ci_run(1, &branch, CiState::Running);
+    rerun.attempt = 2;
+    gh.set_runs(&branch, vec![rerun]);
+    answer(&env, &code, json!({"choice": "outcome:submitted"})).await;
+    let took = tick_until(&env, "the wait taking the earlier event", || async {
+        let runs = runs_of(&env, &t, "Pipeline").await;
+        let steps = runs.first()?["steps"].as_array()?.clone();
+        steps.into_iter().find(|s| s["nodeId"] == "wait_ci" && s["port"] == "event")
+    })
+    .await;
+    assert_eq!(took["output"]["eventId"], early["id"], "{took}");
+    let merges = || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count();
+    assert_eq!(merges(), 0, "the merge read CI again: still running");
+}
+
+/// PDT-151: in a project with Buildkite, green GitHub Actions alone don't pass while Buildkite hasn't reported on the
+/// head; and a read from GitHub that fails is an error, not a wait.
+#[tokio::test]
+async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    let (s, c) = call(
+        &env.app,
+        "POST",
+        "/api/connections",
+        Some(json!({"name": "bk", "kind": "buildkite", "url": "http://127.0.0.1:1", "config": {"org": "acme"}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{c}");
+    settings(&env, json!({"buildkite": {"connection": "bk", "pipelines": ["app"]}})).await;
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_pending")), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Buildkite hasn't reported"), "{v}");
+
+    *gh.error.lock().unwrap() = Some("gh: signed out".into());
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_unreadable")), "{v}");
+    assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")), "nothing merged");
 }

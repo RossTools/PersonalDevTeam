@@ -426,8 +426,9 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
             }
         }
         let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
+        let merge_waiting = st.store.attempt_merge_waits_for_ci(&info.attempt.id).await.unwrap_or(false);
         let info = &info;
-        for e in news_events(info, &now, agent_working) {
+        for e in news_events(info, &now, agent_working, merge_waiting) {
             match st.store.emit_event(&e, now_ms()).await {
                 Ok(Some(logged)) => crate::notifications::on_event(st, &logged).await,
                 Ok(None) => {}
@@ -495,8 +496,13 @@ pub(crate) fn merge_refused(info: &AttemptInfo, pr: &PullRequestStatus) -> bool 
 }
 
 /// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
-/// `agent_working`: an agent step works on the attempt now.
-pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_working: bool) -> Vec<NewLogEvent> {
+/// `agent_working`: an agent step works on the attempt now; `merge_waiting`: a workflow's merge waits for its CI.
+pub(crate) fn news_events(
+    info: &AttemptInfo,
+    now: &PullRequestStatus,
+    agent_working: bool,
+    merge_waiting: bool,
+) -> Vec<NewLogEvent> {
     let a = attempt_ref(info);
     let key = |k: &str| format!("{}:{k}", a.attempt_id);
     let merge_requested = merge_requested(info, now);
@@ -539,6 +545,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
                         merge_requested,
                         merge_refused,
                         agent_working,
+                        merge_waiting,
                     },
                 )
             }
@@ -572,6 +579,7 @@ pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_wor
                 merge_requested,
                 merge_refused,
                 agent_working,
+                merge_waiting,
             },
         ));
     }
@@ -660,6 +668,58 @@ fn read_pr(
         error: None,
     };
     Ok((Some(status), fresh_queue, fetched_jobs))
+}
+
+/// Logs `attempt.late_commits` (once per branch head, PDT-151): the attempt's PR merged, and `commits` (newest first, as
+/// (sha, subject)) were pushed to its branch, now at `head`, after that.
+pub(crate) async fn log_late_commits(
+    st: &AppState,
+    info: &AttemptInfo,
+    pr: &PullRequestStatus,
+    head: &str,
+    commits: Vec<(String, String)>,
+) {
+    let commits: Vec<pdt_core::pr::LateCommit> =
+        commits.into_iter().map(|(sha, subject)| pdt_core::pr::LateCommit { sha, subject }).collect();
+    let (summary, notice) = pdt_core::pr::late_commits_notice(
+        &info.ticket_key,
+        pr.number,
+        &info.attempt.branch,
+        &info.attempt.base_branch,
+        &commits,
+    );
+    let list = commits.iter().map(|c| format!("- {} {}", c.sha, c.subject).trim_end().to_string()).collect::<Vec<_>>();
+    let e = ev::LateCommitsEvent {
+        attempt: attempt_ref(info),
+        pr: pr.number,
+        url: pr.url.clone(),
+        merged_head: pr.head_sha.clone(),
+        head: head.to_string(),
+        commits,
+        summary,
+        notice,
+        list: list.join("\n"),
+    };
+    let key = format!("{}:late_commits:{head}", info.attempt.id);
+    match st.store.emit_event(&NewLogEvent::new(ev::ATTEMPT_LATE_COMMITS, key, "merge_check", e), now_ms()).await {
+        Ok(Some(logged)) => {
+            tracing::info!(ticket = %info.ticket_key, pr = pr.number, "commits were pushed after the PR merged");
+            crate::notifications::on_event(st, &logged).await;
+        }
+        Ok(None) => {}
+        Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log commits pushed after a merge"),
+    }
+}
+
+/// The attempt's open PR as last seen, with the CI on its head from GitHub Actions and Buildkite together (as its badge
+/// shows it), and whether Buildkite has reported on that head (its last look may be of an older one).
+pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, Option<CiStatus>, bool)> {
+    let w = watch(st);
+    let pr = w.by_attempt.get(attempt_id).filter(|p| p.state == PrState::Open).cloned()?;
+    let bk = w.buildkite.get(attempt_id).filter(|b| b.runs.iter().all(|r| r.head_sha == pr.head_sha)).cloned();
+    let bk_on_head = bk.is_some();
+    let ci = CiStatus::merge(pr.ci.clone(), bk);
+    Some((pr, ci, bk_on_head))
 }
 
 /// The attempt's PR as last seen (None when it has none, or the project is not on GitHub).

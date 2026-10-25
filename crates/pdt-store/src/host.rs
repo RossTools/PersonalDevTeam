@@ -141,8 +141,8 @@ impl Store {
             None => None,
         };
         let agent_permission_mode = mode.as_deref().and_then(pdt_core::conversation::PermissionMode::parse);
-        let (start_delay,): (i64,) =
-            sqlx::query_as("SELECT start_delay_seconds FROM project_settings WHERE project_id = ?")
+        let (start_delay, require_green_ci): (i64, bool) =
+            sqlx::query_as("SELECT start_delay_seconds, require_green_ci FROM project_settings WHERE project_id = ?")
                 .bind(project_id)
                 .fetch_one(&self.pool)
                 .await?;
@@ -163,6 +163,7 @@ impl Store {
                     .map_err(|_| StoreError::Corrupt(format!("approval-exempt labels {exempt:?}")))?,
                 pm_acts,
                 start_delay_seconds: u32::try_from(start_delay).unwrap_or(0),
+                require_green_ci,
             },
             jira: jira_connection.filter(|c| !c.is_empty()).map(|connection| pdt_core::jira::JiraSettings {
                 connection,
@@ -185,7 +186,8 @@ impl Store {
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
              approval_exempt_labels, pm_acts, jira_connection, jira_scope, jira_done, buildkite_connection, \
-             buildkite_pipelines, start_delay_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             buildkite_pipelines, start_delay_seconds, require_green_ci) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
@@ -195,7 +197,7 @@ impl Store {
              pm_acts = excluded.pm_acts, jira_connection = excluded.jira_connection, \
              jira_scope = excluded.jira_scope, jira_done = excluded.jira_done, \
              buildkite_connection = excluded.buildkite_connection, buildkite_pipelines = excluded.buildkite_pipelines, \
-             start_delay_seconds = excluded.start_delay_seconds",
+             start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -218,6 +220,7 @@ impl Store {
                 .expect("a list of pipelines"),
         )
         .bind(i64::from(s.policy.start_delay_seconds))
+        .bind(s.policy.require_green_ci)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -296,6 +299,7 @@ mod tests {
                 approval_exempt_labels: vec!["automerge".into()],
                 pm_acts: true,
                 start_delay_seconds: 30,
+                require_green_ci: false,
             },
             jira: Some(pdt_core::jira::JiraSettings {
                 connection: "work-jira".into(),

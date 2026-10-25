@@ -275,12 +275,10 @@ async fn match_events(st: &AppState) {
                 continue;
             }
             let Some(w) = step.wait.get("event") else { continue };
-            if w.get("type").and_then(|t| t.as_str()) != Some(e.kind.as_str()) {
+            if !crate::workflow::nodes::wait::wait_types(w).contains(&e.kind.as_str()) {
                 continue;
             }
-            let conds: Vec<pdt_core::workflow::cond::Condition> =
-                w.get("where").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
-            if all(&conds, &json!({"event": trigger})) {
+            if crate::workflow::nodes::wait::wait_matches(w, &trigger) {
                 resumed.insert(step.id.clone());
                 if let Err(x) = complete_step(st, step, "event", trigger.clone()).await {
                     tracing::warn!(step = %step.id, error = %x, "could not resume a waiting step");
@@ -662,9 +660,10 @@ async fn apply(
 /// this a wait reached after its event (a pull request merged by hand during QA) would wait for one that never comes.
 async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>> {
     let Some(w) = step.wait.get("event") else { return Ok(None) };
-    let Some(kind) = w.get("type").and_then(Value::as_str) else { return Ok(None) };
-    let conds: Vec<pdt_core::workflow::cond::Condition> =
-        w.get("where").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
+    let kinds = crate::workflow::nodes::wait::wait_types(w);
+    if kinds.is_empty() {
+        return Ok(None);
+    }
     let steps = st.store.list_steps(&run.id).await.map_err(err)?;
     let taken: HashSet<&str> = steps
         .iter()
@@ -672,14 +671,24 @@ async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>>
         .filter_map(|s| s.output.get("eventId").and_then(Value::as_str))
         .chain(run.trigger_event_id.as_deref())
         .collect();
-    let filter = pdt_store::EventFilter {
-        kind: Some(kind.into()),
-        since: Some(run.started_at),
-        limit: 1000,
-        ..Default::default()
-    };
-    let events = st.store.list_log_events(&filter).await.map_err(err)?;
-    Ok(events.into_iter().find(|e| !taken.contains(e.id.as_str()) && all(&conds, &json!({"event": trigger_value(e)}))))
+    let mut found: Option<LogEvent> = None;
+    for kind in kinds {
+        let filter = pdt_store::EventFilter {
+            kind: Some(kind.into()),
+            since: Some(run.started_at),
+            limit: 1000,
+            ..Default::default()
+        };
+        let events = st.store.list_log_events(&filter).await.map_err(err)?;
+        let first = events.into_iter().find(|e| {
+            !taken.contains(e.id.as_str()) && crate::workflow::nodes::wait::wait_matches(w, &trigger_value(e))
+        });
+        // Of several types, the one logged first.
+        if let Some(e) = first.filter(|e| found.as_ref().is_none_or(|f| e.seq < f.seq)) {
+            found = Some(e);
+        }
+    }
+    Ok(found)
 }
 
 /// A step's `wait` while it waits to be retried after a timeout: it was cut short (`StepCx::rerun`).

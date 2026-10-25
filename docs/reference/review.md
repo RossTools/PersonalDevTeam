@@ -47,6 +47,16 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   `attempt.merge` node (PDT-124). A refusal never records the attempt as set to merge: then PR notices would turn
   auto-merge on when CI passes, also for a fix no one reviewed (the Pipeline fixes and reviews its own). An automated
   merge whose pull request is already on auto-merge or in the queue counts as queued.
+- Green CI (PDT-151, policy `requireGreenCi`, on by default; project settings: "An automated merge waits for green
+  CI"): an automated merge of a pull request reads its PR from GitHub again and needs CI on its head to have passed
+  (GitHub Actions and Buildkite together, as the badge shows it; pdt-core `pr::ci_gate`), whatever GitHub's branch
+  protection requires (`gh pr merge --auto` merges at once where nothing is required). A failed or cancelled run is
+  409 `ci_failed` (`fixable`, the reason names the failed jobs and the run); runs still going, or none yet while the
+  repository has CI (`.github/workflows` files at the head or on the branch, or a Buildkite pipeline for the project),
+  `ci_pending`; in a project with Buildkite, green Actions alone are `ci_pending` while Buildkite hasn't reported on
+  that head. A read from GitHub that fails is 409 `ci_unreadable`, an error like `merge_failed` (the last look may be
+  older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
+  A person's merge doesn't wait.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
   (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (pdt-github `merge_pr`; the method from
   `merge_settings`, none with a merge queue; when GitHub says the PR is already clean it merges at once) and the merge
