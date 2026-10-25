@@ -349,7 +349,12 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         )
         .route("/projects/{id}/pull", axum::routing::post(crate::projects::pull))
         .route("/projects/{id}/files", get(crate::files::list))
-        .route("/projects/{id}/files/content", get(crate::files::content))
+        .route(
+            "/projects/{id}/files/content",
+            get(crate::files::content).put(crate::files::save).delete(crate::files::delete),
+        )
+        .route("/projects/{id}/files/rename", axum::routing::post(crate::files::rename))
+        .route("/projects/{id}/files/tell", axum::routing::post(crate::files::tell))
         .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
         .route("/worktrees/{id}/changes", get(crate::review::changes))
         .route("/worktrees/{id}/changes/file", get(crate::review::file))

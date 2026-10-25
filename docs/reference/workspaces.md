@@ -173,6 +173,23 @@ its tab, the Inbox picking an item) replace it.
 - The Files view reads checkouts through `/api/projects/{id}/files` (git's file list, `.gitignore` honoured; paths
   stay inside the checkout, `.git` refused). A Markdown file shows rendered (`Markdown`, as ticket text) with a
   Rendered | Source switch.
+- Editing in the Files view (PDT-157, not on phones): **Edit** turns the file's CodeMirror editable (same
+  highlighting; a file with CRLF endings keeps them), with Save (⌘S / Ctrl+S) and Cancel (Done once saved); a Markdown
+  file gets an Edit | Preview switch. While there are unsaved changes, navigating in the app asks first (the router's
+  `useNavigationGuard`; browser Back is not held) and closing the page asks the browser's question. The file's
+  content carries `hash` (SHA-256 of its bytes); `PUT /api/projects/{id}/files/content` `{path, worktreeId?, text,
+  baseHash?}` writes only when the file on disk still has `baseHash`, else 409 `file_changed`, and the UI offers
+  Reload (the file as it is now) or Show diff (on disk → yours, the review's `CodeDiff`) + Overwrite (saves against
+  the hash just read, so it never overwrites blindly either). Without `baseHash` it creates a file that must not exist
+  (409 `file_exists`), making its folders. `POST …/files/rename` `{from, to}` moves a file or folder to a free path;
+  `DELETE …/files/content?path=` deletes a file (not a folder), after a confirm. New file is the button beside the
+  checkout picker and in a row's right-click menu (with Rename and Delete; also in the file's ⋯). Writes refuse `..`,
+  a `.git` segment anywhere (submodules too), and any path whose nearest existing folder or itself resolves, through
+  symlinks, outside the checkout; binary files and files over 1 MB stay read-only (`not_editable`, 413 `too_large`).
+  While editing, a banner names the agent sessions working in that checkout (running, activity `working`, same
+  worktree); after a save the toast offers to tell them: `POST …/files/tell` `{sessionId, paths}` queues a user
+  message through the `session.send` outbox (it waits until the agent is free). Saved changes are plain uncommitted
+  changes: the editor never commits.
 - Folder picker (PDT-5): `GET /api/host/folders` (`path` absolute or `~…`, empty = home; `hidden`; `nearest` walks up
   to a folder that exists) lists one folder's subfolders, never files, in the host's path form whatever the browser's
   OS (pure rules in pdt-core `host_path`, tested for both styles), marking git checkouts and projects;

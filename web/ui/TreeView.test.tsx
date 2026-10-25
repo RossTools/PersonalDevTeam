@@ -57,6 +57,18 @@ describe('TreeView', () => {
     expect(within(t).queryByRole('row', { name: 'main.ts' })).toBeNull();
   });
 
+  it('opens a row menu on right-click and Shift+F10', async () => {
+    const onMenu = vi.fn();
+    render(<TreeView aria-label="Files" items={root} onMenu={onMenu} />);
+    const readme = screen.getByRole('row', { name: /README\.md/ });
+    await userEvent.pointer({ keys: '[MouseRight]', target: readme, coords: { clientX: 3, clientY: 4 } });
+    expect(onMenu).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'README.md' }), { x: 3, y: 4 });
+    readme.focus();
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}');
+    expect(onMenu).toHaveBeenCalledTimes(2);
+    expect(onMenu.mock.calls[1][0].id).toBe('README.md');
+  });
+
   it('loads children only for open branches', async () => {
     const calls: string[] = [];
     render(<Files calls={calls} />);

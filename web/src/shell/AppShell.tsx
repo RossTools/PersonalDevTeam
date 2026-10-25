@@ -918,7 +918,7 @@ export function AppShell() {
             ) : view === 'workflows' ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></Suspense>
             ) : view === 'files' ? (
-              phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} />
+              phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} readOnly={phone} />
             ) : view === 'settings' ? (
               settingsPage.kind === 'project' ? (
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => (phone ? go(viewRoute('settings'), { replace: true }) : showProjectSettings(null))}

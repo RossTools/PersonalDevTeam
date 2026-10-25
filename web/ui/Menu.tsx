@@ -31,7 +31,7 @@ export type MenuEntry =
   | { separator: true }
   | { submenu: string; entries: MenuEntry[]; disabled?: boolean; icon?: ReactNode }
   /** A one-line text field ("New workspace…"): shown as an item; choosing it turns the menu into the field. */
-  | { input: string; onSubmit: (value: string) => void };
+  | { input: string; onSubmit: (value: string) => void; defaultValue?: string };
 
 type InputEntry = Extract<MenuEntry, { input: string }>;
 
@@ -126,6 +126,7 @@ function InputForm({ entry, onDone }: { entry: InputEntry; onDone: () => void })
         name="v"
         aria-label={entry.input}
         placeholder={entry.input}
+        defaultValue={entry.defaultValue}
         autoFocus
         autoComplete="off"
         className="h-control-md w-56 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-control-touch"

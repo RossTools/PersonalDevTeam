@@ -1,7 +1,8 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Button as AriaButton, Tree, TreeItem, TreeItemContent, type Key, type Selection } from 'react-aria-components';
 import { cn } from './lib/utils';
+import { isKeyMenu, type MenuPoint } from './lib/rowMenu';
 
 /** One node of a tree. `hasChildren` marks a branch (a folder) whose children are loaded when it opens. */
 export interface TreeNode {
@@ -42,6 +43,8 @@ export interface TreeViewProps<T extends TreeNode> {
   selectedKey?: string | null;
   /** A leaf was opened: click, tap, Enter or Space. Branches toggle instead. */
   onAction?: (node: T) => void;
+  /** Opens a row's menu: right-click, Shift+F10 or the Menu key (render it with `useMenuAt`). */
+  onMenu?: (node: T, at: MenuPoint) => void;
   /** Shown inside the tree when `items` is empty. */
   renderEmpty?: () => ReactNode;
   className?: string;
@@ -63,6 +66,7 @@ export function TreeView<T extends TreeNode>({
   onExpandedChange,
   selectedKey,
   onAction,
+  onMenu,
   renderEmpty,
   className,
   ...rest
@@ -98,6 +102,7 @@ export function TreeView<T extends TreeNode>({
           // Branches can't be selected (disabledBehavior="selection"): pressing one toggles it.
           isDisabled={!!node.hasChildren}
           onAction={node.hasChildren ? () => toggle(node.id) : undefined}
+          onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(node, { x: e.clientX, y: e.clientY }); } : undefined}
           className={rowClass}
           style={indent}
         >
@@ -136,29 +141,41 @@ export function TreeView<T extends TreeNode>({
   };
 
   const content = renderNodes(items);
+  // Shift+F10 / the Menu key on the focused row open its menu (rows can't take key handlers themselves).
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (!onMenu || !isKeyMenu(e)) return;
+    const row = (e.target as HTMLElement).closest<HTMLElement>('[data-key]');
+    const node = row && nodes.get(row.dataset.key ?? '');
+    if (!row || !node) return;
+    e.preventDefault();
+    const r = row.getBoundingClientRect();
+    onMenu(node, { x: r.left + 8, y: r.bottom });
+  };
   return (
-    <Tree
-      {...rest}
-      selectionMode="single"
-      disallowEmptySelection={selected != null}
-      selectedKeys={selected == null ? [] : [selected]}
-      disabledBehavior="selection"
-      onSelectionChange={(keys: Selection) => {
-        if (keys === 'all') return;
-        const key = [...keys][0];
-        if (key == null) return;
-        const node = nodes.get(String(key));
-        if (!node || node.hasChildren) return;
-        if (selectedKey === undefined) setOwnSelected(node.id);
-        onAction?.(node);
-      }}
-      expandedKeys={expanded}
-      onExpandedChange={(keys: Set<Key>) => setExpanded(new Set([...keys].map(String)))}
-      renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
-      className={cn('flex flex-col outline-none', className)}
-    >
-      {content}
-    </Tree>
+    <div className="contents" onKeyDown={onKeyDown}>
+      <Tree
+        {...rest}
+        selectionMode="single"
+        disallowEmptySelection={selected != null}
+        selectedKeys={selected == null ? [] : [selected]}
+        disabledBehavior="selection"
+        onSelectionChange={(keys: Selection) => {
+          if (keys === 'all') return;
+          const key = [...keys][0];
+          if (key == null) return;
+          const node = nodes.get(String(key));
+          if (!node || node.hasChildren) return;
+          if (selectedKey === undefined) setOwnSelected(node.id);
+          onAction?.(node);
+        }}
+        expandedKeys={expanded}
+        onExpandedChange={(keys: Set<Key>) => setExpanded(new Set([...keys].map(String)))}
+        renderEmptyState={renderEmpty ? () => renderEmpty() : undefined}
+        className={cn('flex flex-col outline-none', className)}
+      >
+        {content}
+      </Tree>
+    </div>
   );
 }
 

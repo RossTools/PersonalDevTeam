@@ -13,6 +13,9 @@ import type { NewProject } from './gen/NewProject';
 import type { CloneProject } from './gen/CloneProject';
 import type { FileContent } from './gen/FileContent';
 import type { FileEntry } from './gen/FileEntry';
+import type { RenameFile } from './gen/RenameFile';
+import type { SaveFile } from './gen/SaveFile';
+import type { TellFilesChanged } from './gen/TellFilesChanged';
 import type { FolderEntry } from './gen/FolderEntry';
 import type { FolderListing } from './gen/FolderListing';
 import type { NewFolder } from './gen/NewFolder';
@@ -202,6 +205,16 @@ export const api = {
     request<FileEntry[]>(`/api/projects/${enc(projectId)}/files?${filesQuery(worktreeId, path)}`),
   fileContent: (projectId: string, worktreeId: string | null, path: string) =>
     request<FileContent>(`/api/projects/${enc(projectId)}/files/content?${filesQuery(worktreeId, path)}`),
+  /** Saves a file opened with `baseHash` (409 `file_changed` when it changed on disk since); without it, creates one. */
+  saveFile: (projectId: string, f: SaveFile) =>
+    request<FileContent>(`/api/projects/${enc(projectId)}/files/content`, { method: 'PUT', body: JSON.stringify(f) }),
+  renameFile: (projectId: string, r: RenameFile) =>
+    request<void>(`/api/projects/${enc(projectId)}/files/rename`, { method: 'POST', body: JSON.stringify(r) }),
+  deleteFile: (projectId: string, worktreeId: string | null, path: string) =>
+    request<void>(`/api/projects/${enc(projectId)}/files/content?${filesQuery(worktreeId, path)}`, { method: 'DELETE' }),
+  /** Tells an agent session which files the user changed (it gets it once it is free). */
+  tellFilesChanged: (projectId: string, t: TellFilesChanged) =>
+    request<void>(`/api/projects/${enc(projectId)}/files/tell`, { method: 'POST', body: JSON.stringify(t) }),
   listWorktrees: (projectId: string) => request<Worktree[]>(`/api/projects/${enc(projectId)}/worktrees`),
   createWorktree: (projectId: string, w: NewWorktree) =>
     request<Worktree>(`/api/projects/${enc(projectId)}/worktrees`, { method: 'POST', body: JSON.stringify(w) }),

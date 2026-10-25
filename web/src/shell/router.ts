@@ -36,8 +36,12 @@ const entry = (): EntryState => (window.history.state as EntryState | null) ?? {
  * entry is replaced, so choosing in a drawer leaves one entry.
  */
 export function navigate(to: string, opts?: { replace?: boolean }) {
+  if (to === currentLocation() && !entry().overlay) return;
+  whenAllowed(() => navigateNow(to, opts));
+}
+
+function navigateNow(to: string, opts?: { replace?: boolean }) {
   const cur = entry();
-  if (to === currentLocation() && !cur.overlay) return;
   if (opts?.replace || pushedThisTask || cur.overlay) {
     window.history.replaceState({ n: cur.n ?? 0 }, '', to);
   } else {
@@ -48,9 +52,38 @@ export function navigate(to: string, opts?: { replace?: boolean }) {
   notify();
 }
 
+/** What may hold up leaving the screen (unsaved edits): asks, and resolves true to leave. */
+let guard: (() => Promise<boolean>) | null = null;
+
+/** Runs `go` (something that leaves the screen) now, or once the guard, when there is one, says so. */
+export function whenAllowed(go: () => void) {
+  if (!guard) return go();
+  void guard().then((ok) => { if (ok) go(); });
+}
+
+/**
+ * While `active` (unsaved changes), navigating in the app first asks `ask` (a confirm), and closing or reloading the
+ * page asks the browser's own question. Browser Back is not held.
+ */
+export function useNavigationGuard(active: boolean, ask: () => Promise<boolean>) {
+  const askRef = useRef(ask);
+  askRef.current = ask;
+  useEffect(() => {
+    if (!active) return;
+    const mine = () => askRef.current();
+    guard = mine;
+    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      if (guard === mine) guard = null;
+      window.removeEventListener('beforeunload', onUnload);
+    };
+  }, [active]);
+}
+
 /** ←: Back, when it stays in the app; otherwise (a detail screen opened from a link) `up` in place of this one. */
 export function goBack(up: string) {
-  if ((entry().n ?? 0) > 0) window.history.back();
+  if ((entry().n ?? 0) > 0) whenAllowed(() => window.history.back());
   else navigate(up, { replace: true });
 }
 
