@@ -174,6 +174,81 @@ pub enum Actor {
 }
 str_enum!(Actor { User => "user", System => "system", Agent => "agent" });
 
+/// The agent session behind a ticket change or comment made through pdt-mcp (PDT-163). Events keep it in their data as
+/// `agent`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentBy {
+    pub session_id: String,
+    /// The session's project (its tab opens there).
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// The persona it runs (Coder, Reviewer, QA, PM), if any.
+    #[serde(default)]
+    pub persona: Option<String>,
+    /// The ticket the session works on, if any: its key (`PDT-34`) and id.
+    #[serde(default)]
+    pub from_ticket: Option<String>,
+    #[serde(default)]
+    pub from_ticket_id: Option<String>,
+}
+
+impl AgentBy {
+    /// Who made an event, as its data says: `agent`, or the `sessionId` and `persona` an agent's comment carried
+    /// before PDT-163. None when nothing is known.
+    pub fn of_event(kind: EventKind, actor: Actor, data: Option<&serde_json::Value>) -> Option<AgentBy> {
+        let data = data?;
+        if let Some(a) = data.get("agent").and_then(|a| serde_json::from_value(a.clone()).ok()) {
+            return Some(a);
+        }
+        if kind != EventKind::Comment || actor != Actor::Agent {
+            return None;
+        }
+        let session_id = data.get("sessionId")?.as_str()?.to_string();
+        let persona = data.get("persona").and_then(|p| p.as_str()).map(String::from);
+        Some(AgentBy { session_id, project_id: None, persona, from_ticket: None, from_ticket_id: None })
+    }
+}
+
+/// Who changes a ticket: the actor and, for an agent through pdt-mcp, its session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct By {
+    pub actor: Actor,
+    pub agent: Option<AgentBy>,
+}
+
+impl By {
+    pub fn agent(a: AgentBy) -> By {
+        By { actor: Actor::Agent, agent: Some(a) }
+    }
+
+    /// `data` with the agent added as `agent` (an object, or a new one when there is no data).
+    pub fn stamp(&self, data: Option<serde_json::Value>) -> Option<serde_json::Value> {
+        let Some(a) = &self.agent else { return data };
+        let mut data = match data {
+            Some(serde_json::Value::Object(m)) => m,
+            None | Some(serde_json::Value::Null) => serde_json::Map::new(),
+            // Not an object: left as it is.
+            Some(other) => return Some(other),
+        };
+        data.insert("agent".into(), serde_json::to_value(a).unwrap_or_default());
+        Some(serde_json::Value::Object(data))
+    }
+}
+
+impl From<Actor> for By {
+    fn from(actor: Actor) -> By {
+        By { actor, agent: None }
+    }
+}
+
+impl From<&By> for By {
+    fn from(by: &By) -> By {
+        by.clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -577,6 +652,9 @@ pub struct TicketEvent {
     pub data: Option<serde_json::Value>,
     #[ts(type = "number")]
     pub created_at: i64,
+    /// The agent session that made it, when known (PDT-163; from `data`).
+    #[serde(default)]
+    pub agent: Option<AgentBy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -926,6 +1004,54 @@ pub fn format_key(project_key: &str, number: u32) -> String {
     format!("{project_key}-{number}")
 }
 
+/// What a non-PM agent session (a Coder, Reviewer, QA…) asks of `edit_ticket` on a ticket (PDT-162).
+#[derive(Debug, Clone)]
+pub struct AgentEdit<'a> {
+    /// The ticket as the agent named it.
+    pub given: &'a str,
+    /// The ticket's key (`PDT-12`).
+    pub key: &'a str,
+    pub stage: TicketStage,
+    /// It is the session's own ticket.
+    pub own: bool,
+    /// The session created it.
+    pub created: bool,
+    /// The edit changes its title or replaces its description.
+    pub rewrites: bool,
+}
+
+/// Whether a non-PM agent may make an edit: its own ticket freely; another only named by its exact key, and never
+/// rewriting the title or description of one in progress or closed that it didn't create. The error says why and
+/// points at `add_ticket_comment`.
+pub fn agent_may_edit(e: &AgentEdit) -> Result<(), String> {
+    if e.own {
+        return Ok(());
+    }
+    let exact = parse_key(e.given).and_then(|k| k.key.map(|key| format_key(&key, k.number)));
+    if exact.as_deref() != Some(e.key) {
+        return Err(format!(
+            "{} is not this session's ticket: name another ticket by its exact key (such as {}), not an id, a \
+             number or a search result. To tell its owner something, use add_ticket_comment.",
+            e.given.trim(),
+            e.key
+        ));
+    }
+    let worked_on = e.stage == TicketStage::InProgress || e.stage.is_closed();
+    if worked_on && e.rewrites && !e.created {
+        return Err(format!(
+            "{} is {} and isn't this session's ticket, so its title and description stay as they are. Use \
+             add_ticket_comment to say what should change.",
+            e.key,
+            match e.stage {
+                TicketStage::InProgress => "in progress",
+                TicketStage::Done => "done",
+                _ => "closed",
+            }
+        ));
+    }
+    Ok(())
+}
+
 fn split_list(s: Option<&str>) -> impl Iterator<Item = &str> {
     s.unwrap_or("").split(',').map(str::trim).filter(|x| !x.is_empty())
 }
@@ -1052,6 +1178,33 @@ impl BulkRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agents_edit_their_own_ticket_and_others_only_by_exact_key() {
+        let e = |given, stage, own, created, rewrites| {
+            agent_may_edit(&AgentEdit { given, key: "CB-42", stage, own, created, rewrites })
+        };
+        use TicketStage::*;
+        // Its own ticket: any way it names it, any field.
+        assert!(e("01a1-uuid", InProgress, true, false, true).is_ok());
+        // Another, by its exact key (any case): fine while nobody works on it, or for fields other than the text.
+        assert!(e("CB-42", Todo, false, false, true).is_ok());
+        assert!(e(" cb-42 ", Draft, false, false, true).is_ok());
+        assert!(e("CB-42", InProgress, false, false, false).is_ok());
+        assert!(e("CB-42", Done, false, false, false).is_ok());
+        // One it created, even once work starts.
+        assert!(e("CB-42", InProgress, false, true, true).is_ok());
+        // An id, a bare number or another key is refused.
+        for given in ["01a1-uuid", "42", "#42", "CB-33"] {
+            let err = e(given, Todo, false, false, false).unwrap_err();
+            assert!(err.contains("exact key") && err.contains("add_ticket_comment"), "{err}");
+        }
+        // Rewriting one in progress or closed that it didn't create.
+        for (stage, word) in [(InProgress, "in progress"), (Done, "done"), (WontDo, "closed")] {
+            let err = e("CB-42", stage, false, false, true).unwrap_err();
+            assert!(err.contains(word) && err.contains("add_ticket_comment"), "{err}");
+        }
+    }
 
     #[test]
     fn stages_round_trip_and_know_when_they_are_closed() {
@@ -1226,5 +1379,40 @@ mod tests {
         assert_eq!(v["description"], "d");
         assert_eq!(v["defaultBranch"], "pdt/PDT-1-t");
         assert_eq!(v["sessions"], serde_json::json!([]));
+    }
+
+    fn coder() -> AgentBy {
+        AgentBy {
+            session_id: "s1".into(),
+            project_id: Some("p1".into()),
+            persona: Some("Coder".into()),
+            from_ticket: Some("CB-34".into()),
+            from_ticket_id: Some("t34".into()),
+        }
+    }
+
+    #[test]
+    fn an_agents_change_carries_its_session_in_the_events_data() {
+        let by = By::agent(coder());
+        let data = by.stamp(Some(serde_json::json!({"fields": ["title"]}))).unwrap();
+        assert_eq!(data["fields"], serde_json::json!(["title"]));
+        assert_eq!(data["agent"]["sessionId"], "s1");
+        assert_eq!(data["agent"]["fromTicket"], "CB-34");
+        assert_eq!(by.stamp(None).unwrap()["agent"]["persona"], "Coder");
+        assert_eq!(AgentBy::of_event(EventKind::Edited, Actor::Agent, Some(&data)), Some(coder()));
+        // The user's changes carry nothing.
+        let user: By = Actor::User.into();
+        assert_eq!(user.stamp(None), None);
+        assert_eq!(AgentBy::of_event(EventKind::Edited, Actor::User, None), None);
+    }
+
+    #[test]
+    fn older_agent_comments_are_read_from_their_flat_data() {
+        let old = serde_json::json!({"sessionId": "s1", "persona": "Coder"});
+        let a = AgentBy::of_event(EventKind::Comment, Actor::Agent, Some(&old)).unwrap();
+        assert_eq!((a.session_id.as_str(), a.persona.as_deref(), a.from_ticket), ("s1", Some("Coder"), None));
+        // A PR notice's sessionId is the session it told, not who made it.
+        assert_eq!(AgentBy::of_event(EventKind::Pr, Actor::System, Some(&old)), None);
+        assert_eq!(AgentBy::of_event(EventKind::Comment, Actor::Agent, Some(&serde_json::json!({}))), None);
     }
 }

@@ -142,7 +142,7 @@ impl Store {
 }
 
 /// Mirrors a ticket timeline event into the log, in the same transaction (Phase 7a spec §2.1): `moved`, `comment`,
-/// `started`, `merged`, `abandoned`, `overlap` and `outcome` become `ticket.*`, `attempt.*` and `agent.*` events.
+/// `started`, `merged`, `abandoned`, `overlap` (found or cleared) and `outcome` become `ticket.*`, `attempt.*` and `agent.*` events.
 /// Other kinds aren't domain events workflows react to.
 /// A row just written to `ticket_events`.
 pub(crate) struct TimelineRow<'a> {
@@ -249,6 +249,18 @@ pub(crate) async fn mirror_timeline(
                 session_id: data.get("sessionId").and_then(|v| v.as_str()).map(String::from),
                 workflow_id: data.get("workflowId").and_then(|v| v.as_str()).map(String::from),
                 run_id: data.get("runId").and_then(|v| v.as_str()).map(String::from),
+            },
+        ),
+        K::Overlap if data.get("cleared").and_then(|c| c.as_bool()) == Some(true) => NewLogEvent::new(
+            ev::TICKET_OVERLAP_CLEARED,
+            timeline_id,
+            "overlap",
+            ev::TicketOverlapCleared {
+                project_id,
+                ticket_id: ticket_id.into(),
+                ticket_key,
+                other_ticket_id: s("ticketId"),
+                other_key: s("key"),
             },
         ),
         K::Overlap => NewLogEvent::new(

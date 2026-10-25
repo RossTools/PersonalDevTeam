@@ -15,6 +15,10 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   `agent_context`) plus the project's **agent instructions** (`project_settings.agent_instructions`,
   `agentInstructions` in the settings API; kept when a PUT leaves it out, max 16 KB), written to
   `<data dir>/sessions/<id>/instructions.md`.
+- A session on an active attempt, or a workflow step's session about one (a new Reviewer or QA session has no attempt
+  of its own), outside Personal projects, is told to read CI from the attempt's `pr.ci` or Actions runs (`gh run list
+  --branch <its branch>`, `gh run view`), never `gh pr checks` or the check-runs API, which fine-grained tokens can't
+  read (PDT-165).
 - A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
   follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
   workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how
@@ -112,9 +116,12 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, `list_todos` (the user's todo
   list with due dates, `dueOn`/`dueTime`, and repeat rules, `recurrence`; read-only: the PM never changes it), the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
-  `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
+  `create_ticket` (a draft by default; the timeline gets "Created by the PM.", or by the session's persona), `edit_ticket` (closing ends the
   attempt and moving back to Draft, Ready or To do stops its work, as the API; `parent` takes a key or id, `""`
-  detaches), `stop_ticket` (`ticket`, `stage?`, `removeWorktree?`, `deleteBranch?`: `POST /api/tickets/{id}/stop`,
+  detaches; another persona given the tool edits its own ticket freely, but another ticket only by its exact key,
+  never by id or number, and one in progress or closed keeps its title and description unless that session created
+  it, its `create_ticket` note carrying `created` and its session id; the refusal points at `add_ticket_comment`,
+  PDT-162), `stop_ticket` (`ticket`, `stage?`, `removeWorktree?`, `deleteBranch?`: `POST /api/tickets/{id}/stop`,
   [tickets.md](tickets.md) "Stopping a ticket's work"; the timeline gets "The PM stopped its work."), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
   `blocks`, `blockedBy` or `relates`, and `other` in the same project; the store's link rules, so self-links, blocking
   cycles and unknown tickets are errors; the `linked`/`unlinked` and `parted` events are the agent's) and

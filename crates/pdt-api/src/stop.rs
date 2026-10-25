@@ -10,7 +10,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::ticket::{Actor, AttemptState, TicketStage};
+use pdt_core::ticket::{Actor, AttemptState, By, TicketStage};
 use pdt_store::AttemptInfo;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -66,8 +66,9 @@ pub(crate) async fn stop_ticket(
     st: &AppState,
     ticket_id: &str,
     req: &StopRequest,
-    actor: Actor,
+    by: impl Into<By>,
 ) -> Result<StopResult, ApiError> {
+    let by = by.into();
     if let Some(stage) = req.stage.filter(|s| !s.is_before_work()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -79,9 +80,9 @@ pub(crate) async fn stop_ticket(
     let ticket = st.store.get_ticket_summary(ticket_id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
     let to = req.stage.or((ticket.stage == TicketStage::InProgress).then_some(TicketStage::Todo));
     if let Some(stage) = to.filter(|s| *s != ticket.stage) {
-        st.store.move_ticket_by(ticket_id, stage, actor, None, now_ms()).await?;
+        st.store.move_ticket_by(ticket_id, stage, &by, None, now_ms()).await?;
     }
-    let mut result = stop_work(st, ticket_id, since, actor).await?;
+    let mut result = stop_work(st, ticket_id, since, &by).await?;
     if req.remove_worktree {
         // The latest attempt's worktree, also when an earlier stop left it.
         let latest = st.store.get_ticket_summary(ticket_id).await?.and_then(|t| t.attempt);
@@ -110,7 +111,7 @@ pub(crate) async fn stop_work(
     st: &AppState,
     ticket_id: &str,
     since: i64,
-    actor: Actor,
+    by: impl Into<By>,
 ) -> Result<StopResult, ApiError> {
     let key = st.store.get_ticket_summary(ticket_id).await?.map(|t| t.key).unwrap_or_default();
     let mut result = StopResult { key, ..Default::default() };
@@ -126,7 +127,7 @@ pub(crate) async fn stop_work(
         }
     }
     let attempt = &info.attempt.id;
-    if st.store.end_attempt(attempt, AttemptState::Abandoned, actor, None, None, now_ms()).await?.is_some() {
+    if st.store.end_attempt(attempt, AttemptState::Abandoned, by, None, None, now_ms()).await?.is_some() {
         result.abandoned = Some(attempt.clone());
     }
     Ok(result)
@@ -164,11 +165,11 @@ async fn cancel_runs(st: &AppState, info: &AttemptInfo, since: i64) -> u32 {
 
 /// After a stage change made at `since`: a ticket moved to Draft, Ready or To do with an active attempt stops its
 /// work. Failures are logged: the move itself went through.
-pub(crate) async fn after_move(st: &AppState, ticket_id: &str, stage: TicketStage, since: i64, actor: Actor) {
+pub(crate) async fn after_move(st: &AppState, ticket_id: &str, stage: TicketStage, since: i64, by: impl Into<By>) {
     if !stage.is_before_work() {
         return;
     }
-    if let Err(e) = stop_work(st, ticket_id, since, actor).await {
+    if let Err(e) = stop_work(st, ticket_id, since, by).await {
         tracing::warn!(ticket = %ticket_id, error = %e.message(), "could not stop the moved ticket's work");
     }
 }

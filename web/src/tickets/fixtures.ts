@@ -24,7 +24,7 @@ export function ticket(n: number, over: Partial<Ticket> = {}): Ticket {
 export const page = (items: TicketSummary[], nextCursor: string | null = null, total = items.length): TicketPage => ({ items, nextCursor, total });
 
 export function event(id: string, over: Partial<TicketEvent> = {}): TicketEvent {
-  return { id, ticketId: 't1', kind: 'created', actor: 'user', body: null, data: null, createdAt: 1, ...over };
+  return { id, ticketId: 't1', kind: 'created', actor: 'user', body: null, data: null, createdAt: 1, agent: null, ...over };
 }
 
 /** The query of a request path, as an object. */

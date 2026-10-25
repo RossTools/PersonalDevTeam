@@ -262,6 +262,85 @@ async fn pdt_mcp_needs_the_session_token_and_lists_its_tools() {
     );
 }
 
+/// PDT-163: a Coder working on one ticket edits and comments on another; both name the Coder, its session and the
+/// ticket it works on, in the timeline and in `get_ticket`.
+#[tokio::test]
+async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket() {
+    let env = setup().await;
+    let (_, list) = call(&env.app, "GET", "/api/personas", None).await;
+    let mut coder = list.as_array().unwrap().iter().find(|p| p["name"] == "Coder").unwrap().clone();
+    let mut tools: Vec<&str> = pdt_core::persona::DEFAULT_TOOLS.to_vec();
+    tools.push("edit_ticket");
+    coder["tools"] = json!(tools);
+    // edit_ticket asks first; here nothing asks.
+    coder["permissionMode"] = json!("bypass");
+    let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", coder["id"].as_str().unwrap()), Some(coder)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let mine = ticket(&env, "Mine").await;
+    let other = ticket(&env, "Other").await;
+    let (_, m) = call(&env.app, "GET", &format!("/api/tickets/{mine}"), None).await;
+    let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+    let (mine_key, other_key) = (m["key"].as_str().unwrap().to_string(), o["key"].as_str().unwrap().to_string());
+    let wf = create_workflow(&env, review_doc("Get going.", json!({"persona": "Coder"}))).await;
+    let run_id = run_now(&env, &wf, json!({"ticketId": mine})).await;
+    let session = step_session(&env, &run_id).await;
+    let say = |text: String| {
+        let (env, session) = (&env, session.clone());
+        async move {
+            let before = agent_says(env, &session).await.len();
+            let (s, v) =
+                call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+            tick_until(env, "the agent's answer", || async {
+                let said = agent_says(env, &session).await;
+                said.iter().skip(before).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+            })
+            .await
+            .as_str()
+            .unwrap()
+            .to_string()
+        }
+    };
+    let said =
+        say(format!(r#"mcp: edit_ticket {{"ticket": "{other_key}", "title": "Renamed", "stage": "ready"}}"#)).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    let said = say(format!(r#"mcp: add_ticket_comment {{"ticket": "{other_key}", "body": "Mine needs this."}}"#)).await;
+    assert!(said.contains("\"commented\": true"), "{said}");
+
+    let want = json!({"sessionId": session, "projectId": env.project, "persona": "Coder", "fromTicket": mine_key,
+                      "fromTicketId": mine});
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{other}/events"), None).await;
+    let items = events["items"].as_array().unwrap();
+    for kind in ["edited", "moved", "comment"] {
+        let e = items.iter().find(|e| e["kind"] == kind).unwrap_or_else(|| panic!("no {kind} in {events:#}"));
+        assert_eq!((&e["actor"], &e["agent"]), (&json!("agent"), &want), "{kind}: {e:#}");
+    }
+    let edited = items.iter().find(|e| e["kind"] == "edited").unwrap();
+    assert_eq!(edited["data"]["fields"], json!(["title"]));
+    // The user's own changes name nobody.
+    let created = items.iter().find(|e| e["kind"] == "created").unwrap();
+    assert_eq!((&created["actor"], &created["agent"]), (&json!("user"), &Value::Null));
+
+    let said = say(format!(r#"mcp: get_ticket {{"ticket": "{other_key}"}}"#)).await;
+    let got: Value = serde_json::from_str(said.strip_prefix("mcp get_ticket: ").unwrap_or(&said)).unwrap_or_else(|e| {
+        panic!("{e}: {said}");
+    });
+    let comment = &got["comments"][0];
+    assert_eq!(
+        (&comment["by"], &comment["sessionId"], &comment["fromTicket"], &comment["body"]),
+        (&json!("Coder"), &json!(session), &json!(mine_key), &json!("Mine needs this."))
+    );
+    let history = got["history"].as_array().unwrap();
+    let kinds: Vec<&str> = history.iter().map(|h| h["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["created", "edited", "moved"], "{got:#}");
+    assert_eq!((&history[0]["by"], &history[0].get("sessionId")), (&json!("user"), &None));
+    for h in &history[1..] {
+        assert_eq!((&h["by"], &h["sessionId"], &h["fromTicket"]), (&json!("Coder"), &json!(session), &json!(mine_key)));
+        assert!(h["data"].get("agent").is_none(), "{h}");
+    }
+    assert_eq!(history[1]["data"]["fields"], json!(["title"]));
+}
+
 #[tokio::test]
 async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     let env = setup().await;
@@ -1112,4 +1191,112 @@ async fn a_pass_message_that_never_arrives_stalls_the_step_and_can_be_sent_again
 async fn gate_session(env: &Env, t: &str) -> String {
     let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
     v["sessions"][0]["id"].as_str().unwrap().to_string()
+}
+
+/// PDT-162: a Coder edits its own ticket and drafts it created; another ticket needs its exact key, and one in
+/// progress or done that it didn't create keeps its title and description.
+#[tokio::test]
+async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
+    let env = setup().await;
+    let (s, p) = call(
+        &env.app,
+        "POST",
+        "/api/personas",
+        Some(json!({"name": "Builder", "role": "coder", "agent": "claude", "instructions": "Build it.",
+                    "permissionMode": "bypass",
+                    "tools": ["get_ticket", "submit_outcome", "create_ticket", "edit_ticket"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let (_, project) = call(&env.app, "GET", &format!("/api/projects/{}", env.project), None).await;
+    let key = project["key"].as_str().unwrap().to_string();
+    let own = ticket(&env, "Mine").await;
+    let busy = ticket(&env, "Someone else's").await;
+    let done = ticket(&env, "Finished").await;
+    let todo = ticket(&env, "Up next").await;
+    for (t, stage) in [(&busy, "in_progress"), (&done, "done")] {
+        let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": stage}))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+    }
+    let key_of = |t: &str| {
+        let (app, t) = (env.app.clone(), t.to_string());
+        async move { call(&app, "GET", &format!("/api/tickets/{t}"), None).await.1["key"].as_str().unwrap().to_string() }
+    };
+    let (busy_key, done_key, todo_key) = (key_of(&busy).await, key_of(&done).await, key_of(&todo).await);
+    let wf = create_workflow(
+        &env,
+        json!({
+            "name": "Build",
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "code", "kind": "agent", "version": 1, "config": {"persona": "Builder",
+                    "prompt": "Build it.", "outcomes": [{"id": "submitted"}]}},
+                {"id": "done", "kind": "end", "version": 1},
+            ],
+            "edges": [{"from": "go", "to": "code"}, {"from": "code", "port": "submitted", "to": "done"}],
+        }),
+    )
+    .await;
+    run_now(&env, &wf, json!({"ticketId": own})).await;
+    let coder = tick_until(&env, "the coder", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{own}"), None).await;
+        v["sessions"][0]["id"].as_str().map(|s| json!(s))
+    })
+    .await;
+    let coder = coder.as_str().unwrap().to_string();
+    let ask = |text: String| {
+        let (env, coder) = (&env, coder.clone());
+        async move {
+            let n = agent_says(env, &coder).await.len();
+            let (s, v) =
+                call(&env.app, "POST", &format!("/api/sessions/{coder}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+            // Its answer to the tool call, past PDT's nudges to finish the step.
+            tick_until(env, "the agent's answer", || async {
+                agent_says(env, &coder).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+            })
+            .await
+            .as_str()
+            .unwrap()
+            .to_string()
+        }
+    };
+    let title = |t: &str| {
+        let (app, t) = (env.app.clone(), t.to_string());
+        async move { call(&app, "GET", &format!("/api/tickets/{t}"), None).await.1["title"].as_str().unwrap().to_string() }
+    };
+
+    // Its own ticket, even by id.
+    let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{own}", "title": "Mine, renamed"}}"#)).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    // A draft it created, and still once work on it starts.
+    let said = ask(format!(r#"mcp: create_ticket {{"project": "{key}", "title": "Follow-up"}}"#)).await;
+    assert!(said.contains("\"created\": true"), "{said}");
+    let follow = said.split("\"key\": \"").nth(1).unwrap().split('"').next().unwrap().to_string();
+    let said =
+        ask(format!(r#"mcp: edit_ticket {{"ticket": "{follow}", "description": "More.", "stage": "in_progress"}}"#))
+            .await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{follow}", "title": "Follow-up, renamed"}}"#)).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets?project={}&q={follow}", env.project), None).await;
+    assert_eq!(events["items"][0]["title"], "Follow-up, renamed", "{events}");
+    // Another ticket nobody works on, by its key.
+    let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{todo_key}", "title": "Up next, clearer"}}"#)).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+
+    // Refused: one in progress or done it didn't create, and any other ticket by id.
+    for (t, k, word) in [(&busy, &busy_key, "in progress"), (&done, &done_key, "done")] {
+        let before = title(t).await;
+        let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{k}", "title": "Overwritten"}}"#)).await;
+        assert!(said.contains(word) && said.contains("add_ticket_comment"), "{said}");
+        let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{k}", "description": "Gone."}}"#)).await;
+        assert!(said.contains("add_ticket_comment"), "{said}");
+        assert_eq!(title(t).await, before);
+    }
+    let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{todo}", "priority": "high"}}"#)).await;
+    assert!(said.contains("exact key") && said.contains("add_ticket_comment"), "{said}");
+    // Fields other than the text are fine by key.
+    let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{busy_key}", "priority": "high"}}"#)).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
 }

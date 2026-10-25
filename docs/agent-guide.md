@@ -27,8 +27,8 @@ person confirms per call unless the project lets the PM act. Use them for what t
 
 | Tool | Does |
 |---|---|
-| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments, the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
-| `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes. `submitted` is refused while the worktree has uncommitted changes to tracked files or commits not pushed to its upstream: commit and push first |
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
+| `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes. `submitted` is refused while the worktree has uncommitted changes to tracked files, commits not pushed to its upstream, or a branch not pushed to `origin`: commit and push first |
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
 | `list_secrets` | the secrets (API keys, tokens, passwords) this session may use: names and descriptions, never values |
@@ -41,7 +41,7 @@ person confirms per call unless the project lets the PM act. Use them for what t
 | `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs` | the PM's view of every project: open tickets per stage, tickets in progress with PR and CI, the Inbox, running sessions; ticket search; a session's state and last messages; workflow runs and their steps |
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (host-wide or per project; pinned ones go in every PM briefing) and the journal entry a PM session writes as it ends |
 | `list_todos` | `{project?, done?}`: the person's own todo list (title, done, project, linked ticket, due date `dueOn` and time `dueTime`, repeat rule `recurrence`, dates), read-only |
-| `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket (also its parent; moving one at work back to Draft, Ready or To do stops its work), a link between two tickets (`blocks`, `blockedBy`, `relates`) or its removal, stopping a ticket's work (`{ticket, stage?, removeWorktree?, deleteBranch?}`: cancels its workflow runs, stops its sessions, abandons its attempt and moves it back to To do; `removeWorktree` also discards its worktree), a message to a session (delivered when it is idle, so it can't stop a busy agent); each waits for the person's yes unless the project lets the PM act |
+| `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket (also its parent; outside the PM, another ticket than your own only by its exact key, and not the title or description of one in progress or done you didn't create; moving one at work back to Draft, Ready or To do stops its work), a link between two tickets (`blocks`, `blockedBy`, `relates`) or its removal, stopping a ticket's work (`{ticket, stage?, removeWorktree?, deleteBranch?}`: cancels its workflow runs, stops its sessions, abandons its attempt and moves it back to To do; `removeWorktree` also discards its worktree), a message to a session (delivered when it is idle, so it can't stop a busy agent); each waits for the person's yes unless the project lets the PM act |
 
 Never ask the person to paste a secret into the chat, and never print, log or commit one: ask with `request_secret`
 and use it through `run_with_secrets` or `write_secret_file` (keep files they write out of git). PDT replaces every
@@ -87,7 +87,14 @@ queue, merged); each says what happened and what to do. When the pull request wa
 the failure as a workflow step instead: fix it, push, and finish with `submit_outcome` (PDT turns auto-merge back on). A notice that comes while you are on a step that hands in work (a Coder's pass sent back by review or QA) goes in
 with that step's message, after the review and QA findings: address the findings first, then the notice. A session started on a ticket is told in its instructions
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
-shell. Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
+shell.
+
+To read CI yourself, use the ticket's attempt (`pr.ci`: the head commit's state, URL and runs, once PDT has seen the
+pull request) or GitHub Actions: `gh run list --branch <branch>`, `gh run view <id> --json jobs,conclusion` and
+`gh run view <id> --log-failed`. Not `gh pr checks` or the check-runs API: fine-grained `gh` tokens can't read checks,
+so both fail with 403 "Resource not accessible by personal access token".
+
+Workflows are changed only when the person asks, and then as a **proposal**: `PUT /api/workflows/<id>` with
 `{"doc": …, "note": "what and why", "propose": true}`. It is validated like a save but doesn't take effect: the person
 reviews its diff in the Workflows view and accepts or discards it. Never turn a workflow on (`PATCH {"enabled": true}`):
 that is the person's consent. Check a document with `/check` or `/validate` and try it with `/dry-run` before proposing.

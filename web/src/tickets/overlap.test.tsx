@@ -81,6 +81,8 @@ describe('model', () => {
     expect(eventTitle(event('e', { kind: 'overlap', data: { ticketId: 't2', key: 'ALP-2', files: ['a', 'b'], level: 'conflict' } })))
       .toBe('Conflicts with ALP-2: 2 shared files');
     expect(eventTitle(event('e', { kind: 'overlap', data: { key: 'ALP-3', files: ['a'], level: 'overlap' } }))).toBe('Overlaps ALP-3: 1 shared file');
+    expect(eventTitle(event('e', { kind: 'overlap', data: { key: 'ALP-3', files: [], level: 'none', cleared: true } })))
+      .toBe('No longer overlaps ALP-3');
   });
 });
 

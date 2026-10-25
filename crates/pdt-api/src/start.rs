@@ -495,14 +495,14 @@ pub(crate) async fn end_for_close(
     st: &AppState,
     ticket_id: &str,
     stage: TicketStage,
-    actor: Actor,
+    by: impl Into<pdt_core::ticket::By>,
 ) -> Result<(), ApiError> {
     if let Some(info) = st.store.active_attempt(ticket_id).await? {
         let merged = stage == TicketStage::Done || is_merged(st, &info, false, false).await;
         let state = if merged { AttemptState::Merged } else { AttemptState::Abandoned };
         let via = merged.then_some(MergeVia::Closed);
         let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
-        st.store.end_attempt(&info.attempt.id, state, actor, via, pr, now_ms()).await?;
+        st.store.end_attempt(&info.attempt.id, state, by, via, pr, now_ms()).await?;
     }
     Ok(())
 }

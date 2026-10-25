@@ -347,6 +347,17 @@ async fn every_step_session_on_a_ticket_opens_a_tab_and_belongs_to_the_ticket() 
             (&json!("QA"), &Value::Null)
         ]
     );
+    // PDT-165: the Reviewer and QA have no attempt of their own, but read its CI from Actions runs like the Coder.
+    let branch = v["attempts"][0]["branch"].as_str().unwrap();
+    let instructions = |s: &Value| {
+        let id = s["id"].as_str().unwrap();
+        std::fs::read_to_string(env.state.data_dir.join("sessions").join(id).join("instructions.md")).unwrap()
+    };
+    for s in [&coder, &reviewer, &qa] {
+        let text = instructions(s);
+        assert!(text.contains(&format!("`gh run list --branch {branch}`")), "{}: {text}", s["title"]);
+    }
+    assert!(!instructions(&refiner).contains("gh run list"), "no attempt yet");
     let (_, all) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
     let on_ticket = all.as_array().unwrap().iter().filter(|s| s["ticket"]["key"] == "PX-1").count();
     assert_eq!(on_ticket, 4, "{all}");

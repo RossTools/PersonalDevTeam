@@ -171,9 +171,16 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   these attempts; moving the ticket to Done ends the attempt.
 - Agent steps record their outcome on the timeline (`outcome`: `{outcome, summary, persona, personaVersion, by,
   sessionId, attemptId, comments, workflowId, workflowName, runId}`, actor `agent`, or `user` when taken over from the
-  Inbox) and a step's new session as a `session` event with its persona. Comments an agent adds through pdt-mcp have
-  actor `agent` (`data.sessionId`, `data.persona`); the built-in "Ticket comments to the agent" only forwards the
-  user's.
+  Inbox) and a step's new session as a `session` event with its persona. Every ticket change and comment an agent makes through
+  pdt-mcp (comments, `update_ticket`, `edit_ticket` with its moves, `create_ticket`, `link_tickets`/`unlink_tickets`,
+  `stop_ticket`, `report_bug`) has actor `agent` and `data.agent`: `{sessionId, projectId, persona, fromTicket,
+  fromTicketId}` (the ticket that session works on, if any; PDT-163). Events carry it as `agent` (read from
+  `data.agent`, or from the flat `data.sessionId`/`data.persona` agent comments had before; null otherwise). The
+  timeline names such an event "Coder · PDT-34", a button that opens the session; older events show the persona or
+  "Agent" as before. `get_ticket` gives each comment and each entry of `history` (the newest 50 created, edited,
+  moved, linked, unlinked, parted, waiting, started, merged and abandoned events, oldest first, with their `data`)
+  `by` (the persona, `agent` when none is known, `user`, `system`), `sessionId` and `fromTicket`. The built-in
+  "Ticket comments to the agent" only forwards the user's.
 
 ## Merge detection and finishing
 
@@ -321,8 +328,15 @@ Tickets spec §7; the config format is in docs/run-config.md "Areas".
   declares its areas (migrations is the exclusive one).
 - A ticket's overlap is always against the project's tickets with an active attempt: shared areas (planned) and, when
   both are active, shared changed files (actual; pdtd's 30 s `refresh_overlaps` runs `pdt_git::changed_files` per
-  active attempt and keeps them in memory; new file overlaps add an `overlap` event once per pair and file set). A
-  shared exclusive area or a file inside one is a `conflict`, else `overlap`.
+  active attempt and keeps them in memory, keeping an attempt's last list when git fails). A shared exclusive area or a
+  file inside one is a `conflict`, else `overlap`.
+- File overlaps are recorded on both tickets' timelines as `overlap` events (`{ticketId, key, files, level}`, mirrored
+  as `ticket.overlap_found`) only when they are news: a new pair, a file not reported for the pair since it began, or
+  a worse level (pdt-core `overlap_news`, against the ticket's earlier events folded by the store's
+  `overlap_reports`). The same files again, fewer of them, or a file coming back after a revert or rebase add nothing.
+  A reported pair that no longer shares a file (one attempt ended, or the files were put back) adds one `overlap`
+  event with `cleared: true`, `files: []`, `level: none` (`ticket.overlap_cleared`); a later overlap is a new pair.
+  No clear is recorded while either attempt has no file list yet (pdtd just started), nor on done or won't-do tickets.
 - Computed in pdt-api `overlap.rs` (pure rules in pdt-core `overlap.rs`) and applied to every ticket response:
   `overlap`, `overlapWith`, `clearToStart` on summaries, `overlaps` on the full ticket; `GET
   /api/tickets?conflicts=true|false`.

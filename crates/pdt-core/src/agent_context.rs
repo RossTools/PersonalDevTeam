@@ -34,6 +34,9 @@ pub struct SessionContext<'a> {
     pub tools: &'a [String],
     /// The agent step's section (`workflow::agent::step_section`) when the session runs a persona in a step.
     pub step: Option<&'a str>,
+    /// The branch whose CI the session reads: its attempt's, or the attempt its workflow step is about (a Reviewer or
+    /// QA step's new session has no attempt of its own). None: no ticket work.
+    pub ci_branch: Option<&'a str>,
 }
 
 /// The ticket a session works on.
@@ -85,6 +88,15 @@ pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> Stri
              ids for it. Prefer them to calling the API for what they cover.\n",
             ctx.tools.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", "),
             server = crate::mcp::SERVER_NAME,
+        ));
+    }
+    if let Some(branch) = ctx.ci_branch.filter(|_| !ctx.personal) {
+        // PDT-165: fine-grained `gh` tokens can't read the Checks API, so `gh pr checks` fails with a 403.
+        out.push_str(&format!(
+            "- Read CI from the ticket's attempt (`pr.ci`: state, URL and runs, when {SHORT_NAME} has seen the pull \
+             request) or from GitHub Actions: `gh run list --branch {branch}`, `gh run view <id> --json \
+             jobs,conclusion` and `gh run view <id> --log-failed`. Not `gh pr checks` or the check-runs API: \
+             fine-grained tokens can't read checks, so they fail with 403.\n"
         ));
     }
     if let Some(t) = &ctx.ticket {
@@ -177,7 +189,7 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
         [ev::CI_RUN_FAILED, ev::CI_RUN_PASSED, ev::PR_CONFLICT, ev::PR_QUEUE_LEFT, ev::PR_MERGED, ev::PR_BEHIND];
     if merged || watched.iter().any(|k| has(k)) {
         out.push_str(&format!(
-            "\n{SHORT_NAME} watches the pull request and sends these, so don't poll or watch CI in a shell (`gh run watch`, `gh pr checks --watch`, sleep loops): push, then carry \
+            "\n{SHORT_NAME} watches the pull request and sends these, so don't poll or watch CI in a shell (`gh run watch`, sleep loops): push, then carry \
              on or end your turn.\n"
         ));
     }
@@ -221,11 +233,13 @@ mod tests {
             personal: false,
             tools: &[],
             step: None,
+            ci_branch: None,
         }
     }
 
     fn on_ticket(news: &[&'static str]) -> String {
         let mut c = ctx(Some("pdt-WA-7-x"));
+        c.ci_branch = Some("pdt-WA-7-x");
         c.ticket = Some(TicketWork {
             ticket_id: "t7",
             key: "WA-7",
@@ -245,6 +259,34 @@ mod tests {
         let plain = session_instructions(&ctx(Some("pdt-WA-7-x")), None);
         assert!(!plain.contains("This session's ticket"), "{plain}");
         assert!(plain.contains("/projects/p1/worktrees") && plain.contains("/projects/p1/runs"), "{plain}");
+    }
+
+    #[test]
+    fn ticket_work_reads_ci_from_actions_runs() {
+        let t = on_ticket(&[ev::CI_RUN_FAILED]);
+        assert!(t.contains("`gh run list --branch pdt-WA-7-x`"), "{t}");
+        assert!(t.contains("`gh run view <id> --json jobs,conclusion`") && t.contains("--log-failed"), "{t}");
+        assert!(t.contains("Not `gh pr checks` or the check-runs API"), "{t}");
+        assert!(!t.contains("gh pr checks --watch"), "{t}");
+        assert!(on_ticket(&[]).contains("gh run list --branch"), "with or without PR notices");
+        let mut p = ctx(None);
+        p.personal = true;
+        p.ci_branch = Some("x");
+        p.ticket =
+            Some(TicketWork { ticket_id: "t7", key: "WA-7", branch: "x", base: "main", news: Default::default() });
+        assert!(!session_instructions(&p, None).contains("gh run list"), "a Personal project has no CI");
+        assert!(!session_instructions(&ctx(Some("feat/x")), None).contains("gh run list"), "no ticket work");
+    }
+
+    /// A Reviewer or QA step's new session has no attempt (no ticket section), but reads its attempt's CI.
+    #[test]
+    fn a_step_session_without_an_attempt_reads_ci_too() {
+        let mut c = ctx(Some("pdt-WA-7-x"));
+        c.step = Some("\n# Your role: Reviewer\n");
+        c.ci_branch = Some("pdt-WA-7-x");
+        let t = session_instructions(&c, None);
+        assert!(!t.contains("This session's ticket"), "{t}");
+        assert!(t.contains("`gh run list --branch pdt-WA-7-x`") && t.contains("Not `gh pr checks`"), "{t}");
     }
 
     #[test]
