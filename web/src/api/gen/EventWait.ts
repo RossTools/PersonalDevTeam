@@ -5,4 +5,8 @@ export type EventWait = { type: string,
 /**
  * More event types that end the wait too (PDT-151: CI passing or failing).
  */
-also?: Array<string>, where: Array<Condition>, };
+also?: Array<string>, where: Array<Condition>, 
+/**
+ * With `where`, at least one of these holds too (when given).
+ */
+any?: Array<Condition>, };

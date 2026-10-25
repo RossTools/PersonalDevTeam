@@ -1312,3 +1312,73 @@ async fn commits_pushed_after_a_merge_ask_in_the_inbox() {
     let v = get_ticket(&env, &t).await;
     assert_eq!((v["stage"].as_str(), v["attempts"][0]["state"].as_str()), (Some("in_progress"), Some("active")));
 }
+
+/// PDT-151: a CI event logged before the wait began (between the merge's read and the wait, so not marked
+/// `mergeWaiting`) still ends the wait: it is on the head the merge was refused at.
+#[tokio::test]
+async fn a_ci_event_logged_before_the_wait_still_ends_it() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"], "codeBy": "user"}),
+        &[("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change it", &["agentic"]).await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    // The run has started (it looks back only to its start) and waits at Code, the user's.
+    let code = inbox_item(&env, "manual", &t).await;
+    // CI passed and was logged (no merge waiting then); a re-run is going when the merge reads it.
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=ci.run_passed", None).await;
+    let early = logged.as_array().unwrap()[0].clone();
+    assert_eq!(early["payload"]["mergeWaiting"], false, "{early}");
+    let mut rerun = ci_run(1, &branch, CiState::Running);
+    rerun.attempt = 2;
+    gh.set_runs(&branch, vec![rerun]);
+    answer(&env, &code, json!({"choice": "outcome:submitted"})).await;
+    let took = tick_until(&env, "the wait taking the earlier event", || async {
+        let runs = runs_of(&env, &t, "Pipeline").await;
+        let steps = runs.first()?["steps"].as_array()?.clone();
+        steps.into_iter().find(|s| s["nodeId"] == "wait_ci" && s["port"] == "event")
+    })
+    .await;
+    assert_eq!(took["output"]["eventId"], early["id"], "{took}");
+    let merges = || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count();
+    assert_eq!(merges(), 0, "the merge read CI again: still running");
+}
+
+/// PDT-151: in a project with Buildkite, green GitHub Actions alone don't pass while Buildkite hasn't reported on the
+/// head; and a read from GitHub that fails is an error, not a wait.
+#[tokio::test]
+async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    let (s, c) = call(
+        &env.app,
+        "POST",
+        "/api/connections",
+        Some(json!({"name": "bk", "kind": "buildkite", "url": "http://127.0.0.1:1", "config": {"org": "acme"}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{c}");
+    settings(&env, json!({"buildkite": {"connection": "bk", "pipelines": ["app"]}})).await;
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_pending")), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Buildkite hasn't reported"), "{v}");
+
+    *gh.error.lock().unwrap() = Some("gh: signed out".into());
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_unreadable")), "{v}");
+    assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")), "nothing merged");
+}

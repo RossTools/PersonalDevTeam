@@ -53,7 +53,9 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   protection requires (`gh pr merge --auto` merges at once where nothing is required). A failed or cancelled run is
   409 `ci_failed` (`fixable`, the reason names the failed jobs and the run); runs still going, or none yet while the
   repository has CI (`.github/workflows` files at the head or on the branch, or a Buildkite pipeline for the project),
-  or a read from GitHub that failed, `ci_pending`. A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
+  `ci_pending`; in a project with Buildkite, green Actions alone are `ci_pending` while Buildkite hasn't reported on
+  that head. A read from GitHub that fails is 409 `ci_unreadable`, an error like `merge_failed` (the last look may be
+  older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
   A person's merge doesn't wait.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
   (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (pdt-github `merge_pr`; the method from

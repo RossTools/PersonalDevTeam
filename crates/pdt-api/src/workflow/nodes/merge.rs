@@ -136,7 +136,14 @@ impl NodeKind for Merge {
                     {
                         tracing::warn!(attempt = %c.attempt, error = %e, "could not record a merge waiting for CI");
                     }
-                    Ok(Outcome::next("refused", json!({"code": r.code, "reason": r.reason, "fixable": r.fixable})))
+                    let mut out = json!({"code": r.code, "reason": r.reason, "fixable": r.fixable});
+                    // The head CI was judged at (PDT-151): a wait for CI matches its events, earlier ones too.
+                    if r.code.starts_with("ci_")
+                        && let Some(pr) = crate::github::watched_pr(cx.st, &c.attempt)
+                    {
+                        out["headSha"] = json!(pr.head_sha);
+                    }
+                    Ok(Outcome::next("refused", out))
                 }
                 Err(e) => Err(e.message().to_string()),
             }

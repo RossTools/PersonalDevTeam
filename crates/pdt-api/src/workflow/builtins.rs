@@ -406,8 +406,8 @@ fn late_commits() -> WorkflowDoc {
                 "ticket": "{{trigger.ticketId}}", "stopRunning": true, "deleteBranch": true}},
             {"id": "blocked", "kind": "ticket.comment", "version": 1, "position": {"x": 1400, "y": 0},
              "title": "Note what blocks it", "config": comment(
-                "Couldn't finish {{trigger.ticketKey}}: its worktree has uncommitted changes. Commit or discard them, \
-                 then move it to Done.")},
+                "Couldn't finish {{trigger.ticketKey}}: something in the way stops it (uncommitted changes in its \
+                 worktree, or a session or run that didn't stop). Clear it, then move the ticket to Done.")},
             {"id": "done", "kind": "end", "version": 1, "position": {"x": 1400, "y": -140}, "title": "Finished"},
             {"id": "kept", "kind": "end", "version": 1, "position": {"x": 560, "y": 140}, "title": "Kept open",
              "config": {"quiet": true}},

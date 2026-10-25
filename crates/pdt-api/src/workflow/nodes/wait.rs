@@ -24,6 +24,10 @@ pub struct EventWait {
     #[serde(default, rename = "where")]
     #[ts(rename = "where")]
     pub conditions: Vec<Condition>,
+    /// With `where`, at least one of these holds too (when given).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<Condition>>", optional)]
+    pub any: Vec<Condition>,
 }
 
 impl EventWait {
@@ -44,8 +48,21 @@ impl EventWait {
         if !self.also.is_empty() {
             w["also"] = json!(self.also);
         }
+        if !self.any.is_empty() {
+            w["any"] = json!(self.any);
+        }
         w
     }
+}
+
+/// Whether `event` (its trigger value) ends a step's `wait.event`: every `where` holds, and one of `any` if given.
+pub fn wait_matches(w: &Value, event: &Value) -> bool {
+    let conds = |k: &str| -> Vec<Condition> {
+        w.get(k).cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default()
+    };
+    let ctx = json!({"event": event});
+    let any = conds("any");
+    conds("where").iter().all(|c| c.holds(&ctx)) && (any.is_empty() || any.iter().any(|c| c.holds(&ctx)))
 }
 
 /// The event types a step's `wait.event` takes: its `type` and `also`.

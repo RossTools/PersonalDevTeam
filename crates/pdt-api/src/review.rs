@@ -625,7 +625,7 @@ pub(crate) async fn merge_attempt(
         // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
         // asks: `gh pr merge --auto` merges at once where nothing is required.
         let no_ci = if automated && policy.require_green_ci {
-            match ci_gate(&st, &info).await {
+            match ci_gate(&st, &info).await.map_err(|m| conflict("ci_unreadable", m))? {
                 CiGate::Passed => false,
                 CiGate::NoCi => true,
                 CiGate::Pending(reason) => return Ok(Err(Refusal { code: "ci_pending", reason, fixable: false })),
@@ -690,15 +690,18 @@ pub(crate) async fn merge_attempt(
 
 /// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from GitHub now.
 /// The repository has CI when the head (or the branch) has GitHub Actions workflows or the project a Buildkite
-/// pipeline, so no run yet is CI still to come.
-async fn ci_gate(st: &AppState, info: &AttemptInfo) -> CiGate {
+/// pipeline, so no run yet is CI still to come. A project with Buildkite waits for its builds on the head too, so
+/// green Actions alone don't pass while Buildkite hasn't reported on that head.
+/// A read from GitHub that fails is an error (`ci_unreadable`), as a failing `gh pr merge` is: the last look may be
+/// older than the head's CI, and no CI event would end a wait once GitHub answers again.
+async fn ci_gate(st: &AppState, info: &AttemptInfo) -> Result<CiGate, String> {
     crate::github::refresh_attempt(st, info).await;
-    let Some((pr, ci)) = crate::github::head_ci(st, &info.attempt.id) else {
-        return CiGate::Pending("PDT couldn't read the pull request's CI from GitHub".into());
+    let Some((pr, ci, bk_on_head)) = crate::github::head_ci(st, &info.attempt.id) else {
+        return Err("PDT couldn't read the pull request's CI from GitHub".into());
     };
     // A failed read keeps the last look, which may be older than the head's CI.
     if let Some(e) = &pr.error {
-        return CiGate::Pending(format!("PDT couldn't read the pull request's CI from GitHub: {e}"));
+        return Err(format!("PDT couldn't read the pull request's CI from GitHub: {e}"));
     }
     let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite).is_some();
     let has_ci = buildkite || {
@@ -710,7 +713,14 @@ async fn ci_gate(st: &AppState, info: &AttemptInfo) -> CiGate {
         .await
         .unwrap_or(true)
     };
-    pdt_core::pr::ci_gate(&pr, ci.as_ref(), has_ci)
+    Ok(match pdt_core::pr::ci_gate(&pr, ci.as_ref(), has_ci) {
+        CiGate::Passed | CiGate::NoCi if buildkite && !bk_on_head => CiGate::Pending(format!(
+            "Buildkite hasn't reported on PR #{} at {} yet",
+            pr.number,
+            pr.head_sha.get(..7).unwrap_or(&pr.head_sha)
+        )),
+        gate => gate,
+    })
 }
 
 /// `POST /api/attempts/{id}/ask-agent`: asks the coder session to clear what stops the merge: merge the base in and

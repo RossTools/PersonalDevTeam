@@ -92,15 +92,18 @@ fn merged_event() -> Value {
     json!({"type": "attempt.merged", "where": [{"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}]})
 }
 
-/// CI on this run's attempt passing or failing while its merge waits for it (`mergeWaiting`: not an older run's).
+/// CI on this run's attempt passing or failing: on the head the merge was refused at (also one logged before the wait
+/// began, or while GitHub couldn't be read), or on a newer head while the merge waits (`mergeWaiting`).
 fn ci_event() -> Value {
     json!({"type": "ci.run_passed", "also": ["ci.run_failed"], "where": [
-        {"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"},
+        {"left": "{{event.attemptId}}", "op": "eq", "right": "{{trigger.attemptId}}"}],
+        "any": [
+        {"left": "{{event.headSha}}", "op": "eq", "right": "{{steps.merge.headSha}}"},
         {"left": "{{event.mergeWaiting}}", "op": "truthy"}]})
 }
 
 pub fn doc() -> WorkflowDoc {
-    let nodes = vec![
+    let mut nodes = vec![
         // Refine: Draft → Ready.
         node("refine_requested", "ticket.refine_requested", 0, 0, "", Value::Null),
         node(
@@ -331,6 +334,10 @@ pub fn doc() -> WorkflowDoc {
         ),
         node("stopped_end", "end", 1500, 700, "Stopped", Value::Null),
     ];
+    // GitHub not answering (`merge_failed`, `ci_unreadable`, PDT-151): a few more tries before the run fails.
+    if let Some(m) = nodes.iter_mut().find(|n| n["id"] == "merge") {
+        m["retry"] = json!({"max": 3, "backoffMs": 2 * 60 * 1000});
+    }
     let edges = vec![
         edge("refine_requested", "", "refine"),
         edge("refine", "ready", "queue"),

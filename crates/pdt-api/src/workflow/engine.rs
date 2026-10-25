@@ -278,9 +278,7 @@ async fn match_events(st: &AppState) {
             if !crate::workflow::nodes::wait::wait_types(w).contains(&e.kind.as_str()) {
                 continue;
             }
-            let conds: Vec<pdt_core::workflow::cond::Condition> =
-                w.get("where").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
-            if all(&conds, &json!({"event": trigger})) {
+            if crate::workflow::nodes::wait::wait_matches(w, &trigger) {
                 resumed.insert(step.id.clone());
                 if let Err(x) = complete_step(st, step, "event", trigger.clone()).await {
                     tracing::warn!(step = %step.id, error = %x, "could not resume a waiting step");
@@ -666,8 +664,6 @@ async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>>
     if kinds.is_empty() {
         return Ok(None);
     }
-    let conds: Vec<pdt_core::workflow::cond::Condition> =
-        w.get("where").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
     let steps = st.store.list_steps(&run.id).await.map_err(err)?;
     let taken: HashSet<&str> = steps
         .iter()
@@ -684,9 +680,9 @@ async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>>
             ..Default::default()
         };
         let events = st.store.list_log_events(&filter).await.map_err(err)?;
-        let first = events
-            .into_iter()
-            .find(|e| !taken.contains(e.id.as_str()) && all(&conds, &json!({"event": trigger_value(e)})));
+        let first = events.into_iter().find(|e| {
+            !taken.contains(e.id.as_str()) && crate::workflow::nodes::wait::wait_matches(w, &trigger_value(e))
+        });
         // Of several types, the one logged first.
         if let Some(e) = first.filter(|e| found.as_ref().is_none_or(|f| e.seq < f.seq)) {
             found = Some(e);

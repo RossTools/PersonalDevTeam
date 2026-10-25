@@ -95,7 +95,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     and `git cherry-pick <merged head>..<head>` in its description) → a comment naming it → `ticket.finish`
     (`stopRunning`, keeping the branch for the cherry-pick); `discard_and_finish` → a second gate ("Discard …? …
     deletes its branch"): `discard` → `ticket.finish` with `deleteBranch`, `back` → the first gate; `keep_open` →
-    quiet end. A blocked finish (uncommitted changes) comments on the ticket. Runs may last 30 days.
+    quiet end. A blocked finish (uncommitted changes, or a session or run that didn't stop) comments on the ticket. Runs may last 30 days.
   - **Ticket comments to the agent** (on): `ticket.commented` by the user (`actor` = `user`, not an agent's comment
     through the API or a workflow's) with an active attempt → `session.send` (`reopen: true`: with no running agent
     session, the attempt's newest conversation that wasn't stopped, e.g. one a pdtd restart interrupted, reopens to take
@@ -127,9 +127,9 @@ derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MC
 | one trigger per event type; `manual` (Run now, sub-workflows) — config `projects`, `where`, `runKey` | `out` |
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
-| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `event {type, also, where}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
+| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `event {type, also, where, any}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
 | `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `backgroundWaitMs`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
-| `wait` (`ms`, `until`, or `event {type, also, where}` with `timeoutMs`; `also`: more event types that end it, PDT-151; `pipelineStage`) | `done`, `event`, `timeout` |
+| `wait` (`ms`, `until`, or `event {type, also, where, any}` with `timeoutMs`; `also`: more event types that end it, `any`: with `where`, one of these holds too, PDT-151; `pipelineStage`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
 | `state.set` (`key`, `value`, `ifMissing`; or `add`: a counter, output `value`) | `out` |
@@ -696,10 +696,12 @@ deleted (`409 persona_in_use`).
   goes straight on, any other to Accept (a gate with `inbox: accept`, `pipelineStage: accept`, `approve: merge`;
   `reject` → Code); `auto` → straight on; then
   a switch on `{{params.merge}}`: `workflow` → `attempt.merge` (`pipelineStage: merge`; `merged` → `ticket.finish`;
+  `retry` 3 times, 2 minutes apart, for GitHub not answering (`merge_failed`, `ci_unreadable`);
   `queued` → end, Finish merged tickets finishes it, and PR notices gets it merging again after a failure, PDT-104;
   `refused` → a switch on `{{steps.merge.code}}`: `ci_pending` (PDT-151: CI on the PR's head still running, or not
-  started) → Wait for CI (a `wait` for this attempt's `ci.run_passed` `also` `ci.run_failed` with `mergeWaiting`, so
-  not an older one; `pipelineStage: merge`, 6 hours) → `event` → `attempt.merge` again, `timeout` → Merge blocked;
+  started) → Wait for CI (a `wait` for this attempt's `ci.run_passed` `also` `ci.run_failed`, `any`: on the head the
+  merge was refused at (`{{steps.merge.headSha}}`, so also one logged between the merge's read and the wait) or with
+  `mergeWaiting` (a newer head pushed while it waits); `pipelineStage: merge`, 6 hours) → `event` → `attempt.merge` again, `timeout` → Merge blocked;
   anything else → a condition on `{{steps.merge.fixable}}`, PDT-124). Fixable (a conflict, uncommitted changes,
   failing CI; not recorded as set
   to merge, so nothing merges the fix before its review, even when the loop ends early) → Fix the merge (agent `{{params.coder}}`, `session: reuse`, owner
@@ -726,7 +728,8 @@ deleted (`409 persona_in_use`).
 - **`attempt.merge`** runs the Merge command as an automated merger ([review.md](review.md#merge)): a policy refusal
   or anything that stops the merge leaves by `refused` (`code`, `reason`, `fixable`: a conflict, uncommitted
   changes or failing CI (`ci_failed`), which the attempt's agent can clear; `ci_pending` while CI on the pull
-  request's head hasn't passed, PDT-151); `merge_failed` is an error. Merging `again` refused for CI records the
+  request's head hasn't passed, PDT-151, with `headSha`, the head it judged); `merge_failed` and `ci_unreadable`
+  (GitHub couldn't be read for CI) are errors. Merging `again` refused for CI records the
   attempt as set to merge, so PR notices merges it once CI passes. With `again`
   (PR notices after a fix, PDT-104) it reads the PR from GitHub first: one already on auto-merge or in the queue is
   `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays. A first merge

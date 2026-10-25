@@ -712,13 +712,14 @@ pub(crate) async fn log_late_commits(
 }
 
 /// The attempt's open PR as last seen, with the CI on its head from GitHub Actions and Buildkite together (as its badge
-/// shows it).
-pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, Option<CiStatus>)> {
+/// shows it), and whether Buildkite has reported on that head (its last look may be of an older one).
+pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, Option<CiStatus>, bool)> {
     let w = watch(st);
     let pr = w.by_attempt.get(attempt_id).filter(|p| p.state == PrState::Open).cloned()?;
     let bk = w.buildkite.get(attempt_id).filter(|b| b.runs.iter().all(|r| r.head_sha == pr.head_sha)).cloned();
+    let bk_on_head = bk.is_some();
     let ci = CiStatus::merge(pr.ci.clone(), bk);
-    Some((pr, ci))
+    Some((pr, ci, bk_on_head))
 }
 
 /// The attempt's PR as last seen (None when it has none, or the project is not on GitHub).
