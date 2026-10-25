@@ -410,7 +410,8 @@ pub fn doc() -> WorkflowDoc {
         "name": "Pipeline",
         "description": "Draft → Refine → Ready → Code → Review → QA → Accept → Done. Refine (on a ticket) runs the \
                         Refiner; starting a ticket runs the Coder, then a fresh Reviewer and QA, sending it back to the \
-                        Coder on changes or a failure; then you accept and the run merges once CI on the pull \
+                        Coder on changes or a failure (findings first, PR notices after them; it submits once its \
+                        work is committed and pushed); then you accept and the run merges once CI on the pull \
                         request passes. A merge refused for a conflict or failing CI goes back to the Coder and a \
                         Reviewer; one refused for anything else asks you in the Inbox. Any stage can be yours instead of an agent's.",
         "nodes": nodes,

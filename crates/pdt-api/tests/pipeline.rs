@@ -1466,3 +1466,127 @@ async fn abandon_and_stop_end_the_run_and_sessions_and_stop_can_remove_the_workt
     let (s, r) = call(&env.app, "POST", &format!("/api/tickets/{t}/stop"), Some(json!({"stage": "done"}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{r}");
 }
+
+/// PDT-161: a CI-failed notice that comes while a QA-fail pass waits for the Coder goes in with that pass's message,
+/// after QA's findings, not ahead of it as a message of its own.
+#[tokio::test]
+async fn a_ci_failure_during_a_qa_fail_pass_comes_after_qas_findings_in_its_message() {
+    let gh = std::sync::Arc::new(FakeGithub::default());
+    let env = setup_with(Some(gh.clone())).await;
+    // Another conversation, to hold the host's one slot later.
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "claude", "mode": "conversation",
+                      "cols": 80, "rows": 24});
+    let (s, created) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{created}");
+    let busy = created["id"].as_str().unwrap().to_string();
+    pipeline(&env, json!({"qaBy": "user"}), &[("code", "submitted"), ("review", "approved")]).await;
+    let t = ticket(&env, "Make it fast").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    let qa = inbox_item(&env, "manual", &t).await;
+    let sessions = get_ticket(&env, &t).await["sessions"].as_array().unwrap().clone();
+    let coder = sessions.iter().find(|s| s["persona"] == "Coder").unwrap()["id"].as_str().unwrap().to_string();
+    assert_eq!(qa["title"], "Your turn: QA");
+
+    // The Coder can't take a turn yet: the one slot is busy. QA fails, then CI does.
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxAgentTurns": 1}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{busy}/messages"), Some(json!({"text": "slow"}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    tick_until(&env, "the other session working", || async {
+        let s = call(&env.app, "GET", &format!("/api/sessions/{busy}"), None).await.1;
+        (s["activity"] == "working").then_some(s)
+    })
+    .await;
+    answer(&env, &qa, json!({"choice": "outcome:fail", "text": "p95 is 900 ms; the target is 200 ms."})).await;
+    let mut red = ci_run(1, &branch, CiState::Failed);
+    red.failed_jobs = vec!["test (linux)".into()];
+    gh.set_runs(&branch, vec![red]);
+    gh.set_jobs(1, &["test (linux)"]);
+    pdt_api::refresh_prs(&env.state).await;
+    tick_until(&env, "the notice waiting for the coder", || async {
+        let waiting = env.state.store.waiting_session_messages().await.unwrap();
+        let pass = waiting.iter().any(|m| m.dedupe.as_deref().is_some_and(|d| d.starts_with("agent:")));
+        let notice = waiting.iter().any(|m| m.text.contains("CI failed"));
+        (pass && notice).then_some(Value::Null)
+    })
+    .await;
+    assert!(!agent_says(&env, &coder).await.iter().any(|m| m.contains("CI failed")));
+
+    // The slot frees: one message, QA's findings first, the notice after them as part of the pass.
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{busy}/interrupt"), None).await;
+    assert!(s.is_success(), "{v}");
+    let said = tick_until(&env, "the pass reaching the coder", || async {
+        agent_says(&env, &coder).await.into_iter().find(|m| m.contains("another pass")).map(Value::from)
+    })
+    .await;
+    let said = said.as_str().unwrap();
+    let findings = said.find("The user answered `fail`: p95 is 900 ms").unwrap_or_else(|| panic!("{said}"));
+    let also = said.find("Also for this pass").unwrap_or_else(|| panic!("{said}"));
+    let ci = said.find("CI failed on PR #12").unwrap_or_else(|| panic!("{said}"));
+    assert!(findings < also && also < ci, "{said}");
+    let all = agent_says(&env, &coder).await;
+    assert_eq!(all.iter().filter(|m| m.contains("CI failed")).count(), 1, "{all:?}");
+}
+
+/// The mcp result a session's agent said for its latest `submit_outcome`.
+async fn submitted_reply(env: &Env, session: &str, before: usize) -> String {
+    tick_until(env, "the submit_outcome reply", || async {
+        let said = agent_says(env, session).await;
+        said.into_iter()
+            .filter(|m| m.starts_with("mcp submit_outcome") || m.starts_with("mcp error"))
+            .nth(before)
+            .map(Value::from)
+    })
+    .await
+    .as_str()
+    .unwrap()
+    .to_string()
+}
+
+/// PDT-161: `submitted` is refused while the worktree has uncommitted changes to tracked files or commits its upstream
+/// lacks, and taken once it is clean and pushed. Untracked files don't count.
+#[tokio::test]
+async fn submitted_needs_a_clean_pushed_worktree() {
+    let env = setup().await;
+    let remote = env._tmp.path().join("remote.git");
+    git(env._tmp.path(), &["init", "-q", "--bare", &remote.to_string_lossy()]);
+    git(&env.repo, &["remote", "add", "origin", &remote.to_string_lossy()]);
+    git(&env.repo, &["push", "-q", "origin", "main"]);
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[]).await;
+    let t = ticket(&env, "Push it").await;
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let branch = started["attempt"]["branch"].as_str().unwrap().to_string();
+    let wt = env.repo.join(".worktrees").join(&branch);
+    let coder = step_session(&env, "code").await;
+
+    std::fs::write(wt.join("a.txt"), "changed\n").unwrap();
+    std::fs::write(wt.join("scratch.txt"), "untracked\n").unwrap();
+    submit_in(&env, &coder, "submitted").await;
+    let r = submitted_reply(&env, &coder, 0).await;
+    assert!(
+        r.contains("`submitted` is refused") && r.contains("uncommitted changes to tracked files (`a.txt`)"),
+        "{r}"
+    );
+    assert!(!r.contains("scratch.txt"), "{r}");
+
+    git(&wt, &["commit", "-q", "-am", "change"]);
+    git(&wt, &["push", "-q", "-u", "origin", &branch]);
+    std::fs::write(wt.join("a.txt"), "again\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "again"]);
+    submit_in(&env, &coder, "submitted").await;
+    let r = submitted_reply(&env, &coder, 1).await;
+    assert!(r.contains(&format!("1 commit not pushed to `origin/{branch}`")), "{r}");
+    assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "code");
+
+    git(&wt, &["push", "-q"]);
+    submit_in(&env, &coder, "submitted").await;
+    let r = submitted_reply(&env, &coder, 2).await;
+    assert!(r.starts_with("mcp submit_outcome:"), "{r}");
+    let review = inbox_item(&env, "manual", &t).await;
+    assert_eq!(review["title"], "Your turn: Review");
+}

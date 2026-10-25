@@ -319,7 +319,8 @@ fn pr_notices() -> WorkflowDoc {
         "name": "PR notices",
         "description": "Tells the attempt's agent when CI fails, its pull request conflicts with the base, the merge \
                         queue drops it, or it merges. Each notice once; it waits until the agent is idle and nobody \
-                        is typing, and lands on the ticket's timeline. A pull request that was set to merge gets an \
+                        is typing, and lands on the ticket's timeline; one that comes while a Coder's pass sent \
+                        back by review or QA waits goes in with it, after the findings. A pull request that was set to merge gets an \
                         agent step instead (the attempt's Coder session, or a new one): it fixes the cause and pushes, \
                         with a Reviewer first when it calls the fix large, and auto-merge goes back on, also when CI \
                         passes again with it off; a workflow's merge refused for a conflict counts too. After 3 tries \

@@ -20,6 +20,7 @@ use pdt_core::conversation::SessionMode;
 use pdt_core::notification::{NewNotification, NotificationKind, NotificationTarget, Severity};
 use pdt_core::session::{Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{Actor, EventKind};
+use pdt_core::workflow::agent::AgentStepState;
 use pdt_core::workflow::api::StepStatus;
 use pdt_store::SessionMessage;
 use serde_json::{Value, json};
@@ -168,7 +169,7 @@ pub(crate) async fn deliver(st: &AppState) {
             }
             free = Some(slots.saturating_sub(1));
         }
-        let text = list.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
+        let text = batch_text(st, &sid, &list).await;
         if conversation {
             // Told when the agent echoes it (`echoed`); until then the messages are on their way.
             let pending_id = uuid::Uuid::now_v7().to_string();
@@ -196,6 +197,32 @@ pub(crate) async fn deliver(st: &AppState) {
             Err(e) => tracing::warn!(session = %sid, error = %e, "could not type a message into the session"),
         }
     }
+}
+
+/// One message for a session's batch. Workflows' messages (PR notices) meeting a step that hands in work (a Coder's,
+/// `submitted`) are folded into it (PDT-161): after the step's message when that goes in the same batch, else marked
+/// as part of the step it is working on, so a notice never displaces the review and QA findings.
+async fn batch_text(st: &AppState, sid: &str, list: &[SessionMessage]) -> String {
+    let prompt = |m: &&SessionMessage| m.dedupe.as_deref().is_some_and(|d| d.starts_with(super::agent::PROMPT_KEY));
+    let workflow = |m: &&SessionMessage| m.step_id.is_some() && !m.by_user;
+    let hands_in = |a: &pdt_core::workflow::agent::AgentStep| {
+        a.outcomes.iter().any(|o| o.id == pdt_core::workflow::agent::SUBMITTED)
+    };
+    let step = match list.iter().find(prompt).and_then(|m| m.dedupe.as_deref()) {
+        Some(d) => st.store.get_agent_step(&d[super::agent::PROMPT_KEY.len()..]).await.ok().flatten(),
+        None => st.store.active_agent_step(sid).await.ok().flatten().filter(|a| a.state == AgentStepState::Working),
+    };
+    if !step.as_ref().is_some_and(hands_in) {
+        return list.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
+    }
+    let own: Vec<&str> = list
+        .iter()
+        .filter(prompt)
+        .chain(list.iter().filter(|m| !prompt(m) && !workflow(m)))
+        .map(|m| m.text.as_str())
+        .collect();
+    let notices: Vec<&str> = list.iter().filter(|m| !prompt(m) && workflow(m)).map(|m| m.text.as_str()).collect();
+    pdt_core::workflow::agent::fold_messages(&own, &notices, true)
 }
 
 /// Whether a session that cannot take messages now is working (worth waiting for), and else why it cannot.

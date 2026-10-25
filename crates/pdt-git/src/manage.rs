@@ -80,6 +80,55 @@ pub fn is_dirty(dir: &Path) -> Result<bool, GitError> {
     Ok(!run(dir, &["status", "--porcelain"])?.is_empty())
 }
 
+/// What a checkout holds that its remote doesn't (PDT-161): tracked files changed but not committed, and commits on
+/// HEAD its upstream lacks. Untracked files don't count.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Unpushed {
+    /// Tracked files with uncommitted changes (staged or not), `/`-separated.
+    pub changed: Vec<String>,
+    /// What HEAD is compared with: its upstream, else `origin/<branch>` when that exists; None when it has neither.
+    pub upstream: Option<String>,
+    /// Commits on HEAD that `upstream` doesn't have.
+    pub ahead: u32,
+}
+
+impl Unpushed {
+    pub fn is_clean(&self) -> bool {
+        self.changed.is_empty() && self.ahead == 0
+    }
+}
+
+/// [`Unpushed`] for the checkout at `dir`.
+pub fn unpushed(dir: &Path) -> Result<Unpushed, GitError> {
+    let out = run(dir, &["-c", "core.quotepath=off", "status", "--porcelain=v1", "-z", "--untracked-files=no"])?;
+    let mut changed = Vec::new();
+    let mut parts = out.split('\0');
+    while let Some(e) = parts.next() {
+        if e.len() < 4 {
+            continue;
+        }
+        let (code, path) = e.split_at(3);
+        if code.starts_with('R') || code.starts_with('C') {
+            parts.next(); // the original name of a rename or copy
+        }
+        changed.push(path.to_string());
+    }
+    let tracking = |args: &[&str]| match git_with_env(dir, args, &[]) {
+        Ok(Ok(s)) if !s.is_empty() => Some(s),
+        _ => None,
+    };
+    let upstream = tracking(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).or_else(|| {
+        let branch = tracking(&["symbolic-ref", "--short", "-q", "HEAD"])?;
+        let remote = format!("origin/{branch}");
+        crate::rev_parse(dir, &format!("refs/remotes/{remote}")).map(|_| remote)
+    });
+    let ahead = match &upstream {
+        Some(u) => run(dir, &["rev-list", "--count", &format!("{u}..HEAD")])?.trim().parse().unwrap_or(0),
+        None => 0,
+    };
+    Ok(Unpushed { changed, upstream, ahead })
+}
+
 /// `git worktree remove [--force] <path>`.
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<(), GitError> {
     let p = path.to_string_lossy();
@@ -170,6 +219,42 @@ mod tests {
         std::fs::write(dir.join("README.md"), "hi\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "init"]);
+    }
+
+    #[test]
+    fn unpushed_counts_tracked_changes_and_commits_the_upstream_lacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let remote = tmp.path().join("remote.git");
+        let dir = tmp.path().join("work");
+        repo(&dir);
+        // No upstream: only uncommitted changes count.
+        assert_eq!(unpushed(&dir).unwrap(), Unpushed::default());
+        git(tmp.path(), &["init", "-q", "--bare", &remote.to_string_lossy()]);
+        git(&dir, &["remote", "add", "origin", &remote.to_string_lossy()]);
+        git(&dir, &["push", "-q", "-u", "origin", "main"]);
+        let up = unpushed(&dir).unwrap();
+        assert!(up.is_clean(), "{up:?}");
+        assert_eq!(up.upstream.as_deref(), Some("origin/main"));
+        // An untracked file doesn't count; a changed tracked one does.
+        std::fs::write(dir.join("scratch.txt"), "x\n").unwrap();
+        assert!(unpushed(&dir).unwrap().is_clean());
+        std::fs::write(dir.join("README.md"), "changed\n").unwrap();
+        assert_eq!(unpushed(&dir).unwrap().changed, vec!["README.md".to_string()]);
+        git(&dir, &["commit", "-q", "-am", "change"]);
+        let up = unpushed(&dir).unwrap();
+        assert_eq!((up.changed.len(), up.ahead), (0, 1), "{up:?}");
+        git(&dir, &["push", "-q"]);
+        assert!(unpushed(&dir).unwrap().is_clean());
+        // Pushed without -u: origin/<branch> stands in for the upstream.
+        git(&dir, &["checkout", "-q", "-b", "topic"]);
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        git(&dir, &["add", "b.txt"]);
+        git(&dir, &["commit", "-q", "-m", "b"]);
+        git(&dir, &["push", "-q", "origin", "topic"]);
+        let up = unpushed(&dir).unwrap();
+        assert_eq!((up.upstream.as_deref(), up.ahead), (Some("origin/topic"), 0), "{up:?}");
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "c"]);
+        assert_eq!(unpushed(&dir).unwrap().ahead, 1);
     }
 
     fn same(a: &Path, b: &Path) -> bool {

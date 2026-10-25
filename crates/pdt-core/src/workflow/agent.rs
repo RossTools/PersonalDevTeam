@@ -9,6 +9,9 @@ use ts_rs::TS;
 /// Ports an agent node has besides its outcomes.
 pub const TIMEOUT: &str = "timeout";
 pub const STOPPED: &str = "stopped";
+/// The outcome that hands a step's work on (a Coder's): refused while the attempt's worktree holds what its remote
+/// doesn't (PDT-161), and the outcome of the steps PR notices fold into (`fold_messages`).
+pub const SUBMITTED: &str = "submitted";
 
 /// One outcome a step allows: its port.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -179,8 +182,8 @@ pub fn next_pass_message(reason: Option<&str>, outcomes: &[OutcomeSpec]) -> Stri
         out.push_str(&format!("\n\n{r}"));
     }
     out.push_str(&format!(
-        "\n\nAddress it (`get_ticket` has the earlier outcomes, their line comments and the user's comments), then \
-         call `submit_outcome` with one of: {}.",
+        "\n\nAddress each point above, one by one (`get_ticket` has the earlier outcomes, their line comments and the \
+         user's comments), then call `submit_outcome` with one of: {}.",
         outcome_list(outcomes)
     ));
     out
@@ -194,10 +197,24 @@ pub fn back_because(kind: &str, port: &str, output: &serde_json::Value) -> Optio
         "agent" => {
             let who =
                 if text("by") == Some("user") { "The user" } else { text("persona").unwrap_or("The previous step") };
-            Some(match text("summary") {
+            let mut out = match text("summary") {
                 Some(s) => format!("{who} answered `{port}`: {s}"),
                 None => format!("{who} answered `{port}`."),
-            })
+            };
+            // Its line comments, each a finding to address (PDT-161).
+            let comments: Vec<OutcomeComment> =
+                output.get("comments").cloned().and_then(|c| serde_json::from_value(c).ok()).unwrap_or_default();
+            if !comments.is_empty() {
+                out.push_str("\n\nIts findings:");
+                for c in &comments {
+                    let at = match c.end_line {
+                        Some(end) if end > c.line => format!("{}:{}-{end}", c.file, c.line),
+                        _ => format!("{}:{}", c.file, c.line),
+                    };
+                    out.push_str(&format!("\n- `{at}`: {}", c.body.trim()));
+                }
+            }
+            Some(out)
         }
         "gate" => Some(match text("text") {
             Some(t) => format!("The user chose `{port}`: {t}"),
@@ -208,6 +225,30 @@ pub fn back_because(kind: &str, port: &str, output: &serde_json::Value) -> Optio
             None => "The merge was refused.".into(),
         }),
         _ => None,
+    }
+}
+
+/// What a session is told when messages from workflows (PR notices: CI failed, a conflict, the base moved) meet a step
+/// that hands in work (PDT-161). `own` are the session's other messages, its step's prompt first; `notices` the
+/// workflows'. In one batch with the step's prompt they come after it, as more items for the pass; on their own while
+/// such a step is working (`mid_step`) they say they belong to it. Otherwise they are just joined.
+pub fn fold_messages(own: &[&str], notices: &[&str], mid_step: bool) -> String {
+    let join = |v: &[&str]| v.iter().map(|t| t.trim()).collect::<Vec<_>>().join("\n\n");
+    match (own.is_empty(), notices.is_empty()) {
+        (_, true) => join(own),
+        (false, false) => format!(
+            "{}\n\n[{SHORT_NAME}] Also for this pass, once each point above is addressed: this came in while it \
+             waited.\n\n{}",
+            join(own),
+            join(notices)
+        ),
+        (true, false) if mid_step => format!(
+            "[{SHORT_NAME}] This came in while you work on your step. Take it in as one more item of the step, after \
+             what the step's message asked (the review and QA findings come first), and finish the step as that \
+             message says.\n\n{}",
+            join(notices)
+        ),
+        (true, false) => join(notices),
     }
 }
 
@@ -246,6 +287,32 @@ pub fn resumable_step(steps: &[super::api::Step]) -> Option<&super::api::Step> {
     let last = steps.iter().filter(|s| s.kind == "agent").max_by_key(|s| s.seq)?;
     (last.status == super::api::StepStatus::Succeeded && matches!(last.port.as_deref(), Some(TIMEOUT | STOPPED)))
         .then_some(last)
+}
+
+/// Why `submitted` is refused (PDT-161), or None when the worktree is clean and pushed: `changed` tracked files with
+/// uncommitted changes, `ahead` commits `upstream` doesn't have.
+pub fn not_handed_in(changed: &[String], ahead: u32, upstream: Option<&str>) -> Option<String> {
+    if changed.is_empty() && ahead == 0 {
+        return None;
+    }
+    let mut what = vec![];
+    if !changed.is_empty() {
+        const SHOWN: usize = 5;
+        let mut files = changed.iter().take(SHOWN).map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ");
+        if changed.len() > SHOWN {
+            files.push_str(&format!(" and {} more", changed.len() - SHOWN));
+        }
+        what.push(format!("uncommitted changes to tracked files ({files})"));
+    }
+    if ahead > 0 {
+        let commits = if ahead == 1 { "1 commit".to_string() } else { format!("{ahead} commits") };
+        what.push(format!("{commits} not pushed to `{}`", upstream.unwrap_or("its upstream")));
+    }
+    Some(format!(
+        "`{SUBMITTED}` is refused: the worktree still has {}. The next step only sees what is committed and pushed: \
+         commit and push it (run the checks first if anything changed), then submit again.",
+        what.join(" and ")
+    ))
 }
 
 /// The section a step's session gets in its instructions (spec §4.2).
@@ -324,6 +391,49 @@ mod tests {
         );
         assert_eq!(back_because("attempt.merge", "queued", &serde_json::Value::Null), None);
         assert!(!next_pass_message(None, &outs()).contains("\n\n\n"));
+    }
+
+    #[test]
+    fn a_later_pass_lists_the_findings_and_asks_for_each_one() {
+        let qa = serde_json::json!({"persona": "QA", "summary": "Too slow.", "comments": [
+            {"file": "src/a.rs", "line": 3, "body": " p95 is 900 ms, the target 200 ms. "},
+            {"file": "src/b.rs", "line": 7, "endLine": 9, "body": "No test."}]});
+        let reason = back_because("agent", "fail", &qa).unwrap();
+        assert_eq!(
+            reason,
+            "QA answered `fail`: Too slow.\n\nIts findings:\n- `src/a.rs:3`: p95 is 900 ms, the target 200 ms.\n- \
+             `src/b.rs:7-9`: No test."
+        );
+        let m = next_pass_message(Some(&reason), &outs());
+        assert!(m.contains("No test.\n\nAddress each point above, one by one"), "{m}");
+    }
+
+    #[test]
+    fn notices_come_after_a_steps_prompt_or_say_they_belong_to_the_step() {
+        let pass = "[PDT] Your step is back for another pass.\n\nQA answered `fail`: Too slow.";
+        let ci = "[PDT] CI failed on PR #4.";
+        let m = fold_messages(&[pass], &[ci], false);
+        assert!(m.starts_with(pass), "{m}");
+        assert!(m.ends_with(&format!("this came in while it waited.\n\n{ci}")), "{m}");
+        assert!(m.find("Too slow").unwrap() < m.find("CI failed").unwrap());
+        let mid = fold_messages(&[], &[ci], true);
+        assert!(mid.starts_with("[PDT] This came in while you work on your step.") && mid.ends_with(ci), "{mid}");
+        assert_eq!(fold_messages(&[], &[ci, "two"], false), format!("{ci}\n\ntwo"));
+        assert_eq!(fold_messages(&[pass, "nudge"], &[], true), format!("{pass}\n\nnudge"));
+    }
+
+    #[test]
+    fn submitted_needs_a_clean_pushed_worktree() {
+        assert_eq!(not_handed_in(&[], 0, Some("origin/x")), None);
+        let files: Vec<String> = (1..=7).map(|i| format!("f{i}.rs")).collect();
+        let m = not_handed_in(&files, 2, Some("origin/x")).unwrap();
+        assert!(
+            m.starts_with("`submitted` is refused: the worktree still has uncommitted changes to tracked files"),
+            "{m}"
+        );
+        assert!(m.contains("`f5.rs` and 2 more) and 2 commits not pushed to `origin/x`."), "{m}");
+        let m = not_handed_in(&[], 1, None).unwrap();
+        assert!(m.contains("still has 1 commit not pushed to `its upstream`."), "{m}");
     }
 
     #[test]
