@@ -112,9 +112,12 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, `list_todos` (the user's todo
   list with due dates, `dueOn`/`dueTime`, and repeat rules, `recurrence`; read-only: the PM never changes it), the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
-  `create_ticket` (a draft by default; the timeline gets "Created by the PM."), `edit_ticket` (closing ends the
+  `create_ticket` (a draft by default; the timeline gets "Created by the PM.", or by the session's persona), `edit_ticket` (closing ends the
   attempt and moving back to Draft, Ready or To do stops its work, as the API; `parent` takes a key or id, `""`
-  detaches), `stop_ticket` (`ticket`, `stage?`, `removeWorktree?`, `deleteBranch?`: `POST /api/tickets/{id}/stop`,
+  detaches; another persona given the tool edits its own ticket freely, but another ticket only by its exact key,
+  never by id or number, and one in progress or closed keeps its title and description unless that session created
+  it, its `create_ticket` note carrying `created` and its session id; the refusal points at `add_ticket_comment`,
+  PDT-162), `stop_ticket` (`ticket`, `stage?`, `removeWorktree?`, `deleteBranch?`: `POST /api/tickets/{id}/stop`,
   [tickets.md](tickets.md) "Stopping a ticket's work"; the timeline gets "The PM stopped its work."), `link_tickets` / `unlink_tickets` (`ticket`, `kind`:
   `blocks`, `blockedBy` or `relates`, and `other` in the same project; the store's link rules, so self-links, blocking
   cycles and unknown tickets are errors; the `linked`/`unlinked` and `parted` events are the agent's) and

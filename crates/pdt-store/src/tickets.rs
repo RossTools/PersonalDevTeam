@@ -1985,6 +1985,20 @@ impl Store {
         Ok(rows.into_iter().filter_map(|(b,)| b).collect())
     }
 
+    /// Whether an agent session created the ticket with `create_ticket` (its note says so, PDT-162).
+    pub async fn created_by_session(&self, ticket_id: &str, session_id: &str) -> Result<bool, StoreError> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM ticket_events WHERE ticket_id = ? AND kind = ? \
+             AND json_extract(data, '$.sessionId') = ? AND json_extract(data, '$.created') = 1 LIMIT 1",
+        )
+        .bind(ticket_id)
+        .bind(EventKind::Comment.as_str())
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
     /// A ticket's comments, oldest first: `(actor, body, created_at)`.
     pub async fn comments(&self, ticket_id: &str) -> Result<Vec<(String, String, i64)>, StoreError> {
         let rows: Vec<(String, Option<String>, i64)> = sqlx::query_as(

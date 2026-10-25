@@ -163,7 +163,7 @@ const TOOL_DOES: [(&str, &str); 44] = [
     ("write_journal", "Write the session's journal entry"),
     ("list_todos", "Read your todo list"),
     ("create_ticket", "Create tickets"),
-    ("edit_ticket", "Edit any ticket"),
+    ("edit_ticket", "Edit tickets (outside the PM, others only by exact key)"),
     ("link_tickets", "Link two tickets (blocks, relates to)"),
     ("unlink_tickets", "Remove a link between tickets"),
     ("stop_ticket", "Stop a ticket's work: its workflow run, sessions and attempt"),
