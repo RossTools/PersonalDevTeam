@@ -18,6 +18,7 @@ pub mod instance;
 pub mod jira;
 pub mod links;
 pub mod liveness;
+pub mod local_network;
 pub mod mcp;
 pub mod notification;
 pub mod overlap;

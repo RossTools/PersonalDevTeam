@@ -71,6 +71,14 @@ ticket, remove it here.
 - **Release scripts:** `release-stable.sh` passes all tray pids to one `kill -0` loop, which ends as soon as any one
   has exited; `release-stable.ps1` swallows `Wait-Process` timeouts.
 - **Self-signed macOS builds** make the keychain ask again after every update (docs/superpowers/notes/developer-id.md).
+- **macOS Local Network permission** (PDT-156, docs/reference/host.md "pdt-host at login"): an install whose
+  LaunchAgent predates `AssociatedBundleIdentifiers` gets it at the next login, so until then pdt-host and pdtd may be
+  asked about (and listed) under their own names. Before macOS 27.2 a choice cannot be reset in System Settings (no
+  remove button; TN3179). A connection given by a name other than `.local` that resolves to a private address gets the
+  raw "No route to host" error, not the Local Network hint (only the URL's host is known when the request fails).
+  Apple advises an Apple-issued signing identity for the choice to follow the app reliably: whether a self-signed
+  release keeps it across updates (same certificate and identifiers, so the same designated requirement) is
+  unverified until an update on macOS 15+ shows it.
 
 ## Web UI (from the Phase 1 review; unverified since)
 

@@ -635,6 +635,7 @@ pub(crate) async fn create_connection(
     })?;
     crate::connection_health::forget(&st, &[&conn.name]).await;
     crate::mcp_client::connection_changed(&st, Some(&conn)).await;
+    crate::local_network::prompt_soon(&st);
     Ok((StatusCode::CREATED, Json(conn)))
 }
 
@@ -683,6 +684,7 @@ pub(crate) async fn patch_connection(
     (c.last_error, c.last_error_at) = (None, None);
     crate::connection_health::forget(&st, &[&old_name, &c.name]).await;
     crate::mcp_client::connection_changed(&st, Some(&c)).await;
+    crate::local_network::prompt_soon(&st);
     Ok(Json(c))
 }
 

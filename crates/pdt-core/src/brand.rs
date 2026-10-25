@@ -20,6 +20,9 @@ pub const HOST_AUTOSTART_NAME: &str = "Personal Dev Team host";
 pub const TRAY_LABEL: &str = "dev.personaldevteam.tray";
 /// Name of the per-user autostart entry for the tray app (Windows `HKCU\…\Run` value, PDT-148).
 pub const TRAY_AUTOSTART_NAME: &str = "Personal Dev Team";
+/// The app bundle's identifier (tauri.conf.json `identifier`, a test checks). pdt-host's LaunchAgent names it in
+/// `AssociatedBundleIdentifiers`, so macOS counts pdt-host and pdtd as the app's (Local Network permission, PDT-156).
+pub const APP_BUNDLE_ID: &str = "dev.personaldevteam.desktop";
 /// GitHub repository (owner/name) whose releases hosts update from, through the GitHub REST API and a token.
 pub const RELEASE_REPO: &str = "ross-game-tools/PersonalDevTeam";
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
@@ -62,6 +65,14 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_app_bundle_id_is_the_tauri_identifier() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../../../desktop/src-tauri/tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], APP_BUNDLE_ID);
+        assert_eq!(conf["productName"], PRODUCT_NAME);
+    }
 
     #[test]
     fn dev_profile_only_from_exact_value() {
