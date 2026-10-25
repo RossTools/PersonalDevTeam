@@ -24,6 +24,7 @@ import { SessionView } from '../sessions/SessionView';
 import { HOST_SECTIONS, HostSettingsPage } from '../host/HostSettingsPage';
 import { sectionLabel } from '../common/SettingsScreens';
 import { ConnectionsPage } from '../connections/ConnectionsPage';
+import { SecretsPage } from '../secrets/SecretsPage';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
@@ -87,6 +88,8 @@ const PHONE_LIST_SCREENS: readonly ViewId[] = ['pm', 'sessions', 'inbox', 'notes
 const CONNECTIONS = 'connections';
 /** The Settings page of notifications. */
 const NOTIFICATIONS = 'notifications';
+/** The Settings page of secrets (PDT-158). */
+const SECRETS = 'secrets';
 
 const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
 
@@ -439,7 +442,8 @@ export function AppShell() {
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
   // The Settings list's current row: a project's id, connections, or null (this host).
   const settingsProjectId = settingsProject?.id
-    ?? (settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
+    ?? (settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'secrets' ? SECRETS
+      : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
   const section = settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
   // On a phone a section is a screen of its own; on a desktop the page scrolls to it.
   useScrollToSection(view === 'settings' && !phone ? section : null, settingsProjectId ?? '');
@@ -477,12 +481,12 @@ export function AppShell() {
     if (folder.file) setSheetOpen(false);
   }, [folder.file]);
 
-  /** Settings for a project (by id), connections, notifications, or this host (null). */
+  /** Settings for a project (by id), connections, secrets, notifications, or this host (null). */
   const showProjectSettings = (id: string | null) => {
     const key = ws.projects.find((p) => p.id === id)?.key;
     go({
       view: 'settings',
-      page: id === CONNECTIONS ? { kind: 'connections' } : id === NOTIFICATIONS ? { kind: 'notifications' }
+      page: id === CONNECTIONS ? { kind: 'connections' } : id === SECRETS ? { kind: 'secrets' } : id === NOTIFICATIONS ? { kind: 'notifications' }
         : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null },
     });
     setSheetOpen(false);
@@ -620,10 +624,11 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS || id === NOTIFICATIONS ? id : null)}>
+      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS || id === SECRETS || id === NOTIFICATIONS ? id : null)}>
         <ListRow id="host" title="This host" current={!phone && settingsProjectId === null} />
         <ListRow id={NOTIFICATIONS} title="Notifications" current={settingsProjectId === NOTIFICATIONS} />
         <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
+        <ListRow id={SECRETS} title="Secrets" current={settingsProjectId === SECRETS} />
       </List>
       <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
         <span className="flex-1">Projects</span>
@@ -719,6 +724,7 @@ export function AppShell() {
       case 'host': return (section && sectionLabel(HOST_SECTIONS, section)) || 'This host';
       case 'project': return (section && sectionLabel(PROJECT_SECTIONS, section)) || (settingsProject?.name ?? settingsPage.key);
       case 'connections': return 'Connections';
+      case 'secrets': return 'Secrets';
       case 'notifications': return 'Notifications';
       case 'index': return label;
     }
@@ -925,6 +931,7 @@ export function AppShell() {
                   drill={phone} section={section} onSection={showSection} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
               ) : settingsPage.kind === 'connections' ? <ConnectionsPage />
+                : settingsPage.kind === 'secrets' ? <SecretsPage />
                 : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage drill={phone} section={section} onSection={showSection} />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>

@@ -746,13 +746,22 @@ async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::Subm
 /// `ask_user` (pdt-mcp): an Inbox question; a step waits for the answers instead of stalling.
 pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question>) -> R<Value> {
     let questions = inbox::valid_questions(questions)?;
+    let first = questions[0].question.clone();
+    let item = ask(st, s, InboxKind::Question, first, json!({"questions": questions})).await?;
+    Ok(json!({"asked": true, "inboxItemId": item.id,
+              "message": "Your questions are in the user's Inbox. Their answers will come as a message; end your turn now."}))
+}
+
+/// Opens an item a session waits on the user for (a question, a secret request), replacing its step's open one of
+/// that kind; the step is asking until it is answered.
+pub(crate) async fn ask(st: &AppState, s: &Session, kind: InboxKind, title: String, body: Value) -> R<InboxItem> {
     let run = session_run(st, &s.id).await;
     let _locked = super::engine::lock_run(st, run.as_deref()).await;
     let binding = st.store.active_agent_step(&s.id).await.map_err(err)?;
     if let Some(a) = &binding {
         // A new question replaces the step's open one.
         for old in st.store.open_items_for_step(&a.step_id).await.map_err(err)? {
-            if old.kind == InboxKind::Question {
+            if old.kind == kind {
                 st.store
                     .end_inbox_item(&old.id, InboxStatus::Closed, &json!({"replaced": true}), now_ms())
                     .await
@@ -761,10 +770,9 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
         }
     }
     let ticket_id = crate::mcp::tools::session_ticket(st, s).await;
-    let first = questions[0].question.clone();
     let item = InboxItem {
         id: uuid::Uuid::now_v7().to_string(),
-        kind: InboxKind::Question,
+        kind,
         group: InboxGroup::Question,
         status: InboxStatus::Open,
         project_id: Some(s.project_id.clone()),
@@ -777,8 +785,8 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
         step_id: binding.as_ref().map(|a| a.step_id.clone()),
         persona_id: s.persona.as_ref().map(|p| p.id.clone()),
         persona_name: None,
-        title: first,
-        body: json!({"questions": questions}),
+        title,
+        body,
         choices: vec![],
         resolution: Value::Null,
         created_at: now_ms(),
@@ -790,8 +798,7 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
         a.updated_at = now_ms();
         st.store.put_agent_step(&a).await.map_err(err)?;
     }
-    Ok(json!({"asked": true, "inboxItemId": item.id,
-              "message": "Your questions are in the user's Inbox. Their answers will come as a message; end your turn now."}))
+    Ok(item)
 }
 
 /// A session's turn ended (a conversation's `Turn` end, a terminal going idle): a working step with no outcome is
@@ -1046,6 +1053,7 @@ pub(crate) async fn sweep(st: &AppState) {
 pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox::InboxAnswer) -> R<Value> {
     match item.kind {
         InboxKind::Question => answer_question(st, item, answer).await,
+        InboxKind::Secret => crate::vault::answer_request(st, item, answer).await,
         InboxKind::Stalled => {
             let choice = answer.choice.as_deref().ok_or("choose Nudge or an outcome")?;
             let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
@@ -1193,14 +1201,16 @@ async fn answer_question(st: &AppState, item: &InboxItem, answer: &inbox::InboxA
     let questions: Vec<Question> =
         serde_json::from_value(item.body.get("questions").cloned().unwrap_or_default()).unwrap_or_default();
     let text = inbox::answers_message(&questions, answer)?;
-    let sid = item.session_id.as_deref().ok_or("the question has no session to answer")?;
-    let s = st.store.get_session(sid).await.map_err(err)?.ok_or("the asking session is gone")?;
-    if s.mode != SessionMode::Conversation && s.status != SessionStatus::Running {
-        return Err("the asking terminal session has stopped; restart it first".into());
-    }
+    reply(st, item, &text, json!({"answers": answer.answers, "text": answer.text})).await?;
+    Ok(json!({"answered": true}))
+}
+
+/// Ends an item the asking session waits on with `resolution`, and sends it `text`; its step works again.
+pub(crate) async fn reply(st: &AppState, item: &InboxItem, text: &str, resolution: Value) -> R<()> {
+    let s = asker(st, item).await?;
     let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
-    end_item(st, item, json!({"answers": answer.answers, "text": answer.text})).await?;
-    queue_message(st, &s, &text, None, item.ticket_id.clone(), USER).await?;
+    end_item(st, item, resolution).await?;
+    queue_message(st, &s, text, None, item.ticket_id.clone(), USER).await?;
     if let Some(step) = &item.step_id
         && let Ok(Some(mut a)) = st.store.get_agent_step(step).await
         && a.state == AgentStepState::Asking
@@ -1209,5 +1219,15 @@ async fn answer_question(st: &AppState, item: &InboxItem, answer: &inbox::InboxA
         a.updated_at = now_ms();
         st.store.put_agent_step(&a).await.map_err(err)?;
     }
-    Ok(json!({"answered": true}))
+    Ok(())
+}
+
+/// The session an item asks for, while it can still be answered.
+pub(crate) async fn asker(st: &AppState, item: &InboxItem) -> R<Session> {
+    let sid = item.session_id.as_deref().ok_or("the question has no session to answer")?;
+    let s = st.store.get_session(sid).await.map_err(err)?.ok_or("the asking session is gone")?;
+    if s.mode != SessionMode::Conversation && s.status != SessionStatus::Running {
+        return Err("the asking terminal session has stopped; restart it first".into());
+    }
+    Ok(s)
 }

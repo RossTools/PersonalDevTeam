@@ -95,6 +95,23 @@ describe('inbox', () => {
     expect(calls.filter((c) => c.path.endsWith('/answer'))).toEqual([]);
   });
 
+  it('takes a requested secret in a masked field and sends it only as the secret', async () => {
+    const request = item('sr', {
+      kind: 'secret', group: 'question', sessionId: 'sess', title: 'Secret NPM_TOKEN: Publish',
+      body: { name: 'NPM_TOKEN', purpose: 'Publish the package', sessionTitle: 'Coder · PDT-9' },
+    });
+    const calls = stubApi({ 'POST /api/inbox/sr/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[request]} selectedId="sr" onSelect={() => {}} />);
+    expect(screen.getByText(/Never paste it into the chat/)).toBeInTheDocument();
+    const field = screen.getByLabelText('Value of NPM_TOKEN');
+    expect(field).toHaveAttribute('type', 'password');
+    const store = screen.getByRole('button', { name: 'Store secret' });
+    await userEvent.type(field, 'abc');
+    expect(store.hasAttribute('disabled') || store.getAttribute('aria-disabled') === 'true').toBe(true);
+    await userEvent.type(field, '-def-123{Enter}');
+    await waitFor(() => expect(calls.find((c) => c.path.endsWith('/answer'))?.body).toEqual({ secret: 'abc-def-123' }));
+  });
+
   it('sends the answers to an agent\'s questions', async () => {
     const calls = stubApi({ 'POST /api/inbox/q/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[question]} selectedId="q" onSelect={() => {}} />);

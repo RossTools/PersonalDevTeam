@@ -19,6 +19,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   session: 'Session waiting',
   timed_out: 'Timed out',
   notice: 'Unheard notice',
+  secret: 'Secret request',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -86,7 +87,7 @@ export function resends(item: InboxItem): boolean {
 
 /** Whether `e` dismisses it (questions and stalled steps, whose step keeps waiting; unheard notices). */
 export function dismissable(item: InboxItem): boolean {
-  return item.kind === 'question' || item.kind === 'stalled' || item.kind === 'notice';
+  return item.kind === 'question' || item.kind === 'secret' || item.kind === 'stalled' || item.kind === 'notice';
 }
 
 /** What an unheard notice said, and its settling, in a line (PDT-139). */

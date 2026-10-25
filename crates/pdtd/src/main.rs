@@ -40,7 +40,9 @@ async fn run() -> anyhow::Result<()> {
     let listener = config::bind(cfg.port).await?;
     std::fs::create_dir_all(&cfg.data_dir).with_context(|| format!("creating data dir {}", cfg.data_dir.display()))?;
     let _lock = lock::lock_data_dir(&cfg.data_dir)?;
-    let _log_guard = logging::init(&cfg.data_dir.join("logs"), !cfg.supervised)?;
+    // One redactor of known secrets' values (PDT-158) for the log, the store and the API.
+    let redactor = std::sync::Arc::new(pdt_core::secret::Redactor::default());
+    let _log_guard = logging::init(&cfg.data_dir.join("logs"), !cfg.supervised, redactor.clone())?;
     if let Ok(p) = std::env::var("PDT_PROFILE")
         && !matches!(p.trim(), "" | "dev" | "stable")
     {
@@ -54,7 +56,8 @@ async fn run() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("opening database {}", db_path.display()))?
         // The dev profile's runs default to their own port range, apart from the stable instance's.
-        .with_host_defaults(pdt_core::host::HostSettings::for_profile(cfg.profile));
+        .with_host_defaults(pdt_core::host::HostSettings::for_profile(cfg.profile))
+        .with_redactor(redactor);
     if cfg.seed == Some(config::Seed::Demo) {
         if cfg.profile == pdt_core::brand::Profile::Dev {
             if seed::seed_demo(&store, &cfg.data_dir, jiff::Timestamp::now().as_millisecond()).await? {
@@ -125,7 +128,11 @@ async fn run() -> anyhow::Result<()> {
     // In the background: serving (and pdt-host's health check after an update) never waits on the keychain.
     tokio::spawn({
         let st = state.clone();
-        async move { pdt_api::update::sync_token_state(&st).await }
+        async move {
+            pdt_api::update::sync_token_state(&st).await;
+            // The secrets' values, so they are redacted from the start.
+            pdt_api::vault::load_known(&st).await;
+        }
     });
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.

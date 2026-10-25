@@ -68,8 +68,16 @@ pub struct EventFilter {
 }
 
 impl Store {
-    /// Adds an event unless one with its key is logged: the new event, or None for a duplicate.
+    /// Adds an event unless one with its key is logged: the new event, or None for a duplicate. Known secrets' values
+    /// are redacted from its payload (PDT-158).
     pub async fn emit_event(&self, e: &NewLogEvent, now: i64) -> Result<Option<LogEvent>, StoreError> {
+        let redacted;
+        let e = if self.redactor.is_empty() {
+            e
+        } else {
+            redacted = NewLogEvent { payload: self.redactor.json(&e.payload), ..e.clone() };
+            &redacted
+        };
         let mut conn = self.pool.acquire().await?;
         if !emit_in(&mut conn, e, now).await? {
             return Ok(None);

@@ -144,7 +144,7 @@ async fn working_dir(cx: &StepCx<'_>, cwd: &str) -> Result<PathBuf, String> {
 }
 
 /// Kills the child's whole process tree when dropped (a time limit drops the step's future).
-struct TreeGuard(Option<u32>);
+pub(crate) struct TreeGuard(pub(crate) Option<u32>);
 
 impl Drop for TreeGuard {
     fn drop(&mut self) {
@@ -171,7 +171,7 @@ impl Drop for TreeGuard {
 }
 
 /// Reads all of `r`, keeping the first `cap` bytes.
-async fn read_capped(mut r: impl AsyncRead + Unpin, cap: usize) -> (Vec<u8>, bool) {
+pub(crate) async fn read_capped(mut r: impl AsyncRead + Unpin, cap: usize) -> (Vec<u8>, bool) {
     let mut kept = Vec::new();
     let mut buf = [0u8; 8192];
     let mut cut = false;

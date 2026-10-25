@@ -30,6 +30,8 @@ pub enum InboxKind {
     /// A notice nobody could be told (PDT-139): PR notices found no agent session for a conflict or a CI failure.
     /// One per attempt and notice; it closes once the cause went away.
     Notice,
+    /// An agent's `request_secret` (PDT-158): the user types the value into PDT's masked form, never the chat.
+    Secret,
 }
 
 impl InboxKind {
@@ -44,6 +46,7 @@ impl InboxKind {
             InboxKind::Session => "session",
             InboxKind::TimedOut => "timed_out",
             InboxKind::Notice => "notice",
+            InboxKind::Secret => "secret",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -57,6 +60,7 @@ impl InboxKind {
             Self::Session,
             Self::TimedOut,
             Self::Notice,
+            Self::Secret,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -236,13 +240,17 @@ pub struct InboxList {
 }
 
 /// `POST /api/inbox/{id}/answer`.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, TS)]
+#[derive(Clone, Default, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct InboxAnswer {
     #[serde(default)]
     #[ts(optional)]
     pub choice: Option<String>,
+    /// A secret request's value (PDT-158): kept in the keychain only, never stored with the item or sent on.
+    #[serde(default)]
+    #[ts(optional)]
+    pub secret: Option<String>,
     /// A question's answer as one text, or the words of a nudge.
     #[serde(default)]
     #[ts(optional)]
@@ -251,6 +259,18 @@ pub struct InboxAnswer {
     #[serde(default)]
     #[ts(optional)]
     pub answers: Option<Vec<String>>,
+}
+
+/// Never shows a secret's value.
+impl std::fmt::Debug for InboxAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InboxAnswer")
+            .field("choice", &self.choice)
+            .field("secret", &self.secret.as_ref().map(|_| "[secret]"))
+            .field("text", &self.text)
+            .field("answers", &self.answers)
+            .finish()
+    }
 }
 
 /// Sorts items as the Inbox lists them: by group, then oldest first.
