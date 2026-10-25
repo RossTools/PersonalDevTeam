@@ -47,7 +47,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 - A document (`WorkflowDoc`): `name`, `description`, `nodes` (`id`, `kind`, `version`, `config`, `position`, `retry`
   `{max, backoffMs}`, `timeoutMs`, `maxVisits`), `edges` (`from`, `port`, `to`) and `settings` (`maxSteps`,
   `maxRuntimeMs`). Config strings take `{{trigger.x}}`, `{{steps.<node>.x}}`, `{{state.x}}`, `{{run.id}}`; a string
-  that is one reference keeps the value's type. `{{event.x}}` is left for a wait's event conditions.
+  that is one reference keeps the value's type. `{{event.x}}` is left for a wait's event conditions, and
+  `{{secret.x}}` and `{"$secret": "x"}` for the moment the node runs ([secrets.md](secrets.md#workflows)); steps' and
+  runs' stored inputs, outputs and errors are redacted of known secrets' values.
 - Rows: `workflows` (scope `project` | `host` | `personal`, `enabled`, `builtin`, `source` `host` | `repo`,
   `repo_file`, `version`), `workflow_versions` (every save; author `user` / `builtin` / `repo` / `agent`; `status`
   `saved` / `proposed` / `discarded`). A version's number is the highest so far plus one.
@@ -837,7 +839,8 @@ deleted (`409 persona_in_use`).
 `inbox_items` (pdt-store `inbox.rs`, pdt-api `inbox.rs`): `question` (`ask_user`), `gate` (a waiting `gate` node;
 group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c),
 `timed_out` (group Stalled, PDT-123), `notice` (group Unheard notices, after Loop limit, PDT-139: made by
-`inbox.notice`, with no step, so it outlives its run); one
+`inbox.notice`, with no step, so it outlives its run), `secret` (group Questions, `request_secret`, PDT-158:
+answered `{secret}` in a masked field, [secrets.md](secrets.md#agents-pdt-mcp)); one
 open item per step and kind. A `notice` closes (`resolution` `{settled: true}`) when its cause is gone: the
 attempt ended (merged, abandoned) or its PR, as the PR check last saw it, is no longer open or shows the notice
 settled (`pdt_core::pr::notice_settled`: a conflict mergeable again, CI passed, back in the queue or on auto-merge,
@@ -851,7 +854,7 @@ accept, oldest first within each, with ticket key and title and persona name. `P
 step; `again`,
 `outcome:<id>` or `stop` at a loop limit; `resume` with an optional `text`, the note, or `stop` for a timed-out step)
 or `{answers}` / `{text}` for a question (a notice takes no answer); `POST /api/inbox/{id}/dismiss`
-closes a question or stalled item (the step keeps waiting) or a notice. A gate answered through
+closes a question, a secret request or a stalled item (the step keeps waiting) or a notice. A gate answered through
 `/api/workflow-runs/{run}/steps/{step}/answer` resolves its item too. When a session is removed (and when the store
 opens, for older ones) its open questions close (`resolution` `{sessionGone: true}`) and no item keeps its
 `sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93). **Sessions waiting** (group

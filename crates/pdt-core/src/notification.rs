@@ -280,7 +280,7 @@ impl NotificationKind {
     /// The kind an Inbox item notifies as.
     pub fn of_inbox(kind: InboxKind, group: InboxGroup) -> Self {
         match (kind, group) {
-            (InboxKind::Question, _) => K::InboxQuestion,
+            (InboxKind::Question | InboxKind::Secret, _) => K::InboxQuestion,
             (InboxKind::Approval, _) => K::InboxApproval,
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,

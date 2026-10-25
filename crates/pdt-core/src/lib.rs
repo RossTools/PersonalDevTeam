@@ -34,6 +34,7 @@ pub mod review;
 pub mod run;
 pub mod runconfig;
 pub mod scryer;
+pub mod secret;
 pub mod session;
 pub mod start;
 pub mod ticket;

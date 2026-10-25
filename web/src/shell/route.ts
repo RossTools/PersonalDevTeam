@@ -6,12 +6,13 @@ import type { ViewId } from './views';
 
 /**
  * A Settings page: the index (`/settings`: this host on desktop, the list of pages on a phone), this host (and a
- * section of it), connections, notifications, or a project by key.
+ * section of it), connections, secrets, notifications, or a project by key.
  */
 export type SettingsPage =
   | { kind: 'index' }
   | { kind: 'host'; section: string | null }
   | { kind: 'connections' }
+  | { kind: 'secrets' }
   | { kind: 'notifications' }
   | { kind: 'project'; key: string; section: string | null };
 
@@ -84,6 +85,7 @@ export function parseRoute(pathname: string, search = ''): Route {
       };
     case 'settings':
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
+      if (a === 'secrets') return { view: 'settings', page: { kind: 'secrets' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
       if (a === 'projects' && b) return { view: 'settings', page: { kind: 'project', key: b, section: c } };
       if (a === 'host') return { view: 'settings', page: { kind: 'host', section: b } };
@@ -130,6 +132,7 @@ export function routePath(r: Route): string {
         case 'index': return '/settings';
         case 'host': return p.section ? `/settings/host/${enc(p.section)}` : '/settings/host';
         case 'connections': return '/settings/connections';
+        case 'secrets': return '/settings/secrets';
         case 'notifications': return '/settings/notifications';
         case 'project': return `/settings/projects/${enc(p.key)}${p.section ? `/${enc(p.section)}` : ''}`;
       }

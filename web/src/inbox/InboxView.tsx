@@ -8,6 +8,7 @@ import { Markdown } from '../common/Markdown';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
+import { SecretRequest } from './SecretRequest';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { useOpenChanges } from '../review/open';
 import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
@@ -165,6 +166,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             busy={busy}
           />
         )}
+        {item.kind === 'secret' && <SecretRequest item={item} busy={busy} onSend={(secret) => answer({ secret })} />}
         {item.kind === 'session' && (
           <section aria-label="Session waiting" className="flex flex-col gap-3">
             <p className="text-sm">

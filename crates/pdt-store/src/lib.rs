@@ -9,6 +9,7 @@ mod personas;
 mod pm;
 mod review;
 mod runs;
+mod secrets;
 mod sessions;
 mod tickets;
 mod todos;
@@ -37,6 +38,9 @@ pub struct Store {
     pool: SqlitePool,
     /// What `get_host_settings` returns while none are stored (the profile's defaults; see `with_host_defaults`).
     host_defaults: std::sync::Arc<pdt_core::host::HostSettings>,
+    /// Known secrets' values, replaced in the text the store keeps (transcripts, comments, steps, runs, the Inbox):
+    /// PDT-158. Shared with pdt-api and the log writer (see `with_redactor`).
+    redactor: std::sync::Arc<pdt_core::secret::Redactor>,
 }
 
 pub(crate) type ProjectRow = (String, String, String, String, i64, Option<String>, String);
@@ -91,7 +95,7 @@ impl Store {
         let pool = SqlitePoolOptions::new().max_connections(8).test_before_acquire(false).connect_with(options).await?;
         migrate::backup_if_pending(&pool, migrator, backup_dir).await?;
         migrator.run(&pool).await?;
-        Ok(Store { pool, host_defaults: Default::default() })
+        Ok(Store { pool, host_defaults: Default::default(), redactor: Default::default() })
     }
 
     /// Copies the WAL into the database and empties it (`wal_checkpoint(TRUNCATE)`). SQLite's own checkpoints can
@@ -107,6 +111,17 @@ impl Store {
     pub fn with_host_defaults(mut self, defaults: pdt_core::host::HostSettings) -> Store {
         self.host_defaults = std::sync::Arc::new(defaults);
         self
+    }
+
+    /// Uses `r` to redact what it stores (pdtd shares one with its log writer).
+    pub fn with_redactor(mut self, r: std::sync::Arc<pdt_core::secret::Redactor>) -> Store {
+        self.redactor = r;
+        self
+    }
+
+    /// The redactor of known secrets' values.
+    pub fn redactor(&self) -> &std::sync::Arc<pdt_core::secret::Redactor> {
+        &self.redactor
     }
 
     pub async fn close(self) {

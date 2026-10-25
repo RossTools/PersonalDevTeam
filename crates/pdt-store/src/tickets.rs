@@ -1951,8 +1951,10 @@ impl Store {
         data: Option<serde_json::Value>,
         now: i64,
     ) -> Result<(), StoreError> {
+        let body = body.map(|b| self.redactor.string(b));
+        let data = data.map(|d| self.redactor.json(&d));
         let mut conn = self.pool.acquire().await?;
-        insert_event(&mut conn, ticket_id, kind, actor, body, data, now).await?;
+        insert_event(&mut conn, ticket_id, kind, actor, body.as_deref(), data, now).await?;
         Ok(())
     }
 
@@ -2187,7 +2189,8 @@ impl Store {
         row.as_ref().map(to_event).transpose()
     }
 
-    /// A comment by `actor`; `data` names the workflow and run that wrote a system comment.
+    /// A comment by `actor`; `data` names the workflow and run that wrote a system comment. Known secrets' values are
+    /// redacted from its body.
     pub async fn add_comment_by(
         &self,
         ticket_id: &str,
@@ -2196,11 +2199,13 @@ impl Store {
         data: Option<serde_json::Value>,
         now: i64,
     ) -> Result<Option<TicketEvent>, StoreError> {
+        // A secret pasted into a comment is kept as its placeholder (PDT-158).
+        let body = self.redactor.string(body);
         let mut tx = self.write_tx().await?;
         if ticket_head(&mut tx, ticket_id).await?.is_none() {
             return Ok(None);
         }
-        let id = insert_event(&mut tx, ticket_id, EventKind::Comment, actor, Some(body), data, now).await?;
+        let id = insert_event(&mut tx, ticket_id, EventKind::Comment, actor, Some(&body), data, now).await?;
         touch(&mut tx, ticket_id, now).await?;
         let row =
             sqlx::query("SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE id = ?")

@@ -5,6 +5,10 @@
  */
 export type InboxAnswer = { choice?: string, 
 /**
+ * A secret request's value (PDT-158): kept in the keychain only, never stored with the item or sent on.
+ */
+secret?: string, 
+/**
  * A question's answer as one text, or the words of a nudge.
  */
 text?: string, 

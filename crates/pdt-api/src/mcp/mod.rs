@@ -229,9 +229,11 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
                 Ok(proto::tool_error(&format!("{name} is not one of this session's tools")))
             } else {
                 let cx = tools::Cx { st, session };
+                // No secret's value ever goes back to an agent (PDT-158).
+                let r = st.store.redactor();
                 Ok(match tools::call(&cx, name, args).await {
-                    Ok(v) => proto::tool_result(&v),
-                    Err(e) => proto::tool_error(&e),
+                    Ok(v) => proto::tool_result(&r.json(&v)),
+                    Err(e) => proto::tool_error(&r.string(&e)),
                 })
             }
         }

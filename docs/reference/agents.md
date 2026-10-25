@@ -42,8 +42,9 @@ notifications get 202; `GET`/`DELETE` 405).
   random bytes, owner-only, made on first use). Nothing is stored per session; a token works while its session exists,
   is an agent session and is not `finished` (401 otherwise). A tool call knows its session, and through it the
   project, ticket (the session's attempt's, else its agent step's) and agent step.
-- **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`
-  (the default set), and `update_ticket` (Phase 7c: title and description of the session's own ticket, the store's
+- **Tools** (`mcp/tools.rs`): `get_ticket`, `submit_outcome`, `ask_user`, `add_ticket_comment`, `add_review_comment`,
+  `list_secrets`, `request_secret`, `run_with_secrets`, `write_secret_file` (the default set; the secret tools are in
+  [secrets.md](secrets.md)), and `update_ticket` (Phase 7c: title and description of the session's own ticket, the store's
   `patch_ticket_by` as the agent; the built-in Refiner lists it), `catalog_search`, `catalog_get`, `workflow_get`,
   `workflow_validate`, `workflow_dry_run`, `workflow_save`, `workflow_export` (read-only: the export's text) and
   `workflow_import` (asking: imports an export, new workflows off; `check: true` only reports) for personas that list
@@ -53,7 +54,7 @@ notifications get 202; `GET`/`DELETE` 405).
   `create_workflow` with author `agent`, so a new workflow starts disabled, and `save` with `propose`, so a change is a
   proposal the user accepts or discards). `tools/list` gives only the session's set (its
   persona version's, else the default); read-only tools carry `readOnlyHint`. Errors the agent can act on are tool
-  results with `isError`.
+  results with `isError`. Every result and error is redacted of known secrets' values (PDT-158).
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
   `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
   less the asking tools (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session`,
