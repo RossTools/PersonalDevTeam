@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import { codeHighlight, codeTheme, languageFor } from '../files/codeTheme';
+import { codeEditing, codeHighlight, codeTheme, languageFor } from '../files/codeTheme';
 
 /**
  * Editable code (CodeMirror) highlighted by `name`'s extension. Controlled loosely: `value` replaces the text only when
@@ -30,6 +30,7 @@ export function CodeEditor({ name, value, onChange, readOnly = false, label }: {
           EditorView.editable.of(!readOnly),
           EditorView.contentAttributes.of({ 'aria-label': label }),
           EditorView.updateListener.of((u) => { if (u.docChanged) change.current(u.state.doc.toString()); }),
+          ...(readOnly ? [] : [codeEditing]),
           codeTheme,
           codeHighlight,
           language.of([]),

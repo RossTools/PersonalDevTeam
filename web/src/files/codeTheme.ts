@@ -1,10 +1,11 @@
 import type { Extension } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { tags as t } from '@lezer/highlight';
 
-// Colours come from the design tokens (tokens.css), so the viewers follow light and dark mode.
+// Colours come from the design tokens (tokens.css), so the viewers follow light and dark mode. Read-only views show no
+// caret; `codeEditing` adds one for the editors.
 export const v = (name: string) => `var(--pdt-${name})`;
 
 export const codeTheme = EditorView.theme({
@@ -29,6 +30,19 @@ const highlight = HighlightStyle.define([
   { tag: t.link, textDecoration: 'underline' },
   { tag: t.invalid, color: v('failed') },
 ]);
+
+/** For editable editors: a drawn, blinking cursor, the selection, and the active line (translucent, so a selection on it
+ * still shows). */
+export const codeEditing: Extension = [
+  drawSelection(),
+  highlightActiveLine(),
+  highlightActiveLineGutter(),
+  EditorView.theme({
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: v('fg'), borderLeftWidth: '2px' },
+    '.cm-activeLine': { backgroundColor: v('code-active-line') },
+    '.cm-activeLineGutter': { backgroundColor: v('surface-2'), color: v('fg') },
+  }),
+];
 
 export const codeHighlight: Extension = syntaxHighlighting(highlight);
 

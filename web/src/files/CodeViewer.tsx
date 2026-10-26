@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import { codeHighlight, codeTheme, languageFor } from './codeTheme';
+import { codeEditing, codeHighlight, codeTheme, languageFor } from './codeTheme';
 
 /**
  * Code with line numbers, highlighted by the file's name (languages load on demand). Read-only unless `onChange` is
@@ -26,6 +26,7 @@ export function CodeViewer({ name, text, onChange }: { name: string; text: strin
           lineNumbers(),
           ...(editable
             ? [
+                codeEditing,
                 history(),
                 keymap.of([...defaultKeymap, ...historyKeymap]),
                 ...(crlf ? [EditorState.lineSeparator.of('\r\n')] : []),
