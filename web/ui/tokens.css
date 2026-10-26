@@ -37,6 +37,7 @@
   --pdt-code-type: #953800;
   --pdt-code-tag: #116329;
   --pdt-code-comment: #6e7781;
+  --pdt-code-active-line: rgba(37, 99, 235, 0.06);
   --pdt-backdrop: rgba(15, 16, 20, 0.25);
   --pdt-shadow-popover: 0 4px 16px rgba(15, 16, 20, 0.1);
   --pdt-shadow-dialog: 0 12px 40px rgba(15, 16, 20, 0.18);
@@ -113,6 +114,7 @@
     --pdt-code-type: #ffa657;
     --pdt-code-tag: #7ee787;
     --pdt-code-comment: #8b949e;
+    --pdt-code-active-line: rgba(53, 97, 184, 0.14);
     --pdt-backdrop: rgba(0, 0, 0, 0.5);
     --pdt-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
     --pdt-shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
@@ -174,6 +176,7 @@
   --pdt-code-type: #ffa657;
   --pdt-code-tag: #7ee787;
   --pdt-code-comment: #8b949e;
+  --pdt-code-active-line: rgba(53, 97, 184, 0.14);
   --pdt-backdrop: rgba(0, 0, 0, 0.5);
   --pdt-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
   --pdt-shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
