@@ -14,7 +14,11 @@ export const codeTheme = EditorView.theme({
   '.cm-gutters': { backgroundColor: v('surface'), color: v('muted'), borderRight: `1px solid ${v('border')}` },
   '.cm-content': { caretColor: 'transparent' },
   '&.cm-focused': { outline: 'none' },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: v('accent-soft') },
+  // `&.cm-editor` outranks CodeMirror's base theme (`&light.cm-focused > … .cm-selectionBackground` and the like), whose
+  // light defaults would otherwise win in both modes once drawSelection draws the selection.
+  '&.cm-editor .cm-selectionBackground, &.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: v('accent-soft'),
+  },
 });
 
 const highlight = HighlightStyle.define([
@@ -38,9 +42,9 @@ export const codeEditing: Extension = [
   highlightActiveLine(),
   highlightActiveLineGutter(),
   EditorView.theme({
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: v('fg'), borderLeftWidth: '2px' },
-    '.cm-activeLine': { backgroundColor: v('code-active-line') },
-    '.cm-activeLineGutter': { backgroundColor: v('surface-2'), color: v('fg') },
+    '&.cm-editor .cm-cursor, &.cm-editor .cm-dropCursor': { borderLeftColor: v('fg'), borderLeftWidth: '2px' },
+    '&.cm-editor .cm-activeLine': { backgroundColor: v('code-active-line') },
+    '&.cm-editor .cm-activeLineGutter': { backgroundColor: v('surface-2'), color: v('fg') },
   }),
 ];
 
