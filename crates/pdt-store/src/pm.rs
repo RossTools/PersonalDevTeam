@@ -1,10 +1,14 @@
-//! The PM (PDT-81): the host project its sessions live in, its notes and journal (FTS5), and its sessions' rotation.
+//! The PM (PDT-81): the host project its sessions live in, its notes and journal (FTS5), and its sessions' rotation
+//! and daily updates.
 
 use crate::{PROJECT_COLUMNS, ProjectRow, Store, StoreError, to_project};
 use pdt_core::pm::{NoteKind, PmNote, RotateReason, Rotation};
 use pdt_core::project::{HOST_PROJECT_KEY, Project, ProjectKind};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
+
+const PM_SESSION_COLUMNS: &str =
+    "session_id, rotation, reason, created_at, ended_at, COALESCE(caught_up_at, created_at) AS caught_up_at";
 
 const NOTE_COLUMNS: &str = "n.id, n.project_id, n.kind, n.title, n.body, n.pinned, n.session_id, n.created_at, \
                             n.updated_at";
@@ -44,6 +48,8 @@ pub struct PmSessionRow {
     pub reason: Option<RotateReason>,
     pub created_at: i64,
     pub ended_at: Option<i64>,
+    /// When it was last brought up to date: its briefing (`created_at`) or its last daily update (PDT-167).
+    pub caught_up_at: i64,
 }
 
 fn to_pm_session(r: &SqliteRow) -> Result<PmSessionRow, StoreError> {
@@ -55,6 +61,7 @@ fn to_pm_session(r: &SqliteRow) -> Result<PmSessionRow, StoreError> {
         reason: reason.as_deref().and_then(RotateReason::parse),
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
+        caught_up_at: r.try_get("caught_up_at")?,
     })
 }
 
@@ -182,24 +189,31 @@ impl Store {
     }
 
     pub async fn get_pm_session(&self, session_id: &str) -> Result<Option<PmSessionRow>, StoreError> {
-        let row = sqlx::query(
-            "SELECT session_id, rotation, reason, created_at, ended_at FROM pm_sessions WHERE session_id = ?",
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let sql = format!("SELECT {PM_SESSION_COLUMNS} FROM pm_sessions WHERE session_id = ?");
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).fetch_optional(&self.pool).await?;
         row.as_ref().map(to_pm_session).transpose()
     }
 
     /// Every PM session, newest first.
     pub async fn list_pm_sessions(&self) -> Result<Vec<PmSessionRow>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT session_id, rotation, reason, created_at, ended_at FROM pm_sessions \
-             ORDER BY created_at DESC, session_id DESC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let sql = format!("SELECT {PM_SESSION_COLUMNS} FROM pm_sessions ORDER BY created_at DESC, session_id DESC");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         rows.iter().map(to_pm_session).collect()
+    }
+
+    /// Marks an open PM session brought up to date at `to` if it was last at `from` (false if it ended, or another
+    /// caller moved it first).
+    pub async fn set_pm_caught_up(&self, session_id: &str, from: i64, to: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE pm_sessions SET caught_up_at = ? \
+             WHERE session_id = ? AND rotation = 'none' AND COALESCE(caught_up_at, created_at) = ?",
+        )
+        .bind(to)
+        .bind(session_id)
+        .bind(from)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
     }
 
     /// Moves a PM session's rotation on from `from` (false if it was not there: someone else moved it first).
@@ -295,14 +309,19 @@ mod tests {
         store.insert_session(&s).await.unwrap();
         store.insert_pm_session("s1", 10).await.unwrap();
         let row = store.get_pm_session("s1").await.unwrap().unwrap();
-        assert_eq!((row.rotation, row.reason, row.ended_at), (Rotation::None, None, None));
+        assert_eq!((row.rotation, row.reason, row.ended_at, row.caught_up_at), (Rotation::None, None, None, 10));
+        // Brought up to date once per time it was last at (PDT-167).
+        assert!(store.set_pm_caught_up("s1", 10, 11).await.unwrap());
+        assert!(!store.set_pm_caught_up("s1", 10, 12).await.unwrap(), "another caller moved it first");
+        assert_eq!(store.get_pm_session("s1").await.unwrap().unwrap().caught_up_at, 11);
         assert!(
-            store.set_pm_rotation("s1", Rotation::None, Rotation::Journal, Some(RotateReason::Age), 11).await.unwrap()
+            store.set_pm_rotation("s1", Rotation::None, Rotation::Journal, Some(RotateReason::User), 11).await.unwrap()
         );
+        assert!(!store.set_pm_caught_up("s1", 11, 12).await.unwrap(), "not once it is ending");
         assert!(!store.set_pm_rotation("s1", Rotation::None, Rotation::Journal, None, 12).await.unwrap());
         assert!(store.set_pm_rotation("s1", Rotation::Journal, Rotation::Done, None, 13).await.unwrap());
         let row = store.get_pm_session("s1").await.unwrap().unwrap();
-        assert_eq!((row.rotation, row.reason, row.ended_at), (Rotation::Done, Some(RotateReason::Age), Some(13)));
+        assert_eq!((row.rotation, row.reason, row.ended_at), (Rotation::Done, Some(RotateReason::User), Some(13)));
         let mut j = note("j", None, "Journal", "We talked.", false, 13);
         j.kind = NoteKind::Journal;
         j.session_id = Some("s1".into());

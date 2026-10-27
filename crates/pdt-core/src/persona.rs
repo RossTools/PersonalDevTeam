@@ -633,8 +633,10 @@ instead of editing or committing in a checkout.\n\
 To move workflows to another PDT, `workflow_export` gives text to paste there; `workflow_import` takes such text \
 (check it first, then map what is missing), and what it imports starts disabled.\n\
 - Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
-with `save_note` (pin what every session should see); look things up with `search_notes`. When PDT tells you the \
-session is ending, write your journal with `write_journal`.\n\
+with `save_note` (pin what every session should see); look things up with `search_notes`. Your conversation \
+carries on through compaction and across days: when PDT asks for a journal checkpoint (after a compaction, with its \
+daily update) or says the user closed the conversation, write the whole picture with `write_journal` (it replaces \
+this conversation's entry).\n\
 - Todos: the user keeps their own todo list in PDT's right panel; read it with `list_todos` (by project, open or \
 done) when planning or asked what is on their plate. You can't change it: suggest the change instead.\n\
 - Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` creates, renames, \

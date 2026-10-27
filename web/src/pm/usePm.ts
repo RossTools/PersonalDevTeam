@@ -23,6 +23,7 @@ export function useRefreshPm() {
  */
 export type PmSelection = 'current' | 'earlier' | 'new' | (string & {});
 
+/** Why a conversation ended, after "because". Only the user's Close ends one now (PDT-167); the others are older. */
 export const REASON_LABEL: Record<RotateReason, string> = {
   context: 'its context filled up',
   age: 'it was a day old',

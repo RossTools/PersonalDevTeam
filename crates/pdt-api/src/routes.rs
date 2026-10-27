@@ -134,8 +134,8 @@ pub struct AppState {
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
     /// MCP servers PDT is a client of (Phase 7e-3): their live clients and cached tools.
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
-    /// How old a PM session gets before it rotates (PDT-81; tests shorten it).
-    pub pm_rotate_age_ms: i64,
+    /// How often a PM conversation in use gets its daily update and journal checkpoint (PDT-167; tests shorten it).
+    pub pm_update_every_ms: i64,
     /// Makes and clears notifications (PDT-108), and streams them.
     pub notifier: std::sync::Arc<crate::notifications::Notifier>,
     /// The background loops' last passes (PDT-127), for `/api/health` and `host.loop_stale`.
@@ -219,7 +219,7 @@ impl AppState {
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             personas_installed: Default::default(),
-            pm_rotate_age_ms: pdt_core::pm::ROTATE_AGE_MS,
+            pm_update_every_ms: pdt_core::pm::UPDATE_EVERY_MS,
             notifier: Default::default(),
             loops: Default::default(),
             poll_part_limit: crate::loops::POLL_PART_LIMIT,

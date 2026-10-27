@@ -571,8 +571,9 @@ fn defs() -> Vec<Def> {
         Def {
             name: "write_journal",
             title: "Write the journal",
-            description: "This session's journal entry, which the next PM session's briefing includes. Write it when \
-                          PDT says the session is ending.",
+            description: "This conversation's journal entry, which later PM conversations' briefings include. Write \
+                          it when PDT asks for a checkpoint or says the conversation is ending; each call replaces \
+                          the entry.",
             schema: schema::<WriteJournal>,
         },
         Def {

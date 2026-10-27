@@ -1,5 +1,6 @@
 //! PDT-81 end to end: the PM's sessions in the host project, its tools, asking before acting (and the project policy
-//! that lets it act), Discord and Scryer, notes, the journal, the briefing and rotation, with `fake-agent` standing in
+//! that lets it act), Discord and Scryer, notes, the journal (checkpoints, daily updates, closing), the briefing, with
+//! `fake-agent` standing in
 //! for Claude (it calls pdt-mcp tools when a message says `mcp: <tool> <json>`, asking first for tools
 //! `--allowedTools` leaves out).
 
@@ -23,12 +24,12 @@ struct Env {
 }
 
 /// A project `P` (key `PX`) with one ticket, served on a free local port (the agent's pdt-mcp calls come over TCP).
-async fn setup(rotate_age_ms: Option<i64>) -> Env {
-    setup_with(rotate_age_ms, |_| {}).await
+async fn setup(update_every_ms: Option<i64>) -> Env {
+    setup_with(update_every_ms, |_| {}).await
 }
 
 /// `setup`, with `tweak` applied to the state before it is served.
-async fn setup_with(rotate_age_ms: Option<i64>, tweak: impl FnOnce(&mut AppState)) -> Env {
+async fn setup_with(update_every_ms: Option<i64>, tweak: impl FnOnce(&mut AppState)) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -51,8 +52,8 @@ async fn setup_with(rotate_age_ms: Option<i64>, tweak: impl FnOnce(&mut AppState
     state.conversations.notice_quiet = Duration::ZERO;
     let gh = std::sync::Arc::new(pdt_github::testing::FakeGithub::default());
     state.github = gh.clone();
-    if let Some(ms) = rotate_age_ms {
-        state.pm_rotate_age_ms = ms;
+    if let Some(ms) = update_every_ms {
+        state.pm_update_every_ms = ms;
     }
     tweak(&mut state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -471,7 +472,7 @@ async fn several_pm_conversations_run_at_once_each_with_its_own_transcript() {
     let closed = close_pm(&env, &third).await;
     assert_eq!((closed["rotation"].as_str(), closed["reason"].as_str()), (Some("done"), Some("user")));
     assert_eq!(closed["journal"], "(no journal)");
-    assert!(agent_says(&env, &third).await.iter().any(|m| m.contains("This PM session is ending")));
+    assert!(agent_says(&env, &third).await.iter().any(|m| m.contains("The user closed this PM conversation")));
     let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
     let open: Vec<&str> = pm["sessions"]
         .as_array()
@@ -509,25 +510,92 @@ async fn several_pm_conversations_run_at_once_each_with_its_own_transcript() {
     }
 }
 
+/// The conversation's events of `kind` with their text (`markdown` or `text`), in order.
+async fn said_in_order(env: &Env, session: &str) -> Vec<(String, String)> {
+    events(env, session)
+        .await
+        .iter()
+        .filter_map(|e| {
+            let ev = &e["event"];
+            let text = ev["markdown"].as_str().or(ev["text"].as_str()).unwrap_or("");
+            match ev["kind"].as_str()? {
+                k @ ("user_message" | "agent_message" | "compaction") => Some((k.to_string(), text.to_string())),
+                "turn" if ev["phase"] == "ended" => Some(("turn_ended".into(), String::new())),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn an_old_session_writes_its_journal_and_ends() {
+async fn a_compacted_conversation_writes_a_checkpoint_after_its_turn_and_carries_on() {
+    let env = setup(None).await;
+    let id = start_pm(&env, "hello").await;
+    wait_said(&env, &id, 1).await;
+    // The agent compacts mid-turn and works on: the checkpoint request waits for the turn to end (the engine ticks
+    // all along), then goes in as a turn of its own.
+    send(&env, &id, "compact: 1500").await;
+    let said = wait_said(&env, &id, 3).await;
+    assert_eq!(said[1], "Compacted and carried on.");
+    assert!(said[2].contains("[PDT] Your context was just compacted") && said[2].contains("carries on"), "{said:?}");
+    let order = said_in_order(&env, &id).await;
+    let at = |want: &dyn Fn(&(String, String)) -> bool| order.iter().position(want).unwrap();
+    let compaction = at(&|(k, _)| k == "compaction");
+    let carried_on = at(&|(k, t)| k == "agent_message" && t == "Compacted and carried on.");
+    let request = at(&|(k, t)| k == "user_message" && t.contains("Your context was just compacted"));
+    let turn_end = compaction + order[compaction..].iter().position(|(k, _)| k == "turn_ended").unwrap();
+    assert!(compaction < carried_on && carried_on < turn_end && turn_end < request, "{order:?}");
+
+    // Each checkpoint replaces the conversation's entry; it stays open, and the next conversation is briefed with it.
+    let said = ask(&env, &id, r#"mcp: write_journal {"body": "Planning the CB cutover."}"#).await;
+    assert!(said.contains("\"written\": true"), "{said}");
+    let said = ask(&env, &id, r#"mcp: write_journal {"body": "CB cutover set for Friday."}"#).await;
+    assert!(said.contains("\"written\": true"), "{said}");
+    let info = pm_info(&env, &id).await;
+    assert_eq!((info["open"].as_bool(), info["rotation"].as_str()), (Some(true), Some("none")));
+    assert_eq!(info["journal"], "CB cutover set for Friday.");
+    let (_, journal) = call(&env.app, "GET", "/api/pm/notes?kind=journal", None).await;
+    assert_eq!(journal.as_array().unwrap().len(), 1, "{journal}");
+    let next = start_pm(&env, "What's next?").await;
+    wait_said(&env, &next, 1).await;
+    let text = instructions(&env, &next);
+    assert!(text.contains("CB cutover set for Friday.") && !text.contains("Planning the CB cutover."), "{text}");
+    for s in [&id, &next] {
+        call(&env.app, "POST", &format!("/api/sessions/{s}/kill"), None).await;
+    }
+}
+
+#[tokio::test]
+async fn a_conversation_in_use_gets_a_daily_update_and_carries_on() {
+    // Every turn the user started is "a day" later.
     let env = setup(Some(0)).await;
     let id = start_pm(&env, "hello").await;
-    // The first turn ends: PDT asks for the journal; the agent's answer to it ends the session.
     let said = wait_said(&env, &id, 2).await;
-    assert!(said[1].contains("This PM session is ending"), "{said:?}");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
-        // The row is marked done just before the stand-in journal is written.
-        if pm["current"].is_null() && !pm["sessions"][0]["journal"].is_null() {
-            let s = &pm["sessions"][0];
-            assert_eq!((s["rotation"].as_str(), s["reason"].as_str()), (Some("done"), Some("age")));
-            assert_eq!(s["journal"], "(no journal)");
-            break;
-        }
-        assert!(Instant::now() < deadline, "the session never ended: {pm}");
+    for want in ["[PDT] Since your briefing (", "## Events", "## Inbox", "`write_journal`", "carries on"] {
+        assert!(said[1].contains(want), "missing {want:?} in\n{}", said[1]);
+    }
+    // Answering the update asks for no other, and the conversation stays open.
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < deadline {
+        pdt_api::run_workflows(&env.state).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(agent_says(&env, &id).await.len(), 2);
+    let info = pm_info(&env, &id).await;
+    assert_eq!((info["open"].as_bool(), info["rotation"].as_str()), (Some(true), Some("none")));
+
+    // Another conversation writes its journal; the next turn the user starts here brings the next update with it.
+    let other = start_pm(&env, "CB cutover").await;
+    wait_said(&env, &other, 2).await;
+    ask(&env, &other, r#"mcp: write_journal {"body": "Cut over Friday."}"#).await;
+    send(&env, &id, "again").await;
+    let said = wait_said(&env, &id, 4).await;
+    for want in ["[PDT] Since the last update (", "### CB cutover (", "Cut over Friday."] {
+        assert!(said[3].contains(want), "missing {want:?} in\n{}", said[3]);
+    }
+    assert_eq!(pm_info(&env, &id).await["open"], true);
+    for s in [&id, &other] {
+        call(&env.app, "POST", &format!("/api/sessions/{s}/kill"), None).await;
     }
 }
 
@@ -555,7 +623,7 @@ async fn notes_are_checked_and_edited() {
 async fn the_users_own_notes_are_found_by_the_pm_but_never_briefed_or_written_by_it() {
     let env = setup(None).await;
     let (s, v) = call(&env.app, "POST", "/api/pm/notes", Some(json!({"title": "x", "kind": "journal"}))).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "only rotation writes journal entries: {v}");
+    assert_eq!(s, StatusCode::BAD_REQUEST, "only PM conversations write journal entries: {v}");
     let (s, mine) = call(
         &env.app,
         "POST",

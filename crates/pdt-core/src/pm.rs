@@ -1,6 +1,6 @@
 //! The project manager (PDT-81, docs/superpowers/specs/2026-10-21-pm-persona-design.md): a host-level conversation
 //! with PDT's tools only. PDT owns its memory: the briefing every new PM session starts with (rendered here from data
-//! pdt-api gathers), notes searched with FTS5, and rotation with a journal entry. Pure.
+//! pdt-api gathers), notes searched with FTS5, journal checkpoints and daily updates. Pure.
 
 use crate::brand::{PRODUCT_NAME, SHORT_NAME};
 use crate::session::Session;
@@ -9,17 +9,28 @@ use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 use ts_rs::TS;
 
-/// A PM session rotates once its context is this full (used / window)…
-pub const ROTATE_CONTEXT: f64 = 0.6;
-/// …or this old (ms).
-pub const ROTATE_AGE_MS: i64 = 24 * 60 * 60 * 1000;
+/// How often a PM conversation that is in use is brought up to date ([`update_message`]) and asked for a journal
+/// checkpoint (ms).
+pub const UPDATE_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 
-/// What PDT sends a PM session that is about to rotate.
+/// What the journal is for, said in every request for it.
+const JOURNAL_WHAT: &str = "what you and the user are working on, what was decided, and the threads still open. It \
+                            replaces this conversation's earlier entry, so write the whole picture; later PM \
+                            conversations start from it";
+
+/// What PDT sends a PM conversation the user closed (spec §5.3).
 pub fn journal_request() -> String {
     format!(
-        "[{SHORT_NAME}] This PM session is ending. Write a short journal entry with `write_journal`: what you and the \
-         user were working on, what was decided, and the threads still open. The next PM session starts from it. \
-         Then end your turn."
+        "[{SHORT_NAME}] The user closed this PM conversation, so it is ending. Write its journal entry with \
+         `write_journal`: {JOURNAL_WHAT}. Then end your turn."
+    )
+}
+
+/// What PDT sends a PM conversation whose context the agent just compacted (spec §5.3): a checkpoint, and it carries on.
+pub fn checkpoint_request() -> String {
+    format!(
+        "[{SHORT_NAME}] Your context was just compacted. Write a journal checkpoint with `write_journal`: \
+         {JOURNAL_WHAT}. Then end your turn; this conversation carries on."
     )
 }
 
@@ -64,16 +75,16 @@ const MAX_TITLE: usize = 200;
 const MAX_BODY: usize = 16 * 1024;
 const MAX_JOURNAL: usize = 8 * 1024;
 
-/// Why a PM session rotated.
+/// Why a PM session ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum RotateReason {
-    /// Its context reached [`ROTATE_CONTEXT`].
+    /// Its context was 60 % full (before PDT-167: conversations now compact and carry on).
     Context,
-    /// It reached [`ROTATE_AGE_MS`].
+    /// It was a day old (before PDT-167).
     Age,
-    /// The user started a new session.
+    /// The user closed it.
     User,
 }
 
@@ -90,18 +101,6 @@ impl RotateReason {
     }
 }
 
-/// Whether a PM session that just ended a turn should rotate: its context use (`used`, `window`) or its age
-/// (`max_age`, normally [`ROTATE_AGE_MS`]).
-pub fn rotate_reason(started_at: i64, now: i64, context: Option<(i64, i64)>, max_age: i64) -> Option<RotateReason> {
-    if let Some((used, window)) = context
-        && window > 0
-        && used as f64 / window as f64 >= ROTATE_CONTEXT
-    {
-        return Some(RotateReason::Context);
-    }
-    (now - started_at >= max_age).then_some(RotateReason::Age)
-}
-
 /// A PM session's rotation state (`pm_sessions.rotation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -109,7 +108,7 @@ pub fn rotate_reason(started_at: i64, now: i64, context: Option<(i64, i64)>, max
 pub enum Rotation {
     /// In use.
     None,
-    /// Asked for its journal; it ends when that turn ends.
+    /// Closed by the user and asked for its journal; it ends when that turn ends.
     Journal,
     /// Ended.
     Done,
@@ -135,7 +134,7 @@ impl Rotation {
 pub enum NoteKind {
     #[default]
     Note,
-    /// Written by a PM session as it rotates.
+    /// A PM conversation's own entry: checkpoints while it runs, the last one as it ends.
     Journal,
     /// The user's own note (PDT-126): never in a briefing, and the PM can find it but not write or delete it.
     User,
@@ -194,7 +193,7 @@ pub struct NewNote {
     #[serde(default)]
     #[ts(optional)]
     pub pinned: Option<bool>,
-    /// `note` (the PM's, the default) or `user`; journal entries are only written by rotation.
+    /// `note` (the PM's, the default) or `user`; journal entries are only written by PM conversations.
     #[serde(default)]
     #[ts(optional)]
     pub kind: Option<NoteKind>,
@@ -287,7 +286,7 @@ pub struct PmSessionInfo {
     pub last_activity: i64,
     pub rotation: Rotation,
     pub reason: Option<RotateReason>,
-    /// The journal entry it wrote as it ended.
+    /// Its journal entry: the latest checkpoint, or the one it wrote as it ended.
     pub journal: Option<String>,
 }
 
@@ -536,6 +535,95 @@ fn capped<T>(items: &[T], out: &mut String, line: impl Fn(&T) -> String) {
     }
 }
 
+fn inbox_section(inbox: &[BriefInbox], out: &mut String) {
+    if inbox.is_empty() {
+        out.push_str("- Empty.\n");
+    }
+    capped(inbox, out, |i| match &i.ticket {
+        Some(k) => format!("- {} · {k}: {}", i.kind, i.title),
+        None => format!("- {}: {}", i.kind, i.title),
+    });
+}
+
+/// Events, newest first: counts per kind, then the newest of them.
+fn events_section(now: i64, events: &[BriefEvent], out: &mut String) {
+    if events.is_empty() {
+        out.push_str("- Nothing happened.\n");
+        return;
+    }
+    let mut counts: Vec<(&str, usize)> = vec![];
+    for e in events {
+        match counts.iter_mut().find(|(k, _)| *k == e.kind) {
+            Some(c) => c.1 += 1,
+            None => counts.push((&e.kind, 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    out.push_str(&format!(
+        "Counts: {}.\n\n",
+        counts.iter().map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(", ")
+    ));
+    capped(events, out, |e| match &e.ticket {
+        Some(k) => format!("- {} · {} · {k}", ago(now, e.at), e.kind),
+        None => format!("- {} · {}", ago(now, e.at), e.kind),
+    });
+}
+
+/// What a daily update ([`update_message`]) is made from (pdt-api gathers it).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UpdateData {
+    pub now: i64,
+    /// When the conversation was last brought up to date: its briefing, or the last update.
+    pub since: i64,
+    /// Whether `since` is the briefing's time (this is the conversation's first update).
+    pub first: bool,
+    /// Events since then, newest first.
+    pub events: Vec<BriefEvent>,
+    pub inbox: Vec<BriefInbox>,
+    /// Other PM conversations' journal entries written since then, newest first.
+    pub journal: Vec<BriefConversationJournal>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BriefConversationJournal {
+    /// The conversation's title.
+    pub title: String,
+    pub at: i64,
+    pub body: String,
+}
+
+/// Whether a PM conversation that just ended a turn is due its daily update (spec §5.3): `every` (normally
+/// [`UPDATE_EVERY_MS`]) has passed since it was last brought up to date. pdt-api also wants the user to have written
+/// to it since.
+pub fn update_due(caught_up_at: i64, now: i64, every: i64) -> bool {
+    now - caught_up_at >= every
+}
+
+/// The daily update a PM conversation in use gets in place of ending (spec §5.3): what happened since its briefing
+/// or last update, the Inbox, the other conversations' new journal entries, and a request for a journal checkpoint.
+pub fn update_message(d: &UpdateData) -> String {
+    let since = if d.first { "your briefing" } else { "the last update" };
+    let mut out = format!(
+        "[{SHORT_NAME}] Since {since} ({}): what changed, so this conversation stays current. Look things up with \
+         your tools for more.\n\n## Events\n\n",
+        ago(d.now, d.since)
+    );
+    events_section(d.now, &d.events, &mut out);
+    out.push_str("\n## Inbox\n\n");
+    inbox_section(&d.inbox, &mut out);
+    if !d.journal.is_empty() {
+        out.push_str("\n## New journal entries from other PM conversations\n");
+        for j in d.journal.iter().take(BRIEF_JOURNALS) {
+            out.push_str(&format!("\n### {} ({})\n\n{}\n", j.title, ago(d.now, j.at), j.body.trim()));
+        }
+    }
+    out.push_str(&format!(
+        "\nThen write a journal checkpoint with `write_journal`: {JOURNAL_WHAT}. Then end your turn; this \
+         conversation carries on.\n"
+    ));
+    out
+}
+
 /// The briefing, as Markdown.
 pub fn briefing(d: &BriefingData) -> String {
     let mut out = format!(
@@ -562,39 +650,14 @@ pub fn briefing(d: &BriefingData) -> String {
     }
     capped(&d.in_flight, &mut out, |t| format!("- {} {} ({}): {}", t.key, t.title, t.stage, t.state));
     out.push_str("\n## Inbox\n\n");
-    if d.inbox.is_empty() {
-        out.push_str("- Empty.\n");
-    }
-    capped(&d.inbox, &mut out, |i| match &i.ticket {
-        Some(k) => format!("- {} · {k}: {}", i.kind, i.title),
-        None => format!("- {}: {}", i.kind, i.title),
-    });
+    inbox_section(&d.inbox, &mut out);
     match d.since {
         Some(since) => out.push_str(&format!("\n## Since the last PM session ({})\n\n", ago(d.now, since))),
         None => out.push_str("\n## Recent events\n\n"),
     }
-    if d.events.is_empty() {
-        out.push_str("- Nothing happened.\n");
-    } else {
-        let mut counts: Vec<(&str, usize)> = vec![];
-        for e in &d.events {
-            match counts.iter_mut().find(|(k, _)| *k == e.kind) {
-                Some(c) => c.1 += 1,
-                None => counts.push((&e.kind, 1)),
-            }
-        }
-        counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-        out.push_str(&format!(
-            "Counts: {}.\n\n",
-            counts.iter().map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(", ")
-        ));
-        capped(&d.events, &mut out, |e| match &e.ticket {
-            Some(k) => format!("- {} · {} · {k}", ago(d.now, e.at), e.kind),
-            None => format!("- {} · {}", ago(d.now, e.at), e.kind),
-        });
-    }
+    events_section(d.now, &d.events, &mut out);
     if !d.journal.is_empty() {
-        out.push_str("\n## Journal (from earlier PM sessions, newest first)\n");
+        out.push_str("\n## Journal (from earlier and other PM conversations, newest first)\n");
         for j in d.journal.iter().take(BRIEF_JOURNALS) {
             out.push_str(&format!("\n### {}\n\n{}\n", ago(d.now, j.at), j.body.trim()));
         }
@@ -711,13 +774,45 @@ mod tests {
     const H: i64 = 3_600_000;
 
     #[test]
-    fn rotates_on_a_full_context_or_old_age() {
-        let day = ROTATE_AGE_MS;
-        assert_eq!(rotate_reason(0, H, Some((59, 100)), day), None);
-        assert_eq!(rotate_reason(0, H, Some((60, 100)), day), Some(RotateReason::Context));
-        assert_eq!(rotate_reason(0, H, Some((10, 0)), day), None, "an unknown window never rotates");
-        assert_eq!(rotate_reason(0, 24 * H, None, day), Some(RotateReason::Age));
-        assert_eq!(rotate_reason(0, 24 * H - 1, None, day), None);
+    fn a_daily_update_is_due_after_a_day_of_use() {
+        let day = UPDATE_EVERY_MS;
+        assert!(!update_due(0, 24 * H - 1, day));
+        assert!(update_due(0, 24 * H, day));
+        assert!(update_due(H, 25 * H, day) && !update_due(H, 24 * H, day), "a day from the last update");
+    }
+
+    #[test]
+    fn checkpoints_and_updates_keep_the_conversation_going() {
+        for text in [checkpoint_request(), update_message(&UpdateData::default())] {
+            assert!(text.starts_with("[PDT] ") && text.contains("`write_journal`"), "{text}");
+            assert!(text.contains("this conversation carries on"), "{text}");
+        }
+        assert!(checkpoint_request().contains("compacted"));
+        assert!(journal_request().contains("closed this PM conversation"));
+        let d = UpdateData {
+            now: 25 * H,
+            since: H,
+            first: true,
+            events: vec![BriefEvent { at: 2 * H, kind: "ticket.moved".into(), ticket: Some("PDT-3".into()) }],
+            inbox: vec![BriefInbox { kind: "approval".into(), ticket: None, title: "Merge it?".into() }],
+            journal: vec![BriefConversationJournal {
+                title: "CB cutover".into(),
+                at: 3 * H,
+                body: "Cut over Friday.".into(),
+            }],
+        };
+        let text = update_message(&d);
+        for want in [
+            "[PDT] Since your briefing (1 d ago)",
+            "Counts: ticket.moved 1.",
+            "- 23 h ago · ticket.moved · PDT-3",
+            "- approval: Merge it?",
+            "### CB cutover (22 h ago)\n\nCut over Friday.",
+        ] {
+            assert!(text.contains(want), "missing {want:?} in\n{text}");
+        }
+        let later = update_message(&UpdateData { first: false, journal: vec![], ..d });
+        assert!(later.starts_with("[PDT] Since the last update") && !later.contains("New journal entries"), "{later}");
     }
 
     #[test]

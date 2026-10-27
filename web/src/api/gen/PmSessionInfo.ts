@@ -21,6 +21,6 @@ unseen: boolean,
  */
 lastActivity: number, rotation: Rotation, reason: RotateReason | null, 
 /**
- * The journal entry it wrote as it ended.
+ * Its journal entry: the latest checkpoint, or the one it wrote as it ended.
  */
 journal: string | null, };

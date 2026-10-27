@@ -10,6 +10,7 @@ import { enterAddsLine } from '../conversation/ConversationComposer';
 import { loadDraft, saveDraft } from '../conversation/drafts';
 import { useViewTracking } from '../sessions/useViewTracking';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
+import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { earlier, firstLine, REASON_LABEL, shownConversation, usePm, usePmActions, useRefreshPm, type PmSelection } from './usePm';
@@ -93,10 +94,10 @@ function Conversation({ info, phone, onSelect, onNew }: {
         className="min-h-0 flex-1"
         banner={info.rotation === 'journal' ? (
           <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
-            This conversation is writing its journal and then ends; start a new one to carry on.
+            You closed this conversation: it is writing its journal, then it ends. Start a new one to carry on.
           </p>
         ) : undefined}
-        readOnly={ended ? <Ended journal={info.journal} onNew={onNew} /> : undefined}
+        readOnly={ended ? <Ended reason={info.reason} journal={info.journal} onNew={onNew} /> : undefined}
       />
     </div>
   );
@@ -108,14 +109,21 @@ function ViewTracked({ session }: { session: Session }) {
   return null;
 }
 
-function Ended({ journal, onNew }: { journal: string | null; onNew: () => void }) {
+/**
+ * The notice under an ended conversation (PDT-167): why it ended (only the user's Close ends one now; older ones may
+ * have ended on a full context or at a day old), its journal, and New conversation.
+ */
+function Ended({ reason, journal, onNew }: { reason: RotateReason | null; journal: string | null; onNew: () => void }) {
   return (
-    <div className="flex flex-col gap-2 border-t border-border px-4 py-3 text-sm">
+    <div role="status" className="flex flex-col gap-2 border-t border-border px-4 py-3 text-sm">
       {journal && (
         <p className="line-clamp-4 whitespace-pre-wrap text-muted-foreground"><span className="font-medium text-foreground">Journal: </span>{journal}</p>
       )}
       <div className="flex items-center gap-2">
-        <span className="flex-1 text-muted-foreground">This conversation has ended.</span>
+        <span className="flex-1 text-muted-foreground">
+          {reason ? `This conversation ended because ${REASON_LABEL[reason]}.` : 'This conversation has ended.'} Its journal
+          carries into new conversations.
+        </span>
         <Button size="sm" onClick={onNew}>New conversation</Button>
       </div>
     </div>

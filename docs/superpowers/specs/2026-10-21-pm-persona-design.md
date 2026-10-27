@@ -11,8 +11,8 @@ on Phase 7b's pdt-mcp and personas (docs/superpowers/specs/2026-10-20-phase-7b-a
   running sessions), a session's state, workflow runs, notes and the journal; and the acting tools (create and edit
   tickets, message a session), which **ask first** unless the project's policy lets the PM act.
 - **Memory owned by PDT**: a briefing pdtd writes into every new PM session's instructions, a notes store (host-wide
-  and per project, SQLite FTS5), and rotation (context threshold or age) with a journal entry the next briefing
-  carries.
+  and per project, SQLite FTS5), and a journal entry per conversation (checkpoints on compaction and daily, the
+  last one when the user closes it) that later briefings carry.
 - **The PM persona**, a built-in like the 7b ones, so a workflow's `agent` step can run it (triage).
 
 Done when the user can ask the PM about any project's state and get an answer grounded in PDT's data, have it draft a
@@ -98,15 +98,27 @@ Sections are capped (a few dozen lines each) so the briefing stays small.
 kept in step by triggers. API: `GET /api/pm/notes?q=&project=&kind=`, `POST /api/pm/notes`,
 `PATCH /api/pm/notes/{id}`, `DELETE /api/pm/notes/{id}`; the PM view lists, searches, edits, pins and deletes them.
 
-### 5.3 Rotation and the journal
+### 5.3 The journal, compaction and closing (PDT-167)
 
-- A PM session **rotates** when a turn ends and its context use (the last `usage` event's used / window) is at least
-  `PM_ROTATE_CONTEXT` (60 %), or it started at least `PM_ROTATE_AGE` (24 h) ago.
-- PDT then sends it "[PDT] This PM session is ending: write a short journal entry with `write_journal` (what you and
-  the user were doing, decisions, open threads) and end your turn." (`pm_sessions.rotation = 'journal'`).
-- When that turn ends (journal written or not), PDT ends the session (`rotation = 'done'`, stopped; a missing journal
-  is recorded as "(no journal)"). The next message the user sends starts a new session with a fresh briefing.
-- `pm_sessions`: session id, `rotation` (`none` | `journal` | `done`), `reason`, timestamps.
+- A PM conversation never ends on its own: Claude Code and Codex compact their own context, so a full context or a
+  long life (it used to end at 60 % context or 24 h) is no reason to throw away a working conversation.
+- **Journal checkpoints.** When the agent compacts its context (a `compaction` event), PDT queues "[PDT] Your context
+  was just compacted. Write a journal checkpoint with `write_journal`… this conversation carries on." through the
+  outbox, so it never goes into a running turn (it waits for the turn to end) and never wakes a parked conversation.
+  `write_journal` replaces the conversation's one entry each time, so the entry is always the latest picture.
+- **Daily update.** When a turn ends and at least `UPDATE_EVERY_MS` (24 h) has passed since the conversation was last
+  brought up to date (its briefing, then each update: `pm_sessions.caught_up_at`), and the user wrote to it since,
+  PDT queues "[PDT] Since your briefing (… ago)…" (later "Since the last update"): the log's events since then, the
+  Inbox, and other conversations' journal entries written since then, ending with a request for a journal checkpoint.
+  The turn answering it asks for no other. One checkpoint request or update waits at a time per conversation.
+- **Closing.** Only the user ends a conversation (`DELETE /api/pm/sessions/{id}`). PDT drops a waiting checkpoint or
+  update and sends "[PDT] The user closed this PM conversation, so it is ending. Write its journal entry with
+  `write_journal`… Then end your turn." (`pm_sessions.rotation = 'journal'`, reason `user`). When that turn ends
+  (journal written or not), PDT ends the session (`rotation = 'done'`, stopped; a missing journal is recorded as
+  "(no journal)").
+- The ended conversation shows, in place of its composer, why it ended (`reason`; `context` and `age` are kept for
+  conversations that ended before PDT-167), its journal, and **New conversation**.
+- `pm_sessions`: session id, `rotation` (`none` | `journal` | `done`), `reason`, `caught_up_at`, timestamps.
 
 ## 6. As a workflow step
 
@@ -126,11 +138,11 @@ repo, project, persona) runs it on PDT-80's `github.issue.opened`: outcomes `dra
 
 ## 8. Code layout
 
-- pdt-core `pm.rs` (briefing renderer, instructions, rotation rule, tool sets), `persona.rs` (PM built-in, new tools,
+- pdt-core `pm.rs` (briefing and update renderers, instructions, the update rule, tool sets), `persona.rs` (PM built-in, new tools,
   `ASKING_TOOLS`), `project.rs` (`Host`), `policy.rs` (`PmActs`).
 - pdt-store migration `0026_pm.sql` (`pm_notes`, `pm_notes_fts`, `pm_sessions`, `project_settings.pm_acts`);
   `pm.rs`.
-- pdt-api `pm.rs` (routes, sessions, briefing data, rotation, auto-answer), `mcp/tools.rs` (the new tools);
+- pdt-api `pm.rs` (routes, sessions, briefing data, checkpoints and updates, auto-answer), `mcp/tools.rs` (the new tools);
   pdt-agents `mcp.rs` (asking tools out of `--allowedTools`; PDT-100: the PM's Codex settings).
 - web `pm/` (view, list, notes), rail, palette, project settings.
 

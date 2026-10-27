@@ -550,7 +550,7 @@ async fn append(
             AgentEvent::Turn { phase: TurnPhase::Ended, .. } => {
                 s.turn_running = false;
                 // An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)? A PM session's
-                // may be time to rotate (PDT-81).
+                // may be due its daily update (PDT-167), or end once the user closed it.
                 let (st2, id) = (st.clone(), c.id.clone());
                 tokio::spawn(async move {
                     crate::workflow::agent::turn_ended(&st2, &id).await;
@@ -569,6 +569,12 @@ async fn append(
                 true
             }
             AgentEvent::Request { id, .. } => s.open_requests.remove(id),
+            AgentEvent::Compaction { .. } => {
+                // A PM conversation writes a journal checkpoint and carries on (PDT-167).
+                let (st2, id) = (st.clone(), c.id.clone());
+                tokio::spawn(async move { crate::pm::compacted(&st2, &id).await });
+                false
+            }
             AgentEvent::Error { .. } => {
                 s.errored = true;
                 true
