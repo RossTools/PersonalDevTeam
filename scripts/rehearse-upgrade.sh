@@ -298,6 +298,8 @@ if [ "$UP" = 1 ]; then
     pass "with no token, Settings → This host → GitHub asks to connect"
     if [ "$(echo "$LOGIN" | jq -r .deviceFlow)" != true ]; then
       note "Connect GitHub (the device flow) is off: no OAuth App client ID is built in, so only a pasted token signs in (docs/reference/github.md \"Registering PDT's OAuth App\")"
+    else
+      pass "Connect GitHub (the device flow) is on: an OAuth App client ID is built in"
     fi
   else
     fail "the GitHub login reads as connected with no token set: $(echo "$LOGIN" | jq -c .)"
