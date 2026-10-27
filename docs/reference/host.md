@@ -95,7 +95,7 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 
 ## Releases and the stable app
 
-- Every push to main publishes GitHub release `v0.1.<run number>` of ross-game-tools/PersonalDevTeam
+- Every push to main publishes GitHub release `v0.1.<run number>` of the release repository (`RELEASE_REPO` in brand.rs)
   (`*-setup.exe`, `*.app.tar.gz`), built with that version (`PDT_BUILD_VERSION`, read at compile time). PR and local
   builds keep the checked-in 0.1.0. A release's notes are its head commit's whole message (a squashed PR's subject
   and body).

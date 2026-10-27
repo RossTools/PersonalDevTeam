@@ -235,7 +235,7 @@ function render() {
       <Row label="Link">
         <Link onClick={() => {}}>Open settings</Link>
         <Link href="#gallery">Internal href</Link>
-        <Link href="https://github.com/ross-game-tools/PersonalDevTeam" external>
+        <Link href="https://github.com/example-org/PersonalDevTeam" external>
           GitHub
         </Link>
       </Row>

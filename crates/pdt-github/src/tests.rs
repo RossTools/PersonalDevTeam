@@ -56,7 +56,7 @@ fn reads_the_branch_pr_preferring_an_open_one() {
        "mergeable":"CONFLICTING","mergeStateStatus":"BEHIND","isInMergeQueue":true,"mergeQueueEntry":{"position":0},
        "autoMergeRequest":{"enabledAt":"2026-10-18T00:00:00Z"}}]}}}}"#,
     );
-    let pr = g.change_request("ross-game-tools/PersonalDevTeam", "pdt/PDT-1-x").unwrap().unwrap();
+    let pr = g.change_request("example-org/PersonalDevTeam", "pdt/PDT-1-x").unwrap().unwrap();
     assert_eq!(pr.number, 44);
     assert_eq!(pr.state, PrState::Open);
     assert!(pr.draft && pr.behind && pr.auto_merge && pr.in_merge_queue);
@@ -65,7 +65,7 @@ fn reads_the_branch_pr_preferring_an_open_one() {
     assert_eq!((pr.head_sha.as_str(), pr.base_branch.as_str()), ("b", "main"));
     assert_eq!((pr.queue_removal.clone(), pr.created_at), (None, None));
     let vars = &body_of(&t.sent()[0])["variables"];
-    assert_eq!(vars, &json!({"owner": "ross-game-tools", "name": "PersonalDevTeam", "head": "pdt/PDT-1-x"}));
+    assert_eq!(vars, &json!({"owner": "example-org", "name": "PersonalDevTeam", "head": "pdt/PDT-1-x"}));
     assert!(g.change_request("nope", "b").is_err(), "not owner/name");
 
     t.ok("POST", GQL, r#"{"data":{"repository":{"pullRequests":{"nodes":[]}}}}"#);
