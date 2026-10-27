@@ -15,6 +15,7 @@ import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { BugReportDialog } from './BugReportDialog';
+import { GithubLogin } from './GithubLogin';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -478,7 +479,7 @@ function DangerZone({ v }: { v: HostSettingsView }) {
 }
 
 /** This host's sections, in page order (their `Section` labels): the phone's list of them and its top bar titles. */
-export const HOST_SECTIONS = ['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone'] as const;
+export const HOST_SECTIONS = ['Updates', 'GitHub', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone'] as const;
 
 export interface HostSettingsPageProps {
   /** A phone: one screen per section, the list of them while `section` is null. */
@@ -512,6 +513,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   const nodes: Record<(typeof HOST_SECTIONS)[number], ReactNode> = {
     'Updates': <Updates v={v} />,
+    'GitHub': <GithubLogin />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Agents': <Agents v={v} />,
     'Runs': <Runs v={v} />,

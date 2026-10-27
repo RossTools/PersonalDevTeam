@@ -1,4 +1,5 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
+import type { GithubLoginView } from './gen/GithubLoginView';
 import type { ConnectionKind } from './gen/ConnectionKind';
 import type { ProjectSettingsSchema } from './gen/ProjectSettingsSchema';
 import type { BugReportFiled } from './gen/BugReportFiled';
@@ -439,6 +440,13 @@ export const api = {
   dismissUpdateResult: () => request<void>('/api/host/update/dismiss', { method: 'POST' }),
   saveToken: (token: string) => request<UpdateStatus>('/api/host/token', { method: 'PUT', body: JSON.stringify({ token }) }),
   deleteToken: () => request<void>('/api/host/token', { method: 'DELETE' }),
+  githubLogin: () => request<GithubLoginView>('/api/github/login'),
+  githubLoginToken: (token: string, apiUrl?: string) =>
+    request<GithubLoginView>('/api/github/login/token', { method: 'POST', body: JSON.stringify({ token, ...(apiUrl ? { apiUrl } : {}) }) }),
+  githubLoginDevice: (b: { apiUrl?: string; clientId?: string }) =>
+    request<GithubLoginView>('/api/github/login/device', { method: 'POST', body: JSON.stringify(b) }),
+  githubCancelDevice: () => request<GithubLoginView>('/api/github/login/device', { method: 'DELETE' }),
+  githubDisconnect: () => request<GithubLoginView>('/api/github/login', { method: 'DELETE' }),
   hostChecks: () => request<HostChecks>('/api/host/checks'),
   /** Where a bug report would go, and the redacted diagnostics it would carry (PDT-153). */
   bugReportPreview: () => request<BugReportPreview>('/api/bug-reports/preview'),

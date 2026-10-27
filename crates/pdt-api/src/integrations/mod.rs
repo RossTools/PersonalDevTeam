@@ -14,6 +14,7 @@ mod bug_reports;
 mod buildkite;
 mod core;
 mod discord;
+mod forge;
 mod github;
 mod http;
 mod jira;
@@ -141,6 +142,7 @@ pub trait Integration: Send + Sync {
 fn all() -> Vec<Box<dyn Integration>> {
     vec![
         Box::new(core::Core),
+        Box::new(forge::ForgeTools),
         Box::new(discord::Discord),
         Box::new(webhook::Webhook),
         Box::new(github::Github),

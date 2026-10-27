@@ -585,10 +585,10 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   revoked token, the service down, no such connection), the connection gets `lastError` / `lastErrorAt` (shown on its
   row in Settings → Connections) and one `connection.failed` notification (dedupe key `connection:<name>`, opening
   Settings → Connections), however many polls fail; the first poll that works clears both. A pass in which any use of
-  a connection failed counts as failing. A failing `gh` (issues, PR comments, PRs) is logged once per read until it
+  a connection failed counts as failing. A failing GitHub read (issues, PR comments, PRs) is logged once per read until it
   works again; a PR it can't read keeps its last look with `error` set (`attempt.pr.error`, [tickets.md](tickets.md)).
 - **GitHub issues** (`github_issues.rs` `refresh_issues`, pdtd every 60 s): the repos enabled `github.issue.opened`
-  nodes name, else the GitHub repos of the projects in their scope, through `gh api …/issues` (pull requests left out;
+  nodes name, else the GitHub repos of the projects in their scope, through GitHub's `…/issues` API (pull requests left out;
   100 a page, read back page by page to the last issue seen, up to 10 pages). The newest number logged per repo is
   kept in `host_settings` (`sensor.github_issues.<repo>`); the first look only records it (from one page). Event key `github:<repo>:issue:<n>`, payload `repo`, `number`, `title`, `body`, `url`, `author`, `labels`,
   `createdAt`, `projectId` (when it is a project's repo).

@@ -16,7 +16,8 @@ import { useStartRun } from '../runs/useStartRun';
 import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
-import { after, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
+import { navigate } from '../shell/router';
+import { after, CONNECT_PATH, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
 import { useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
@@ -96,6 +97,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
       if (item.ticketId && item.projectId) openTicket({ id: item.ticketId, projectId: item.projectId });
       return;
     }
+    if (item.kind === 'connect') return void navigate(CONNECT_PATH);
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
 
@@ -176,6 +178,15 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             </p>
             <div>
               <Button variant="primary" onClick={doPrimary}>Open session <Kbd>↵</Kbd></Button>
+            </div>
+          </section>
+        )}
+        {item.kind === 'connect' && (
+          <section aria-label="Connect GitHub" className="flex flex-col gap-3">
+            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+            <p className="text-sm text-muted-foreground">It goes away once GitHub is connected.</p>
+            <div>
+              <Button variant="primary" onClick={doPrimary}>Open GitHub settings <Kbd>↵</Kbd></Button>
             </div>
           </section>
         )}

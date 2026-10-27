@@ -63,7 +63,7 @@ pub struct CiRun {
 }
 
 impl CiRun {
-    /// `gh run list`'s `status` and `conclusion`.
+    /// An Actions run's `status` and `conclusion`.
     pub fn state_of(status: &str, conclusion: &str) -> CiState {
         match status {
             "completed" => match conclusion {
@@ -156,7 +156,7 @@ pub struct PullRequestStatus {
     /// When it was last read (ms).
     #[ts(type = "number")]
     pub checked_at: i64,
-    /// Why the reads since `checked_at` failed (`gh` signed out, GitHub down): the rest is that older look.
+    /// Why the reads since `checked_at` failed (GitHub not connected, or down): the rest is that older look.
     #[serde(default)]
     pub error: Option<String>,
     /// A change request on the local forge (PDT-178): PDT's own, with CI it runs and merges it makes itself. Its
@@ -265,7 +265,7 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
             text.push_str(&format!(" Read its log with `curl -s {}`, fix it, run the checks and commit.", ci.url));
         } else {
             if let Some(id) = first {
-                text.push_str(&format!(" Read the failure with `gh run view {id} --log-failed`,"));
+                text.push_str(&format!(" Read the failure with `ci_failed_logs` (runId {id}),"));
             }
             text.push_str(" fix it, run the checks and push.");
         }
@@ -322,7 +322,7 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
                 }
                 why.push_str(&format!(": {}", q.url));
                 if let Some(first) = q.failed().next() {
-                    why.push_str(&format!(". Read it with `gh run view {} --log-failed`", first.id));
+                    why.push_str(&format!(". Read it with `ci_failed_logs` (runId {})", first.id));
                 }
                 (why, q.url.clone(), jobs)
             }
@@ -337,8 +337,8 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
             jobs,
             text: format!(
                 "[PDT] PR #{n} ({branch}) was removed from the merge queue: {why}. Fix it on {branch} (merge \
-                 origin/{base} if needed), run the checks, push, and turn auto-merge back on (`gh pr merge {n} \
-                 --squash --auto`)."
+                 origin/{base} if needed), run the checks and push. The merge then has to be asked for again \
+                 (Merge on the ticket)."
             ),
         });
     }
@@ -494,7 +494,7 @@ pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> C
             CiGate::Failed(format!("CI was cancelled on {n} at {at} ({}); commit a fix to run it again", ci.url))
         }
         CiState::Cancelled => CiGate::Failed(format!(
-            "CI was cancelled on {n} at {at} ({}); run it again (`gh run rerun`) or push a fix",
+            "CI was cancelled on {n} at {at} ({}); run it again on the forge or push a fix",
             ci.url
         )),
         CiState::Failed => {
@@ -508,7 +508,7 @@ pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> C
             if pr.local {
                 why.push_str(&format!(". Read its log with `curl -s {}`", ci.url));
             } else if let Some(r) = failed.iter().find(|r| r.url.contains("github.com")) {
-                why.push_str(&format!(". Read it with `gh run view {} --log-failed`", r.id));
+                why.push_str(&format!(". Read it with `ci_failed_logs` (runId {})", r.id));
             }
             CiGate::Failed(why)
         }
@@ -617,7 +617,7 @@ pub(crate) mod tests {
             ci_gate(&p, failed.as_ref(), true),
             CiGate::Failed(
                 "CI failed on PR #308 at abcdef1 (test (linux)): https://github.com/o/r/actions/runs/3. Read it with \
-                 `gh run view 3 --log-failed`"
+                 `ci_failed_logs` (runId 3)"
                     .into()
             ),
             "a failure wins over a run still going"
@@ -785,7 +785,7 @@ pub(crate) mod tests {
         assert_eq!(n[0].key, "ci_failed:7.1");
         assert_eq!(n[0].jobs, vec!["test (linux)".to_string()]);
         assert!(n[0].text.contains("CI failed on PR #12 (pdt/x) at abcdef0: test (linux)"), "{}", n[0].text);
-        assert!(n[0].text.contains("gh run view 7 --log-failed"));
+        assert!(n[0].text.contains("`ci_failed_logs` (runId 7)"));
         failed.attempt = 2;
         p.ci = CiStatus::of(&[failed], "abcdef0123");
         assert_eq!(notices(&p, "b")[0].key, "ci_failed:7.2", "a re-run that fails again is news");
@@ -819,7 +819,7 @@ pub(crate) mod tests {
             "{}",
             n[0].text
         );
-        assert!(n[0].text.contains("gh pr merge 12 --squash --auto"));
+        assert!(n[0].text.contains("The merge then has to be asked for again (Merge on the ticket)."));
         // Merged, removed by hand, back in the queue or auto-merge on again (someone dealt with it): nothing.
         p.queue_removal = removal("RFMQE_2", "merged");
         assert!(notices(&p, "b").is_empty());
@@ -847,7 +847,7 @@ pub(crate) mod tests {
         assert_eq!((n[0].key.as_str(), n[0].jobs.clone()), ("queue_removed:RFMQE_9", vec!["web (linux)".to_string()]));
         assert!(
             n[0].text.contains(
-                "its merge-queue CI failed (web (linux)): https://gh/runs/9. Read it with `gh run view 9 --log-failed`."
+                "its merge-queue CI failed (web (linux)): https://gh/runs/9. Read it with `ci_failed_logs` (runId 9)."
             ),
             "{}",
             n[0].text

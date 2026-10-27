@@ -1,4 +1,4 @@
-//! Secrets (the update token) live only in the OS keychain / credential manager (spec §3.2). Never logged, never
+//! Secrets (the update token, the GitHub login) live only in the OS keychain / credential manager (spec §3.2). Never logged, never
 //! returned by the API, never written to a file or the database.
 
 use std::collections::HashMap;
@@ -11,17 +11,31 @@ pub const UPDATE_TOKEN: &str = "update-token";
 /// default data dir (`stable_data_dir`), else `update-token:<12 hex digits of the canonical data dir>`, so a dev
 /// instance or a test never reads, replaces or deletes the stable instance's token.
 pub fn update_token_account(data_dir: &std::path::Path, stable_data_dir: Option<&std::path::Path>) -> String {
+    instance_account(UPDATE_TOKEN, data_dir, stable_data_dir)
+}
+
+/// The keychain account holding the stable instance's GitHub login (PDT-177). See [`github_login_account`].
+pub const GITHUB_LOGIN: &str = "github-login";
+
+/// The keychain account for the GitHub login of the pdtd using `data_dir`, kept apart per instance as the update
+/// token's is ([`update_token_account`]).
+pub fn github_login_account(data_dir: &std::path::Path, stable_data_dir: Option<&std::path::Path>) -> String {
+    instance_account(GITHUB_LOGIN, data_dir, stable_data_dir)
+}
+
+/// `name` for the stable instance's default data dir, else `name:<12 hex digits of the canonical data dir>`.
+fn instance_account(name: &str, data_dir: &std::path::Path, stable_data_dir: Option<&std::path::Path>) -> String {
     let canonical = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let dir = canonical(data_dir);
     if stable_data_dir.is_some_and(|s| canonical(s) == dir) {
-        return UPDATE_TOKEN.to_string();
+        return name.to_string();
     }
     // FNV-1a (64-bit): stable across builds and platforms, unlike `DefaultHasher`.
     let hash = dir
         .to_string_lossy()
         .bytes()
         .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
-    format!("{UPDATE_TOKEN}:{:012x}", hash >> 16)
+    format!("{name}:{:012x}", hash >> 16)
 }
 
 /// How every keychain failure message starts (so a later successful read can clear it).

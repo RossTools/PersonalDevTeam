@@ -21,9 +21,10 @@ pub struct Config {
     /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
     /// nothing, so they never reach the machine's Tailscale).
     pub tailscale_bin: Option<PathBuf>,
-    /// `PDT_GH_BIN`: the GitHub CLI to use instead of the detected one (tests point it at nothing, so they never
-    /// reach GitHub).
-    pub gh_bin: Option<PathBuf>,
+    /// `PDT_GITHUB_OFFLINE=1`: the GitHub forge never reaches the network (tests set it, so they never reach GitHub).
+    pub github_offline: bool,
+    /// `PDT_GITHUB_CLIENT_ID`: the OAuth App Connect GitHub signs in with, instead of the built-in one.
+    pub github_client_id: Option<String>,
     /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
     /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -86,7 +87,8 @@ impl Config {
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
         let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
-        let gh_bin = lookup("PDT_GH_BIN").map(PathBuf::from);
+        let github_offline = lookup("PDT_GITHUB_OFFLINE").as_deref() == Some("1");
+        let github_client_id = lookup("PDT_GITHUB_CLIENT_ID").filter(|c| !c.trim().is_empty());
         let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
@@ -107,7 +109,8 @@ impl Config {
             owner_login,
             memory_secrets,
             tailscale_bin,
-            gh_bin,
+            github_offline,
+            github_client_id,
             remote_https_port,
             claude_program,
             codex_program,

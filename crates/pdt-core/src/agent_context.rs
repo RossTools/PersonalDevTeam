@@ -174,8 +174,8 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
         ),
         (
             has(ev::PR_QUEUE_LEFT),
-            "Dropped from the merge queue: fix what it names, run the checks, push, and turn \
-                                  auto-merge back on as it says.",
+            "Dropped from the merge queue: fix what it names, run the checks and push, as it \
+                                  says.",
         ),
         (merged, "Merged: the work is in. Push nothing more to the branch and start nothing new on it."),
         (has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED), reply.as_str()),

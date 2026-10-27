@@ -1317,6 +1317,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Approval => Err("answer an approval in its session".into()),
         InboxKind::Session => Err("answer the session in its tab".into()),
         InboxKind::Notice => Err("a notice waits on no answer: dismiss it".into()),
+        InboxKind::Connect => Err("connect GitHub in Settings › This host › GitHub".into()),
     }
 }
 

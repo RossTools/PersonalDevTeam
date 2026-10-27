@@ -20,6 +20,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   timed_out: 'Timed out',
   notice: 'Unheard notice',
   secret: 'Secret request',
+  connect: 'Connect',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -89,6 +90,9 @@ export function resends(item: InboxItem): boolean {
 export function dismissable(item: InboxItem): boolean {
   return item.kind === 'question' || item.kind === 'secret' || item.kind === 'stalled' || item.kind === 'notice';
 }
+
+/** Where "Connect GitHub" (PDT-177) sends the user: Settings › This host › GitHub. */
+export const CONNECT_PATH = '/settings/host/github';
 
 /** What an unheard notice said, and its settling, in a line (PDT-139). */
 export function noticeText(item: InboxItem): string {
