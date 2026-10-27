@@ -3421,6 +3421,7 @@ dependencies = [
  "libc",
  "pdt-agents",
  "pdt-core",
+ "pdt-forge",
  "pdt-git",
  "pdt-github",
  "pdt-store",
@@ -3479,6 +3480,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdt-forge"
+version = "0.1.0"
+dependencies = [
+ "pdt-core",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "pdt-git"
 version = "0.1.0"
 dependencies = [
@@ -3491,6 +3500,7 @@ name = "pdt-github"
 version = "0.1.0"
 dependencies = [
  "pdt-core",
+ "pdt-forge",
  "serde_json",
  "thiserror 2.0.21",
  "which",

@@ -80,7 +80,7 @@ async fn a_project_without_a_file_has_an_empty_config() {
     let (_, v) = call(&app, "GET", &format!("/api/projects/{pid}/run-config"), None).await;
     assert_eq!(
         (v["file"].clone(), v["effective"].clone()),
-        (Value::Null, json!({"runs": [], "tests": [], "areas": [], "ignored": []}))
+        (Value::Null, json!({"runs": [], "tests": [], "areas": [], "forge": null, "ignored": []}))
     );
 }
 

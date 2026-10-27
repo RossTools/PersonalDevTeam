@@ -7,6 +7,7 @@ pub mod bug_report;
 pub mod buildkite;
 pub mod conversation;
 pub mod discord;
+pub mod forge;
 pub mod git_url;
 pub mod github_issue;
 pub mod handoff;

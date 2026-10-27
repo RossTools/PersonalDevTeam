@@ -98,7 +98,7 @@ async fn run() -> anyhow::Result<()> {
     // A slow step never holds up the engine's next tick for long: its run goes on in the background.
     state.engine_tick_wait = std::time::Duration::from_secs(1);
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
-    // Likewise the GitHub CLI (attempts' pull requests and CI).
+    // Likewise the GitHub forge through its CLI (attempts' pull requests, CI, merges and issues).
     state.github = match &cfg.gh_bin {
         Some(bin) => std::sync::Arc::new(pdt_github::GhCli::new(bin.clone())),
         None => std::sync::Arc::new(pdt_github::GhCli::detect(state.platform.login_path.as_deref())),

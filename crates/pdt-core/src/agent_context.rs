@@ -4,6 +4,7 @@
 //! on a ticket also learns the rules for ticket work and which `[PDT]` messages the enabled workflows will send it.
 
 use crate::brand::{PRODUCT_NAME, SHORT_NAME};
+use crate::forge::ForgeNotes;
 use crate::workflow::events as ev;
 use std::collections::BTreeSet;
 
@@ -37,6 +38,8 @@ pub struct SessionContext<'a> {
     /// The branch whose CI the session reads: its attempt's, or the attempt its workflow step is about (a Reviewer or
     /// QA step's new session has no attempt of its own). None: no ticket work.
     pub ci_branch: Option<&'a str>,
+    /// What the project's forge tells agents (PDT-176); None when the project has no forge.
+    pub forge: Option<&'a ForgeNotes>,
 }
 
 /// The ticket a session works on.
@@ -90,17 +93,12 @@ pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> Stri
             server = crate::mcp::SERVER_NAME,
         ));
     }
-    if let Some(branch) = ctx.ci_branch.filter(|_| !ctx.personal) {
-        // PDT-165: fine-grained `gh` tokens can't read the Checks API, so `gh pr checks` fails with a 403.
-        out.push_str(&format!(
-            "- Read CI from the ticket's attempt (`pr.ci`: state, URL and runs, when {SHORT_NAME} has seen the pull \
-             request) or from GitHub Actions: `gh run list --branch {branch}`, `gh run view <id> --json \
-             jobs,conclusion` and `gh run view <id> --log-failed`. Not `gh pr checks` or the check-runs API: \
-             fine-grained tokens can't read checks, so they fail with 403.\n"
-        ));
+    let ci = ctx.forge.and_then(|f| f.ci.as_deref());
+    if let (Some(branch), Some(ci)) = (ctx.ci_branch.filter(|_| !ctx.personal), ci) {
+        out.push_str(&format!("- {}\n", ci.replace("{branch}", branch)));
     }
     if let Some(t) = &ctx.ticket {
-        out.push_str(&ticket_section(&api, t));
+        out.push_str(&ticket_section(&api, t, ctx.forge));
     }
     if let Some(step) = ctx.step {
         out.push_str(step);
@@ -115,7 +113,7 @@ pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> Stri
     out
 }
 
-fn ticket_section(api: &str, t: &TicketWork) -> String {
+fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> String {
     let (key, branch) = (t.key, t.branch);
     let mut out = format!(
         "\n## This session's ticket\n\n\
@@ -154,6 +152,15 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
          happened; act on it as it asks:\n",
         sentence_list(&events),
     ));
+    let reply = match forge.and_then(|f| f.reply.as_deref()) {
+        Some(how) => format!(
+            "A pull request comment or review: from a reviewer; make the change it asks for (then run the checks and \
+             push), or answer it on the pull request ({how})."
+        ),
+        None => "A pull request comment or review: from a reviewer; make the change it asks for (then run the checks \
+                 and push), or answer it on the pull request."
+            .into(),
+    };
     let rules = [
         (
             has(ev::CI_RUN_FAILED),
@@ -171,11 +178,7 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
                                   auto-merge back on as it says.",
         ),
         (merged, "Merged: the work is in. Push nothing more to the branch and start nothing new on it."),
-        (
-            has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED),
-            "A pull request comment or review: from a reviewer; make the change it asks for (then run the checks and \
-             push), or answer it on the pull request (`gh pr comment`, or a reply to the review comment).",
-        ),
+        (has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED), reply.as_str()),
         (
             has(ev::TICKET_COMMENTED),
             "A ticket comment: the user wrote it; answer or act on it as you would their own \
@@ -188,9 +191,13 @@ fn ticket_section(api: &str, t: &TicketWork) -> String {
     let watched =
         [ev::CI_RUN_FAILED, ev::CI_RUN_PASSED, ev::PR_CONFLICT, ev::PR_QUEUE_LEFT, ev::PR_MERGED, ev::PR_BEHIND];
     if merged || watched.iter().any(|k| has(k)) {
+        let how = match forge.and_then(|f| f.watch.as_deref()) {
+            Some(w) => format!("{w}, sleep loops"),
+            None => "sleep loops".into(),
+        };
         out.push_str(&format!(
-            "\n{SHORT_NAME} watches the pull request and sends these, so don't poll or watch CI in a shell (`gh run watch`, sleep loops): push, then carry \
-             on or end your turn.\n"
+            "\n{SHORT_NAME} watches the pull request and sends these, so don't poll or watch CI in a shell ({how}): \
+             push, then carry on or end your turn.\n"
         ));
     }
     out
@@ -218,6 +225,16 @@ pub fn clean_project_instructions(raw: Option<&str>) -> Result<Option<String>, S
 mod tests {
     use super::*;
 
+    /// A stand-in forge's notes.
+    fn notes() -> &'static ForgeNotes {
+        static NOTES: std::sync::OnceLock<ForgeNotes> = std::sync::OnceLock::new();
+        NOTES.get_or_init(|| ForgeNotes {
+            ci: Some("Read CI with `forge runs {branch}`.".into()),
+            reply: Some("`forge reply`".into()),
+            watch: Some("`forge watch`".into()),
+        })
+    }
+
     fn ctx(branch: Option<&'static str>) -> SessionContext<'static> {
         SessionContext {
             port: 7420,
@@ -234,6 +251,7 @@ mod tests {
             tools: &[],
             step: None,
             ci_branch: None,
+            forge: Some(notes()),
         }
     }
 
@@ -255,27 +273,24 @@ mod tests {
         let t = on_ticket(&[]);
         assert!(t.contains("works on ticket WA-7 (`GET http://127.0.0.1:7420/api/tickets/t7`)"), "{t}");
         assert!(t.contains("Follow-up work") && t.contains("Don't move the ticket to Done"), "{t}");
-        assert!(!t.contains("Messages from") && !t.contains("gh run watch"), "no workflow, no messages: {t}");
+        assert!(!t.contains("Messages from") && !t.contains("forge watch"), "no workflow, no messages: {t}");
         let plain = session_instructions(&ctx(Some("pdt-WA-7-x")), None);
         assert!(!plain.contains("This session's ticket"), "{plain}");
         assert!(plain.contains("/projects/p1/worktrees") && plain.contains("/projects/p1/runs"), "{plain}");
     }
 
     #[test]
-    fn ticket_work_reads_ci_from_actions_runs() {
+    fn ticket_work_reads_ci_as_the_forge_says() {
         let t = on_ticket(&[ev::CI_RUN_FAILED]);
-        assert!(t.contains("`gh run list --branch pdt-WA-7-x`"), "{t}");
-        assert!(t.contains("`gh run view <id> --json jobs,conclusion`") && t.contains("--log-failed"), "{t}");
-        assert!(t.contains("Not `gh pr checks` or the check-runs API"), "{t}");
-        assert!(!t.contains("gh pr checks --watch"), "{t}");
-        assert!(on_ticket(&[]).contains("gh run list --branch"), "with or without PR notices");
+        assert!(t.contains("- Read CI with `forge runs pdt-WA-7-x`.\n"), "{t}");
+        assert!(on_ticket(&[]).contains("forge runs pdt-WA-7-x"), "with or without PR notices");
         let mut p = ctx(None);
         p.personal = true;
         p.ci_branch = Some("x");
         p.ticket =
             Some(TicketWork { ticket_id: "t7", key: "WA-7", branch: "x", base: "main", news: Default::default() });
-        assert!(!session_instructions(&p, None).contains("gh run list"), "a Personal project has no CI");
-        assert!(!session_instructions(&ctx(Some("feat/x")), None).contains("gh run list"), "no ticket work");
+        assert!(!session_instructions(&p, None).contains("forge runs"), "a Personal project has no CI");
+        assert!(!session_instructions(&ctx(Some("feat/x")), None).contains("forge runs"), "no ticket work");
     }
 
     /// A Reviewer or QA step's new session has no attempt (no ticket section), but reads its attempt's CI.
@@ -286,7 +301,7 @@ mod tests {
         c.ci_branch = Some("pdt-WA-7-x");
         let t = session_instructions(&c, None);
         assert!(!t.contains("This session's ticket"), "{t}");
-        assert!(t.contains("`gh run list --branch pdt-WA-7-x`") && t.contains("Not `gh pr checks`"), "{t}");
+        assert!(t.contains("forge runs pdt-WA-7-x"), "{t}");
     }
 
     #[test]
@@ -309,13 +324,31 @@ mod tests {
     fn comments_alone_say_nothing_about_ci() {
         let t = on_ticket(&[ev::TICKET_COMMENTED]);
         assert!(t.contains("when the user comments on the ticket. ") && t.contains("- A ticket comment:"), "{t}");
-        assert!(!t.contains("gh run watch") && !t.contains("- Merged") && !t.contains("- CI failed"), "{t}");
+        assert!(!t.contains("forge watch") && !t.contains("- Merged") && !t.contains("- CI failed"), "{t}");
     }
 
     #[test]
     fn a_merge_alone_still_means_no_watching() {
         let t = on_ticket(&[ev::ATTEMPT_MERGED]);
-        assert!(t.contains("when it is merged. ") && t.contains("gh run watch"), "{t}");
+        assert!(t.contains("when it is merged. ") && t.contains("forge watch"), "{t}");
+    }
+
+    #[test]
+    fn without_a_forge_there_is_no_ci_line_or_forge_command() {
+        let mut c = ctx(Some("pdt-WA-7-x"));
+        c.forge = None;
+        c.ci_branch = Some("pdt-WA-7-x");
+        let news = [ev::CI_RUN_FAILED, ev::PR_COMMENTED].into_iter().collect();
+        c.ticket = Some(TicketWork { ticket_id: "t7", key: "WA-7", branch: "pdt-WA-7-x", base: "main", news });
+        let t = session_instructions(&c, None);
+        assert!(!t.contains("Read CI") && !t.contains("forge "), "{t}");
+        assert!(t.contains("or answer it on the pull request.\n"), "{t}");
+        assert!(t.contains("watch CI in a shell (sleep loops)"), "{t}");
+        let with = on_ticket(&[ev::PR_COMMENTED, ev::CI_RUN_FAILED]);
+        assert!(
+            with.contains("answer it on the pull request (`forge reply`).")
+                && with.contains("(`forge watch`, sleep loops)")
+        );
     }
 
     #[test]

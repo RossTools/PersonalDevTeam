@@ -6,8 +6,8 @@ use axum::http::StatusCode;
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval};
-use pdt_github::PullRequest;
-use pdt_github::testing::FakeGithub;
+use pdt_forge::ChangeRequest;
+use pdt_forge::testing::FakeForge;
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -18,7 +18,7 @@ const BRANCH: &str = "pdt-PDT-1-ship-it";
 struct Env {
     app: axum::Router,
     state: AppState,
-    gh: Arc<FakeGithub>,
+    gh: Arc<FakeForge>,
     repo: std::path::PathBuf,
     ticket: String,
     session: String,
@@ -53,7 +53,7 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     };
     state.conversations.notice_quiet = Duration::ZERO;
     state.typing_quiet = Duration::ZERO;
-    let gh = Arc::new(FakeGithub::default());
+    let gh = Arc::new(FakeForge::default());
     state.github = gh.clone();
     // pdt-mcp (a fake agent's `mcp:` calls) needs pdtd listening.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -84,8 +84,8 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     Env { app, state, gh, repo, ticket, session }
 }
 
-fn pr() -> PullRequest {
-    PullRequest {
+fn pr() -> ChangeRequest {
+    ChangeRequest {
         number: 12,
         url: "https://github.com/o/r/pull/12".into(),
         title: "Ship it".into(),
@@ -521,8 +521,8 @@ async fn an_ended_attempts_pr_is_read_again_until_it_is_not_open() {
     env.state.ptys.shutdown().await;
 }
 
-fn comment(id: u64, author: &str, path: Option<&str>) -> pdt_github::PrComment {
-    pdt_github::PrComment {
+fn comment(id: u64, author: &str, path: Option<&str>) -> pdt_forge::ChangeComment {
+    pdt_forge::ChangeComment {
         id,
         author: author.into(),
         is_bot: author.ends_with("[bot]"),
@@ -567,7 +567,7 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
     env.gh.set_reviews(
         12,
         vec![
-            pdt_github::PrReview {
+            pdt_forge::ChangeReview {
                 id: 9,
                 author: "bob".into(),
                 is_bot: false,
@@ -575,7 +575,7 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
                 body: "Please split this.".into(),
                 url: "https://github.com/o/r/pull/12#r9".into(),
             },
-            pdt_github::PrReview {
+            pdt_forge::ChangeReview {
                 id: 10,
                 author: "carol".into(),
                 is_bot: false,
@@ -611,6 +611,53 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
         pr_events(&env).await.iter().map(|e| e["data"]["key"].as_str().unwrap().into()).collect();
     keys.sort();
     assert_eq!(keys, ["comment:2", "comment:501", "review:9"], "not mine, not a bot's, not an approval");
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-176: a forge without reviews or merge queues still has its PR and CI read, and CI news told, but its comments,
+/// reviews and merge-queue runs are never asked for.
+#[tokio::test]
+async fn a_forge_without_reviews_or_queues_still_reports_ci() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    *env.gh.capabilities.lock().unwrap() = pdt_forge::Capabilities::NONE;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
+    let id = list.as_array().unwrap().iter().find(|w| w["builtin"] == "pr-feedback").unwrap()["id"].clone();
+    call(&env.app, "PATCH", &format!("/api/workflows/{}", id.as_str().unwrap()), Some(json!({"enabled": true}))).await;
+    let mut removed = pr();
+    // Dropped from the queue for failed checks: a GitHub look would read the queue's runs.
+    removed.queue_removal = Some(QueueRemoval { id: "RFMQE_1".into(), reason: "failed_checks".into(), by_queue: true });
+    env.gh.set_pr(BRANCH, Some(removed));
+    env.gh.set_comments(12, vec![comment(1, "alice", None)]);
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(ticket(&env).await["attempt"]["pr"]["ci"]["state"], "failed");
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c == &format!("runs o/r {BRANCH}")), "{calls:?}");
+    let asked = |what: &str| calls.iter().any(|c| c.starts_with(what));
+    assert!(!asked("comments") && !asked("reviews") && !asked("queue"), "{calls:?}");
+    let (_, failed) = call(&env.app, "GET", "/api/events?type=ci.run_failed", None).await;
+    assert_eq!(failed.as_array().unwrap().len(), 1, "{failed}");
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-176: a project whose `.pdt/project.toml` says `forge = "none"` has no PR read, though its origin is on GitHub.
+#[tokio::test]
+async fn a_project_without_a_forge_has_no_pr_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    std::fs::create_dir_all(env.repo.join(".pdt")).unwrap();
+    std::fs::write(env.repo.join(".pdt/project.toml"), "forge = \"none\"\n").unwrap();
+    pdt_api::refresh_prs(&env.state).await;
+    assert!(ticket(&env).await["attempt"]["pr"].is_null());
+    assert!(env.gh.calls.lock().unwrap().is_empty(), "{:?}", env.gh.calls.lock().unwrap());
+    // Naming GitHub (or nothing) reads it.
+    std::fs::write(env.repo.join(".pdt/project.toml"), "forge = \"github\"\n").unwrap();
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(ticket(&env).await["attempt"]["pr"]["number"], 12);
     env.state.ptys.shutdown().await;
 }
 

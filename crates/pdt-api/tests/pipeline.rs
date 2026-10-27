@@ -8,8 +8,8 @@ use axum::http::StatusCode;
 use common::{call, git, mark_pushed};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
-use pdt_github::PullRequest;
-use pdt_github::testing::FakeGithub;
+use pdt_forge::testing::FakeForge;
+use pdt_forge::{ChangeRequest, MergeSettings};
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ async fn setup() -> Env {
 }
 
 /// [`setup`], for a project on GitHub (its origin says so; nothing is fetched) answered by `gh`.
-async fn setup_with(gh: Option<std::sync::Arc<FakeGithub>>) -> Env {
+async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -319,6 +319,11 @@ async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
 #[tokio::test]
 async fn every_step_session_on_a_ticket_opens_a_tab_and_belongs_to_the_ticket() {
     let env = setup().await;
+    // On GitHub (the default forge, which runs nothing in tests), so its sessions are told how to read CI.
+    git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
+    // Its branch is "pushed" already, so the Coder's `submitted` passes (it commits nothing).
+    git(&env.repo, &["update-ref", "refs/remotes/origin/pdt-PX-1-tabbed", "HEAD"]);
     let t = ticket(&env, "Tabbed").await;
     pipeline(&env, json!({}), &[("refine", "ready"), ("code", "submitted"), ("review", "approved"), ("qa", "pass")])
         .await;
@@ -347,7 +352,8 @@ async fn every_step_session_on_a_ticket_opens_a_tab_and_belongs_to_the_ticket() 
             (&json!("QA"), &Value::Null)
         ]
     );
-    // PDT-165: the Reviewer and QA have no attempt of their own, but read its CI from Actions runs like the Coder.
+    // PDT-165: the Reviewer and QA have no attempt of their own, but read its CI from Actions runs like the Coder, as
+    // the GitHub forge says (PDT-176).
     let branch = v["attempts"][0]["branch"].as_str().unwrap();
     let instructions = |s: &Value| {
         let id = s["id"].as_str().unwrap();
@@ -933,8 +939,8 @@ async fn a_merge_refused_for_a_conflict_is_fixed_reviewed_and_merged() {
     assert_eq!(merged, "branch\n", "merged into main");
 }
 
-fn pull_request(mergeable: Mergeable) -> PullRequest {
-    PullRequest {
+fn pull_request(mergeable: Mergeable) -> ChangeRequest {
+    ChangeRequest {
         number: 12,
         url: "https://github.com/o/r/pull/12".into(),
         title: "Change it".into(),
@@ -969,7 +975,7 @@ async fn a_conflict_fix_left_unreviewed_never_merges() {
 }
 
 async fn conflicting_pr(abandon: bool) {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     pipeline(
         &env,
@@ -1133,7 +1139,7 @@ async fn runs_of(env: &Env, t: &str, workflow: &str) -> Vec<Value> {
 /// Reviewer checks the fix; green: it merges.
 #[tokio::test]
 async fn a_pipeline_merge_waits_for_pending_ci_and_sends_red_ci_back_to_the_coder() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     pipeline(
         &env,
@@ -1196,7 +1202,7 @@ async fn a_pipeline_merge_waits_for_pending_ci_and_sends_red_ci_back_to_the_code
 /// PDT-151: a repository with no CI at all merges as before, and the ticket says so.
 #[tokio::test]
 async fn a_repository_without_ci_merges_and_says_so() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     pipeline(
         &env,
@@ -1222,7 +1228,7 @@ async fn a_repository_without_ci_merges_and_says_so() {
 /// PDT-151: with CI turned off for the project, a merge doesn't wait for it.
 #[tokio::test]
 async fn a_project_can_merge_without_waiting_for_ci() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     settings(&env, json!({"requireGreenCi": false})).await;
     pipeline(
@@ -1242,7 +1248,7 @@ async fn a_project_can_merge_without_waiting_for_ci() {
 }
 
 /// A started ticket whose PR merged at its first commit, with a second commit pushed after: its gate item.
-async fn merged_then_pushed(env: &Env, gh: &FakeGithub, title: &str) -> (String, String, Value) {
+async fn merged_then_pushed(env: &Env, gh: &FakeForge, title: &str) -> (String, String, Value) {
     let t = ticket(env, title).await;
     let attempt = start_with_a_commit(env, &t, &format!("{title}.txt")).await;
     let branch = attempt["branch"].as_str().unwrap().to_string();
@@ -1274,7 +1280,7 @@ fn branch_exists(env: &Env, branch: &str) -> bool {
 /// asks again, then finishes and deletes the branch; Keep open leaves it as it is.
 #[tokio::test]
 async fn commits_pushed_after_a_merge_ask_in_the_inbox() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
 
     let (t, branch, item) = merged_then_pushed(&env, &gh, "follow").await;
@@ -1329,7 +1335,7 @@ async fn commits_pushed_after_a_merge_ask_in_the_inbox() {
 /// `mergeWaiting`) still ends the wait: it is on the head the merge was refused at.
 #[tokio::test]
 async fn a_ci_event_logged_before_the_wait_still_ends_it() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     pipeline(
         &env,
@@ -1368,7 +1374,7 @@ async fn a_ci_event_logged_before_the_wait_still_ends_it() {
 /// head; and a read from GitHub that fails is an error, not a wait.
 #[tokio::test]
 async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     let (s, c) = call(
         &env.app,
@@ -1393,6 +1399,37 @@ async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge()
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_unreadable")), "{v}");
     assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")), "nothing merged");
+}
+
+/// PDT-176: on a forge that doesn't hold merges for required checks, an agent's merge waits for green CI even where the
+/// project doesn't ask it to; on one without merge queues, a repository's queue setting is ignored and the merge names
+/// its strategy. A person's merge doesn't wait.
+#[tokio::test]
+async fn a_forge_without_required_checks_or_queues_still_merges_safely() {
+    let caps = pdt_forge::Capabilities { required_checks: false, merge_queue: false, ..pdt_forge::Capabilities::ALL };
+    let gh = std::sync::Arc::new(FakeForge::with(caps));
+    *gh.settings.lock().unwrap() = Some(MergeSettings { squash: true, merge: false, rebase: false, queue: true });
+    let env = setup_with(Some(gh.clone())).await;
+    settings(&env, json!({"requireGreenCi": false})).await;
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, v) = call(&env.app, "GET", &format!("/api/attempts/{id}/merge"), None).await;
+    assert_eq!((s, &v["pr"]["queue"]), (StatusCode::OK, &json!(false)), "no merge queue on this forge: {v}");
+    let merges =
+        || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).cloned().collect::<Vec<_>>();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_pending")), "{v}");
+    assert!(merges().is_empty(), "nothing merged while CI runs");
+
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(merges(), ["merge o/r 12 squash"], "the strategy is named: no queue picks it");
+    assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")), "no merge-queue runs read");
 }
 
 /// PDT-159: moving an in-progress ticket back to To do stops its work: the Pipeline's run is cancelled, the Coder's
@@ -1483,7 +1520,7 @@ async fn abandon_and_stop_end_the_run_and_sessions_and_stop_can_remove_the_workt
 /// after QA's findings, not ahead of it as a message of its own.
 #[tokio::test]
 async fn a_ci_failure_during_a_qa_fail_pass_comes_after_qas_findings_in_its_message() {
-    let gh = std::sync::Arc::new(FakeGithub::default());
+    let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     // Another conversation, to hold the host's one slot later.
     let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "claude", "mode": "conversation",

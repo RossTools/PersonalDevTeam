@@ -1,6 +1,6 @@
 //! PDT-154 end to end: bug reports from other PDT instances (issues labelled `from-pdt` on the release repository)
 //! come in through the built-in "PDT bug triage" (the PM's step, played by `fake-agent`), and a linked ticket that
-//! finishes closes its issue (the built-in "Done closes the GitHub issue"). GitHub is `FakeGithub`.
+//! finishes closes its issue (the built-in "Done closes the GitHub issue"). GitHub is `FakeForge`.
 
 mod common;
 
@@ -9,7 +9,7 @@ use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::brand::RELEASE_REPO;
 use pdt_core::github_issue::CloseReason;
-use pdt_github::testing::{FakeGithub, fake_issue_id};
+use pdt_forge::testing::{FakeForge, fake_issue_id};
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -22,7 +22,7 @@ struct Env {
     app: axum::Router,
     state: AppState,
     project: String,
-    gh: Arc<FakeGithub>,
+    gh: Arc<FakeForge>,
     _tmp: tempfile::TempDir,
 }
 
@@ -46,7 +46,7 @@ async fn setup() -> Env {
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
-    let gh = Arc::new(FakeGithub::default());
+    let gh = Arc::new(FakeForge::default());
     state.github = gh.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
@@ -65,8 +65,8 @@ async fn setup() -> Env {
     Env { app, state, project, gh, _tmp: tmp }
 }
 
-fn issue(n: u64, title: &str, labels: &[&str]) -> pdt_github::Issue {
-    pdt_github::Issue {
+fn issue(n: u64, title: &str, labels: &[&str]) -> pdt_forge::Issue {
+    pdt_forge::Issue {
         number: n,
         title: title.into(),
         body: format!("Steps for #{n}."),
@@ -94,7 +94,7 @@ async fn tickets(env: &Env) -> Vec<Value> {
 }
 
 /// Opens `new` on the release repository (on top of the issues there) and has pdtd look.
-async fn look(env: &Env, new: pdt_github::Issue) {
+async fn look(env: &Env, new: pdt_forge::Issue) {
     let mut all = env.gh.issues.lock().unwrap().get(RELEASE_REPO).cloned().unwrap_or_default();
     all.insert(0, new);
     env.gh.set_issues(RELEASE_REPO, all);
@@ -291,7 +291,7 @@ fn step<'a>(run: &'a Value, node: &str) -> &'a Value {
 #[tokio::test]
 async fn an_issue_is_imported_once_and_wont_do_closes_it_as_not_planned() {
     let env = setup().await;
-    let slow = pdt_github::Issue { url: "https://github.com/o/r/issues/9".into(), ..issue(9, "Slow board", &[]) };
+    let slow = pdt_forge::Issue { url: "https://github.com/o/r/issues/9".into(), ..issue(9, "Slow board", &[]) };
     env.gh.set_issues("o/r", vec![slow]);
     let import = action(
         &env,
@@ -351,6 +351,31 @@ async fn an_issue_is_imported_once_and_wont_do_closes_it_as_not_planned() {
     .await;
     let r = run_now(&env, &comment, json!({})).await;
     assert_eq!(step(&r, "act")["port"], "unlinked", "{r}");
+}
+
+/// PDT-176: on a forge without issues the triage reads nothing and the issue actions fail, saying why.
+#[tokio::test]
+async fn a_forge_without_issues_reads_and_changes_none() {
+    let env = setup().await;
+    *env.gh.capabilities.lock().unwrap() = pdt_forge::Capabilities::NONE;
+    assert_eq!(builtin(&env, "pdt-bug-triage").await["enabled"], true);
+    look(&env, issue(1, "Old", &["from-pdt"])).await;
+    look(&env, issue(2, "Crash on start", &["from-pdt"])).await;
+    assert!(env.gh.calls.lock().unwrap().is_empty(), "{:?}", env.gh.calls.lock().unwrap());
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=github.issue.opened", None).await;
+    assert!(logged.as_array().unwrap().is_empty(), "{logged}");
+
+    env.gh.set_issues("o/r", vec![issue(9, "Slow board", &[])]);
+    let import = action(
+        &env,
+        json!({"id": "act", "kind": "github.import", "version": 1, "config": {
+            "repo": "o/r", "number": 9, "project": env.project}}),
+    )
+    .await;
+    let r = run_now(&env, &import, json!({})).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert!(r.to_string().contains("has no issues"), "{r}");
+    assert!(tickets(&env).await.is_empty());
 }
 
 #[tokio::test]

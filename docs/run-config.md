@@ -36,7 +36,7 @@ command = "pnpm test"                             # passes when it exits 0; test
 ```
 
 Unknown keys inside an entry are refused, and so are duplicate names, an entry without a command, and env names that
-are not `[A-Za-z_][A-Za-z0-9_]*`, and tests cannot be `web` or `detach`. A top-level section PDT does not know (say, one added by a newer PDT) is skipped
+are not `[A-Za-z_][A-Za-z0-9_]*`, and tests cannot be `web` or `detach`. A top-level section (or `forge` name) PDT does not know (say, one added by a newer PDT) is skipped
 instead: it is logged when a run reads the file, listed in `effective.ignored`, and noted in the project's settings,
 so a file written for a newer PDT still runs on an older one. Host overrides are written for this PDT, so saving them
 with an unknown section is refused.
@@ -77,6 +77,18 @@ exclusive = true                                  # only one active ticket at a 
 
 Areas are read from the project's **main checkout** (not the branch being worked on) plus the host overrides, merged
 by name like runs. An invalid area makes the whole configuration invalid, as a bad run does.
+
+### Forge
+
+The same file can name the project's forge: where its pull requests, CI, reviews and issues live.
+
+```toml
+forge = "github"                                  # or "none": no pull requests, CI or issues are read; merges are local
+```
+
+Without it, a project whose `origin` is on github.com uses GitHub and any other has none, so existing projects need
+nothing. It is read from the project's **main checkout** plus the host overrides (the overrides' wins). A forge name
+this PDT does not know (written for a newer one) is skipped like an unknown section, leaving the choice to the origin.
 
 ## What a run gets
 

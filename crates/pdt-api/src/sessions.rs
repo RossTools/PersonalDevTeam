@@ -222,7 +222,12 @@ pub(crate) async fn agent_instructions(
         Some(a) => Some(a.attempt.branch.clone()),
         None => crate::workflow::agent::step_attempt_branch(st, s).await,
     };
+    let forge = match ci_branch {
+        Some(_) => crate::forge::project_forge(st, &project.id, &project.repo_path).await.map(|f| f.api.agent_notes()),
+        None => None,
+    };
     let ctx = pdt_core::agent_context::SessionContext {
+        forge: forge.as_ref(),
         personal: project.is_personal(),
         tools: &tools,
         step: step.as_deref(),
