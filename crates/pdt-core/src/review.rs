@@ -221,6 +221,9 @@ pub struct MergePr {
     pub url: String,
     /// The base branch has a merge queue (it picks the method).
     pub queue: bool,
+    /// A change request on the local forge (PDT-178): PDT merges it here once its CI passes.
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// `GET /api/attempts/{id}/merge`.

@@ -83,12 +83,35 @@ by name like runs. An invalid area makes the whole configuration invalid, as a b
 The same file can name the project's forge: where its pull requests, CI, reviews and issues live.
 
 ```toml
-forge = "github"                                  # or "none": no pull requests, CI or issues are read; merges are local
+forge = "github"                                  # or "local" (below), or "none": no pull requests, CI or issues are read; merges are local
 ```
 
 Without it, a project whose `origin` is on github.com uses GitHub and any other has none, so existing projects need
 nothing. It is read from the project's **main checkout** plus the host overrides (the overrides' wins). A forge name
 this PDT does not know (written for a newer one) is skipped like an unknown section, leaving the choice to the origin.
+
+### The local forge
+
+For a repository with no remote, PDT can be the forge itself:
+
+```toml
+forge = "local"
+
+[ci]
+command = "cargo test"                            # optional; run with sh -c (cmd /C on Windows)
+```
+
+- **Change requests:** once a started ticket's branch has commits its base lacks, it has a change request (numbered
+  per project, `Change #1` in the UI), kept by PDT. It shows wherever a pull request would.
+- **CI:** on each new commit of the branch, PDT runs `[ci] command` in the ticket's worktree, with `CI=true` and
+  `PDT_RUN_BRANCH` set; exit 0 passes. A newer commit stops the run on the older one; a run cut short by a restart
+  runs again; one longer than two hours fails. Each run's output is at `GET /api/local-ci/runs/<id>/log` (the CI
+  failed message gives the agent that URL). Failures, conflicts and merges reach the agent as they do on GitHub.
+- **Merging:** Merge… sets the change request to merge once CI passes (at once when it already has, or when there is
+  no `[ci]`): a fast-forward of the base when it hasn't moved, else a merge commit, in the project's checkout. A
+  conflict goes back to the agent (`git merge <base>`). Approval and review rules apply as on any forge.
+- No merge queue, issues or forge reviews (PDT's own review only). Agents are told to commit and not push.
+- `[ci]` is only read with `forge = "local"`; an older PDT skips the section.
 
 ## What a run gets
 

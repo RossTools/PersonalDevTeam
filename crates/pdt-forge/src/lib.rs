@@ -175,6 +175,11 @@ pub trait Forge: Send + Sync {
     fn ci_dirs(&self) -> &'static [&'static str] {
         &[]
     }
+    /// Whether the repository has CI, when the forge knows without looking at its files (the local forge: its `[ci]`
+    /// command). None: ask [`Forge::ci_dirs`].
+    fn has_ci(&self) -> Option<bool> {
+        None
+    }
     /// The change request whose head is `branch`: the newest open one, else the newest.
     fn change_request(&self, repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError>;
     /// Recent CI runs on `branch`.

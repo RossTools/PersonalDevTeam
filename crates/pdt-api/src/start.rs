@@ -488,6 +488,23 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
     Ok(Json(load_ticket(&st, &id).await?))
 }
 
+/// Merge detection for one active attempt now, without fetching (the local forge merged it here, PDT-178): ends it
+/// as `merged` when its branch is. Whether it ended.
+pub(crate) async fn end_if_merged(st: &AppState, info: &AttemptInfo) -> bool {
+    if !is_merged(st, info, false, true).await {
+        return false;
+    }
+    let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
+    let via = Some(MergeVia::Detected);
+    match st.store.end_attempt(&info.attempt.id, AttemptState::Merged, Actor::System, via, pr, now_ms()).await {
+        Ok(ended) => ended.is_some(),
+        Err(e) => {
+            tracing::warn!(attempt = %info.attempt.id, error = %e, "could not end the merged attempt");
+            false
+        }
+    }
+}
+
 /// Ends the ticket's active attempt because the ticket was closed (callers close it first, so a refused close ends
 /// nothing). Done says the work landed, so the attempt is `merged`; Won't do ends it `merged` if its branch is (git
 /// or GitHub), else `abandoned`.

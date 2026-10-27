@@ -57,7 +57,9 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
         </Alert>
       );
     case 'pr_not_mergeable':
-      return <Alert tone="warning">GitHub can’t merge pull request #{p.pr?.number}: it is a draft or it conflicts with {p.base}.</Alert>;
+      return p.pr?.local
+        ? <Alert tone="warning">Change request #{p.pr.number} conflicts with {p.base}: merge {p.base} into {p.branch} first.</Alert>
+        : <Alert tone="warning">GitHub can’t merge pull request #{p.pr?.number}: it is a draft or it conflicts with {p.base}.</Alert>;
     case 'no_pr':
       return (
         <Alert
@@ -69,7 +71,9 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
         </Alert>
       );
     case 'pr_queued':
-      return <Alert tone="info">Auto-merge is already on for pull request #{p.pr?.number}; GitHub merges it once its checks pass.</Alert>;
+      return p.pr?.local
+        ? <Alert tone="info">Change request #{p.pr.number} is already set to merge; PDT merges it once its CI passes.</Alert>
+        : <Alert tone="info">Auto-merge is already on for pull request #{p.pr?.number}; GitHub merges it once its checks pass.</Alert>;
     default:
       return null;
   }
@@ -116,8 +120,15 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
       onClose();
       if (r.outcome === 'queued') {
         toast.success(
-          `Auto-merge is on for PR #${p.pr?.number}. GitHub merges it once the checks pass${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`,
+          p.pr?.local
+            ? `Change request #${p.pr.number} merges into ${p.base} once its CI passes${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`
+            : `Auto-merge is on for PR #${p.pr?.number}. GitHub merges it once the checks pass${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`,
         );
+        return;
+      }
+      if (github) {
+        // The local forge merged it at once (its CI had passed): PDT finishes the ticket as asked.
+        toast.success(`Merged change request #${p.pr?.number} into ${p.base}.`);
         return;
       }
       const fresh = await api.getTicket(ticket.id);
@@ -139,13 +150,13 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     <Dialog
       open
       onOpenChange={(o) => { if (!o) onClose(); }}
-      title={p?.pr ? `Merge pull request #${p.pr.number}` : `Merge ${ticket.key}`}
+      title={p?.pr ? `Merge ${p.pr.local ? 'change request' : 'pull request'} #${p.pr.number}` : `Merge ${ticket.key}`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {p && !p.problem && (
             <Button variant="primary" pending={busy} onClick={() => void merge()}>
-              {github ? (p.pr?.queue ? 'Add to merge queue' : 'Turn on auto-merge') : style === 'squash' ? 'Squash and merge' : 'Merge'}
+              {github ? (p.pr?.queue ? 'Add to merge queue' : p.pr?.local ? 'Merge when CI passes' : 'Turn on auto-merge') : style === 'squash' ? 'Squash and merge' : 'Merge'}
             </Button>
           )}
         </>
@@ -157,7 +168,13 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
         <Alert tone="error">{preview.error ? actionError(preview.error) : 'Could not check the merge.'}</Alert>
       ) : (
         <div className="flex flex-col gap-3 text-sm">
-          {github && p.pr ? (
+          {github && p.pr?.local ? (
+            <p>
+              Change request #{p.pr.number} merges into <span className="font-mono">{p.base}</span> here (a fast-forward, or a merge commit
+              when {p.base} has moved) once its CI passes.
+              {finishOnMerge ? '' : ` PDT notices the merge and offers to move ${ticket.key} to Done.`}
+            </p>
+          ) : github && p.pr ? (
             <p>
               <Link href={p.pr!.url} external>Pull request #{p.pr!.number}</Link> merges into <span className="font-mono">{p.base}</span> on
               GitHub{p.pr!.queue ? ' through the merge queue' : ' once its checks pass'}.

@@ -20,7 +20,8 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   none without a forge). GitHub's: from the attempt's `pr.ci` or Actions runs (`gh run list --branch <its branch>`,
   `gh run view`), never `gh pr checks` or the check-runs API, which fine-grained tokens can't read (PDT-165). The
   forge also names how to answer a PR comment (`gh pr comment`) and the CI watch not to run (`gh run watch`) in
-  "Messages from PDT".
+  "Messages from PDT". The local forge's (PDT-178): commit and don't push; PDT runs the `[ci]` command on each commit,
+  merges once it passes, and serves each run's log.
 - A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
   follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
   workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how

@@ -304,7 +304,7 @@ describe('MergeDialog', () => {
   });
 
   it('turns on auto-merge for an open pull request', async () => {
-    const { calls, onClose } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: true } }), {
+    const { calls, onClose } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: true, local: false } }), {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     expect(await screen.findByText(/through the merge queue/)).toBeInTheDocument();
@@ -320,8 +320,19 @@ describe('MergeDialog', () => {
     expect(await screen.findByText(/then ALP-1 moves to Done/)).toBeInTheDocument();
   });
 
+  it('sets a local change request to merge once its CI passes (PDT-178)', async () => {
+    const { onClose } = open(preview({ method: 'github', pr: { number: 3, url: '', queue: false, local: true } }), {
+      'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
+    });
+    expect(await screen.findByText(/merges into/)).toHaveTextContent(/here \(a fast-forward/);
+    expect(screen.getByRole('dialog', { name: 'Merge change request #3' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Merge when CI passes' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(await screen.findByText(/Change request #3 merges into main once its CI passes/)).toBeInTheDocument();
+  });
+
   it('turning off finishing once it merges turns off deleting the branch too', async () => {
-    const { calls } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: false } }), {
+    const { calls } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: false, local: false } }), {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Delete the branch' }));
