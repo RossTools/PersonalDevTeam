@@ -85,7 +85,9 @@ pub(crate) async fn list(
     State(st): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<Workflow>>, ApiError> {
-    Ok(Json(st.store.list_workflows(q.project.as_deref()).await?))
+    let reg = st.registry();
+    let all = st.store.list_workflows(q.project.as_deref()).await?;
+    Ok(Json(all.into_iter().filter(|w| !super::builtins::hidden(&reg, w)).collect()))
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, TS, schemars::JsonSchema)]
@@ -598,10 +600,12 @@ fn check_config(st: &AppState, kind: &str, config: &Value) -> Result<(), ApiErro
     if let Some(i) = pdt_core::integration::owner_of_connection(kind)
         && !reg.connection_kinds().iter().any(|k| k.id == kind)
     {
-        return Err(invalid(format!(
-            "{kind} connections are part of the {} integration, which is turned off (Settings → Integrations)",
-            i.label
-        )));
+        let why = if st.integrations.built().iter().any(|b| b.id() == i.id) {
+            "which is turned off (Settings → Integrations)".to_string()
+        } else {
+            format!("which this {} was built without", pdt_core::brand::SHORT_NAME)
+        };
+        return Err(invalid(format!("{kind} connections are part of the {} integration, {why}", i.label)));
     }
     reg.check_connection_config(kind, config).map_err(invalid)
 }

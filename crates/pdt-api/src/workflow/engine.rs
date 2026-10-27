@@ -83,7 +83,11 @@ const DOC_CACHE_MAX: usize = 256;
 /// The enabled workflows with their current documents.
 pub(crate) async fn enabled_with_docs(st: &AppState) -> Vec<(Workflow, Arc<WorkflowDoc>)> {
     let mut out = vec![];
+    let reg = st.registry();
     for wf in st.store.enabled_workflows().await.unwrap_or_default() {
+        if super::builtins::hidden(&reg, &wf) {
+            continue;
+        }
         let key = (wf.id.clone(), wf.version, wf.updated_at);
         let cached = st.workflow_docs.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned();
         let doc = match cached {

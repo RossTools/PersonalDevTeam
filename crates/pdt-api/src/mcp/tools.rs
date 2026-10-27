@@ -1164,6 +1164,7 @@ async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
         .await
         .map_err(store)?
         .into_iter()
+        .filter(|w| !crate::workflow::builtins::hidden(&st.registry(), w))
         .find(|w| w.name.eq_ignore_ascii_case(name.trim()))
         .map(|w| w.id)
         .ok_or_else(|| format!("no workflow is called {name}"))

@@ -37,7 +37,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `agentWorking` (an agent step is open on the attempt); CI events also `mergeWaiting` (a workflow's merge waits for
   this CI, PDT-151). The merge check logs `attempt.late_commits` (key `<attempt>:late_commits:<head>`, PDT-151:
   commits pushed after the attempt's PR merged; [tickets.md](tickets.md)). `ticket.stage_changed` carries `external`, the issue in each tracker the
-  ticket is linked to by tracker (`{"jira": "ABC-5"}`, `{{trigger.external.jira}}`; PDT-173, it was `jiraKey`), and
+  ticket is linked to by tracker (`{"jira": "ABC-5"}`, `{{trigger.external.jira}}`), and
   `githubIssue` (`owner/name#12`) when it is linked to a GitHub issue.
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
@@ -111,6 +111,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     not `approved` and with a body) → `session.send` (`{{trigger.notice.text}}`, dedupe on the notice key, `timeline:
     pr`).
   - Each enabled integration's built-ins (PDT-173: installed when it is enabled, and listed with PDT's): Jira's two.
+    A turned-off integration's built-ins (every install from before PDT-173 has Jira's, enabled) are left out of
+    `GET /api/workflows`, the engine and the PM's workflow lookup, as they can't run and built-ins can't be deleted;
+    they come back as they were when it is turned on (`builtins::hidden`).
   - **Import assigned Jira issues** (on, 7e-2): `jira.issue.created` and `jira.issue.updated` where `assignedToMe`
     and no `ticketId` → `jira.import` (`{{trigger.key}}` into `{{trigger.projectId}}`). Does nothing until a project
     links Jira.
@@ -162,10 +165,15 @@ kinds, node kinds, triggers, tools, PM instructions, project settings, pollers, 
 project links and workflows are kept. A connection of a turned-off integration's kind is refused (400, naming it), a
 project's settings leave its section out, and a workflow node of its kinds fails validation (and a run) with
 `integration_disabled` ("… is part of the Jira integration, which is turned off") or, when this build lacks it,
-`integration_missing`, instead of `unknown_kind`. A new install enables none; when the store opens with no
+`integration_missing`, instead of `unknown_kind`; a refused connection's message says which of the two it is. A new install enables none; when the store opens with no
 `integrations.enabled` yet (an install from before PDT-173), it enables those already in use: with a connection of one
 of their kinds, or a workflow of the user's (not a built-in) with one of their node kinds (pdt-store `host.rs`).
 Turning one on installs its built-ins and refreshes the built-in personas on the engine's next tick.
+
+**Breaking change (PDT-173):** `ticket.stage_changed` no longer has `jiraKey`; it has `external.jira`
+(`{{trigger.external.jira}}`). The untouched built-in "Done moves the Jira issue" follows its new template, but a copy
+of it, or a workflow of the user's, that reads `{{trigger.jiraKey}}` stops matching (the value is missing, so an
+`exists` condition is false) with no warning: change it to `{{trigger.external.jira}}`.
 
 An **action** (PDT-172, `integrations/action.rs`) is one capability defined once and offered as both a node kind and a
 pdt-mcp tool: one `Action` gives its input type (the node's config and the tool's arguments, one JSON Schema), output

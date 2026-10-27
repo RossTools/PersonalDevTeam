@@ -208,6 +208,11 @@ async fn turned_off_jira_registers_nothing_and_its_workflows_name_it() {
     assert!(!catalog.as_array().unwrap().iter().any(|k| k["id"].as_str().unwrap().starts_with("jira.")));
     let (_, settings) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
     assert_eq!(settings["integrations"], json!({}), "{settings}");
+    let (s, v) =
+        call(&env.app, "POST", "/api/connections", Some(json!({"name": "other", "kind": "jira", "url": "https://x"})))
+            .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Jira integration, which is turned off"), "{v}");
     let import = format!("/api/projects/{}/jira/import", env.project);
     let (s, _) = call(&env.app, "POST", &import, Some(json!({"key": "ABC-1"}))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -232,6 +237,54 @@ async fn turned_off_jira_registers_nothing_and_its_workflows_name_it() {
     let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
     let builtins: Vec<&str> = list.as_array().unwrap().iter().filter_map(|w| w["builtin"].as_str()).collect();
     assert!(builtins.contains(&"jira-import") && builtins.contains(&"jira-done"), "{builtins:?}");
+}
+
+/// PDT-173: an install from before integrations could be turned off has Jira's two built-ins, enabled. Upgraded with
+/// no Jira connection, Jira is off: they are left out of the workflow list (they can't run, and built-ins can't be
+/// deleted) rather than shown broken, and come back as they were when Jira is turned on.
+#[tokio::test]
+async fn an_upgrade_without_jira_hides_its_builtins_until_it_is_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("pdt.db");
+    let state = |store: Store| {
+        let mut st = AppState::new(store, tmp.path().join("data"));
+        st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_jira::Jira)]));
+        st
+    };
+    // The old install: the built-ins were installed whatever the user used.
+    let st = state(Store::open(&db).await.unwrap());
+    st.integrations.enable(&["jira".into()]);
+    pdt_api::run_workflows(&st).await;
+    let builtins = |list: &Value| -> Vec<(String, bool)> {
+        let mut out: Vec<(String, bool)> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|w| Some((w["builtin"].as_str()?.to_string(), w["enabled"].as_bool().unwrap())))
+            .filter(|(b, _)| b.starts_with("jira"))
+            .collect();
+        out.sort();
+        out
+    };
+    let (_, list) = call(&router(st.clone(), None), "GET", "/api/workflows", None).await;
+    assert_eq!(builtins(&list), [("jira-done".to_string(), true), ("jira-import".to_string(), true)]);
+    // As a store written before PDT-173 has it: no choice made yet, and no Jira connection.
+    st.store.delete_host_value("integrations.enabled").await.unwrap();
+    st.store.clone().close().await;
+    drop(st);
+
+    let st = state(Store::open(&db).await.unwrap());
+    pdt_api::load_enabled_integrations(&st).await.unwrap();
+    assert!(st.integrations.enabled().is_empty(), "no Jira connection: Jira is off");
+    let app = router(st.clone(), None);
+    pdt_api::run_workflows(&st).await;
+    let (_, list) = call(&app, "GET", "/api/workflows", None).await;
+    assert!(builtins(&list).is_empty(), "{list}");
+
+    let (s, _) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": ["jira"]}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, list) = call(&app, "GET", "/api/workflows", None).await;
+    assert_eq!(builtins(&list), [("jira-done".to_string(), true), ("jira-import".to_string(), true)]);
 }
 
 async fn link(env: &Env) {

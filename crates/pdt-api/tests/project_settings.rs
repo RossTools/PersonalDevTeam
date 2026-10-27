@@ -85,7 +85,7 @@ async fn integrations_this_build_lacks_are_listed_and_refused() {
     let (s, v) =
         call(&app, "POST", "/api/connections", Some(json!({"name": "work", "kind": "jira", "url": "https://x"}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
-    assert!(v["message"].as_str().unwrap().contains("Jira integration"), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Jira integration, which this PDT was built without"), "{v}");
     let (_, kinds) = call(&app, "GET", "/api/connections/kinds", None).await;
     let ids: Vec<&str> = kinds.as_array().unwrap().iter().map(|k| k["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["webhook", "http", "mcp"]);

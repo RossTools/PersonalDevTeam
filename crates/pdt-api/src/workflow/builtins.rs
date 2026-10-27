@@ -42,6 +42,14 @@ pub fn all(reg: &crate::integrations::Registry) -> Vec<Builtin> {
     BUILTINS.iter().copied().chain(reg.builtin_workflows()).collect()
 }
 
+/// Whether a stored workflow is the built-in of an integration that is turned off (or not in this build; PDT-173): an
+/// install from before integrations could be turned off has Jira's, enabled. It can't run (its kinds aren't
+/// registered) nor be deleted, so it is left out of the workflow list and the engine until its integration is on
+/// again, when it comes back as it was.
+pub fn hidden(reg: &crate::integrations::Registry, w: &Workflow) -> bool {
+    w.builtin.as_deref().is_some_and(|id| !all(reg).iter().any(|b| b.id == id))
+}
+
 fn doc(v: serde_json::Value) -> WorkflowDoc {
     serde_json::from_value(v).expect("a built-in workflow is a valid document")
 }
