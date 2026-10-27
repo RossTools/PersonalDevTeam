@@ -51,7 +51,7 @@ personas?, value?}`, `DELETE /api/secrets/{id}` (`204`; the keychain entry too),
 
 ## Agents (pdt-mcp)
 
-In the default tool set and the PM's (pdt-core `DEFAULT_TOOLS`, `PM_TOOLS`), never asking:
+In the default tool set and the PM's (pdt-core `DEFAULT_TOOLS`; each tool's `pm` flag), never asking:
 
 - `list_secrets {}`: names and descriptions of the secrets this session may use.
 - `request_secret {name, purpose}`: one the session may use already answers `{name, stored: true}`; one that exists

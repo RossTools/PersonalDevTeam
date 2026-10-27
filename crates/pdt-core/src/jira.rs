@@ -1,12 +1,45 @@
 //! Jira Cloud (Phase 7e spec §6, PDT-85): issues as REST v3 returns them, Atlassian Document Format (ADF) to and from
 //! text, and what is news about an issue since a poll. Pure: pdt-api calls Jira and logs the events.
 
+use crate::workflow::events::{
+    EventType, JIRA_ISSUE_COMMENTED, JIRA_ISSUE_CREATED, JIRA_ISSUE_TRANSITIONED, JIRA_ISSUE_UPDATED,
+    JiraIssueCommented, JiraIssueCreated, JiraIssueTransitioned, JiraIssueUpdated, schema_of,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use ts_rs::TS;
 
 /// The connection kind, and the `system` of a ticket's link to a Jira issue.
 pub const JIRA: &str = "jira";
+
+/// Jira's event types (the `jira` integration's), in catalog order.
+pub const EVENT_TYPES: &[EventType] = &[
+    EventType {
+        id: JIRA_ISSUE_CREATED,
+        title: "Jira issue created",
+        description: "A new issue in a project's Jira scope (checked every minute; linking a project only records where \
+                      it is).",
+        schema: schema_of::<JiraIssueCreated>,
+    },
+    EventType {
+        id: JIRA_ISSUE_UPDATED,
+        title: "Jira issue updated",
+        description: "Someone changed fields of an issue in a project's Jira scope (`changed` names them).",
+        schema: schema_of::<JiraIssueUpdated>,
+    },
+    EventType {
+        id: JIRA_ISSUE_TRANSITIONED,
+        title: "Jira issue transitioned",
+        description: "An issue in a project's Jira scope moved to another status.",
+        schema: schema_of::<JiraIssueTransitioned>,
+    },
+    EventType {
+        id: JIRA_ISSUE_COMMENTED,
+        title: "Jira issue commented",
+        description: "Someone commented on an issue in a project's Jira scope.",
+        schema: schema_of::<JiraIssueCommented>,
+    },
+];
 
 /// The transition (or status) a linked ticket's Done moves its issue to, unless the project says otherwise.
 pub const DEFAULT_DONE: &str = "Done";

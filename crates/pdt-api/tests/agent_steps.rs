@@ -150,7 +150,7 @@ async fn personas_are_built_in_versioned_and_diffed() {
     let (s, tools) = call(&env.app, "GET", "/api/personas/tools", None).await;
     assert_eq!(s, StatusCode::OK, "{tools}");
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, pdt_core::persona::ALL_TOOLS);
+    assert_eq!(names, pdt_api::tool_names());
     let link = tools.as_array().unwrap().iter().find(|t| t["name"] == "link_tickets").unwrap();
     assert_eq!((link["asks"].as_bool(), link["default"].as_bool()), (Some(true), Some(false)));
 

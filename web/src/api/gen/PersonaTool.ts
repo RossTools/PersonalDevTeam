@@ -9,7 +9,7 @@ export type PersonaTool = { name: string,
  */
 does: string, 
 /**
- * It asks the user before each call ([`ASKING_TOOLS`]).
+ * It asks the user before each call ([`ToolDecl::asks`](crate::integration::ToolDecl::asks)).
  */
 asks: boolean, 
 /**

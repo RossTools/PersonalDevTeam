@@ -3,6 +3,7 @@
 //! keeps them, pdt-api installs the built-ins and runs them.
 
 use crate::conversation::PermissionMode;
+use crate::integration::ToolTable;
 use crate::session::AgentKind;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -21,166 +22,6 @@ pub const DEFAULT_TOOLS: [&str; 9] = [
     "write_secret_file",
 ];
 
-/// Every pdt-mcp tool, in the order `tools/list` gives them.
-pub const ALL_TOOLS: [&str; 44] = [
-    "get_ticket",
-    "submit_outcome",
-    "ask_user",
-    "add_ticket_comment",
-    "add_review_comment",
-    "list_secrets",
-    "request_secret",
-    "run_with_secrets",
-    "write_secret_file",
-    "update_ticket",
-    "catalog_search",
-    "catalog_get",
-    "workflow_get",
-    "workflow_validate",
-    "workflow_dry_run",
-    "workflow_save",
-    "workflow_export",
-    "workflow_import",
-    "get_overview",
-    "search_tickets",
-    "get_session",
-    "list_workflow_runs",
-    "search_notes",
-    "save_note",
-    "delete_note",
-    "write_journal",
-    "list_todos",
-    "create_ticket",
-    "edit_ticket",
-    "link_tickets",
-    "unlink_tickets",
-    "stop_ticket",
-    "send_to_session",
-    "discord_get",
-    "discord_change",
-    "discord_webhook",
-    "scryer_library",
-    "scryer_search",
-    "scryer_queue",
-    "scryer_add",
-    "scryer_schema",
-    "scryer_query",
-    "scryer_mutate",
-    "report_bug",
-];
-
-/// Tools that act for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval
-/// card) unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so they are never in Claude's
-/// `--allowedTools`.
-pub const ASKING_TOOLS: [&str; 12] = [
-    "create_ticket",
-    "edit_ticket",
-    "link_tickets",
-    "unlink_tickets",
-    "stop_ticket",
-    "send_to_session",
-    "discord_change",
-    "discord_webhook",
-    "scryer_add",
-    "scryer_mutate",
-    "report_bug",
-    "workflow_import",
-];
-
-/// The PM persona's tools (PDT-81 spec §4).
-pub const PM_TOOLS: [&str; 42] = [
-    "get_ticket",
-    "submit_outcome",
-    "ask_user",
-    "add_ticket_comment",
-    "list_secrets",
-    "request_secret",
-    "run_with_secrets",
-    "write_secret_file",
-    "catalog_search",
-    "catalog_get",
-    "workflow_get",
-    "workflow_validate",
-    "workflow_dry_run",
-    "workflow_save",
-    "workflow_export",
-    "workflow_import",
-    "get_overview",
-    "search_tickets",
-    "get_session",
-    "list_workflow_runs",
-    "search_notes",
-    "save_note",
-    "delete_note",
-    "write_journal",
-    "list_todos",
-    "create_ticket",
-    "edit_ticket",
-    "link_tickets",
-    "unlink_tickets",
-    "stop_ticket",
-    "send_to_session",
-    "discord_get",
-    "discord_change",
-    "discord_webhook",
-    "scryer_library",
-    "scryer_search",
-    "scryer_queue",
-    "scryer_add",
-    "scryer_schema",
-    "scryer_query",
-    "scryer_mutate",
-    "report_bug",
-];
-
-/// What each of [`ALL_TOOLS`] lets the agent do, in the same order: the Personas page's tool list (PDT-110).
-const TOOL_DOES: [(&str, &str); 44] = [
-    ("get_ticket", "Read the ticket, its comments and attempt"),
-    ("submit_outcome", "Finish the step with an outcome and a summary"),
-    ("ask_user", "Ask you questions (they wait in the Inbox)"),
-    ("add_ticket_comment", "Comment on the ticket"),
-    ("add_review_comment", "Comment on a line of the attempt's changes"),
-    ("list_secrets", "See the names of the secrets it may use"),
-    ("request_secret", "Ask you for a secret (you type it into the Inbox, never the chat)"),
-    ("run_with_secrets", "Run a command with secrets in its environment (it never sees them)"),
-    ("write_secret_file", "Write a file (a .env) with secrets filled in, without seeing it"),
-    ("update_ticket", "Rewrite its own ticket's title and description"),
-    ("catalog_search", "Search the workflow node catalog"),
-    ("catalog_get", "Read a catalog node"),
-    ("workflow_get", "Read a workflow"),
-    ("workflow_validate", "Check a workflow document"),
-    ("workflow_dry_run", "Try a workflow without running it"),
-    ("workflow_save", "Save a workflow (a new version)"),
-    ("workflow_export", "Export workflows as text to paste into another PDT"),
-    ("workflow_import", "Import pasted workflows (disabled)"),
-    ("get_overview", "See every project's board, tickets in flight, the Inbox and running sessions"),
-    ("search_tickets", "Search tickets in every project"),
-    ("get_session", "Read a session's state and last messages"),
-    ("list_workflow_runs", "List workflow runs and their steps"),
-    ("search_notes", "Search the PM's notes and journal"),
-    ("save_note", "Save a note"),
-    ("delete_note", "Delete a note"),
-    ("write_journal", "Write the session's journal entry"),
-    ("list_todos", "Read your todo list"),
-    ("create_ticket", "Create tickets"),
-    ("edit_ticket", "Edit tickets (outside the PM, others only by exact key)"),
-    ("link_tickets", "Link two tickets (blocks, relates to)"),
-    ("unlink_tickets", "Remove a link between tickets"),
-    ("stop_ticket", "Stop a ticket's work: its workflow run, sessions and attempt"),
-    ("send_to_session", "Message a session"),
-    ("discord_get", "Look at the Discord server: its channels and webhooks"),
-    ("discord_change", "Create, rename, move or archive Discord channels"),
-    ("discord_webhook", "Make a Discord webhook for discord.post steps"),
-    ("scryer_library", "Browse the Scryer media library"),
-    ("scryer_search", "Look up films, series and anime to add to Scryer"),
-    ("scryer_queue", "See what Scryer is downloading"),
-    ("scryer_add", "Add a film, series or anime to Scryer"),
-    ("scryer_schema", "Find Scryer's settings and operations in its API"),
-    ("scryer_query", "Read anything from Scryer's API (settings, indexers, download clients)"),
-    ("scryer_mutate", "Change Scryer's settings through its API"),
-    ("report_bug", "Report a bug in PDT (an issue on its repository, or a local ticket)"),
-];
-
 /// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -189,28 +30,10 @@ pub struct PersonaTool {
     pub name: String,
     /// What it lets the agent do, in a line.
     pub does: String,
-    /// It asks the user before each call ([`ASKING_TOOLS`]).
+    /// It asks the user before each call ([`ToolDecl::asks`](crate::integration::ToolDecl::asks)).
     pub asks: bool,
     /// In the default set ([`DEFAULT_TOOLS`]).
     pub default: bool,
-}
-
-/// Every pdt-mcp tool, in [`ALL_TOOLS`]' order, with what it does.
-pub fn tool_list() -> Vec<PersonaTool> {
-    ALL_TOOLS
-        .iter()
-        .map(|&name| PersonaTool {
-            name: name.to_string(),
-            does: TOOL_DOES.iter().find(|(n, _)| *n == name).map(|(_, d)| d.to_string()).unwrap_or_default(),
-            asks: asks(name),
-            default: DEFAULT_TOOLS.contains(&name),
-        })
-        .collect()
-}
-
-/// Whether a call to `tool` needs the user's yes (see [`ASKING_TOOLS`]).
-pub fn asks(tool: &str) -> bool {
-    ASKING_TOOLS.contains(&tool)
 }
 
 const MAX_NAME: usize = 60;
@@ -258,17 +81,17 @@ pub struct PersonaSetup {
 }
 
 impl PersonaSetup {
-    /// The tools the persona's sessions get.
-    pub fn tool_set(&self) -> Vec<String> {
+    /// The tools the persona's sessions get, in `all`'s order.
+    pub fn tool_set(&self, all: &ToolTable) -> Vec<String> {
         if self.tools.is_empty() {
             DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect()
         } else {
-            ALL_TOOLS.iter().filter(|t| self.tools.iter().any(|x| x == *t)).map(|t| t.to_string()).collect()
+            all.names().into_iter().filter(|t| self.tools.iter().any(|x| x == t)).map(String::from).collect()
         }
     }
 
-    /// The setup with names trimmed, or why it can't be saved.
-    pub fn validate(mut self) -> Result<Self, String> {
+    /// The setup with names trimmed, or why it can't be saved (`all`: the tools PDT has).
+    pub fn validate(mut self, all: &ToolTable) -> Result<Self, String> {
         self.model = self.model.map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
         if self.instructions.len() > MAX_INSTRUCTIONS {
             return Err(format!("instructions are longer than {} KB", MAX_INSTRUCTIONS / 1024));
@@ -276,8 +99,8 @@ impl PersonaSetup {
         let mut tools: Vec<String> = vec![];
         for t in self.tools {
             let t = t.trim().to_string();
-            if !ALL_TOOLS.contains(&t.as_str()) {
-                return Err(format!("{t} is not a PDT tool (tools: {})", ALL_TOOLS.join(", ")));
+            if !all.contains(&t) {
+                return Err(format!("{t} is not a PDT tool (tools: {})", all.names().join(", ")));
             }
             if !tools.contains(&t) {
                 tools.push(t);
@@ -407,13 +230,13 @@ pub struct PersonaTemplate {
     pub diff: PersonaDiff,
 }
 
-fn as_text(s: &PersonaSetup) -> String {
+fn as_text(s: &PersonaSetup, all: &ToolTable) -> String {
     let mut t = format!(
         "agent: {}\nmodel: {}\npermission mode: {}\ntools: {}\n\n",
         serde_json::to_value(s.agent).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
         s.model.as_deref().unwrap_or("(default)"),
         s.permission_mode.map(|m| m.as_str()).unwrap_or("(project or host default)"),
-        s.tool_set().join(", "),
+        s.tool_set(all).join(", "),
     );
     t.push_str(&s.instructions);
     if !t.ends_with('\n') {
@@ -422,7 +245,8 @@ fn as_text(s: &PersonaSetup) -> String {
     t
 }
 
-pub fn diff(a: &PersonaSetup, b: &PersonaSetup, a_label: &str, b_label: &str) -> PersonaDiff {
+/// What changed from `a` to `b` (`all`: the tools PDT has).
+pub fn diff(a: &PersonaSetup, b: &PersonaSetup, a_label: &str, b_label: &str, all: &ToolTable) -> PersonaDiff {
     let mut changed = vec![];
     if a.agent != b.agent {
         changed.push("agent".to_string());
@@ -433,24 +257,25 @@ pub fn diff(a: &PersonaSetup, b: &PersonaSetup, a_label: &str, b_label: &str) ->
     if a.permission_mode != b.permission_mode {
         changed.push("permissionMode".into());
     }
-    if a.tool_set() != b.tool_set() {
+    if a.tool_set(all) != b.tool_set(all) {
         changed.push("tools".into());
     }
     if a.instructions != b.instructions {
         changed.push("instructions".into());
     }
-    let (ta, tb) = (as_text(a), as_text(b));
+    let (ta, tb) = (as_text(a, all), as_text(b, all));
     let unified = similar::TextDiff::from_lines(&ta, &tb).unified_diff().header(a_label, b_label).to_string();
     PersonaDiff { changed, unified }
 }
 
 /// A built-in persona brought up to a newer template (PDT-100). `base` is the template PDT applied last: each field
 /// the user left as it was follows `template`; a field they changed stays theirs. Returns the setup and the fields
-/// kept (named as in [`PersonaDiff::changed`]) whose template moved on.
+/// kept (named as in [`PersonaDiff::changed`]) whose template moved on. `all`: the tools PDT has.
 pub fn follow_template(
     base: &PersonaSetup,
     current: &PersonaSetup,
     template: &PersonaSetup,
+    all: &ToolTable,
 ) -> (PersonaSetup, Vec<&'static str>) {
     let mut kept = vec![];
     fn pick<T: Clone + PartialEq>(
@@ -468,10 +293,10 @@ pub fn follow_template(
         }
         current.clone()
     }
-    let tools = if current.tool_set() == base.tool_set() {
+    let tools = if current.tool_set(all) == base.tool_set(all) {
         template.tools.clone()
     } else {
-        if template.tool_set() != base.tool_set() {
+        if template.tool_set(all) != base.tool_set(all) {
             kept.push("tools");
         }
         current.tools.clone()
@@ -515,19 +340,32 @@ pub struct BuiltinPersona {
     pub role: &'static str,
     pub description: &'static str,
     pub permission_mode: Option<PermissionMode>,
-    /// Its pdt-mcp tools; empty: the default set.
-    pub tools: &'static [&'static str],
+    /// Its pdt-mcp tools.
+    pub tools: BuiltinTools,
     pub instructions: &'static str,
 }
 
+/// A built-in persona's pdt-mcp tools.
+pub enum BuiltinTools {
+    /// These (empty: the default set).
+    These(&'static [&'static str]),
+    /// Every tool the PM has ([`ToolDecl::pm`](crate::integration::ToolDecl::pm)), from every integration.
+    Pm,
+}
+
 impl BuiltinPersona {
-    pub fn setup(&self) -> PersonaSetup {
+    /// Its setup, with `all` the tools PDT has.
+    pub fn setup(&self, all: &ToolTable) -> PersonaSetup {
+        let tools = match self.tools {
+            BuiltinTools::These(t) => t.to_vec(),
+            BuiltinTools::Pm => all.pm_tools(),
+        };
         PersonaSetup {
             agent: AgentKind::Claude,
             model: None,
             instructions: self.instructions.to_string(),
             permission_mode: self.permission_mode,
-            tools: self.tools.iter().map(|t| t.to_string()).collect(),
+            tools: tools.into_iter().map(String::from).collect(),
         }
     }
 }
@@ -539,7 +377,13 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
         role: "refiner",
         description: "Turns a draft ticket into one that is ready to build.",
         permission_mode: None,
-        tools: &["get_ticket", "submit_outcome", "ask_user", "add_ticket_comment", "update_ticket"],
+        tools: BuiltinTools::These(&[
+            "get_ticket",
+            "submit_outcome",
+            "ask_user",
+            "add_ticket_comment",
+            "update_ticket",
+        ]),
         instructions: "You are the Refiner. You make a ticket ready for a coding agent to build without guessing.\n\n\
 - Read the ticket with `get_ticket` (its comments and earlier outcomes too) and look at the code it touches.\n\
 - Change nothing in the code. Improve the ticket: a clear scope, what is out of scope, and a \"Done when\" list \
@@ -556,7 +400,7 @@ can't until the user decides something you could not ask.\n",
         role: "coder",
         description: "Builds the ticket on its branch, runs the checks and commits.",
         permission_mode: None,
-        tools: &[],
+        tools: BuiltinTools::These(&[]),
         instructions: "You are the Coder. You build the ticket on its branch.\n\n\
 - Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point.\n\
 - Work test-first where the project does, follow the repository's instructions, run its checks, and commit.\n\
@@ -570,7 +414,7 @@ only when you are blocked on a decision that is the user's.\n",
         role: "reviewer",
         description: "Reviews the attempt's changes against the ticket.",
         permission_mode: None,
-        tools: &[],
+        tools: BuiltinTools::These(&[]),
         instructions: "You are the Reviewer. You review the attempt's changes with fresh eyes; you change nothing.\n\n\
 - Read the ticket with `get_ticket` and the branch's diff against its base (`git diff <base>...HEAD`).\n\
 - Look for bugs, missing tests, behaviour the ticket asks for that is missing, and changes it didn't ask for.\n\
@@ -584,7 +428,7 @@ change.\n",
         role: "qa",
         description: "Runs the project's tests and tries the change.",
         permission_mode: None,
-        tools: &[],
+        tools: BuiltinTools::These(&[]),
         instructions: "You are QA. You check that the attempt's change works.\n\n\
 - Read the ticket with `get_ticket` and its \"Done when\".\n\
 - Run the project's tests and, where it has them, its runs (PDT's guide `GET /api/guides/run-config` explains \
@@ -598,7 +442,7 @@ them); try each point of \"Done when\".\n\
         role: "pm",
         description: "The project manager you talk to; also triage in a workflow.",
         permission_mode: Some(PermissionMode::Ask),
-        tools: &PM_TOOLS,
+        tools: BuiltinTools::Pm,
         instructions: PM_INSTRUCTIONS,
     },
 ];
@@ -663,20 +507,17 @@ pub fn builtin_persona(id: &str) -> Option<&'static BuiltinPersona> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn every_tool_says_what_it_does() {
-        let names: Vec<&str> = TOOL_DOES.iter().map(|(n, _)| *n).collect();
-        assert_eq!(names, ALL_TOOLS, "TOOL_DOES lists ALL_TOOLS, in order");
-        let list = tool_list();
-        assert_eq!(list.len(), ALL_TOOLS.len());
-        assert!(list.iter().all(|t| !t.does.is_empty()));
-        assert!(list.iter().find(|t| t.name == "discord_change").unwrap().asks);
-        assert!(!list.iter().find(|t| t.name == "discord_get").unwrap().asks);
-        let defaults: Vec<&str> = list.iter().filter(|t| t.default).map(|t| t.name.as_str()).collect();
-        assert_eq!(defaults, DEFAULT_TOOLS);
-    }
-
     use super::*;
+    use crate::integration::ToolDecl;
+
+    /// Some of PDT's tools; pdt-api's registry tests check the real table.
+    fn table() -> ToolTable {
+        ToolTable::new(DEFAULT_TOOLS.iter().map(|&t| ToolDecl::new(t, "does").pm()).chain([
+            ToolDecl::new("update_ticket", "Rewrite its own ticket"),
+            ToolDecl::new("catalog_get", "Read a catalog node").read_only().pm(),
+            ToolDecl::new("create_ticket", "Create tickets").asks().pm(),
+        ]))
+    }
 
     fn setup() -> PersonaSetup {
         PersonaSetup {
@@ -690,17 +531,18 @@ mod tests {
 
     #[test]
     fn empty_tools_mean_the_default_set_and_unknown_tools_are_refused() {
-        let s = setup().validate().unwrap();
+        let t = table();
+        let s = setup().validate(&t).unwrap();
         assert_eq!(s.model.as_deref(), Some("opus"));
-        assert_eq!(s.tool_set(), DEFAULT_TOOLS.to_vec());
+        assert_eq!(s.tool_set(&t), DEFAULT_TOOLS.to_vec());
         let s = PersonaSetup { tools: vec!["catalog_get".into(), "get_ticket".into(), "get_ticket".into()], ..setup() };
-        let s = s.validate().unwrap();
+        let s = s.validate(&t).unwrap();
         assert_eq!(s.tools, ["catalog_get", "get_ticket"]);
-        assert_eq!(s.tool_set(), ["get_ticket", "catalog_get"], "in the catalog's order");
+        assert_eq!(s.tool_set(&t), ["get_ticket", "catalog_get"], "in the catalog's order");
         let bad = PersonaSetup { tools: vec!["rm_rf".into()], ..setup() };
-        assert!(bad.validate().unwrap_err().contains("rm_rf is not a PDT tool"));
+        assert!(bad.validate(&t).unwrap_err().contains("rm_rf is not a PDT tool"));
         let long = PersonaSetup { instructions: "x".repeat(MAX_INSTRUCTIONS + 1), ..setup() };
-        assert!(long.validate().is_err());
+        assert!(long.validate(&t).is_err());
     }
 
     #[test]
@@ -718,11 +560,11 @@ mod tests {
             permission_mode: Some(PermissionMode::Plan),
             ..a.clone()
         };
-        let d = diff(&a, &b, "v1", "v2");
+        let d = diff(&a, &b, "v1", "v2", &table());
         assert_eq!(d.changed, ["permissionMode", "instructions"]);
         assert!(d.unified.starts_with("--- v1\n+++ v2\n"), "{}", d.unified);
         assert!(d.unified.contains("+Do it well."));
-        assert!(diff(&a, &a, "a", "b").changed.is_empty());
+        assert!(diff(&a, &a, "a", "b", &table()).changed.is_empty());
     }
 
     #[test]
@@ -737,43 +579,41 @@ mod tests {
     fn the_builtins_are_the_pipeline_roles_and_the_pm() {
         let names: Vec<_> = BUILTIN_PERSONAS.iter().map(|p| p.name).collect();
         assert_eq!(names, ["Refiner", "Coder", "Reviewer", "QA", "PM"]);
+        let t = table();
         for p in BUILTIN_PERSONAS {
-            assert!(p.setup().validate().is_ok(), "{}", p.id);
+            assert!(p.setup(&t).validate(&t).is_ok(), "{}", p.id);
             assert!(p.instructions.contains("submit_outcome"), "{}", p.id);
         }
         assert!(builtin_persona("qa").is_some() && builtin_persona("nobody").is_none());
     }
 
     #[test]
-    fn the_pm_tools_are_pdt_tools_and_the_asking_ones_are_among_them() {
-        for t in PM_TOOLS.iter().chain(&ASKING_TOOLS) {
-            assert!(ALL_TOOLS.contains(t), "{t}");
-        }
-        let pm = builtin_persona("pm").unwrap().setup();
-        assert_eq!(pm.tool_set().len(), PM_TOOLS.len());
-        assert!(ASKING_TOOLS.iter().all(|t| pm.tool_set().iter().any(|x| x == t)));
-        assert!(asks("create_ticket") && !asks("get_overview") && !asks("add_ticket_comment"));
+    fn the_pm_gets_every_pm_tool() {
+        let t = table();
+        let pm = builtin_persona("pm").unwrap().setup(&t);
+        assert_eq!(pm.tool_set(&t), t.pm_tools());
         assert_eq!(pm.permission_mode, Some(PermissionMode::Ask));
     }
 
     #[test]
     fn an_edited_built_in_follows_its_template_where_the_user_left_it() {
-        let old = builtin_persona("pm").unwrap().setup();
+        let t = table();
+        let old = builtin_persona("pm").unwrap().setup(&t);
         let new = PersonaSetup { instructions: "New PM text.".into(), ..old.clone() };
         // Untouched: the new template.
-        assert_eq!(follow_template(&old, &old, &new), (new.clone(), vec![]));
+        assert_eq!(follow_template(&old, &old, &new, &t), (new.clone(), vec![]));
         // Only the model changed: it stays, the instructions follow.
         let mine = PersonaSetup { model: Some("opus".into()), ..old.clone() };
-        let (s, kept) = follow_template(&old, &mine, &new);
+        let (s, kept) = follow_template(&old, &mine, &new, &t);
         assert_eq!(s, PersonaSetup { model: Some("opus".into()), ..new.clone() });
         assert!(kept.is_empty(), "the template's model did not move: {kept:?}");
         // Edited instructions stay the user's, and are named.
         let mine = PersonaSetup { instructions: "Mine.".into(), ..old.clone() };
-        assert_eq!(follow_template(&old, &mine, &new), (mine.clone(), vec!["instructions"]));
+        assert_eq!(follow_template(&old, &mine, &new, &t), (mine.clone(), vec!["instructions"]));
         // Tools compare as sets the persona gets (empty is the default set).
         let base = PersonaSetup { tools: vec![], ..old.clone() };
         let same = PersonaSetup { tools: DEFAULT_TOOLS.map(String::from).to_vec(), ..old.clone() };
-        let more = PersonaSetup { tools: ALL_TOOLS.map(String::from).to_vec(), ..old.clone() };
-        assert_eq!(follow_template(&base, &same, &more).0.tools, more.tools);
+        let more = PersonaSetup { tools: t.names().into_iter().map(String::from).collect(), ..old.clone() };
+        assert_eq!(follow_template(&base, &same, &more, &t).0.tools, more.tools);
     }
 }

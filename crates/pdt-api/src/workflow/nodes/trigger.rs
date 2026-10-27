@@ -2,7 +2,7 @@
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};
 use pdt_core::workflow::cond::Condition;
-use pdt_core::workflow::events::{EVENT_TYPES, EventType, OWN_TRIGGERS};
+use pdt_core::workflow::events::EventType;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,16 +33,9 @@ pub struct SharedTrigger {
     pub run_key: Option<String>,
 }
 
-/// A trigger on one event type.
+/// A trigger on one event type: the registry makes one for each type no node kind claims
+/// (`crate::integrations::Registry::node_kinds`).
 pub struct EventTrigger(pub &'static EventType);
-
-pub fn event_triggers() -> Vec<Box<dyn NodeKind>> {
-    EVENT_TYPES
-        .iter()
-        .filter(|t| !OWN_TRIGGERS.contains(&t.id))
-        .map(|t| Box::new(EventTrigger(t)) as Box<dyn NodeKind>)
-        .collect()
-}
 
 impl NodeKind for EventTrigger {
     fn spec(&self) -> KindSpec {

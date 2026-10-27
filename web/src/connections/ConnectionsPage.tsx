@@ -7,7 +7,7 @@ import { Alert, Badge, Button, Page, Section, Skeleton, relativeTime, useConfirm
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from './ConnectionDialog';
-import { CONNECTION_KINDS, hookUrl, kindOf } from './kinds';
+import { hookUrl, useConnectionKinds } from './kinds';
 
 /** An MCP server's tools: how many (their names on hover), or why listing them failed; List again asks it now. */
 function McpToolsLine({ c }: { c: Connection }) {
@@ -30,6 +30,7 @@ function McpToolsLine({ c }: { c: Connection }) {
 }
 
 function Row({ c, onEdit, onDelete }: { c: Connection; onEdit: () => void; onDelete: () => void }) {
+  const { kindOf } = useConnectionKinds();
   return (
     <div className="flex flex-wrap items-center gap-2 py-1">
       <span className="min-w-0 truncate text-sm font-medium">{c.name}</span>
@@ -56,6 +57,7 @@ export function ConnectionsPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const list = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const kinds = useConnectionKinds();
   const [editing, setEditing] = useState<{ connection?: Connection; kind?: string } | null>(null);
   const remove = useMutation({
     mutationFn: (c: Connection) => api.deleteConnection(c.id),
@@ -71,15 +73,16 @@ export function ConnectionsPage() {
     if (ok) remove.mutate(c);
   };
   const items = list.data ?? [];
-  const known = new Set(CONNECTION_KINDS.map((k) => k.id));
+  const known = new Set(kinds.kinds.map((k) => k.id));
   const other = items.filter((c) => !known.has(c.kind));
   const rows = (cs: Connection[]) =>
     cs.map((c) => <Row key={c.id} c={c} onEdit={() => setEditing({ connection: c })} onDelete={() => void ask(c)} />);
   return (
     <Page title="Connections" description="Services workflows use by name. Their secrets are kept in this machine's keychain and never shown again.">
       {list.error && <Alert tone="error">Connections could not be loaded: {list.error.message}</Alert>}
-      {list.isLoading && <Skeleton label="Loading connections" className="h-24" />}
-      {!list.isLoading && CONNECTION_KINDS.map((k) => {
+      {kinds.error && <Alert tone="error">The kinds of connection could not be loaded: {kinds.error.message}</Alert>}
+      {(list.isLoading || kinds.isLoading) && <Skeleton label="Loading connections" className="h-24" />}
+      {!list.isLoading && !kinds.isLoading && kinds.kinds.map((k) => {
         const mine = items.filter((c) => c.kind === k.id);
         return (
           <Section key={k.id} label={k.plural} description={k.setup}

@@ -13,6 +13,17 @@ const conn = (name: string, kind: string, hasSecret = true): Connection => ({
 describe('connections', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('has a section per kind the server lists, and Other for the rest (PDT-171)', async () => {
+    const kind = { id: 'dummy', label: 'Dummy', plural: 'Dummies', setup: 'A dummy service.', description: 'Pokes it.', url: true,
+      secretLabel: 'Key', secretHint: 'Its key.', generate: false, auth: false, secretOptional: false, urlOptional: false, fields: [], discordBot: false };
+    stubApi({ 'GET /api/connections/kinds': [kind], 'GET /api/connections': [conn('d', 'dummy'), conn('alerts', 'discord_webhook')] });
+    renderWithQuery(<ConnectionsPage />);
+    expect(await screen.findByText('A dummy service.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add dummy' })).toBeTruthy();
+    expect(screen.queryByText(/Discord webhooks/)).toBeNull();
+    expect(screen.getByText('Other')).toBeTruthy();
+  });
+
   it('shows why a sensor cannot use a connection, and since when', async () => {
     const failing = { ...conn('work', 'jira'), lastError: 'Jira answered 401', lastErrorAt: Date.now() - 5 * 60_000 };
     stubApi({ 'GET /api/connections': [failing, conn('ci', 'buildkite')] });

@@ -16,6 +16,7 @@ pub mod host_path;
 pub mod identity;
 pub mod inbox;
 pub mod instance;
+pub mod integration;
 pub mod jira;
 pub mod links;
 pub mod liveness;

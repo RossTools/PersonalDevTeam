@@ -1,4 +1,5 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
+import type { ConnectionKind } from './gen/ConnectionKind';
 import type { BugReportFiled } from './gen/BugReportFiled';
 import type { BugReportPreview } from './gen/BugReportPreview';
 import type { NewBugReport } from './gen/NewBugReport';
@@ -364,6 +365,7 @@ export const api = {
   deleteSecret: (id: string) => request<void>(`/api/secrets/${enc(id)}`, { method: 'DELETE' }),
   secretUses: (id: string) => request<SecretUse[]>(`/api/secrets/${enc(id)}/uses`),
   listConnections: () => request<Connection[]>('/api/connections'),
+  connectionKinds: () => request<ConnectionKind[]>('/api/connections/kinds'),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
   updateConnection: (id: string, c: Partial<ConnectionInput>) =>
     request<Connection>(`/api/connections/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(c) }),
