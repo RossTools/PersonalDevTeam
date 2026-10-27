@@ -856,7 +856,13 @@ async fn a_late_outcome_after_a_timeout_continues_the_run() {
     );
     assert!(r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "fix" && s["status"] == "succeeded"));
     assert!(inbox(&env).await.is_empty(), "the timed-out item is resolved");
-    // The run has moved on: another outcome finds no step.
+    // The run has moved on: another outcome finds no step. The run's end stops the step's session once its turn is over
+    // (PDT-183); wait for that, so the message reopens it rather than landing in a turn the stop then cuts short.
+    tick_until(&env, "the step's session stopped", || async {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+        (s["status"] == "finished").then_some(s)
+    })
+    .await;
     send(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Again."}"#).await;
     tick_until(&env, "the refusal", || async {
         let said = agent_says(&env, &session).await;
