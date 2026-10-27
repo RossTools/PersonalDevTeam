@@ -17,6 +17,8 @@ import type { ProjectSettingsInput } from '../api/gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
 import { CodeViewer } from '../files/LazyCodeViewer';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
+import { fieldShown, fieldText } from '../connections/kinds';
+import type { ProjectSettingsSchema } from '../api/gen/ProjectSettingsSchema';
 import type { SettingsSection } from '../common/SettingsScreens';
 
 /** The Select's value for "no override: use the host setting" (its empty value would show the placeholder). */
@@ -71,6 +73,8 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
 export function useProjectSettingsSections(project: Project): { notice: ReactNode; sections: SettingsSection[] } {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ['project-settings', project.id], queryFn: () => api.projectSettings(project.id) });
+  // The integrations a project links to; they change only with PDT.
+  const schemas = useQuery({ queryKey: ['project-settings-schemas'], queryFn: api.projectSettingsSchemas, staleTime: Infinity }).data ?? [];
   const openSession = useOpenSession();
   const agents = useAgentAvailability();
   const defaults = useAgentDefaults();
@@ -98,7 +102,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
     { label: 'Agents', node: <Agents project={project} settings={settings.data} /> },
     !personal && { label: 'Review', node: <Merging project={project} settings={settings.data} /> },
     { label: 'Pipeline and policies', node: <Pipeline project={project} settings={settings.data} personal={personal} /> },
-    !personal && { label: 'Jira and Buildkite', node: <Integrations project={project} settings={settings.data} /> },
+    !personal && { label: 'Integrations', node: <Integrations project={project} settings={settings.data} schemas={schemas} /> },
   ];
   return {
     notice: settings.isError ? <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert> : null,
@@ -470,75 +474,82 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
   );
 }
 
-interface JiraForm { connection: string; scope: string; done: string }
-interface BuildkiteForm { connection: string; pipelines: string }
+/** A form's text for each integration edited, by its id: `connection` and each field's key. */
+type IntegrationForms = Record<string, Record<string, string>>;
+
+/** An integration's stored settings as the form's text (a field with a default shows it until set). */
+function integrationText(schema: ProjectSettingsSchema, stored: Record<string, unknown> | undefined): Record<string, string> {
+  const text: Record<string, string> = { connection: typeof stored?.connection === 'string' ? stored.connection : '' };
+  for (const f of schema.fields) text[f.key] = stored && f.key in stored ? fieldText(f, stored[f.key]) : f.default ?? '';
+  return text;
+}
+
+/** The settings the form's text makes: every field sent, so an emptied one is cleared (or takes its default). */
+function integrationInput(schema: ProjectSettingsSchema, text: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = { connection: text.connection ?? '' };
+  for (const f of schema.fields) {
+    const t = text[f.key] ?? '';
+    out[f.key] = f.type === 'lines' ? t.split('\n').map((l) => l.trim()).filter(Boolean) : t.trim();
+  }
+  return out;
+}
 
 /**
- * The project's Jira project and Buildkite pipelines (Phase 7e): issues assigned to you become tickets, Done moves the
- * issue, and the branches' builds show as CI. Kept on this host, never in the repository. Typed values stay until
- * saved (the panel re-renders on every poll).
+ * The project's integrations (PDT-174): each integration that a project links to declares its connection kind and
+ * fields, and its part of the form is made from them (Jira's issues and Done, Buildkite's pipelines). Kept on this
+ * host, never in the repository. Typed values stay until saved (the panel re-renders on every poll).
  */
-function Integrations({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
+function Integrations({ project, settings, schemas }: { project: Project; settings: ProjectSettingsView | undefined; schemas: ProjectSettingsSchema[] }) {
   const save = useSaveProjectSettings(project, settings);
   const [saved, setSaved] = useSavedNote();
-  const j = settings?.jira;
-  const b = settings?.buildkite;
-  const [jira, setJira] = useState<JiraForm | null>(null);
-  const [bk, setBk] = useState<BuildkiteForm | null>(null);
-  const jv: JiraForm = jira ?? { connection: j?.connection ?? '', scope: j?.scope ?? '', done: j?.done ?? 'Done' };
-  const bv: BuildkiteForm = bk ?? { connection: b?.connection ?? '', pipelines: (b?.pipelines ?? []).join(', ') };
-  const dirty = jira !== null || bk !== null;
-  const done = { onSuccess: () => { setJira(null); setBk(null); setSaved(true); } };
+  const [forms, setForms] = useState<IntegrationForms>({});
+  const stored = (id: string) => settings?.integrations?.[id];
+  const textOf = (s: ProjectSettingsSchema) => forms[s.integration] ?? integrationText(s, stored(s.integration));
+  const set = (s: ProjectSettingsSchema, key: string, value: string) => setForms((f) => ({ ...f, [s.integration]: { ...textOf(s), [key]: value } }));
+  const dirty = Object.keys(forms).length > 0;
+  const done = { onSuccess: () => { setForms({}); setSaved(true); } };
   const submit = () => {
     if (!dirty || save.isPending) return;
-    save.mutate({
-      ...(jira ? { jira: { connection: jv.connection, scope: jv.scope, done: jv.done } } : {}),
-      ...(bk ? { buildkite: { connection: bv.connection, pipelines: bv.pipelines.split(',').map((p) => p.trim()).filter(Boolean) } } : {}),
-    }, done);
+    const integrations = Object.fromEntries(schemas.filter((s) => forms[s.integration]).map((s) => [s.integration, integrationInput(s, forms[s.integration]!)]));
+    save.mutate({ integrations }, done);
   };
   return (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
       <Section
-        label="Jira and Buildkite"
+        label="Integrations"
         dirty={dirty}
-        description="For a project whose issues are in Jira and whose CI is Buildkite. Kept on this host, never written to the repository."
+        description="Link this project to the services its issues and CI live in. Kept on this host, never written to the repository."
         footer={
           <>
             {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-            <SaveFooter label="Save Jira and Buildkite" dirty={dirty} saved={saved} pending={save.isPending} />
+            <SaveFooter label="Save integrations" dirty={dirty} saved={saved} pending={save.isPending} />
           </>
         }
       >
-        <SettingsRow
-          label="Jira"
-          description="Issues assigned to you in this scope become Draft tickets (checked every minute), and moving a linked ticket to Done moves its issue."
-        >
-          <div className="flex w-80 max-w-full flex-col gap-1">
-            <ConnectionPicker kind="jira" label="Jira connection" value={jv.connection} disabled={!settings} onChange={(c) => setJira({ ...jv, connection: c })} />
-            {j && <Button size="sm" variant="secondary" onClick={() => save.mutate({ jira: { connection: '' } }, done)}>Unlink Jira</Button>}
-          </div>
-        </SettingsRow>
-        {jv.connection && (
-          <>
-            <SettingsRow label="Jira issues" description="JQL for this project's issues. Empty: every issue the account can see.">
-              <Input aria-label="Jira issues" className="w-80 max-w-full" placeholder="project = ABC" value={jv.scope} onChange={(e) => setJira({ ...jv, scope: e.target.value })} />
-            </SettingsRow>
-            <SettingsRow label="Done in Jira" description="The transition (or status) a ticket moved to Done moves its issue to.">
-              <Input aria-label="Done in Jira" className="w-56 max-w-full" value={jv.done} onChange={(e) => setJira({ ...jv, done: e.target.value })} />
-            </SettingsRow>
-          </>
-        )}
-        <SettingsRow label="Buildkite" description="Builds of the tickets' branches show as their CI, and failures are told to the agent like GitHub's.">
-          <div className="flex w-80 max-w-full flex-col gap-1">
-            <ConnectionPicker kind="buildkite" label="Buildkite connection" value={bv.connection} disabled={!settings} onChange={(c) => setBk({ ...bv, connection: c })} />
-            {b && <Button size="sm" variant="secondary" onClick={() => save.mutate({ buildkite: { connection: '' } }, done)}>Unlink Buildkite</Button>}
-          </div>
-        </SettingsRow>
-        {bv.connection && (
-          <SettingsRow label="Pipelines" description="The pipelines (slugs) that build this project's branches. Comma-separated.">
-            <Input aria-label="Pipelines" className="w-80 max-w-full" placeholder="my-app, my-app-e2e" value={bv.pipelines} onChange={(e) => setBk({ ...bv, pipelines: e.target.value })} />
-          </SettingsRow>
-        )}
+        {schemas.map((s) => {
+          const text = textOf(s);
+          return (
+            <Fragment key={s.integration}>
+              <SettingsRow label={s.label} description={s.description}>
+                <div className="flex w-80 max-w-full flex-col gap-1">
+                  <ConnectionPicker kind={s.connectionKind} label={`${s.label} connection`} value={text.connection ?? ''} disabled={!settings} onChange={(c) => set(s, 'connection', c)} />
+                  {stored(s.integration) && (
+                    <Button size="sm" variant="secondary" onClick={() => save.mutate({ integrations: { [s.integration]: null } }, done)}>Unlink {s.label}</Button>
+                  )}
+                </div>
+              </SettingsRow>
+              {text.connection && s.fields.filter((f) => fieldShown(f, text)).map((f) => (
+                <SettingsRow key={f.key} label={f.label} description={f.hint}>
+                  {f.type === 'lines'
+                    ? <Textarea mono aria-label={f.label} rows={3} className="w-80 max-w-full" placeholder={f.placeholder} value={text[f.key] ?? ''} onChange={(e) => set(s, f.key, e.target.value)} />
+                    : f.type === 'choice'
+                      ? <Select<string> aria-label={f.label} className="w-56 max-w-full" options={f.options ?? []} value={text[f.key] ?? ''} onChange={(v) => set(s, f.key, v)} />
+                      : <Input aria-label={f.label} className="w-80 max-w-full" placeholder={f.placeholder} value={text[f.key] ?? ''} onChange={(e) => set(s, f.key, e.target.value)} />}
+                </SettingsRow>
+              ))}
+            </Fragment>
+          );
+        })}
       </Section>
     </form>
   );

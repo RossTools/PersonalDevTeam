@@ -12,7 +12,7 @@ pub const BUILDKITE: &str = "buildkite";
 /// Buildkite's REST API, unless a connection names another address.
 pub const API_URL: &str = "https://api.buildkite.com";
 
-/// A project's Buildkite pipelines on this host.
+/// A project's Buildkite pipelines on this host: its `buildkite` integration settings, read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -20,6 +20,7 @@ pub struct BuildkiteSettings {
     /// A `buildkite` connection's name.
     pub connection: String,
     /// The pipelines (slugs) that build the project's branches.
+    #[serde(default)]
     pub pipelines: Vec<String>,
 }
 

@@ -4,12 +4,12 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::buildkite::{BUILDKITE, BuildkiteSettings};
 use pdt_core::host::{CredentialPolicy, effective_credentials};
-use pdt_core::jira::{DEFAULT_DONE, JIRA, JiraSettings};
+use pdt_core::integration::IntegrationSettings;
 use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
 use pdt_store::ProjectSettings;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 #[derive(Debug, Serialize, TS)]
@@ -30,40 +30,16 @@ pub struct ProjectSettingsView {
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
     /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c).
     pub policy: ProjectPolicy,
-    /// Its Jira project (Phase 7e): issues assigned to the user become tickets, Done moves the issue.
-    pub jira: Option<JiraSettings>,
-    /// Its Buildkite pipelines (Phase 7e): CI of its attempts' branches.
-    pub buildkite: Option<BuildkiteSettings>,
-}
-
-/// Links a project to Jira; a `connection` of "" unlinks it.
-#[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraInput {
-    pub connection: String,
-    #[serde(default)]
-    #[ts(optional)]
-    pub scope: Option<String>,
-    /// Default `Done`.
-    #[serde(default)]
-    #[ts(optional)]
-    pub done: Option<String>,
-}
-
-/// Links a project to Buildkite pipelines; a `connection` of "" unlinks it.
-#[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct BuildkiteInput {
-    pub connection: String,
-    #[serde(default)]
-    #[ts(optional)]
-    pub pipelines: Option<Vec<String>>,
+    /// Its settings for each integration it is linked to, by the integration's id (PDT-174): `connection` and the
+    /// fields `GET /api/integrations/project-settings` declares, e.g. `jira` (issues assigned to the user become
+    /// tickets, Done moves the issue) and `buildkite` (CI of its attempts' branches).
+    #[ts(type = "Record<string, Record<string, unknown>>")]
+    pub integrations: BTreeMap<String, IntegrationSettings>,
 }
 
 /// Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it), `mergeViaPr`,
-/// `agentPermissionMode` ("" clears it) and the policies (`maxRunningAttempts` 0 clears it) are replaced when present,
+/// `agentPermissionMode` ("" clears it), the policies (`maxRunningAttempts` 0 clears it) and each integration named in
+/// `integrations` are replaced when present,
 /// so a client that does not know them keeps them.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -110,12 +86,11 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub require_green_ci: Option<bool>,
+    /// Integration settings by integration id: each one named is set (keys left out keep their values), null or a
+    /// `connection` of "" unlinks it, and integrations not named are kept.
     #[serde(default)]
-    #[ts(optional)]
-    pub jira: Option<JiraInput>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub buildkite: Option<BuildkiteInput>,
+    #[ts(optional, type = "Record<string, Record<string, unknown> | null>")]
+    pub integrations: Option<BTreeMap<String, Option<IntegrationSettings>>>,
 }
 
 /// The highest running-attempt cap a project can set.
@@ -135,8 +110,7 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
         merge_via_pr: p.merge_via_pr,
         agent_permission_mode: p.agent_permission_mode,
         policy: p.policy,
-        jira: p.jira,
-        buildkite: p.buildkite,
+        integrations: p.integrations,
     })
 }
 
@@ -218,45 +192,29 @@ pub(crate) async fn put_settings(
         start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),
         require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
     };
-    let jira = match input.jira {
-        None => current.jira,
-        Some(j) => match linked_connection(&st, &j.connection, JIRA).await? {
+    let mut integrations = current.integrations;
+    for (id, given) in input.integrations.unwrap_or_default() {
+        let applied = match given {
             None => None,
-            Some(connection) => {
-                let done = j.done.as_deref().map(str::trim).filter(|d| !d.is_empty());
-                let old = current.jira.as_ref();
-                Some(JiraSettings {
-                    connection,
-                    scope: j.scope.map(|s| s.trim().to_string()).or(old.map(|o| o.scope.clone())).unwrap_or_default(),
-                    done: done.map(String::from).or(old.map(|o| o.done.clone())).unwrap_or_else(|| DEFAULT_DONE.into()),
-                })
+            Some(given) => crate::integrations::registry()
+                .apply_project_settings(&id, &given, integrations.get(&id))
+                .map_err(invalid)?,
+        };
+        match applied {
+            None => {
+                integrations.remove(&id);
             }
-        },
-    };
-    let buildkite = match input.buildkite {
-        None => current.buildkite,
-        Some(b) => match linked_connection(&st, &b.connection, BUILDKITE).await? {
-            None => None,
-            Some(connection) => {
-                let pipelines = match b.pipelines {
-                    Some(list) => {
-                        let mut out: Vec<String> = vec![];
-                        for p in list.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
-                            if !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                                return Err(invalid(format!("{p:?} is not a pipeline slug")));
-                            }
-                            if !out.iter().any(|o| o == p) {
-                                out.push(p.to_string());
-                            }
-                        }
-                        out
-                    }
-                    None => current.buildkite.map(|o| o.pipelines).unwrap_or_default(),
+            Some((schema, mut settings)) => {
+                let name = settings.get("connection").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+                let Some(name) = linked_connection(&st, &name, &schema.connection_kind).await? else {
+                    integrations.remove(&id);
+                    continue;
                 };
-                Some(BuildkiteSettings { connection, pipelines })
+                settings.insert("connection".into(), name.into());
+                integrations.insert(id, settings);
             }
-        },
-    };
+        }
+    }
     let settings = ProjectSettings {
         run_overrides,
         agent_credentials: input.agent_credentials,
@@ -264,8 +222,7 @@ pub(crate) async fn put_settings(
         merge_via_pr: input.merge_via_pr.unwrap_or(current.merge_via_pr),
         agent_permission_mode,
         policy,
-        jira,
-        buildkite,
+        integrations,
     };
     st.store.put_project_settings(&id, &settings).await?;
     Ok(Json(view(&st, &id).await?))

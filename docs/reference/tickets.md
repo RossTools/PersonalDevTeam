@@ -302,11 +302,14 @@ For a work project whose issues are in Jira Cloud and whose CI is Buildkite. pdt
 pdt-api `jira.rs`, `buildkite.rs`; the sensors and actions are in [workflows.md](workflows.md) "Sensors and webhooks".
 
 - **The link** is host settings, not `.pdt/project.toml` (work repos may not take a `.pdt/` folder): the project's
-  settings page, section Jira and Buildkite, names a `jira` connection, a JQL scope (`project = ABC`) and the done
-  transition or status (default `Done`), and a `buildkite` connection with the pipelines (slugs) that build its
-  branches. API: `GET/PUT /api/projects/{id}/settings` `jira` `{connection, scope, done}` and `buildkite`
-  `{connection, pipelines}`; left out keeps them, a `connection` of `""` unlinks, a connection of another kind is
-  `400`.
+  settings page, section Integrations (made from what each integration declares, [workflows.md](workflows.md)
+  "Integrations"), names a `jira` connection, a JQL scope (`project = ABC`) and the done transition or status
+  (default `Done`), and a `buildkite` connection with the pipelines (slugs, one per line) that build its branches.
+  API: `GET/PUT /api/projects/{id}/settings` `integrations` `{"jira": {connection, scope, done}, "buildkite":
+  {connection, pipelines}}`; an integration left out is kept, a key left out keeps its value, `null` or a
+  `connection` of `""` unlinks, a connection of another kind is `400`. Stored as JSON in
+  `project_settings.integration_settings` (PDT-174; 0027's `jira_*` and `buildkite_*` columns were copied in and
+  are unused).
 - **Linked tickets**: `ticket_links_external (ticket_id, system 'jira', connection_id, key, url)`, unique per
   `(system, connection_id, key)`, gone with the ticket. Every ticket response has `external: [{system, key, url}]`;
   the Board card shows the key, the ticket page links it to the issue.

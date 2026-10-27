@@ -717,7 +717,7 @@ describe('settings page', () => {
     const main = screen.getByRole('main');
     await within(main).findByRole('region', { name: 'Project' });
     expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Jira and Buildkite', 'Danger zone']);
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Integrations', 'Danger zone']);
     expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
   });
 });
@@ -1014,7 +1014,7 @@ describe('phone', () => {
     expect(here()).toBe('/settings/projects/ALP');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Jira and Buildkite', 'Danger zone',
+      'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Integrations', 'Danger zone',
     ]);
     expect(topBar).toHaveTextContent('Alpha');
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));

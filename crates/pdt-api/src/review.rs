@@ -715,7 +715,7 @@ async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Res
     if let Some(e) = &pr.error {
         return Err(format!("{SHORT_NAME} couldn't read the pull request's CI from {name}: {e}"));
     }
-    let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite).is_some();
+    let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite()).is_some();
     let has_ci = buildkite || {
         let repo = PathBuf::from(&info.repo_path);
         let (head, branch) = (pr.head_sha.clone(), format!("refs/heads/{}", info.attempt.branch));

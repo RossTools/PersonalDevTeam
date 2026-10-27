@@ -558,7 +558,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   );
 
   // Phones: Import from Jira under the top bar's ⋯ (the list screen only).
-  const jira = phone && peekRef === null && !!project && !!settings.data?.jira;
+  const jira = phone && peekRef === null && !!project && !!settings.data?.integrations?.jira;
   useTopBarActions(jira ? () => [{ label: 'Import from Jira…', onSelect: () => setImporting(true) }] : null);
 
   let body: ReactNode;
@@ -656,7 +656,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         }
         actions={
           <>
-            {project && settings.data?.jira && (
+            {project && settings.data?.integrations?.jira && (
               <Button size="sm" onClick={() => setImporting(true)}>Import from Jira…</Button>
             )}
             <Button variant="primary" size="sm" disabled={projects.length === 0} onClick={() => onNewTicket(project?.id ?? null)}>

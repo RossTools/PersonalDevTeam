@@ -1,5 +1,6 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
 import type { ConnectionKind } from './gen/ConnectionKind';
+import type { ProjectSettingsSchema } from './gen/ProjectSettingsSchema';
 import type { BugReportFiled } from './gen/BugReportFiled';
 import type { BugReportPreview } from './gen/BugReportPreview';
 import type { NewBugReport } from './gen/NewBugReport';
@@ -366,6 +367,7 @@ export const api = {
   secretUses: (id: string) => request<SecretUse[]>(`/api/secrets/${enc(id)}/uses`),
   listConnections: () => request<Connection[]>('/api/connections'),
   connectionKinds: () => request<ConnectionKind[]>('/api/connections/kinds'),
+  projectSettingsSchemas: () => request<ProjectSettingsSchema[]>('/api/integrations/project-settings'),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
   updateConnection: (id: string, c: Partial<ConnectionInput>) =>
     request<Connection>(`/api/connections/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(c) }),
