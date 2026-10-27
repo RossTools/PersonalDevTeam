@@ -68,6 +68,7 @@ import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
 import { useReadAllUpdates, useUpdates } from '../notifications/queries';
 import { useNotificationStream } from '../notifications/useNotificationStream';
+import { useAttention, useFaviconBadge, type Attention } from '../notifications/attention';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { VIEWS, type ViewId } from './views';
 import { TicketKeysContext } from '../common/ticketKeys';
@@ -113,8 +114,10 @@ const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted
 
 /** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n things need the user (the Inbox's Needs you); [dev]
  * on a dev instance. */
-function useAttentionTitle(count: number) {
-  useDevTitle(count);
+/** What wants the user, in the page title's count and the favicon's dot (PDT-168), and reloading on a new build. */
+function useAttentionTitle(attention: Attention) {
+  useDevTitle(attention.count);
+  useFaviconBadge(attention.level);
   useReloadOnNewBuild();
 }
 
@@ -435,8 +438,6 @@ export function AppShell() {
     }
   });
 
-  useAttentionTitle(inbox.data?.total ?? 0);
-
   const label = VIEWS.find((v) => v.id === view)!.label;
   const current = ws.currentInfo;
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
@@ -500,6 +501,7 @@ export function AppShell() {
   const pmShown = route.view !== 'pm' || (phone && pmSelection === 'current') ? null
     : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.session.id ?? null;
   const pmDot = pmUnread(pm.data?.sessions, pmShown);
+  useAttentionTitle(useAttention(ws.allInfos, pmShown));
   const openTarget = useCallback((t: NotificationTarget) => {
     switch (t.kind) {
       case 'session': openSession({ id: t.id, projectId: t.projectId }); break;

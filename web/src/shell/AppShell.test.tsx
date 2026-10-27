@@ -195,7 +195,7 @@ describe('workspaces', () => {
   });
 
   it('shows the workspace tabs with their status and the current tab', async () => {
-    // The title counts the Inbox's Needs you (PDT-108).
+    // The title counts what wants the user (PDT-168): B needs them, D's reply is unseen.
     stubWorkspaces({ 'GET /api/inbox': { items: [], total: 1 } });
     renderWithQuery(<AppShell />);
     const tabs = await screen.findByRole('tablist', { name: 'Tabs' });
@@ -207,7 +207,7 @@ describe('workspaces', () => {
     await userEvent.click(b);
     expect(b).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('main').querySelector('[data-testid="terminal-view"]')).toHaveTextContent('b');
-    await waitFor(() => expect(document.title).toBe('(1) PDT'));
+    await waitFor(() => expect(document.title).toBe('(2) PDT'));
   });
 
   it('scrolls the tab strip to the current tab when it changes from the sidebar', async () => {

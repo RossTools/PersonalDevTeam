@@ -9,7 +9,7 @@ export function useInstance() {
   return useQuery<Health>({ queryKey: ['health'], queryFn: api.health, staleTime: Infinity });
 }
 
-/** The browser tab title: `(<n>) ` while n sessions need the user, `[dev] ` on a development instance. */
+/** The browser tab title: `(<n>) ` while n things want the user (`useAttention`), `[dev] ` on a development instance. */
 export function formatTitle(base: string, { attention = 0, dev = false }: { attention?: number; dev?: boolean }): string {
   return `${attention > 0 ? `(${attention}) ` : ''}${dev ? '[dev] ' : ''}${base}`;
 }
