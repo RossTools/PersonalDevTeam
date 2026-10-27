@@ -49,7 +49,7 @@ impl NodeKind for IssueOpened {
             version: 1,
             category: Category::Trigger,
             title: t.title.into(),
-            description: "A new issue in a GitHub repository: the ones in `repos` (any repo, through gh), else the \
+            description: "A new issue in a GitHub repository: the ones in `repos` (any repo PDT's GitHub login can read), else the \
                           projects' own. Checked every minute; the first look at a repository only records where it \
                           is."
             .into(),
@@ -137,7 +137,7 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String
 }
 
 /// One look at every watched repo's newest issues. pdtd runs it every 60 s. Never fails; problems are logged (a
-/// failing `gh` once per repo until it works again).
+/// failing read once per repo until it works again).
 pub async fn refresh_issues(st: &AppState) {
     if !st.github.capabilities().issues {
         return;

@@ -18,7 +18,7 @@ path: string | null, line: number | null,
  */
 inReview: boolean, 
 /**
- * Written by the user themself (the account `gh` is logged in as).
+ * Written by the user themself (the account PDT is logged in to GitHub as).
  */
 byOwner: boolean, isBot: boolean, notice: Notice, projectId: string, ticketId: string, 
 /**

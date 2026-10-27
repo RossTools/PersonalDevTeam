@@ -294,8 +294,8 @@ notify itself forever.
   (quiet), picks the transition named `to` or the one leading to that status, and otherwise leaves by `unavailable`
   (quiet, with the `available` names); a ticket without a Jira link also leaves by `unavailable`. `jira.create`
   outputs `{key, url}`, `jira.comment` `{key, commentId}`.
-- GitHub issue actions (`workflow/nodes/github.rs`, PDT-154) go through the GitHub forge (PDT-176: the user's own
-  `gh`, pdt-github, the access the `github.issue.opened` trigger uses; `FakeForge` in tests), and fail when it has no
+- GitHub issue actions (`workflow/nodes/github.rs`, PDT-154) go through the GitHub forge (PDT-176: PDT's GitHub
+  login, pdt-github, the access the `github.issue.opened` trigger uses; `FakeForge` in tests), and fail when it has no
   issues; the trigger watches only projects whose forge is GitHub. `number` is a number or text: `12`, `#12`,
   `owner/name#12` or the issue's URL. `github.import` makes a Draft ticket (title the issue's, description its text
   then "Reported by @author in <url>"; a priority or label PDT can't take is left out) linked to the issue as
@@ -405,7 +405,7 @@ secret as a bearer token); without `transport`, a URL and no command means `http
 - Locks (PDT-128): `AppState.engine_lock` is held only around state changes: the tick's passes (schedules, events,
   slots, outbox, sweep), claiming a step (`running`) and writing its result, and the commands (answer, resume, retry,
   cancel, `submit_outcome`, `ask_user`, a turn's end, Inbox answers). A node's body (an HTTP request, a command,
-  `gh`, starting an agent session: actions and agent steps) runs outside it, holding only its run's lock
+  a forge call, starting an agent session: actions and agent steps) runs outside it, holding only its run's lock
   (`AppState.run_locks`, shared by the runs of one ticket, so those still go one at a time and one's checks see
   what the other did); flow, gate, wait and condition kinds and `session.send` (quick, and waited on by the
   engine's own passes) run under it. Runnable runs advance in their own tasks (a ticket's runs one after another in

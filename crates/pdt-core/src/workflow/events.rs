@@ -453,7 +453,7 @@ pub struct PrCommented {
     pub line: Option<u32>,
     /// On a line, in a review (else on the conversation).
     pub in_review: bool,
-    /// Written by the user themself (the account `gh` is logged in as).
+    /// Written by the user themself (the account PDT is logged in to GitHub as).
     pub by_owner: bool,
     pub is_bot: bool,
     pub notice: Notice,

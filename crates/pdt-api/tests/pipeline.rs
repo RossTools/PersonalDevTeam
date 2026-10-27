@@ -29,7 +29,7 @@ async fn setup() -> Env {
     setup_with(None).await
 }
 
-/// [`setup`], for a project on GitHub (its origin says so; nothing is fetched) answered by `gh`.
+/// [`setup`], for a project on GitHub (its origin says so; nothing is fetched) answered by a `FakeForge`.
 async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");

@@ -1,5 +1,5 @@
 //! GitHub issue actions (PDT-154), modelled on an issue tracker integration's: `github.import` (an issue as a linked Draft ticket),
-//! `github.comment` and `github.close`, through the GitHub forge (PDT-176; the user's own `gh`, the access the
+//! `github.comment` and `github.close`, through the GitHub forge (PDT-176; PDT's GitHub login, the access the
 //! `github.issue.opened` trigger uses). A ticket links an issue as `owner/name#12` ([`pdt_core::github_issue`]); linking is the dedupe.
 
 use crate::routes::{AppState, now_ms};

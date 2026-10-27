@@ -24,7 +24,7 @@ pub(crate) fn all() -> Vec<Template> {
             "github-issues-discord",
             params(json!([
                 {"id": "repo", "title": "Repository", "type": "string", "required": true,
-                 "description": "owner/name on GitHub (read through gh)."},
+                 "description": "owner/name on GitHub (read through PDT's GitHub login)."},
                 discord_param(),
             ])),
             doc(json!({

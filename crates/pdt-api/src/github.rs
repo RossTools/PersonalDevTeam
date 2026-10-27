@@ -1,5 +1,5 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR from its project's forge
-//! (PDT-176: `crate::forge`; GitHub through `gh`) every 60 s
+//! (PDT-176: `crate::forge`; GitHub through its API) every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and logs what is
 //! news as events (Phase 7a): `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
 //! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent. While an
@@ -32,10 +32,10 @@ pub(crate) struct PrWatch {
     by_attempt: HashMap<String, PullRequestStatus>,
     /// The failed jobs of each run attempt already asked for, while a watched PR still shows that run.
     jobs: HashMap<(u64, u32), Vec<String>>,
-    /// The last error per read (`pr:<project>`, `issues:<repo>`, `feedback:<attempt>`), so a broken `gh` is logged
+    /// The last error per read (`pr:<project>`, `issues:<repo>`, `feedback:<attempt>`), so a broken GitHub login is logged
     /// once rather than every minute.
     errors: HashMap<String, String>,
-    /// The login `gh` is authenticated as (comments by it are the user's own).
+    /// The account PDT is logged in to GitHub as (comments by it are the user's own).
     viewer: Option<String>,
     /// The CI integrations report for each active attempt's head (Phase 7e), by attempt and then by
     /// integration id; shown with its PR's CI or on its own.
@@ -54,7 +54,7 @@ fn feedback_key(attempt_id: &str) -> String {
     format!("sensor.pr_comments.{attempt_id}")
 }
 
-/// A `gh` read failed: logged when that is news (the first failure, or a new reason).
+/// A GitHub read failed: logged when that is news (the first failure, or a new reason).
 pub(crate) fn gh_failed(st: &AppState, what: &str, error: &str) {
     let mut w = watch(st);
     if w.errors.get(what).map(String::as_str) != Some(error) {
@@ -63,7 +63,7 @@ pub(crate) fn gh_failed(st: &AppState, what: &str, error: &str) {
     }
 }
 
-/// A `gh` read worked (logged when it had been failing).
+/// A GitHub read worked (logged when it had been failing).
 pub(crate) fn gh_worked(st: &AppState, what: &str) {
     if watch(st).errors.remove(what).is_some() {
         tracing::info!(read = what, "reading from GitHub works again");

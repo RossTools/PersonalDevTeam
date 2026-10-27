@@ -152,10 +152,10 @@ pub struct JobLog {
     pub log: String,
 }
 
-/// A forge call that failed. The text is the forge's own (e.g. "the GitHub CLI (gh) was not found").
+/// A forge call that failed. The text is the forge's own (e.g. "GitHub is not connected").
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ForgeError {
-    /// The forge can't be reached at all (its tool is missing).
+    /// The forge can't be reached at all (not connected, or its login was refused).
     #[error("{0}")]
     Unavailable(String),
     /// The call failed, timed out or gave an answer that could not be read.

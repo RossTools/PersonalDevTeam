@@ -75,7 +75,7 @@ memory when `PDT_SECRET_STORE=memory`.
 | `crates/pdt-store` | SQLite store and migrations |
 | `crates/pdt-agents` | PTY terminals, agent launching and the conversation adapters |
 | `crates/pdt-core` | domain types and brand names |
-| `crates/pdt-git`, `pdt-tailscale`, `pdt-github`, `pdt-update` | git, Tailscale, GitHub CLI and GitHub release wrappers |
+| `crates/pdt-git`, `pdt-tailscale`, `pdt-github`, `pdt-update` | git and Tailscale CLI wrappers, GitHub API and GitHub release clients |
 | `web/` | React + Vite UI; `web/ui` is the design system |
 | `desktop/src-tauri` | the optional tray app (Tauri v2) |
 | `.pdt/project.toml` | how PDT runs and tests this repo |
