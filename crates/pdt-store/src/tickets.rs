@@ -1768,6 +1768,19 @@ impl Store {
         Ok(u32::try_from(n).unwrap_or(0))
     }
 
+    /// Whether an attempt of the project's tickets ever merged through a pull request (its `merged` event names one):
+    /// the project's attempts use PRs, so a workflow never merges one of them locally (PDT-181).
+    pub async fn project_merged_a_pr(&self, project_id: &str) -> Result<bool, StoreError> {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM ticket_events e JOIN tickets t ON t.id = e.ticket_id \
+             WHERE t.project_id = ? AND e.kind = 'merged' AND json_extract(e.data, '$.pr') IS NOT NULL)",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n != 0)
+    }
+
     pub async fn set_attempt_finish(&self, id: &str, finish: bool, delete_branch: bool) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE attempts SET finish_on_merge = ?, finish_delete_branch = ? WHERE id = ?")
             .bind(finish)
