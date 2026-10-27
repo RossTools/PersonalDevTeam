@@ -1,9 +1,10 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PmNote } from '../api/gen/PmNote';
 import { project } from '../tickets/fixtures';
-import { renderWithQuery, stubApi, type Call } from '../test-utils';
+import { editorText, renderWithQuery, setEditorText, stubApi, type Call } from '../test-utils';
 import { ALL, previewOf, sectionsOf, ticketDescription, titleFor, wordCount, type Whose } from './model';
 import { NoteScreen } from './NotePage';
 import { NotesList } from './NotesList';
@@ -26,6 +27,7 @@ const filters = (over: Partial<NotesFilters> = {}): NotesFilters => ({
   whose: 'user', setWhose: () => {}, scope: ALL, setScope: () => {}, q: '', setQ: () => {}, ...over,
 });
 
+const caretIn = (box: HTMLElement) => EditorView.findFromDOM(box.closest<HTMLElement>('.cm-editor')!)!.state.selection.main.head;
 const patches = (calls: Call[]) => calls.filter((c) => c.method === 'PATCH').map((c) => c.body);
 
 describe('notes: the rules', () => {
@@ -133,21 +135,44 @@ describe('notes: a note', () => {
     expect(screen.getByText(/Created .* · 3 words/)).toBeInTheDocument();
     expect(props.onKind).toHaveBeenCalledWith('user');
     await userEvent.click(screen.getByRole('radio', { name: 'Write' }));
-    const body = screen.getByRole('textbox', { name: 'Note' });
+    const body = await screen.findByRole('textbox', { name: 'Note' });
     expect(body).toHaveFocus();
-    expect(body).toHaveValue('### Layout\n\n- [x] Ask Sam');
+    expect(editorText(body)).toBe('### Layout\n\n- [x] Ask Sam');
     await userEvent.keyboard('{Escape}');
     expect(screen.getByRole('heading', { name: 'Plan', level: 1 })).toBeInTheDocument();
+  });
+
+  it('opens to write on a double-click, the caret at the start of the block clicked', async () => {
+    const body = 'Intro line\n\n## Layout\n\n- [Ask](https://x.test) Sam';
+    stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body }), 'GET /api/projects': [] });
+    renderWithQuery(<NoteScreen {...screenProps()} />);
+    await userEvent.dblClick(await screen.findByRole('heading', { name: 'Layout' }));
+    const box = await screen.findByRole('textbox', { name: 'Note' });
+    await waitFor(() => expect(box).toHaveFocus());
+    expect(caretIn(box)).toBe(body.indexOf('## Layout'));
+  });
+
+  it('opens the title on a double-click on it; not on a link or after a drag', async () => {
+    stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body: 'See [the spec](https://x.test).' }), 'GET /api/projects': [] });
+    renderWithQuery(<NoteScreen {...screenProps()} />);
+    await userEvent.dblClick(await screen.findByRole('link', { name: 'the spec' }));
+    const read = screen.getByTestId('note-body');
+    fireEvent.pointerDown(read, { clientX: 10, clientY: 10 });
+    fireEvent.doubleClick(read, { clientX: 80, clientY: 10 });
+    expect(screen.queryByRole('textbox', { name: 'Title' })).not.toBeInTheDocument();
+    await userEvent.dblClick(screen.getByRole('heading', { name: 'Plan', level: 1 }));
+    expect(await screen.findByRole('textbox', { name: 'Title' })).toHaveFocus();
   });
 
   it('saves AUTOSAVE_MS after typing stops', async () => {
     const calls = stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body: 'Hello' }), 'PATCH /api/pm/notes/a': note('a', { title: 'Plan', body: 'Hello world' }), 'GET /api/projects': [] });
     renderWithQuery(<NoteScreen {...screenProps()} />);
     await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    const body = await screen.findByRole('textbox', { name: 'Note' });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Hello wor' } });
+    setEditorText(body, 'Hello wor');
     act(() => vi.advanceTimersByTime(AUTOSAVE_MS - 100));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Hello world' } });
+    setEditorText(body, 'Hello world');
     act(() => vi.advanceTimersByTime(AUTOSAVE_MS - 1));
     expect(patches(calls)).toEqual([]);
     expect(screen.getByRole('status')).toHaveTextContent('Saving…');
@@ -162,16 +187,16 @@ describe('notes: a note', () => {
     stubApi({ 'GET /api/pm/notes/a': () => theirs, 'PATCH /api/pm/notes/a': (c: Call) => ({ ...theirs, ...(c.body as object) }), 'GET /api/projects': [] });
     const { qc } = renderWithQuery(<NoteScreen {...screenProps()} />);
     await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
-    const body = screen.getByRole('textbox', { name: 'Note' });
-    fireEvent.change(body, { target: { value: 'Mine, unsaved' } });
+    const body = await screen.findByRole('textbox', { name: 'Note' });
+    setEditorText(body, 'Mine, unsaved');
     theirs = note('a', { title: 'Plan', body: 'Changed elsewhere', updatedAt: NOW + 1 });
     await act(() => qc.refetchQueries({ queryKey: ['pm-notes', 'one', 'a'] }));
-    expect(body).toHaveValue('Mine, unsaved');
+    expect(editorText(body)).toBe('Mine, unsaved');
     // Once saved, a change made elsewhere shows.
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Saved/), { timeout: 2000 });
     theirs = note('a', { title: 'Plan', body: 'The PM changed it', updatedAt: NOW + 2 });
     await act(() => qc.refetchQueries({ queryKey: ['pm-notes', 'one', 'a'] }));
-    await waitFor(() => expect(body).toHaveValue('The PM changed it'));
+    await waitFor(() => expect(editorText(body)).toBe('The PM changed it'));
   });
 
   it('saves an empty title as the first line of the text', async () => {
@@ -209,8 +234,8 @@ describe('notes: a note', () => {
     // The path changes to the note's own: the same editor stays.
     rerender(<NoteScreen {...props} id="c" />);
     expect(screen.getByRole('textbox', { name: 'Title' })).toBe(title);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'More' } });
-    fireEvent.blur(screen.getByRole('textbox', { name: 'Note' }));
+    setEditorText(await screen.findByRole('textbox', { name: 'Note' }), 'More');
+    fireEvent.focusOut(await screen.findByRole('textbox', { name: 'Note' }));
     await waitFor(() => expect(patches(calls)).toEqual([{ title: 'Idea', body: 'More' }]));
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
@@ -223,8 +248,8 @@ describe('notes: a note', () => {
     expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
     renderWithQuery(<NoteScreen {...screenProps({ id: 'new', whose: 'note' })} />);
     const body = await screen.findByRole('textbox', { name: 'Note' });
-    fireEvent.change(body, { target: { value: 'Prefers small PRs' } });
-    fireEvent.blur(body);
+    setEditorText(body, 'Prefers small PRs');
+    fireEvent.focusOut(body);
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ title: 'Prefers small PRs', body: 'Prefers small PRs' }));
     expect(screen.queryByRole('button', { name: 'Make a ticket' })).not.toBeInTheDocument();
   });
@@ -238,9 +263,9 @@ describe('notes: a note', () => {
     });
     renderWithQuery(<NoteScreen {...screenProps()} />);
     await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
-    const body = screen.getByRole('textbox', { name: 'Note' });
-    fireEvent.change(body, { target: { value: 'Hi' } });
-    fireEvent.blur(body);
+    const body = await screen.findByRole('textbox', { name: 'Note' });
+    setEditorText(body, 'Hi');
+    fireEvent.focusOut(body);
     expect(await screen.findByText(/could not be saved: disk full/)).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Not saved');
     fail = false;

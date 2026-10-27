@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Eye, FolderGit2, Globe, Pencil, Pin, Ticket } from 'lucide-react';
-import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, Skeleton, StatusDot, Textarea, useConfirm, type MenuEntry } from '@ui';
+import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { PmNote } from '../api/gen/PmNote';
 import type { Project } from '../api/gen/Project';
+import { MarkdownEditor, type MarkdownEditorHandle } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/Markdown';
 import { useAction } from '../common/useAction';
 import { useRefreshPm } from '../pm/usePm';
@@ -79,9 +80,12 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
   const [mode, setMode] = useState<Mode | null>(isNew ? 'write' : null);
   const [makingTicket, setMakingTicket] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  // What Write focuses when it opens: the title for a new or empty note, else the text.
-  const focusNext = useRef<'title' | 'body' | null>(isNew ? 'title' : null);
+  const bodyRef = useRef<MarkdownEditorHandle>(null);
+  // What Write focuses when it opens: the title for a new or empty note, else the text (at an offset, or its end).
+  const focusNext = useRef<'title' | null>(isNew ? 'title' : null);
+  const [bodyFocus, setBodyFocus] = useState<number | 'end' | undefined>(undefined);
+  // Where the last press in Read started, so a drag that selects text doesn't count as a double-click.
+  const pressedAt = useRef<{ x: number; y: number } | null>(null);
 
   const serverKind = server?.kind;
   useEffect(() => {
@@ -100,22 +104,36 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
 
   useEffect(() => {
     if (mode !== 'write' || !focusNext.current) return;
-    (focusNext.current === 'title' ? titleRef : bodyRef).current?.focus();
+    titleRef.current?.focus();
     focusNext.current = null;
   }, [mode]);
 
-  // The text box grows with its text (where the browser's field-sizing doesn't).
-  useLayoutEffect(() => {
-    const el = bodyRef.current;
-    if (!el || mode !== 'write') return;
-    el.style.height = 'auto';
-    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
-  }, [draft.body, mode]);
-
+  /** Opens Write focused on the title, or on the text at `at` (its end when not given). */
+  const openWrite = (on: 'title' | 'body', at: number | 'end' = 'end') => {
+    focusNext.current = on === 'title' ? 'title' : null;
+    setBodyFocus(on === 'body' ? at : undefined);
+    setMode('write');
+  };
   const switchMode = (m: Mode) => {
-    if (m === 'write') focusNext.current = draft.title.trim() ? 'body' : 'title';
-    else void draft.flush();
-    setMode(m);
+    if (m === 'write') openWrite(draft.title.trim() ? 'body' : 'title');
+    else {
+      void draft.flush();
+      setMode(m);
+    }
+  };
+  // A double-click on the rendered note opens it to write, the caret at the start of the block clicked (PDT-187); not
+  // on a link or a checkbox, or at the end of a drag that selected text.
+  const onReadPress = (e: PointerEvent) => { pressedAt.current = { x: e.clientX, y: e.clientY }; };
+  const onReadDoubleClick = (on: 'title' | 'body') => (e: MouseEvent) => {
+    const from = pressedAt.current;
+    if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > 4) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('a, button, [role="checkbox"]')) return;
+    e.preventDefault();
+    window.getSelection()?.removeAllRanges();
+    if (on === 'title') return openWrite('title');
+    const start = Number(target.closest<HTMLElement>('[data-source-start]')?.dataset.sourceStart);
+    openWrite('body', Number.isFinite(start) ? start : 'end');
   };
   const onFieldKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -242,26 +260,30 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
                 className="h-auto rounded-none border-0 bg-transparent p-0 text-title font-semibold tracking-tight shadow-none focus-visible:ring-0 pointer-coarse:h-auto pointer-coarse:text-title"
               />
               <Meta created={server?.createdAt ?? null} words={words} />
-              <Textarea
+              <MarkdownEditor
                 ref={bodyRef}
-                aria-label="Note"
+                label="Note"
                 placeholder="Write in Markdown…"
                 value={draft.body}
-                onChange={(e) => draft.setBody(e.target.value)}
+                onChange={draft.setBody}
+                autoFocus={bodyFocus}
                 onBlur={() => void draft.flush()}
                 onKeyDown={onFieldKey}
-                className="min-h-40 resize-none overflow-hidden rounded-none border-0 bg-transparent p-0 text-base leading-[1.7] shadow-none focus-visible:ring-0"
               />
             </>
           ) : (
             <>
-              <h1 className="text-title font-semibold tracking-tight break-words">{titleFor(draft.title, draft.body)}</h1>
+              <h1 className="text-title font-semibold tracking-tight break-words" onPointerDown={onReadPress} onDoubleClick={onReadDoubleClick('title')}>
+                {titleFor(draft.title, draft.body)}
+              </h1>
               <Meta created={server?.createdAt ?? null} words={words} />
-              {draft.body.trim() ? (
-                <Markdown variant="document" breaks>{draft.body}</Markdown>
-              ) : (
-                <p className="text-muted-foreground">Nothing written yet.</p>
-              )}
+              <div data-testid="note-body" onPointerDown={onReadPress} onDoubleClick={onReadDoubleClick('body')}>
+                {draft.body.trim() ? (
+                  <Markdown variant="document" breaks>{draft.body}</Markdown>
+                ) : (
+                  <p className="text-muted-foreground">Nothing written yet.</p>
+                )}
+              </div>
             </>
           )}
         </article>

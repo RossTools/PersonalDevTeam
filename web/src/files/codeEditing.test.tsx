@@ -1,7 +1,8 @@
 import { render } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CodeViewer } from './CodeViewer';
 import { CodeEditor } from '../workflows/CodeEditor';
+import { setEditorText } from '../test-utils';
 
 // Editable editors draw their own cursor (drawSelection's cursor layer) and mark the active line; read-only views do neither.
 const cursor = (el: HTMLElement) => el.querySelector('.cm-cursorLayer');
@@ -26,5 +27,12 @@ describe('code editing cursor', () => {
     expect(activeLine(editable.container)).not.toBeNull();
     const readOnly = render(<CodeEditor name="w.ts" value="x" onChange={() => {}} readOnly label="Code" />);
     expect(cursor(readOnly.container)).toBeNull();
+  });
+
+  it('an edited file with Windows line endings keeps them', () => {
+    const onChange = vi.fn();
+    const { container } = render(<CodeViewer name="a.txt" text={'one\r\ntwo'} onChange={onChange} />);
+    setEditorText(container.querySelector<HTMLElement>('.cm-content')!, 'one\r\ntwo\r\nthree');
+    expect(onChange).toHaveBeenLastCalledWith('one\r\ntwo\r\nthree');
   });
 });

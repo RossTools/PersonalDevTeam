@@ -220,8 +220,12 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   (`/notes/<id>`): its project (a menu; changing it saves at once), the save state (Saved · edited when, Saving…, or
   Not saved with Retry, which also toasts), **Write | Read**, Pin (amber when pinned; "listed first" for mine, "in
   every briefing" for the PM's), Make a ticket (mine only) and ⋯ Delete… (asks first). Read renders the Markdown as a
-  document; Write is the title and a plain text box that grows with its text, in the same type (no editor library);
-  Esc goes back to Read. A note with text opens to Read, an empty or new one to Write with its title focused. It
+  document; Write is the title and the Markdown source in `MarkdownEditor` (web/src/common, CodeMirror, PDT-187):
+  styled as it is typed (headings, emphasis, code, links, quotes) with the marks kept visible and dimmed, growing with
+  its text; Enter continues a list (an empty item ends it), Backspace removes an empty item's marker, Tab / Shift-Tab
+  indent. Esc goes back to Read. A double-click on the rendered note (not on a link or a checkbox, nor at the end of
+  a drag) opens Write with the caret at the start of the block clicked (each block carries `data-source-start`), or on
+  the title the title. A note with text opens to Read, an empty or new one to Write with its title focused. It
   saves by itself 800 ms after typing stops, on blur and when the page goes; the text comes from the server once and
   a polled copy only replaces it when it changed elsewhere and nothing here is unsaved. An empty title is saved as
   the text's first line (plain, at most 200 characters) or "Untitled". `/notes/new` is a blank note made by its first

@@ -176,7 +176,8 @@ its tab, the Inbox picking an item) replace it.
   Rendered | Source switch.
 - Editing in the Files view (PDT-157, not on phones): **Edit** turns the file's CodeMirror editable (same
   highlighting; a file with CRLF endings keeps them), with Save (⌘S / Ctrl+S) and Cancel (Done once saved); a Markdown
-  file gets an Edit | Preview switch. While there are unsaved changes, navigating in the app asks first (the router's
+  file is edited in `MarkdownEditor` instead (styled source with line numbers and list continuation, as notes, PDT-187)
+  and gets an Edit | Preview switch. While there are unsaved changes, navigating in the app asks first (the router's
   `useNavigationGuard`), Back and Forward are undone and taken again only once the user says to discard (by the
   history entries' `n`), and closing the page asks the browser's question; Rename and Delete of the edited file
   (or its folders) are held until the edits are saved or cancelled. The file's

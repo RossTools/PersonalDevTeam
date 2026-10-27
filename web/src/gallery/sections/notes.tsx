@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { PmNote } from '../../api/gen/PmNote';
 import { Markdown } from '../../common/Markdown';
+import { MarkdownEditor } from '../../common/MarkdownEditor';
 import { NoteItem } from '../../notes/NoteItem';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
@@ -36,6 +37,48 @@ const DOC = `Things I keep wanting while triaging. None of these are tickets yet
 - [x] Ask Sam whether swimlanes break the phone layout
 - [ ] Sketch the compact card`;
 
+const SOURCE = `# Ideas for the board
+
+Some **bold**, some *italic*, ~~struck~~ and \`inline code\`, with [a link](https://example.com).
+
+## Layout
+
+- Swimlanes per area
+  - nested item
+1. Numbered
+2. Next
+
+- [x] Ask Sam
+- [ ] Sketch the compact card
+
+> A quote, dimmed.
+
+\`\`\`ts
+const x: number = 1; // a comment
+\`\`\`
+
+#### Fourth level
+##### Fifth level`;
+
+function Editors() {
+  const [note, setNote] = useState(SOURCE);
+  const [file, setFile] = useState(SOURCE);
+  return (
+    <>
+      <Demo label="MarkdownEditor · note (Write)">
+        <article className="w-[560px] max-w-full rounded-md border border-border bg-background p-8">
+          <MarkdownEditor label="Note" value={note} onChange={setNote} />
+        </article>
+      </Demo>
+      <Demo label="MarkdownEditor · file (line numbers)">
+        <div className="h-[520px] w-[560px] max-w-full overflow-hidden rounded-md border border-border">
+          <MarkdownEditor label="README.md" variant="file" value={file} onChange={setFile} />
+        </div>
+      </Demo>
+    </>
+  );
+}
+
 function NoteList() {
   const [selected, setSelected] = useState('a');
   return (
@@ -60,6 +103,7 @@ function render() {
           <Markdown variant="document" breaks>{DOC}</Markdown>
         </article>
       </Demo>
+      <Editors />
     </div>
   );
 }

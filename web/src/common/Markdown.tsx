@@ -1,5 +1,5 @@
-import { memo, useContext, useMemo } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import { memo, useContext, useMemo, type ComponentType } from 'react';
+import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSanitize from 'rehype-sanitize';
@@ -150,6 +150,16 @@ const documentComponents: Components = {
     </div>
   ),
 };
+
+// Each block of a document says where its source starts (`data-source-start`, an offset into the text), so a
+// double-click on it can open the editor there (a note, PDT-187).
+const SOURCED = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'blockquote', 'pre', 'table'] as const;
+type Block = ComponentType<ExtraProps & Record<string, unknown>>;
+const sourced = documentComponents as Record<string, Block>;
+for (const tag of SOURCED) {
+  const Inner = sourced[tag];
+  sourced[tag] = (props) => <Inner {...props} data-source-start={props.node?.position?.start.offset} />;
+}
 
 const plugins = [remarkGfm, remarkHtmlAsText];
 const withBreaks = [...plugins, remarkBreaks];

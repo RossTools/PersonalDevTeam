@@ -1,4 +1,5 @@
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
@@ -67,4 +68,21 @@ export function stubApi(given: Record<string, Route>): Call[] {
     return value === undefined ? new Response(null, { status: 204 }) : new Response(JSON.stringify(value), { status: 200 });
   }));
   return calls;
+}
+
+/** The text in a CodeMirror editor, given its text box (or anything inside it). */
+export function editorText(el: HTMLElement): string {
+  return editorView(el).state.sliceDoc();
+}
+
+/** Replaces a CodeMirror editor's text, as typing would (the change goes through its update listeners). */
+export function setEditorText(el: HTMLElement, text: string) {
+  const view = editorView(el);
+  act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } }));
+}
+
+function editorView(el: HTMLElement): EditorView {
+  const view = EditorView.findFromDOM(el.closest<HTMLElement>('.cm-editor') ?? el);
+  if (!view) throw new Error('not a CodeMirror editor');
+  return view;
 }

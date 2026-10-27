@@ -16,7 +16,8 @@ export function CodeViewer({ name, text, onChange }: { name: string; text: strin
   const editable = !!onChange;
   useEffect(() => {
     const language = new Compartment();
-    // A file with Windows line endings keeps them (CodeMirror would otherwise save every line with `\n`).
+    // A file with Windows line endings keeps them (CodeMirror would otherwise save every line with `\n`): the text is read
+    // with sliceDoc, which joins lines with the separator (doc.toString always uses `\n`).
     const crlf = editable && text.includes('\r\n');
     const view = new EditorView({
       parent: host.current!,
@@ -30,7 +31,7 @@ export function CodeViewer({ name, text, onChange }: { name: string; text: strin
                 history(),
                 keymap.of([...defaultKeymap, ...historyKeymap]),
                 ...(crlf ? [EditorState.lineSeparator.of('\r\n')] : []),
-                EditorView.updateListener.of((u) => { if (u.docChanged) changed.current?.(u.state.doc.toString()); }),
+                EditorView.updateListener.of((u) => { if (u.docChanged) changed.current?.(u.state.sliceDoc()); }),
               ]
             : [EditorState.readOnly.of(true), EditorView.editable.of(false)]),
           EditorView.lineWrapping,
