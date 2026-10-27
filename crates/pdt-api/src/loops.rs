@@ -248,13 +248,15 @@ mod tests {
     #[tokio::test]
     async fn a_loop_without_a_pass_goes_stale() {
         let (st, _tmp) = state().await;
+        // Explicit times, not the clock: a slow runner can take longer than the stale window between two calls.
+        let before = now_ms();
         st.loops.register("slow", Duration::from_secs(1), Some(20));
         st.loops.register("slow", Duration::from_secs(9), None);
-        assert!(!st.loops.health(now_ms())[0].stale);
-        assert_eq!(st.loops.health(now_ms())[0].every_ms, 1_000, "registering again changes nothing");
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        assert!(st.loops.health(now_ms())[0].stale);
-        st.loops.passed("slow", now_ms(), false);
-        assert!(!st.loops.health(now_ms())[0].stale);
+        let after = now_ms();
+        assert!(!st.loops.health(before)[0].stale);
+        assert_eq!(st.loops.health(before)[0].every_ms, 1_000, "registering again changes nothing");
+        assert!(st.loops.health(after + 40)[0].stale);
+        st.loops.passed("slow", after + 40, false);
+        assert!(!st.loops.health(after + 40)[0].stale);
     }
 }
