@@ -37,12 +37,12 @@ describe('Jira and Buildkite', () => {
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'work', kind: 'jira', url: 'https://acme.atlassian.net', config: { email: 'me@acme.com' } });
   });
 
-  it('links the project to Jira and Buildkite in its settings', async () => {
+  it('links the project to Jira and Buildkite in its settings, a form made from what each declares', async () => {
     const calls = stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, jira: null, buildkite: null },
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, integrations: {} },
       'GET /api/projects/p/run-config': config,
       'GET /api/connections': [conn('work-jira', 'jira'), conn('bk', 'buildkite'), conn('alerts', 'discord_webhook')],
-      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'subscription', agentInstructions: null, jira: null, buildkite: null, ...(c.body as object) }),
+      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'subscription', agentInstructions: null, ...(c.body as object) }),
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);
     await userEvent.click(await screen.findByRole('button', { name: /Jira connection/ }));
@@ -50,16 +50,35 @@ describe('Jira and Buildkite', () => {
     expect(options).toEqual(['work-jira']);
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'work-jira' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Jira issues' }), 'project = ABC');
+    expect(screen.getByRole('textbox', { name: 'Done in Jira' })).toHaveValue('Done');
     await userEvent.click(screen.getByRole('button', { name: /Buildkite connection/ }));
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'bk' }));
-    await userEvent.type(screen.getByRole('textbox', { name: 'Pipelines' }), 'app, app-e2e');
-    await userEvent.click(screen.getByRole('button', { name: 'Save Jira and Buildkite' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Pipelines' }), 'app{enter}app-e2e');
+    await userEvent.click(screen.getByRole('button', { name: 'Save integrations' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({
       agentCredentials: null, runOverrides: null,
-      jira: { connection: 'work-jira', scope: 'project = ABC', done: 'Done' },
-      buildkite: { connection: 'bk', pipelines: ['app', 'app-e2e'] },
+      integrations: {
+        jira: { connection: 'work-jira', scope: 'project = ABC', done: 'Done' },
+        buildkite: { connection: 'bk', pipelines: ['app', 'app-e2e'] },
+      },
     });
+  });
+
+  it('shows a linked integration\'s settings and unlinks it', async () => {
+    const linked = { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null,
+      integrations: { buildkite: { connection: 'bk', pipelines: ['app', 'e2e'] } } };
+    const calls = stubApi({
+      'GET /api/projects/p/settings': linked,
+      'GET /api/projects/p/run-config': config,
+      'GET /api/connections': [conn('bk', 'buildkite')],
+      'PUT /api/projects/p/settings': { ...linked, integrations: {} },
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    expect(await screen.findByRole('textbox', { name: 'Pipelines' })).toHaveValue('app\ne2e');
+    expect(screen.queryByRole('button', { name: 'Unlink Jira' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Unlink Buildkite' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toMatchObject({ integrations: { buildkite: null } }));
   });
 
   it('imports an issue by key and opens its ticket, or says why not', async () => {

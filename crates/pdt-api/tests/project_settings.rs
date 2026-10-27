@@ -63,3 +63,16 @@ async fn agent_instructions_are_kept_unless_sent() {
     let (s, v) = put(json!({"agentCredentials": null, "runOverrides": null, "agentInstructions": long})).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
 }
+
+#[tokio::test]
+async fn integrations_declare_what_a_project_sets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _) = setup(tmp.path()).await;
+    let (s, v) = call(&app, "GET", "/api/integrations/project-settings", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let jira = v.as_array().unwrap().iter().find(|x| x["integration"] == "jira").expect("jira's");
+    assert_eq!(jira["connectionKind"], "jira");
+    let keys: Vec<&str> = jira["fields"].as_array().unwrap().iter().map(|f| f["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, ["scope", "done"]);
+    assert_eq!(jira["fields"][1]["default"], "Done");
+}

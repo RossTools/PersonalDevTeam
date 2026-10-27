@@ -292,7 +292,7 @@ pub async fn refresh_jira(st: &AppState) {
             return;
         }
         let Ok(settings) = st.store.get_project_settings(&p.id).await else { continue };
-        let Some(jira) = settings.jira else { continue };
+        let Some(jira) = settings.jira() else { continue };
         match poll_project(st, &p.id, &jira).await {
             Ok(()) => uses.worked(&jira.connection),
             Err(PollError::Connection(e)) => uses.failed(&jira.connection, &e),
@@ -388,7 +388,7 @@ pub(crate) async fn import_issue(
         Some(c) => c.to_string(),
         None => {
             let s = st.store.get_project_settings(project_id).await.map_err(|e| failed(e.to_string()))?;
-            s.jira.map(|j| j.connection).ok_or(ImportError::NotLinked)?
+            s.jira().map(|j| j.connection).ok_or(ImportError::NotLinked)?
         }
     };
     let c = JiraClient::named(st, &name).await.map_err(failed)?;
