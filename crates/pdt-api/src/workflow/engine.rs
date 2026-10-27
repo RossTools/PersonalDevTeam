@@ -829,6 +829,14 @@ pub async fn run_workflows(st: &AppState) {
     advance_all(st).await;
 }
 
+/// Installs the built-in workflows and personas for what is enabled, and nothing else of [`run_workflows`]: no event
+/// starts a run and no run goes on (an upgrade rehearsal's instance, `PDT_REHEARSAL`).
+pub async fn install_builtins(st: &AppState) {
+    let _engine = st.engine_lock.lock().await;
+    super::builtins::ensure_installed(st).await;
+    crate::personas::ensure_builtins(st).await;
+}
+
 // ---- commands used by the API ----
 
 /// "Run now": a run of the workflow's `manual` trigger with `input`.

@@ -6,7 +6,7 @@ import type { IntegrationInfo } from '../api/gen/IntegrationInfo';
 import { IntegrationsPage } from './IntegrationsPage';
 
 const info = (id: string, label: string, over: Partial<IntegrationInfo> = {}): IntegrationInfo => ({
-  id, label, description: `${label} things.`, enabled: false, built: true, ...over,
+  id, label, description: `${label} things.`, enabled: false, built: true, tools: [], pmTools: [], ...over,
 });
 
 describe('integrations', () => {

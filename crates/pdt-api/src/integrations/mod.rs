@@ -526,6 +526,10 @@ pub struct IntegrationInfo {
     pub enabled: bool,
     /// This build has it (pdtd's cargo feature); one it lacks can't be enabled.
     pub built: bool,
+    /// The pdt-mcp tools it adds (its actions' and its own), enabled or not; none when this build lacks it.
+    pub tools: Vec<String>,
+    /// Those of [`IntegrationInfo::tools`] the PM has ([`ToolDecl::pm`]).
+    pub pm_tools: Vec<String>,
 }
 
 /// What `PUT /api/integrations` takes: the ids of the integrations to enable (the rest are disabled).
@@ -536,16 +540,22 @@ pub struct EnableIntegrations {
     pub enabled: Vec<String>,
 }
 
-fn infos(st: &AppState) -> Vec<IntegrationInfo> {
-    let built = st.integrations.built();
+fn infos(ints: &Integrations) -> Vec<IntegrationInfo> {
+    let built = ints.built();
     let mut out: Vec<IntegrationInfo> = built
         .iter()
-        .map(|i| IntegrationInfo {
-            id: i.id().into(),
-            label: i.label().into(),
-            description: i.description().into(),
-            enabled: st.integrations.is_enabled(i.id()),
-            built: true,
+        .map(|i| {
+            let decls: Vec<ToolDecl> =
+                i.actions().iter().map(|a| a.decl()).chain(i.tools().into_iter().map(|t| t.decl)).collect();
+            IntegrationInfo {
+                id: i.id().into(),
+                label: i.label().into(),
+                description: i.description().into(),
+                enabled: ints.is_enabled(i.id()),
+                built: true,
+                tools: decls.iter().map(|d| d.name.to_string()).collect(),
+                pm_tools: decls.iter().filter(|d| d.pm).map(|d| d.name.to_string()).collect(),
+            }
         })
         .collect();
     for k in pdt_core::integration::KNOWN.iter().filter(|k| !built.iter().any(|i| i.id() == k.id)) {
@@ -555,6 +565,8 @@ fn infos(st: &AppState) -> Vec<IntegrationInfo> {
             description: String::new(),
             enabled: false,
             built: false,
+            tools: vec![],
+            pm_tools: vec![],
         });
     }
     out
@@ -562,7 +574,7 @@ fn infos(st: &AppState) -> Vec<IntegrationInfo> {
 
 /// `GET /api/integrations`: every integration this build has, enabled or not, then the known ones it lacks.
 pub(crate) async fn list(State(st): State<AppState>) -> axum::Json<Vec<IntegrationInfo>> {
-    axum::Json(infos(&st))
+    axum::Json(infos(&st.integrations))
 }
 
 /// `PUT /api/integrations`: enables exactly the given integrations. Turning one on installs its built-in workflows
@@ -594,7 +606,7 @@ pub(crate) async fn put(
     st.builtins_installed.store(false, std::sync::atomic::Ordering::SeqCst);
     st.personas_installed.store(false, std::sync::atomic::Ordering::SeqCst);
     tracing::info!(enabled = ?st.integrations.enabled(), "changed the enabled integrations");
-    Ok(axum::Json(infos(&st)))
+    Ok(axum::Json(infos(&st.integrations)))
 }
 
 /// Each integration's routes this build has, answering 404 while it is disabled.

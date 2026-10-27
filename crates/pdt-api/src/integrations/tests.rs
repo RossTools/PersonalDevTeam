@@ -234,6 +234,20 @@ fn a_disabled_integration_registers_nothing() {
     assert!(ints.registry().tool_table().contains("get_ticket"), "PDT's own are always on");
 }
 
+/// PDT-179: Settings → Integrations names each integration's tools and the PM's among them, enabled or not, so the
+/// upgrade rehearsal can check the tool lists.
+#[test]
+fn the_integrations_list_names_their_tools() {
+    let ints = Integrations::new(vec![Arc::new(Dummy)]);
+    let list = infos(&ints);
+    let dummy = list.iter().find(|i| i.id == "dummy").unwrap();
+    assert!(!dummy.enabled);
+    assert_eq!(dummy.tools, ["dummy_blink", "dummy_wink", "dummy_poke"]);
+    assert_eq!(dummy.pm_tools, ["dummy_blink", "dummy_poke"]);
+    let lacking = list.iter().find(|i| !i.built).unwrap();
+    assert!(lacking.tools.is_empty() && lacking.pm_tools.is_empty());
+}
+
 /// A node of a known integration that is turned off, or that this build lacks, says so rather than "unknown kind".
 #[test]
 fn a_turned_off_integrations_node_names_it() {

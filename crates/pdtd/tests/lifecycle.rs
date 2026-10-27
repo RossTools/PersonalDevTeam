@@ -223,3 +223,33 @@ fn without_the_seed_a_dev_database_starts_empty() {
     let (_, projects) = http(port, "GET", "/api/projects", None);
     assert_eq!(projects, serde_json::json!([]));
 }
+
+/// PDT-179: an upgrade rehearsal (`PDT_REHEARSAL`) migrates and serves the copy, with the built-in workflows
+/// installed, but resumes nothing: a session the last run left is still interrupted.
+#[test]
+fn a_rehearsal_serves_the_copy_and_resumes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    let port = free_port();
+
+    let mut d = start(port, &data);
+    let body = serde_json::json!({"name": "P", "repoPath": repo.to_string_lossy()}).to_string();
+    let (status, project) = http(port, "POST", "/api/projects", Some(&body));
+    assert_eq!(status, 201, "{project}");
+    let body = serde_json::json!({"projectId": project["id"], "kind": "shell", "cols": 80, "rows": 24}).to_string();
+    let (status, session) = http(port, "POST", "/api/sessions", Some(&body));
+    assert_eq!(status, 201, "{session}");
+    let id = session["id"].as_str().unwrap().to_string();
+    assert_eq!(http(port, "POST", "/api/shutdown", None).0, 202);
+    assert!(wait_exit(&mut d, Duration::from_secs(20)).success());
+
+    let _d = start_with(port, &data, &[("PDT_REHEARSAL", "1")]);
+    let (_, workflows) = http(port, "GET", "/api/workflows", None);
+    assert!(workflows.as_array().unwrap().iter().any(|w| !w["builtin"].is_null()), "built-ins installed: {workflows}");
+    std::thread::sleep(Duration::from_secs(2));
+    let (_, s) = http(port, "GET", &format!("/api/sessions/{id}"), None);
+    assert_eq!(s["status"], "interrupted", "not resumed: {s}");
+}

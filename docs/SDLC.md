@@ -109,6 +109,11 @@ Only one manual dev instance at a time (pdtd refuses a data folder another pdtd 
 pdt-desktop`. To check the bundle, `scripts/release-stable.sh --build-only` (Windows: `-BuildOnly`). Never run the
 script without it, never run a built installer, never run `pdt-host install`/`uninstall`.
 
+**Upgrade rehearsal:** before a release with migrations or plugin changes reaches the stable instance,
+`scripts/rehearse-upgrade.sh` runs this checkout's pdtd on port 7421 against a read-only copy of the stable data dir
+and reports whether migrations, integrations, connections, workflows (validate and dry run), tool lists and the GitHub
+login hold up (docs/reference/host.md "Upgrade rehearsal"). Stop a dev instance on 7421 first, or pass `--port`.
+
 ## After merge
 
 For a ticket's branch, the ticket's merge banner ("Move to Done and remove the worktree") does all of this once PDT
