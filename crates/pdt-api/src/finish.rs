@@ -10,7 +10,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use pdt_core::project::PullResult;
 use pdt_core::session::SessionStatus;
-use pdt_core::ticket::{Actor, TicketStage};
+use pdt_core::ticket::{Actor, AttemptState, TicketStage};
 use pdt_store::AttemptInfo;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -251,6 +251,12 @@ pub(crate) async fn finish_ticket(
         result.pull = pull(st, &ticket.project_id, None).await;
         return Ok(result);
     };
+    // Finished already (a workflow's merge is finished by the workflow and by Finish merged tickets, PDT-181): nothing
+    // is left to clean up, so a finish that comes after another one's cleanup cancels no runs. (Two finishes at the
+    // same moment both get past this.)
+    if ticket.stage.is_closed() && info.attempt.state != AttemptState::Active && info.attempt.worktree_id.is_none() {
+        return Ok(result);
+    }
     let key = &info.ticket_key;
     let base = Some(info.attempt.base_branch.clone());
     if req.keep_worktree {

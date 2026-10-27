@@ -3,4 +3,4 @@
 /**
  * How an attempt came to be merged.
  */
-export type MergeVia = "detected" | "merged_here" | "closed";
+export type MergeVia = "detected" | "merged_here" | "automated" | "closed";

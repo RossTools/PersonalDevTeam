@@ -84,10 +84,10 @@ pub fn builtin_templates() -> Vec<Template> {
             ),
             doc(json!({
                 "name": "Ask before finishing a merged ticket",
-                "description": "When a ticket's branch is found merged, asks whether to move it to Done and clean up.",
+                "description": "When a ticket's branch is found merged, or a workflow or an agent merged it, asks whether to move it to Done and clean up.",
                 "nodes": [
                     {"id": "merged", "kind": "attempt.merged", "version": 1, "position": {"x": 0, "y": 0},
-                     "config": {"where": [{"left": "{{trigger.via}}", "op": "eq", "right": "detected"}]}},
+                     "config": {"where": [{"left": "{{trigger.via}}", "op": "in", "right": ["detected", "automated"]}]}},
                     {"id": "ask", "kind": "gate", "version": 1, "position": {"x": 300, "y": 0}, "config": {
                         "question": "{{trigger.ticketKey}} merged. Move it to Done and remove its worktree?",
                         "choices": ["finish", "keep"]}},

@@ -21,7 +21,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `pr.queue_left`, `pr.merged`, `pr.behind`; key `<attempt>:<notice key>`), and the ticket timeline: the store's
   `insert_event` mirrors `moved`, `comment`, `started`, `merged`, `abandoned` and `overlap` into
   `ticket.stage_changed`, `ticket.commented`, `attempt.started`, `attempt.merged` (key `<attempt>:merged`, with `via`
-  `detected` / `merged_here` / `closed`, `pr`, `finishOnMerge`, `finishDeleteBranch` and the merged `notice`),
+  `detected` / `merged_here` / `automated` / `closed`, `pr`, `finishOnMerge`, `finishDeleteBranch` and the merged `notice`),
   `attempt.abandoned` (every `attempt.*` carries the ticket's `labels` at the time, for `{{trigger.labels}}`
   `contains` `<label>`) and `ticket.overlap_found` (or `ticket.overlap_cleared` for an `overlap` event with
   `cleared`), in the same transaction, except Start's: its `ticket.stage_changed`
@@ -87,7 +87,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     untold notice does not spend its key (PDT-129), so the same notice again tries the agent again (told if a session
     is there by then) and, still untold, stops at `inbox.notice`'s `skipped`.
     An untouched PR notices follows this template, so an enabled one picks it up on pdtd's next start.
-  - **Finish merged tickets** (on): `attempt.merged` (`via: detected`) → gate answered ahead by `finishOnMerge`
+  - **Finish merged tickets** (on): `attempt.merged` (`via` `detected`, or `automated`: a workflow's or an agent's
+    local merge, PDT-181; a person's own Merge… finishes the ticket itself) → gate answered ahead by `finishOnMerge`
     (Merge…'s "Move to Done and clean up once it merges", PDT-75), else `unanswered` → quiet end (the merged banner
     asks) → `ticket.finish` (`stopRunning`, `deleteBranch: {{trigger.finishDeleteBranch}}`); `blocked` (uncommitted
     changes) → quiet end.
@@ -839,7 +840,9 @@ deleted (`409 persona_in_use`).
   or anything that stops the merge leaves by `refused` (`code`, `reason`, `fixable`: a conflict, uncommitted
   changes or failing CI (`ci_failed`), which the attempt's agent can clear; `ci_pending` while CI on the pull
   request's head hasn't passed, PDT-151, with `headSha`, the head it judged); `merge_failed` and `ci_unreadable`
-  (GitHub couldn't be read for CI) are errors. Merging `again` refused for CI records the
+  (GitHub couldn't be read for CI) are errors. It reads the PR from GitHub first: one merged already ends the
+  attempt as `detected` with its number and leaves by `merged`, and it never merges a branch locally that has or had
+  a PR, while GitHub can't be read, or in a project whose attempts merge through PRs (PDT-181, `refused`). Merging `again` refused for CI records the
   attempt as set to merge, so PR notices merges it once CI passes. With `again`
   (PR notices after a fix, PDT-104) it reads the PR from GitHub first: one already on auto-merge or in the queue is
   `queued` (`already: true`); and it sends no `finishOnMerge`, so the first merge's choice stays. A first merge

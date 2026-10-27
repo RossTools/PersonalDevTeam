@@ -610,3 +610,235 @@ async fn finish_on_merge_leaves_uncommitted_changes_for_the_user() {
     let (s, _) = call(&env.app, "GET", &format!("/api/sessions/{}", env.session), None).await;
     assert_eq!(s, StatusCode::OK);
 }
+
+fn rev(dir: &Path, rev: &str) -> String {
+    let out = std::process::Command::new("git").current_dir(dir).args(["rev-parse", rev]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Runs a workflow whose one step is `attempt.merge` (as the Pipeline's merge, or PR notices' `remerge` with `again`)
+/// on the attempt; the port it left by.
+async fn workflow_merge(env: &Env, again: bool) -> String {
+    let doc = json!({"name": "Merge it", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "m", "kind": "attempt.merge", "version": 1, "config": {"attempt": env.attempt, "again": again}}],
+        "edges": [{"from": "t", "to": "m"}]});
+    let (s, w) = call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let wf = w["id"].as_str().unwrap();
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": {}}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let run_id = r["runId"].as_str().unwrap().to_string();
+    pdt_api::run_workflows(&env.state).await;
+    let (_, run) = call(&env.app, "GET", &format!("/api/workflow-runs/{run_id}"), None).await;
+    let step = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "m").cloned();
+    step.and_then(|s| s["port"].as_str().map(String::from)).unwrap_or_else(|| panic!("the merge step ran: {run}"))
+}
+
+async fn merged_event(env: &Env) -> Value {
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{}/events", env.ticket), None).await;
+    events["items"].as_array().unwrap().iter().find(|e| e["kind"] == "merged").cloned().expect("a merged event")
+}
+
+async fn finish_runs(env: &Env) -> Vec<Value> {
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    runs.as_array().unwrap().iter().filter(|r| r["workflowName"] == "Finish merged tickets").cloned().collect()
+}
+
+/// A commit on the branch and its open pull request `number`, which PDT has seen; no merge asked for yet.
+async fn open_pr(env: &Env, number: u32) -> ChangeRequest {
+    git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "add c");
+    let pr = ChangeRequest {
+        number,
+        url: format!("https://github.com/o/r/pull/{number}"),
+        title: "Ship it".into(),
+        state: PrState::Open,
+        draft: false,
+        head_sha: rev(&env.wt_path, "HEAD"),
+        base_branch: "main".into(),
+        mergeable: Mergeable::Mergeable,
+        behind: false,
+        auto_merge: false,
+        in_merge_queue: false,
+        queue_position: None,
+        queue_removal: None,
+        created_at: None,
+    };
+    env.gh.set_pr(&env.branch, Some(pr.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    pr
+}
+
+/// The first workflow merge (not `again`) finds the PR merged already: the ticket finishes as that merge asked.
+#[tokio::test]
+async fn a_first_workflow_merge_of_a_pr_merged_already_finishes_the_ticket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = open_pr(&env, 9).await;
+    let main = rev(&env.repo, "main");
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+
+    assert_eq!(workflow_merge(&env, false).await, "merged");
+    assert_eq!(rev(&env.repo, "main"), main, "no local merge commit");
+    let merged = merged_event(&env).await;
+    assert_eq!(
+        (merged["data"]["via"].as_str(), merged["data"]["pr"].as_u64()),
+        (Some("detected"), Some(9)),
+        "{merged}"
+    );
+    pdt_api::run_workflows(&env.state).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+    assert_eq!(finish_runs(&env).await[0]["status"], "succeeded");
+}
+
+/// CB-66 (PDT-181): GitHub merged the PR through the auto-merge an earlier merge turned on, and PR notices' merge
+/// again (CI passed) came a moment later, while PDT still had the PR open.
+#[tokio::test]
+async fn ci_passing_after_the_pr_merged_makes_no_local_merge_and_the_ticket_finishes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = queue_with_finish(&env).await;
+    let main = rev(&env.repo, "main");
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+
+    assert_eq!(workflow_merge(&env, true).await, "merged");
+    assert_eq!(rev(&env.repo, "main"), main, "no local merge commit");
+    let merged = merged_event(&env).await;
+    assert_eq!(
+        (merged["data"]["via"].as_str(), merged["data"]["pr"].as_u64()),
+        (Some("detected"), Some(12)),
+        "{merged}"
+    );
+    pdt_api::run_workflows(&env.state).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!((t["stage"].as_str(), t["attempt"]["pr"]["number"].as_u64()), (Some("done"), Some(12)), "{t}");
+    assert!(!env.wt_path.exists(), "the worktree went");
+    assert_eq!(finish_runs(&env).await[0]["status"], "succeeded");
+}
+
+#[tokio::test]
+async fn a_workflow_merge_of_an_open_pr_finishes_the_ticket_once_it_merges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = open_pr(&env, 7).await;
+    // The repository has no CI to wait for.
+    assert_eq!(workflow_merge(&env, false).await, "queued");
+
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+    let (s, _) = call(&env.app, "POST", &format!("/api/tickets/{}/check-merge", env.ticket), None).await;
+    assert_eq!(s, StatusCode::OK);
+    pdt_api::run_workflows(&env.state).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+    assert_eq!(merged_event(&env).await["data"]["pr"], json!(7));
+}
+
+#[tokio::test]
+async fn a_workflow_local_merge_finishes_the_ticket_and_the_users_own_is_left_to_merge_dialog() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "add c");
+    assert_eq!(workflow_merge(&env, false).await, "merged");
+    assert_eq!(merged_event(&env).await["data"]["via"], "automated");
+    pdt_api::run_workflows(&env.state).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+    assert_eq!(finish_runs(&env).await[0]["status"], "succeeded");
+
+    // The user's own Merge… finishes the ticket itself (the dialog): Finish merged tickets stays out of it.
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "add c");
+    let body = json!({"by": "user", "finishOnMerge": true});
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), Some(body)).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("merged")), "{r}");
+    let merged = merged_event(&env).await;
+    assert_eq!((merged["actor"].as_str(), merged["data"]["via"].as_str()), (Some("user"), Some("merged_here")));
+    pdt_api::run_workflows(&env.state).await;
+    assert!(finish_runs(&env).await.is_empty());
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "in_progress", "the dialog moves it, not a workflow");
+}
+
+#[tokio::test]
+async fn a_workflow_never_merges_locally_what_had_or_would_have_a_pr() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = queue_with_finish(&env).await;
+    let main = rev(&env.repo, "main");
+    pr.state = PrState::Closed;
+    env.gh.set_pr(&env.branch, Some(pr.clone()));
+    let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("merge_blocked")), "{e}");
+    assert!(e["message"].as_str().unwrap().contains("closed without merging"), "{e}");
+    assert_eq!(rev(&env.repo, "main"), main);
+
+    // GitHub not answering: a PR may be there.
+    *env.gh.error.lock().unwrap() = Some("gh: offline".into());
+    let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("pr_unreadable")), "{e}");
+    *env.gh.error.lock().unwrap() = None;
+
+    // Once a ticket of the project merged through a PR, a branch with none yet waits for one.
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("merged")), "{r}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await;
+    let pid = t["projectId"].as_str().unwrap();
+    let (_, t2) = call(&env.app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Next"}))).await;
+    let t2 = t2["id"].as_str().unwrap();
+    let (s, started) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{t2}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "terminal"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let (_, t2v) = call(&env.app, "GET", &format!("/api/tickets/{t2}"), None).await;
+    let a2 = t2v["attempt"]["id"].as_str().unwrap();
+    let branch2 = t2v["attempt"]["branch"].as_str().unwrap();
+    let wt2 = env.repo.join(".worktrees").join(branch2);
+    std::fs::write(wt2.join("d.txt"), "d\n").unwrap();
+    commit_all(&wt2, "add d");
+    let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{a2}/merge"), None).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("merge_blocked")), "{e}");
+    assert!(e["message"].as_str().unwrap().contains("merge through pull requests"), "{e}");
+    // The user can still merge it here.
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{a2}/merge"), Some(json!({"by": "user"}))).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("merged")), "{r}");
+}
+
+#[tokio::test]
+async fn hosts_with_the_old_finish_merged_tickets_get_the_new_condition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    pdt_api::run_workflows(&env.state).await;
+    let store = &env.state.store;
+    let w = store.workflow_by_builtin("finish-merged").await.unwrap().unwrap();
+    let mut old = store.workflow_doc(&w.id, w.version).await.unwrap().unwrap();
+    let mut v = serde_json::to_value(&old).unwrap();
+    v["nodes"][0]["config"] = json!({"where": [{"left": "{{trigger.via}}", "op": "eq", "right": "detected"}]});
+    old = serde_json::from_value(v).unwrap();
+    store
+        .save_workflow_version(&w.id, &old, pdt_core::workflow::api::Author::Builtin, "updated by PDT", 1)
+        .await
+        .unwrap();
+
+    // pdtd starts again.
+    let state = AppState::new(Store::open(&tmp.path().join("pdt.db")).await.unwrap(), tmp.path().join("data"));
+    pdt_api::run_workflows(&state).await;
+    let w = state.store.workflow_by_builtin("finish-merged").await.unwrap().unwrap();
+    let now = serde_json::to_value(state.store.workflow_doc(&w.id, w.version).await.unwrap().unwrap()).unwrap();
+    assert_eq!(now["nodes"][0]["config"]["where"][0]["right"], json!(["detected", "automated"]), "{now}");
+}
