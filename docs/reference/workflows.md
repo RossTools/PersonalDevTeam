@@ -159,7 +159,8 @@ pdtd has a cargo feature per crate (all on by default, so releases have them all
 jira,…` leaves the rest out) and hands those it was built with to `Integrations::new` (pdtd `src/integrations/`).
 pdt-core `integration::KNOWN` is the one list naming them outside their crates (id, label, connection kinds, node-kind
 prefixes). Which of them an instance uses is the host value `integrations.enabled` (a JSON list of ids):
-Settings → Integrations (`GET /api/integrations`: each known one with `enabled` and `built`; `PUT /api/integrations
+Settings → Integrations (`GET /api/integrations`: each known one with `enabled`, `built`, its pdt-mcp `tools` and the
+PM's among them, `pmTools`, PDT-179; `PUT /api/integrations
 {enabled}` sets exactly those, 422 for one this build lacks). A disabled integration registers nothing (no connection
 kinds, node kinds, triggers, tools, PM instructions, project settings, pollers, routes or built-ins); its connections,
 project links and workflows are kept. A connection of a turned-off integration's kind is refused (400, naming it), a

@@ -41,6 +41,10 @@ pub struct Config {
     pub updates_unsupported: Option<String>,
     /// `PDT_SEED=demo`: fill an empty database with demo data at startup (dev instances only; `seed.rs`).
     pub seed: Option<Seed>,
+    /// `PDT_REHEARSAL=1` (PDT-179, `scripts/rehearse-upgrade.sh`): a dev instance on a copy of a real data dir that
+    /// only migrates it and serves the API. Nothing it does reaches beyond the copy: no run or session resumes, no
+    /// background loop (poll, workflow engine, scheduler, remote access, updates) starts, and secrets stay in memory.
+    pub rehearsal: bool,
 }
 
 /// What `PDT_SEED` asks for.
@@ -67,7 +71,7 @@ impl Config {
         };
         let data_dir = match lookup("PDT_DATA_DIR") {
             Some(d) => PathBuf::from(d),
-            None => match default_data_root {
+            None => match &default_data_root {
                 Some(root) => root.join(profile.data_dir_name()),
                 None => bail!("could not determine a data directory; set PDT_DATA_DIR"),
             },
@@ -85,7 +89,27 @@ impl Config {
             allowed_hosts.extend(extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from));
         }
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
-        let memory_secrets = lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
+        let rehearsal = lookup("PDT_REHEARSAL").as_deref() == Some("1");
+        if rehearsal {
+            if profile != Profile::Dev {
+                bail!("PDT_REHEARSAL needs PDT_PROFILE=dev");
+            }
+            match lookup("PDT_DATA_DIR") {
+                None => bail!("PDT_REHEARSAL needs PDT_DATA_DIR: a copy of the data dir to rehearse on"),
+                Some(d)
+                    if default_data_root.as_ref().is_some_and(|r| {
+                        [Profile::Stable, Profile::Dev]
+                            .iter()
+                            .any(|p| r.join(p.data_dir_name()) == std::path::Path::new(&d))
+                    }) =>
+                {
+                    bail!("PDT_REHEARSAL runs on a copy, never on a real data dir ({d})")
+                }
+                Some(_) => {}
+            }
+        }
+        // A rehearsal never reads the keychain: the copy's secrets are the real instance's.
+        let memory_secrets = rehearsal || lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
         let github_offline = lookup("PDT_GITHUB_OFFLINE").as_deref() == Some("1");
         let github_client_id = lookup("PDT_GITHUB_CLIENT_ID").filter(|c| !c.trim().is_empty());
@@ -118,6 +142,7 @@ impl Config {
             supervised,
             updates_unsupported,
             seed,
+            rehearsal,
         })
     }
 
@@ -180,6 +205,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!((c.port, c.data_dir, c.web_dir), (9999, PathBuf::from("/x"), Some(PathBuf::from("/w"))));
+    }
+
+    #[test]
+    fn a_rehearsal_runs_on_a_copy_with_secrets_in_memory() {
+        let root = Some(PathBuf::from("/data"));
+        let dev = |extra: &[(&str, &str)]| {
+            let mut pairs = vec![("PDT_PROFILE", "dev"), ("PDT_REHEARSAL", "1")];
+            pairs.extend_from_slice(extra);
+            Config::from_lookup(lookup(&pairs), root.clone(), None)
+        };
+        let copy = std::env::temp_dir().join("pdt-rehearsal");
+        let c = dev(&[("PDT_DATA_DIR", copy.to_str().unwrap())]).unwrap();
+        assert!(c.rehearsal && c.memory_secrets);
+        assert_eq!(c.data_dir, copy);
+        assert!(dev(&[]).is_err(), "needs an explicit copy");
+        for real in ["pdt", "pdt-dev"] {
+            let d = PathBuf::from("/data").join(real);
+            assert!(dev(&[("PDT_DATA_DIR", d.to_str().unwrap())]).is_err(), "{real}");
+        }
+        let stable = [("PDT_REHEARSAL", "1"), ("PDT_DATA_DIR", copy.to_str().unwrap())];
+        assert!(Config::from_lookup(lookup(&stable), root.clone(), None).is_err(), "dev profile only");
+        let c = Config::from_lookup(lookup(&[]), root, None).unwrap();
+        assert!(!c.rehearsal && !c.memory_secrets);
     }
 
     #[test]

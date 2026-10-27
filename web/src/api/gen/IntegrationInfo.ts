@@ -7,4 +7,12 @@ export type IntegrationInfo = { id: string, label: string, description: string, 
 /**
  * This build has it (pdtd's cargo feature); one it lacks can't be enabled.
  */
-built: boolean, };
+built: boolean, 
+/**
+ * The pdt-mcp tools it adds (its actions' and its own), enabled or not; none when this build lacks it.
+ */
+tools: Array<string>, 
+/**
+ * Those of [`IntegrationInfo::tools`] the PM has ([`ToolDecl::pm`]).
+ */
+pmTools: Array<string>, };

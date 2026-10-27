@@ -148,6 +148,9 @@ async fn run() -> anyhow::Result<()> {
             pdt_api::vault::load_known(&st).await;
         }
     });
+    if cfg.rehearsal {
+        return rehearse(listener, state, store, cfg).await;
+    }
     // Bindings are decided now; the sessions themselves restart in the background once pdtd is serving, because
     // fresh Codex launches in one folder are spaced out and must not delay the health check.
     let plan = plan_resume_interrupted(&state).await;
@@ -248,6 +251,28 @@ async fn run() -> anyhow::Result<()> {
             }
         });
     }
+    shutdown::serve(listener, app, state).await?;
+    store.close().await;
+    tracing::info!("stopped");
+    Ok(())
+}
+
+/// An upgrade rehearsal (`PDT_REHEARSAL`, PDT-179): the copy is migrated and served for `scripts/rehearse-upgrade.sh`
+/// to check, with the built-in workflows and personas installed for what is enabled. Nothing resumes and no background
+/// loop starts, so the copy's runs, sessions, workflows and repos are never acted on.
+async fn rehearse(
+    listener: tokio::net::TcpListener,
+    state: AppState,
+    store: Store,
+    cfg: config::Config,
+) -> anyhow::Result<()> {
+    pdt_api::recover_conversations(&state).await;
+    pdt_api::install_builtins(&state).await;
+    let app = with_host_guard(router(state.clone(), cfg.web_dir.clone()), state.allowed_hosts.clone());
+    tracing::info!(
+        port = cfg.port, data_dir = %cfg.data_dir.display(),
+        "{PRODUCT_NAME} upgrade rehearsal listening on http://127.0.0.1:{} (nothing resumes, no background loop)", cfg.port
+    );
     shutdown::serve(listener, app, state).await?;
     store.close().await;
     tracing::info!("stopped");

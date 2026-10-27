@@ -81,4 +81,7 @@ pub use scheduler::{run_scheduler, schedule_tickets};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};
 pub use start::check_merges;
 pub use update::{UpdateService, run_update_loop};
-pub use workflow::{engine::run_workflows, maintain_workflows};
+pub use workflow::{
+    engine::{install_builtins, run_workflows},
+    maintain_workflows,
+};

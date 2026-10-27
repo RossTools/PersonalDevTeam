@@ -134,6 +134,32 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   (polled every 2 s while downloading/installing, else every 60 s and on window focus); index.html is `no-cache`, so
   the reload gets the new bundle.
 
+## Upgrade rehearsal (PDT-179)
+
+Before installing a release with migrations or plugin changes, `scripts/rehearse-upgrade.sh` runs this checkout's
+pdtd (built with `cargo build -p pdtd`, or `--bin`) against a copy of a real data dir and prints a pass/fail report
+(Markdown; `--report FILE` saves it). Exit status 0 when every check passes, 1 when one fails, 2 when it could not run.
+
+- The copy: the source (`--from`, the stable data dir by default) is only read. Its database is copied with SQLite's
+  online backup (consistent while the stable instance runs), plus `sessions/` and `pm/`, into a temp folder that is
+  removed afterwards (`--keep` keeps it and the instance's log).
+- The instance: a dev pdtd on port 7421 (`--port`; it refuses 7420 and a port in use) with `PDT_REHEARSAL=1`.
+  Rehearsal mode needs the dev profile and an explicit `PDT_DATA_DIR` other than the real `pdt`/`pdt-dev` folders; it
+  migrates the copy, installs the built-in workflows and personas for what is enabled and serves the API, and does
+  nothing else: no run or session resumes, no background loop starts (poll, workflow engine, scheduler, notifier,
+  remote access, host checks, updates), and secrets are kept in memory, so the keychain is never read and the copy's
+  repos, processes and connections are never acted on. The script also drops every `PDT_*` variable of its shell and
+  points the agent programs and Tailscale at nothing.
+- The checks: every migration in `crates/pdt-store/migrations` applied; every integration a connection or a user
+  workflow uses is enabled (an install that never chose gets the ones it uses, `integrations.enabled`); every
+  connection loads, and each with a secret is reported as "needs secret" (its value is in the keychain); every
+  workflow validates (`POST /api/workflows/validate`, as `workflow_validate`) and each trigger dry-runs on the newest
+  of its last 20 logged events that matches it (`schedule` and `manual` on made-up ones; a type with no logged event
+  on an empty made-up one, reported as untested when it fails); each enabled integration's tools (`GET
+  /api/integrations` `tools`/`pmTools`) are in the agents' list (`GET /api/personas/tools`) and the PM persona's; with
+  no token, `GET /api/github/login` is not connected (Settings offers Connect GitHub); the UI is served when
+  `web/dist` is built.
+
 ## Bug reports (PDT-153)
 
 "Report a bug" (the palette's Actions, the Keyboard shortcuts dialog, Host settings → Bug reports; pdt-api
