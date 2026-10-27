@@ -92,12 +92,12 @@ pub fn under(base: &str, url: &str) -> bool {
 }
 
 /// The longest connecting to a service may take, for every call through [`client`].
-pub(crate) const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The HTTP client of workflows' nodes, the sensors and MCP servers. It bounds connecting only: MCP keeps streams open
 /// for as long as a server lives, so each caller bounds its own requests (nodes by the step timeout, sensors by
 /// `AppState::sensor_timeout`).
-pub(crate) fn client() -> &'static reqwest::Client {
+pub fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -109,10 +109,10 @@ pub(crate) fn client() -> &'static reqwest::Client {
 }
 
 /// A request's error without its URL, with its causes. reqwest's own message ends with the URL, and a URL can be a
-/// secret (a Discord webhook's token, a key sent as a query parameter): every outbound call's error goes through
+/// secret (a webhook URL's token, a key sent as a query parameter): every outbound call's error goes through
 /// this before it reaches a step, a run, a notification or the log. A connection macOS's Local Network permission
 /// blocked names the setting instead of "No route to host" (PDT-156).
-pub(crate) fn send_error(e: reqwest::Error) -> String {
+pub fn send_error(e: reqwest::Error) -> String {
     let host = e.url().and_then(|u| u.host_str()).map(String::from);
     let e = e.without_url();
     if let Some(m) = pdt_core::local_network::explain_failure(cfg!(target_os = "macos"), host.as_deref(), os_error(&e))
@@ -142,7 +142,7 @@ fn os_error(e: &(dyn std::error::Error + 'static)) -> Option<i32> {
 }
 
 /// Adds a connection's secret to a request, the way its config says.
-pub(crate) fn authorize(
+pub fn authorize(
     req: reqwest::RequestBuilder,
     conn: &Connection,
     secret: Option<&str>,
@@ -160,7 +160,7 @@ pub(crate) fn authorize(
 }
 
 /// Reads a response body, up to `cap` bytes.
-pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
+pub async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     while let Some(chunk) = resp.chunk().await.map_err(send_error)? {
         let room = cap.saturating_sub(out.len());
@@ -172,12 +172,8 @@ pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result
     Ok(out)
 }
 
-/// A connection of `kind` and its secret, for kinds made for one service (Radarr, Plex, …).
-pub(crate) async fn service(
-    st: &crate::routes::AppState,
-    name: &str,
-    kind: &str,
-) -> Result<(Connection, String), String> {
+/// A connection of `kind` and its secret, for kinds made for one service (an integration's).
+pub async fn service(st: &crate::routes::AppState, name: &str, kind: &str) -> Result<(Connection, String), String> {
     if name.trim().is_empty() {
         return Err(format!("connection is empty: name a {kind} connection"));
     }
@@ -194,7 +190,7 @@ pub(crate) async fn service(
 
 /// One JSON call to a service: `path` under its `base` URL, with `headers` (its key); a status other than 2xx is an
 /// error naming `who`, the status and the start of the answer. An empty answer is null.
-pub(crate) async fn call_json(
+pub async fn call_json(
     who: &str,
     method: reqwest::Method,
     base: &str,
@@ -208,7 +204,7 @@ pub(crate) async fn call_json(
 
 /// [`call_json`] reading at most `cap` bytes of the answer (a GraphQL schema's introspection is bigger than most).
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn call_json_capped(
+pub async fn call_json_capped(
     who: &str,
     method: reqwest::Method,
     base: &str,

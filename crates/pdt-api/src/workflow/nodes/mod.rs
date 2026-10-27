@@ -1,24 +1,19 @@
 //! The built-in node kinds, one module each (Phase 7a spec §4.4).
 
 pub mod agent;
-pub mod arr;
 pub mod attempt;
 pub mod brief;
-pub mod buildkite;
 pub mod call;
 pub mod command;
 pub mod condition;
-pub mod discord;
 pub mod end;
 pub mod gate;
 pub mod github;
 pub mod http;
 pub mod inbox_notice;
-pub mod jira;
 pub mod mcp_tool;
 pub mod merge;
 pub mod notify;
-pub mod plex;
 pub mod schedule;
 pub mod session_send;
 pub mod state;

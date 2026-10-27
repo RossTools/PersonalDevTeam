@@ -8,7 +8,7 @@ const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
 /// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels, the PM
-/// may act), the integrations' settings (JSON), the start delay and green CI. (0027's Jira and Buildkite columns are
+/// may act), the integrations' settings (JSON), the start delay and green CI. (0027's integration columns are
 /// unused since the integration settings took them in, PDT-174.)
 type ProjectSettingsRow = (
     Option<String>,
@@ -42,26 +42,20 @@ pub struct ProjectSettings {
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
     /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c §4).
     pub policy: ProjectPolicy,
-    /// Its settings for each integration it is linked to, by the integration's id (PDT-174): `jira` (Phase 7e §6.1,
-    /// issues assigned to the user become tickets), `buildkite` (§6.4, CI of its attempts' branches).
+    /// Its settings for each integration it is linked to, by the integration's id (PDT-174): `connection` and the
+    /// fields the integration's project settings declare.
     pub integrations: BTreeMap<String, IntegrationSettings>,
 }
 
 impl ProjectSettings {
-    /// Its Jira link, if it has a readable one.
-    pub fn jira(&self) -> Option<pdt_core::jira::JiraSettings> {
-        serde_json::from_value(self.integration(pdt_core::jira::JIRA)?).ok()
-    }
-
-    /// Its Buildkite pipelines, if it has readable ones.
-    pub fn buildkite(&self) -> Option<pdt_core::buildkite::BuildkiteSettings> {
-        serde_json::from_value(self.integration(pdt_core::buildkite::BUILDKITE)?).ok()
-    }
-
-    fn integration(&self, id: &str) -> Option<serde_json::Value> {
-        self.integrations.get(id).map(|m| serde_json::Value::Object(m.clone()))
+    /// Its settings for integration `id` as `T`, if it is linked and they read as one.
+    pub fn integration<T: serde::de::DeserializeOwned>(&self, id: &str) -> Option<T> {
+        serde_json::from_value(serde_json::Value::Object(self.integrations.get(id)?.clone())).ok()
     }
 }
+
+/// Where the integrations this instance has enabled are kept (PDT-173): a JSON list of their ids.
+const ENABLED_INTEGRATIONS: &str = "integrations.enabled";
 
 impl Store {
     pub async fn get_host_settings(&self) -> Result<HostSettings, StoreError> {
@@ -115,6 +109,39 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// The integrations this instance has enabled (PDT-173), by id.
+    pub async fn enabled_integrations(&self) -> Result<Vec<String>, StoreError> {
+        let v = self.get_host_value(ENABLED_INTEGRATIONS).await?;
+        Ok(v.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default())
+    }
+
+    pub async fn set_enabled_integrations(&self, ids: &[String]) -> Result<(), StoreError> {
+        self.put_host_value(ENABLED_INTEGRATIONS, &serde_json::json!(ids)).await
+    }
+
+    /// Decides which integrations an instance that has never chosen enables (PDT-173): the ones it already uses (a
+    /// connection of one of their kinds, or a workflow of the user's with one of their node kinds), so an upgraded
+    /// install keeps working with no action; a new one has none.
+    pub(crate) async fn backfill_enabled_integrations(&self) -> Result<(), StoreError> {
+        if self.get_host_value(ENABLED_INTEGRATIONS).await?.is_some() {
+            return Ok(());
+        }
+        let connections: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT kind FROM connections").fetch_all(&self.pool).await?;
+        let nodes: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT json_extract(n.value, '$.kind') FROM workflows w \
+             JOIN workflow_versions v ON v.workflow_id = w.id AND v.version = w.version, json_each(v.doc, '$.nodes') n \
+             WHERE w.builtin IS NULL AND json_valid(v.doc) AND json_extract(n.value, '$.kind') IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let used = pdt_core::integration::in_use(
+            connections.iter().map(|(k,)| k.as_str()),
+            nodes.iter().map(|(k,)| k.as_str()),
+        );
+        self.set_enabled_integrations(&used.into_iter().map(String::from).collect::<Vec<_>>()).await
     }
 
     pub async fn get_project_settings(&self, project_id: &str) -> Result<ProjectSettings, StoreError> {
@@ -258,6 +285,66 @@ mod tests {
         assert_eq!(store.get_host_value("sensor.x.y").await.unwrap(), None);
     }
 
+    /// PDT-173: an upgraded install enables the integrations it already uses, with no action from the user; a new
+    /// one enables none, and a choice once made is kept.
+    #[tokio::test]
+    async fn an_upgraded_install_enables_the_integrations_it_uses() {
+        use pdt_core::workflow::api::{Author, Connection, Scope, Source, Workflow};
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("pdt.db");
+        let store = crate::Store::open(&db).await.unwrap();
+        assert!(store.enabled_integrations().await.unwrap().is_empty(), "a new install enables none");
+        let conn = |id: &str, kind: &str| Connection {
+            id: id.into(),
+            name: id.into(),
+            kind: kind.into(),
+            url: String::new(),
+            config: json!({}),
+            has_secret: true,
+            created_at: 1,
+            updated_at: 1,
+            last_error: None,
+            last_error_at: None,
+        };
+        store.insert_connection(&conn("media", "scryer")).await.unwrap();
+        store.insert_connection(&conn("alerts", "discord_webhook")).await.unwrap();
+        store.insert_connection(&conn("api", "http")).await.unwrap();
+        let workflow = |id: &str, builtin: Option<&str>| Workflow {
+            id: id.into(),
+            name: id.into(),
+            description: String::new(),
+            scope: Scope::Host,
+            project_id: None,
+            enabled: true,
+            builtin: builtin.map(String::from),
+            source: Source::Host,
+            repo_file: None,
+            version: 1,
+            proposed: None,
+            created_at: 1,
+            updated_at: 1,
+        };
+        let doc = |kind: &str| {
+            serde_json::from_value(json!({"name": "w", "nodes": [{"id": "a", "kind": kind, "version": 1}]})).unwrap()
+        };
+        store.insert_workflow(&workflow("w1", None), &doc("plex.search"), Author::User, "").await.unwrap();
+        // A built-in PDT installed is not the user's use of its integration.
+        store
+            .insert_workflow(&workflow("w2", Some("jira-import")), &doc("jira.import"), Author::Builtin, "")
+            .await
+            .unwrap();
+        // Before this version there was no setting: an upgrade.
+        store.delete_host_value(super::ENABLED_INTEGRATIONS).await.unwrap();
+        store.close().await;
+
+        let store = crate::Store::open(&db).await.unwrap();
+        assert_eq!(store.enabled_integrations().await.unwrap(), ["discord", "scryer", "plex"]);
+        store.set_enabled_integrations(&["scryer".into()]).await.unwrap();
+        store.close().await;
+        let store = crate::Store::open(&db).await.unwrap();
+        assert_eq!(store.enabled_integrations().await.unwrap(), ["scryer"], "the user's choice is kept");
+    }
+
     #[tokio::test]
     async fn corrupt_host_settings_are_reported() {
         let tmp = tempfile::tempdir().unwrap();
@@ -291,8 +378,8 @@ mod tests {
                 require_green_ci: false,
             },
             integrations: [
-                ("jira", json!({"connection": "work-jira", "scope": "project = ABC", "done": "Close"})),
-                ("buildkite", json!({"connection": "bk", "pipelines": ["app", "e2e"]})),
+                ("tracker", json!({"connection": "work", "scope": "project = ABC", "done": "Close"})),
+                ("ci", json!({"connection": "builds", "pipelines": ["app", "e2e"]})),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.as_object().unwrap().clone()))
@@ -301,8 +388,8 @@ mod tests {
         store.put_project_settings("p", &s).await.unwrap();
         let got = store.get_project_settings("p").await.unwrap();
         assert_eq!(got, s);
-        assert_eq!(got.jira().unwrap().done, "Close");
-        assert_eq!(got.buildkite().unwrap().pipelines, ["app", "e2e"]);
+        assert_eq!(got.integration::<serde_json::Value>("tracker").unwrap()["done"], "Close");
+        assert_eq!(got.integration::<serde_json::Value>("ci").unwrap()["pipelines"], json!(["app", "e2e"]));
         store.put_project_settings("p", &ProjectSettings::default()).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
         assert!(store.put_project_settings("missing", &s).await.is_err(), "foreign key enforced");

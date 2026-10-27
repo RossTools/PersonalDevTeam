@@ -9,14 +9,14 @@ use std::collections::BTreeMap;
 
 /// One sensor pass's uses of connections, by name: the first failure of each, or None when every use worked.
 #[derive(Debug, Default)]
-pub(crate) struct Uses(BTreeMap<String, Option<String>>);
+pub struct Uses(BTreeMap<String, Option<String>>);
 
 impl Uses {
-    pub(crate) fn worked(&mut self, name: &str) {
+    pub fn worked(&mut self, name: &str) {
         self.0.entry(name.to_string()).or_insert(None);
     }
 
-    pub(crate) fn failed(&mut self, name: &str, error: &str) {
+    pub fn failed(&mut self, name: &str, error: &str) {
         let e = self.0.entry(name.to_string()).or_insert(None);
         if e.is_none() {
             *e = Some(error.to_string());
@@ -24,7 +24,7 @@ impl Uses {
     }
 
     /// Records the pass on each connection (failing if any use of it failed): notifies or clears once per change.
-    pub(crate) async fn report(self, st: &AppState) {
+    pub async fn report(self, st: &AppState) {
         for (name, error) in self.0 {
             report(st, &name, error.as_deref()).await;
         }
@@ -32,7 +32,7 @@ impl Uses {
 }
 
 /// Records one connection's state now: `error` when a use failed, None when it worked.
-pub(crate) async fn report(st: &AppState, name: &str, error: Option<&str>) {
+pub async fn report(st: &AppState, name: &str, error: Option<&str>) {
     let key = connection_key(name);
     let conn = match st.store.connection_by_name(name).await {
         Ok(c) => c,
@@ -73,7 +73,7 @@ pub(crate) async fn report(st: &AppState, name: &str, error: Option<&str>) {
 }
 
 /// A connection was saved, renamed or deleted: its old failure is forgotten (the next use tells).
-pub(crate) async fn forget(st: &AppState, names: &[&str]) {
+pub async fn forget(st: &AppState, names: &[&str]) {
     for n in names {
         crate::notifications::clear(st, &connection_key(n)).await;
     }

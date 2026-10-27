@@ -2,6 +2,7 @@
 //! [`catalog`]. The catalog serves `GET /api/workflows/catalog`, checks configs for validation, and runs nodes.
 
 use crate::routes::AppState;
+use pdt_core::brand::SHORT_NAME;
 use pdt_core::workflow::api::{LogEvent, Run, Scope, Step, Workflow};
 use pdt_core::workflow::doc::{ERROR_PORT, Node};
 use pdt_core::workflow::validate::{KindFacts, Kinds};
@@ -11,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::OnceLock;
 use ts_rs::TS;
 
 pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -244,16 +244,38 @@ pub fn spec<C: JsonSchema, O: JsonSchema>(
 }
 
 pub struct Catalog {
-    kinds: Vec<(KindSpec, Box<dyn NodeKind>)>,
+    kinds: Vec<(KindSpec, std::sync::Arc<dyn NodeKind>)>,
+    /// The ids of the integrations this build has, enabled or not.
+    built: Vec<&'static str>,
 }
 
 impl Catalog {
-    pub(crate) fn new(kinds: Vec<Box<dyn NodeKind>>) -> Self {
-        Self { kinds: kinds.into_iter().map(|k| (k.spec(), k)).collect() }
+    pub(crate) fn new(kinds: Vec<Box<dyn NodeKind>>, built: Vec<&'static str>) -> Self {
+        Self { kinds: kinds.into_iter().map(|k| (k.spec(), std::sync::Arc::from(k))).collect(), built }
+    }
+
+    /// Why there is no kind `kind`: its integration is turned off, or this build lacks it, or there is no such kind.
+    pub fn missing(&self, kind: &str) -> (&'static str, String) {
+        match pdt_core::integration::owner_of_kind(kind) {
+            Some(i) if self.built.contains(&i.id) => (
+                "integration_disabled",
+                format!("{kind} is part of the {} integration, which is turned off (Settings → Integrations)", i.label),
+            ),
+            Some(i) => (
+                "integration_missing",
+                format!("{kind} is part of the {} integration, which this {SHORT_NAME} was built without", i.label),
+            ),
+            None => ("unknown_kind", format!("no node kind is called {kind}")),
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<&dyn NodeKind> {
         self.kinds.iter().find(|(s, _)| s.id == id).map(|(_, k)| k.as_ref())
+    }
+
+    /// The kind, to keep beyond the catalog (a running step's).
+    pub fn shared(&self, id: &str) -> Option<std::sync::Arc<dyn NodeKind>> {
+        self.kinds.iter().find(|(s, _)| s.id == id).map(|(_, k)| k.clone())
     }
 
     pub fn spec(&self, id: &str) -> Option<&KindSpec> {
@@ -283,10 +305,7 @@ impl Catalog {
 
     /// A node's config at the kind's current version.
     pub fn current_config(&self, node: &Node) -> Result<Value, String> {
-        let (kind, spec) = self
-            .get(&node.kind)
-            .zip(self.spec(&node.kind))
-            .ok_or_else(|| format!("no node kind is called {}", node.kind))?;
+        let (kind, spec) = self.get(&node.kind).zip(self.spec(&node.kind)).ok_or_else(|| self.missing(&node.kind).1)?;
         if node.version > spec.version {
             return Err(format!(
                 "{} was written for {} version {}; this PDT has {}",
@@ -298,6 +317,11 @@ impl Catalog {
 }
 
 impl Kinds for Catalog {
+    fn unknown(&self, kind: &str) -> (String, String) {
+        let (code, message) = self.missing(kind);
+        (code.into(), message)
+    }
+
     fn facts(&self, node: &Node) -> Option<KindFacts> {
         let kind = self.get(&node.kind)?;
         let spec = self.spec(&node.kind)?;
@@ -318,8 +342,9 @@ impl Kinds for Catalog {
 
 /// The catalog as the API lists it: every kind, then an entry per cached MCP tool (`mcp:<server>/<tool>`).
 pub fn listed(st: &AppState) -> Vec<KindSpec> {
-    let mut all = catalog().specs();
-    if let Some(base) = catalog().spec(super::nodes::mcp_tool::KIND) {
+    let reg = st.registry();
+    let mut all = reg.catalog().specs();
+    if let Some(base) = reg.catalog().spec(super::nodes::mcp_tool::KIND) {
         all.extend(super::nodes::mcp_tool::tool_entries(base, &st.mcp.all_cached()));
     }
     all
@@ -327,19 +352,16 @@ pub fn listed(st: &AppState) -> Vec<KindSpec> {
 
 /// A kind or MCP tool entry by id, as [`listed`] has it.
 pub fn listed_spec(st: &AppState, id: &str) -> Option<KindSpec> {
-    catalog().spec(id).cloned().or_else(|| listed(st).into_iter().find(|k| k.id == id))
-}
-
-/// Every kind PDT knows: every registered integration's ([`crate::integrations::Registry::node_kinds`]). Adding one:
-/// a module in `nodes/` and a line in its integration's `node_kinds`.
-pub fn catalog() -> &'static Catalog {
-    static CATALOG: OnceLock<Catalog> = OnceLock::new();
-    CATALOG.get_or_init(|| Catalog::new(crate::integrations::registry().node_kinds()))
+    st.registry().catalog().spec(id).cloned().or_else(|| listed(st).into_iter().find(|k| k.id == id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn catalog() -> &'static Catalog {
+        crate::integrations::test_registry().catalog()
+    }
 
     #[test]
     fn every_kind_has_a_unique_id_and_schemas() {
@@ -350,7 +372,7 @@ mod tests {
             assert!(s.config_schema.is_object(), "{}", s.id);
             assert!(!s.title.is_empty() && !s.description.is_empty(), "{}", s.id);
         }
-        for t in crate::integrations::registry().events() {
+        for t in crate::integrations::test_registry().events() {
             let kinds: Vec<_> = catalog()
                 .specs()
                 .into_iter()
@@ -364,14 +386,8 @@ mod tests {
     #[test]
     fn connection_fields_say_their_kind() {
         let prop = |kind: &str, field: &str| catalog().spec(kind).unwrap().config_schema["properties"][field].clone();
-        assert_eq!(prop("discord.post", "connection")["x-connection-kind"], "discord_webhook");
         assert_eq!(prop("webhook", "hook")["x-connection-kind"], "webhook");
-        assert_eq!(prop("plex.search", "connection")["x-connection-kind"], "plex");
-        assert_eq!(prop("radarr.add", "connection")["x-connection-kind"], "radarr");
-        assert_eq!(prop("sonarr.queue", "connection")["x-connection-kind"], "sonarr");
-        assert_eq!(prop("scryer.add", "connection")["x-connection-kind"], "scryer");
         assert_eq!(prop("mcp.tool", "server")["x-connection-kind"], "mcp");
-        assert_eq!(prop("discord.channel.ensure", "connection")["x-connection-kind"], "discord_bot");
         assert_eq!(
             prop("http.request", "connection")["x-connection-kind"],
             "any",

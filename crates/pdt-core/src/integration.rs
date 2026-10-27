@@ -15,7 +15,7 @@ pub struct ToolDecl {
     /// It changes nothing (MCP's `readOnlyHint`).
     pub read_only: bool,
     /// It acts for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval card)
-    /// unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so it is never in Claude's
+    /// unless the project's policy (for an integration's tools, its connection) lets the PM act, so it is never in Claude's
     /// `--allowedTools`.
     pub asks: bool,
     /// It reaches outside PDT (MCP's `openWorldHint`).
@@ -110,6 +110,76 @@ impl ToolTable {
             })
             .collect()
     }
+}
+
+/// An integration PDT knows of, whether or not this build has it (PDT-173): the list that names them outside their own
+/// crates. Each one's crate is `crates/pdt-int-<id>` and pdtd's cargo feature `<id>`. An instance enables the ones it
+/// uses (Settings → Integrations); this list says which an upgraded install already used, and names the integration a
+/// workflow's node kind belongs to when it is turned off or not built in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnownIntegration {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// The kinds of connection it adds.
+    pub connection_kinds: &'static [&'static str],
+    /// Its node kinds' (and event types') id prefixes, with their dot.
+    pub kind_prefixes: &'static [&'static str],
+}
+
+pub const KNOWN: &[KnownIntegration] = &[
+    KnownIntegration {
+        id: "discord",
+        label: "Discord",
+        connection_kinds: &["discord_webhook", "discord_bot"],
+        kind_prefixes: &["discord."],
+    },
+    KnownIntegration { id: "jira", label: "Jira", connection_kinds: &["jira"], kind_prefixes: &["jira."] },
+    KnownIntegration {
+        id: "buildkite",
+        label: "Buildkite",
+        connection_kinds: &["buildkite"],
+        kind_prefixes: &["buildkite."],
+    },
+    KnownIntegration {
+        id: "arr",
+        label: "Sonarr and Radarr",
+        connection_kinds: &["sonarr", "radarr"],
+        kind_prefixes: &["sonarr.", "radarr."],
+    },
+    KnownIntegration { id: "scryer", label: "Scryer", connection_kinds: &["scryer"], kind_prefixes: &["scryer."] },
+    KnownIntegration { id: "plex", label: "Plex", connection_kinds: &["plex"], kind_prefixes: &["plex."] },
+];
+
+/// The known integration with this id.
+pub fn known(id: &str) -> Option<&'static KnownIntegration> {
+    KNOWN.iter().find(|k| k.id == id)
+}
+
+/// The known integration a node kind (or event type) belongs to.
+pub fn owner_of_kind(kind: &str) -> Option<&'static KnownIntegration> {
+    KNOWN.iter().find(|k| k.kind_prefixes.iter().any(|p| kind.starts_with(p)))
+}
+
+/// The known integration a kind of connection belongs to.
+pub fn owner_of_connection(kind: &str) -> Option<&'static KnownIntegration> {
+    KNOWN.iter().find(|k| k.connection_kinds.contains(&kind))
+}
+
+/// The integrations an install uses, in [`KNOWN`]'s order: those with a connection of one of their kinds, or a
+/// workflow with one of their node kinds. What an upgraded install starts with enabled.
+pub fn in_use<'a>(
+    connection_kinds: impl IntoIterator<Item = &'a str>,
+    node_kinds: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'static str> {
+    let mut used: Vec<&'static str> = connection_kinds
+        .into_iter()
+        .filter_map(owner_of_connection)
+        .chain(node_kinds.into_iter().filter_map(owner_of_kind))
+        .map(|k| k.id)
+        .collect();
+    used.sort_by_key(|id| KNOWN.iter().position(|k| k.id == *id));
+    used.dedup();
+    used
 }
 
 /// A kind of connection the workflow actions (and the PM's tools) use: what it needs, and how to get its secret. A
@@ -415,6 +485,18 @@ mod tests {
         assert_eq!(t.asking_tools(), ["create_ticket"]);
         let listed = t.persona_tools();
         assert!(listed[0].default && !listed[1].default && listed[1].asks);
+    }
+
+    #[test]
+    fn integrations_in_use_come_from_connections_and_node_kinds() {
+        assert_eq!(in_use(["scryer", "http", "discord_bot"], []), ["discord", "scryer"]);
+        assert_eq!(in_use(["webhook"], ["jira.import", "condition", "radarr.add"]), ["jira", "arr"]);
+        assert!(in_use([], ["manual"]).is_empty());
+        assert_eq!(owner_of_kind("sonarr.queue").unwrap().id, "arr");
+        let mut ids: Vec<_> = KNOWN.iter().map(|k| k.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), KNOWN.len());
     }
 
     #[test]

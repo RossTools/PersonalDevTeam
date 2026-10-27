@@ -8,8 +8,8 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 
 | Check | Runs on | Does | Pull requests | Merge queue | main |
 |---|---|---|---|---|---|
-| lint (linux) | Namespace `linux-8` | fmt, clippy | unless docs only | unless docs only | never |
-| test (linux) | Namespace `linux-8` | nextest, generated TS types are committed | unless docs only | unless docs only | never |
+| lint (linux) | Namespace `linux-8` | fmt, clippy (pdtd also with no integration features) | unless docs only | unless docs only | never |
+| test (linux) | Namespace `linux-8` | nextest (pdtd also with no integration features), generated TS types are committed | unless docs only | unless docs only | never |
 | web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only | never |
 | build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | never |
 | build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |

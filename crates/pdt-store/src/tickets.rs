@@ -2342,7 +2342,7 @@ mod tests {
         let store = store_with_project(tmp.path()).await;
         let link = StoredExternalLink {
             ticket_id: String::new(),
-            system: "jira".into(),
+            system: "tracker".into(),
             connection_id: "c".into(),
             key: "ABC-1".into(),
             url: "https://s/browse/ABC-1".into(),
@@ -2350,17 +2350,17 @@ mod tests {
         let t = store.create_linked_ticket("t1", "p", &new("Fix"), &link, 1).await.unwrap().unwrap();
         assert_eq!(
             t.summary.external,
-            [ExternalLink { system: "jira".into(), key: "ABC-1".into(), url: link.url.clone() }]
+            [ExternalLink { system: "tracker".into(), key: "ABC-1".into(), url: link.url.clone() }]
         );
         assert_eq!(store.create_linked_ticket("t2", "p", &new("Again"), &link, 2).await.unwrap(), Err("t1".into()));
         assert!(store.get_ticket("t2").await.unwrap().is_none(), "nothing made the second time");
-        assert_eq!(store.ticket_for_external("jira", "c", "ABC-1").await.unwrap().as_deref(), Some("t1"));
-        assert_eq!(store.ticket_for_external("jira", "other", "ABC-1").await.unwrap(), None);
-        assert_eq!(store.external_links("t1", "jira").await.unwrap()[0].connection_id, "c");
+        assert_eq!(store.ticket_for_external("tracker", "c", "ABC-1").await.unwrap().as_deref(), Some("t1"));
+        assert_eq!(store.ticket_for_external("tracker", "other", "ABC-1").await.unwrap(), None);
+        assert_eq!(store.external_links("t1", "tracker").await.unwrap()[0].connection_id, "c");
         let page = store.query_tickets(&filter(in_project())).await.unwrap();
         assert_eq!(page.items[0].external[0].key, "ABC-1", "lists carry the link too");
         store.delete_ticket("t1").await.unwrap();
-        assert_eq!(store.ticket_for_external("jira", "c", "ABC-1").await.unwrap(), None, "gone with its ticket");
+        assert_eq!(store.ticket_for_external("tracker", "c", "ABC-1").await.unwrap(), None, "gone with its ticket");
     }
 
     #[tokio::test]

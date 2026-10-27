@@ -1,5 +1,5 @@
 use super::*;
-use crate::workflow::catalog::{Catalog, Category, KindSpec, Outcome, StepCx, parse};
+use crate::workflow::catalog::{Category, KindSpec, Outcome, StepCx, parse};
 use pdt_core::workflow::events::schema_of;
 use pdt_core::workflow::validate::Kinds;
 use std::sync::Arc;
@@ -133,16 +133,20 @@ impl Integration for Dummy {
     }
 }
 
+fn with_dummy() -> Registry {
+    Registry::new(own().into_iter().chain([Arc::new(Dummy) as Arc<dyn Integration>]).collect(), vec!["dummy"])
+}
+
 #[test]
 fn registering_an_integration_adds_its_connection_kind_node_kinds_and_tool() {
-    let without = Registry::new(all());
-    let r = Registry::new(all().into_iter().chain([Box::new(Dummy) as Box<dyn Integration>]).collect());
+    let without = Registry::new(own(), vec![]);
+    let r = with_dummy();
 
-    let kinds: Vec<&str> = r.connection_kinds().iter().map(|k| k.id.as_str()).collect();
-    assert_eq!(kinds.last(), Some(&"dummy"));
+    let kinds: Vec<String> = r.connection_kinds().into_iter().map(|k| k.id).collect();
+    assert_eq!(kinds.last().map(String::as_str), Some("dummy"));
     assert_eq!(kinds.len(), without.connection_kinds().len() + 1);
 
-    let catalog = Catalog::new(r.node_kinds());
+    let catalog = r.catalog();
     let poke = catalog.spec("dummy.poke").expect("its node kind");
     assert_eq!(poke.category, Category::Action);
     let trigger = catalog.spec("dummy.happened").expect("a trigger on its event type");
@@ -151,7 +155,7 @@ fn registering_an_integration_adds_its_connection_kind_node_kinds_and_tool() {
     let node: pdt_core::workflow::doc::Node =
         serde_json::from_value(json!({"id": "t", "kind": "dummy.happened", "version": 1})).unwrap();
     assert!(catalog.facts(&node).unwrap().trigger);
-    assert!(Catalog::new(without.node_kinds()).spec("dummy.poke").is_none());
+    assert!(without.catalog().spec("dummy.poke").is_none());
 
     let t = r.tool_table();
     assert_eq!(t.names().last(), Some(&"dummy_poke"));
@@ -166,204 +170,9 @@ fn registering_an_integration_adds_its_connection_kind_node_kinds_and_tool() {
     assert!(!coder.tool_set(t).iter().any(|x| x == "dummy_poke"));
 }
 
-/// The tools, their order and flags as they were before the registry (PDT-171): only where they were.
-#[test]
-fn the_tools_are_where_they_were() {
-    let t = registry().tool_table();
-    assert_eq!(
-        t.names(),
-        [
-            "get_ticket",
-            "submit_outcome",
-            "ask_user",
-            "add_ticket_comment",
-            "add_review_comment",
-            "list_secrets",
-            "request_secret",
-            "run_with_secrets",
-            "write_secret_file",
-            "update_ticket",
-            "catalog_search",
-            "catalog_get",
-            "workflow_get",
-            "workflow_validate",
-            "workflow_dry_run",
-            "workflow_save",
-            "workflow_export",
-            "workflow_import",
-            "get_overview",
-            "search_tickets",
-            "get_session",
-            "list_workflow_runs",
-            "search_notes",
-            "save_note",
-            "delete_note",
-            "write_journal",
-            "list_todos",
-            "create_ticket",
-            "edit_ticket",
-            "link_tickets",
-            "unlink_tickets",
-            "stop_ticket",
-            "send_to_session",
-            "discord_get",
-            "discord_change",
-            "discord_webhook",
-            "scryer_library",
-            "scryer_search",
-            "scryer_queue",
-            "scryer_add",
-            "scryer_schema",
-            "scryer_query",
-            "scryer_mutate",
-            "report_bug",
-        ]
-    );
-    assert_eq!(
-        t.asking_tools(),
-        [
-            "workflow_import",
-            "create_ticket",
-            "edit_ticket",
-            "link_tickets",
-            "unlink_tickets",
-            "stop_ticket",
-            "send_to_session",
-            "discord_change",
-            "discord_webhook",
-            "scryer_add",
-            "scryer_mutate",
-            "report_bug",
-        ]
-    );
-    let not_pm: Vec<&str> = t.all().iter().filter(|d| !d.pm).map(|d| d.name).collect();
-    assert_eq!(not_pm, ["add_review_comment", "update_ticket"]);
-    let list = t.persona_tools();
-    assert!(list.iter().all(|x| !x.does.is_empty()));
-    let defaults: Vec<&str> = list.iter().filter(|x| x.default).map(|x| x.name.as_str()).collect();
-    assert_eq!(defaults, pdt_core::persona::DEFAULT_TOOLS);
-    let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
-    assert_eq!(read_only.len(), 20, "{read_only:?}");
-    let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
-    assert!(open.iter().all(|n| n.starts_with("discord_") || n.starts_with("scryer_") || *n == "report_bug"));
-    assert_eq!(open.len(), 11);
-    let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 42);
-}
-
-#[test]
-fn the_connection_kinds_are_the_pages_kinds_in_order() {
-    let ids: Vec<&str> = registry().connection_kinds().iter().map(|k| k.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        [
-            "discord_webhook",
-            "discord_bot",
-            "webhook",
-            "jira",
-            "buildkite",
-            "http",
-            "radarr",
-            "sonarr",
-            "scryer",
-            "plex",
-            "mcp"
-        ]
-    );
-}
-
-/// The web tests' stand-in for `GET /api/connections/kinds` (web/src/test-utils.tsx serves it), written beside the
-/// generated TS types so CI's check that they are committed covers it too.
-#[test]
-fn exports_the_connection_kinds_for_the_web_tests() {
-    let Ok(dir) = std::env::var("TS_RS_EXPORT_DIR") else { return };
-    let path = std::path::Path::new(&dir).join("connectionKinds.ts");
-    let text = format!(
-        "// Written by pdt-api's integrations tests (`exports_the_connection_kinds_for_the_web_tests`). Do not edit this \
-         file manually.\nimport type {{ ConnectionKind }} from \"./ConnectionKind\";\n\nexport const connectionKinds: \
-         ConnectionKind[] = {};\n",
-        serde_json::to_string_pretty(registry().connection_kinds()).unwrap()
-    );
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
-        std::fs::write(&path, text).unwrap();
-    }
-}
-
-#[test]
-fn every_tool_is_listed_once_with_an_object_schema() {
-    let infos = registry().tool_infos();
-    let names: Vec<String> = infos.iter().map(|t| t.name.clone()).collect();
-    let unique: std::collections::HashSet<_> = names.iter().collect();
-    assert_eq!(unique.len(), names.len(), "{names:?}");
-    for t in &infos {
-        assert_eq!(t.input_schema["type"], "object", "{}", t.name);
-        assert!(t.input_schema.get("$schema").is_none());
-    }
-    let s = &infos[1].input_schema;
-    assert!(s["required"].as_array().unwrap().iter().any(|r| r == "outcome"), "{s}");
-}
-
-/// What agents see of the tools (each one's `tools/list` entry and declaration, the PM's tools, the personas' list) and
-/// the spec of every node kind an [`Action`](super::action::Action) makes, against `snapshot.json`: moving a capability
-/// onto an action changes none of it (PDT-172). Other kinds are left out, so a change to one doesn't touch this. After
-/// a change meant to show, write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test`.
-#[test]
-fn tools_and_node_kinds_match_the_snapshot() {
-    let r = registry();
-    let t = r.tool_table();
-    let tools: Vec<Value> = r
-        .tool_infos()
-        .into_iter()
-        .map(|i| {
-            let d = t.get(&i.name).unwrap();
-            json!({"info": i, "does": d.does, "asks": d.asks, "pm": d.pm, "readOnly": d.read_only,
-                   "openWorld": d.open_world, "destructive": d.destructive})
-        })
-        .collect();
-    let ids: Vec<String> =
-        all().iter().flat_map(|i| i.actions()).filter_map(|a| a.node_kind().map(|k| k.spec().id)).collect();
-    let mut kinds: Vec<_> =
-        crate::workflow::catalog::catalog().specs().into_iter().filter(|k| ids.contains(&k.id)).collect();
-    kinds.sort_by(|a, b| a.id.cmp(&b.id));
-    let now = json!({"tools": tools, "pm": t.pm_tools(), "asking": t.asking_tools(), "personaTools": t.persona_tools(),
-                     "kinds": kinds});
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/integrations/snapshot.json");
-    // One line per entry, so a diff shows which one changed.
-    let lines: Vec<String> = now
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(k, v)| {
-            let items: Vec<String> = v.as_array().unwrap().iter().map(|x| format!("    {x}")).collect();
-            format!("  {k:?}: [\n{}\n  ]", items.join(",\n"))
-        })
-        .collect();
-    let text = format!("{{\n{}\n}}\n", lines.join(",\n"));
-    if std::env::var_os("PDT_UPDATE_SNAPSHOT").is_some() {
-        std::fs::write(&path, &text).unwrap();
-    }
-    let was: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    // The entries that differ, each as it was and as it is.
-    let mut changed: Vec<String> = vec![];
-    for (k, v) in now.as_object().unwrap() {
-        let old = was[k].as_array().cloned().unwrap_or_default();
-        let new = v.as_array().unwrap();
-        for i in 0..old.len().max(new.len()) {
-            if old.get(i) != new.get(i) {
-                changed.push(format!("{k}[{i}]:\n  was {}\n  now {}", json!(old.get(i)), json!(new.get(i))));
-            }
-        }
-    }
-    assert!(
-        changed.is_empty(),
-        "the tools or node kinds changed (run with PDT_UPDATE_SNAPSHOT=1 and check the diff):\n{}",
-        changed.join("\n")
-    );
-}
-
 #[test]
 fn an_action_is_both_a_node_kind_and_a_tool() {
-    let r = Registry::new(all().into_iter().chain([Box::new(Dummy) as Box<dyn Integration>]).collect());
+    let r = with_dummy();
     // Its tools come before the integration's own, in order.
     let names = r.tool_table().names();
     assert_eq!(names[names.len() - 3..], ["dummy_blink", "dummy_wink", "dummy_poke"]);
@@ -377,7 +186,7 @@ fn an_action_is_both_a_node_kind_and_a_tool() {
     assert!(conn.get("x-connection-kind").is_none());
 
     // The node needs it, and checks the config as the action says.
-    let catalog = Catalog::new(r.node_kinds());
+    let catalog = r.catalog();
     let blink = catalog.spec("dummy.blink").expect("its node kind");
     assert_eq!((blink.category, blink.version, blink.ports.len()), (Category::Action, 1, 1));
     assert_eq!(blink.config_schema["properties"]["connection"]["x-connection-kind"], "dummy");
@@ -395,38 +204,63 @@ fn an_action_is_both_a_node_kind_and_a_tool() {
     assert!(catalog.specs().iter().all(|s| s.id != "dummy_wink" && !s.id.contains("wink")));
 }
 
+/// PDT-173: an integration this build has registers nothing until the instance enables it, and nothing once it is
+/// disabled again; a workflow node of it then names it.
 #[test]
-fn jira_and_buildkite_declare_project_settings() {
-    let ids: Vec<&str> = registry().project_settings().map(|s| s.integration.as_str()).collect();
-    assert_eq!(ids, ["jira", "buildkite"]);
-    let map = |v: Value| v.as_object().unwrap().clone();
-    let r = registry();
-    let (_, jira) = r.apply_project_settings("jira", &map(json!({"connection": "j"})), None).unwrap().unwrap();
-    assert_eq!(Value::Object(jira), json!({"connection": "j", "scope": "", "done": "Done"}));
-    let bk = |pipelines: Value| {
-        r.apply_project_settings("buildkite", &map(json!({"connection": "b", "pipelines": pipelines})), None)
+fn a_disabled_integration_registers_nothing() {
+    let ints = Integrations::new(vec![Arc::new(Dummy)]);
+    let has = |ints: &Integrations| {
+        let r = ints.registry();
+        (
+            r.connection_kinds().iter().any(|k| k.id == "dummy"),
+            r.catalog().spec("dummy.poke").is_some(),
+            r.tool_table().contains("dummy_blink"),
+            r.event_type("dummy.happened").is_some(),
+        )
     };
-    assert_eq!(
-        Value::Object(bk(json!(["app", " app ", "e2e"])).unwrap().unwrap().1),
-        json!({"connection": "b", "pipelines": ["app", "e2e"]})
-    );
-    assert!(bk(json!(["no spaces"])).unwrap_err().contains("not a pipeline slug"));
-    assert!(r.apply_project_settings("discord", &map(json!({})), None).is_err(), "no project settings");
+    assert_eq!(has(&ints), (false, false, false, false));
+    assert!(ints.enabled().is_empty());
+    let node: pdt_core::workflow::doc::Node =
+        serde_json::from_value(json!({"id": "p", "kind": "dummy.poke", "version": 1})).unwrap();
+    assert!(ints.registry().catalog().facts(&node).is_none());
+
+    ints.enable(&["dummy".into(), "nope".into()]);
+    assert_eq!(ints.enabled(), ["dummy"], "only what the build has");
+    assert_eq!(has(&ints), (true, true, true, true));
+    assert!(ints.registry().catalog().facts(&node).is_some());
+
+    ints.enable(&[]);
+    assert_eq!(has(&ints), (false, false, false, false));
+    assert!(ints.registry().tool_table().contains("get_ticket"), "PDT's own are always on");
 }
 
-/// The web tests' stand-in for `GET /api/integrations/project-settings`, like the connection kinds'.
+/// A node of a known integration that is turned off, or that this build lacks, says so rather than "unknown kind".
 #[test]
-fn exports_the_project_settings_for_the_web_tests() {
-    let Ok(dir) = std::env::var("TS_RS_EXPORT_DIR") else { return };
-    let path = std::path::Path::new(&dir).join("projectSettingsSchemas.ts");
-    let list: Vec<_> = registry().project_settings().collect();
-    let text = format!(
-        "// Written by pdt-api's integrations tests (`exports_the_project_settings_for_the_web_tests`). Do not edit \
-         this file manually.\nimport type {{ ProjectSettingsSchema }} from \"./ProjectSettingsSchema\";\n\nexport \
-         const projectSettingsSchemas: ProjectSettingsSchema[] = {};\n",
-        serde_json::to_string_pretty(&list).unwrap()
+fn a_turned_off_integrations_node_names_it() {
+    use pdt_core::workflow::validate::{Severity, validate};
+    let doc: pdt_core::workflow::doc::WorkflowDoc = serde_json::from_value(json!({"name": "w", "nodes": [
+        {"id": "m", "kind": "manual", "version": 1},
+        {"id": "j", "kind": "jira.comment", "version": 1, "config": {}},
+        {"id": "x", "kind": "nope.nothing", "version": 1}],
+        "edges": [{"from": "m", "to": "j"}, {"from": "j", "to": "x"}]}))
+    .unwrap();
+    let errors = |r: &Registry| -> Vec<(String, String)> {
+        validate(&doc, r.catalog())
+            .into_iter()
+            .filter(|i| i.severity == Severity::Error)
+            .map(|i| (i.code, i.message))
+            .collect()
+    };
+    let built = Registry::new(own(), vec!["jira"]);
+    let e = errors(&built);
+    assert!(
+        e.iter().any(|(c, m)| c == "integration_disabled" && m.contains("Jira") && m.contains("turned off")),
+        "{e:?}"
     );
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
-        std::fs::write(&path, text).unwrap();
-    }
+    assert!(e.iter().any(|(c, _)| c == "unknown_kind"), "{e:?}");
+    let lacking = Registry::new(own(), vec![]);
+    let e = errors(&lacking);
+    assert!(e.iter().any(|(c, m)| c == "integration_missing" && m.contains("built without")), "{e:?}");
+    let node = doc.node("j").unwrap();
+    assert!(built.catalog().current_config(node).unwrap_err().contains("turned off"));
 }

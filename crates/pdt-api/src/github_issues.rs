@@ -7,7 +7,7 @@
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{
-    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, catalog, in_scope, parse, ports, schema_of,
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, ports, schema_of,
 };
 use pdt_core::workflow::api::{LogEvent, NewLogEvent, Scope, Workflow};
 use pdt_core::workflow::cond::Condition;
@@ -108,7 +108,10 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String
     for wf in st.store.enabled_workflows().await.unwrap_or_default() {
         let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
         for node in doc.nodes.iter().filter(|n| n.kind == GITHUB_ISSUE_OPENED) {
-            let Ok(c) = catalog().current_config(node).and_then(|c| parse::<IssueTriggerConfig>(&c)) else { continue };
+            let Ok(c) = st.registry().catalog().current_config(node).and_then(|c| parse::<IssueTriggerConfig>(&c))
+            else {
+                continue;
+            };
             let repos: Vec<String> = if !c.repos.is_empty() {
                 c.repos.clone()
             } else {

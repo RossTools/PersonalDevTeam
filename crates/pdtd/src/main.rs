@@ -1,5 +1,6 @@
 mod config;
 mod hook;
+mod integrations;
 mod lock;
 mod logging;
 mod seed;
@@ -72,6 +73,10 @@ async fn run() -> anyhow::Result<()> {
         tracing::info!(sessions = interrupted, "sessions from the previous run are now interrupted");
     }
     let mut state = AppState::new(store.clone(), cfg.data_dir.clone());
+    state.integrations = std::sync::Arc::new(pdt_api::Integrations::new(integrations::built()));
+    pdt_api::load_enabled_integrations(&state).await?;
+    tracing::info!(built = ?state.integrations.built().iter().map(|i| i.id()).collect::<Vec<_>>(),
+                   enabled = ?state.integrations.enabled(), "integrations");
     if let Some(p) = &cfg.claude_program {
         state.platform.claude_program = p.clone();
     }

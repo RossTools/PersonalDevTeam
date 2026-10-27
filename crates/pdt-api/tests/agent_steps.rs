@@ -150,7 +150,7 @@ async fn personas_are_built_in_versioned_and_diffed() {
     let (s, tools) = call(&env.app, "GET", "/api/personas/tools", None).await;
     assert_eq!(s, StatusCode::OK, "{tools}");
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, pdt_api::tool_names());
+    assert_eq!(names, env.state.registry().tool_table().names());
     let link = tools.as_array().unwrap().iter().find(|t| t["name"] == "link_tickets").unwrap();
     assert_eq!((link["asks"].as_bool(), link["default"].as_bool()), (Some(true), Some(false)));
 
@@ -433,7 +433,7 @@ async fn an_agent_step_in_a_personal_workflow_runs_in_the_host_project() {
     assert_eq!(work.canonicalize().unwrap(), env._tmp.path().canonicalize().unwrap(), "{s}");
     let instructions =
         std::fs::read_to_string(env.state.data_dir.join("sessions").join(&session).join("instructions.md")).unwrap();
-    for want in ["project manager", "# Your role: PM", "`nothing_ready`", "scryer_query"] {
+    for want in ["project manager", "# Your role: PM", "`nothing_ready`", "`catalog_search`"] {
         assert!(instructions.contains(want), "missing {want:?} in\n{instructions}");
     }
     assert!(inbox(&env).await.is_empty());

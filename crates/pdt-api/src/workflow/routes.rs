@@ -1,7 +1,7 @@
 //! The workflow API (Phase 7a spec §9): the catalog, documents and versions, validation and dry runs, runs, the event
 //! log and connections.
 
-use super::catalog::{KindSpec, PortSpec, catalog};
+use super::catalog::{KindSpec, PortSpec};
 use super::engine::{self, DryEvent, DryRun};
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -38,8 +38,8 @@ pub(crate) fn body<T: Default>(payload: Result<Json<T>, JsonRejection>) -> Resul
 }
 
 /// The document's issues, or 422 `workflow_invalid` naming its errors.
-pub(crate) fn checked(doc: &WorkflowDoc) -> Result<Vec<Issue>, ApiError> {
-    let issues = validate(doc, catalog());
+pub(crate) fn checked(st: &AppState, doc: &WorkflowDoc) -> Result<Vec<Issue>, ApiError> {
+    let issues = validate(doc, st.registry().catalog());
     if !is_valid(&issues) {
         let errors: Vec<&str> =
             issues.iter().filter(|i| i.severity == Severity::Error).map(|i| i.message.as_str()).collect();
@@ -54,7 +54,7 @@ pub(crate) async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> 
 
 /// A document's issues, with warnings about its MCP tool nodes from their servers' cached tools.
 pub(crate) fn validate_with_tools(st: &AppState, doc: &WorkflowDoc) -> Vec<Issue> {
-    let mut issues = validate(doc, catalog());
+    let mut issues = validate(doc, st.registry().catalog());
     issues.extend(super::nodes::mcp_tool::tool_issues(doc, |s| st.mcp.cached(s)));
     issues
 }
@@ -123,7 +123,7 @@ pub(crate) async fn create_workflow(
     note: &str,
     author: Author,
 ) -> Result<WorkflowDetail, ApiError> {
-    checked(doc)?;
+    checked(st, doc)?;
     let scope = scope.unwrap_or(if project_id.is_some() { Scope::Project } else { Scope::Host });
     let project_id = match scope {
         Scope::Project => {
@@ -189,7 +189,7 @@ pub(crate) async fn save(
             format!("{} lives in the repo ({}): edit the file", w.name, w.repo_file.unwrap_or_default()),
         ));
     }
-    checked(&doc)?;
+    checked(&st, &doc)?;
     if s.propose {
         st.store.propose_workflow_version(&id, &doc, Author::Agent, &s.note, now_ms()).await?;
     } else {
@@ -215,7 +215,7 @@ pub(crate) async fn accept(
     Path((id, v)): Path<(String, u32)>,
 ) -> Result<Json<WorkflowDetail>, ApiError> {
     let doc = proposal(&st, &id, v).await?;
-    checked(&doc)?;
+    checked(&st, &doc)?;
     if !st.store.accept_workflow_version(&id, v, now_ms()).await? {
         return Err(conflict("not_proposed", format!("version {v} is not a proposal waiting for review")));
     }
@@ -249,7 +249,7 @@ pub(crate) async fn patch(
     let w = load(&st, &id).await?;
     if let Some(enabled) = p.enabled {
         if enabled {
-            checked(&detail(&st, w).await?.doc)?;
+            checked(&st, &detail(&st, w).await?.doc)?;
         }
         st.store.set_workflow_enabled(&id, enabled, now_ms()).await?;
     }
@@ -370,7 +370,7 @@ pub(crate) async fn check_doc(
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<WorkflowCheck>, ApiError> {
     let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
-    let ports = doc.nodes.iter().filter_map(|n| Some((n.id.clone(), catalog().node_ports(n)?))).collect();
+    let ports = doc.nodes.iter().filter_map(|n| Some((n.id.clone(), st.registry().catalog().node_ports(n)?))).collect();
     Ok(Json(WorkflowCheck { issues: doc_issues(&st, &doc).await, ports }))
 }
 
@@ -591,19 +591,26 @@ fn valid_name(name: &str) -> Result<String, ApiError> {
     Ok(n.to_string())
 }
 
-/// What a kind needs in its config (a Discord bot: its server's id).
-fn check_config(kind: &str, config: &Value) -> Result<(), ApiError> {
-    if kind == pdt_core::discord::DISCORD_BOT {
-        pdt_core::discord::bot_config(config).map_err(invalid)?;
+/// What a kind needs in its config, as its integration checks it (a bot: its server's id). A kind of an integration
+/// that is turned off (or not built in) is refused.
+fn check_config(st: &AppState, kind: &str, config: &Value) -> Result<(), ApiError> {
+    let reg = st.registry();
+    if let Some(i) = pdt_core::integration::owner_of_connection(kind)
+        && !reg.connection_kinds().iter().any(|k| k.id == kind)
+    {
+        return Err(invalid(format!(
+            "{kind} connections are part of the {} integration, which is turned off (Settings → Integrations)",
+            i.label
+        )));
     }
-    Ok(())
+    reg.check_connection_config(kind, config).map_err(invalid)
 }
 
 pub(crate) async fn list_connections(State(st): State<AppState>) -> Result<Json<Vec<Connection>>, ApiError> {
     Ok(Json(st.store.list_connections().await?))
 }
 
-pub(crate) async fn create_connection(
+pub async fn create_connection(
     State(st): State<AppState>,
     payload: Result<Json<ConnectionInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Connection>), ApiError> {
@@ -614,7 +621,7 @@ pub(crate) async fn create_connection(
         return Err(invalid("config must be an object"));
     }
     let kind = c.kind.unwrap_or_else(|| "http".into()).trim().to_string();
-    check_config(&kind, &config)?;
+    check_config(&st, &kind, &config)?;
     let conn = Connection {
         id: uuid::Uuid::now_v7().to_string(),
         name: valid_name(c.name.as_deref().unwrap_or_default())?,
@@ -673,7 +680,7 @@ pub(crate) async fn patch_connection(
         }
         c.config = cfg;
     }
-    check_config(&c.kind, &c.config)?;
+    check_config(&st, &c.kind, &c.config)?;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(_) => {
@@ -713,7 +720,7 @@ pub struct ConnectionSecret {
 }
 
 /// `PUT /api/connections/{id}/secret`: kept in the OS keychain, never returned.
-pub(crate) async fn put_secret(
+pub async fn put_secret(
     State(st): State<AppState>,
     Path(id): Path<String>,
     payload: Result<Json<ConnectionSecret>, JsonRejection>,
@@ -785,12 +792,8 @@ async fn mcp_connection(st: &AppState, id: &str) -> Result<Connection, ApiError>
 }
 
 /// The connection of `kind` that `name` means: that one, or the only one of its kind there is (the PM's tools).
-pub(crate) async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&str>) -> Result<Connection, String> {
-    let label = match kind {
-        pdt_core::discord::DISCORD_BOT => "Discord bot",
-        pdt_core::scryer::SCRYER => "Scryer",
-        other => other,
-    };
+pub async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&str>) -> Result<Connection, String> {
+    let label = st.registry().connection_label(kind);
     let all: Vec<Connection> =
         st.store.list_connections().await.map_err(|e| e.to_string())?.into_iter().filter(|c| c.kind == kind).collect();
     match name.map(str::trim).filter(|n| !n.is_empty()) {
@@ -812,7 +815,7 @@ pub(crate) async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&
 }
 
 /// A connection and its secret by name, for node kinds that call external services (7e).
-pub(crate) async fn connection_with_secret(st: &AppState, name: &str) -> Result<(Connection, Option<String>), String> {
+pub async fn connection_with_secret(st: &AppState, name: &str) -> Result<(Connection, Option<String>), String> {
     let c = st
         .store
         .connection_by_name(name)
@@ -864,6 +867,7 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/connections", get(list_connections).post(create_connection))
         .route("/connections/kinds", get(crate::integrations::connection_kinds))
         .route("/integrations/project-settings", get(crate::integrations::project_settings))
+        .route("/integrations", get(crate::integrations::list).put(crate::integrations::put))
         .route("/connections/{id}", get(get_connection).patch(patch_connection).delete(delete_connection))
         .route("/connections/{id}/secret", put(put_secret).delete(delete_secret))
         .route("/connections/{id}/tools", get(connection_tools).post(refresh_connection_tools))

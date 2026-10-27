@@ -638,7 +638,7 @@ impl Store {
         Ok(())
     }
 
-    /// Records what a running step has done so far (its `output`, e.g. the Discord messages it posted), so running it
+    /// Records what a running step has done so far (its `output`, e.g. the messages it posted), so running it
     /// again after a restart or a retry doesn't do it twice. False when the step is no longer at that execution.
     pub async fn set_step_progress(&self, id: &str, attempts: u32, output: &Value) -> Result<bool, StoreError> {
         let r =
@@ -1463,8 +1463,8 @@ mod tests {
 
         let c = Connection {
             id: "c".into(),
-            name: "discord".into(),
-            kind: "discord_webhook".into(),
+            name: "alerts".into(),
+            kind: "http".into(),
             url: String::new(),
             config: json!({}),
             has_secret: false,
@@ -1479,7 +1479,7 @@ mod tests {
             Err(StoreError::Conflict(_))
         ));
         store.update_connection(&Connection { has_secret: true, ..c.clone() }).await.unwrap();
-        assert!(store.connection_by_name("discord").await.unwrap().unwrap().has_secret);
+        assert!(store.connection_by_name("alerts").await.unwrap().unwrap().has_secret);
         assert_eq!(store.list_connections().await.unwrap().len(), 1);
         // A failing connection changes once per new error, and once when it works again.
         assert!(store.set_connection_error("c", Some("401"), 5).await.unwrap());

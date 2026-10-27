@@ -46,7 +46,7 @@ pub struct TemplateParam {
     /// Instantiating needs a value (when there is no default).
     #[serde(default)]
     pub required: bool,
-    /// A `connection` param's kind (`discord_webhook`); none: any.
+    /// A `connection` param's kind (`http`); none: any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub connection_kind: Option<String>,

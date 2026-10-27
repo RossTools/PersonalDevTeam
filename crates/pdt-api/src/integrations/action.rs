@@ -23,7 +23,7 @@ pub struct ToolFace {
     pub description: &'static str,
 }
 
-/// An action as a workflow node kind: its id (`scryer.search`), title, description and ports (the first is the one a
+/// An action as a workflow node kind: its id (`media.search`), title, description and ports (the first is the one a
 /// dry run takes).
 pub struct NodeFace {
     pub id: &'static str,
@@ -36,7 +36,7 @@ pub struct NodeFace {
 /// the only connection of the kind.
 pub struct ConnectionFace {
     pub kind: &'static str,
-    /// The kind as a tool's schema names it (`Scryer`, `Discord bot`).
+    /// The kind as a tool's schema names it (`Media server`, `Chat bot`).
     pub label: &'static str,
 }
 
@@ -79,7 +79,7 @@ pub trait Action: Send + Sync + 'static {
         Ok(())
     }
 
-    /// What a call does, in a line (`add the series tvdb 371980 to Scryer (media)`): a dry run's `would`, and the title
+    /// What a call does, in a line (`add the series tvdb 371980 to the media server (home)`): a dry run's `would`, and the title
     /// of the user's approval.
     fn approval_title(&self, input: &Self::Input) -> String;
 
@@ -130,6 +130,12 @@ pub trait AnyAction: Send + Sync {
 
     /// Runs it as a tool. Err is a message for the agent.
     fn call<'a>(&'a self, cx: &'a Cx<'a>, args: Value) -> BoxFut<'a, Result<Value, String>>;
+
+    /// What a call with these arguments acts on, when the tool asks ([`Action::ask_target`]).
+    fn ask_target(&self, args: &Value) -> Option<AskTarget>;
+
+    /// The title of the user's approval of a call with these arguments ([`Action::approval_title`]), when they read.
+    fn title(&self, args: &Value) -> Option<String>;
 }
 
 impl<A: Action> AnyAction for A {
@@ -146,12 +152,21 @@ impl<A: Action> AnyAction for A {
         self.node().is_some().then(|| Box::new(ActionNode(self)) as Box<dyn NodeKind>)
     }
 
+    fn ask_target(&self, args: &Value) -> Option<AskTarget> {
+        self.tool().decl.asks.then(|| Action::ask_target(self, args))
+    }
+
+    fn title(&self, args: &Value) -> Option<String> {
+        let input: A::Input = serde_json::from_value(args.clone()).ok()?;
+        Some(self.approval_title(&input))
+    }
+
     fn call<'a>(&'a self, cx: &'a Cx<'a>, args: Value) -> BoxFut<'a, Result<Value, String>> {
         Box::pin(async move {
             let decl = self.tool().decl;
             let mut args = if args.is_null() { json!({}) } else { args };
             if decl.asks {
-                confirmable(cx, decl.name, &self.ask_target(&args)).await?;
+                confirmable(cx, decl.name, &Action::ask_target(self, &args)).await?;
             }
             if let Some(c) = self.connection()
                 && let Some(a) = args.as_object_mut()

@@ -38,6 +38,34 @@ pub async fn call_raw(
     (status, ct, bytes)
 }
 
+/// pdt-api's `fake-agent`: cargo's path to it in pdt-api's own tests; elsewhere (an integration crate's tests, which
+/// cargo builds no pdt-api binary for) the one in this build's target folder, built first when it is missing.
+pub fn fake_agent() -> String {
+    if let Some(p) = option_env!("CARGO_BIN_EXE_fake-agent") {
+        return p.into();
+    }
+    static BUILT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            // target/<profile>/deps/<this test> → target/<profile>/fake-agent
+            let exe = std::env::current_exe().unwrap();
+            let dir = exe.parent().and_then(|d| d.parent()).unwrap().to_path_buf();
+            let path = dir.join(format!("fake-agent{}", std::env::consts::EXE_SUFFIX));
+            if !path.exists() {
+                let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+                let release = dir.file_name().is_some_and(|n| n == "release");
+                let mut c = std::process::Command::new(cargo);
+                c.args(["build", "-q", "-p", "pdt-api", "--bin", "fake-agent"]);
+                if release {
+                    c.arg("--release");
+                }
+                assert!(c.status().unwrap().success(), "could not build fake-agent");
+            }
+            path.to_string_lossy().into_owned()
+        })
+        .clone()
+}
+
 /// The smallest bytes PDT takes for a PNG (it reads the signature, not the pixels).
 pub const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRfake";
 
@@ -147,4 +175,5 @@ pub async fn fail_events(db: &std::path::Path, kind: Option<&str>) {
     c.close().await.unwrap();
 }
 pub mod issues;
-pub mod scryer;
+pub mod pm;
+pub mod workflows;

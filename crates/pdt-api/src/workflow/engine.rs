@@ -5,7 +5,7 @@
 //! Locks (PDT-128): `engine_lock` is held only around state changes (claiming a step, writing its result, the tick's
 //! passes, the commands); a node's body runs outside it, holding only its run's lock, and runs advance side by side.
 
-use super::catalog::{Category, Outcome, StepCx, catalog, parse};
+use super::catalog::{Category, Outcome, StepCx, parse};
 use super::nodes::trigger::{MANUAL, SharedTrigger};
 use crate::routes::{AppState, now_ms};
 use pdt_core::workflow::api::{LogEvent, Run, RunStatus, Step, StepStatus, Workflow};
@@ -243,12 +243,14 @@ async fn match_events(st: &AppState) {
     for e in events {
         let trigger = trigger_value(&e);
         let ctx = json!({"trigger": trigger});
+        let reg = st.registry();
         for (wf, doc) in &enabled {
             for node in &doc.nodes {
-                let Some(kind) = catalog().get(&node.kind).filter(|k| k.event_type() == Some(e.kind.as_str())) else {
+                let Some(kind) = reg.catalog().get(&node.kind).filter(|k| k.event_type() == Some(e.kind.as_str()))
+                else {
                     continue;
                 };
-                let Ok(config) = catalog().current_config(node) else { continue };
+                let Ok(config) = reg.catalog().current_config(node) else { continue };
                 if !kind.accepts(&config, wf, node, &e) {
                     continue;
                 }
@@ -390,10 +392,11 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
 }
 
 /// Whether a finished run had nothing to report: no action did anything that wasn't quiet.
-fn is_quiet(steps: &[Step]) -> bool {
+fn is_quiet(st: &AppState, steps: &[Step]) -> bool {
+    let reg = st.registry();
     !steps.iter().any(|s| {
         s.status == StepStatus::Succeeded
-            && catalog().spec(&s.kind).is_some_and(|k| matches!(k.category, Category::Action | Category::Agent))
+            && reg.catalog().spec(&s.kind).is_some_and(|k| matches!(k.category, Category::Action | Category::Agent))
             && s.output.get("quiet").and_then(|q| q.as_bool()) != Some(true)
     })
 }
@@ -467,7 +470,7 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
                 continue;
             }
             let output = steps.iter().rev().find(|s| s.status == StepStatus::Succeeded).map(|s| s.output.clone());
-            let status = if is_quiet(&steps) { RunStatus::Quiet } else { RunStatus::Succeeded };
+            let status = if is_quiet(st, &steps) { RunStatus::Quiet } else { RunStatus::Succeeded };
             return finish_run(st, &mut run, status, output.unwrap_or(Value::Null), None).await;
         };
         let executed = steps.iter().filter(|s| s.attempts > 0).count();
@@ -501,7 +504,7 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
             // A timeout drops the body wherever it was: it may have done its work (PDT-131).
             // Secrets are filled in only now, from the node's own config, and never stored with the step's input
             // (PDT-158).
-            let (kind, input) = (job.kind, job.input.clone());
+            let (kind, input) = (job.kind.clone(), job.input.clone());
             let body = async {
                 let input = crate::vault::fill_step(&cx, &job.config, input).await?;
                 kind.run(&cx, input).await
@@ -537,7 +540,7 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
 struct Job<'a> {
     step: Step,
     node: &'a pdt_core::workflow::doc::Node,
-    kind: &'static dyn super::catalog::NodeKind,
+    kind: std::sync::Arc<dyn super::catalog::NodeKind>,
     /// The node's config as written (its secret references are filled in from it, PDT-158).
     config: Value,
     input: Value,
@@ -572,14 +575,15 @@ async fn claim<'a>(
         finish_run(st, run, RunStatus::Failed, Value::Null, Some(e)).await?;
         return Ok(Claim::Ended);
     };
-    let kind = catalog().get(&node.kind);
+    let reg = st.registry();
+    let kind = reg.catalog().shared(&node.kind);
     let visits = steps
         .iter()
         .filter(|s| {
             s.node_id == node.id && s.id != step.id && matches!(s.status, StepStatus::Succeeded | StepStatus::Failed)
         })
         .count();
-    let config = catalog().current_config(node);
+    let config = reg.catalog().current_config(node);
     let (kind, config) = match (kind, config) {
         (Some(k), Ok(c)) if visits < usize::try_from(node.max_visits()).unwrap_or(usize::MAX) => (k, c),
         (_, Err(e)) => return fail_step(st, doc, run, step, e, true).await.map(ended),
@@ -615,7 +619,8 @@ async fn claim<'a>(
     }
     st.store.put_step(&step).await.map_err(err)?;
     let limit = std::time::Duration::from_millis(node.timeout_ms.unwrap_or_else(|| kind.default_timeout_ms()));
-    let outside = matches!(catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
+    let outside =
+        matches!(reg.catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
     let locked = !outside || kind.in_engine_lock();
     Ok(Claim::Run(Box::new(Job { step, node, kind, config, input, ctx, limit, locked, rerun })))
 }
@@ -731,7 +736,7 @@ async fn fail_step(
     let retry = node.and_then(|n| n.retry);
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step failed");
     step.error = Some(e.clone());
-    let safe = definite || catalog().get(&step.kind).is_none_or(|k| k.rerun_safe(&step.input));
+    let safe = definite || st.registry().catalog().get(&step.kind).is_none_or(|k| k.rerun_safe(&step.input));
     if let Some(r) = retry.filter(|_| safe)
         && step.attempts <= r.max
     {
@@ -831,8 +836,12 @@ pub(crate) async fn start_manual(
     let doc = st.store.workflow_doc(&wf.id, wf.version).await.map_err(err)?.ok_or("the workflow has no document")?;
     let node = doc.nodes.iter().find(|n| n.kind == MANUAL).ok_or("the workflow has no Run now trigger")?;
     let trigger = if input.is_null() { json!({}) } else { input };
-    let configured =
-        catalog().current_config(node).ok().and_then(|c| c.get("runKey").and_then(|k| k.as_str()).map(String::from));
+    let configured = st
+        .registry()
+        .catalog()
+        .current_config(node)
+        .ok()
+        .and_then(|c| c.get("runKey").and_then(|k| k.as_str()).map(String::from));
     let key = run_key
         .or_else(|| {
             configured.and_then(|k| resolve(&Value::String(k), &json!({"trigger": trigger})).as_str().map(String::from))
@@ -1102,7 +1111,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
     let mut out = DryRun { triggers: vec![], steps: vec![], status: None };
     let mut start = None;
     for node in &doc.nodes {
-        let fires = match catalog().get(&node.kind) {
+        let fires = match st.registry().catalog().get(&node.kind) {
             Some(k) if k.event_type() == Some(event.kind.as_str()) => true,
             Some(_) if node.kind == MANUAL && event.kind == MANUAL => true,
             _ => false,
@@ -1110,7 +1119,8 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         if !fires {
             continue;
         }
-        let cfg = catalog().current_config(node).and_then(|c| parse::<SharedTrigger>(&c)).unwrap_or_default();
+        let cfg =
+            st.registry().catalog().current_config(node).and_then(|c| parse::<SharedTrigger>(&c)).unwrap_or_default();
         let project = trigger.get("projectId").and_then(|p| p.as_str());
         let reason = if !cfg.projects.is_empty() && !project.is_some_and(|p| cfg.projects.iter().any(|x| x == p)) {
             Some("the event's project is not in the trigger's projects".to_string())
@@ -1187,8 +1197,9 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
             status = RunStatus::Failed;
             break;
         }
-        let (Some(kind), Ok(config)) = (catalog().get(&node.kind), catalog().current_config(node)) else {
-            ds.error = Some(format!("no node kind is called {}", node.kind));
+        let reg = st.registry();
+        let (Some(kind), Ok(config)) = (reg.catalog().get(&node.kind), reg.catalog().current_config(node)) else {
+            ds.error = Some(reg.catalog().missing(&node.kind).1);
             out.steps.push(ds);
             status = RunStatus::Failed;
             break;
@@ -1237,7 +1248,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         step.port = port;
         done.push(step);
     }
-    if status == RunStatus::Succeeded && is_quiet(&done) {
+    if status == RunStatus::Succeeded && is_quiet(st, &done) {
         status = RunStatus::Quiet;
     }
     out.status = Some(status);

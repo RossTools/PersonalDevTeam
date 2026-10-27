@@ -30,8 +30,8 @@ agentPermissionMode: PermissionMode | null,
  */
 policy: ProjectPolicy, 
 /**
- * Its settings for each integration it is linked to, by the integration's id (PDT-174): `connection` and the
- * fields `GET /api/integrations/project-settings` declares, e.g. `jira` (issues assigned to the user become
- * tickets, Done moves the issue) and `buildkite` (CI of its attempts' branches).
+ * Its settings for each enabled integration it is linked to, by the integration's id (PDT-174): `connection` and
+ * the fields `GET /api/integrations/project-settings` declares. A turned-off integration's are kept but not shown
+ * (PDT-173).
  */
 integrations: Record<string, Record<string, unknown>>, };

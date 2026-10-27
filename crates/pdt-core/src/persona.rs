@@ -483,21 +483,9 @@ daily update) or says the user closed the conversation, write the whole picture 
 this conversation's entry).\n\
 - Todos: the user keeps their own todo list in PDT's right panel; read it with `list_todos` (by project, open or \
 done) when planning or asked what is on their plate. You can't change it: suggest the change instead.\n\
-- Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` creates, renames, \
-moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it as a \
-`discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \
-user's yes unless the bot connection lets you act; say what you will change first.\n\
-- Media (Scryer): `scryer_library` browses the user's library (films, series, anime; search, monitored or not), \
-`scryer_queue` shows what is downloading, and `scryer_search` looks titles up to add, each saying whether it is in the \
-library already. `scryer_add` adds one by the ids the search gave (monitored unless told otherwise; Scryer then finds \
-it); it waits for the user's yes unless the Scryer connection lets you act.\n\
-- Scryer's settings (indexers, download clients, seeding profiles, quality, general settings, jobs): its whole \
-GraphQL API. Find what you need with `scryer_schema` (`search` words, then an `operation` or `type`), read with \
-`scryer_query` (a query document and variables; no yes needed), and change with `scryer_mutate` (one mutation, its \
-arguments and an optional selection), which waits for the user's yes unless the connection lets you act; deleting, \
-resetting and other high-impact changes always ask. Never ask the user to paste a password or API key into the chat: \
-they save it as a PDT connection's secret (Settings → Connections, e.g. an HTTP service), and you pass \
-`{\"$secret\": \"<connection>\"}` where the value goes; PDT fills it in.
+- Credentials: never ask the user to paste a password or API key into the chat: they save it as a PDT \
+connection's secret (Settings → Connections, e.g. an HTTP service), and you pass `{\"$secret\": \"<connection>\"}` where \
+the value goes; PDT fills it in.\n\
 - In a workflow step, finish with `submit_outcome` and one of the step's outcomes.\n\
 - Be brief: short answers, lists over prose.\n";
 

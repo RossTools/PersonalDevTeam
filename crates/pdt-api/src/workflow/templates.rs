@@ -1,7 +1,6 @@
 //! Workflow templates (Phase 7d spec §5): the ones PDT ships (`builtin:<id>`, read-only) and the user's own, with
 //! parameters. Instantiating one makes an ordinary workflow, disabled until the user enables it.
 
-use super::builtins::BUILTINS;
 use super::routes::{body, checked, conflict, create_workflow, invalid};
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -18,15 +17,18 @@ use ts_rs::TS;
 
 pub const BUILTIN_PREFIX: &str = "builtin:";
 
-fn doc(v: Value) -> WorkflowDoc {
+/// A template's document from its JSON.
+pub fn doc(v: Value) -> WorkflowDoc {
     serde_json::from_value(v).expect("a built-in template is a valid document")
 }
 
-fn params(v: Value) -> Vec<TemplateParam> {
+/// A template's params from their JSON.
+pub fn params(v: Value) -> Vec<TemplateParam> {
     serde_json::from_value(v).expect("built-in template params")
 }
 
-fn builtin(id: &str, params: Vec<TemplateParam>, doc: WorkflowDoc) -> Template {
+/// One of the templates PDT (or an integration) ships: `builtin:<id>`, read-only.
+pub fn builtin(id: &str, params: Vec<TemplateParam>, doc: WorkflowDoc) -> Template {
     Template {
         id: format!("{BUILTIN_PREFIX}{id}"),
         name: doc.name.clone(),
@@ -39,8 +41,9 @@ fn builtin(id: &str, params: Vec<TemplateParam>, doc: WorkflowDoc) -> Template {
     }
 }
 
-/// The templates PDT ships: a blank one, a few starters, and the built-in workflows (to copy, e.g. per project).
-pub fn builtin_templates() -> Vec<Template> {
+/// The templates PDT ships: a blank one, a few starters, the enabled integrations' and the built-in workflows (to
+/// copy, e.g. per project).
+pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
     let mut out = vec![
         Template {
             name: "Blank".into(),
@@ -121,23 +124,11 @@ pub fn builtin_templates() -> Vec<Template> {
             })),
         ),
     ];
-    out.extend(integration_templates());
+    out.push(issue_triage());
+    out.extend(reg.templates());
     out.push(builtin(super::pipeline::ID, super::pipeline::params(), super::pipeline::doc()));
-    out.extend(BUILTINS.iter().map(|b| builtin(b.id, vec![], (b.doc)())));
+    out.extend(super::builtins::all(reg).iter().map(|b| builtin(b.id, vec![], (b.doc)())));
     out
-}
-
-/// The param of a Discord webhook connection.
-fn discord_param() -> Value {
-    json!({"id": "discord", "title": "Discord channel", "type": "connection", "connectionKind": "discord_webhook",
-        "required": true, "description": "Where it posts: a Discord webhook connection (Settings → Connections)."})
-}
-
-/// A schedule's `every`.
-fn every_param(default: &str) -> Value {
-    json!({"id": "every", "title": "How often", "type": "string", "default": default,
-        "description": "An interval: 1m, 15m, 1h, 1d (from midnight UTC). For set times, change the schedule to a \
-                        cron expression after creating it."})
 }
 
 /// What the triage step asks of the PM (PDT-81).
@@ -147,191 +138,47 @@ const TRIAGE_PROMPT: &str = "A new issue was opened on {{trigger.repo}}: #{{trig
 ticket with create_ticket (project {{params.project}}): a clear title, then a description with the issue's link, what \
 it asks for, scope and \"Done when\". If only the user can decide, ask with ask_user. Finish with submit_outcome.";
 
-/// Templates for the Hermes jobs that need no agent (Phase 7e spec §5), and issue triage by the PM (PDT-81).
-fn integration_templates() -> Vec<Template> {
-    let mut out = vec![
-        builtin(
-            "github-issues-discord",
-            params(json!([
-                {"id": "repo", "title": "Repository", "type": "string", "required": true,
-                 "description": "owner/name on GitHub (read through gh)."},
-                discord_param(),
-            ])),
-            doc(json!({
-                "name": "New GitHub issues to Discord",
-                "description": "Posts each new issue of a GitHub repository to a Discord channel. The first look at \
-                                the repository only records where it is.",
-                "nodes": [
-                    {"id": "opened", "kind": "github.issue.opened", "version": 1, "position": {"x": 0, "y": 0},
-                     "config": {"repos": ["{{params.repo}}"]}},
-                    {"id": "post", "kind": "discord.post", "version": 1, "position": {"x": 320, "y": 0},
-                     "retry": {"max": 3, "backoffMs": 30000}, "config": {"connection": "{{params.discord}}",
-                        "content": "New issue in {{trigger.repo}} #{{trigger.number}}: **{{trigger.title}}** by \
-                                    {{trigger.author}}\n{{trigger.url}}"}},
-                ],
-                "edges": [{"from": "opened", "to": "post"}],
-            })),
-        ),
-        builtin(
-            "issue-triage",
-            params(json!([
-                {"id": "repo", "title": "Repository", "type": "string", "required": true,
-                 "description": "owner/name on GitHub (read through gh)."},
-                {"id": "project", "title": "Project for its tickets", "type": "string", "required": true,
-                 "description": "The key of the project new tickets go in (PDT)."},
-                {"id": "persona", "title": "Persona", "type": "string", "default": "PM",
-                 "description": "Who triages: the project manager, or a persona of your own."},
-            ])),
-            doc(json!({
-                "name": "Triage new GitHub issues",
-                "description": "The PM reads each new issue of a GitHub repository and drafts a ticket for it, \
-                                marks it a duplicate, or leaves it. Creating the ticket asks you first unless the \
-                                project lets the PM act. The first look at the repository only records where it is.",
-                "nodes": [
-                    {"id": "opened", "kind": "github.issue.opened", "version": 1, "position": {"x": 0, "y": 160},
-                     "config": {"repos": ["{{params.repo}}"]}},
-                    {"id": "triage", "kind": "agent", "version": 1, "position": {"x": 320, "y": 160},
-                     "title": "Triage", "config": {
-                        "persona": "{{params.persona}}", "session": "new", "ticket": "", "attempt": "",
-                        "prompt": TRIAGE_PROMPT,
-                        "outcomes": [
-                            {"id": "drafted", "description": "you created a draft ticket for it with create_ticket"},
-                            {"id": "duplicate", "description": "a ticket already covers it (name it in the summary)"},
-                            {"id": "ignored", "description": "it needs no ticket (a question, spam, already fixed)"},
-                        ]}},
-                    {"id": "drafted", "kind": "end", "version": 1, "position": {"x": 640, "y": 0},
-                     "title": "Drafted", "config": {"output": {"summary": "{{steps.triage.summary}}"}}},
-                    {"id": "duplicate", "kind": "end", "version": 1, "position": {"x": 640, "y": 160},
-                     "title": "Duplicate", "config": {"output": {"summary": "{{steps.triage.summary}}"}}},
-                    {"id": "ignored", "kind": "end", "version": 1, "position": {"x": 640, "y": 320},
-                     "title": "Left", "config": {"quiet": true}},
-                ],
-                "edges": [
-                    {"from": "opened", "to": "triage"},
-                    {"from": "triage", "port": "drafted", "to": "drafted"},
-                    {"from": "triage", "port": "duplicate", "to": "duplicate"},
-                    {"from": "triage", "port": "ignored", "to": "ignored"},
-                ],
-            })),
-        ),
-        builtin(
-            "health-watchdog",
-            params(json!([
-                {"id": "name", "title": "Service name", "type": "string", "default": "The service"},
-                {"id": "url", "title": "Health URL", "type": "string", "required": true,
-                 "description": "Healthy when it answers with a status below 400."},
-                every_param("1m"),
-                discord_param(),
-            ])),
-            doc(json!({
-                "name": "Health watchdog",
-                "description": "Checks a URL on a schedule and posts to Discord only when it goes down or comes back. \
-                                The first check only records the state.",
-                "nodes": [
-                    {"id": "tick", "kind": "schedule", "version": 1, "position": {"x": 0, "y": 160},
-                     "config": {"every": "{{params.every}}", "catchUp": false}},
-                    {"id": "check", "kind": "http.request", "version": 1, "position": {"x": 260, "y": 160},
-                     "timeoutMs": 30000, "config": {"url": "{{params.url}}", "expect": "any"}},
-                    {"id": "healthy", "kind": "condition", "version": 1, "position": {"x": 520, "y": 160},
-                     "title": "Healthy?", "config": {"conditions": [
-                        {"left": "{{steps.check.status}}", "op": "lt", "right": 400}]}},
-                    {"id": "was_down", "kind": "condition", "version": 1, "position": {"x": 780, "y": 0},
-                     "title": "Was it down?", "config": {"conditions": [
-                        {"left": "{{state.healthy}}", "op": "eq", "right": false}]}},
-                    {"id": "was_up", "kind": "condition", "version": 1, "position": {"x": 780, "y": 320},
-                     "title": "Was it up?", "config": {"conditions": [
-                        {"left": "{{state.healthy}}", "op": "eq", "right": true}]}},
-                    {"id": "set_up", "kind": "state.set", "version": 1, "position": {"x": 1040, "y": 0},
-                     "config": {"key": "healthy", "value": true}},
-                    {"id": "set_down", "kind": "state.set", "version": 1, "position": {"x": 1040, "y": 320},
-                     "config": {"key": "healthy", "value": false}},
-                    {"id": "recovered", "kind": "discord.post", "version": 1, "position": {"x": 1300, "y": 0},
-                     "retry": {"max": 3, "backoffMs": 30000}, "config": {"connection": "{{params.discord}}",
-                        "content": "✅ {{params.name}} recovered."}},
-                    {"id": "down", "kind": "discord.post", "version": 1, "position": {"x": 1300, "y": 320},
-                     "retry": {"max": 3, "backoffMs": 30000}, "config": {"connection": "{{params.discord}}",
-                        "content": "🔴 {{params.name}} is down: {{steps.check.status}}{{steps.check.error}} \
-                                    ({{params.url}})"}},
-                    {"id": "same_up", "kind": "state.set", "version": 1, "position": {"x": 1040, "y": 160},
-                     "title": "Still up (or first check)", "config": {"key": "healthy", "value": true}},
-                    {"id": "same_down", "kind": "state.set", "version": 1, "position": {"x": 1040, "y": 480},
-                     "title": "Still down (or first check)", "config": {"key": "healthy", "value": false}},
-                    {"id": "quiet_up", "kind": "end", "version": 1, "position": {"x": 1300, "y": 160},
-                     "config": {"quiet": true}},
-                    {"id": "quiet_down", "kind": "end", "version": 1, "position": {"x": 1300, "y": 480},
-                     "config": {"quiet": true}},
-                ],
-                "edges": [
-                    {"from": "tick", "to": "check"},
-                    {"from": "check", "to": "healthy"},
-                    {"from": "check", "port": "error", "to": "was_up"},
-                    {"from": "healthy", "port": "true", "to": "was_down"},
-                    {"from": "healthy", "port": "false", "to": "was_up"},
-                    {"from": "was_down", "port": "true", "to": "set_up"},
-                    {"from": "was_down", "port": "false", "to": "same_up"},
-                    {"from": "was_up", "port": "true", "to": "set_down"},
-                    {"from": "was_up", "port": "false", "to": "same_down"},
-                    {"from": "set_up", "to": "recovered"},
-                    {"from": "set_down", "to": "down"},
-                    {"from": "same_up", "to": "quiet_up"},
-                    {"from": "same_down", "to": "quiet_down"},
-                ],
-            })),
-        ),
-    ];
-    for (id, name, what, every) in [
-        (
-            "brief-follow-ups",
-            "Brief follow-ups",
-            "Runs a brief's follow-up script (say, matching its items against a watchlist) once a day",
-            "1d",
-        ),
-        ("email-processing", "Email processing", "Runs an email-processing script every 15 minutes", "15m"),
-    ] {
-        out.push(scheduled_script(id, name, what, every));
-    }
-    out
-}
-
-/// A script on a schedule that posts to Discord only when it has news: `{"message": "…"}` on stdout; `{}` or
-/// `{"quiet": true}` when not.
-fn scheduled_script(id: &str, name: &str, what: &str, every: &str) -> Template {
+/// Issue triage by the PM (PDT-81).
+fn issue_triage() -> Template {
     builtin(
-        id,
+        "issue-triage",
         params(json!([
-            {"id": "program", "title": "Program", "type": "string", "default": "python3",
-             "description": "What runs the script: python3, node, bash, or the script itself."},
-            {"id": "script", "title": "Script", "type": "string", "required": true,
-             "description": "The script's full path, given to the program. It prints {\"message\": \"…\"} when there \
-                             is news and {} when not."},
-            {"id": "cwd", "title": "Run in", "type": "string", "default": "scratch",
-             "description": "scratch (a fresh folder), or a full path."},
-            every_param(every),
-            discord_param(),
+            {"id": "repo", "title": "Repository", "type": "string", "required": true,
+             "description": "owner/name on GitHub (read through gh)."},
+            {"id": "project", "title": "Project for its tickets", "type": "string", "required": true,
+             "description": "The key of the project new tickets go in (PDT)."},
+            {"id": "persona", "title": "Persona", "type": "string", "default": "PM",
+             "description": "Who triages: the project manager, or a persona of your own."},
         ])),
         doc(json!({
-            "name": name,
-            "description": format!("{what} and posts its message to Discord when it has one. The script prints \
-                                    {{\"message\": \"…\"}} when there is news, {{}} when not."),
+            "name": "Triage new GitHub issues",
+            "description": "The PM reads each new issue of a GitHub repository and drafts a ticket for it, \
+                            marks it a duplicate, or leaves it. Creating the ticket asks you first unless the \
+                            project lets the PM act. The first look at the repository only records where it is.",
             "nodes": [
-                {"id": "tick", "kind": "schedule", "version": 1, "position": {"x": 0, "y": 0},
-                 "config": {"every": "{{params.every}}"}},
-                {"id": "run", "kind": "command", "version": 1, "position": {"x": 260, "y": 0}, "timeoutMs": 600000,
-                 "config": {"program": "{{params.program}}", "args": ["{{params.script}}"], "cwd": "{{params.cwd}}",
-                    "input": {"slot": "{{trigger.slotIso}}", "date": "{{trigger.date}}"}}},
-                {"id": "news", "kind": "condition", "version": 1, "position": {"x": 520, "y": 0}, "title": "Any news?",
-                 "config": {"conditions": [{"left": "{{steps.run.json.message}}", "op": "truthy"}]}},
-                {"id": "post", "kind": "discord.post", "version": 1, "position": {"x": 780, "y": 0},
-                 "retry": {"max": 3, "backoffMs": 30000},
-                 "config": {"connection": "{{params.discord}}", "content": "{{steps.run.json.message}}"}},
-                {"id": "nothing", "kind": "end", "version": 1, "position": {"x": 780, "y": 160},
-                 "config": {"quiet": true}},
+                {"id": "opened", "kind": "github.issue.opened", "version": 1, "position": {"x": 0, "y": 160},
+                 "config": {"repos": ["{{params.repo}}"]}},
+                {"id": "triage", "kind": "agent", "version": 1, "position": {"x": 320, "y": 160},
+                 "title": "Triage", "config": {
+                    "persona": "{{params.persona}}", "session": "new", "ticket": "", "attempt": "",
+                    "prompt": TRIAGE_PROMPT,
+                    "outcomes": [
+                        {"id": "drafted", "description": "you created a draft ticket for it with create_ticket"},
+                        {"id": "duplicate", "description": "a ticket already covers it (name it in the summary)"},
+                        {"id": "ignored", "description": "it needs no ticket (a question, spam, already fixed)"},
+                    ]}},
+                {"id": "drafted", "kind": "end", "version": 1, "position": {"x": 640, "y": 0},
+                 "title": "Drafted", "config": {"output": {"summary": "{{steps.triage.summary}}"}}},
+                {"id": "duplicate", "kind": "end", "version": 1, "position": {"x": 640, "y": 160},
+                 "title": "Duplicate", "config": {"output": {"summary": "{{steps.triage.summary}}"}}},
+                {"id": "ignored", "kind": "end", "version": 1, "position": {"x": 640, "y": 320},
+                 "title": "Left", "config": {"quiet": true}},
             ],
             "edges": [
-                {"from": "tick", "to": "run"},
-                {"from": "run", "to": "news"},
-                {"from": "news", "port": "true", "to": "post"},
-                {"from": "news", "port": "false", "to": "nothing"},
+                {"from": "opened", "to": "triage"},
+                {"from": "triage", "port": "drafted", "to": "drafted"},
+                {"from": "triage", "port": "duplicate", "to": "duplicate"},
+                {"from": "triage", "port": "ignored", "to": "ignored"},
             ],
         })),
     )
@@ -339,13 +186,16 @@ fn scheduled_script(id: &str, name: &str, what: &str, every: &str) -> Template {
 
 async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
     if id.starts_with(BUILTIN_PREFIX) {
-        return builtin_templates().into_iter().find(|t| t.id == id).ok_or_else(|| ApiError::not_found("template"));
+        return builtin_templates(&st.registry())
+            .into_iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| ApiError::not_found("template"));
     }
     st.store.get_template(id).await?.ok_or_else(|| ApiError::not_found("template"))
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Template>>, ApiError> {
-    let mut out = builtin_templates();
+    let mut out = builtin_templates(&st.registry());
     out.extend(st.store.list_templates().await?);
     Ok(Json(out))
 }
@@ -368,7 +218,10 @@ pub struct TemplateInput {
 
 /// A template's name, params and document, checked: the params make sense and the document validates with their
 /// defaults (or placeholders) filled in.
-fn checked_input(t: TemplateInput) -> Result<(String, String, Vec<TemplateParam>, WorkflowDoc), ApiError> {
+fn checked_input(
+    st: &AppState,
+    t: TemplateInput,
+) -> Result<(String, String, Vec<TemplateParam>, WorkflowDoc), ApiError> {
     let name = t.name.as_deref().map(str::trim).unwrap_or_default().to_string();
     if name.is_empty() || name.len() > 120 {
         return Err(invalid("a template needs a name of at most 120 characters"));
@@ -376,7 +229,7 @@ fn checked_input(t: TemplateInput) -> Result<(String, String, Vec<TemplateParam>
     let doc = t.doc.ok_or_else(|| invalid("doc is required"))?;
     check_params(&t.params).map_err(invalid)?;
     let filled = fill(&doc, &placeholder_values(&t.params)).map_err(invalid)?;
-    checked(&filled)?;
+    checked(st, &filled)?;
     Ok((name, t.description.trim().to_string(), t.params, doc))
 }
 
@@ -384,7 +237,7 @@ pub(crate) async fn create(
     State(st): State<AppState>,
     payload: Result<Json<TemplateInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Template>), ApiError> {
-    let (name, description, params, doc) = checked_input(body(payload)?)?;
+    let (name, description, params, doc) = checked_input(&st, body(payload)?)?;
     let now = now_ms();
     let t = Template {
         id: uuid::Uuid::now_v7().to_string(),
@@ -413,7 +266,7 @@ pub(crate) async fn save(
     if t.builtin {
         return Err(read_only(&t));
     }
-    let (name, description, params, doc) = checked_input(body(payload)?)?;
+    let (name, description, params, doc) = checked_input(&st, body(payload)?)?;
     (t.name, t.description, t.params, t.doc, t.updated_at) = (name, description, params, doc, now_ms());
     st.store.update_template(&t).await?;
     Ok(Json(t))
@@ -520,7 +373,7 @@ async fn legacy_pipeline(st: &AppState, w: &Workflow, doc: &WorkflowDoc) -> Resu
 /// (with its params), as an untouched built-in follows its template (PDT-124). One the user (or an agent) saved a
 /// version of is left alone. Runs once per pdtd, with the built-ins.
 pub(crate) async fn follow_templates(st: &AppState) -> Result<(), pdt_store::StoreError> {
-    let templates = builtin_templates();
+    let templates = builtin_templates(&st.registry());
     for w in st.store.list_workflows(None).await? {
         if w.builtin.is_some() || w.source != Source::Host {
             continue;
@@ -555,7 +408,7 @@ pub(crate) async fn follow_templates(st: &AppState) -> Result<(), pdt_store::Sto
                 .set_workflow_state(&w.id, TEMPLATE_STATE, &json!({"id": t.id, "params": values}), false, now)
                 .await?;
         }
-        if doc != current && checked(&doc).is_ok() {
+        if doc != current && checked(st, &doc).is_ok() {
             let note = format!("updated by PDT to the newer template {}", t.name);
             st.store.save_workflow_version(&w.id, &doc, Author::Builtin, &note, now).await?;
             tracing::info!(workflow = %w.name, template = %t.id, "a workflow followed its template");
@@ -571,18 +424,18 @@ mod tests {
 
     #[test]
     fn every_builtin_template_is_valid_with_its_defaults() {
-        let all = builtin_templates();
+        let all = builtin_templates(crate::integrations::test_registry());
         let mut ids = std::collections::HashSet::new();
         for t in &all {
             assert!(ids.insert(t.id.clone()), "{} twice", t.id);
             check_params(&t.params).unwrap();
             let d = fill(&t.doc, &placeholder_values(&t.params)).unwrap();
-            let issues = validate(&d, super::super::catalog::catalog());
+            let issues = validate(&d, crate::integrations::test_registry().catalog());
             let errors: Vec<_> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
             assert!(errors.is_empty(), "{}: {errors:?}", t.id);
         }
         assert!(all.iter().any(|t| t.id == "builtin:pr-notices"));
-        for id in ["github-issues-discord", "issue-triage", "health-watchdog", "brief-follow-ups", "email-processing"] {
+        for id in ["issue-triage", "pipeline", "comment-on-merge"] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
     }
@@ -591,8 +444,10 @@ mod tests {
     /// (saying not to is fine).
     #[test]
     fn no_builtin_prompt_runs_gh_pr_checks() {
-        let mut texts: Vec<(String, String)> =
-            builtin_templates().into_iter().map(|t| (t.id, serde_json::to_string(&t.doc).unwrap())).collect();
+        let mut texts: Vec<(String, String)> = builtin_templates(crate::integrations::test_registry())
+            .into_iter()
+            .map(|t| (t.id, serde_json::to_string(&t.doc).unwrap()))
+            .collect();
         texts.extend(pdt_core::persona::BUILTIN_PERSONAS.iter().map(|p| (p.id.into(), p.instructions.into())));
         texts.push(("pm".into(), pdt_core::persona::PM_INSTRUCTIONS.into()));
         for g in ["agents", "run-config", "set-up-project", "set-up-workflow"] {
@@ -608,7 +463,10 @@ mod tests {
 
     #[test]
     fn a_filled_in_pipeline_gives_back_its_params() {
-        let t = builtin_templates().into_iter().find(|t| t.id == "builtin:pipeline").unwrap();
+        let t = builtin_templates(crate::integrations::test_registry())
+            .into_iter()
+            .find(|t| t.id == "builtin:pipeline")
+            .unwrap();
         let given = serde_json::json!({"coder": "Builder", "accept": "auto", "autoAcceptLabels": ["agentic"],
                                        "loopLimit": 5, "afterRefine": "ready"});
         let values = param_values(&t.params, given.as_object().unwrap()).unwrap();

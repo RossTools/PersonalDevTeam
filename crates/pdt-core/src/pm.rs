@@ -323,22 +323,23 @@ pub enum AskTarget {
     /// A ticket id or key.
     Ticket(String),
     Session(String),
-    /// A connection of `kind` (`discord_bot`, `scryer`) by name (None: the only one of its kind), whose
+    /// A connection of `kind` (an integration's, e.g. a bot's) by name (None: the only one of its kind), whose
     /// `config.pmActs` says whether the PM acts without asking.
     Connection {
         kind: &'static str,
         name: Option<String>,
     },
-    /// A call no policy answers for the user: a destructive Scryer change, or one that sends a connection's secret.
+    /// A call no policy answers for the user: a destructive change, or one that sends a connection's secret.
     Always,
 }
 
-/// Whether a connection the PM acts through (a Discord bot, a Scryer) lets it act without asking (`config.pmActs`).
+/// Whether a connection the PM acts through (an integration's) lets it act without asking (`config.pmActs`).
 pub fn connection_lets_pm_act(config: &Value) -> bool {
     config.get("pmActs").and_then(Value::as_bool) == Some(true)
 }
 
-/// The target of an asking tool's input, from its arguments (Claude's tool name `mcp__pdt__<tool>` or the bare name).
+/// The target of one of PDT's own asking tools' input, from its arguments (Claude's tool name `mcp__pdt__<tool>` or the
+/// bare name). An integration's asking tools name their own (pdt-api's `Integration::ask_target`).
 pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
     let tool = tool.strip_prefix(&format!("mcp__{}__", crate::mcp::SERVER_NAME)).unwrap_or(tool);
     let field = |k: &str| input.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
@@ -348,17 +349,6 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
             field("ticket").map(|t| AskTarget::Ticket(t.into()))
         }
         "send_to_session" => field("session").map(|s| AskTarget::Session(s.into())),
-        "discord_change" | "discord_webhook" => Some(AskTarget::Connection {
-            kind: crate::discord::DISCORD_BOT,
-            name: field("connection").map(String::from),
-        }),
-        "scryer_add" => {
-            Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
-        }
-        "scryer_mutate" if crate::scryer::mutate_always_asks(input) => Some(AskTarget::Always),
-        "scryer_mutate" => {
-            Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
-        }
         _ => None,
     }
 }
@@ -752,7 +742,7 @@ pub fn instructions(ctx: &PmContext) -> String {
     if !asking.is_empty() {
         out.push_str(&format!(
             "- These act for the user, so each call waits for their yes (they see the call and its arguments) unless \
-             the project (for Discord and Scryer, the connection) lets you act without asking: {asking}. A refusal is an \
+             the project (for an integration's tools, its connection) lets you act without asking: {asking}. A refusal is an \
              answer: don't retry it unchanged.\n"
         ));
     }
@@ -853,23 +843,6 @@ mod tests {
         assert_eq!(t("mcp__pdt__unlink_tickets", json!({"ticket": "PDT-5"})), Some(AskTarget::Ticket("PDT-5".into())));
         assert_eq!(t("send_to_session", json!({"session": "s1"})), Some(AskTarget::Session("s1".into())));
         assert_eq!(t("create_ticket", json!({})), None);
-        assert_eq!(
-            t("discord_change", json!({"connection": "home"})),
-            Some(AskTarget::Connection { kind: "discord_bot", name: Some("home".into()) })
-        );
-        assert_eq!(
-            t("mcp__pdt__discord_webhook", json!({})),
-            Some(AskTarget::Connection { kind: "discord_bot", name: None })
-        );
-        assert_eq!(
-            t("mcp__pdt__scryer_add", json!({"connection": "media"})),
-            Some(AskTarget::Connection { kind: "scryer", name: Some("media".into()) })
-        );
-        assert_eq!(
-            t("scryer_mutate", json!({"mutation": "updateGeneralSettings"})),
-            Some(AskTarget::Connection { kind: "scryer", name: None })
-        );
-        assert_eq!(t("scryer_mutate", json!({"mutation": "deleteIndexerConfig"})), Some(AskTarget::Always));
         assert_eq!(t("get_ticket", json!({"ticket": "PDT-4"})), None);
     }
 

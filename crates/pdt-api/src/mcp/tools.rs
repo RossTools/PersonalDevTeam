@@ -23,7 +23,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 /// What a tool call knows: PDT and the calling session.
-pub(crate) struct Cx<'a> {
+pub struct Cx<'a> {
     pub st: &'a AppState,
     pub session: &'a Session,
 }
@@ -1173,9 +1173,7 @@ async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
 /// there) runs only where the project lets the PM act. Claude asks through its permission prompt (spec §4).
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
-    if !crate::integrations::registry().tool_table().asks(tool)
-        || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
-    {
+    if !cx.st.registry().tool_table().asks(tool) || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
         return Ok(());
     }
     if crate::pm::acts_without_asking(cx.st, target).await {
@@ -1183,7 +1181,7 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
     }
     Err(format!(
         "{tool} needs the user's yes, and PDT can only ask for it in a Claude session. Tell the user what you would \
-         do so they can do it, or ask them to let the PM act (the project's settings, or the Discord bot's or Scryer's connection)."
+         do so they can do it, or ask them to let the PM act (the project's settings, or the integration's connection)."
     ))
 }
 

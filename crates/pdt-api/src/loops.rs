@@ -155,16 +155,17 @@ where
 }
 
 /// One pass of the 60 s poll, in order: runs whose checkout is gone; attempts' pull requests and CI (PDT-25), then
-/// Buildkite's (PDT-85), then attempts whose branch was merged (tickets spec §6); new issues in repos workflows
-/// watch and linked projects' Jira issues (Phase 7e); workflows kept in repos, and pruning old events and runs
-/// (Phase 7a). Each member is contained and limited, so a hung or panicking one never holds up the rest.
+/// attempts whose branch was merged (tickets spec §6); new issues in repos workflows watch (Phase 7e); the enabled
+/// integrations' checks (their CI, their trackers' issues; PDT-173); workflows kept in repos, and pruning old events
+/// and runs (Phase 7a). Each member is contained and limited, so a hung or panicking one never holds up the rest.
 pub async fn poll_pass(st: AppState) {
     part(&st, "the gone-runs sweep", |s| async move { crate::sweep_gone_runs(&s).await }).await;
     part(&st, "the PR check", |s| async move { crate::refresh_prs(&s).await }).await;
-    part(&st, "the Buildkite check", |s| async move { crate::refresh_buildkite(&s).await }).await;
     part(&st, "the merge check", |s| async move { crate::check_merges(&s).await }).await;
     part(&st, "the issue check", |s| async move { crate::refresh_issues(&s).await }).await;
-    part(&st, "the Jira check", |s| async move { crate::refresh_jira(&s).await }).await;
+    for p in st.registry().pollers() {
+        part(&st, p.name, p.run).await;
+    }
     part(&st, "workflow upkeep", |s| async move { crate::maintain_workflows(&s).await }).await;
 }
 

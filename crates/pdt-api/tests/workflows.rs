@@ -102,8 +102,7 @@ async fn the_catalog_and_the_builtins_are_served() {
         .iter()
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
-    assert_eq!(builtins.len(), 10, "{list}");
-    assert!(builtins.contains(&("jira-import", true)) && builtins.contains(&("jira-done", true)));
+    assert_eq!(builtins.len(), 8, "no integration's built-ins until it is enabled: {list}");
     // Bug triage is on only where a project is PDT's own repository (PDT-154).
     assert!(builtins.contains(&("github-issue-done", true)) && builtins.contains(&("pdt-bug-triage", false)));
     assert!(builtins.contains(&("late-commits", true)));
@@ -482,11 +481,10 @@ async fn a_dry_run_covers_each_case_of_a_pr_set_to_merge() {
 #[tokio::test]
 async fn connections_keep_their_secret_in_the_keychain() {
     let env = setup().await;
-    let (s, c) =
-        call(&env.app, "POST", "/api/connections", Some(json!({"name": "discord", "kind": "discord_webhook"}))).await;
+    let (s, c) = call(&env.app, "POST", "/api/connections", Some(json!({"name": "hook", "kind": "http"}))).await;
     assert_eq!(s, StatusCode::CREATED, "{c}");
     let id = c["id"].as_str().unwrap();
-    let (s, e) = call(&env.app, "POST", "/api/connections", Some(json!({"name": "discord"}))).await;
+    let (s, e) = call(&env.app, "POST", "/api/connections", Some(json!({"name": "hook"}))).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("connection_exists")));
     let (s, c) =
         call(&env.app, "PUT", &format!("/api/connections/{id}/secret"), Some(json!({"secret": "https://hook"}))).await;
@@ -494,8 +492,8 @@ async fn connections_keep_their_secret_in_the_keychain() {
     assert!(!c.to_string().contains("https://hook"), "never returned");
     assert_eq!(env.state.secrets.get(&format!("connection:{id}")).unwrap().as_deref(), Some("https://hook"));
     let (_, c) =
-        call(&env.app, "PATCH", &format!("/api/connections/{id}"), Some(json!({"url": "https://discord.com"}))).await;
-    assert_eq!(c["url"], "https://discord.com");
+        call(&env.app, "PATCH", &format!("/api/connections/{id}"), Some(json!({"url": "https://example.com"}))).await;
+    assert_eq!(c["url"], "https://example.com");
     let (s, _) = call(&env.app, "DELETE", &format!("/api/connections/{id}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     assert_eq!(env.state.secrets.get(&format!("connection:{id}")).unwrap(), None);

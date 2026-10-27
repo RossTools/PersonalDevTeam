@@ -655,7 +655,7 @@ mod tests {
 
     fn fields(kind: &str) -> Vec<RefField> {
         match kind {
-            "discord.post" => vec![RefField::Connection { field: "connection".into(), kind: "discord_webhook".into() }],
+            "chat.post" => vec![RefField::Connection { field: "connection".into(), kind: "chat_webhook".into() }],
             "webhook" => vec![RefField::Connection { field: "hook".into(), kind: "webhook".into() }],
             "mcp.tool" => vec![RefField::Connection { field: "server".into(), kind: "mcp".into() }],
             "http.request" => vec![RefField::Connection { field: "connection".into(), kind: "any".into() }],
@@ -681,8 +681,8 @@ mod tests {
             "nodes": [
                 {"id": "t", "kind": "ticket.moved", "version": 1, "config": {"projects": [P1, "other"]}},
                 {"id": "r", "kind": "agent", "version": 1, "config": {"persona": "Reviewer", "prompt": "p"}},
-                {"id": "d", "kind": "discord.post", "version": 1, "config": {"connection": "alerts", "text": "x"}},
-                {"id": "d2", "kind": "discord.post", "version": 1, "config": {"connection": "{{state.c}}"}},
+                {"id": "d", "kind": "chat.post", "version": 1, "config": {"connection": "alerts", "text": "x"}},
+                {"id": "d2", "kind": "chat.post", "version": 1, "config": {"connection": "{{state.c}}"}},
                 {"id": "m", "kind": "mcp.tool", "version": 1, "config": {"server": "files", "tool": "read"}},
                 {"id": "c", "kind": "ticket.create", "version": 1, "config": {"project": P1, "title": "t"}},
             ],
@@ -732,7 +732,7 @@ mod tests {
         assert_eq!(
             r.connections,
             vec![
-                NeedConnection { name: "alerts".into(), kind: "discord_webhook".into(), tools: vec![] },
+                NeedConnection { name: "alerts".into(), kind: "chat_webhook".into(), tools: vec![] },
                 NeedConnection { name: "files".into(), kind: "mcp".into(), tools: vec!["read".into()] },
             ]
         );
@@ -761,9 +761,9 @@ mod tests {
     fn local() -> Local {
         Local {
             connections: vec![
-                LocalConnection { name: "Alerts".into(), kind: "discord_webhook".into(), has_secret: true },
+                LocalConnection { name: "Alerts".into(), kind: "chat_webhook".into(), has_secret: true },
                 LocalConnection { name: "files".into(), kind: "http".into(), has_secret: false },
-                LocalConnection { name: "ops".into(), kind: "discord_webhook".into(), has_secret: true },
+                LocalConnection { name: "ops".into(), kind: "chat_webhook".into(), has_secret: true },
             ],
             personas: vec!["Reviewer".into(), "Critic".into()],
             projects: vec![LocalProject { id: "here".into(), key: "WEB".into(), name: "Web".into() }],
@@ -773,7 +773,7 @@ mod tests {
     fn requires() -> Requires {
         Requires {
             connections: vec![
-                NeedConnection { name: "alerts".into(), kind: "discord_webhook".into(), tools: vec![] },
+                NeedConnection { name: "alerts".into(), kind: "chat_webhook".into(), tools: vec![] },
                 NeedConnection { name: "files".into(), kind: "mcp".into(), tools: vec!["read".into()] },
             ],
             personas: vec!["Coder".into()],

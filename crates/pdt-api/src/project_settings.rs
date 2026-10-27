@@ -30,9 +30,9 @@ pub struct ProjectSettingsView {
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
     /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c).
     pub policy: ProjectPolicy,
-    /// Its settings for each integration it is linked to, by the integration's id (PDT-174): `connection` and the
-    /// fields `GET /api/integrations/project-settings` declares, e.g. `jira` (issues assigned to the user become
-    /// tickets, Done moves the issue) and `buildkite` (CI of its attempts' branches).
+    /// Its settings for each enabled integration it is linked to, by the integration's id (PDT-174): `connection` and
+    /// the fields `GET /api/integrations/project-settings` declares. A turned-off integration's are kept but not shown
+    /// (PDT-173).
     #[ts(type = "Record<string, Record<string, unknown>>")]
     pub integrations: BTreeMap<String, IntegrationSettings>,
 }
@@ -102,6 +102,9 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
     st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let p = st.store.get_project_settings(project_id).await?;
     let host = st.store.get_host_settings().await?.agent_credentials;
+    let reg = st.registry();
+    let mut integrations = p.integrations;
+    integrations.retain(|id, _| reg.project_settings().any(|s| s.integration == *id));
     Ok(ProjectSettingsView {
         agent_credentials: p.agent_credentials,
         effective_credentials: effective_credentials(host, p.agent_credentials),
@@ -110,7 +113,7 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
         merge_via_pr: p.merge_via_pr,
         agent_permission_mode: p.agent_permission_mode,
         policy: p.policy,
-        integrations: p.integrations,
+        integrations,
     })
 }
 
@@ -193,12 +196,11 @@ pub(crate) async fn put_settings(
         require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
     };
     let mut integrations = current.integrations;
+    let reg = st.registry();
     for (id, given) in input.integrations.unwrap_or_default() {
         let applied = match given {
             None => None,
-            Some(given) => crate::integrations::registry()
-                .apply_project_settings(&id, &given, integrations.get(&id))
-                .map_err(invalid)?,
+            Some(given) => reg.apply_project_settings(&id, &given, integrations.get(&id)).map_err(invalid)?,
         };
         match applied {
             None => {

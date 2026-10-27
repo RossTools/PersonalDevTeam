@@ -472,30 +472,33 @@ async fn pump(
 }
 
 /// Stores an event (updating its item in place), applies it to the runtime state and sends it to viewers.
-/// A credential the agent wrote into a call to one of PDT's Scryer tools (PDT-150) is redacted from the event (the
+/// A call to one of an integration's pdt-mcp tools gets the title its integration gives it (what the user says yes
+/// to), and a credential the agent wrote into it (a password, PDT-150) is redacted from the event (the
 /// transcript and the approval card) and its raw line; the call itself still gets it. The raw line without them, when
 /// there were any.
-fn redact_credentials(event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
-    let (AgentEvent::ToolCall { tool, input, .. } | AgentEvent::Request { tool, input, .. }) = event else {
+fn redact_credentials(st: &AppState, event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
+    let (AgentEvent::ToolCall { tool, input, title, .. } | AgentEvent::Request { tool, input, title, .. }) = event
+    else {
         return None;
     };
-    if !tool.contains("scryer_") {
-        return None;
+    let reg = st.registry();
+    if let Some(t) = reg.ask_title(tool, input) {
+        *title = t;
     }
-    let secrets = pdt_core::scryer::secret_values(input);
+    let secrets = reg.redact_tool_input(tool, input);
     if secrets.is_empty() {
         return None;
     }
-    *input = pdt_core::scryer::redact(input);
     let mut text = raw?.to_string();
     for s in &secrets {
         let escaped = serde_json::to_string(s).unwrap_or_default();
-        text = text
-            .replace(escaped.trim_matches('"'), pdt_core::scryer::REDACTED)
-            .replace(s.as_str(), pdt_core::scryer::REDACTED);
+        text = text.replace(escaped.trim_matches('"'), REDACTED).replace(s.as_str(), REDACTED);
     }
     Some(text)
 }
+
+/// What a redacted credential reads as.
+pub const REDACTED: &str = "[redacted]";
 
 async fn append(
     st: &AppState,
@@ -521,7 +524,7 @@ async fn append(
             }
         }
     }
-    let scrubbed = redact_credentials(&mut event, raw);
+    let scrubbed = redact_credentials(st, &mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
     let row = match st
         .store

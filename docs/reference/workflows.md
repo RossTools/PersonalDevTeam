@@ -31,13 +31,14 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
   `schedule.fired` and webhooks' `webhook.received` ("Sensors and webhooks"); 7e-2 the
   Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and the Buildkite sensor's
-  `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (PDT's own types in `EVENT_TYPES`; Jira's in `jira.rs`, registered by the Jira integration: "Integrations"). CI events carry
-  `provider` (`github_actions` or `buildkite`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
+  `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (PDT's own types in `EVENT_TYPES`; Jira's in its crate, pdt-int-jira `core.rs`, registered by the Jira integration: "Integrations"). CI events carry
+  `provider` (`github_actions`, or the CI integration's id: `buildkite`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
   carry `mergeRequested` (the open PR was set to merge and hasn't merged, PDT-104: [tickets.md](tickets.md)) and
   `agentWorking` (an agent step is open on the attempt); CI events also `mergeWaiting` (a workflow's merge waits for
   this CI, PDT-151). The merge check logs `attempt.late_commits` (key `<attempt>:late_commits:<head>`, PDT-151:
-  commits pushed after the attempt's PR merged; [tickets.md](tickets.md)). `ticket.stage_changed` carries `jiraKey` when the ticket is linked to
-  a Jira issue, and `githubIssue` (`owner/name#12`) when it is linked to a GitHub issue.
+  commits pushed after the attempt's PR merged; [tickets.md](tickets.md)). `ticket.stage_changed` carries `external`, the issue in each tracker the
+  ticket is linked to by tracker (`{"jira": "ABC-5"}`, `{{trigger.external.jira}}`; PDT-173, it was `jiraKey`), and
+  `githubIssue` (`owner/name#12`) when it is linked to a GitHub issue.
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
 - `GET /api/events?type=&project=&ticket=&attempt=&limit=` (newest first) or `&after=<seq>` (oldest first, to
@@ -109,10 +110,11 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   - **PR comments to the agent** (off, 7e): `pr.commented` and `pr.reviewed` (not `byOwner`, not `isBot`; reviews
     not `approved` and with a body) → `session.send` (`{{trigger.notice.text}}`, dedupe on the notice key, `timeline:
     pr`).
+  - Each enabled integration's built-ins (PDT-173: installed when it is enabled, and listed with PDT's): Jira's two.
   - **Import assigned Jira issues** (on, 7e-2): `jira.issue.created` and `jira.issue.updated` where `assignedToMe`
     and no `ticketId` → `jira.import` (`{{trigger.key}}` into `{{trigger.projectId}}`). Does nothing until a project
     links Jira.
-  - **Done moves the Jira issue** (on, 7e-2): `ticket.stage_changed` to `done` with a `jiraKey` →
+  - **Done moves the Jira issue** (on, 7e-2): `ticket.stage_changed` to `done` with an `external.jira` →
     `jira.transition` (`ticket`: the project's done mapping). Nothing else is pushed to Jira.
   - **PDT bug triage** (PDT-154; on when installed only where a project's repository is `RELEASE_REPO`, PDT's own;
     off elsewhere): `github.issue.opened` on `RELEASE_REPO` where `labels` contains `from-pdt` (the bug reports other
@@ -135,15 +137,35 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
 
 ## Integrations (PDT-171)
 
-One place declares what an integration adds: pdt-api `integrations/`, a module per integration implementing
-`Integration` (its connection kinds, event types, node kinds and pdt-mcp tools with their `readOnly`, `asks`,
-`openWorld`, `destructive` and `pm` flags, and how to run them), listed once in `integrations/mod.rs` `all()`. PDT's
-own pieces are the `core` integration. The `Registry` gathers them, in that order, into the catalog, `tools/list` and
-`tools/call`, the personas' tools (`GET /api/personas/tools`, the PM's set, which ask), the event types and
-`GET /api/connections/kinds`. Registered: core, discord (webhooks, the bot and its tools), webhook (incoming), github
-(issues), jira, buildkite, http, arr (Radarr and Sonarr), scryer (with its tools), plex, mcp, bug_reports
-(`report_bug`). An integration's tools are the PM's only with its `pm` flag, and in another persona's set only when the
-user picks them.
+One place declares what an integration adds: a type implementing pdt-api's `Integration` (`integrations/mod.rs`;
+what an integration crate builds on is re-exported as `pdt_api::sdk`): its connection kinds (and a check of their
+config), event types, node kinds and pdt-mcp tools with their `readOnly`, `asks`, `openWorld`, `destructive` and `pm`
+flags (and how to run them, what an asking call acts on, its approval title, credentials to keep out of the
+transcript), its lines of the PM's instructions, project settings, whether it is a project's CI provider, its members
+of the 60 s poll, its routes (under `/api`, 404 while it is off), its built-in workflows and its templates. PDT's own
+pieces are always on: core, webhook (incoming), github (issues), http, mcp, bug_reports (`report_bug`), in pdt-api
+`integrations/`. The `Registry` gathers PDT's own and the enabled integrations, in that order, into the catalog,
+`tools/list` and `tools/call`, the personas' tools (`GET /api/personas/tools`, the PM's set, which ask), the event
+types and `GET /api/connections/kinds`. An integration's tools are the PM's only with its `pm` flag, and in another
+persona's set only when the user picks them.
+
+**Integration crates and enabling them** (PDT-173). Each optional integration is a crate, `crates/pdt-int-<id>`:
+discord (webhooks, the bot and its tools, the templates that post to Discord), jira (with its sensor, import route and
+built-ins), buildkite (its CI sensor), arr (Radarr and Sonarr), scryer (with its tools and GraphQL schema) and plex.
+pdtd has a cargo feature per crate (all on by default, so releases have them all; `--no-default-features --features
+jira,…` leaves the rest out) and hands those it was built with to `Integrations::new` (pdtd `src/integrations/`).
+pdt-core `integration::KNOWN` is the one list naming them outside their crates (id, label, connection kinds, node-kind
+prefixes). Which of them an instance uses is the host value `integrations.enabled` (a JSON list of ids):
+Settings → Integrations (`GET /api/integrations`: each known one with `enabled` and `built`; `PUT /api/integrations
+{enabled}` sets exactly those, 422 for one this build lacks). A disabled integration registers nothing (no connection
+kinds, node kinds, triggers, tools, PM instructions, project settings, pollers, routes or built-ins); its connections,
+project links and workflows are kept. A connection of a turned-off integration's kind is refused (400, naming it), a
+project's settings leave its section out, and a workflow node of its kinds fails validation (and a run) with
+`integration_disabled` ("… is part of the Jira integration, which is turned off") or, when this build lacks it,
+`integration_missing`, instead of `unknown_kind`. A new install enables none; when the store opens with no
+`integrations.enabled` yet (an install from before PDT-173), it enables those already in use: with a connection of one
+of their kinds, or a workflow of the user's (not a built-in) with one of their node kinds (pdt-store `host.rs`).
+Turning one on installs its built-ins and refreshes the built-in personas on the engine's next tick.
 
 An **action** (PDT-172, `integrations/action.rs`) is one capability defined once and offered as both a node kind and a
 pdt-mcp tool: one `Action` gives its input type (the node's config and the tool's arguments, one JSON Schema), output
@@ -156,13 +178,13 @@ action shapes each output (`scryer.add` leaves by `added` or `exists` with the t
 its other kinds). An action can be a tool only (`scryer_schema`, `discord_get`, `discord_change`, `discord_webhook`).
 On actions: Scryer's library, search, queue, add, query and mutate (each `scryer.*` kind and `scryer_*` tool) and
 `scryer_schema`, and Discord's tools; `discord.post` and `discord.channel.ensure` are node kinds with no tool. A test
-(`integrations/tests.rs`, `snapshot.json`) keeps every tool's `tools/list` entry and flags, the PM's tools and every
+(pdtd `src/integrations/tests.rs`, `snapshot.json`, with every integration on) keeps every tool's `tools/list` entry and flags, the PM's tools and every
 kind's spec as they were.
 
 **Project settings** (PDT-174): an integration a project links to declares a `ProjectSettingsSchema` (pdt-core
 `integration.rs`: its label, description, the connection kind it links through, and `ConfigField`s, text, choice or
 lines, with `default` and `optional`), and may check the result (`check_project_settings`, e.g. Buildkite's pipeline
-slugs). `GET /api/integrations/project-settings` lists them (jira, buildkite); the project's settings page makes its
+slugs). `GET /api/integrations/project-settings` lists the enabled integrations' (jira, buildkite); the project's settings page makes its
 Integrations section from them. A project's settings are one JSON object per integration in
 `project_settings.integration_settings`, keyed by the integration's id: `connection` plus each field (lists as
 arrays). `ProjectSettingsSchema::apply` tidies an update: keys left out keep their value, an empty one takes its
@@ -172,7 +194,7 @@ default, an unknown key or wrong type is `400`, no connection unlinks.
 
 `GET /api/workflows/catalog` lists every kind: `id`, `version`, `category`, `title`, `description`,
 `configSchema` / `outputSchema` (JSON Schema from schemars), `ports`, `dynamicPorts`. One module per kind in
-pdt-api `workflow/nodes/` (Radarr and Sonarr share `arr.rs`), registered by its integration ("Integrations");
+pdt-api `workflow/nodes/` or its integration's crate, registered by its integration ("Integrations");
 config types also derive ts-rs (web/src/api/gen). Each event type is a trigger kind: the plain event trigger, unless a
 kind claims the type (`NodeKind::event_type`: the schedule, webhook and GitHub issue triggers have configs of their
 own). After the kinds come the MCP tools' entries ("MCP tools as actions"), which have a
@@ -295,7 +317,7 @@ notify itself forever.
   default): `{items [{title, progress, status (`downloading`, `importPending`, …), secondsLeft, client, attention}],
   total}`. Library: `titles` (50 a page by default, at most 300): `{titles, total, hasMore}`.
   Every operation is checked against Scryer's published schema, vendored in
-  `crates/pdt-api/src/scryer/schema.graphql` (a unit test with apollo-compiler).
+  `crates/pdt-int-scryer/src/schema.graphql` (a unit test with apollo-compiler).
   Any query or mutation (PDT-150; `scryer/graphql.rs`): `scryer.query` runs a query document (no mutations or
   subscriptions) and outputs `{data}`; `scryer.mutate` runs one mutation by name with its `args` and `select` and
   outputs `{mutation, result}`. Both are validated against Scryer's live schema (introspection, kept 10 minutes per

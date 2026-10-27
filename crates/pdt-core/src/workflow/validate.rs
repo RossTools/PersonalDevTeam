@@ -42,6 +42,12 @@ pub struct KindFacts {
 /// The catalog, as validation sees it: facts for a node (None for an unknown kind).
 pub trait Kinds {
     fn facts(&self, node: &super::doc::Node) -> Option<KindFacts>;
+
+    /// The issue's code and message for a node of a kind it doesn't have (`unknown_kind`; pdt-api names the
+    /// integration a kind belongs to when that is turned off).
+    fn unknown(&self, kind: &str) -> (String, String) {
+        ("unknown_kind".into(), format!("no node kind is called {kind}"))
+    }
 }
 
 fn issue(severity: Severity, code: &str, node: Option<&str>, message: String) -> Issue {
@@ -67,7 +73,8 @@ pub fn validate(doc: &WorkflowDoc, kinds: &dyn Kinds) -> Vec<Issue> {
             continue;
         }
         let Some(f) = kinds.facts(n) else {
-            out.push(issue(Error, "unknown_kind", Some(&n.id), format!("no node kind is called {}", n.kind)));
+            let (code, message) = kinds.unknown(&n.kind);
+            out.push(issue(Error, &code, Some(&n.id), message));
             continue;
         };
         if n.version > f.version {

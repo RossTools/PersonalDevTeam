@@ -1,5 +1,6 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
 import type { ConnectionKind } from './gen/ConnectionKind';
+import type { IntegrationInfo } from './gen/IntegrationInfo';
 import type { ProjectSettingsSchema } from './gen/ProjectSettingsSchema';
 import type { BugReportFiled } from './gen/BugReportFiled';
 import type { BugReportPreview } from './gen/BugReportPreview';
@@ -368,6 +369,9 @@ export const api = {
   listConnections: () => request<Connection[]>('/api/connections'),
   connectionKinds: () => request<ConnectionKind[]>('/api/connections/kinds'),
   projectSettingsSchemas: () => request<ProjectSettingsSchema[]>('/api/integrations/project-settings'),
+  listIntegrations: () => request<IntegrationInfo[]>('/api/integrations'),
+  setIntegrations: (enabled: string[]) =>
+    request<IntegrationInfo[]>('/api/integrations', { method: 'PUT', body: JSON.stringify({ enabled }) }),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
   updateConnection: (id: string, c: Partial<ConnectionInput>) =>
     request<Connection>(`/api/connections/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(c) }),

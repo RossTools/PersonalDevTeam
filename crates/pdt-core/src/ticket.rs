@@ -287,17 +287,17 @@ pub struct AttemptSummary {
     /// Its pull request on GitHub as pdtd last saw it (active attempts of projects on GitHub; kept in memory).
     #[serde(default)]
     pub pr: Option<crate::pr::PullRequestStatus>,
-    /// CI of its branch without a pull request (Buildkite builds branches; with a PR it is in `pr.ci`). In memory.
+    /// CI of its branch without a pull request (a CI integration's builds of the branch; with a PR it is in `pr.ci`). In memory.
     #[serde(default)]
     pub ci: Option<crate::pr::CiStatus>,
 }
 
-/// An issue in another tracker that a ticket is linked to (Phase 7e: Jira).
+/// An issue in another tracker that a ticket is linked to (Phase 7e: an issue tracker integration's, or GitHub's).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ExternalLink {
-    /// `jira`.
+    /// The tracker: an integration's id, or `github`.
     pub system: String,
     /// `ABC-123`.
     pub key: String,
@@ -385,7 +385,7 @@ pub struct TicketSummary {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub auto_start_at: Option<i64>,
-    /// The issues in other trackers it is linked to (a Jira issue it was imported from).
+    /// The issues in other trackers it is linked to (an issue it was imported from).
     #[serde(default)]
     pub external: Vec<ExternalLink>,
 }
