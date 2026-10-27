@@ -56,18 +56,24 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
 
 ### Registering PDT's OAuth App
 
-The device flow needs an OAuth App's client ID: `pdt_core::brand::GITHUB_OAUTH_CLIENT_ID` (empty until it is
-registered; until then Settings offers only a pasted token). `PDT_GITHUB_CLIENT_ID` overrides it for one pdtd (a dev
-instance, or before a release carries the ID).
+The device flow needs an OAuth App's client ID: `pdt_core::brand::GITHUB_OAUTH_CLIENT_ID` (with it empty, Settings
+offers only a pasted token). `PDT_GITHUB_CLIENT_ID` overrides it for one pdtd (a dev instance, or another app).
+
+PDT's app is registered (PDT-190): owned by the **RossTools** organization, Device Flow enabled, Client ID
+`Ov23litfc05CvYvo8kR5` (not a secret: it ships in the binary; there is no client secret). To register another one (a
+fork, or an Enterprise host):
 
 1. On GitHub: Settings › Developer settings › OAuth Apps › New OAuth App (or the organization's, to own it there).
 2. Application name: Personal Dev Team. Homepage URL: the project's repository. Authorization callback URL: any URL
    (the device flow never calls it), e.g. the homepage.
 3. Register it, then tick **Enable Device Flow** and save. No client secret is needed: the device flow doesn't use one.
-4. Put the Client ID in `GITHUB_OAUTH_CLIENT_ID` (crates/pdt-core/src/brand.rs) and release.
+4. Put the Client ID in `GITHUB_OAUTH_CLIENT_ID` (crates/pdt-core/src/brand.rs) and release (done for PDT's app).
 5. At the cutover each host's user opens Settings › This host › GitHub, clicks Connect GitHub, enters the code on
-   GitHub and authorizes the app (for an organization's private repositories, also grant the organization access, or
-   have an owner approve the app).
+   GitHub and authorizes the app.
+
+Private repositories of an organization: the organization has to grant the app access (Organization settings › Third-
+party access › OAuth app policy), or an owner approves it when a member asks at first sign-in. Until then the token
+works but that organization's private repositories answer 404.
 
 ## Not connected
 
