@@ -1080,6 +1080,8 @@ async fn media_dry_runs_call_nothing() {
         json!({"id": "a", "kind": "scryer.add", "version": 1,
                "config": {"connection": "films", "facet": "movie", "tmdbId": 693134}}),
         json!({"id": "a", "kind": "scryer.library", "version": 1, "config": {"connection": "films"}}),
+        json!({"id": "a", "kind": "scryer.search", "version": 1, "config": {"connection": "films", "term": "dune"}}),
+        json!({"id": "a", "kind": "scryer.queue", "version": 1, "config": {"connection": "films"}}),
         json!({"id": "a", "kind": "scryer.query", "version": 1,
                "config": {"connection": "films", "query": "query { indexers { id } }"}}),
         json!({"id": "a", "kind": "scryer.mutate", "version": 1,

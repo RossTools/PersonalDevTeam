@@ -1,21 +1,22 @@
-//! Scryer (PDT-147), a media manager for films, series and anime, through its GraphQL API: the node kinds
-//! `scryer.search`, `scryer.add`, `scryer.queue` and `scryer.library`, and the PM's tools on them (`scryer_search`,
-//! `scryer_add`, `scryer_queue`, `scryer_library`). A connection of kind `scryer`: `url` Scryer's address
+//! Scryer (PDT-147), a media manager for films, series and anime, through its GraphQL API: the actions (PDT-172)
+//! library, search, queue and add, each a node kind (`scryer.search`, …) and a tool (`scryer_search`, …). A connection of kind `scryer`: `url` Scryer's address
 //! (`http://nas:8080`, with its base path if it has one), the secret an API key (Scryer: Settings → API keys), sent
 //! as a bearer token to `<url>/graphql`; `config.pmActs` lets the PM add without asking. Like Radarr and Sonarr
 //! (`workflow/nodes/arr.rs`), an add is by id and checks the library first. The whole API (any query or mutation,
 //! checked against Scryer's schema) is in [`graphql`] (PDT-150).
 
+use crate::integrations::action::{Action, ActionCx, AnyAction, ConnectionFace, NodeFace, ToolFace, Via};
 use crate::routes::AppState;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, schema_of};
 use crate::workflow::nodes::http::{call_json_capped, service};
+use pdt_core::integration::ToolDecl;
 use pdt_core::scryer::{Facet, Ids, SCRYER, monitor_type};
 use pdt_core::workflow::api::Connection;
 use reqwest::Method;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use ts_rs::TS;
 
 pub(crate) mod graphql;
@@ -612,36 +613,123 @@ pub(crate) async fn library(client: &Client, c: &ScryerLibraryConfig) -> Result<
     })
 }
 
-// ---- the node kinds ----
+// ---- the actions ----
 
-fn would(cx: &StepCx<'_>, port: &str, what: String) -> Option<Outcome> {
-    cx.dry_run.then(|| Outcome::next(port, json!({"would": what})))
+/// A Scryer action as a pdt-mcp tool.
+const fn face(decl: ToolDecl, title: &'static str, description: &'static str) -> ToolFace {
+    ToolFace { decl, title, description }
 }
 
-fn kind_spec<C: JsonSchema, O: JsonSchema>(
-    id: &str,
-    title: &str,
-    description: &str,
-    ports: &[(&str, &str)],
-) -> KindSpec {
-    spec::<C, O>(id, 1, Category::Action, title, description, ports, false)
+const fn node(
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+    ports: &'static [(&'static str, &'static str)],
+) -> Option<NodeFace> {
+    Some(NodeFace { id, title, description, ports })
+}
+
+/// Scryer's connection: a tool call may leave it out.
+pub(crate) const CONNECTION: Option<ConnectionFace> = Some(ConnectionFace { kind: SCRYER, label: "Scryer" });
+
+const THEN: &[(&str, &str)] = &[("out", "Then")];
+
+/// The actions, in `tools/list` order: the four shortcuts, then the schema and any query or mutation.
+pub(crate) fn actions() -> Vec<Arc<dyn AnyAction>> {
+    vec![
+        Arc::new(Library),
+        Arc::new(Search),
+        Arc::new(Queue),
+        Arc::new(Add),
+        Arc::new(graphql::SchemaLookup),
+        Arc::new(graphql::Query),
+        Arc::new(graphql::Mutate),
+    ]
+}
+
+pub struct Library;
+
+impl Action for Library {
+    type Input = ScryerLibraryConfig;
+    type Output = ScryerLibraryOutput;
+
+    fn tool(&self) -> ToolFace {
+        face(
+            ToolDecl::new("scryer_library", "Browse the Scryer media library").read_only().open_world().pm(),
+            "Browse the Scryer library",
+            "Titles in the user's Scryer media library: films, series and anime, by facet, words in the title and \
+             whether they are monitored, a page at a time (limit, offset), with each one's library, status and \
+             episodes on disk.",
+        )
+    }
+
+    fn node(&self) -> Option<NodeFace> {
+        node(
+            "scryer.library",
+            "Scryer library",
+            "Titles in Scryer's library (a facet, words in the title, monitored or not): `{{steps.<id>.titles}}` is \
+             a list of {titleId, facet, name, year, monitored, library, status}.",
+            THEN,
+        )
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
+    }
+
+    fn check(&self, c: &ScryerLibraryConfig) -> Result<(), String> {
+        if let Some(f) = c.facet.as_deref().filter(|f| !is_ref(f)) {
+            facet_of(Some(f))?;
+        }
+        Ok(())
+    }
+
+    fn approval_title(&self, c: &ScryerLibraryConfig) -> String {
+        format!("read Scryer's library ({})", c.connection)
+    }
+
+    fn run<'a>(
+        &'a self,
+        cx: &'a ActionCx<'a>,
+        c: ScryerLibraryConfig,
+    ) -> BoxFut<'a, Result<ScryerLibraryOutput, String>> {
+        Box::pin(async move { library(&Client::open(cx.st, &c.connection).await?, &c).await })
+    }
 }
 
 pub struct Search;
 
-impl NodeKind for Search {
-    fn spec(&self) -> KindSpec {
-        kind_spec::<ScryerSearchConfig, ScryerSearchOutput>(
+impl Action for Search {
+    type Input = ScryerSearchConfig;
+    type Output = ScryerSearchOutput;
+
+    fn tool(&self) -> ToolFace {
+        face(
+            ToolDecl::new("scryer_search", "Look up films, series and anime to add to Scryer")
+                .read_only()
+                .open_world()
+                .pm(),
+            "Look up titles to add to Scryer",
+            "Searches Scryer's metadata for films, series and anime by title (one facet, or all): each result's ids \
+             (tvdbId, tmdbId, imdbId) for scryer_add, and whether it is in the library already.",
+        )
+    }
+
+    fn node(&self) -> Option<NodeFace> {
+        node(
             "scryer.search",
             "Search Scryer",
             "Looks up films, series and anime in Scryer's metadata by title: `{{steps.<id>.results}}` is a list of \
              {facet, name, year, tvdbId, tmdbId, imdbId, inLibrary}.",
-            &[("out", "Then")],
+            THEN,
         )
     }
 
-    fn check(&self, config: &Value) -> Result<(), String> {
-        let c: ScryerSearchConfig = parse(config)?;
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
+    }
+
+    fn check(&self, c: &ScryerSearchConfig) -> Result<(), String> {
         if c.term.trim().is_empty() {
             return Err("term is empty".into());
         }
@@ -651,23 +739,84 @@ impl NodeKind for Search {
         Ok(())
     }
 
-    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
-        Box::pin(async move {
-            let c: ScryerSearchConfig = parse(&input)?;
-            if let Some(o) = would(cx, "out", format!("search Scryer ({}) for {:?}", c.connection, c.term)) {
-                return Ok(o);
-            }
-            let client = Client::open(cx.st, &c.connection).await?;
-            Ok(Outcome::next("out", search(&client, &c).await?))
-        })
+    fn approval_title(&self, c: &ScryerSearchConfig) -> String {
+        format!("search Scryer ({}) for {:?}", c.connection, c.term)
     }
+
+    fn run<'a>(
+        &'a self,
+        cx: &'a ActionCx<'a>,
+        c: ScryerSearchConfig,
+    ) -> BoxFut<'a, Result<ScryerSearchOutput, String>> {
+        Box::pin(async move { search(&Client::open(cx.st, &c.connection).await?, &c).await })
+    }
+}
+
+pub struct Queue;
+
+impl Action for Queue {
+    type Input = ScryerQueueConfig;
+    type Output = ScryerQueueOutput;
+
+    fn tool(&self) -> ToolFace {
+        face(
+            ToolDecl::new("scryer_queue", "See what Scryer is downloading").read_only().open_world().pm(),
+            "See Scryer's downloads",
+            "What Scryer is downloading: each item's title, progress, status, time left and client, and why one \
+             needs the user.",
+        )
+    }
+
+    fn node(&self) -> Option<NodeFace> {
+        node(
+            "scryer.queue",
+            "Scryer queue",
+            "What Scryer is downloading: `{{steps.<id>.items}}` is a list of {title, progress, status, secondsLeft, \
+             client}.",
+            THEN,
+        )
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
+    }
+
+    fn approval_title(&self, c: &ScryerQueueConfig) -> String {
+        format!("read Scryer's queue ({})", c.connection)
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, c: ScryerQueueConfig) -> BoxFut<'a, Result<ScryerQueueOutput, String>> {
+        Box::pin(async move { queue(&Client::open(cx.st, &c.connection).await?, &c).await })
+    }
+}
+
+/// What an add came to: the title, and whether the add made it (false: the library had it).
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ScryerAdded {
+    pub added: bool,
+    pub title: ScryerTitle,
 }
 
 pub struct Add;
 
-impl NodeKind for Add {
-    fn spec(&self) -> KindSpec {
-        kind_spec::<ScryerAddConfig, ScryerTitle>(
+impl Action for Add {
+    type Input = ScryerAddConfig;
+    type Output = ScryerAdded;
+
+    fn tool(&self) -> ToolFace {
+        face(
+            ToolDecl::new("scryer_add", "Add a film, series or anime to Scryer").asks().open_world().pm(),
+            "Add to Scryer",
+            "Adds a film, series or anime to the user's Scryer library by the ids scryer_search gave (facet and at \
+             least one id; give name too so the user sees it), monitored unless told, so Scryer finds and downloads \
+             it. A title already in the library is left as it is. The user confirms each call unless the Scryer \
+             connection lets you act.",
+        )
+    }
+
+    fn node(&self) -> Option<NodeFace> {
+        node(
             "scryer.add",
             "Add to Scryer",
             "Adds a film, series or anime to Scryer by its ids (from scryer.search), monitored unless told; takes \
@@ -676,152 +825,44 @@ impl NodeKind for Add {
         )
     }
 
-    fn check(&self, config: &Value) -> Result<(), String> {
-        check_add(&parse(config)?)
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
     }
 
-    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
+    fn check(&self, c: &ScryerAddConfig) -> Result<(), String> {
+        check_add(c)
+    }
+
+    fn approval_title(&self, c: &ScryerAddConfig) -> String {
+        format!("add the {} {} to Scryer ({})", c.facet, add_ids(c).describe(), c.connection)
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, c: ScryerAddConfig) -> BoxFut<'a, Result<ScryerAdded, String>> {
         Box::pin(async move {
-            let c: ScryerAddConfig = parse(&input)?;
-            let what = format!("add the {} {} to Scryer ({})", c.facet, add_ids(&c).describe(), c.connection);
-            if let Some(o) = would(cx, "added", what) {
-                return Ok(o);
+            let (added, title) = add(&Client::open(cx.st, &c.connection).await?, &c).await?;
+            if cx.via == Via::Tool {
+                tracing::info!(connection = %c.connection, title = %title.name, added, "the PM added a title to Scryer");
             }
-            let client = Client::open(cx.st, &c.connection).await?;
-            let (added, t) = add(&client, &c).await?;
-            Ok(Outcome::next(if added { "added" } else { "exists" }, t))
+            Ok(ScryerAdded { added, title })
         })
     }
-}
 
-pub struct Queue;
-
-impl NodeKind for Queue {
-    fn spec(&self) -> KindSpec {
-        kind_spec::<ScryerQueueConfig, ScryerQueueOutput>(
-            "scryer.queue",
-            "Scryer queue",
-            "What Scryer is downloading: `{{steps.<id>.items}}` is a list of {title, progress, status, secondsLeft, \
-             client}.",
-            &[("out", "Then")],
-        )
+    fn port(&self, out: &ScryerAdded) -> &'static str {
+        if out.added { "added" } else { "exists" }
     }
 
-    fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<ScryerQueueConfig>(config).map(|_| ())
+    /// A node's output is the title; whether it was added is the port.
+    fn node_output(&self, out: ScryerAdded) -> Value {
+        serde_json::to_value(out.title).unwrap_or(Value::Null)
     }
 
-    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
-        Box::pin(async move {
-            let c: ScryerQueueConfig = parse(&input)?;
-            if let Some(o) = would(cx, "out", format!("read Scryer's queue ({})", c.connection)) {
-                return Ok(o);
-            }
-            let client = Client::open(cx.st, &c.connection).await?;
-            Ok(Outcome::next("out", queue(&client, &c).await?))
-        })
-    }
-}
-
-pub struct Library;
-
-impl NodeKind for Library {
-    fn spec(&self) -> KindSpec {
-        kind_spec::<ScryerLibraryConfig, ScryerLibraryOutput>(
-            "scryer.library",
-            "Scryer library",
-            "Titles in Scryer's library (a facet, words in the title, monitored or not): `{{steps.<id>.titles}}` is \
-             a list of {titleId, facet, name, year, monitored, library, status}.",
-            &[("out", "Then")],
-        )
+    fn node_output_schema(&self) -> Value {
+        schema_of::<ScryerTitle>()
     }
 
-    fn check(&self, config: &Value) -> Result<(), String> {
-        let c: ScryerLibraryConfig = parse(config)?;
-        if let Some(f) = c.facet.as_deref().filter(|f| !is_ref(f)) {
-            facet_of(Some(f))?;
-        }
-        Ok(())
+    fn tool_output(&self, out: ScryerAdded) -> Result<Value, String> {
+        Ok(json!({"added": out.added, "alreadyInLibrary": !out.added, "title": out.title}))
     }
-
-    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
-        Box::pin(async move {
-            let c: ScryerLibraryConfig = parse(&input)?;
-            if let Some(o) = would(cx, "out", format!("read Scryer's library ({})", c.connection)) {
-                return Ok(o);
-            }
-            let client = Client::open(cx.st, &c.connection).await?;
-            Ok(Outcome::next("out", library(&client, &c).await?))
-        })
-    }
-}
-
-/// The kinds: the four shortcuts, and any query or mutation.
-pub fn kinds() -> Vec<Box<dyn NodeKind>> {
-    vec![
-        Box::new(Search),
-        Box::new(Add),
-        Box::new(Queue),
-        Box::new(Library),
-        Box::new(graphql::Query),
-        Box::new(graphql::Mutate),
-    ]
-}
-
-// ---- the PM's tools ----
-
-/// A tool's input schema: its node's config, with `connection` optional (the only `scryer` connection).
-pub(crate) fn tool_schema<T: JsonSchema>() -> Value {
-    let mut s = pdt_core::mcp::input_schema(crate::workflow::catalog::schema_of::<T>());
-    if let Some(r) = s["required"].as_array_mut() {
-        r.retain(|k| k != "connection");
-    }
-    if let Some(c) = s.pointer_mut("/properties/connection") {
-        c["description"] = json!("A Scryer connection's name; the only one when left out.");
-        if let Some(o) = c.as_object_mut() {
-            o.remove("x-connection-kind");
-        }
-    }
-    s
-}
-
-/// A tool's arguments as its node's config, `connection` resolved; and the client.
-async fn tool_args<T: DeserializeOwned>(st: &AppState, mut a: Value) -> Result<(T, Client), String> {
-    if a.is_null() {
-        a = json!({});
-    }
-    let given = a.get("connection").and_then(Value::as_str).map(String::from);
-    let conn = crate::workflow::routes::connection_of_kind(st, SCRYER, given.as_deref()).await?;
-    a["connection"] = json!(conn.name);
-    let c: T = serde_json::from_value(a).map_err(|e| format!("the arguments don't fit the tool's schema: {e}"))?;
-    let client = Client::open(st, &conn.name).await?;
-    Ok((c, client))
-}
-
-fn out<T: Serialize>(v: T) -> Result<Value, String> {
-    serde_json::to_value(v).map_err(|e| e.to_string())
-}
-
-pub(crate) async fn search_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (c, client) = tool_args::<ScryerSearchConfig>(st, a).await?;
-    out(search(&client, &c).await?)
-}
-
-pub(crate) async fn library_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (c, client) = tool_args::<ScryerLibraryConfig>(st, a).await?;
-    out(library(&client, &c).await?)
-}
-
-pub(crate) async fn queue_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (c, client) = tool_args::<ScryerQueueConfig>(st, a).await?;
-    out(queue(&client, &c).await?)
-}
-
-pub(crate) async fn add_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (c, client) = tool_args::<ScryerAddConfig>(st, a).await?;
-    let (added, t) = add(&client, &c).await?;
-    tracing::info!(connection = %c.connection, title = %t.name, added, "the PM added a title to Scryer");
-    Ok(json!({"added": added, "alreadyInLibrary": !added, "title": t}))
 }
 
 #[cfg(test)]
@@ -897,7 +938,7 @@ mod tests {
 
     #[test]
     fn tool_schemas_leave_the_connection_optional() {
-        let s = tool_schema::<ScryerAddConfig>();
+        let s = AnyAction::info(&Add).input_schema;
         let required: Vec<&str> = s["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert_eq!(required, ["facet"]);
         assert!(s["properties"]["connection"].get("x-connection-kind").is_none());

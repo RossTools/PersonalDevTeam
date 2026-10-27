@@ -1,20 +1,23 @@
-//! Scryer's whole GraphQL API for the PM and workflows (PDT-150): `scryer_schema` finds and describes operations and
-//! types, `scryer_query` runs a query document, `scryer_mutate` runs one mutation (an asking tool), and the node kinds
-//! `scryer.query` and `scryer.mutate` do the same in a workflow. Every document is checked against Scryer's schema
+//! Scryer's whole GraphQL API for the PM and workflows (PDT-150): the actions `scryer_schema` (a tool only) finds and describes
+//! operations and types, query (`scryer_query`, `scryer.query`) runs a query document and mutate (`scryer_mutate`, an
+//! asking tool, and `scryer.mutate`) runs one mutation. Every document is checked against Scryer's schema
 //! before it is sent: the live one from introspection, kept per connection for a while, else the one PDT bundles
 //! (`schema.graphql`). Credentials are redacted from what comes back, and a mutation can take a connection's secret by
 //! reference (`{"$secret": "<connection>"}`), filled in here so the agent never sees it. Subscriptions are not
 //! offered.
 
-use super::{Client, out, tool_args, would};
+use super::{CONNECTION, Client, THEN};
+use crate::integrations::action::{Action, ActionCx, ConnectionFace, NodeFace, ToolFace, Via};
 use crate::routes::AppState;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::BoxFut;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::response::JsonMap;
 use apollo_compiler::schema::{ExtendedType, FieldDefinition, InputValueDefinition};
 use apollo_compiler::validation::{DiagnosticList, Valid};
 use apollo_compiler::{ExecutableDocument, Node, Schema};
-use pdt_core::scryer::{MutationRule, REDACTED, mutation_rule, redact, secret_ref};
+use pdt_core::integration::ToolDecl;
+use pdt_core::pm::AskTarget;
+use pdt_core::scryer::{MutationRule, REDACTED, SCRYER, mutation_rule, redact, secret_ref};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -765,57 +768,87 @@ pub(crate) fn fit(v: Value, max: usize) -> Value {
                     limit/offset (or first/after) arguments"})
 }
 
-// ---- the PM's tools ----
-
-pub(crate) async fn schema_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (args, client) = tool_args::<ScryerSchemaArgs>(st, a).await?;
-    let s = client.schema().await;
-    schema_answer(&s, &args)
-}
-
-pub(crate) async fn query_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (c, client) = tool_args::<ScryerQueryConfig>(st, a).await?;
-    Ok(fit(query(&client, &c).await?, MAX_ANSWER))
-}
-
-pub(crate) async fn mutate_tool(st: &AppState, a: Value) -> Result<Value, String> {
-    let (c, client) = tool_args::<ScryerMutateConfig>(st, a).await?;
-    let result = mutate(st, &client, &c).await?;
-    tracing::info!(connection = %c.connection, mutation = %c.mutation.trim(), "the PM changed Scryer");
-    let mut v = fit(result, MAX_ANSWER);
-    v["mutation"] = json!(c.mutation.trim());
-    if let Some(o) = v.as_object_mut()
-        && let Some(r) = o.remove("data")
-    {
-        o.insert("result".into(), r);
-    }
-    out(v)
-}
-
-// ---- the node kinds ----
+// ---- the actions ----
 
 fn is_ref(s: &str) -> bool {
     s.contains("{{")
 }
 
-pub struct Query;
+/// `scryer_schema`: a tool only.
+pub struct SchemaLookup;
 
-impl NodeKind for Query {
-    fn spec(&self) -> KindSpec {
-        spec::<ScryerQueryConfig, ScryerQueryOutput>(
-            "scryer.query",
-            1,
-            Category::Action,
-            "Query Scryer",
-            "Runs a GraphQL query on Scryer (any of its settings and data), checked against Scryer's schema first: \
-             `{{steps.<id>.data}}` is what it answered, credentials redacted.",
-            &[("out", "Then")],
-            false,
-        )
+impl Action for SchemaLookup {
+    type Input = ScryerSchemaArgs;
+    type Output = Value;
+
+    fn tool(&self) -> ToolFace {
+        ToolFace {
+            decl: ToolDecl::new("scryer_schema", "Find Scryer's settings and operations in its API")
+                .read_only()
+                .open_world()
+                .pm(),
+            title: "Look up Scryer's API",
+            description: "Finds and describes Scryer's GraphQL operations and types, to read or change any of its \
+                          settings (indexers, download clients, seeding profiles, quality, general settings, jobs): \
+                          `search` words in names and descriptions; `operation` one query or mutation with its \
+                          arguments, the input types they take and what it returns; `type` one type's fields. With \
+                          none, how big the API is.",
+        }
     }
 
-    fn check(&self, config: &Value) -> Result<(), String> {
-        let c: ScryerQueryConfig = parse(config)?;
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
+    }
+
+    fn approval_title(&self, a: &ScryerSchemaArgs) -> String {
+        format!("look up Scryer's API ({})", a.connection)
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, a: ScryerSchemaArgs) -> BoxFut<'a, Result<Value, String>> {
+        Box::pin(async move {
+            let s = Client::open(cx.st, &a.connection).await?.schema().await;
+            schema_answer(&s, &a)
+        })
+    }
+}
+
+pub struct Query;
+
+impl Action for Query {
+    type Input = ScryerQueryConfig;
+    type Output = ScryerQueryOutput;
+
+    fn tool(&self) -> ToolFace {
+        ToolFace {
+            decl: ToolDecl::new(
+                "scryer_query",
+                "Read anything from Scryer's API (settings, indexers, download clients)",
+            )
+            .read_only()
+            .open_world()
+            .pm(),
+            title: "Read from Scryer",
+            description: "Runs a GraphQL query on Scryer (a query document and its variables), checked against \
+                          Scryer's schema first; mutations go through scryer_mutate. Credentials in the answer are \
+                          redacted, and a long answer is cut (it says where): select fewer fields or page.",
+        }
+    }
+
+    fn node(&self) -> Option<NodeFace> {
+        Some(NodeFace {
+            id: "scryer.query",
+            title: "Query Scryer",
+            description: "Runs a GraphQL query on Scryer (any of its settings and data), checked against Scryer's \
+                          schema first: `{{steps.<id>.data}}` is what it answered, credentials redacted.",
+            ports: THEN,
+        })
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
+    }
+
+    fn check(&self, c: &ScryerQueryConfig) -> Result<(), String> {
         if c.query.trim().is_empty() {
             return Err("query is empty".into());
         }
@@ -837,37 +870,58 @@ impl NodeKind for Query {
         Ok(())
     }
 
-    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
-        Box::pin(async move {
-            let c: ScryerQueryConfig = parse(&input)?;
-            if let Some(o) = would(cx, "out", format!("query Scryer ({})", c.connection)) {
-                return Ok(o);
-            }
-            let client = Client::open(cx.st, &c.connection).await?;
-            Ok(Outcome::next("out", ScryerQueryOutput { data: query(&client, &c).await? }))
-        })
+    fn approval_title(&self, c: &ScryerQueryConfig) -> String {
+        format!("query Scryer ({})", c.connection)
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, c: ScryerQueryConfig) -> BoxFut<'a, Result<ScryerQueryOutput, String>> {
+        Box::pin(
+            async move { Ok(ScryerQueryOutput { data: query(&Client::open(cx.st, &c.connection).await?, &c).await? }) },
+        )
+    }
+
+    /// A long answer is cut to fit, and says where.
+    fn tool_output(&self, out: ScryerQueryOutput) -> Result<Value, String> {
+        Ok(fit(out.data, MAX_ANSWER))
     }
 }
 
 pub struct Mutate;
 
-impl NodeKind for Mutate {
-    fn spec(&self) -> KindSpec {
-        spec::<ScryerMutateConfig, ScryerMutateOutput>(
-            "scryer.mutate",
-            1,
-            Category::Action,
-            "Change Scryer",
-            "Runs one GraphQL mutation on Scryer (`createIndexerConfig`, `updateGeneralSettings`, `triggerJob`, …) \
-             with its arguments, checked against Scryer's schema first. A credential is `{\"$secret\": \
-             \"<connection>\"}`. `{{steps.<id>.result}}` is what it returned, credentials redacted.",
-            &[("out", "Then")],
-            false,
-        )
+impl Action for Mutate {
+    type Input = ScryerMutateConfig;
+    type Output = ScryerMutateOutput;
+
+    fn tool(&self) -> ToolFace {
+        ToolFace {
+            decl: ToolDecl::new("scryer_mutate", "Change Scryer's settings through its API").asks().open_world().pm(),
+            title: "Change Scryer",
+            description: "Runs one GraphQL mutation on Scryer: its name, its arguments by name and the fields to read \
+                          back (its scalar fields when left out), checked against Scryer's schema first. Put a \
+                          password or API key in as {\"$secret\": \"<connection>\"}: PDT fills in that connection's \
+                          secret, so it never passes through you. The user confirms each call unless the Scryer \
+                          connection lets you act; deleting, resetting, upgrades and calls that send a secret always \
+                          ask.",
+        }
     }
 
-    fn check(&self, config: &Value) -> Result<(), String> {
-        let c: ScryerMutateConfig = parse(config)?;
+    fn node(&self) -> Option<NodeFace> {
+        Some(NodeFace {
+            id: "scryer.mutate",
+            title: "Change Scryer",
+            description: "Runs one GraphQL mutation on Scryer (`createIndexerConfig`, `updateGeneralSettings`, \
+                          `triggerJob`, …) with its arguments, checked against Scryer's schema first. A credential is \
+                          `{\"$secret\": \"<connection>\"}`. `{{steps.<id>.result}}` is what it returned, credentials \
+                          redacted.",
+            ports: THEN,
+        })
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        CONNECTION
+    }
+
+    fn check(&self, c: &ScryerMutateConfig) -> Result<(), String> {
         let m = c.mutation.trim();
         if m.is_empty() {
             return Err("mutation is empty".into());
@@ -881,17 +935,45 @@ impl NodeKind for Mutate {
         Ok(())
     }
 
-    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
+    fn approval_title(&self, c: &ScryerMutateConfig) -> String {
+        format!("run {} on Scryer ({})", c.mutation.trim(), c.connection)
+    }
+
+    /// Deleting, resetting, upgrades and calls that send a secret always ask; other changes ask unless the connection
+    /// lets the PM act.
+    fn ask_target(&self, args: &Value) -> AskTarget {
+        if pdt_core::scryer::mutate_always_asks(args) {
+            return AskTarget::Always;
+        }
+        AskTarget::Connection { kind: SCRYER, name: args.get("connection").and_then(Value::as_str).map(String::from) }
+    }
+
+    fn run<'a>(
+        &'a self,
+        cx: &'a ActionCx<'a>,
+        c: ScryerMutateConfig,
+    ) -> BoxFut<'a, Result<ScryerMutateOutput, String>> {
         Box::pin(async move {
-            let c: ScryerMutateConfig = parse(&input)?;
-            let m = c.mutation.trim().to_string();
-            if let Some(o) = would(cx, "out", format!("run {m} on Scryer ({})", c.connection)) {
-                return Ok(o);
-            }
             let client = Client::open(cx.st, &c.connection).await?;
             let result = mutate(cx.st, &client, &c).await?;
-            Ok(Outcome::next("out", ScryerMutateOutput { mutation: m, result }))
+            let m = c.mutation.trim().to_string();
+            if cx.via == Via::Tool {
+                tracing::info!(connection = %c.connection, mutation = %m, "the PM changed Scryer");
+            }
+            Ok(ScryerMutateOutput { mutation: m, result })
         })
+    }
+
+    /// A long result is cut to fit, and says where.
+    fn tool_output(&self, out: ScryerMutateOutput) -> Result<Value, String> {
+        let mut v = fit(out.result, MAX_ANSWER);
+        v["mutation"] = json!(out.mutation);
+        if let Some(o) = v.as_object_mut()
+            && let Some(r) = o.remove("data")
+        {
+            o.insert("result".into(), r);
+        }
+        Ok(v)
     }
 }
 

@@ -1,11 +1,12 @@
 //! Integrations (PDT-171): each one declares, in one [`Integration`], what it adds to PDT: connection kinds, workflow
-//! node kinds, event types (each a trigger) and pdt-mcp tools. The [`Registry`] gathers every registered integration's
+//! node kinds, event types (each a trigger), pdt-mcp tools and actions (each both a node kind and a tool, PDT-172). The [`Registry`] gathers every registered integration's
 //! into the lists the rest of PDT reads: the node catalog, `tools/list` and `tools/call`, the personas' tools, the
 //! event types, `GET /api/connections/kinds` and the project settings form (`GET /api/integrations/project-settings`).
 //! PDT's own pieces register the same way ([`core::Core`]).
 //!
 //! Adding an integration: a module here implementing [`Integration`], and a line in [`all`].
 
+pub(crate) mod action;
 mod arr;
 mod bug_reports;
 mod buildkite;
@@ -22,11 +23,12 @@ mod webhook;
 use crate::mcp::tools::Cx;
 use crate::workflow::catalog::{BoxFut, NodeKind};
 use crate::workflow::nodes::trigger::EventTrigger;
+use action::AnyAction;
 use pdt_core::integration::{ConnectionKind, IntegrationSettings, ProjectSettingsSchema, ToolDecl, ToolTable};
 use pdt_core::mcp::ToolInfo;
 use pdt_core::workflow::events::EventType;
 use serde_json::{Value, json};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// One pdt-mcp tool: what it is ([`ToolDecl`]) and what an agent sees of it.
 pub struct Tool {
@@ -40,15 +42,19 @@ pub struct Tool {
 impl Tool {
     /// The tool as `tools/list` gives it.
     pub fn info(&self) -> ToolInfo {
-        let d = &self.decl;
-        ToolInfo {
-            name: d.name.into(),
-            title: self.title.into(),
-            description: self.description.into(),
-            input_schema: (self.schema)(),
-            annotations: json!({"title": self.title, "readOnlyHint": d.read_only, "destructiveHint": d.destructive,
-                                "openWorldHint": d.open_world}),
-        }
+        tool_info(&self.decl, self.title, self.description, (self.schema)())
+    }
+}
+
+/// A tool as `tools/list` gives it, with its annotations from its flags.
+pub(crate) fn tool_info(d: &ToolDecl, title: &str, description: &str, input_schema: Value) -> ToolInfo {
+    ToolInfo {
+        name: d.name.into(),
+        title: title.into(),
+        description: description.into(),
+        input_schema,
+        annotations: json!({"title": title, "readOnlyHint": d.read_only, "destructiveHint": d.destructive,
+                            "openWorldHint": d.open_world}),
     }
 }
 
@@ -66,6 +72,12 @@ pub trait Integration: Send + Sync {
     /// kinds claims the type ([`NodeKind::event_type`]).
     fn event_types(&self) -> &'static [EventType] {
         &[]
+    }
+
+    /// Its actions: each one is a pdt-mcp tool (before [`Integration::tools`]) and, when it has a node face, a node
+    /// kind (after [`Integration::node_kinds`]).
+    fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
+        vec![]
     }
 
     /// Its workflow node kinds, in catalog order.
@@ -115,11 +127,18 @@ fn all() -> Vec<Box<dyn Integration>> {
     ]
 }
 
+/// What runs a tool.
+enum Runner {
+    /// The integration with this index ([`Integration::call_tool`]).
+    Integration(usize),
+    Action(Arc<dyn AnyAction>),
+}
+
 /// The registered integrations, and what they add, gathered.
 pub struct Registry {
     integrations: Vec<Box<dyn Integration>>,
-    /// Every tool, with the index of its integration.
-    tools: Vec<(usize, Tool)>,
+    /// Every tool as `tools/list` gives it, and what runs it.
+    tools: Vec<(ToolInfo, Runner)>,
     table: ToolTable,
     events: Vec<&'static EventType>,
     kinds: Vec<ConnectionKind>,
@@ -131,7 +150,8 @@ impl Registry {
     /// The registry of `integrations`. A tool, event type or connection kind another integration already has is left
     /// out (the first keeps it).
     pub fn new(integrations: Vec<Box<dyn Integration>>) -> Self {
-        let mut tools: Vec<(usize, Tool)> = vec![];
+        let mut tools: Vec<(ToolInfo, Runner)> = vec![];
+        let mut decls: Vec<ToolDecl> = vec![];
         let mut events: Vec<&'static EventType> = vec![];
         let mut kinds: Vec<ConnectionKind> = vec![];
         let mut project_settings: Vec<(usize, ProjectSettingsSchema)> = vec![];
@@ -141,9 +161,15 @@ impl Registry {
                 project_settings.push((i, s));
             }
             debug_assert!(integrations[..i].iter().all(|x| x.id() != int.id()), "{} is registered twice", int.id());
-            for t in int.tools() {
-                if !tools.iter().any(|(_, x)| x.decl.name == t.decl.name) {
-                    tools.push((i, t));
+            let own = int
+                .actions()
+                .into_iter()
+                .map(|a| (a.decl(), a.info(), Runner::Action(a)))
+                .chain(int.tools().into_iter().map(|t| (t.decl, t.info(), Runner::Integration(i))));
+            for (decl, info, runner) in own {
+                if !decls.iter().any(|x| x.name == decl.name) {
+                    decls.push(decl);
+                    tools.push((info, runner));
                 }
             }
             for e in int.event_types() {
@@ -157,7 +183,7 @@ impl Registry {
                 }
             }
         }
-        let table = ToolTable::new(tools.iter().map(|(_, t)| t.decl));
+        let table = ToolTable::new(decls);
         Self { integrations, tools, table, events, kinds, project_settings }
     }
 
@@ -168,13 +194,14 @@ impl Registry {
 
     /// Every pdt-mcp tool as `tools/list` gives them.
     pub fn tool_infos(&self) -> Vec<ToolInfo> {
-        self.tools.iter().map(|(_, t)| t.info()).collect()
+        self.tools.iter().map(|(t, _)| t.clone()).collect()
     }
 
     /// Runs a tool by name. Err is a message for the agent.
     pub async fn call_tool(&self, cx: &Cx<'_>, name: &str, args: Value) -> Result<Value, String> {
-        match self.tools.iter().find(|(_, t)| t.decl.name == name) {
-            Some((i, _)) => self.integrations[*i].call_tool(cx, name, args).await,
+        match self.tools.iter().find(|(t, _)| t.name == name).map(|(_, r)| r) {
+            Some(Runner::Integration(i)) => self.integrations[*i].call_tool(cx, name, args).await,
+            Some(Runner::Action(a)) => a.call(cx, args).await,
             None => Err(format!("no tool is called {name}")),
         }
     }
@@ -214,9 +241,17 @@ impl Registry {
         Ok(Some((schema, out)))
     }
 
-    /// Every node kind: a plain trigger for each event type no kind claims, then each integration's kinds.
+    /// Every node kind: a plain trigger for each event type no kind claims, then each integration's kinds and its
+    /// actions' kinds.
     pub fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {
-        let own: Vec<Box<dyn NodeKind>> = self.integrations.iter().flat_map(|i| i.node_kinds()).collect();
+        let own: Vec<Box<dyn NodeKind>> = self
+            .integrations
+            .iter()
+            .flat_map(|i| {
+                let actions = i.actions().into_iter().filter_map(|a| a.node_kind());
+                i.node_kinds().into_iter().chain(actions).collect::<Vec<_>>()
+            })
+            .collect();
         let claimed: Vec<String> = own.iter().filter_map(|k| k.event_type().map(String::from)).collect();
         let mut kinds: Vec<Box<dyn NodeKind>> = self
             .events

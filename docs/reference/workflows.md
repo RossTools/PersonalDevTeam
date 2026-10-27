@@ -145,6 +145,20 @@ own pieces are the `core` integration. The `Registry` gathers them, in that orde
 (`report_bug`). An integration's tools are the PM's only with its `pm` flag, and in another persona's set only when the
 user picks them.
 
+An **action** (PDT-172, `integrations/action.rs`) is one capability defined once and offered as both a node kind and a
+pdt-mcp tool: one `Action` gives its input type (the node's config and the tool's arguments, one JSON Schema), output
+type, the tool's name, flags, title and description, the node's id, title, description and ports, the kind of
+connection it uses (a tool call may leave `connection` out to use the only one), a `check` for node configs, an
+approval title (also a dry run's `would`), what an asking call acts on, and one async `run`. Where the two differ, the
+action shapes each output (`scryer.add` leaves by `added` or `exists` with the title, `scryer_add` answers
+`{added, alreadyInLibrary, title}`; the tools cut long Scryer answers to fit). An integration lists its actions in
+`Integration::actions`; the registry makes each one's tool (before the integration's other tools) and node kind (after
+its other kinds). An action can be a tool only (`scryer_schema`, `discord_get`, `discord_change`, `discord_webhook`).
+On actions: Scryer's library, search, queue, add, query and mutate (each `scryer.*` kind and `scryer_*` tool) and
+`scryer_schema`, and Discord's tools; `discord.post` and `discord.channel.ensure` are node kinds with no tool. A test
+(`integrations/tests.rs`, `snapshot.json`) keeps every tool's `tools/list` entry and flags, the PM's tools and every
+kind's spec as they were.
+
 **Project settings** (PDT-174): an integration a project links to declares a `ProjectSettingsSchema` (pdt-core
 `integration.rs`: its label, description, the connection kind it links through, and `ConfigField`s, text, choice or
 lines, with `default` and `optional`), and may check the result (`check_project_settings`, e.g. Buildkite's pipeline
