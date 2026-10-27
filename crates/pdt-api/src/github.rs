@@ -1,11 +1,14 @@
-//! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR through `gh` every 60 s
+//! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR from its project's forge
+//! (PDT-176: `crate::forge`; GitHub through `gh`) every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and logs what is
 //! news as events (Phase 7a): `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
 //! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent. While an
-//! enabled workflow listens for them, it also reads an open PR's comments and reviews (Phase 7e): `pr.commented`,
+//! enabled workflow listens for them and the forge has reviews, it also reads an open PR's comments and reviews (Phase
+//! 7e): `pr.commented`,
 //! `pr.reviewed`, after a silent first look (the baseline in `host_settings`), moved on only once every new one is
 //! logged. A read that fails keeps the last look, marked with the error (`attempt.pr.error`), and is logged once.
 
+use crate::forge::ProjectForge;
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{
     CiRun, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, notices, queue_branch_prefix,
@@ -13,7 +16,7 @@ use pdt_core::pr::{
 use pdt_core::ticket::{AttemptSummary, Ticket, TicketSummary};
 use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::events::{self as ev, AttemptRef, CiEvent, CiRunRef, PrEvent};
-use pdt_github::{GhError, GithubApi};
+use pdt_forge::{ChangeComment, ChangeReview, Forge, ForgeError};
 use pdt_store::AttemptInfo;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -83,8 +86,8 @@ pub(crate) async fn workflows_listen(st: &AppState, kinds: &[&str]) -> bool {
 pub(crate) fn feedback_events(
     info: &AttemptInfo,
     pr: &PullRequestStatus,
-    comments: &[pdt_github::PrComment],
-    reviews: &[pdt_github::PrReview],
+    comments: &[ChangeComment],
+    reviews: &[ChangeReview],
     viewer: Option<&str>,
     seen: Option<FeedbackSeen>,
 ) -> (Vec<NewLogEvent>, FeedbackSeen) {
@@ -151,24 +154,24 @@ pub(crate) fn feedback_events(
 }
 
 /// Reads an open PR's comments and reviews and logs what is new.
-async fn refresh_feedback(st: &AppState, info: &AttemptInfo, repo: &str, pr: &PullRequestStatus) {
+async fn refresh_feedback(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, pr: &PullRequestStatus) {
     let key = feedback_key(&info.attempt.id);
     let seen: Option<FeedbackSeen> =
         st.store.get_host_value(&key).await.ok().flatten().and_then(|v| serde_json::from_value(v).ok());
     let viewer = watch(st).viewer.clone();
-    let (gh, repo_s, n) = (st.github.clone(), repo.to_string(), pr.number);
+    let (gh, repo_s, n) = (forge.api.clone(), forge.repo.clone(), pr.number);
     // The comments and the reviews are read side by side.
     let read = tokio::task::spawn_blocking(move || {
         std::thread::scope(|s| {
-            let reviews = s.spawn(|| gh.pr_reviews(&repo_s, n));
+            let reviews = s.spawn(|| gh.change_reviews(&repo_s, n));
             let viewer = match viewer {
                 Some(v) => Some(v),
                 None => gh.viewer_login().ok(),
             };
-            let comments = gh.pr_comments(&repo_s, n)?;
+            let comments = gh.change_comments(&repo_s, n)?;
             let reviews =
-                reviews.join().unwrap_or_else(|_| Err(GhError::BadOutput("the reviews read panicked".into())))?;
-            Ok::<_, GhError>((viewer, comments, reviews))
+                reviews.join().unwrap_or_else(|_| Err(ForgeError::Failed("the reviews read panicked".into())))?;
+            Ok::<_, ForgeError>((viewer, comments, reviews))
         })
     })
     .await;
@@ -272,7 +275,7 @@ pub(crate) fn apply_workspaces(st: &AppState, list: &mut [pdt_core::workspace::W
     }
 }
 
-/// Reads every active attempt's PR (projects on GitHub only) and queues the news, then once more the PR of each
+/// Reads every active attempt's PR (projects with a forge only) and queues the news, then once more the PR of each
 /// attempt that ended in the last hour while its PR was last seen open, so `attempt.pr` catches up with the merge
 /// (no news for those: the attempt's end told it). pdtd runs it every 60 s. Never fails; problems are logged.
 pub async fn refresh_prs(st: &AppState) {
@@ -304,23 +307,23 @@ pub async fn refresh_prs(st: &AppState) {
             Err(e) => tracing::warn!(attempt = %id, error = %e, "the PR check could not read an ended attempt"),
         }
     }
-    let mut repos: HashMap<String, Option<String>> = HashMap::new();
+    let mut forges: HashMap<String, Option<ProjectForge>> = HashMap::new();
     let mut tick = Tick::new(st).await;
     let ended = settling.into_iter().map(|i| (i, false));
     for (info, tell) in active.into_iter().map(|i| (i, true)).chain(ended) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let repo = match repos.get(&info.project_id) {
-            Some(r) => r.clone(),
+        let forge = match forges.get(&info.project_id) {
+            Some(f) => f.clone(),
             None => {
-                let r = github_repo(&info.repo_path).await;
-                repos.insert(info.project_id.clone(), r.clone());
-                r
+                let f = crate::forge::project_forge(st, &info.project_id, &info.repo_path).await;
+                forges.insert(info.project_id.clone(), f.clone());
+                f
             }
         };
-        let Some(repo) = repo else { continue };
-        refresh_one(st, &info, &repo, &mut tick, tell).await;
+        let Some(forge) = forge else { continue };
+        refresh_one(st, &info, &forge, &mut tick, tell).await;
     }
 }
 
@@ -342,8 +345,8 @@ impl Tick {
 
 /// Reads one active attempt's PR now (the ticket was opened).
 pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) {
-    if let Some(repo) = github_repo(&info.repo_path).await {
-        refresh_one(st, info, &repo, &mut Tick::new(st).await, true).await;
+    if let Some(forge) = crate::forge::project_forge(st, &info.project_id, &info.repo_path).await {
+        refresh_one(st, info, &forge, &mut Tick::new(st).await, true).await;
     }
 }
 
@@ -359,12 +362,13 @@ pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
 }
 
 /// Reads one attempt's PR into the watch; with `tell`, queues its news.
-async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut Tick, tell: bool) {
+async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, tick: &mut Tick, tell: bool) {
+    let repo = forge.repo.as_str();
     let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
     let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
     let cached_queue = tick.queue_runs.get(repo).cloned();
     let known_jobs = tick.jobs.clone();
-    let (gh, repo_s, branch) = (st.github.clone(), repo.to_string(), info.attempt.branch.clone());
+    let (gh, repo_s, branch) = (forge.api.clone(), repo.to_string(), info.attempt.branch.clone());
     let since = info.attempt.created_at;
     let read = tokio::task::spawn_blocking(move || {
         read_pr(gh.as_ref(), &repo_s, &branch, since, was_queued, cached_queue, &known_jobs)
@@ -435,8 +439,8 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
                 Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event"),
             }
         }
-        if now.state == PrState::Open && tick.feedback {
-            refresh_feedback(st, info, repo, &now).await;
+        if now.state == PrState::Open && tick.feedback && forge.caps().reviews {
+            refresh_feedback(st, info, forge, &now).await;
         }
     }
 }
@@ -592,18 +596,18 @@ type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), 
 /// (from `known` where already asked). A closed or merged PR opened before the attempt started is an earlier
 /// attempt's on the same branch name, not this one's; an open one is the branch's, whoever opened it.
 /// Merge-queue runs are read only while the PR is queued, just left the queue (`was_queued`) or was removed from it
-/// for failed checks and not handled yet, once per repo.
+/// for failed checks and not handled yet, once per repo, and only from a forge with merge queues.
 fn read_pr(
-    gh: &dyn GithubApi,
+    gh: &dyn Forge,
     repo: &str,
     branch: &str,
     since: i64,
     was_queued: bool,
     queue_cache: Option<Vec<CiRun>>,
     known: &HashMap<(u64, u32), Vec<String>>,
-) -> Result<Read, GhError> {
-    let pr = gh.pull_request(repo, branch)?;
-    // gh gives the newest open PR, else the newest: when that one is too old, every other is too.
+) -> Result<Read, ForgeError> {
+    let pr = gh.change_request(repo, branch)?;
+    // The forge gives the newest open PR, else the newest: when that one is too old, every other is too.
     let Some(pr) = pr.filter(|p| p.state == PrState::Open || p.created_at.is_none_or(|c| c >= since)) else {
         return Ok((None, None, HashMap::new()));
     };
@@ -627,7 +631,8 @@ fn read_pr(
     let mut fresh_queue = None;
     let mut queue_ci = None;
     let removed_for_checks = pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
-    if pr.state == PrState::Open && (pr.in_merge_queue || was_queued || removed_for_checks) {
+    let queues = gh.capabilities().merge_queue;
+    if queues && pr.state == PrState::Open && (pr.in_merge_queue || was_queued || removed_for_checks) {
         let runs = match queue_cache {
             Some(r) => r,
             None => {
@@ -722,7 +727,7 @@ pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestSta
     Some((pr, ci, bk_on_head))
 }
 
-/// The attempt's PR as last seen (None when it has none, or the project is not on GitHub).
+/// The attempt's PR as last seen (None when it has none, or the project has no forge).
 pub(crate) fn watched_pr(st: &AppState, attempt_id: &str) -> Option<PullRequestStatus> {
     watch(st).by_attempt.get(attempt_id).cloned()
 }
@@ -731,8 +736,8 @@ pub(crate) fn watched_pr(st: &AppState, attempt_id: &str) -> Option<PullRequestS
 mod tests {
     use super::*;
     use pdt_core::pr::{CiState, Mergeable, NoticeKind};
-    use pdt_github::PullRequest;
-    use pdt_github::testing::FakeGithub;
+    use pdt_forge::ChangeRequest as PullRequest;
+    use pdt_forge::testing::FakeForge;
 
     fn pr(queued: bool) -> PullRequest {
         PullRequest {
@@ -803,7 +808,7 @@ mod tests {
 
     #[test]
     fn reads_ci_and_failed_jobs_once() {
-        let gh = FakeGithub::default();
+        let gh = FakeForge::default();
         assert_eq!(read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap().0, None);
         gh.set_pr("b", Some(pr(false)));
         gh.set_runs("b", vec![run(1, "b", "h", CiState::Failed), run(2, "b", "old", CiState::Passed)]);
@@ -823,7 +828,7 @@ mod tests {
 
     #[test]
     fn reads_the_newest_merge_queue_run_of_the_pr() {
-        let gh = FakeGithub::default();
+        let gh = FakeForge::default();
         gh.set_pr("b", Some(pr(true)));
         *gh.queue.lock().unwrap() = vec![
             run(5, "gh-readonly-queue/main/pr-12-aaa", "q1", CiState::Failed),
@@ -839,6 +844,15 @@ mod tests {
         let (_, queue, _) = read_pr(&gh, "o/r", "b", 0, false, Some(vec![]), &HashMap::new()).unwrap();
         assert_eq!(queue, None);
         assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")));
+    }
+
+    #[test]
+    fn a_forge_without_merge_queues_reads_no_queue_runs() {
+        let gh = FakeForge::with(pdt_forge::Capabilities::NONE);
+        gh.set_pr("b", Some(pr(true)));
+        let (status, queue, _) = read_pr(&gh, "o/r", "b", 0, true, None, &HashMap::new()).unwrap();
+        assert_eq!((status.unwrap().queue_ci, queue), (None, None));
+        assert_eq!(*gh.calls.lock().unwrap(), vec!["pr o/r b".to_string(), "runs o/r b".to_string()]);
     }
 
     #[test]
@@ -878,7 +892,7 @@ mod tests {
 
     #[test]
     fn a_merged_pr_has_no_ci_reads() {
-        let gh = FakeGithub::default();
+        let gh = FakeForge::default();
         let mut p = pr(false);
         p.state = PrState::Merged;
         gh.set_pr("b", Some(p));
@@ -893,7 +907,7 @@ mod tests {
     /// one or one opened since is.
     #[test]
     fn a_pr_closed_before_the_attempt_started_is_not_its() {
-        let gh = FakeGithub::default();
+        let gh = FakeForge::default();
         let mut p = pr(false);
         p.state = PrState::Merged;
         p.created_at = Some(100);

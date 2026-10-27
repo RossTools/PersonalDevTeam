@@ -2,7 +2,7 @@
 
 Phase 6, PDT-3. Spec: docs/superpowers/specs/2026-10-19-review-design.md; plan:
 docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, pdt-core `review.rs`, pdt-api
-`review.rs`, pdt-github `merge_pr`, web/src/review.
+`review.rs`, the project's forge (pdt-forge `Forge::merge`; GitHub's in pdt-github), web/src/review.
 
 ## Changes
 
@@ -58,8 +58,9 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
   A person's merge doesn't wait.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
-  (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (pdt-github `merge_pr`; the method from
-  `merge_settings`, none with a merge queue; when GitHub says the PR is already clean it merges at once) and the merge
+  (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (the forge's `merge`; the strategy from
+  `merge_settings`, none with a merge queue (and no queue on a forge without them); when GitHub says the PR is already
+  clean it merges at once) and the merge
   check ends the attempt later. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
   branch off) sends `{finishOnMerge, deleteBranch}` (left out: what an earlier merge asked stays), kept on the attempt (`attempts.finish_on_merge`,
   `finish_delete_branch`, PDT-75): when the merge check ends the attempt as merged, pdt-api `finish.rs` does what

@@ -1,5 +1,5 @@
 //! Phase 7e's triggers and actions through the API: schedules, webhooks, GitHub issues, `command`, `http.request`,
-//! `discord.post` and `notify`, the Hermes templates, Radarr, Sonarr, Plex, Scryer and the brief archive. External services are local fake servers and `FakeGithub`.
+//! `discord.post` and `notify`, the Hermes templates, Radarr, Sonarr, Plex, Scryer and the brief archive. External services are local fake servers and `FakeForge`.
 
 mod common;
 
@@ -8,7 +8,7 @@ use axum::http::{Request, StatusCode};
 use common::call;
 use http_body_util::BodyExt;
 use pdt_api::{AppState, router};
-use pdt_github::testing::FakeGithub;
+use pdt_forge::testing::FakeForge;
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -17,7 +17,7 @@ use tower::ServiceExt;
 struct Env {
     app: axum::Router,
     state: AppState,
-    gh: Arc<FakeGithub>,
+    gh: Arc<FakeForge>,
     tmp: tempfile::TempDir,
 }
 
@@ -25,7 +25,7 @@ async fn setup() -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.path().join("data"));
-    let gh = Arc::new(FakeGithub::default());
+    let gh = Arc::new(FakeForge::default());
     state.github = gh.clone();
     let app = router(state.clone(), None);
     Env { app, state, gh, tmp }
@@ -696,8 +696,8 @@ async fn a_webhook_needs_its_secret_and_starts_its_workflows() {
 
 // ---- GitHub issues ----
 
-fn issue(n: u64, title: &str) -> pdt_github::Issue {
-    pdt_github::Issue {
+fn issue(n: u64, title: &str) -> pdt_forge::Issue {
+    pdt_forge::Issue {
         number: n,
         title: title.into(),
         body: String::new(),

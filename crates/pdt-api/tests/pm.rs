@@ -19,7 +19,7 @@ struct Env {
     app: axum::Router,
     state: AppState,
     project: String,
-    gh: std::sync::Arc<pdt_github::testing::FakeGithub>,
+    gh: std::sync::Arc<pdt_forge::testing::FakeForge>,
     _tmp: tempfile::TempDir,
 }
 
@@ -50,7 +50,7 @@ async fn setup_with(update_every_ms: Option<i64>, tweak: impl FnOnce(&mut AppSta
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
-    let gh = std::sync::Arc::new(pdt_github::testing::FakeGithub::default());
+    let gh = std::sync::Arc::new(pdt_forge::testing::FakeForge::default());
     state.github = gh.clone();
     if let Some(ms) = update_every_ms {
         state.pm_update_every_ms = ms;
@@ -669,8 +669,8 @@ async fn the_users_own_notes_are_found_by_the_pm_but_never_briefed_or_written_by
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
-fn issue(n: u64, title: &str, body: &str) -> pdt_github::Issue {
-    pdt_github::Issue {
+fn issue(n: u64, title: &str, body: &str) -> pdt_forge::Issue {
+    pdt_forge::Issue {
         number: n,
         title: title.into(),
         body: body.into(),

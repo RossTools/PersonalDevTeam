@@ -215,8 +215,9 @@ notify itself forever.
   (quiet), picks the transition named `to` or the one leading to that status, and otherwise leaves by `unavailable`
   (quiet, with the `available` names); a ticket without a Jira link also leaves by `unavailable`. `jira.create`
   outputs `{key, url}`, `jira.comment` `{key, commentId}`.
-- GitHub issue actions (`workflow/nodes/github.rs`, PDT-154) go through the user's own `gh` (pdt-github, the access
-  the `github.issue.opened` trigger uses; `FakeGithub` in tests). `number` is a number or text: `12`, `#12`,
+- GitHub issue actions (`workflow/nodes/github.rs`, PDT-154) go through the GitHub forge (PDT-176: the user's own
+  `gh`, pdt-github, the access the `github.issue.opened` trigger uses; `FakeForge` in tests), and fail when it has no
+  issues; the trigger watches only projects whose forge is GitHub. `number` is a number or text: `12`, `#12`,
   `owner/name#12` or the issue's URL. `github.import` makes a Draft ticket (title the issue's, description its text
   then "Reported by @author in <url>"; a priority or label PDT can't take is left out) linked to the issue as
   `owner/name#12`, or leaves by `exists` (quiet) when a ticket already links it; output `{ticketId, ticketKey, issue,

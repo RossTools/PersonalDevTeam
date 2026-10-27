@@ -1,9 +1,14 @@
-//! Thin wrapper over the GitHub CLI (`gh`) for a branch's pull request and its Actions runs (PDT-25). It uses the
-//! user's own `gh` login. Check runs are not read: the fine-grained token PDT's users have cannot see them, so CI
-//! comes from the Actions runs API. Blocking; call from `spawn_blocking` in async code.
+//! The GitHub forge (PDT-176): a thin wrapper over the GitHub CLI (`gh`) for a branch's pull request and its Actions
+//! runs (PDT-25), merges, reviews and issues. It uses the user's own `gh` login. Check runs are not read: the
+//! fine-grained token PDT's users have cannot see them, so CI comes from the Actions runs API. Blocking; call from
+//! `spawn_blocking` in async code.
 
-pub use pdt_core::github_issue::CloseReason;
+use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
+pub use pdt_forge::{
+    Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
+    IssueDetail, MergeSettings, MergeStrategy,
+};
 use serde_json::Value;
 use std::io::Read;
 use std::path::PathBuf;
@@ -26,87 +31,6 @@ timelineItems(itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVE
 const MERGE_SETTINGS_QUERY: &str = "query($owner:String!,$name:String!,$base:String!){repository(owner:$owner,\
 name:$name){squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed mergeQueue(branch:$base){id}}}";
 
-/// How a repository lets pull requests into a base branch merge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MergeSettings {
-    pub squash: bool,
-    pub merge: bool,
-    pub rebase: bool,
-    /// The base branch has a merge queue.
-    pub queue: bool,
-}
-
-/// A branch's pull request as GitHub reports it (CI is read separately).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PullRequest {
-    pub number: u32,
-    pub url: String,
-    pub title: String,
-    pub state: PrState,
-    pub draft: bool,
-    pub head_sha: String,
-    pub base_branch: String,
-    pub mergeable: Mergeable,
-    pub behind: bool,
-    pub auto_merge: bool,
-    pub in_merge_queue: bool,
-    pub queue_position: Option<u32>,
-    /// Its newest merge-queue event, when that is a removal.
-    pub queue_removal: Option<QueueRemoval>,
-    /// When it was opened (ms; None when unknown): a ticket started again on the same branch has its old PR there too.
-    pub created_at: Option<i64>,
-}
-
-/// An issue (not a pull request) as the issues API lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Issue {
-    pub number: u64,
-    pub title: String,
-    pub body: String,
-    pub url: String,
-    pub author: String,
-    pub labels: Vec<String>,
-    pub created_at: String,
-}
-
-/// One issue as `gh api repos/<repo>/issues/<n>` gives it, with what closing it needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IssueDetail {
-    pub issue: Issue,
-    /// GitHub's numeric id (what `duplicate_issue_id` names), not its number.
-    pub id: u64,
-    pub closed: bool,
-    /// Why it was closed (`completed`, `not_planned`, `duplicate`), when it is.
-    pub state_reason: Option<String>,
-    /// It is a pull request (they share issue numbers).
-    pub pull_request: bool,
-}
-
-/// A comment on a pull request: on its conversation, or on a line in a review.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrComment {
-    pub id: u64,
-    pub author: String,
-    pub is_bot: bool,
-    pub body: String,
-    pub url: String,
-    pub path: Option<String>,
-    pub line: Option<u32>,
-    pub in_review: bool,
-}
-
-/// A submitted review of a pull request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrReview {
-    pub id: u64,
-    pub author: String,
-    pub is_bot: bool,
-    /// `approved`, `changes_requested`, `commented` (pending and dismissed ones are left out).
-    pub state: String,
-    pub body: String,
-    pub url: String,
-}
-
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum GhError {
     #[error("the GitHub CLI (gh) was not found")]
@@ -119,61 +43,35 @@ pub enum GhError {
     TimedOut,
 }
 
-pub trait GithubApi: Send + Sync {
-    /// The pull request whose head is `branch` in `repo` (`owner/name`): the newest open one, else the newest.
-    fn pull_request(&self, repo: &str, branch: &str) -> Result<Option<PullRequest>, GhError>;
-    /// Recent workflow runs on `branch`.
-    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, GhError>;
-    /// Recent merge-queue (`merge_group`) runs in `repo`.
-    fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, GhError>;
-    /// The names of the failed jobs of one run attempt.
-    fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, GhError>;
-    /// The merge methods `repo` allows and whether `base` has a merge queue.
-    fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, GhError>;
-    /// Turns on auto-merge for PR `number` (`gh pr merge --auto`, with `flag` such as `--squash` unless a merge queue
-    /// picks the method). A PR that can merge right away is merged.
-    fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError>;
-    /// The login `gh` is authenticated as (the user themself).
-    fn viewer_login(&self) -> Result<String, GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// The newest issues of `repo` (pull requests left out), newest first: one page without `after`, else every page
-    /// back to issue `after` (up to [`ISSUE_PAGES`]).
-    fn recent_issues(&self, _repo: &str, _after: Option<u64>) -> Result<Vec<Issue>, GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// Every comment on PR `number`: the conversation's and the reviews' line comments.
-    fn pr_comments(&self, _repo: &str, _number: u32) -> Result<Vec<PrComment>, GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// The submitted reviews of PR `number`.
-    fn pr_reviews(&self, _repo: &str, _number: u32) -> Result<Vec<PrReview>, GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// Issue `number` of `repo`; None when there is none (or gh can't see it).
-    fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueDetail>, GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// Adds a comment to issue `number`; its URL.
-    fn comment_issue(&self, _repo: &str, _number: u64, _body: &str) -> Result<String, GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// Adds labels to issue `number`, keeping the ones it has.
-    fn add_labels(&self, _repo: &str, _number: u64, _labels: &[String]) -> Result<(), GhError> {
-        Err(GhError::NotInstalled)
-    }
-    /// Closes issue `number` with `reason`; `duplicate_of` (the canonical issue's id, [`IssueDetail::id`]) with
-    /// `duplicate`.
-    fn close_issue(
-        &self,
-        _repo: &str,
-        _number: u64,
-        _reason: CloseReason,
-        _duplicate_of: Option<u64>,
-    ) -> Result<(), GhError> {
-        Err(GhError::NotInstalled)
+impl From<GhError> for ForgeError {
+    fn from(e: GhError) -> Self {
+        match e {
+            GhError::NotInstalled => ForgeError::Unavailable(e.to_string()),
+            _ => ForgeError::Failed(e.to_string()),
+        }
     }
 }
+
+/// GitHub's part of agents' instructions. PDT-165: fine-grained `gh` tokens can't read the Checks API, so
+/// `gh pr checks` fails with a 403.
+pub fn agent_notes() -> ForgeNotes {
+    ForgeNotes {
+        ci: Some(format!(
+            "Read CI from the ticket's attempt (`pr.ci`: state, URL and runs, when {SHORT_NAME} has seen the pull \
+             request) or from GitHub Actions: `gh run list --branch {{branch}}`, `gh run view <id> --json \
+             jobs,conclusion` and `gh run view <id> --log-failed`. Not `gh pr checks` or the check-runs API: \
+             fine-grained tokens can't read checks, so they fail with 403."
+        )),
+        reply: Some("`gh pr comment`, or a reply to the review comment".into()),
+        watch: Some("`gh run watch`".into()),
+    }
+}
+
+/// Where GitHub Actions workflows live.
+pub const CI_DIRS: &[&str] = &[".github/workflows"];
+
+/// What GitHub can do: everything.
+pub const CAPABILITIES: Capabilities = Capabilities::ALL;
 
 const ISSUE_JQ: &str = "{id, number, title, body, url: .html_url, author: .user.login, labels: [.labels[].name], \
 created_at, state, state_reason, pr: (.pull_request != null)}";
@@ -194,7 +92,7 @@ pub fn parse_issue(out: &str) -> Result<IssueDetail, GhError> {
         id: v["id"].as_u64().ok_or_else(|| GhError::BadOutput("no issue id in the answer".into()))?,
         closed: v["state"] == "closed",
         state_reason: v["state_reason"].as_str().filter(|r| !r.is_empty()).map(String::from),
-        pull_request: v["pr"] == true,
+        change_request: v["pr"] == true,
     })
 }
 
@@ -357,11 +255,11 @@ fn issue_of(v: &Value) -> Option<Issue> {
 }
 
 /// Conversation comments (`in_review: false`) or review comments.
-pub fn parse_comments(out: &str, in_review: bool) -> Result<Vec<PrComment>, GhError> {
+pub fn parse_comments(out: &str, in_review: bool) -> Result<Vec<ChangeComment>, GhError> {
     Ok(lines(out)?
         .iter()
         .filter_map(|v| {
-            Some(PrComment {
+            Some(ChangeComment {
                 id: v["id"].as_u64()?,
                 author: s(v, "author"),
                 is_bot: v["bot"] == true,
@@ -375,7 +273,7 @@ pub fn parse_comments(out: &str, in_review: bool) -> Result<Vec<PrComment>, GhEr
         .collect())
 }
 
-pub fn parse_reviews(out: &str) -> Result<Vec<PrReview>, GhError> {
+pub fn parse_reviews(out: &str) -> Result<Vec<ChangeReview>, GhError> {
     Ok(lines(out)?
         .iter()
         .filter_map(|v| {
@@ -385,7 +283,7 @@ pub fn parse_reviews(out: &str) -> Result<Vec<PrReview>, GhError> {
                 "COMMENTED" => "commented",
                 _ => return None,
             };
-            Some(PrReview {
+            Some(ChangeReview {
                 id: v["id"].as_u64()?,
                 author: s(v, "author"),
                 is_bot: v["bot"] == true,
@@ -492,7 +390,7 @@ fn s(v: &Value, k: &str) -> String {
 }
 
 /// The `PR_QUERY` answer: the newest open PR, else the newest one.
-pub fn parse_pull_request(out: &str) -> Result<Option<PullRequest>, GhError> {
+pub fn parse_pull_request(out: &str) -> Result<Option<ChangeRequest>, GhError> {
     let v = json(out)?;
     if let Some(e) = v["errors"].as_array().and_then(|a| a.first()) {
         return Err(GhError::Command(e["message"].as_str().unwrap_or("GraphQL error").to_string()));
@@ -512,7 +410,7 @@ pub fn parse_pull_request(out: &str) -> Result<Option<PullRequest>, GhError> {
         Some("CONFLICTING") => Mergeable::Conflicting,
         _ => Mergeable::Unknown,
     };
-    Ok(Some(PullRequest {
+    Ok(Some(ChangeRequest {
         number: n["number"].as_u64().and_then(|x| u32::try_from(x).ok()).unwrap_or_default(),
         url: s(n, "url"),
         title: s(n, "title"),
@@ -647,22 +545,7 @@ impl GhCli {
     }
 }
 
-impl GithubApi for GhCli {
-    fn pull_request(&self, repo: &str, branch: &str) -> Result<Option<PullRequest>, GhError> {
-        parse_pull_request(&self.run(&pr_args(repo, branch)?)?)
-    }
-    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, GhError> {
-        parse_runs(&self.run(&branch_runs_args(repo, branch))?)
-    }
-    fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, GhError> {
-        parse_runs(&self.run(&queue_runs_args(repo))?)
-    }
-    fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, GhError> {
-        parse_failed_jobs(&self.run(&jobs_args(repo, run_id, attempt))?)
-    }
-    fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, GhError> {
-        parse_merge_settings(&self.run(&merge_settings_args(repo, base)?)?)
-    }
+impl GhCli {
     fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError> {
         match self.run(&merge_pr_args(repo, number, flag, true)) {
             // GitHub refuses auto-merge for a PR that could merge now ("is in clean status"): merge it.
@@ -672,37 +555,79 @@ impl GithubApi for GhCli {
             r => r.map(|_| ()),
         }
     }
-    fn viewer_login(&self) -> Result<String, GhError> {
+}
+
+/// The `gh pr merge` flag for a strategy.
+pub fn merge_flag(strategy: Option<MergeStrategy>) -> Option<&'static str> {
+    strategy.map(|s| match s {
+        MergeStrategy::Squash => "--squash",
+        MergeStrategy::Merge => "--merge",
+        MergeStrategy::Rebase => "--rebase",
+    })
+}
+
+impl Forge for GhCli {
+    fn name(&self) -> &'static str {
+        "GitHub"
+    }
+    fn capabilities(&self) -> Capabilities {
+        CAPABILITIES
+    }
+    fn agent_notes(&self) -> ForgeNotes {
+        agent_notes()
+    }
+    fn ci_dirs(&self) -> &'static [&'static str] {
+        CI_DIRS
+    }
+    fn change_request(&self, repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError> {
+        Ok(parse_pull_request(&self.run(&pr_args(repo, branch)?)?)?)
+    }
+    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
+        Ok(parse_runs(&self.run(&branch_runs_args(repo, branch))?)?)
+    }
+    fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, ForgeError> {
+        Ok(parse_runs(&self.run(&queue_runs_args(repo))?)?)
+    }
+    fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, ForgeError> {
+        Ok(parse_failed_jobs(&self.run(&jobs_args(repo, run_id, attempt))?)?)
+    }
+    fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, ForgeError> {
+        Ok(parse_merge_settings(&self.run(&merge_settings_args(repo, base)?)?)?)
+    }
+    fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {
+        Ok(self.merge_pr(repo, number, merge_flag(strategy))?)
+    }
+    fn viewer_login(&self) -> Result<String, ForgeError> {
         let out = self.run(&["api".into(), "user".into(), "--jq".into(), ".login".into()])?;
-        Ok(out.trim().to_string())
-            .and_then(|l| if l.is_empty() { Err(GhError::BadOutput("no login".into())) } else { Ok(l) })
+        let login = out.trim().to_string();
+        if login.is_empty() { Err(GhError::BadOutput("no login".into()).into()) } else { Ok(login) }
     }
-    fn recent_issues(&self, repo: &str, after: Option<u64>) -> Result<Vec<Issue>, GhError> {
-        read_issue_pages(after, |n| self.run(&recent_issues_args(repo, n)))
+    fn recent_issues(&self, repo: &str, after: Option<u64>) -> Result<Vec<Issue>, ForgeError> {
+        Ok(read_issue_pages(after, |n| self.run(&recent_issues_args(repo, n)))?)
     }
-    fn pr_comments(&self, repo: &str, number: u32) -> Result<Vec<PrComment>, GhError> {
+    fn change_comments(&self, repo: &str, number: u32) -> Result<Vec<ChangeComment>, ForgeError> {
         let mut all = parse_comments(&self.run(&issue_comments_args(repo, number))?, false)?;
         all.extend(parse_comments(&self.run(&review_comments_args(repo, number))?, true)?);
         Ok(all)
     }
-    fn pr_reviews(&self, repo: &str, number: u32) -> Result<Vec<PrReview>, GhError> {
-        parse_reviews(&self.run(&reviews_args(repo, number))?)
+    fn change_reviews(&self, repo: &str, number: u32) -> Result<Vec<ChangeReview>, ForgeError> {
+        Ok(parse_reviews(&self.run(&reviews_args(repo, number))?)?)
     }
-    fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, GhError> {
+    fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, ForgeError> {
         match self.run(&issue_args(repo, number)) {
-            Ok(out) => parse_issue(&out).map(Some),
+            Ok(out) => Ok(Some(parse_issue(&out)?)),
             Err(e) if not_found(&e) => Ok(None),
-            Err(e) => Err(e),
+            Err(e) => Err(e.into()),
         }
     }
-    fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, GhError> {
+    fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, ForgeError> {
         Ok(self.run(&comment_issue_args(repo, number, body))?.trim().to_string())
     }
-    fn add_labels(&self, repo: &str, number: u64, labels: &[String]) -> Result<(), GhError> {
+    fn add_labels(&self, repo: &str, number: u64, labels: &[String]) -> Result<(), ForgeError> {
         if labels.is_empty() {
             return Ok(());
         }
-        self.run(&add_labels_args(repo, number, labels)).map(|_| ())
+        Ok(self.run(&add_labels_args(repo, number, labels)).map(|_| ())?)
     }
     fn close_issue(
         &self,
@@ -710,8 +635,8 @@ impl GithubApi for GhCli {
         number: u64,
         reason: CloseReason,
         duplicate_of: Option<u64>,
-    ) -> Result<(), GhError> {
-        self.run(&close_issue_args(repo, number, reason, duplicate_of)).map(|_| ())
+    ) -> Result<(), ForgeError> {
+        Ok(self.run(&close_issue_args(repo, number, reason, duplicate_of)).map(|_| ())?)
     }
 }
 
@@ -743,207 +668,64 @@ fn no_window(_cmd: &mut Command) {
     }
 }
 
-/// A GithubApi that runs nothing and reports gh as missing. It is the default until production wiring installs the
-/// real CLI, so tests can never reach GitHub.
+/// The GitHub forge with no `gh`: it runs nothing and reports gh as missing. It is the default until production
+/// wiring installs the real CLI, so tests can never reach GitHub; it tells agents what the real one does.
 pub struct Unavailable;
 
-impl GithubApi for Unavailable {
-    fn pull_request(&self, _: &str, _: &str) -> Result<Option<PullRequest>, GhError> {
-        Err(GhError::NotInstalled)
+impl Forge for Unavailable {
+    fn name(&self) -> &'static str {
+        "GitHub"
     }
-    fn branch_runs(&self, _: &str, _: &str) -> Result<Vec<CiRun>, GhError> {
-        Err(GhError::NotInstalled)
+    fn capabilities(&self) -> Capabilities {
+        CAPABILITIES
     }
-    fn queue_runs(&self, _: &str) -> Result<Vec<CiRun>, GhError> {
-        Err(GhError::NotInstalled)
+    fn agent_notes(&self) -> ForgeNotes {
+        agent_notes()
     }
-    fn failed_jobs(&self, _: &str, _: u64, _: u32) -> Result<Vec<String>, GhError> {
-        Err(GhError::NotInstalled)
+    fn ci_dirs(&self) -> &'static [&'static str] {
+        CI_DIRS
     }
-    fn merge_settings(&self, _: &str, _: &str) -> Result<MergeSettings, GhError> {
-        Err(GhError::NotInstalled)
+    fn change_request(&self, _: &str, _: &str) -> Result<Option<ChangeRequest>, ForgeError> {
+        Err(GhError::NotInstalled.into())
     }
-    fn merge_pr(&self, _: &str, _: u32, _: Option<&str>) -> Result<(), GhError> {
-        Err(GhError::NotInstalled)
+    fn branch_runs(&self, _: &str, _: &str) -> Result<Vec<CiRun>, ForgeError> {
+        Err(GhError::NotInstalled.into())
     }
-}
-
-pub mod testing {
-    use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    /// An in-memory GithubApi for other crates' tests: set a branch's PR and runs, count the calls.
-    #[derive(Default)]
-    pub struct FakeGithub {
-        pub prs: Mutex<HashMap<String, PullRequest>>,
-        pub runs: Mutex<HashMap<String, Vec<CiRun>>>,
-        pub queue: Mutex<Vec<CiRun>>,
-        pub jobs: Mutex<HashMap<u64, Vec<String>>>,
-        /// What `merge_settings` answers (squash only, no queue, when unset).
-        pub settings: Mutex<Option<MergeSettings>>,
-        /// `merge_pr` fails with this.
-        pub merge_error: Mutex<Option<String>>,
-        /// `viewer_login`'s answer (`me` when unset).
-        pub login: Mutex<Option<String>>,
-        /// Reads of PRs and issues fail with this (gh signed out, GitHub down).
-        pub error: Mutex<Option<String>>,
-        /// Issues by repo, newest first.
-        pub issues: Mutex<HashMap<String, Vec<Issue>>>,
-        /// Comments and reviews by PR number.
-        pub comments: Mutex<HashMap<u32, Vec<PrComment>>>,
-        pub reviews: Mutex<HashMap<u32, Vec<PrReview>>>,
-        /// Issues closed (by `close_issue` or [`FakeGithub::set_closed`]): by repo and number, the reason and the
-        /// duplicate's canonical issue id.
-        pub closed: Mutex<HashMap<(String, u64), Closed>>,
-        /// Comments added to issues: repo, number, body.
-        pub issue_comments: Mutex<Vec<(String, u64, String)>>,
-        /// Labels added to issues: repo, number, labels.
-        pub added_labels: Mutex<Vec<(String, u64, Vec<String>)>>,
-        pub calls: Mutex<Vec<String>>,
+    fn queue_runs(&self, _: &str) -> Result<Vec<CiRun>, ForgeError> {
+        Err(GhError::NotInstalled.into())
     }
-
-    /// How an issue was closed: the reason, and the duplicate's canonical issue id.
-    pub type Closed = (CloseReason, Option<u64>);
-
-    /// The id the fake gives issue `number` ([`IssueDetail::id`]).
-    pub fn fake_issue_id(number: u64) -> u64 {
-        1_000_000 + number
+    fn failed_jobs(&self, _: &str, _: u64, _: u32) -> Result<Vec<String>, ForgeError> {
+        Err(GhError::NotInstalled.into())
     }
-
-    impl FakeGithub {
-        pub fn set_pr(&self, branch: &str, pr: Option<PullRequest>) {
-            let mut m = self.prs.lock().unwrap();
-            match pr {
-                Some(p) => m.insert(branch.into(), p),
-                None => m.remove(branch),
-            };
-        }
-        pub fn set_runs(&self, branch: &str, runs: Vec<CiRun>) {
-            self.runs.lock().unwrap().insert(branch.into(), runs);
-        }
-        pub fn set_jobs(&self, run_id: u64, jobs: &[&str]) {
-            self.jobs.lock().unwrap().insert(run_id, jobs.iter().map(|j| j.to_string()).collect());
-        }
-        pub fn set_issues(&self, repo: &str, issues: Vec<Issue>) {
-            self.issues.lock().unwrap().insert(repo.into(), issues);
-        }
-        pub fn set_comments(&self, pr: u32, comments: Vec<PrComment>) {
-            self.comments.lock().unwrap().insert(pr, comments);
-        }
-        pub fn set_reviews(&self, pr: u32, reviews: Vec<PrReview>) {
-            self.reviews.lock().unwrap().insert(pr, reviews);
-        }
-        pub fn set_closed(&self, repo: &str, number: u64, reason: CloseReason) {
-            self.closed.lock().unwrap().insert((repo.into(), number), (reason, None));
-        }
-        /// Issue `number`'s comments so far.
-        pub fn comments_on(&self, repo: &str, number: u64) -> Vec<String> {
-            let all = self.issue_comments.lock().unwrap();
-            all.iter().filter(|(r, n, _)| r == repo && *n == number).map(|(_, _, b)| b.clone()).collect()
-        }
-        fn call(&self, what: String) {
-            self.calls.lock().unwrap().push(what);
-        }
-        fn failing(&self) -> Result<(), GhError> {
-            match self.error.lock().unwrap().clone() {
-                Some(e) => Err(GhError::Command(e)),
-                None => Ok(()),
-            }
-        }
+    fn merge_settings(&self, _: &str, _: &str) -> Result<MergeSettings, ForgeError> {
+        Err(GhError::NotInstalled.into())
     }
-
-    impl GithubApi for FakeGithub {
-        fn pull_request(&self, repo: &str, branch: &str) -> Result<Option<PullRequest>, GhError> {
-            self.call(format!("pr {repo} {branch}"));
-            self.failing()?;
-            Ok(self.prs.lock().unwrap().get(branch).cloned())
-        }
-        fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, GhError> {
-            self.call(format!("runs {repo} {branch}"));
-            Ok(self.runs.lock().unwrap().get(branch).cloned().unwrap_or_default())
-        }
-        fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, GhError> {
-            self.call(format!("queue {repo}"));
-            Ok(self.queue.lock().unwrap().clone())
-        }
-        fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, GhError> {
-            self.call(format!("jobs {repo} {run_id}.{attempt}"));
-            Ok(self.jobs.lock().unwrap().get(&run_id).cloned().unwrap_or_default())
-        }
-        fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, GhError> {
-            self.call(format!("merge-settings {repo} {base}"));
-            Ok(self.settings.lock().unwrap().unwrap_or(MergeSettings {
-                squash: true,
-                merge: false,
-                rebase: false,
-                queue: false,
-            }))
-        }
-        fn merge_pr(&self, repo: &str, number: u32, flag: Option<&str>) -> Result<(), GhError> {
-            self.call(format!("merge {repo} {number} {}", flag.unwrap_or("-")));
-            match self.merge_error.lock().unwrap().clone() {
-                Some(e) => Err(GhError::Command(e)),
-                None => Ok(()),
-            }
-        }
-        fn viewer_login(&self) -> Result<String, GhError> {
-            Ok(self.login.lock().unwrap().clone().unwrap_or_else(|| "me".into()))
-        }
-        fn recent_issues(&self, repo: &str, _after: Option<u64>) -> Result<Vec<Issue>, GhError> {
-            self.call(format!("issues {repo}"));
-            self.failing()?;
-            Ok(self.issues.lock().unwrap().get(repo).cloned().unwrap_or_default())
-        }
-        fn pr_comments(&self, repo: &str, number: u32) -> Result<Vec<PrComment>, GhError> {
-            self.call(format!("comments {repo} {number}"));
-            Ok(self.comments.lock().unwrap().get(&number).cloned().unwrap_or_default())
-        }
-        fn pr_reviews(&self, repo: &str, number: u32) -> Result<Vec<PrReview>, GhError> {
-            self.call(format!("reviews {repo} {number}"));
-            Ok(self.reviews.lock().unwrap().get(&number).cloned().unwrap_or_default())
-        }
-        fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, GhError> {
-            self.call(format!("issue {repo} {number}"));
-            self.failing()?;
-            let issues = self.issues.lock().unwrap();
-            let Some(issue) = issues.get(repo).and_then(|l| l.iter().find(|i| i.number == number)).cloned() else {
-                return Ok(None);
-            };
-            let closed = self.closed.lock().unwrap().get(&(repo.to_string(), number)).map(|(r, _)| *r);
-            Ok(Some(IssueDetail {
-                issue,
-                id: fake_issue_id(number),
-                closed: closed.is_some(),
-                state_reason: closed.map(|r| r.as_str().to_string()),
-                pull_request: false,
-            }))
-        }
-        fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, GhError> {
-            self.call(format!("comment-issue {repo} {number}"));
-            self.failing()?;
-            let mut all = self.issue_comments.lock().unwrap();
-            all.push((repo.into(), number, body.into()));
-            Ok(format!("https://github.com/{repo}/issues/{number}#issuecomment-{}", all.len()))
-        }
-        fn add_labels(&self, repo: &str, number: u64, labels: &[String]) -> Result<(), GhError> {
-            self.call(format!("labels {repo} {number} {}", labels.join(",")));
-            self.failing()?;
-            self.added_labels.lock().unwrap().push((repo.into(), number, labels.to_vec()));
-            Ok(())
-        }
-        fn close_issue(
-            &self,
-            repo: &str,
-            number: u64,
-            reason: CloseReason,
-            duplicate_of: Option<u64>,
-        ) -> Result<(), GhError> {
-            self.call(format!("close {repo} {number} {}", reason.as_str()));
-            self.failing()?;
-            self.closed.lock().unwrap().insert((repo.into(), number), (reason, duplicate_of));
-            Ok(())
-        }
+    fn merge(&self, _: &str, _: u32, _: Option<MergeStrategy>) -> Result<(), ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn viewer_login(&self) -> Result<String, ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn recent_issues(&self, _: &str, _: Option<u64>) -> Result<Vec<Issue>, ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn change_comments(&self, _: &str, _: u32) -> Result<Vec<ChangeComment>, ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn change_reviews(&self, _: &str, _: u32) -> Result<Vec<ChangeReview>, ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn issue(&self, _: &str, _: u64) -> Result<Option<IssueDetail>, ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn comment_issue(&self, _: &str, _: u64, _: &str) -> Result<String, ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn add_labels(&self, _: &str, _: u64, _: &[String]) -> Result<(), ForgeError> {
+        Err(GhError::NotInstalled.into())
+    }
+    fn close_issue(&self, _: &str, _: u64, _: CloseReason, _: Option<u64>) -> Result<(), ForgeError> {
+        Err(GhError::NotInstalled.into())
     }
 }
 
@@ -993,6 +775,55 @@ mod tests {
         let err = r#"{"data":null,"errors":[{"message":"Could not resolve to a Repository"}]}"#;
         assert!(matches!(parse_pull_request(err), Err(GhError::Command(m)) if m.contains("Could not resolve")));
         assert!(parse_pull_request("nope").is_err());
+    }
+
+    /// What agents on ticket work are told about GitHub (it used to live in `pdt_core::agent_context`).
+    #[test]
+    fn agents_read_ci_from_actions_runs_and_answer_with_gh() {
+        use pdt_core::agent_context::{SessionContext, TicketWork, session_instructions};
+        use pdt_core::workflow::events as ev;
+        let notes = agent_notes();
+        let news = [ev::CI_RUN_FAILED, ev::PR_COMMENTED].into_iter().collect();
+        let ctx = SessionContext {
+            port: 7420,
+            session_id: "s1",
+            project_id: "p1",
+            project_name: "Work App",
+            project_key: "WA",
+            checkout: "/r/.worktrees/x",
+            branch: Some("pdt-WA-7-x"),
+            repo_path: "/r",
+            base_branch: "main",
+            ticket: Some(TicketWork { ticket_id: "t7", key: "WA-7", branch: "pdt-WA-7-x", base: "main", news }),
+            personal: false,
+            tools: &[],
+            step: None,
+            ci_branch: Some("pdt-WA-7-x"),
+            forge: Some(&notes),
+        };
+        let t = session_instructions(&ctx, None);
+        assert!(t.contains("`pr.ci`: state, URL and runs, when PDT has seen the pull request"), "{t}");
+        assert!(t.contains("`gh run list --branch pdt-WA-7-x`"), "{t}");
+        assert!(t.contains("`gh run view <id> --json jobs,conclusion`") && t.contains("--log-failed"), "{t}");
+        assert!(t.contains("Not `gh pr checks` or the check-runs API"), "{t}");
+        assert!(!t.contains("gh pr checks --watch"), "{t}");
+        assert!(
+            t.contains("answer it on the pull request (`gh pr comment`, or a reply to the review comment)."),
+            "{t}"
+        );
+        assert!(t.contains("watch CI in a shell (`gh run watch`, sleep loops)"), "{t}");
+        assert_eq!(Unavailable.agent_notes(), notes, "the default forge tells agents what the real one does");
+        assert_eq!(Unavailable.capabilities(), Capabilities::ALL);
+    }
+
+    #[test]
+    fn merge_flags_follow_the_strategy() {
+        assert_eq!(merge_flag(None), None);
+        assert_eq!(merge_flag(Some(MergeStrategy::Squash)), Some("--squash"));
+        assert_eq!(merge_flag(Some(MergeStrategy::Rebase)), Some("--rebase"));
+        assert!(
+            matches!(ForgeError::from(GhError::NotInstalled), ForgeError::Unavailable(m) if m.contains("(gh) was not found"))
+        );
     }
 
     #[test]
@@ -1125,8 +956,8 @@ mod tests {
     #[test]
     fn a_missing_cli_is_not_installed() {
         let gh = GhCli::new(std::env::temp_dir().join("pdt-no-such-gh-binary"));
-        assert_eq!(gh.branch_runs("o/r", "b"), Err(GhError::NotInstalled));
-        assert_eq!(Unavailable.pull_request("o/r", "b"), Err(GhError::NotInstalled));
+        assert_eq!(gh.branch_runs("o/r", "b"), Err(GhError::NotInstalled.into()));
+        assert_eq!(Unavailable.change_request("o/r", "b"), Err(GhError::NotInstalled.into()));
     }
 
     #[test]

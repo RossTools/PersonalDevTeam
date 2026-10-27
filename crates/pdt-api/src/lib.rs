@@ -10,6 +10,7 @@ mod error;
 mod files;
 mod finish;
 mod folders;
+mod forge;
 mod github;
 mod github_issues;
 pub mod guides;

@@ -53,9 +53,10 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
-    /// The GitHub CLI for attempts' pull requests. `new` installs [`pdt_github::Unavailable`], which runs nothing;
-    /// only pdtd's production wiring installs the real CLI, so tests never reach GitHub.
-    pub github: std::sync::Arc<dyn pdt_github::GithubApi>,
+    /// The GitHub forge (PDT-176), for projects on GitHub (`crate::forge::project_forge`). `new` installs
+    /// [`pdt_github::Unavailable`], which runs nothing; only pdtd's production wiring installs the real CLI, so tests
+    /// never reach GitHub.
+    pub github: std::sync::Arc<dyn pdt_forge::Forge>,
     /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
     pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
