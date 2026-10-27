@@ -31,7 +31,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
   `schedule.fired` and webhooks' `webhook.received` ("Sensors and webhooks"); 7e-2 the
   Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and the Buildkite sensor's
-  `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (`EVENT_TYPES`). CI events carry
+  `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (PDT's own types in `EVENT_TYPES`; Jira's in `jira.rs`, registered by the Jira integration: "Integrations"). CI events carry
   `provider` (`github_actions` or `buildkite`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
   carry `mergeRequested` (the open PR was set to merge and hasn't merged, PDT-104: [tickets.md](tickets.md)) and
   `agentWorking` (an agent step is open on the attempt); CI events also `mergeWaiting` (a workflow's merge waits for
@@ -132,12 +132,26 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
   are told.
 
+## Integrations (PDT-171)
+
+One place declares what an integration adds: pdt-api `integrations/`, a module per integration implementing
+`Integration` (its connection kinds, event types, node kinds and pdt-mcp tools with their `readOnly`, `asks`,
+`openWorld`, `destructive` and `pm` flags, and how to run them), listed once in `integrations/mod.rs` `all()`. PDT's
+own pieces are the `core` integration. The `Registry` gathers them, in that order, into the catalog, `tools/list` and
+`tools/call`, the personas' tools (`GET /api/personas/tools`, the PM's set, which ask), the event types and
+`GET /api/connections/kinds`. Registered: core, discord (webhooks, the bot and its tools), webhook (incoming), github
+(issues), jira, buildkite, http, arr (Radarr and Sonarr), scryer (with its tools), plex, mcp, bug_reports
+(`report_bug`). An integration's tools are the PM's only with its `pm` flag, and in another persona's set only when the
+user picks them.
+
 ## Catalog
 
 `GET /api/workflows/catalog` lists every kind: `id`, `version`, `category`, `title`, `description`,
 `configSchema` / `outputSchema` (JSON Schema from schemars), `ports`, `dynamicPorts`. One module per kind in
-pdt-api `workflow/nodes/` (Radarr and Sonarr share `arr.rs`), registered in `catalog.rs` `catalog()`; config types also
-derive ts-rs (web/src/api/gen). After the kinds come the MCP tools' entries ("MCP tools as actions"), which have a
+pdt-api `workflow/nodes/` (Radarr and Sonarr share `arr.rs`), registered by its integration ("Integrations");
+config types also derive ts-rs (web/src/api/gen). Each event type is a trigger kind: the plain event trigger, unless a
+kind claims the type (`NodeKind::event_type`: the schedule, webhook and GitHub issue triggers have configs of their
+own). After the kinds come the MCP tools' entries ("MCP tools as actions"), which have a
 `preset`.
 
 | Kind | Ports |
@@ -474,7 +488,7 @@ them), `radarr` and `sonarr` (`url`, `config.qualityProfile`, `config.rootFolder
 (`url`, `config.pmActs`; secret: an API key), `plex` (`url`;
 secret: the token) and `mcp` ("MCP tools as actions"; `GET/POST /api/connections/{id}/tools`, `409 not_mcp` for
 another kind). A config field holding a connection's name says its kind in its schema (`x-connection-kind`:
-`discord_webhook`, `discord_bot`, `webhook`, `jira`, `buildkite`, `radarr`, `sonarr`, `scryer`, `plex`, `mcp`, `any`), so forms offer a picker. `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
+`discord_webhook`, `discord_bot`, `webhook`, `jira`, `buildkite`, `radarr`, `sonarr`, `scryer`, `plex`, `mcp`, `any`), so forms offer a picker. `GET /api/connections/kinds` (every kind the integrations declare, for the Connections page), `GET/POST /api/connections`, `GET/PATCH/DELETE /api/connections/{id}` (`name` unique, `kind`, `url`,
 `config`), `PUT/DELETE /api/connections/{id}/secret {secret}` (the OS keychain, account `connection:<id>`; only
 `hasSecret` is ever returned). A connection carries `lastError` and `lastErrorAt` while a sensor cannot use it
 ("Sensors and webhooks"); saving it (or its secret) clears them until the next use.
@@ -593,7 +607,7 @@ HTTP services, Radarr, Sonarr, Scryer, Plex servers, MCP servers, and Other for 
 one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address `/api/hooks/<name>`
 show on its row, and why a sensor's last use of it failed, and since when; an MCP server's row shows its tools, or why
 listing them failed, with List again). The dialog asks
-what the kind needs (`kinds.ts`: its address, and its own settings: Jira's email, Buildkite's organization, Radarr's
+what the kind needs (`GET /api/connections/kinds`, from the integrations; `kinds.ts` reads it: its address, and its own settings: Jira's email, Buildkite's organization, Radarr's
 default quality profile and root folder, an MCP server's transport, program, arguments, environment and secret
 variable; a setting shown is required unless marked optional) and
 says where its secret comes from (Discord: the channel's settings → Integrations → Webhooks → New Webhook → Copy
@@ -774,7 +788,7 @@ deleted (`409 persona_in_use`).
 - `GET /api/personas/{id}/template` (`404 not_builtin` otherwise) → `{setup, diff}`: the current template and the
   current version's diff to it. The persona page shows it for a built-in that differs (the fields, **Show the
   changes**) and **Load PDT's template** fills the setup form with it to review and save as a version.
-- `GET /api/personas/tools` (PDT-110) → every pdt-mcp tool (pdt-core `ALL_TOOLS`, in order) as `{name, does, asks,
+- `GET /api/personas/tools` (PDT-110) → every pdt-mcp tool (every integration's, in `tools/list` order) as `{name, does, asks,
   default}`: the persona page's tool list, so a new tool shows there with no web change. Saving keeps every tool the
   persona has, a name the server doesn't list included (shown checked, to uncheck).
 

@@ -2,16 +2,16 @@
 //! schemars), and each tool runs the function the matching route runs, so the API and the tools can't drift.
 
 use crate::error::ApiError;
+use crate::integrations::Tool;
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::Category;
 use axum::Json;
 use axum::extract::State;
-use pdt_core::discord::DISCORD_BOT;
 use pdt_core::inbox::Question;
-use pdt_core::mcp::{ToolInfo, input_schema};
+use pdt_core::integration::ToolDecl;
+use pdt_core::mcp::input_schema;
 use pdt_core::pm::AskTarget;
 use pdt_core::review::{CommentSide, NewReviewComment};
-use pdt_core::scryer::SCRYER;
 use pdt_core::session::Session;
 use pdt_core::ticket::{Actor, AgentBy, By, EventKind, TicketEvent, valid_comment};
 use pdt_core::workflow::agent::OutcomeComment;
@@ -348,87 +348,57 @@ struct SendToSession {
     text: String,
 }
 
-struct Def {
-    name: &'static str,
-    title: &'static str,
-    description: &'static str,
-    schema: fn() -> Value,
-}
-
-/// Tools that change nothing.
-const READ_ONLY: [&str; 20] = [
-    "get_ticket",
-    "list_secrets",
-    "catalog_search",
-    "catalog_get",
-    "workflow_get",
-    "workflow_export",
-    "workflow_validate",
-    "workflow_dry_run",
-    "get_overview",
-    "search_tickets",
-    "get_session",
-    "list_workflow_runs",
-    "search_notes",
-    "list_todos",
-    "discord_get",
-    "scryer_library",
-    "scryer_search",
-    "scryer_queue",
-    "scryer_schema",
-    "scryer_query",
-];
-
-fn schema<T: JsonSchema>() -> Value {
+pub(crate) fn schema<T: JsonSchema>() -> Value {
     input_schema(crate::workflow::catalog::schema_of::<T>())
 }
 
-/// Every tool, in `ALL_TOOLS` order.
-fn defs() -> Vec<Def> {
+/// PDT's own tools, in `tools/list` order ([`crate::integrations::core`]).
+pub(crate) fn defs() -> Vec<Tool> {
     vec![
-        Def {
-            name: "get_ticket",
+        Tool {
+            decl: ToolDecl::new("get_ticket", "Read the ticket, its comments and attempt").read_only().pm(),
             title: "Get the ticket",
             description: "The ticket this session works on (or another, by key): description, stage, links, attempts, \
                           comments, the outcomes earlier agent steps submitted, and, in a workflow step, what the step \
                           allows.",
             schema: schema::<GetTicket>,
         },
-        Def {
-            name: "submit_outcome",
+        Tool {
+            decl: ToolDecl::new("submit_outcome", "Finish the step with an outcome and a summary").pm(),
             title: "Submit the step's outcome",
             description: "Ends this session's workflow step with one of the outcomes it allows; PDT moves the work on \
                           from it. Give a short summary, line comments for a review, and `data` when the step's prompt asks for fields.",
             schema: schema::<SubmitOutcome>,
         },
-        Def {
-            name: "ask_user",
+        Tool {
+            decl: ToolDecl::new("ask_user", "Ask you questions (they wait in the Inbox)").pm(),
             title: "Ask the user",
             description: "Puts questions in the user's Inbox. Their answers come back as a message; end your turn \
                           after asking. In a workflow step the step waits for them instead of stalling.",
             schema: schema::<AskUser>,
         },
-        Def {
-            name: "add_ticket_comment",
+        Tool {
+            decl: ToolDecl::new("add_ticket_comment", "Comment on the ticket").pm(),
             title: "Comment on the ticket",
             description: "Adds a comment to the ticket's timeline (this session's ticket unless you name one).",
             schema: schema::<AddTicketComment>,
         },
-        Def {
-            name: "add_review_comment",
+        Tool {
+            decl: ToolDecl::new("add_review_comment", "Comment on a line of the attempt's changes"),
             title: "Comment on a line",
             description: "Adds a line comment to the attempt's changes (the Changes view), on the file as it is in \
                           the attempt's worktree.",
             schema: schema::<OutcomeComment>,
         },
-        Def {
-            name: "list_secrets",
+        Tool {
+            decl: ToolDecl::new("list_secrets", "See the names of the secrets it may use").read_only().pm(),
             title: "List the secrets",
             description: "The secrets this session may use: their names and descriptions, never their values.",
             schema: schema::<NoArgs>,
         },
-        Def {
-            name: "request_secret",
+        Tool {
+            decl: ToolDecl::new("request_secret", "Ask you for a secret (you type it into the Inbox, never the chat)")
+                .pm(),
             title: "Ask the user for a secret",
             description: "Asks the user for a secret (an API key, a token, a password) by name: they type it into PDT's \
                           Inbox, never into this chat. You get `stored: true` once it is (at once if it already is), \
@@ -436,78 +406,85 @@ fn defs() -> Vec<Def> {
                           in the chat.",
             schema: schema::<crate::vault::RequestSecret>,
         },
-        Def {
-            name: "run_with_secrets",
+        Tool {
+            decl: ToolDecl::new(
+                "run_with_secrets",
+                "Run a command with secrets in its environment (it never sees them)",
+            )
+            .pm(),
             title: "Run a command with secrets",
             description: "Runs a command line (sh -c; cmd /C on Windows) with secrets in its environment: an env value \
                           `secret:<name>` is that secret's value. Its output comes back with every secret's value \
                           replaced by `[secret:<name>]`. Each use is recorded.",
             schema: schema::<crate::vault::RunWithSecrets>,
         },
-        Def {
-            name: "write_secret_file",
+        Tool {
+            decl: ToolDecl::new("write_secret_file", "Write a file (a .env) with secrets filled in, without seeing it")
+                .pm(),
             title: "Write a file with secrets",
             description: "Writes a file (a .env, a config file) from a template with `{{secret.<name>}}` where each \
                           secret goes, filled in by PDT; the content is not echoed back. Each use is recorded.",
             schema: schema::<crate::vault::WriteSecretFile>,
         },
-        Def {
-            name: "update_ticket",
+        Tool {
+            decl: ToolDecl::new("update_ticket", "Rewrite its own ticket's title and description"),
             title: "Update the ticket",
             description: "Rewrites this session's ticket: its title and/or description (as `PATCH /api/tickets/{id}`, \
                           recorded as the agent's edit). Only this session's own ticket.",
             schema: schema::<UpdateTicket>,
         },
-        Def {
-            name: "catalog_search",
+        Tool {
+            decl: ToolDecl::new("catalog_search", "Search the workflow node catalog").read_only().pm(),
             title: "Search the node catalog",
             description: "Lists workflow node kinds (triggers, conditions, actions, gates, waits) matching the \
                           words: id, title, category, description. MCP servers' tools are listed too, as \
                           `mcp:<server>/<tool>` (a `preset` mcp.tool node). catalog_get gives one kind's schemas.",
             schema: schema::<CatalogSearch>,
         },
-        Def {
-            name: "catalog_get",
+        Tool {
+            decl: ToolDecl::new("catalog_get", "Read a catalog node").read_only().pm(),
             title: "Get a node kind",
             description: "One node kind with its config and output JSON Schemas and its ports.",
             schema: schema::<CatalogGet>,
         },
-        Def {
-            name: "workflow_get",
+        Tool {
+            decl: ToolDecl::new("workflow_get", "Read a workflow").read_only().pm(),
             title: "Get a workflow",
             description: "A workflow (by id or name) with its current document and validation issues.",
             schema: schema::<WorkflowGet>,
         },
-        Def {
-            name: "workflow_validate",
+        Tool {
+            decl: ToolDecl::new("workflow_validate", "Check a workflow document").read_only().pm(),
             title: "Validate a workflow",
             description: "Checks a workflow document: errors and warnings.",
             schema: schema::<crate::workflow::routes::ValidateRequest>,
         },
-        Def {
-            name: "workflow_dry_run",
+        Tool {
+            decl: ToolDecl::new("workflow_dry_run", "Try a workflow without running it").read_only().pm(),
             title: "Dry-run a workflow",
             description: "Runs a document (or a saved workflow) against an event in memory, changing nothing: which \
                           triggers match and what each step would do.",
             schema: schema::<crate::workflow::routes::DryRunRequest>,
         },
-        Def {
-            name: "workflow_save",
+        Tool {
+            decl: ToolDecl::new("workflow_save", "Save a workflow (a new version)").pm(),
             title: "Save a workflow",
             description: "Proposes a document as a new version of a workflow (the user reviews and accepts it), or \
                           saves it as a new workflow, which starts disabled: the user reviews and enables it.",
             schema: schema::<WorkflowSave>,
         },
-        Def {
-            name: "workflow_export",
+        Tool {
+            decl: ToolDecl::new("workflow_export", "Export workflows as text to paste into another PDT")
+                .read_only()
+                .pm(),
             title: "Export workflows",
             description: "Workflows' current documents as one export text (format pdt-workflow): project ids become \
                           {\"$project\": \"<KEY>\"} placeholders and `requires` lists the connections, personas and \
                           projects they need. Paste it into Import on another PDT, or give it to workflow_import there.",
             schema: schema::<WorkflowExport>,
         },
-        Def {
-            name: "workflow_import",
+        Tool {
+            decl: ToolDecl::new("workflow_import", "Import pasted workflows (disabled)").asks().pm(),
             title: "Import workflows",
             description: "Imports an export text (or a bare workflow document). With `check: true` it only reports \
                           the workflows, names that clash, and how each connection, persona and project they need \
@@ -517,67 +494,72 @@ fn defs() -> Vec<Def> {
                           `versionOf` (a proposed version). New workflows start disabled. The user confirms each call.",
             schema: schema::<pdt_core::workflow::transfer::ImportRequest>,
         },
-        Def {
-            name: "get_overview",
+        Tool {
+            decl: ToolDecl::new(
+                "get_overview",
+                "See every project's board, tickets in flight, the Inbox and running sessions",
+            )
+            .read_only()
+            .pm(),
             title: "What's going on",
             description: "Every project (or one): open tickets per stage, tickets in progress with their branch, PR, CI \
                           and who has them, tickets waiting out the start delay before auto-start takes them, the Inbox's open \
                           items, and the agent sessions running now.",
             schema: schema::<GetOverview>,
         },
-        Def {
-            name: "search_tickets",
+        Tool {
+            decl: ToolDecl::new("search_tickets", "Search tickets in every project").read_only().pm(),
             title: "Search tickets",
             description: "Tickets matching words or a key, in every project or one, by stage: key, title, stage, \
                           priority, labels and state. get_ticket reads one in full.",
             schema: schema::<SearchTickets>,
         },
-        Def {
-            name: "get_session",
+        Tool {
+            decl: ToolDecl::new("get_session", "Read a session's state and last messages").read_only().pm(),
             title: "Get a session",
             description: "An agent session's state: agent, status, activity, ticket, persona and workflow step, its \
                           open requests, and its last messages.",
             schema: schema::<GetSession>,
         },
-        Def {
-            name: "list_workflow_runs",
+        Tool {
+            decl: ToolDecl::new("list_workflow_runs", "List workflow runs and their steps").read_only().pm(),
             title: "List workflow runs",
             description: "Workflow runs (of a workflow or a ticket), newest first, with each step's status, port and \
                           error.",
             schema: schema::<ListWorkflowRuns>,
         },
-        Def {
-            name: "search_notes",
+        Tool {
+            decl: ToolDecl::new("search_notes", "Search the PM's notes and journal").read_only().pm(),
             title: "Search notes",
             description: "The PM's notes and journal entries, and the user's own notes (kind user, writtenBy \
                           \"the user\"), matching the words (full-text), host-wide and per project; every pinned \
                           note when you give no words and pinned: true.",
             schema: schema::<SearchNotes>,
         },
-        Def {
-            name: "save_note",
+        Tool {
+            decl: ToolDecl::new("save_note", "Save a note").pm(),
             title: "Save a note",
             description: "Adds a note (or replaces one by id): what PDT's data can't tell you, such as the user's \
                           preferences, decisions, people and rules at work. Pinned notes go in every briefing. The \
                           user's own notes (kind user) are theirs: you can't change them.",
             schema: schema::<SaveNote>,
         },
-        Def {
-            name: "delete_note",
+        Tool {
+            decl: ToolDecl::new("delete_note", "Delete a note").destructive().pm(),
             title: "Delete a note",
             description: "Removes a note that no longer holds (not one of the user's own).",
             schema: schema::<DeleteNote>,
         },
-        Def {
-            name: "write_journal",
+        Tool {
+            decl: ToolDecl::new("write_journal", "Write the session's journal entry").pm(),
             title: "Write the journal",
             description: "This conversation's journal entry, which later PM conversations' briefings include. Write \
                           it when PDT asks for a checkpoint or says the conversation is ending; each call replaces \
                           the entry.",
             schema: schema::<WriteJournal>,
         },
-        Def {
-            name: "list_todos",
+        Tool {
+            decl: ToolDecl::new("list_todos", "Read your todo list").read_only().pm(),
             title: "List todos",
             description: "The user's own todo list (open ones in their order, then done ones): title, done, project, \
                           linked ticket, due date (dueOn, YYYY-MM-DD, and dueTime, HH:MM, the user's local time), how it repeats \
@@ -585,15 +567,15 @@ fn defs() -> Vec<Def> {
                           the due date or when it's done; checking it off makes the next one) and dates. Read-only: the user edits it in PDT.",
             schema: schema::<ListTodos>,
         },
-        Def {
-            name: "create_ticket",
+        Tool {
+            decl: ToolDecl::new("create_ticket", "Create tickets").asks().pm(),
             title: "Create a ticket",
             description: "Adds a ticket to a project (a draft unless you give a stage), recorded as the PM's. The \
                           user confirms each call unless the project lets you act.",
             schema: schema::<CreateTicket>,
         },
-        Def {
-            name: "edit_ticket",
+        Tool {
+            decl: ToolDecl::new("edit_ticket", "Edit tickets (outside the PM, others only by exact key)").asks().pm(),
             title: "Edit a ticket",
             description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
                           agent's. Outside the PM, a ticket other than the session's own needs its exact key \
@@ -602,8 +584,8 @@ fn defs() -> Vec<Def> {
                           lets you act.",
             schema: schema::<EditTicket>,
         },
-        Def {
-            name: "link_tickets",
+        Tool {
+            decl: ToolDecl::new("link_tickets", "Link two tickets (blocks, relates to)").asks().pm(),
             title: "Link two tickets",
             description: "Links a ticket to another in its project: it blocks the other, is blocked by it, or relates \
                           to it. The link shows on both tickets and a blocked ticket waits on the board. Self-links \
@@ -611,15 +593,17 @@ fn defs() -> Vec<Def> {
                           act.",
             schema: schema::<LinkTickets>,
         },
-        Def {
-            name: "unlink_tickets",
+        Tool {
+            decl: ToolDecl::new("unlink_tickets", "Remove a link between tickets").asks().pm(),
             title: "Unlink two tickets",
             description: "Removes a link made with link_tickets (or in the UI): the same ticket, kind and other. The \
                           user confirms each call unless the project lets you act.",
             schema: schema::<LinkTickets>,
         },
-        Def {
-            name: "stop_ticket",
+        Tool {
+            decl: ToolDecl::new("stop_ticket", "Stop a ticket's work: its workflow run, sessions and attempt")
+                .asks()
+                .pm(),
             title: "Stop a ticket's work",
             description: "Stops the work on a ticket: cancels its workflow runs, stops its agent sessions, abandons its \
                           attempt and moves it back to To do (or the stage you give: draft, ready or todo). The \
@@ -628,131 +612,22 @@ fn defs() -> Vec<Def> {
                           confirms each call unless the project lets you act.",
             schema: schema::<StopTicket>,
         },
-        Def {
-            name: "send_to_session",
+        Tool {
+            decl: ToolDecl::new("send_to_session", "Message a session").asks().pm(),
             title: "Message a session",
             description: "Sends an agent session a message, delivered when it is idle and marked as from the PM. The \
                           user confirms each call unless the project lets you act.",
             schema: schema::<SendToSession>,
         },
-        Def {
-            name: "discord_get",
-            title: "Look at the Discord server",
-            description: "The Discord server a bot connection manages: its categories, channels and webhooks (with \
-                          the connection each webhook is saved as), and whether you may change it without asking.",
-            schema: schema::<crate::discord::DiscordGet>,
-        },
-        Def {
-            name: "discord_change",
-            title: "Change the Discord server",
-            description: "Creates, renames, moves or archives (moves into Archive) channels and categories on the \
-                          Discord server, in order. The user confirms each call unless the bot connection lets you \
-                          act.",
-            schema: schema::<crate::discord::DiscordChange>,
-        },
-        Def {
-            name: "discord_webhook",
-            title: "Make a Discord webhook",
-            description: "Makes a webhook on a channel (and the channel, with createChannel) and saves it as a \
-                          discord_webhook connection that discord.post steps use by name. Its URL is never shown. \
-                          The user confirms each call unless the bot connection lets you act.",
-            schema: schema::<crate::discord::DiscordWebhookArgs>,
-        },
-        Def {
-            name: "scryer_library",
-            title: "Browse the Scryer library",
-            description: "Titles in the user's Scryer media library: films, series and anime, by facet, words in the \
-                          title and whether they are monitored, a page at a time (limit, offset), with each one's \
-                          library, status and episodes on disk.",
-            schema: crate::scryer::tool_schema::<crate::scryer::ScryerLibraryConfig>,
-        },
-        Def {
-            name: "scryer_search",
-            title: "Look up titles to add to Scryer",
-            description: "Searches Scryer's metadata for films, series and anime by title (one facet, or all): each \
-                          result's ids (tvdbId, tmdbId, imdbId) for scryer_add, and whether it is in the library \
-                          already.",
-            schema: crate::scryer::tool_schema::<crate::scryer::ScryerSearchConfig>,
-        },
-        Def {
-            name: "scryer_queue",
-            title: "See Scryer's downloads",
-            description: "What Scryer is downloading: each item's title, progress, status, time left and client, \
-                          and why one needs the user.",
-            schema: crate::scryer::tool_schema::<crate::scryer::ScryerQueueConfig>,
-        },
-        Def {
-            name: "scryer_add",
-            title: "Add to Scryer",
-            description: "Adds a film, series or anime to the user's Scryer library by the ids scryer_search gave \
-                          (facet and at least one id; give name too so the user sees it), monitored unless told, so \
-                          Scryer finds and downloads it. A title already in the library is left as it is. The user \
-                          confirms each call unless the Scryer connection lets you act.",
-            schema: crate::scryer::tool_schema::<crate::scryer::ScryerAddConfig>,
-        },
-        Def {
-            name: "scryer_schema",
-            title: "Look up Scryer's API",
-            description: "Finds and describes Scryer's GraphQL operations and types, to read or change any of its \
-                          settings (indexers, download clients, seeding profiles, quality, general settings, jobs): \
-                          `search` words in names and descriptions; `operation` one query or mutation with its \
-                          arguments, the input types they take and what it returns; `type` one type's fields. With \
-                          none, how big the API is.",
-            schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerSchemaArgs>,
-        },
-        Def {
-            name: "scryer_query",
-            title: "Read from Scryer",
-            description: "Runs a GraphQL query on Scryer (a query document and its variables), checked against \
-                          Scryer's schema first; mutations go through scryer_mutate. Credentials in the answer are \
-                          redacted, and a long answer is cut (it says where): select fewer fields or page.",
-            schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerQueryConfig>,
-        },
-        Def {
-            name: "scryer_mutate",
-            title: "Change Scryer",
-            description: "Runs one GraphQL mutation on Scryer: its name, its arguments by name and the fields to read \
-                          back (its scalar fields when left out), checked against Scryer's schema first. Put a \
-                          password or API key in as {\"$secret\": \"<connection>\"}: PDT fills in that connection's \
-                          secret, so it never passes through you. The user confirms each call unless the Scryer \
-                          connection lets you act; deleting, resetting, upgrades and calls that send a secret always \
-                          ask.",
-            schema: crate::scryer::tool_schema::<crate::scryer::graphql::ScryerMutateConfig>,
-        },
-        Def {
-            name: "report_bug",
-            title: "Report a bug in PDT",
-            description: "Reports a bug in PDT itself (not in the project you work on), as Host settings route it: an \
-                          issue on PDT's GitHub repository, or a Draft bug ticket on the instance PDT is developed on. \
-                          includeDiagnostics adds this instance's version, OS, update state and the end of its log, \
-                          redacted. The user confirms each call.",
-            schema: schema::<crate::bug_reports::NewBugReport>,
-        },
     ]
 }
 
-pub(crate) fn infos() -> Vec<ToolInfo> {
-    defs()
-        .into_iter()
-        .map(|d| ToolInfo {
-            name: d.name.into(),
-            title: d.title.into(),
-            description: d.description.into(),
-            input_schema: (d.schema)(),
-            annotations: json!({"title": d.title, "readOnlyHint": READ_ONLY.contains(&d.name),
-                                "destructiveHint": d.name == "delete_note",
-                                "openWorldHint": d.name.starts_with("discord_") || d.name.starts_with("scryer_")
-                                    || d.name == "report_bug"}),
-        })
-        .collect()
-}
-
-fn args<T: DeserializeOwned>(v: Value) -> Result<T, String> {
+pub(crate) fn args<T: DeserializeOwned>(v: Value) -> Result<T, String> {
     let v = if v.is_null() { json!({}) } else { v };
     serde_json::from_value(v).map_err(|e| format!("the arguments don't fit the tool's schema: {e}"))
 }
 
-fn api(e: ApiError) -> String {
+pub(crate) fn api(e: ApiError) -> String {
     e.message().to_string()
 }
 
@@ -768,7 +643,7 @@ async fn pm_may_write(st: &AppState, id: &str) -> Result<(), String> {
     }
 }
 
-/// Runs a tool. Err is a message for the agent.
+/// Runs one of PDT's own tools. Err is a message for the agent.
 pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
     let st = cx.st;
     match name {
@@ -1273,42 +1148,6 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let m = st.store.queue_session_message(&m).await.map_err(store)?;
             Ok(json!({"queued": true, "messageId": m.id}))
         }
-        "discord_get" => crate::discord::get(st, args(a)?).await,
-        "discord_change" => {
-            let a: crate::discord::DiscordChange = args(a)?;
-            let target = AskTarget::Connection { kind: DISCORD_BOT, name: a.connection.clone() };
-            confirmable(cx, name, &target).await?;
-            crate::discord::change(st, a).await
-        }
-        "discord_webhook" => {
-            let a: crate::discord::DiscordWebhookArgs = args(a)?;
-            let target = AskTarget::Connection { kind: DISCORD_BOT, name: a.connection.clone() };
-            confirmable(cx, name, &target).await?;
-            crate::discord::webhook_tool(st, a).await
-        }
-        "scryer_library" => crate::scryer::library_tool(st, a).await,
-        "scryer_search" => crate::scryer::search_tool(st, a).await,
-        "scryer_queue" => crate::scryer::queue_tool(st, a).await,
-        "scryer_add" => {
-            let given = a.get("connection").and_then(Value::as_str).map(String::from);
-            confirmable(cx, name, &AskTarget::Connection { kind: SCRYER, name: given }).await?;
-            crate::scryer::add_tool(st, a).await
-        }
-        "scryer_schema" => crate::scryer::graphql::schema_tool(st, a).await,
-        "scryer_query" => crate::scryer::graphql::query_tool(st, a).await,
-        "scryer_mutate" => {
-            let target = pdt_core::pm::ask_target(name, &a).unwrap_or(AskTarget::Always);
-            confirmable(cx, name, &target).await?;
-            crate::scryer::graphql::mutate_tool(st, a).await
-        }
-        "report_bug" => {
-            let mut a: crate::bug_reports::NewBugReport = args(a)?;
-            confirmable(cx, name, &AskTarget::Always).await?;
-            // A retried call within a minute files nothing new.
-            a.nonce = Some(format!("mcp:{}:{}", cx.session.id, a.title.trim()));
-            let filed = crate::bug_reports::file(st, a, Some(cx.session)).await.map_err(api)?;
-            Ok(serde_json::to_value(filed).map_err(|e| e.to_string())?)
-        }
         other => Err(format!("no tool is called {other}")),
     }
 }
@@ -1332,9 +1171,11 @@ async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
 /// there) runs only where the project lets the PM act. Claude asks through its permission prompt (spec §4).
-async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
+pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
-    if !pdt_core::persona::asks(tool) || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
+    if !crate::integrations::registry().tool_table().asks(tool)
+        || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
+    {
         return Ok(());
     }
     if crate::pm::acts_without_asking(cx.st, target).await {
@@ -1687,21 +1528,4 @@ pub(crate) async fn add_review_comment(
     };
     let author = cx.session.persona.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "agent".into());
     crate::review::add_comment(st, &wt_id, input, &author, true).await.map_err(api)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_tool_is_listed_once_with_an_object_schema() {
-        let names: Vec<String> = infos().into_iter().map(|t| t.name).collect();
-        assert_eq!(names, pdt_core::persona::ALL_TOOLS.to_vec());
-        for t in infos() {
-            assert_eq!(t.input_schema["type"], "object", "{}", t.name);
-            assert!(t.input_schema.get("$schema").is_none());
-        }
-        let s = &infos()[1].input_schema;
-        assert!(s["required"].as_array().unwrap().iter().any(|r| r == "outcome"), "{s}");
-    }
 }

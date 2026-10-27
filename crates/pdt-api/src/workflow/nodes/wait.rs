@@ -35,7 +35,7 @@ impl EventWait {
     pub fn check(&self) -> Result<(), String> {
         match std::iter::once(&self.kind)
             .chain(&self.also)
-            .find(|k| pdt_core::workflow::events::event_type(k).is_none())
+            .find(|k| crate::integrations::registry().event_type(k).is_none())
         {
             Some(k) => Err(format!("no event type is called {k}")),
             None => Ok(()),

@@ -4,16 +4,21 @@
 
 use crate::workflow::api::{Scope, Workflow};
 use crate::workflow::doc::WorkflowDoc;
-use crate::workflow::events::EVENT_TYPES;
+use crate::workflow::events::EventType;
 use std::collections::{BTreeSet, HashSet};
 
 const SESSION_SEND: &str = "session.send";
 const WORKFLOW_CALL: &str = "workflow.call";
 const AGENT: &str = "agent";
 
-/// The event types (ids from [`EVENT_TYPES`]) some enabled workflow that applies to `project_id` turns into a message
-/// to an attempt's agent. `all` is every workflow with its current document; a called workflow need not be enabled.
-pub fn agent_news(all: &[(Workflow, WorkflowDoc)], project_id: &str) -> BTreeSet<&'static str> {
+/// The event types (ids from `events`, every type PDT has) some enabled workflow that applies to `project_id` turns
+/// into a message to an attempt's agent. `all` is every workflow with its current document; a called workflow need not
+/// be enabled.
+pub fn agent_news(
+    all: &[(Workflow, WorkflowDoc)],
+    project_id: &str,
+    events: &[&'static EventType],
+) -> BTreeSet<&'static str> {
     let mut out = BTreeSet::new();
     for (wf, doc) in all.iter().filter(|(wf, _)| wf.enabled) {
         let applies = match wf.scope {
@@ -26,7 +31,7 @@ pub fn agent_news(all: &[(Workflow, WorkflowDoc)], project_id: &str) -> BTreeSet
             continue;
         }
         for node in &doc.nodes {
-            let Some(event) = EVENT_TYPES.iter().find(|e| e.id == node.kind) else { continue };
+            let Some(event) = events.iter().find(|e| e.id == node.kind) else { continue };
             if !for_project(&node.config, project_id) {
                 continue;
             }
@@ -86,6 +91,10 @@ fn sends_to_attempt(config: &serde_json::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn events() -> Vec<&'static EventType> {
+        crate::workflow::events::EVENT_TYPES.iter().collect()
+    }
     use crate::workflow::api::Source;
     use serde_json::json;
 
@@ -132,7 +141,7 @@ mod tests {
     #[test]
     fn names_the_events_whose_triggers_lead_to_a_message() {
         let all = [wf("a", Scope::Host, None, true, notices("PR notices"))];
-        assert_eq!(agent_news(&all, "p1"), BTreeSet::from(["attempt.merged", "ci.run_failed"]));
+        assert_eq!(agent_news(&all, "p1", &events()), BTreeSet::from(["attempt.merged", "ci.run_failed"]));
     }
 
     #[test]
@@ -142,8 +151,8 @@ mod tests {
             wf("b", Scope::Project, Some("p2"), true, notices("b")),
             wf("c", Scope::Personal, None, true, notices("c")),
         ];
-        assert!(agent_news(&all, "p1").is_empty());
-        assert_eq!(agent_news(&all, "p2").len(), 2);
+        assert!(agent_news(&all, "p1", &events()).is_empty());
+        assert_eq!(agent_news(&all, "p2", &events()).len(), 2);
     }
 
     #[test]
@@ -151,8 +160,8 @@ mod tests {
         let doc = json!({"name": "x", "nodes": [node("t", "pr.conflict", json!({"projects": ["p2"]})), tell()],
             "edges": [{"from": "t", "to": "tell"}]});
         let all = [wf("a", Scope::Host, None, true, doc)];
-        assert!(agent_news(&all, "p1").is_empty());
-        assert_eq!(agent_news(&all, "p2"), BTreeSet::from(["pr.conflict"]));
+        assert!(agent_news(&all, "p1", &events()).is_empty());
+        assert_eq!(agent_news(&all, "p2", &events()), BTreeSet::from(["pr.conflict"]));
     }
 
     #[test]
@@ -162,7 +171,7 @@ mod tests {
                 node("s", "ci.run_passed", json!({})),
                 node("other", SESSION_SEND, json!({"session": "s9", "text": "x"})), tell()],
             "edges": [{"from": "t", "to": "move"}, {"from": "s", "to": "other"}]});
-        assert!(agent_news(&[wf("a", Scope::Host, None, true, doc)], "p1").is_empty());
+        assert!(agent_news(&[wf("a", Scope::Host, None, true, doc)], "p1", &events()).is_empty());
     }
 
     #[test]
@@ -171,7 +180,10 @@ mod tests {
                 node("t", "pr.conflict", json!({})), node("s", "ci.run_passed", json!({})),
                 node("fix", AGENT, json!({"session": "reuse"})), node("review", AGENT, json!({"session": "new"}))],
             "edges": [{"from": "t", "to": "fix"}, {"from": "s", "to": "review"}]});
-        assert_eq!(agent_news(&[wf("a", Scope::Host, None, true, doc)], "p1"), BTreeSet::from(["pr.conflict"]));
+        assert_eq!(
+            agent_news(&[wf("a", Scope::Host, None, true, doc)], "p1", &events()),
+            BTreeSet::from(["pr.conflict"])
+        );
     }
 
     #[test]
@@ -182,6 +194,6 @@ mod tests {
         let child = json!({"name": "child", "nodes": [node("m", "manual", json!({})), tell()],
             "edges": [{"from": "m", "to": "tell"}]});
         let all = [wf("p", Scope::Host, None, true, parent), wf("child", Scope::Host, None, false, child)];
-        assert_eq!(agent_news(&all, "p1"), BTreeSet::from(["pr.queue_left"]));
+        assert_eq!(agent_news(&all, "p1", &events()), BTreeSet::from(["pr.queue_left"]));
     }
 }

@@ -63,7 +63,7 @@ notifications get 202; `GET`/`DELETE` 405).
   `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
   less the asking tools (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session`,
   `discord_change`, `discord_webhook`:
-  pdt-core `ASKING_TOOLS`), which Claude
+  each tool's `asks` flag, pdt-core `integration::ToolDecl`), which Claude
   asks about per call;
   Codex conversations a thread `config` `mcp_servers.pdt` with `http_headers` and `default_tools_approval_mode =
   "approve"`, Codex terminals the same through `-c` with the token in `PDT_MCP_TOKEN` (`bearer_token_env_var`); Devin
@@ -110,7 +110,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   Codex also gets `web_search = "live"` and network access in its workspace-write sandbox (thread config
   `sandbox_workspace_write.network_access`, `networkAccess` on each turn's `sandboxPolicy`; pdt-agents
   `mcp::CODEX_PM_CONFIG`).
-- **PDT's tools.** pdt-mcp with the PM's set (pdt-core `PM_TOOLS`): `get_overview` (projects with open tickets per
+- **PDT's tools.** pdt-mcp with the PM's set (every tool with the `pm` flag, from every integration): `get_overview` (projects with open tickets per
   stage, tickets in progress with branch/PR/CI/agent in words, the Inbox, running agent sessions), `search_tickets`,
   `get_ticket`, `get_session` (state, open requests, last messages),
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, `list_todos` (the user's todo

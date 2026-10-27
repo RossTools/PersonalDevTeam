@@ -259,7 +259,7 @@ async fn agent_news(st: &AppState, project_id: &str) -> Result<std::collections:
             all.push((wf, doc));
         }
     }
-    Ok(pdt_core::workflow::news::agent_news(&all, project_id))
+    Ok(pdt_core::workflow::news::agent_news(&all, project_id, crate::integrations::registry().events()))
 }
 
 fn is_codex(s: &Session) -> bool {

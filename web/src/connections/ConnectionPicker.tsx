@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button, Select } from '@ui';
 import { api } from '../api/client';
 import { ConnectionDialog, connectionsKey } from './ConnectionDialog';
-import { kindLabel, kindOf } from './kinds';
+import { useConnectionKinds } from './kinds';
 
 export function ConnectionPicker({ kind, value, onChange, label, disabled }: {
   /** `discord_webhook`, …; `any` or none: every connection. */
@@ -16,6 +16,7 @@ export function ConnectionPicker({ kind, value, onChange, label, disabled }: {
   disabled?: boolean;
 }) {
   const list = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const { kindLabel, kindOf } = useConnectionKinds();
   const [adding, setAdding] = useState(false);
   const wanted = kind && kind !== 'any' ? kind : null;
   const fits = (list.data ?? []).filter((c) => !wanted || c.kind === wanted);

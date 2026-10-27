@@ -2,6 +2,7 @@
 //! (Refiner, Coder, Reviewer, QA) are installed on start and follow newer templates until the user edits them.
 
 use crate::error::ApiError;
+use crate::integrations::registry;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -27,7 +28,7 @@ async fn load(st: &AppState, id: &str) -> Result<Persona, ApiError> {
 
 /// `GET /api/personas/tools` (PDT-110): every pdt-mcp tool a persona may pick, with what it does.
 pub(crate) async fn tools() -> Json<Vec<pdt_core::persona::PersonaTool>> {
-    Json(pdt_core::persona::tool_list())
+    Json(registry().tool_table().persona_tools())
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Persona>>, ApiError> {
@@ -41,7 +42,7 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Persona>), ApiError> {
     let Json(n) = payload?;
     let name = valid_name(&n.name).map_err(invalid)?;
-    let setup = n.setup.validate().map_err(invalid)?;
+    let setup = n.setup.validate(registry().tool_table()).map_err(invalid)?;
     let now = now_ms();
     let p = Persona {
         id: uuid::Uuid::now_v7().to_string(),
@@ -71,7 +72,7 @@ pub(crate) async fn save(
 ) -> Result<Json<Persona>, ApiError> {
     let Json(s) = payload?;
     let current = load(&st, &id).await?;
-    let setup = s.setup.validate().map_err(invalid)?;
+    let setup = s.setup.validate(registry().tool_table()).map_err(invalid)?;
     if setup == current.setup {
         return Ok(Json(current));
     }
@@ -168,7 +169,7 @@ pub(crate) async fn diff(
     let from = q.from.unwrap_or(to.saturating_sub(1).max(1));
     let a = st.store.get_persona_version(&id, from).await?.ok_or_else(|| ApiError::not_found("persona version"))?;
     let b = st.store.get_persona_version(&id, to).await?.ok_or_else(|| ApiError::not_found("persona version"))?;
-    Ok(Json(persona_diff(&a.setup, &b.setup, &format!("v{from}"), &format!("v{to}"))))
+    Ok(Json(persona_diff(&a.setup, &b.setup, &format!("v{from}"), &format!("v{to}"), registry().tool_table())))
 }
 
 /// `GET /api/personas/{id}/template` (PDT-100): a built-in persona's current template, for "Load PDT's template".
@@ -180,8 +181,8 @@ pub(crate) async fn template(
     let b = p.builtin.as_deref().and_then(pdt_core::persona::builtin_persona).ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, "not_builtin", format!("{} is not a built-in persona", p.name))
     })?;
-    let setup = b.setup();
-    let diff = persona_diff(&p.setup, &setup, &format!("v{}", p.version), "PDT's template");
+    let setup = b.setup(registry().tool_table());
+    let diff = persona_diff(&p.setup, &setup, &format!("v{}", p.version), "PDT's template", registry().tool_table());
     Ok(Json(pdt_core::persona::PersonaTemplate { setup, diff }))
 }
 
@@ -203,7 +204,7 @@ pub(crate) async fn ensure_builtins(st: &AppState) {
 }
 
 async fn install(st: &AppState, b: &pdt_core::persona::BuiltinPersona) -> Result<(), pdt_store::StoreError> {
-    let template = b.setup();
+    let template = b.setup(registry().tool_table());
     let now = now_ms();
     let Some(p) = st.store.persona_by_builtin(b.id).await? else {
         // A persona the user already called that keeps their own; the built-in gets a free name.
@@ -242,7 +243,7 @@ async fn install(st: &AppState, b: &pdt_core::persona::BuiltinPersona) -> Result
             .find(|v| v.author == PersonaAuthor::Builtin)
             .map_or_else(|| template.clone(), |v| v.setup),
     };
-    let (setup, kept) = pdt_core::persona::follow_template(&base, &p.setup, &template);
+    let (setup, kept) = pdt_core::persona::follow_template(&base, &p.setup, &template, registry().tool_table());
     if setup != p.setup {
         let note = match kept.as_slice() {
             [] => "updated by PDT".to_string(),

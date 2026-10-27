@@ -6,7 +6,7 @@ import { Alert, Button, Dialog, Field, Input, Link, Select, Switch, Textarea } f
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import {
-  AUTH_MODES, CONNECTION_KINDS, discordInviteUrl, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, type ConnectionKind,
+  AUTH_MODES, discordInviteUrl, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, useConnectionKinds, type ConnectionKind,
 } from './kinds';
 
 export const connectionsKey = ['connections'] as const;
@@ -18,14 +18,30 @@ function settingsText(k: ConnectionKind | undefined, config: Record<string, unkn
   return Object.fromEntries((k?.fields ?? []).map((f) => [f.key, fieldText(f, config[f.key]) || (f.type === 'choice' ? f.options?.[0]?.value ?? '' : '')]));
 }
 
-export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved }: {
+interface DialogProps {
   /** Editing this one; else a new one. */
   connection?: Connection;
   /** A new one of this kind (the kind can't be changed). */
   kind?: string;
   onClose: () => void;
   onSaved?: (c: Connection) => void;
-}) {
+}
+
+/** Opens once the kinds are loaded (the Connections page and pickers have them already). */
+export function ConnectionDialog(props: DialogProps) {
+  const kinds = useConnectionKinds();
+  if (kinds.data) return <ConnectionForm {...props} kinds={kinds.data} />;
+  if (!kinds.error) return null;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) props.onClose(); }} title={props.connection ? `Edit ${props.connection.name}` : 'New connection'}
+      footer={<Button variant="secondary" onClick={props.onClose}>Cancel</Button>}>
+      <Alert tone="error">The kinds of connection could not be loaded: {kinds.error.message}</Alert>
+    </Dialog>
+  );
+}
+
+/** The dialog's form, once the kinds are loaded. */
+function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, kinds }: DialogProps & { kinds: ConnectionKind[] }) {
   const qc = useQueryClient();
   const [name, setName] = useState(connection?.name ?? '');
   const [kind, setKind] = useState(connection?.kind ?? fixedKind ?? 'discord_webhook');
@@ -33,7 +49,7 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
-  const [settings, setSettings] = useState(() => settingsText(kindOf(kind), connection?.config));
+  const [settings, setSettings] = useState(() => settingsText(kindOf(kinds, kind), connection?.config));
   const [guildId, setGuildId] = useState(str(connection?.config.guildId));
   const [appId, setAppId] = useState(str(connection?.config.applicationId));
   const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
@@ -41,8 +57,8 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
   // second one with the same name.
   const [made, setMade] = useState<Connection | null>(null);
   const existing = connection ?? made;
-  const k = kindOf(kind);
-  const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(id))); };
+  const k = kindOf(kinds, kind);
+  const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(kinds, id))); };
   const askUrl = !!k?.url || (!!k?.urlWhen && settings[k.urlWhen.key] === k.urlWhen.value);
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
@@ -91,7 +107,7 @@ export function ConnectionDialog({ connection, kind: fixedKind, onClose, onSaved
           <Select
             className="w-full"
             aria-label="Kind"
-            options={CONNECTION_KINDS.map((x) => ({ value: x.id, label: x.label }))}
+            options={kinds.map((x) => ({ value: x.id, label: x.label }))}
             value={kind}
             disabled={!!existing || !!fixedKind}
             onChange={pickKind}
