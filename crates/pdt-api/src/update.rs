@@ -10,10 +10,10 @@ use axum::http::StatusCode;
 use pdt_core::activity::Activity;
 use pdt_core::handoff::{UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path};
 use pdt_core::host::{DEFAULT_UPDATE_CHECK_MINUTES, UpdatePolicy};
-use pdt_core::release::{HostOs, TokenState, Version, parse_version, token_state};
+use pdt_core::release::{HostOs, TokenState, Version, compare_base, parse_version, token_state};
 use pdt_core::run::RunState;
 use pdt_core::session::SessionStatus;
-use pdt_update::{GitHubClient, Release, UpdateError, fetch_verified};
+use pdt_update::{Changes, GitHubClient, Release, UpdateError, fetch_verified};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -42,6 +42,48 @@ pub struct ReleaseSummary {
     /// GitHub's `published_at` as GitHub sends it (an ISO 8601 UTC string, e.g. `2026-10-15T00:00:00Z`), not Unix
     /// ms: it is only displayed (ruling F17).
     pub published_at: Option<String>,
+    /// Every commit from the installed version to this one (PDT-169); None when GitHub could not compare them (the
+    /// installed tag is gone, a local build, a failed call), and `notes` is all there is.
+    pub changes: Option<ReleaseChanges>,
+}
+
+/// The commits an update brings, newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReleaseChanges {
+    /// The installed version (`0.1.741`).
+    pub since: String,
+    pub entries: Vec<ReleaseChange>,
+    /// Every commit in the range: more than `entries` when GitHub cut the list off at 250.
+    pub total: u32,
+    /// The range on GitHub, when the list is cut off.
+    pub more_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReleaseChange {
+    pub sha: String,
+    /// The commit's first line.
+    pub subject: String,
+    /// The subject without its ticket key and pull request number.
+    pub title: String,
+    /// `PDT-167`.
+    pub ticket: Option<String>,
+    /// That ticket on this instance, when it has it (looked up for each answer, not cached).
+    pub ticket_here: Option<TicketHere>,
+    pub pr: Option<u32>,
+    pub pr_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketHere {
+    pub id: String,
+    pub project_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -71,6 +113,8 @@ pub struct UpdateService {
     status: Mutex<UpdateStatus>,
     /// The newer release a check found. Lock order: `status`, then `release`.
     pub(crate) release: Mutex<Option<Release>>,
+    /// The last comparison: its base and head, so a check for the same pair does not ask GitHub again.
+    changes: Mutex<Option<(String, String, ReleaseChanges)>>,
     /// Held by the install task from the busy check until the hand-off (or failure).
     running: Arc<tokio::sync::Mutex<()>>,
     /// `requested_at` of the request this pdtd handed to pdt-host, while it shows `installing`.
@@ -110,6 +154,7 @@ impl UpdateService {
                 last_result: None,
             }),
             release: Mutex::new(None),
+            changes: Mutex::new(None),
             running: Default::default(),
             handed_off_at: Mutex::new(None),
             first_check_delay: Duration::from_secs(30),
@@ -247,6 +292,10 @@ async fn check_now(st: &AppState) -> UpdateStatus {
         return claimed;
     }
     let result = svc.client.latest(&tok).await;
+    let changes = match &result {
+        Ok(l) if l.release.version.is_newer_than(&current) => release_changes(svc, &tok, &l.release).await,
+        _ => None,
+    };
     let now = now_ms();
     let mut s = svc.status.lock().unwrap_or_else(|e| e.into_inner());
     s.last_checked_at = Some(now);
@@ -256,7 +305,7 @@ async fn check_now(st: &AppState) -> UpdateStatus {
         Ok(l) => {
             s.token = token_state(true, l.token_expires_at, false, now);
             if !busy {
-                set_found(&mut s, svc, &l.release, &current);
+                set_found(&mut s, svc, &l.release, &current, changes);
             }
         }
         Err(e) => {
@@ -272,8 +321,78 @@ async fn check_now(st: &AppState) -> UpdateStatus {
     s.clone()
 }
 
+/// The commits from the installed version to `release`, from the cache when the pair was compared before. None when
+/// there is nothing to compare from or GitHub fails (the release's notes stand in).
+async fn release_changes(svc: &UpdateService, tok: &str, release: &Release) -> Option<ReleaseChanges> {
+    let base = compare_base(&svc.current)?;
+    if let Some((b, h, c)) = &*svc.changes.lock().unwrap_or_else(|e| e.into_inner())
+        && (b.as_str(), h.as_str()) == (base.as_str(), release.tag.as_str())
+    {
+        return Some(c.clone());
+    }
+    let changes = match svc.client.compare(tok, &base, &release.tag).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, base, head = release.tag, "could not list the changes in the update");
+            return None;
+        }
+    };
+    let since = parse_version(&svc.current).map_or_else(|| svc.current.clone(), |v| v.to_string());
+    let out = summarize(&changes, &since, svc.client.repo());
+    *svc.changes.lock().unwrap_or_else(|e| e.into_inner()) = Some((base, release.tag.clone(), out.clone()));
+    Some(out)
+}
+
+fn summarize(c: &Changes, since: &str, repo: &str) -> ReleaseChanges {
+    let entries = c
+        .entries
+        .iter()
+        .map(|e| {
+            let pr = e.pr.and_then(|n| u32::try_from(n).ok());
+            ReleaseChange {
+                sha: e.sha.clone(),
+                subject: e.subject.clone(),
+                title: e.title.clone(),
+                ticket: e.ticket.clone(),
+                ticket_here: None,
+                pr,
+                pr_url: pr.map(|n| format!("https://github.com/{repo}/pull/{n}")),
+            }
+        })
+        .collect();
+    ReleaseChanges {
+        since: since.to_string(),
+        entries,
+        total: u32::try_from(c.total).unwrap_or(u32::MAX),
+        more_url: c.truncated().then(|| c.url.clone()),
+    }
+}
+
+/// Points each change's ticket key at that ticket here, when this instance has it.
+async fn link_tickets(st: &AppState, mut s: UpdateStatus) -> UpdateStatus {
+    let Some(changes) = s.latest.as_mut().and_then(|l| l.changes.as_mut()) else { return s };
+    let Ok(projects) = st.store.list_projects().await else { return s };
+    for e in &mut changes.entries {
+        let Some(k) = e.ticket.as_deref().and_then(pdt_core::ticket::parse_key) else { continue };
+        let Some(p) = projects.iter().find(|p| k.key.as_deref().is_some_and(|key| p.key.eq_ignore_ascii_case(key)))
+        else {
+            continue;
+        };
+        if let Ok(Some(id)) = st.store.ticket_id_by_number(&p.id, k.number).await {
+            e.ticket_here = Some(TicketHere { id, project_id: p.id.clone() });
+        }
+    }
+    s
+}
+
 /// Records a check's answer (the status lock is held by the caller).
-fn set_found(s: &mut UpdateStatus, svc: &UpdateService, release: &Release, current: &Version) {
+fn set_found(
+    s: &mut UpdateStatus,
+    svc: &UpdateService,
+    release: &Release,
+    current: &Version,
+    changes: Option<ReleaseChanges>,
+) {
     let newer = release.version.is_newer_than(current);
     *svc.release.lock().unwrap_or_else(|e| e.into_inner()) = newer.then(|| release.clone());
     s.error = None;
@@ -282,6 +401,7 @@ fn set_found(s: &mut UpdateStatus, svc: &UpdateService, release: &Release, curre
         tag: release.tag.clone(),
         notes: release.notes.clone(),
         published_at: release.published_at.clone(),
+        changes,
     });
     s.state = resting(s);
 }
@@ -537,11 +657,11 @@ pub(crate) async fn get_status(State(st): State<AppState>) -> Json<UpdateStatus>
     settle_handed_off(&st);
     refresh_policy(&st).await;
     sync_token_state(&st).await;
-    Json(st.update.snapshot())
+    Json(link_tickets(&st, st.update.snapshot()).await)
 }
 
 pub(crate) async fn post_check(State(st): State<AppState>) -> Json<UpdateStatus> {
-    Json(check(&st).await)
+    Json(link_tickets(&st, check(&st).await).await)
 }
 
 #[derive(Deserialize)]
@@ -558,7 +678,7 @@ pub(crate) async fn post_install(
     let status = install(&st, b.force).await?;
     // A manual update of a skipped version is the retry ruling B allows; the skip is lifted.
     let _ = std::fs::remove_file(skip_path(&st.data_dir));
-    Ok(Json(status))
+    Ok(Json(link_tickets(&st, status).await))
 }
 
 pub(crate) async fn post_dismiss(State(st): State<AppState>) -> StatusCode {
@@ -591,7 +711,7 @@ pub(crate) async fn put_token(
     };
     write_token(&st, Some(tok)).await?;
     st.update.edit(|s| s.token = token_state(true, expires_at, false, now_ms()));
-    Ok(Json(check(&st).await))
+    Ok(Json(link_tickets(&st, check(&st).await).await))
 }
 
 pub(crate) async fn delete_token(State(st): State<AppState>) -> Result<StatusCode, ApiError> {

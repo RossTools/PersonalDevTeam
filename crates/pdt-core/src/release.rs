@@ -120,6 +120,59 @@ pub fn token_state(present: bool, expires_at: Option<i64>, rejected: bool, now: 
     }
 }
 
+/// Where the notes for an update start (PDT-169): the installed release's tag (`v0.1.741`), or the commit of a dev
+/// build (`0.1.741+g<sha>`). None for a local build without a commit, or a version that is not ours.
+pub fn compare_base(current: &str) -> Option<String> {
+    let current = current.trim();
+    if let Some((_, build)) = current.split_once('+')
+        && let Some(sha) = build.strip_prefix('g')
+        && sha.len() >= 7
+        && sha.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Some(sha.to_string());
+    }
+    parse_version(current).filter(|v| !v.local).map(|v| format!("v{v}"))
+}
+
+/// One commit between two versions, read from its subject (merges are squashed: one per pull request).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub sha: String,
+    /// The whole first line of the commit message.
+    pub subject: String,
+    /// The subject without its ticket key and pull request number.
+    pub title: String,
+    /// `PDT-167` from `PDT-167: …`.
+    pub ticket: Option<String>,
+    /// `177` from `… (#177)`.
+    pub pr: Option<u64>,
+}
+
+/// Reads a commit: its subject is the message's first line, a leading `KEY-N:` its ticket and a trailing `(#N)` its
+/// pull request.
+pub fn parse_change(sha: &str, message: &str) -> Change {
+    let subject = message.lines().next().unwrap_or("").trim().to_string();
+    let mut rest = subject.as_str();
+    let mut pr = None;
+    if let Some(head) = rest.strip_suffix(')')
+        && let Some((head, n)) = head.rsplit_once("(#")
+        && let Ok(n) = n.parse::<u64>()
+    {
+        pr = Some(n);
+        rest = head.trim_end();
+    }
+    let mut ticket = None;
+    if let Some((key, after)) = rest.split_once(':')
+        && let Some(k) = crate::ticket::parse_key(key)
+        && let Some(project) = k.key
+    {
+        ticket = Some(crate::ticket::format_key(&project, k.number));
+        rest = after.trim_start();
+    }
+    let title = if rest.is_empty() { subject.clone() } else { rest.to_string() };
+    Change { sha: sha.to_string(), subject, title, ticket, pr }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +232,39 @@ mod tests {
             serde_json::to_string(&TokenState::ExpiresSoon { expires_at: 5 }).unwrap(),
             r#"{"state":"expires_soon","expiresAt":5}"#
         );
+    }
+
+    #[test]
+    fn compare_starts_at_the_installed_tag_or_a_dev_builds_commit() {
+        assert_eq!(compare_base("0.1.741").as_deref(), Some("v0.1.741"));
+        assert_eq!(compare_base("0.1.741+gabc1234def").as_deref(), Some("abc1234def"));
+        assert_eq!(compare_base("0.1.0-local+g0123456").as_deref(), Some("0123456"));
+        // A build suffix that is not a commit leaves the version's tag.
+        assert_eq!(compare_base("0.1.3+abc").as_deref(), Some("v0.1.3"));
+        assert_eq!(compare_base("0.1.3+gxyz").as_deref(), Some("v0.1.3"));
+        assert_eq!(compare_base("0.1.0-local"), None);
+        assert_eq!(compare_base("garbage"), None);
+    }
+
+    #[test]
+    fn a_squashed_merge_names_its_ticket_and_pull_request() {
+        let c = parse_change("abc", "PDT-167: PM conversations compact (#177)\n\nThe body.");
+        assert_eq!(
+            c,
+            Change {
+                sha: "abc".into(),
+                subject: "PDT-167: PM conversations compact (#177)".into(),
+                title: "PM conversations compact".into(),
+                ticket: Some("PDT-167".into()),
+                pr: Some(177),
+            }
+        );
+        let c = parse_change("d", "Fix the build (#12)");
+        assert_eq!((c.title.as_str(), c.ticket, c.pr), ("Fix the build", None, Some(12)));
+        let c = parse_change("d", "pdt-3: lower-case key");
+        assert_eq!((c.title.as_str(), c.ticket.as_deref(), c.pr), ("lower-case key", Some("PDT-3"), None));
+        let c = parse_change("d", "Note: not a key (#x)");
+        assert_eq!((c.title.as_str(), c.ticket, c.pr), ("Note: not a key (#x)", None, None));
+        assert_eq!(parse_change("d", "").title, "");
     }
 }

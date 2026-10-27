@@ -25,6 +25,8 @@ struct Fake {
     /// While set, the latest-release answer (or the installer download) waits.
     hold_latest: Arc<AtomicBool>,
     hold_assets: Arc<AtomicBool>,
+    /// Requests for a comparison of two versions.
+    compares: Arc<AtomicUsize>,
 }
 
 async fn wait_while(flag: &AtomicBool) {
@@ -47,6 +49,7 @@ async fn fake_github() -> (String, Fake) {
         sums: Arc::new(std::sync::Mutex::new(good_sums())),
         hold_latest: Default::default(),
         hold_assets: Default::default(),
+        compares: Default::default(),
     };
     let ok = |h: &HeaderMap| {
         h.get("authorization").and_then(|v| v.to_str().ok()) == Some(format!("Bearer {TOKEN}").as_str())
@@ -78,6 +81,30 @@ async fn fake_github() -> (String, Fake) {
                     2 => MAC.to_vec().into_response(),
                     _ => f.sums.lock().unwrap().clone().into_response(),
                 }
+            }),
+        )
+        .route(
+            "/repos/o/r/compare/{range}",
+            axum::routing::get(|State(f): State<Fake>, Path(range): Path<String>| async move {
+                f.compares.fetch_add(1, Ordering::SeqCst);
+                let commit = |sha: String, message: String| json!({"sha": sha, "commit": {"message": message}});
+                // v0.1.5 and the dev build abc1234 are two merges behind; v0.1.1 is 300 commits behind (GitHub sends
+                // 250); anything older is not found.
+                let (commits, total): (Vec<Value>, usize) = match range.as_str() {
+                    "v0.1.5...v0.1.7" | "abc1234...v0.1.7" => (
+                        vec![
+                            commit("a1".into(), "TK-1: First change (#10)\n\nIts body.".into()),
+                            commit("a2".into(), "TK-9: Second change (#11)".into()),
+                        ],
+                        2,
+                    ),
+                    "v0.1.1...v0.1.7" => {
+                        ((0..250).map(|i| commit(format!("s{i}"), format!("Change {i} (#{i})"))).collect(), 300)
+                    }
+                    _ => return (StatusCode::NOT_FOUND, r#"{"message":"Not Found"}"#).into_response(),
+                };
+                let url = format!("https://github.com/o/r/compare/{range}");
+                axum::Json(json!({"total_commits": total, "html_url": url, "commits": commits})).into_response()
             }),
         )
         .with_state(fake.clone());
@@ -628,4 +655,84 @@ async fn the_loop_auto_installs_a_newer_version_than_the_one_that_failed() {
     tokio::time::timeout(Duration::from_secs(5), state.shutdown.notified()).await.expect("pdtd asked to stop");
     task.abort();
     assert!(request_path(&data(tmp.path())).exists());
+}
+
+#[tokio::test]
+async fn an_update_lists_every_change_since_the_installed_release() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.1.5").await;
+    store_token(&state);
+    // TK-1 is a ticket here; TK-9 is not.
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&repo).status().unwrap().success());
+    let (_, p) = call(
+        &app,
+        "POST",
+        "/api/projects",
+        Some(json!({"name": "T", "repoPath": repo.to_string_lossy(), "key": "TK"})),
+    )
+    .await;
+    let pid = p["id"].as_str().unwrap();
+    let (_, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "x"}))).await;
+    assert_eq!(t["key"], "TK-1");
+
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    let c = &v["latest"]["changes"];
+    assert_eq!(
+        (c["since"].as_str(), c["total"].as_u64(), &c["moreUrl"]),
+        (Some("0.1.5"), Some(2), &Value::Null),
+        "{v}"
+    );
+    assert_eq!(
+        c["entries"][0],
+        json!({"sha": "a2", "subject": "TK-9: Second change (#11)", "title": "Second change", "ticket": "TK-9",
+               "ticketHere": null, "pr": 11, "prUrl": "https://github.com/o/r/pull/11"}),
+        "newest first"
+    );
+    assert_eq!(c["entries"][1]["ticketHere"], json!({"id": t["id"], "projectId": pid}));
+    assert_eq!(v["latest"]["notes"], "notes", "the release's own notes stay");
+
+    // The same pair is not compared again.
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["latest"]["changes"]["entries"].as_array().unwrap().len(), 2);
+    let (_, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert_eq!(v["latest"]["changes"]["entries"][1]["ticketHere"]["id"], t["id"]);
+    assert_eq!(fake.compares.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_dev_build_compares_from_its_commit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup_with(tmp.path(), true, "0.1.5+gabc1234").await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    let c = &v["latest"]["changes"];
+    assert_eq!((c["since"].as_str(), c["entries"].as_array().map(Vec::len)), (Some("0.1.5"), Some(2)), "{v}");
+}
+
+#[tokio::test]
+async fn without_a_comparison_the_release_notes_stand_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.1.4").await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["state"], "available", "{v}");
+    assert_eq!((&v["latest"]["changes"], &v["latest"]["notes"]), (&Value::Null, &json!("notes")), "{v}");
+    assert_eq!(v["error"], Value::Null, "a failed comparison is not an update error");
+    // A failure is not cached: the next check asks again.
+    call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(fake.compares.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_range_too_long_for_github_links_to_the_rest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup_with(tmp.path(), true, "0.1.1").await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    let c = &v["latest"]["changes"];
+    assert_eq!((c["entries"].as_array().map(Vec::len), c["total"].as_u64()), (Some(250), Some(300)), "{v}");
+    assert_eq!(c["moreUrl"], "https://github.com/o/r/compare/v0.1.1...v0.1.7");
+    assert_eq!(c["entries"][0]["sha"], "s249");
 }

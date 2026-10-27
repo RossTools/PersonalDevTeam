@@ -255,11 +255,13 @@ jobs:
           HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           tag="v0.1.${{ github.run_number }}"
-          subject="$(printf '%s\n' "$HEAD_MESSAGE" | head -n 1)"
+          # The notes are the whole head commit message (a squashed PR: its subject and body).
+          notes="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n' "${HEAD_MESSAGE:-$tag}" > "$notes"
           ls -l assets
           # A re-run of this job finds the release already there: replace its assets instead of failing.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$tag" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes "${subject:-$tag}"
+            gh release create "$tag" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes"
           fi
