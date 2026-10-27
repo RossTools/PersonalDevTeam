@@ -12,6 +12,10 @@ configure({ asyncUtilTimeout: process.env.CI ? 10_000 : 3_000 });
 if (typeof window !== 'undefined') {
   Element.prototype.setPointerCapture ??= () => {};
   Element.prototype.releasePointerCapture ??= () => {};
+  // CodeMirror measures text through ranges.
+  const noRects = { length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] } as unknown as DOMRectList;
+  Range.prototype.getClientRects ??= () => noRects;
+  Range.prototype.getBoundingClientRect ??= () => new DOMRect();
   // React Flow measures nodes with ResizeObserver.
   window.ResizeObserver ??= class {
     observe() {}

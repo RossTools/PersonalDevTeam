@@ -12,6 +12,7 @@ import type { FileEntry } from '../api/gen/FileEntry';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
 import { copyToClipboard } from '../common/clipboard';
+import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { isMarkdownPath, Markdown } from '../common/Markdown';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { useNavigationGuard, whenAllowed } from '../shell/router';
@@ -512,7 +513,11 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
         <>
           {/* The editor stays mounted under the preview: it holds the text and its undo history. */}
           <div className={cn('flex-1 min-h-0', markdown && editView === 'preview' && 'hidden')}>
-            <CodeViewer key={edit.n} name={f.path} text={edit.start} onChange={(text) => setEdit((e) => (e ? { ...e, text } : e))} />
+            {markdown ? (
+              <MarkdownEditor key={edit.n} variant="file" label={f.path} value={edit.text} onChange={(text) => setEdit((e) => (e ? { ...e, text } : e))} />
+            ) : (
+              <CodeViewer key={edit.n} name={f.path} text={edit.start} onChange={(text) => setEdit((e) => (e ? { ...e, text } : e))} />
+            )}
           </div>
           {markdown && editView === 'preview' && (
             <div className="min-h-0 flex-1 overflow-auto">

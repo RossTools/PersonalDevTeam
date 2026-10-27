@@ -13,6 +13,10 @@ vi.mock('./CodeViewer', () => ({
       ? <textarea aria-label="Editor" data-name={name} defaultValue={text} onChange={(e) => onChange(e.target.value)} />
       : <pre data-testid="code" data-name={name}>{text}</pre>,
 }));
+vi.mock('../common/MarkdownEditor', () => ({
+  MarkdownEditor: ({ label, value, onChange }: { label: string; value: string; onChange: (t: string) => void }) =>
+    <textarea aria-label={label} data-markdown defaultValue={value} onChange={(e) => onChange(e.target.value)} />,
+}));
 vi.mock('../review/CodeDiff', () => ({
   CodeDiff: ({ oldText, newText }: { oldText: string; newText: string }) => <pre data-testid="diff">{`${oldText}|${newText}`}</pre>,
 }));
@@ -142,10 +146,10 @@ const editRoutes = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-async function startEditing(name: RegExp) {
+async function startEditing(name: RegExp, editor = 'Editor') {
   await userEvent.click(await screen.findByRole('row', { name }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-  return screen.findByRole('textbox', { name: 'Editor' });
+  return screen.findByRole('textbox', { name: editor });
 }
 
 describe('editing files', () => {
@@ -273,12 +277,12 @@ describe('editing files', () => {
       'GET /api/projects/p/files/content?path=README.md': text('README.md', '# Hi\n'),
     }));
     renderWithQuery(<Harness />);
-    const editor = await startEditing(/README/);
+    const editor = await startEditing(/README/, 'README.md');
     await userEvent.type(editor, '\n## More');
     await userEvent.click(screen.getByRole('radio', { name: 'Preview' }));
     expect(await screen.findByRole('heading', { name: 'More', level: 2 })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Edit' }));
-    expect(screen.getByRole('textbox', { name: 'Editor' })).toHaveValue('# Hi\n\n## More');
+    expect(screen.getByRole('textbox', { name: 'README.md' })).toHaveValue('# Hi\n\n## More');
   });
 
   it('creates, renames and deletes files', async () => {
