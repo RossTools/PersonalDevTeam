@@ -215,8 +215,8 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   `keepWorktree` only moves to Done (ending the attempt and cancelling the runs as above) and pulls (`outcome: kept`). The route runs it in a task of its own, so it
   completes when the caller goes away first (PDT-97: an agent finishing its own ticket is stopped by it).
   A ticket already closed whose attempt ended and whose worktree is gone is finished already: the command does
-  nothing (`finished`), so the Pipeline's Finish and Finish merged tickets after one merge don't clean up twice or
-  cancel each other's run (PDT-181).
+  nothing (`finished`), so a second finish after one merge (the Pipeline's Finish, then Finish merged tickets) doesn't
+  clean up again or cancel runs (PDT-181). Two finishes at the same moment both still run.
 - A merged attempt shows the banner "Move to Done and remove the worktree" (once Done with the worktree still there,
   kept or left behind, "Remove the worktree"; web/src/tickets/actions.ts
   `finishMerged`; in the ticket peek, and above every tab of the ticket's workspace while it is on screen, PDT-71,

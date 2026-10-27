@@ -597,7 +597,7 @@ pub(crate) async fn merge_attempt(
     if info.attempt.state == AttemptState::Active
         && let Some(pr) = crate::github::watched_pr(&st, &info.attempt.id).filter(|p| p.state == PrState::Merged)
     {
-        return Ok(Ok(pr_merged(&st, &info, pr.number, merger).await?));
+        return Ok(Ok(pr_merged(&st, &info, pr.number, input, merger).await?));
     }
     let policy = st.store.get_project_settings(&info.project_id).await?.policy;
     let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
@@ -709,8 +709,17 @@ pub(crate) async fn merge_attempt(
 }
 
 /// The attempt's pull request merged already: the attempt ends as merge detection would end it (`detected`, with the
-/// PR's number), so Finish merged tickets finishes the ticket, and nothing merges locally (PDT-181).
-async fn pr_merged(st: &AppState, info: &AttemptInfo, pr: u32, merger: Merger) -> Result<MergeResult, ApiError> {
+/// PR's number), so Finish merged tickets finishes the ticket as the merge asked, and nothing merges locally (PDT-181).
+async fn pr_merged(
+    st: &AppState,
+    info: &AttemptInfo,
+    pr: u32,
+    input: &MergeRequest,
+    merger: Merger,
+) -> Result<MergeResult, ApiError> {
+    if let Some(finish) = input.finish_on_merge {
+        st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
+    }
     let actor = if merger == Merger::User { Actor::User } else { Actor::System };
     let via = Some(MergeVia::Detected);
     st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, via, Some(pr), now_ms()).await?;

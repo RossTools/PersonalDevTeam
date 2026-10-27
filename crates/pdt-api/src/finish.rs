@@ -252,7 +252,8 @@ pub(crate) async fn finish_ticket(
         return Ok(result);
     };
     // Finished already (a workflow's merge is finished by the workflow and by Finish merged tickets, PDT-181): nothing
-    // is left to clean up, and the second finish must not cancel the first one's run.
+    // is left to clean up, so a finish that comes after another one's cleanup cancels no runs. (Two finishes at the
+    // same moment both get past this.)
     if ticket.stage.is_closed() && info.attempt.state != AttemptState::Active && info.attempt.worktree_id.is_none() {
         return Ok(result);
     }

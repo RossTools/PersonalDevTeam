@@ -645,6 +645,57 @@ async fn finish_runs(env: &Env) -> Vec<Value> {
     runs.as_array().unwrap().iter().filter(|r| r["workflowName"] == "Finish merged tickets").cloned().collect()
 }
 
+/// A commit on the branch and its open pull request `number`, which PDT has seen; no merge asked for yet.
+async fn open_pr(env: &Env, number: u32) -> PullRequest {
+    git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "add c");
+    let pr = PullRequest {
+        number,
+        url: format!("https://github.com/o/r/pull/{number}"),
+        title: "Ship it".into(),
+        state: PrState::Open,
+        draft: false,
+        head_sha: rev(&env.wt_path, "HEAD"),
+        base_branch: "main".into(),
+        mergeable: Mergeable::Mergeable,
+        behind: false,
+        auto_merge: false,
+        in_merge_queue: false,
+        queue_position: None,
+        queue_removal: None,
+        created_at: None,
+    };
+    env.gh.set_pr(&env.branch, Some(pr.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    pr
+}
+
+/// The first workflow merge (not `again`) finds the PR merged already: the ticket finishes as that merge asked.
+#[tokio::test]
+async fn a_first_workflow_merge_of_a_pr_merged_already_finishes_the_ticket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let mut pr = open_pr(&env, 9).await;
+    let main = rev(&env.repo, "main");
+    pr.state = PrState::Merged;
+    env.gh.set_pr(&env.branch, Some(pr));
+
+    assert_eq!(workflow_merge(&env, false).await, "merged");
+    assert_eq!(rev(&env.repo, "main"), main, "no local merge commit");
+    let merged = merged_event(&env).await;
+    assert_eq!(
+        (merged["data"]["via"].as_str(), merged["data"]["pr"].as_u64()),
+        (Some("detected"), Some(9)),
+        "{merged}"
+    );
+    pdt_api::run_workflows(&env.state).await;
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+    assert_eq!(finish_runs(&env).await[0]["status"], "succeeded");
+}
+
 /// CB-66 (PDT-181): GitHub merged the PR through the auto-merge an earlier merge turned on, and PR notices' merge
 /// again (CI passed) came a moment later, while PDT still had the PR open.
 #[tokio::test]
@@ -675,27 +726,7 @@ async fn ci_passing_after_the_pr_merged_makes_no_local_merge_and_the_ticket_fini
 async fn a_workflow_merge_of_an_open_pr_finishes_the_ticket_once_it_merges() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path(), "terminal").await;
-    git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
-    git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
-    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
-    commit_all(&env.wt_path, "add c");
-    let mut pr = PullRequest {
-        number: 7,
-        url: "https://github.com/o/r/pull/7".into(),
-        title: "Ship it".into(),
-        state: PrState::Open,
-        draft: false,
-        head_sha: rev(&env.wt_path, "HEAD"),
-        base_branch: "main".into(),
-        mergeable: Mergeable::Mergeable,
-        behind: false,
-        auto_merge: false,
-        in_merge_queue: false,
-        queue_position: None,
-        queue_removal: None,
-        created_at: None,
-    };
-    env.gh.set_pr(&env.branch, Some(pr.clone()));
+    let mut pr = open_pr(&env, 7).await;
     // The repository has no CI to wait for.
     assert_eq!(workflow_merge(&env, false).await, "queued");
 
