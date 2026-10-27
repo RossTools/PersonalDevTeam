@@ -304,8 +304,8 @@ fn every_tool_is_listed_once_with_an_object_schema() {
 }
 
 /// What agents see of the tools (each one's `tools/list` entry and declaration, the PM's tools, the personas' list) and
-/// every node kind's spec, against `snapshot.json`: moving a capability onto an [`Action`](super::action::Action)
-/// changes none of it (PDT-172). After a change meant to show, write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test`.
+/// the spec of every node kind an [`Action`](super::action::Action) makes, against `snapshot.json`: moving a capability
+/// onto an action changes none of it (PDT-172). Other kinds are left out, so a change to one doesn't touch this. After a change meant to show, write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test`.
 #[test]
 fn tools_and_node_kinds_match_the_snapshot() {
     let r = registry();
@@ -319,7 +319,10 @@ fn tools_and_node_kinds_match_the_snapshot() {
                    "openWorld": d.open_world, "destructive": d.destructive})
         })
         .collect();
-    let mut kinds = crate::workflow::catalog::catalog().specs();
+    let ids: Vec<String> =
+        all().iter().flat_map(|i| i.actions()).filter_map(|a| a.node_kind().map(|k| k.spec().id)).collect();
+    let mut kinds: Vec<_> =
+        crate::workflow::catalog::catalog().specs().into_iter().filter(|k| ids.contains(&k.id)).collect();
     kinds.sort_by(|a, b| a.id.cmp(&b.id));
     let now = json!({"tools": tools, "pm": t.pm_tools(), "asking": t.asking_tools(), "personaTools": t.persona_tools(),
                      "kinds": kinds});
@@ -339,7 +342,22 @@ fn tools_and_node_kinds_match_the_snapshot() {
         std::fs::write(&path, &text).unwrap();
     }
     let was: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert!(was == now, "the tools or node kinds changed: run with PDT_UPDATE_SNAPSHOT=1 and check the diff");
+    // The entries that differ, each as it was and as it is.
+    let mut changed: Vec<String> = vec![];
+    for (k, v) in now.as_object().unwrap() {
+        let old = was[k].as_array().cloned().unwrap_or_default();
+        let new = v.as_array().unwrap();
+        for i in 0..old.len().max(new.len()) {
+            if old.get(i) != new.get(i) {
+                changed.push(format!("{k}[{i}]:\n  was {}\n  now {}", json!(old.get(i)), json!(new.get(i))));
+            }
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "the tools or node kinds changed (run with PDT_UPDATE_SNAPSHOT=1 and check the diff):\n{}",
+        changed.join("\n")
+    );
 }
 
 #[test]
