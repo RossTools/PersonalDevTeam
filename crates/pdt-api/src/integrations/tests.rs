@@ -232,3 +232,42 @@ fn every_tool_is_listed_once_with_an_object_schema() {
     let s = &infos[1].input_schema;
     assert!(s["required"].as_array().unwrap().iter().any(|r| r == "outcome"), "{s}");
 }
+
+/// What agents see of the tools (each one's `tools/list` entry and declaration, the PM's tools, the personas' list) and
+/// every node kind's spec, against `snapshot.json`: moving a capability onto an [`Action`](super::action::Action)
+/// changes none of it (PDT-172). After a change meant to show, write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test`.
+#[test]
+fn tools_and_node_kinds_match_the_snapshot() {
+    let r = registry();
+    let t = r.tool_table();
+    let tools: Vec<Value> = r
+        .tool_infos()
+        .into_iter()
+        .map(|i| {
+            let d = t.get(&i.name).unwrap();
+            json!({"info": i, "does": d.does, "asks": d.asks, "pm": d.pm, "readOnly": d.read_only,
+                   "openWorld": d.open_world, "destructive": d.destructive})
+        })
+        .collect();
+    let mut kinds = crate::workflow::catalog::catalog().specs();
+    kinds.sort_by(|a, b| a.id.cmp(&b.id));
+    let now = json!({"tools": tools, "pm": t.pm_tools(), "asking": t.asking_tools(), "personaTools": t.persona_tools(),
+                     "kinds": kinds});
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/integrations/snapshot.json");
+    // One line per entry, so a diff shows which one changed.
+    let lines: Vec<String> = now
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| {
+            let items: Vec<String> = v.as_array().unwrap().iter().map(|x| format!("    {x}")).collect();
+            format!("  {k:?}: [\n{}\n  ]", items.join(",\n"))
+        })
+        .collect();
+    let text = format!("{{\n{}\n}}\n", lines.join(",\n"));
+    if std::env::var_os("PDT_UPDATE_SNAPSHOT").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let was: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(was == now, "the tools or node kinds changed: run with PDT_UPDATE_SNAPSHOT=1 and check the diff");
+}
