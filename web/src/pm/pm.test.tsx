@@ -120,11 +120,12 @@ describe('the PM', () => {
     expect(onSelect).toHaveBeenCalledWith('current');
   });
 
-  it('shows an ended conversation read-only with its journal', async () => {
-    stubApi({ ...conversationRoutes, 'GET /api/pm': ended });
+  it('shows an ended conversation read-only with why it ended and its journal', async () => {
+    const closed = { ...endedOne, reason: 'user' as const };
+    stubApi({ ...conversationRoutes, 'GET /api/pm': { current: null, sessions: [closed] } });
     const onNew = vi.fn();
     renderWithQuery(<PmView selection="s1" onSelect={() => {}} onNew={onNew} />);
-    expect(await screen.findByText('This conversation has ended.')).toBeInTheDocument();
+    expect(await screen.findByText(/This conversation ended because you closed it\./)).toBeInTheDocument();
     expect(screen.getByText(/Planned the PM/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Close…' })).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'New conversation' })[0]);

@@ -4,6 +4,8 @@
 //! - `ask: <question>` — asks an AskUserQuestion with options A and B, then says the answer.
 //! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
 //! - `exit` — writes to stderr and exits 3.
+//! - `compact: <ms>` (its first line) — compacts its context (a `compact_boundary`), then works on for `<ms>` before
+//!   ending the turn.
 //! - `deaf` — ends its turn, then never reads another message (it stays alive; nothing sent to it is echoed).
 //! - `env: NAME` — says whether NAME is set.
 //! - `bg: <ms>` (its first line) — starts a background task and ends the turn; when the task finishes `<ms>` later it reports it to
@@ -416,6 +418,12 @@ impl Agent {
                 let _ = tx.send(Some(json!({"type":"fake_task_done","task":task,"quiet":quiet})));
             });
             self.say("Started it in the background.");
+        } else if let Some(ms) = text.lines().next().and_then(|l| l.strip_prefix("compact:")) {
+            // Claude compacting its context mid-turn, then working on for a while (messages sent meanwhile wait).
+            out(json!({"type":"system","subtype":"compact_boundary","session_id":self.session,
+                "compact_metadata":{"trigger":"auto","pre_tokens":150000}}));
+            std::thread::sleep(Duration::from_millis(ms.trim().parse().unwrap_or(500)));
+            self.say("Compacted and carried on.");
         } else if text == "deaf" {
             self.say("Not listening any more.");
             self.result("success", started);

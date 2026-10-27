@@ -10,6 +10,6 @@ export type NewNote = {
  */
 project?: string, title: string, body: string, pinned?: boolean, 
 /**
- * `note` (the PM's, the default) or `user`; journal entries are only written by rotation.
+ * `note` (the PM's, the default) or `user`; journal entries are only written by PM conversations.
  */
 kind?: NoteKind, };

@@ -1,6 +1,6 @@
 //! The project manager (PDT-81, docs/superpowers/specs/2026-10-21-pm-persona-design.md): PM sessions in the host
-//! project, the briefing pdtd writes into each new one, rotation with a journal entry, the notes routes, and the
-//! project policy that answers the PM's asking tools for the user.
+//! project, the briefing pdtd writes into each new one, journal checkpoints and daily updates, closing with a journal
+//! entry, the notes routes, and the project policy that answers the PM's asking tools for the user.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -146,9 +146,9 @@ pub(crate) async fn patch(
     Ok(Json(s))
 }
 
-/// `DELETE /api/pm/sessions/{id}`: closes a PM conversation. One that said anything is asked for its journal first
-/// and ends when that turn does (as rotation does); one that never did ends at once. Closing one that is already
-/// ending does nothing.
+/// `DELETE /api/pm/sessions/{id}`: closes a PM conversation, the only way one ends (spec §5.3). One that said anything
+/// is asked for its journal first and ends when that turn does; one that never did ends at once. Closing one that is
+/// already ending does nothing.
 pub(crate) async fn close(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let (row, s) = pm_session(&st, &id).await?;
     if row.rotation != Rotation::None {
@@ -160,6 +160,8 @@ pub(crate) async fn close(State(st): State<AppState>, Path(id): Path<String>) ->
     }
     if st.store.set_pm_rotation(&id, Rotation::None, Rotation::Journal, Some(RotateReason::User), now_ms()).await? {
         tracing::info!(session = %id, "closing a PM conversation");
+        // A checkpoint or update still waiting is overtaken by the journal request.
+        drop_checkpoints(&st, &id).await;
         // The user's click: it reopens a parked conversation to write its journal.
         ask_for_journal(&st, &s, true).await;
     }
@@ -249,8 +251,12 @@ pub(crate) async fn write_journal(st: &AppState, s: &Session, body: &str) -> Res
     Ok(n)
 }
 
-/// A PM session ended a turn: rotate it when its context is full enough or it is old (spec §5.3), or end it once
-/// the turn that was asked for its journal is over.
+/// What a PM conversation's checkpoint requests and daily updates are queued under, so one waits at a time.
+const CHECKPOINT_KEY: &str = "pm:checkpoint";
+
+/// A PM session ended a turn (spec §5.3): one in use gets its daily update when it is due, and one the user closed
+/// ends once the turn that was asked for its journal is over. Neither a full context nor age ends one: the agent
+/// compacts its own context ([`compacted`]).
 pub(crate) async fn turn_ended(st: &AppState, id: &str) {
     let Ok(Some(row)) = st.store.get_pm_session(id).await else { return };
     let Ok(Some(s)) = st.store.get_session(id).await else { return };
@@ -265,29 +271,113 @@ pub(crate) async fn turn_ended(st: &AppState, id: &str) {
             end_session(st, &s, Rotation::Journal, None).await
         }
         Rotation::None => {
-            let ctx = st.store.session_events_of_kind(id, "usage").await.ok().and_then(|v| {
-                v.into_iter().rev().find_map(|e| match e.event {
-                    pdt_core::conversation::AgentEvent::Usage {
-                        context_used: Some(u),
-                        context_window: Some(w),
-                        ..
-                    } => Some((u, w)),
-                    _ => None,
-                })
-            });
-            let Some(reason) = pm::rotate_reason(row.created_at, now_ms(), ctx, st.pm_rotate_age_ms) else { return };
-            match st.store.set_pm_rotation(id, Rotation::None, Rotation::Journal, Some(reason), now_ms()).await {
-                Ok(true) => {}
-                _ => return,
+            let now = now_ms();
+            // News is for a conversation in use: the turn answering an update never asks for another.
+            if !pm::update_due(row.caught_up_at, now, st.pm_update_every_ms)
+                || !user_wrote_since(st, id, row.caught_up_at).await
+                || checkpoint_waiting(st, id).await
+            {
+                return;
             }
-            tracing::info!(session = %id, reason = reason.as_str(), "rotating the PM session");
-            ask_for_journal(st, &s, false).await;
+            let text = match update_data(st, id, &row, now).await {
+                Ok(d) => pm::update_message(&d),
+                Err(e) => return tracing::warn!(session = %id, error = %e.message(), "could not gather a PM update"),
+            };
+            if !matches!(st.store.set_pm_caught_up(id, row.caught_up_at, now).await, Ok(true)) {
+                return;
+            }
+            tracing::info!(session = %id, "sending a PM conversation its daily update");
+            queue_checkpoint(st, &s, text).await;
         }
     }
 }
 
-/// Asks a PM conversation now at rotation `journal` for its journal entry, through the outbox (7a's delivery rule) so
-/// it never goes into a running turn; `reopens` wakes a parked one (the user closed it). Ends it at once when the
+/// A PM conversation's agent compacted its context: it is asked for a journal checkpoint, through the outbox so the
+/// request waits for the turn to end (spec §5.3). The conversation carries on.
+pub(crate) async fn compacted(st: &AppState, id: &str) {
+    let Ok(Some(row)) = st.store.get_pm_session(id).await else { return };
+    if row.rotation != Rotation::None || checkpoint_waiting(st, id).await {
+        return;
+    }
+    let Ok(Some(s)) = st.store.get_session(id).await else { return };
+    tracing::info!(session = %id, "asking a compacted PM conversation for a journal checkpoint");
+    queue_checkpoint(st, &s, pm::checkpoint_request()).await;
+}
+
+/// Whether the user (not PDT) wrote to a PM conversation after `since`.
+async fn user_wrote_since(st: &AppState, id: &str, since: i64) -> bool {
+    use pdt_core::conversation::{AgentEvent, MessageSource};
+    let events = st.store.session_events_of_kind(id, "user_message").await.unwrap_or_default();
+    events
+        .iter()
+        .rev()
+        .take_while(|e| e.ts > since)
+        .any(|e| matches!(&e.event, AgentEvent::UserMessage { source, .. } if *source != MessageSource::Notice))
+}
+
+async fn checkpoint_waiting(st: &AppState, id: &str) -> bool {
+    let waiting = st.store.waiting_session_messages().await.unwrap_or_default();
+    waiting.iter().any(|m| m.session_id.as_deref() == Some(id) && m.dedupe.as_deref() == Some(CHECKPOINT_KEY))
+}
+
+/// Drops a PM conversation's checkpoint request or update that is still waiting.
+async fn drop_checkpoints(st: &AppState, id: &str) {
+    for m in st.store.waiting_session_messages().await.unwrap_or_default() {
+        if m.session_id.as_deref() == Some(id) && m.dedupe.as_deref() == Some(CHECKPOINT_KEY) {
+            let _ = st.store.resolve_session_message(&m.id, None, now_ms()).await;
+        }
+    }
+}
+
+/// Queues a checkpoint request or update for a running PM conversation (never into a running turn: the outbox waits
+/// for it to be idle, and never wakes a parked one).
+async fn queue_checkpoint(st: &AppState, s: &Session, text: String) {
+    let m = pdt_store::SessionMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        attempt_id: None,
+        session_id: Some(s.id.clone()),
+        ticket_id: None,
+        dedupe: Some(CHECKPOINT_KEY.into()),
+        text,
+        timeline: serde_json::Value::Null,
+        run_id: None,
+        step_id: None,
+        status: "waiting".into(),
+        told_session: None,
+        created_at: now_ms(),
+        resolved_at: None,
+        by_user: false,
+        pending_id: None,
+        reopens: false,
+    };
+    if let Err(e) = st.store.queue_session_message(&m).await {
+        tracing::warn!(session = %s.id, error = %e, "could not queue a PM checkpoint");
+    }
+}
+
+/// What a PM conversation's daily update says: events, the Inbox, and other conversations' journal entries since it
+/// was last brought up to date.
+async fn update_data(st: &AppState, id: &str, row: &PmSessionRow, now: i64) -> Result<pm::UpdateData, ApiError> {
+    let since = row.caught_up_at;
+    let filter =
+        pdt_store::EventFilter { since: Some(since), newest_first: true, limit: BRIEF_EVENTS, ..Default::default() };
+    let events = brief_events(st, &filter).await?;
+    let inbox = brief_inbox(st).await?;
+    let mut journal = vec![];
+    let entries =
+        st.store.search_notes(&NoteFilter { kind: Some(NoteKind::Journal), limit: 50, ..Default::default() }).await?;
+    for n in entries.into_iter().filter(|n| n.updated_at > since && n.session_id.as_deref() != Some(id)) {
+        let title = match &n.session_id {
+            Some(sid) => st.store.get_session(sid).await?.map_or(n.title.clone(), |s| s.title),
+            None => n.title.clone(),
+        };
+        journal.push(pm::BriefConversationJournal { title, at: n.updated_at, body: n.body });
+    }
+    Ok(pm::UpdateData { now, since, first: since == row.created_at, events, inbox, journal })
+}
+
+/// Asks a PM conversation the user closed (rotation `journal`) for its journal entry, through the outbox (7a's
+/// delivery rule) so it never goes into a running turn; `reopens` wakes a parked one. Ends it at once when the
 /// request can't be queued.
 async fn ask_for_journal(st: &AppState, s: &Session, reopens: bool) {
     let m = pdt_store::SessionMessage {
@@ -475,39 +565,16 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
             state: pm::ticket_state(t),
         })
         .collect();
-    let Json(inbox) = crate::inbox::list(State(st.clone()), Query(Default::default())).await?;
-    let inbox = inbox
-        .items
-        .into_iter()
-        .map(|i| BriefInbox {
-            kind: serde_json::to_value(i.group).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
-            ticket: i.ticket_key,
-            title: i.title,
-        })
-        .collect();
+    let inbox = brief_inbox(st).await?;
     let since =
         st.store.list_pm_sessions().await?.into_iter().find(|r| r.session_id != session_id).map(|r| r.created_at);
     let filter = pdt_store::EventFilter {
-        since: Some(since.unwrap_or(now - st.pm_rotate_age_ms.max(pm::ROTATE_AGE_MS))),
+        since: Some(since.unwrap_or(now - pm::UPDATE_EVERY_MS)),
         newest_first: true,
         limit: BRIEF_EVENTS,
         ..Default::default()
     };
-    let mut ticket_keys = std::collections::HashMap::new();
-    let mut events = vec![];
-    for e in st.store.list_log_events(&filter).await? {
-        let ticket = match &e.ticket_id {
-            Some(t) => {
-                if !ticket_keys.contains_key(t) {
-                    let key = st.store.get_ticket(t).await?.map(|t| t.summary.key);
-                    ticket_keys.insert(t.clone(), key);
-                }
-                ticket_keys.get(t).cloned().flatten()
-            }
-            None => None,
-        };
-        events.push(BriefEvent { at: e.created_at, kind: e.kind, ticket });
-    }
+    let events = brief_events(st, &filter).await?;
     let journal = st
         .store
         .search_notes(&NoteFilter {
@@ -542,6 +609,40 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
         });
     }
     Ok(BriefingData { now, projects: out_projects, in_flight, inbox, since, events, journal, pinned, others })
+}
+
+/// The Inbox, for a briefing or an update.
+async fn brief_inbox(st: &AppState) -> Result<Vec<BriefInbox>, ApiError> {
+    let Json(inbox) = crate::inbox::list(State(st.clone()), Query(Default::default())).await?;
+    Ok(inbox
+        .items
+        .into_iter()
+        .map(|i| BriefInbox {
+            kind: serde_json::to_value(i.group).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
+            ticket: i.ticket_key,
+            title: i.title,
+        })
+        .collect())
+}
+
+/// Events of the log, with their tickets' keys, for a briefing or an update.
+async fn brief_events(st: &AppState, filter: &pdt_store::EventFilter) -> Result<Vec<BriefEvent>, ApiError> {
+    let mut ticket_keys = std::collections::HashMap::new();
+    let mut events = vec![];
+    for e in st.store.list_log_events(filter).await? {
+        let ticket = match &e.ticket_id {
+            Some(t) => {
+                if !ticket_keys.contains_key(t) {
+                    let key = st.store.get_ticket(t).await?.map(|t| t.summary.key);
+                    ticket_keys.insert(t.clone(), key);
+                }
+                ticket_keys.get(t).cloned().flatten()
+            }
+            None => None,
+        };
+        events.push(BriefEvent { at: e.created_at, kind: e.kind, ticket });
+    }
+    Ok(events)
 }
 
 /// Events a conversation's summary line looks back through.
@@ -593,7 +694,7 @@ fn bad(m: impl Into<String>) -> ApiError {
 /// A note made by the user or the PM: the PM's (`note`) unless it is the user's own (`user`).
 pub(crate) async fn add_note(st: &AppState, input: NewNote) -> Result<PmNote, ApiError> {
     let kind = match input.kind.unwrap_or_default() {
-        NoteKind::Journal => return Err(bad("journal entries are written by a PM session as it rotates")),
+        NoteKind::Journal => return Err(bad("journal entries are written by PM conversations")),
         k => k,
     };
     let title = pm::valid_title(&input.title).map_err(bad)?;

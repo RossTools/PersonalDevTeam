@@ -91,7 +91,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   and not working and isn't the one on screen (PDT-145); the PM view marks the conversation it shows seen, as a
   session's tab does.
 - **Conversations** (PDT-149). Several PM sessions can be open at once, one per topic, each with its own transcript,
-  briefing, rotation and journal; notes, pinned notes and journal entries are host-wide, so all of them see the same.
+  briefing and journal entry; notes, pinned notes and journal entries are host-wide, so all of them see the same.
   `GET /api/pm/sessions` lists them: each with `session`, `open` (not ended), `title`, `unseen`, `lastActivity` (its
   last event; for an ended one when it ended), rotation (`pm_sessions`: `none` | `journal` | `done`), reason (`context`
   | `age` | `user`) and journal; the open ones first, the most recently active first, then the ended ones, newest
@@ -102,7 +102,7 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   characters), else "New conversation" until the user's first message names it. `PATCH /api/pm/sessions/{id}
   {title}` renames one. `DELETE /api/pm/sessions/{id}` closes one: one that has said anything is asked for its
   journal through the outbox (rotation `journal`, reason `user`, the message reopens a parked conversation) and ends
-  when that turn does, as rotation does; one that never did ends at once with no journal; one already ending is left
+  when that turn does; one that never did ends at once with no journal; one already ending is left
   as it is. An ended conversation is read-only. Idle PM conversations park as every conversation does and wake on a
   message; PDT's messages to them keep to the host's cap on agents running a turn.
 - **Its agent's own tools** (PDT-100), with the agent's usual permission prompts: read and search checkouts and
@@ -231,11 +231,17 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   conversation and Ended conversations, and on a conversation Rename and Close…. The start box shows the usual text
   but isn't focused (the keyboard would cover it). The Notes view's list is its phone screen; a tap opens a note as a screen with ←, the
   save state and Write | Read under the top bar, and its project, pin, Make a ticket and Delete… under ⋯.
-- **Rotation.** When a PM session ends a turn with its context at least 60 % full (the last `usage` event) or 24 h
-  old (`AppState.pm_rotate_age_ms`), PDT queues "[PDT] This PM session is ending…" through the outbox (rotation
-  `journal`); when that turn ends the session is stopped (`done`; "(no journal)" if it wrote none). Rotation is per
-  conversation; the others carry on. The user starts a new conversation to carry on the topic (its briefing has the
-  journal).
+- **Compaction, checkpoints and the daily update** (PDT-167). A PM conversation only ends when the user closes it;
+  neither a full context nor age ends one (the agent compacts its own context). On a `compaction` event PDT queues
+  "[PDT] Your context was just compacted. Write a journal checkpoint…" through the outbox (it waits for the turn to
+  end and never wakes a parked conversation). When a turn ends a day (`AppState.pm_update_every_ms`, pdt-core
+  `pm::UPDATE_EVERY_MS`) after the conversation was last brought up to date (`pm_sessions.caught_up_at`: its briefing,
+  then each update) and the user wrote to it since, PDT queues "[PDT] Since your briefing…" (then "Since the last
+  update…"): the log's events, the Inbox and other conversations' new journal entries, and a request for a
+  checkpoint. One checkpoint request or update waits at a time (dedupe `pm:checkpoint`); closing drops a waiting one.
+  `write_journal` replaces the conversation's one entry, so briefings carry the latest checkpoint. An ended
+  conversation shows why it ended (reason `user`; `context` and `age` are from before PDT-167), its journal and New
+  conversation in place of its composer; while it writes its closing journal a banner says the user closed it.
 - **As a workflow step.** The PM persona can be an `agent` node's persona; its asking tools still ask (the approval
   waits in the Inbox's Approvals). The built-in template **Triage new GitHub issues** (`builtin:issue-triage`) runs it
   on each new issue of a repository: it drafts a ticket in the chosen project, marks a duplicate, or leaves it.

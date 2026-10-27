@@ -1143,7 +1143,7 @@ describe('phone', () => {
     expect(ended).toHaveTextContent('Planned the phone');
     await userEvent.click(within(ended).getByText('Phone plans'));
     expect(here()).toBe('/pm/pm1');
-    expect(await screen.findByText('This conversation has ended.')).toBeInTheDocument();
+    expect(await screen.findByText(/This conversation ended because it was a day old\./)).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
     await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/pm'));
