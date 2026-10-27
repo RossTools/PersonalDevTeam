@@ -15,7 +15,7 @@ pub struct ToolDecl {
     /// It changes nothing (MCP's `readOnlyHint`).
     pub read_only: bool,
     /// It acts for the user (PDT-81): the agent asks before each call (Claude's permission prompt, PDT's approval card)
-    /// unless the project's policy (for Discord and Scryer, the connection) lets the PM act, so it is never in Claude's
+    /// unless the project's policy (for an integration's tools, their connection) lets the PM act, so it is never in Claude's
     /// `--allowedTools`.
     pub asks: bool,
     /// It reaches outside PDT (MCP's `openWorldHint`).

@@ -1183,7 +1183,7 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
     }
     Err(format!(
         "{tool} needs the user's yes, and PDT can only ask for it in a Claude session. Tell the user what you would \
-         do so they can do it, or ask them to let the PM act (the project's settings, or the Discord bot's or Scryer's connection)."
+         do so they can do it, or ask them to let the PM act (the project's settings, or the connection the tool uses)."
     ))
 }
 

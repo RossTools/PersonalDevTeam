@@ -786,11 +786,7 @@ async fn mcp_connection(st: &AppState, id: &str) -> Result<Connection, ApiError>
 
 /// The connection of `kind` that `name` means: that one, or the only one of its kind there is (the PM's tools).
 pub(crate) async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&str>) -> Result<Connection, String> {
-    let label = match kind {
-        pdt_core::discord::DISCORD_BOT => "Discord bot",
-        pdt_core::scryer::SCRYER => "Scryer",
-        other => other,
-    };
+    let label = crate::integrations::registry().connection_label(kind);
     let all: Vec<Connection> =
         st.store.list_connections().await.map_err(|e| e.to_string())?.into_iter().filter(|c| c.kind == kind).collect();
     match name.map(str::trim).filter(|n| !n.is_empty()) {

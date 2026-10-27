@@ -10,6 +10,18 @@ pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-2
 /// The name agents see the server under (`mcp__pdt__get_ticket` in Claude).
 pub const SERVER_NAME: &str = "pdt";
 
+/// A pdt-mcp tool's bare name from the name an agent gives it: Claude's and Devin's `mcp__pdt__<tool>`, Codex's
+/// `mcp:pdt/<tool>`, or the bare name itself.
+pub fn pdt_tool(tool: &str) -> &str {
+    tool.strip_prefix("mcp__")
+        .and_then(|t| t.strip_prefix(SERVER_NAME))
+        .and_then(|t| t.strip_prefix("__"))
+        .or_else(|| {
+            tool.strip_prefix("mcp:").and_then(|t| t.strip_prefix(SERVER_NAME)).and_then(|t| t.strip_prefix('/'))
+        })
+        .unwrap_or(tool)
+}
+
 /// JSON-RPC error codes.
 pub const PARSE_ERROR: i64 = -32700;
 pub const INVALID_REQUEST: i64 = -32600;
@@ -126,6 +138,15 @@ pub fn parse_token(header: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pdt_tool_by_any_agents_name() {
+        assert_eq!(pdt_tool("mcp__pdt__get_ticket"), "get_ticket");
+        assert_eq!(pdt_tool("mcp:pdt/get_ticket"), "get_ticket");
+        assert_eq!(pdt_tool("get_ticket"), "get_ticket");
+        assert_eq!(pdt_tool("mcp__other__get_ticket"), "mcp__other__get_ticket");
+        assert_eq!(pdt_tool("mcp:pdtx/get_ticket"), "mcp:pdtx/get_ticket");
+    }
 
     #[test]
     fn negotiates_a_known_version_or_the_newest() {
