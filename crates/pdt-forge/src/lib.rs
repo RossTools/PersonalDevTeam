@@ -143,6 +143,15 @@ pub struct ChangeReview {
     pub url: String,
 }
 
+/// A failed CI job and the end of its log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobLog {
+    pub name: String,
+    pub url: String,
+    /// The log's last lines (see the forge for how many), timestamps dropped.
+    pub log: String,
+}
+
 /// A forge call that failed. The text is the forge's own (e.g. "the GitHub CLI (gh) was not found").
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ForgeError {
@@ -175,12 +184,24 @@ pub trait Forge: Send + Sync {
     fn ci_dirs(&self) -> &'static [&'static str] {
         &[]
     }
+    /// The user still has to sign in to it before PDT can use it, and something wanted it: the Inbox asks them to.
+    fn login_needed(&self) -> bool {
+        false
+    }
     /// The change request whose head is `branch`: the newest open one, else the newest.
     fn change_request(&self, repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError>;
+    /// Change request `number`; None when there is none.
+    fn change_request_number(&self, _repo: &str, _number: u32) -> Result<Option<ChangeRequest>, ForgeError> {
+        unsupported(self.name(), "change requests by number")
+    }
     /// Recent CI runs on `branch`.
     fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError>;
     /// The names of the failed jobs of one run attempt.
     fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, ForgeError>;
+    /// The failed jobs of run `run_id`'s latest attempt, each with the end of its log.
+    fn failed_logs(&self, _repo: &str, _run_id: u64) -> Result<Vec<JobLog>, ForgeError> {
+        unsupported(self.name(), "CI logs")
+    }
     /// The merge strategies `repo` allows and whether `base` has a merge queue.
     fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, ForgeError>;
     /// Sets change request `number` to merge once it may (auto-merge, or the merge queue), with `strategy` unless a
@@ -199,6 +220,20 @@ pub trait Forge: Send + Sync {
     fn change_comments(&self, _repo: &str, _number: u32) -> Result<Vec<ChangeComment>, ForgeError> {
         unsupported(self.name(), "reviews")
     }
+    /// Adds a comment to change request `number`'s conversation; its URL ([`Capabilities::reviews`]).
+    fn comment_change_request(&self, _repo: &str, _number: u32, _body: &str) -> Result<String, ForgeError> {
+        unsupported(self.name(), "reviews")
+    }
+    /// Replies to review comment `comment_id` on change request `number`; its URL ([`Capabilities::reviews`]).
+    fn reply_review_comment(
+        &self,
+        _repo: &str,
+        _number: u32,
+        _comment_id: u64,
+        _body: &str,
+    ) -> Result<String, ForgeError> {
+        unsupported(self.name(), "reviews")
+    }
     /// The submitted reviews of change request `number` ([`Capabilities::reviews`]).
     fn change_reviews(&self, _repo: &str, _number: u32) -> Result<Vec<ChangeReview>, ForgeError> {
         unsupported(self.name(), "reviews")
@@ -210,6 +245,10 @@ pub trait Forge: Send + Sync {
     }
     /// Issue `number`; None when there is none (or the forge can't see it).
     fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueDetail>, ForgeError> {
+        unsupported(self.name(), "issues")
+    }
+    /// The comments on issue `number`, oldest first.
+    fn issue_comments(&self, _repo: &str, _number: u64) -> Result<Vec<ChangeComment>, ForgeError> {
         unsupported(self.name(), "issues")
     }
     /// Adds a comment to issue `number`; its URL.
@@ -265,6 +304,10 @@ pub mod testing {
         /// Issues closed (by `close_issue` or [`FakeForge::set_closed`]): by repo and number, the reason and the
         /// duplicate's canonical issue id.
         pub closed: Mutex<HashMap<(String, u64), Closed>>,
+        /// Failed jobs' logs by run id.
+        pub logs: Mutex<HashMap<u64, Vec<JobLog>>>,
+        /// Comments added to change requests: number, the review comment replied to, body.
+        pub change_comments_added: Mutex<Vec<(u32, Option<u64>, String)>>,
         /// Comments added to issues: repo, number, body.
         pub issue_comments: Mutex<Vec<(String, u64, String)>>,
         /// Labels added to issues: repo, number, labels.
@@ -293,6 +336,8 @@ pub mod testing {
                 comments: Default::default(),
                 reviews: Default::default(),
                 closed: Default::default(),
+                logs: Default::default(),
+                change_comments_added: Default::default(),
                 issue_comments: Default::default(),
                 added_labels: Default::default(),
                 calls: Default::default(),
@@ -379,6 +424,58 @@ pub mod testing {
             self.call(format!("pr {repo} {branch}"));
             self.failing()?;
             Ok(self.prs.lock().unwrap().get(branch).cloned())
+        }
+        fn change_request_number(&self, repo: &str, number: u32) -> Result<Option<ChangeRequest>, ForgeError> {
+            self.call(format!("pr {repo} #{number}"));
+            self.failing()?;
+            Ok(self.prs.lock().unwrap().values().find(|p| p.number == number).cloned())
+        }
+        fn failed_logs(&self, repo: &str, run_id: u64) -> Result<Vec<JobLog>, ForgeError> {
+            self.call(format!("logs {repo} {run_id}"));
+            self.failing()?;
+            Ok(self.logs.lock().unwrap().get(&run_id).cloned().unwrap_or_default())
+        }
+        fn comment_change_request(&self, repo: &str, number: u32, body: &str) -> Result<String, ForgeError> {
+            self.call(format!("comment-pr {repo} {number}"));
+            self.can(|c| c.reviews, "reviews")?;
+            self.failing()?;
+            let mut all = self.change_comments_added.lock().unwrap();
+            all.push((number, None, body.into()));
+            Ok(format!("https://github.com/{repo}/pull/{number}#issuecomment-{}", all.len()))
+        }
+        fn reply_review_comment(
+            &self,
+            repo: &str,
+            number: u32,
+            comment_id: u64,
+            body: &str,
+        ) -> Result<String, ForgeError> {
+            self.call(format!("reply {repo} {number} {comment_id}"));
+            self.can(|c| c.reviews, "reviews")?;
+            self.failing()?;
+            let mut all = self.change_comments_added.lock().unwrap();
+            all.push((number, Some(comment_id), body.into()));
+            Ok(format!("https://github.com/{repo}/pull/{number}#discussion_r{}", all.len()))
+        }
+        fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<ChangeComment>, ForgeError> {
+            self.call(format!("issue-comments {repo} {number}"));
+            self.can(|c| c.issues, "issues")?;
+            self.failing()?;
+            Ok(self
+                .comments_on(repo, number)
+                .into_iter()
+                .enumerate()
+                .map(|(i, body)| ChangeComment {
+                    id: i as u64 + 1,
+                    author: "me".into(),
+                    is_bot: false,
+                    body,
+                    url: String::new(),
+                    path: None,
+                    line: None,
+                    in_review: false,
+                })
+                .collect())
         }
         fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
             self.call(format!("runs {repo} {branch}"));

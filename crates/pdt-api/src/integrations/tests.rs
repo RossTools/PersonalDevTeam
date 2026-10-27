@@ -206,6 +206,12 @@ fn the_tools_are_where_they_were() {
             "unlink_tickets",
             "stop_ticket",
             "send_to_session",
+            "change_request_view",
+            "change_request_comment",
+            "ci_runs",
+            "ci_failed_logs",
+            "issue_view",
+            "issue_comment",
             "discord_get",
             "discord_change",
             "discord_webhook",
@@ -237,18 +243,35 @@ fn the_tools_are_where_they_were() {
         ]
     );
     let not_pm: Vec<&str> = t.all().iter().filter(|d| !d.pm).map(|d| d.name).collect();
-    assert_eq!(not_pm, ["add_review_comment", "update_ticket"]);
+    assert_eq!(
+        not_pm,
+        [
+            "add_review_comment",
+            "update_ticket",
+            "change_request_view",
+            "change_request_comment",
+            "ci_runs",
+            "ci_failed_logs",
+            "issue_comment",
+        ],
+        "the forge tools (PDT-177) work on the session's project and branch; the PM only reads issues (bug triage)"
+    );
     let list = t.persona_tools();
     assert!(list.iter().all(|x| !x.does.is_empty()));
     let defaults: Vec<&str> = list.iter().filter(|x| x.default).map(|x| x.name.as_str()).collect();
     assert_eq!(defaults, pdt_core::persona::DEFAULT_TOOLS);
     let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
-    assert_eq!(read_only.len(), 20, "{read_only:?}");
+    assert_eq!(read_only.len(), 24, "{read_only:?}");
     let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
-    assert!(open.iter().all(|n| n.starts_with("discord_") || n.starts_with("scryer_") || *n == "report_bug"));
-    assert_eq!(open.len(), 11);
+    let forge =
+        ["change_request_view", "change_request_comment", "ci_runs", "ci_failed_logs", "issue_view", "issue_comment"];
+    assert!(
+        open.iter()
+            .all(|n| n.starts_with("discord_") || n.starts_with("scryer_") || *n == "report_bug" || forge.contains(n))
+    );
+    assert_eq!(open.len(), 17);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 42);
+    assert_eq!(pm.tool_set(t).len(), 43);
 }
 
 #[test]

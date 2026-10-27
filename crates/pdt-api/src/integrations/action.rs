@@ -53,6 +53,8 @@ pub enum Via {
 pub struct ActionCx<'a> {
     pub st: &'a AppState,
     pub via: Via,
+    /// The agent session calling it as a tool (None for a workflow step).
+    pub session: Option<&'a pdt_core::session::Session>,
 }
 
 /// One capability: a workflow node kind and a pdt-mcp tool from one definition. Its input is the node's config and the
@@ -161,7 +163,7 @@ impl<A: Action> AnyAction for A {
                 a.insert("connection".into(), json!(conn.name));
             }
             let input: A::Input = crate::mcp::tools::args(args)?;
-            let out = self.run(&ActionCx { st: cx.st, via: Via::Tool }, input).await?;
+            let out = self.run(&ActionCx { st: cx.st, via: Via::Tool, session: Some(cx.session) }, input).await?;
             self.tool_output(out)
         })
     }
@@ -216,7 +218,7 @@ impl<A: Action> NodeKind for ActionNode<A> {
                 let first = a.node().and_then(|n| n.ports.first().map(|p| p.0)).unwrap_or("out");
                 return Ok(Outcome::next(first, json!({"would": a.approval_title(&c)})));
             }
-            let out = a.run(&ActionCx { st: cx.st, via: Via::Node }, c).await?;
+            let out = a.run(&ActionCx { st: cx.st, via: Via::Node, session: None }, c).await?;
             let port = a.port(&out);
             Ok(Outcome::Next { port: port.into(), output: a.node_output(out) })
         })

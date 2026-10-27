@@ -32,6 +32,8 @@ pub enum InboxKind {
     Notice,
     /// An agent's `request_secret` (PDT-158): the user types the value into PDT's masked form, never the chat.
     Secret,
+    /// A forge PDT needs is not signed in (PDT-177): Connect GitHub in Settings. Not stored: listed while it lasts.
+    Connect,
 }
 
 impl InboxKind {
@@ -47,6 +49,7 @@ impl InboxKind {
             InboxKind::TimedOut => "timed_out",
             InboxKind::Notice => "notice",
             InboxKind::Secret => "secret",
+            InboxKind::Connect => "connect",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -61,6 +64,7 @@ impl InboxKind {
             Self::TimedOut,
             Self::Notice,
             Self::Secret,
+            Self::Connect,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)

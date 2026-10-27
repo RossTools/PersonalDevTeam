@@ -27,6 +27,9 @@ pub const APP_BUNDLE_ID: &str = "dev.personaldevteam.desktop";
 pub const RELEASE_REPO: &str = "ross-game-tools/PersonalDevTeam";
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
 pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
+/// The client ID of PDT's GitHub OAuth App (PDT-177): the in-app "Connect GitHub" login (OAuth device flow) uses it.
+/// Empty until the app is registered (docs/reference/github.md): until then Settings offers only a pasted token.
+pub const GITHUB_OAUTH_CLIENT_ID: &str = "";
 /// The optional run configuration file inside a project's repository (remote-host spec §4.1).
 pub const PROJECT_CONFIG_FILE: &str = ".pdt/project.toml";
 

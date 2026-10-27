@@ -13,6 +13,7 @@ mod folders;
 mod forge;
 mod github;
 mod github_issues;
+pub mod github_login;
 pub mod guides;
 mod hooks;
 mod host;

@@ -233,7 +233,8 @@ async fn pdt_mcp_needs_the_session_token_and_lists_its_tools() {
     assert_eq!(
         said.last().unwrap(),
         "mcp tools: get_ticket,submit_outcome,ask_user,add_ticket_comment,add_review_comment,list_secrets,\
-         request_secret,run_with_secrets,write_secret_file"
+         request_secret,run_with_secrets,write_secret_file,change_request_view,change_request_comment,ci_runs,\
+         ci_failed_logs,issue_view,issue_comment"
     );
     send("mcp: get_ticket {}").await;
     let said = wait_said(first + 2).await;

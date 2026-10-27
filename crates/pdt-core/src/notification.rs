@@ -284,7 +284,7 @@ impl NotificationKind {
             (InboxKind::Approval, _) => K::InboxApproval,
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
-            (InboxKind::Notice, _) => K::InboxNotice,
+            (InboxKind::Notice | InboxKind::Connect, _) => K::InboxNotice,
             (InboxKind::Manual, _) => K::InboxManual,
             (InboxKind::Gate | InboxKind::Session, _) => K::InboxGate,
         }

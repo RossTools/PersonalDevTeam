@@ -1,5 +1,5 @@
 //! Each project's forge (PDT-176): the one `.pdt/project.toml` names (`forge = "github"`), else GitHub when the
-//! project's `origin` is on github.com. The PR poller, merges, agents' instructions and the issue triage ask it, and
+//! project's `origin` is on github.com (or on the GitHub Enterprise Server the GitHub login is for, PDT-177). The PR poller, merges, agents' instructions and the issue triage ask it, and
 //! skip what its [`Capabilities`] say it can't do.
 
 use crate::routes::AppState;
@@ -33,7 +33,8 @@ pub(crate) async fn project_forge(st: &AppState, project_id: &str, repo_path: &s
     match named {
         Some(ForgeKind::None) => None,
         Some(ForgeKind::Github) | None => {
-            let repo = crate::github::github_repo(repo_path).await?;
+            let host = st.github_api.account().map(|a| pdt_github::login::web_host(&a.api_url));
+            let repo = crate::github::github_repo_on(repo_path, host).await?;
             Some(ProjectForge { kind: ForgeKind::Github, api: st.github.clone(), repo })
         }
     }

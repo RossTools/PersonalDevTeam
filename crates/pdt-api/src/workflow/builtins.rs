@@ -545,8 +545,8 @@ fn jira_done() -> WorkflowDoc {
 const BUG_TRIAGE_PROMPT: &str = "A bug report from another PDT instance arrived as issue #{{trigger.number}} on \
 {{trigger.repo}}: \"{{trigger.title}}\" by {{trigger.author}} ({{trigger.url}}).\n\n{{trigger.body}}\n\nTriage it \
 against this project: read the code it touches (your working folder is the project's checkout), its tickets \
-(`search_tickets`, open and closed) and the repository's open and closed issues (`gh issue list --repo \
-{{trigger.repo}} --state all --search \"<words>\"`, `gh issue view <n> --repo {{trigger.repo}}`). Change nothing: make \
+(`search_tickets`, open and closed) and the repository's issues the report or its tickets name (`issue_view` reads \
+one by number). Change nothing: make \
 no ticket, comment or issue change yourself; the workflow does that from your outcome.\n\nThen call `submit_outcome` \
 with one of:\n- `accept`: a real bug no ticket covers yet. `summary`: your triage notes (where in the code, how bad, \
 how to reproduce). `data`: `{\"priority\": \"low|medium|high|urgent\", \"labels\": [\"bug\"]}`.\n- `duplicate`: a \

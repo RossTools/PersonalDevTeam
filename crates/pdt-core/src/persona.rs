@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// The pdt-mcp tools a session gets when it runs no persona (spec §2.2). The secret tools (PDT-158) are here so any
-/// agent can use the secrets the user lets it; each secret says which projects and personas may.
-pub const DEFAULT_TOOLS: [&str; 9] = [
+/// agent can use the secrets the user lets it; each secret says which projects and personas may. The forge tools
+/// (PDT-177) read the session's pull request, CI and issues and comment on them, instead of a forge's CLI.
+pub const DEFAULT_TOOLS: [&str; 15] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -20,6 +21,12 @@ pub const DEFAULT_TOOLS: [&str; 9] = [
     "request_secret",
     "run_with_secrets",
     "write_secret_file",
+    "change_request_view",
+    "change_request_comment",
+    "ci_runs",
+    "ci_failed_logs",
+    "issue_view",
+    "issue_comment",
 ];
 
 /// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).

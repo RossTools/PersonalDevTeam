@@ -22,7 +22,7 @@ pub enum ForgeKind {
 pub struct ForgeNotes {
     /// One line on reading CI for the session's branch; `{branch}` stands for it.
     pub ci: Option<String>,
-    /// How to answer a comment on a change request, e.g. "`gh pr comment`, or a reply to the review comment".
+    /// How to answer a comment on a change request, e.g. "`change_request_comment`, with `replyTo` to answer a review comment".
     pub reply: Option<String>,
     /// The command that watches CI in a shell, named as one not to run.
     pub watch: Option<String>,

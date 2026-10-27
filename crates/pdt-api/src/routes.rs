@@ -53,10 +53,20 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
-    /// The GitHub forge (PDT-176), for projects on GitHub (`crate::forge::project_forge`). `new` installs
-    /// [`pdt_github::Unavailable`], which runs nothing; only pdtd's production wiring installs the real CLI, so tests
-    /// never reach GitHub.
+    /// The GitHub forge (PDT-176), for projects on GitHub (`crate::forge::project_forge`): `github_api` unless a test
+    /// installs a fake.
     pub github: std::sync::Arc<dyn pdt_forge::Forge>,
+    /// The GitHub forge over the API (PDT-177), which the in-app login signs in. `new` makes one with no network
+    /// ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that reaches GitHub.
+    pub github_api: std::sync::Arc<pdt_github::GithubApi>,
+    /// The keychain account of this instance's GitHub login (see `secrets::github_login_account`), kept apart from
+    /// the stable instance's as `update_token_account` is.
+    pub github_account: String,
+    /// The OAuth App the device flow signs in with ([`pdt_core::brand::GITHUB_OAUTH_CLIENT_ID`], or
+    /// `PDT_GITHUB_CLIENT_ID`); empty: only a pasted token.
+    pub github_client_id: String,
+    /// The device flow under way, or why the last login failed.
+    pub(crate) github_login: std::sync::Arc<std::sync::Mutex<crate::github_login::LoginState>>,
     /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
     pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
@@ -161,6 +171,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(store: Store, data_dir: std::path::PathBuf) -> Self {
         let update_token_account = crate::secrets::update_token_account(&data_dir, None);
+        let github_account = crate::secrets::github_login_account(&data_dir, None);
+        let github_api = std::sync::Arc::new(pdt_github::GithubApi::offline());
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -181,7 +193,11 @@ impl AppState {
             listen_port: 0,
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
-            github: std::sync::Arc::new(pdt_github::Unavailable),
+            github: github_api.clone(),
+            github_api,
+            github_account,
+            github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),
+            github_login: Default::default(),
             pr_watch: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
@@ -337,6 +353,12 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/install", axum::routing::post(crate::update::post_install))
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
+        .route("/github/login", axum::routing::get(crate::github_login::get).delete(crate::github_login::disconnect))
+        .route("/github/login/token", axum::routing::post(crate::github_login::put_token))
+        .route(
+            "/github/login/device",
+            axum::routing::post(crate::github_login::start_device).delete(crate::github_login::cancel_device),
+        )
         .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
         .route("/bug-reports", axum::routing::post(crate::bug_reports::create))
         .route("/bug-reports/preview", get(crate::bug_reports::preview))

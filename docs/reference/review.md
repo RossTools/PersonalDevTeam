@@ -50,17 +50,17 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
 - Green CI (PDT-151, policy `requireGreenCi`, on by default; project settings: "An automated merge waits for green
   CI"): an automated merge of a pull request reads its PR from GitHub again and needs CI on its head to have passed
   (GitHub Actions and Buildkite together, as the badge shows it; pdt-core `pr::ci_gate`), whatever GitHub's branch
-  protection requires (`gh pr merge --auto` merges at once where nothing is required). A failed or cancelled run is
+  protection requires (GitHub's auto-merge merges at once where nothing is required). A failed or cancelled run is
   409 `ci_failed` (`fixable`, the reason names the failed jobs and the run); runs still going, or none yet while the
   repository has CI (`.github/workflows` files at the head or on the branch, or a Buildkite pipeline for the project),
   `ci_pending`; in a project with Buildkite, green Actions alone are `ci_pending` while Buildkite hasn't reported on
   that head. A read from GitHub that fails is 409 `ci_unreadable`, an error like `merge_failed` (the last look may be
   older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
   A person's merge doesn't wait.
-- With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
+- With an open PR (`attempt.pr`) it turns on GitHub's auto-merge (GraphQL `enablePullRequestAutoMerge`) and records the attempt as set to merge
   (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (the forge's `merge`; the strategy from
   `merge_settings`, none with a merge queue (and no queue on a forge without them); when GitHub says the PR is already
-  clean it merges at once) and the merge
+  clean it merges at once, or joins the merge queue when there is one) and the merge
   check ends the attempt later. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
   branch off) sends `{finishOnMerge, deleteBranch}` (left out: what an earlier merge asked stays), kept on the attempt (`attempts.finish_on_merge`,
   `finish_delete_branch`, PDT-75): when the merge check ends the attempt as merged, pdt-api `finish.rs` does what

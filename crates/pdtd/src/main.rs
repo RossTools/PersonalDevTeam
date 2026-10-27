@@ -98,11 +98,18 @@ async fn run() -> anyhow::Result<()> {
     // A slow step never holds up the engine's next tick for long: its run goes on in the background.
     state.engine_tick_wait = std::time::Duration::from_secs(1);
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
-    // Likewise the GitHub forge through its CLI (attempts' pull requests, CI, merges and issues).
-    state.github = match &cfg.gh_bin {
-        Some(bin) => std::sync::Arc::new(pdt_github::GhCli::new(bin.clone())),
-        None => std::sync::Arc::new(pdt_github::GhCli::detect(state.platform.login_path.as_deref())),
-    };
+    // Likewise the GitHub forge over the API (attempts' pull requests, CI, merges and issues); it signs in with the
+    // login in the keychain, read in the background below.
+    if !cfg.github_offline {
+        let api = std::sync::Arc::new(pdt_github::GithubApi::new(std::sync::Arc::new(
+            pdt_github::transport::ReqwestTransport::current(),
+        )));
+        state.github = api.clone();
+        state.github_api = api;
+    }
+    if let Some(id) = &cfg.github_client_id {
+        state.github_client_id = id.clone();
+    }
     // The real CLI is installed only here; `AppState::new` runs no tailscale command at all.
     state.tailscale = match &cfg.tailscale_bin {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
@@ -125,11 +132,13 @@ async fn run() -> anyhow::Result<()> {
     let stable_data_dir =
         dirs::data_local_dir().map(|root| root.join(pdt_core::brand::Profile::Stable.data_dir_name()));
     state.update_token_account = pdt_api::secrets::update_token_account(&cfg.data_dir, stable_data_dir.as_deref());
+    state.github_account = pdt_api::secrets::github_login_account(&cfg.data_dir, stable_data_dir.as_deref());
     // In the background: serving (and pdt-host's health check after an update) never waits on the keychain.
     tokio::spawn({
         let st = state.clone();
         async move {
             pdt_api::update::sync_token_state(&st).await;
+            pdt_api::github_login::load(&st).await;
             // The secrets' values, so they are redacted from the start.
             pdt_api::vault::load_known(&st).await;
         }

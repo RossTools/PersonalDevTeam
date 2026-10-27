@@ -12,8 +12,18 @@ pub fn repo_name(url: &str) -> Option<String> {
 
 /// `owner/repo` when the URL points at a repository on github.com (https, ssh or scp-style).
 pub fn github_repo(url: &str) -> Option<String> {
+    github_repo_on(url, "github.com")
+}
+
+/// `owner/repo` when the URL points at a repository on `host` (a GitHub Enterprise Server's, or github.com).
+pub fn github_repo_on(url: &str, host: &str) -> Option<String> {
     let u = url.trim();
-    let rest = if let Some(r) = u.strip_prefix("git@github.com:") {
+    let is_host = |h: &str| {
+        h.eq_ignore_ascii_case(host)
+            || (host.eq_ignore_ascii_case("github.com") && h.eq_ignore_ascii_case("www.github.com"))
+    };
+    let scp = u.strip_prefix("git@").and_then(|r| r.split_once(':')).filter(|(h, _)| is_host(h) && !u.contains("://"));
+    let rest = if let Some((_, r)) = scp {
         r
     } else {
         let no_scheme = u.split_once("://").map(|(_, r)| r)?;
@@ -21,7 +31,7 @@ pub fn github_repo(url: &str) -> Option<String> {
         let host_path = no_scheme.rsplit_once('@').map_or(no_scheme, |(_, r)| r);
         let (host, path) = host_path.split_once('/')?;
         let host = host.split(':').next()?;
-        if !host.eq_ignore_ascii_case("github.com") && !host.eq_ignore_ascii_case("www.github.com") {
+        if !is_host(host) {
             return None;
         }
         path
@@ -74,6 +84,19 @@ mod tests {
             ("git@gitlab.com:o/r.git", None),
         ] {
             assert_eq!(github_repo(url).as_deref(), want, "{url}");
+        }
+    }
+
+    #[test]
+    fn enterprise_repos_are_on_their_host() {
+        for (url, want) in [
+            ("https://ghe.example.com/o/r.git", Some("o/r")),
+            ("git@ghe.example.com:o/r.git", Some("o/r")),
+            ("ssh://git@GHE.example.com/o/r", Some("o/r")),
+            ("https://github.com/o/r", None),
+            ("git@github.com:o/r.git", None),
+        ] {
+            assert_eq!(github_repo_on(url, "ghe.example.com").as_deref(), want, "{url}");
         }
     }
 }
