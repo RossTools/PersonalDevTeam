@@ -1,14 +1,13 @@
 //! Discord (PDT-98): webhooks that Post to Discord steps post to, and a bot the PM manages a server with (its tools
 //! and the `discord.channel.ensure` action).
 
-use super::{Integration, Tool};
-use crate::mcp::tools::{Cx, args, confirmable, schema};
-use crate::workflow::catalog::{BoxFut, NodeKind};
+use super::Integration;
+use super::action::AnyAction;
+use crate::workflow::catalog::NodeKind;
 use crate::workflow::nodes::discord::DISCORD_WEBHOOK;
 use pdt_core::discord::DISCORD_BOT;
-use pdt_core::integration::{ConnectionKind, ToolDecl};
-use pdt_core::pm::AskTarget;
-use serde_json::Value;
+use pdt_core::integration::ConnectionKind;
+use std::sync::Arc;
 
 pub struct Discord;
 
@@ -58,62 +57,7 @@ impl Integration for Discord {
         vec![Box::new(crate::workflow::nodes::discord::Discord), Box::new(crate::discord::EnsureChannel)]
     }
 
-    fn tools(&self) -> Vec<Tool> {
-        vec![
-            Tool {
-                decl: ToolDecl::new("discord_get", "Look at the Discord server: its channels and webhooks")
-                    .read_only()
-                    .open_world()
-                    .pm(),
-                title: "Look at the Discord server",
-                description: "The Discord server a bot connection manages: its categories, channels and webhooks (with \
-                              the connection each webhook is saved as), and whether you may change it without asking.",
-                schema: schema::<crate::discord::DiscordGet>,
-            },
-            Tool {
-                decl: ToolDecl::new("discord_change", "Create, rename, move or archive Discord channels")
-                    .asks()
-                    .open_world()
-                    .pm(),
-                title: "Change the Discord server",
-                description: "Creates, renames, moves or archives (moves into Archive) channels and categories on the \
-                              Discord server, in order. The user confirms each call unless the bot connection lets you \
-                              act.",
-                schema: schema::<crate::discord::DiscordChange>,
-            },
-            Tool {
-                decl: ToolDecl::new("discord_webhook", "Make a Discord webhook for discord.post steps")
-                    .asks()
-                    .open_world()
-                    .pm(),
-                title: "Make a Discord webhook",
-                description: "Makes a webhook on a channel (and the channel, with createChannel) and saves it as a \
-                              discord_webhook connection that discord.post steps use by name. Its URL is never shown. \
-                              The user confirms each call unless the bot connection lets you act.",
-                schema: schema::<crate::discord::DiscordWebhookArgs>,
-            },
-        ]
-    }
-
-    fn call_tool<'a>(&'a self, cx: &'a Cx<'a>, name: &'a str, a: Value) -> BoxFut<'a, Result<Value, String>> {
-        let st = cx.st;
-        Box::pin(async move {
-            match name {
-                "discord_get" => crate::discord::get(st, args(a)?).await,
-                "discord_change" => {
-                    let a: crate::discord::DiscordChange = args(a)?;
-                    let target = AskTarget::Connection { kind: DISCORD_BOT, name: a.connection.clone() };
-                    confirmable(cx, name, &target).await?;
-                    crate::discord::change(st, a).await
-                }
-                "discord_webhook" => {
-                    let a: crate::discord::DiscordWebhookArgs = args(a)?;
-                    let target = AskTarget::Connection { kind: DISCORD_BOT, name: a.connection.clone() };
-                    confirmable(cx, name, &target).await?;
-                    crate::discord::webhook_tool(st, a).await
-                }
-                other => Err(format!("no tool is called {other}")),
-            }
-        })
+    fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
+        crate::discord::actions()
     }
 }

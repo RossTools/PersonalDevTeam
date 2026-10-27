@@ -2,6 +2,7 @@ use super::*;
 use crate::workflow::catalog::{Catalog, Category, KindSpec, Outcome, StepCx, parse};
 use pdt_core::workflow::events::schema_of;
 use pdt_core::workflow::validate::Kinds;
+use std::sync::Arc;
 
 /// An integration that adds one of everything.
 struct Dummy;
@@ -40,6 +41,72 @@ impl NodeKind for DummyNode {
     }
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct BlinkInput {
+    /// A `dummy` connection.
+    #[schemars(extend("x-connection-kind" = "dummy"))]
+    connection: String,
+    times: u32,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct Blinked {
+    blinks: u32,
+}
+
+/// An action: a node kind and a tool from one definition.
+struct Blink;
+
+impl action::Action for Blink {
+    type Input = BlinkInput;
+    type Output = Blinked;
+    fn tool(&self) -> action::ToolFace {
+        action::ToolFace {
+            decl: ToolDecl::new("dummy_blink", "Blink Dummy").read_only().open_world().pm(),
+            title: "Blink Dummy",
+            description: "Blinks it.",
+        }
+    }
+    fn node(&self) -> Option<action::NodeFace> {
+        Some(action::NodeFace {
+            id: "dummy.blink",
+            title: "Blink",
+            description: "Blinks it.",
+            ports: &[("out", "Then")],
+        })
+    }
+    fn connection(&self) -> Option<action::ConnectionFace> {
+        Some(action::ConnectionFace { kind: "dummy", label: "Dummy" })
+    }
+    fn check(&self, i: &BlinkInput) -> Result<(), String> {
+        if i.times == 0 { Err("blink at least once".into()) } else { Ok(()) }
+    }
+    fn approval_title(&self, i: &BlinkInput) -> String {
+        format!("blink {} {} times", i.connection, i.times)
+    }
+    fn run<'a>(&'a self, _cx: &'a action::ActionCx<'a>, i: BlinkInput) -> BoxFut<'a, Result<Blinked, String>> {
+        Box::pin(async move { Ok(Blinked { blinks: i.times }) })
+    }
+}
+
+/// A tool-only action.
+struct Wink;
+
+impl action::Action for Wink {
+    type Input = Value;
+    type Output = Value;
+    fn tool(&self) -> action::ToolFace {
+        action::ToolFace { decl: ToolDecl::new("dummy_wink", "Wink"), title: "Wink", description: "Winks." }
+    }
+    fn approval_title(&self, _: &Value) -> String {
+        "wink".into()
+    }
+    fn run<'a>(&'a self, _cx: &'a action::ActionCx<'a>, i: Value) -> BoxFut<'a, Result<Value, String>> {
+        Box::pin(async move { Ok(i) })
+    }
+}
+
 impl Integration for Dummy {
     fn id(&self) -> &'static str {
         "dummy"
@@ -52,6 +119,9 @@ impl Integration for Dummy {
     }
     fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {
         vec![Box::new(DummyNode)]
+    }
+    fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
+        vec![Arc::new(Blink), Arc::new(Wink)]
     }
     fn tools(&self) -> Vec<Tool> {
         vec![Tool {
@@ -270,4 +340,38 @@ fn tools_and_node_kinds_match_the_snapshot() {
     }
     let was: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(was == now, "the tools or node kinds changed: run with PDT_UPDATE_SNAPSHOT=1 and check the diff");
+}
+
+#[test]
+fn an_action_is_both_a_node_kind_and_a_tool() {
+    let r = Registry::new(all().into_iter().chain([Box::new(Dummy) as Box<dyn Integration>]).collect());
+    // Its tools come before the integration's own, in order.
+    let names = r.tool_table().names();
+    assert_eq!(names[names.len() - 3..], ["dummy_blink", "dummy_wink", "dummy_poke"]);
+    assert!(r.tool_table().pm_tools().contains(&"dummy_blink"));
+    let info = r.tool_infos().into_iter().find(|i| i.name == "dummy_blink").unwrap();
+    assert_eq!(info.annotations["readOnlyHint"], true);
+    // A tool call may leave the connection out.
+    assert_eq!(info.input_schema["required"], json!(["times"]));
+    let conn = &info.input_schema["properties"]["connection"];
+    assert_eq!(conn["description"], "A Dummy connection's name; the only one when left out.");
+    assert!(conn.get("x-connection-kind").is_none());
+
+    // The node needs it, and checks the config as the action says.
+    let catalog = Catalog::new(r.node_kinds());
+    let blink = catalog.spec("dummy.blink").expect("its node kind");
+    assert_eq!((blink.category, blink.version, blink.ports.len()), (Category::Action, 1, 1));
+    assert_eq!(blink.config_schema["properties"]["connection"]["x-connection-kind"], "dummy");
+    assert_eq!(blink.output_schema["properties"]["blinks"]["type"], "integer");
+    let node = |config: Value| -> pdt_core::workflow::doc::Node {
+        serde_json::from_value(json!({"id": "b", "kind": "dummy.blink", "version": 1, "config": config})).unwrap()
+    };
+    assert_eq!(catalog.facts(&node(json!({"connection": "d", "times": 2}))).unwrap().config_error, None);
+    assert_eq!(
+        catalog.facts(&node(json!({"connection": "d", "times": 0}))).unwrap().config_error.as_deref(),
+        Some("blink at least once")
+    );
+    assert!(catalog.facts(&node(json!({"times": 2}))).unwrap().config_error.unwrap().contains("connection"));
+    // A tool-only action has no node kind.
+    assert!(catalog.specs().iter().all(|s| s.id != "dummy_wink" && !s.id.contains("wink")));
 }

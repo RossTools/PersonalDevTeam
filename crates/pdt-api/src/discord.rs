@@ -1,8 +1,9 @@
 //! A Discord server through a bot (PDT-98): a small client for Discord's REST API (no gateway) with a `discord_bot`
-//! connection's token, the PM's tools (`discord_get`, `discord_change`, `discord_webhook`) and the
-//! `discord.channel.ensure` node kind. Webhook URLs (their tokens) go to the secret store and never into a result or
+//! connection's token, the PM's tools (`discord_get`, `discord_change`, `discord_webhook`: actions
+//! that are tools only) and the `discord.channel.ensure` node kind. Webhook URLs (their tokens) go to the secret store and never into a result or
 //! an error (`send_error` drops the URL from a failed request).
 
+use crate::integrations::action::{Action, ActionCx, AnyAction, ConnectionFace, ToolFace};
 use crate::routes::AppState;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use crate::workflow::nodes::discord::DISCORD_WEBHOOK;
@@ -11,11 +12,13 @@ use crate::workflow::routes::{ConnectionInput, ConnectionSecret};
 use axum::Json;
 use axum::extract::{Path, State};
 use pdt_core::discord::{self as core, ARCHIVE_CATEGORY, Change, Channel, ChannelKind, DISCORD_BOT};
+use pdt_core::integration::ToolDecl;
 use pdt_core::workflow::api::Connection;
 use reqwest::Method;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use ts_rs::TS;
 
 /// How many times a rate-limited request is tried.
@@ -410,6 +413,117 @@ pub(crate) async fn webhook_tool(st: &AppState, a: DiscordWebhookArgs) -> Result
     Ok(json!({"saved": true, "connection": conn.name, "channel": {"id": channel.id, "name": channel.name},
               "channelCreated": created, "webhookId": hook.id,
               "use": format!("discord.post with connection \"{}\"", conn.name)}))
+}
+
+// ---- the actions ----
+
+/// The bot's connection: a tool call may leave it out.
+const BOT: Option<ConnectionFace> = Some(ConnectionFace { kind: DISCORD_BOT, label: "Discord bot" });
+
+/// The actions, in `tools/list` order. They are tools only: workflows post through `discord.post` and make channels
+/// with `discord.channel.ensure`.
+pub(crate) fn actions() -> Vec<Arc<dyn AnyAction>> {
+    vec![Arc::new(GetServer), Arc::new(ChangeServer), Arc::new(MakeWebhook)]
+}
+
+fn bot_name(c: &Option<String>) -> &str {
+    c.as_deref().unwrap_or("the bot")
+}
+
+pub(crate) struct GetServer;
+
+impl Action for GetServer {
+    type Input = DiscordGet;
+    type Output = Value;
+
+    fn tool(&self) -> ToolFace {
+        ToolFace {
+            decl: ToolDecl::new("discord_get", "Look at the Discord server: its channels and webhooks")
+                .read_only()
+                .open_world()
+                .pm(),
+            title: "Look at the Discord server",
+            description: "The Discord server a bot connection manages: its categories, channels and webhooks (with \
+                          the connection each webhook is saved as), and whether you may change it without asking.",
+        }
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        BOT
+    }
+
+    fn approval_title(&self, a: &DiscordGet) -> String {
+        format!("look at the Discord server ({})", bot_name(&a.connection))
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, a: DiscordGet) -> BoxFut<'a, Result<Value, String>> {
+        Box::pin(get(cx.st, a))
+    }
+}
+
+pub(crate) struct ChangeServer;
+
+impl Action for ChangeServer {
+    type Input = DiscordChange;
+    type Output = Value;
+
+    fn tool(&self) -> ToolFace {
+        ToolFace {
+            decl: ToolDecl::new("discord_change", "Create, rename, move or archive Discord channels")
+                .asks()
+                .open_world()
+                .pm(),
+            title: "Change the Discord server",
+            description: "Creates, renames, moves or archives (moves into Archive) channels and categories on the \
+                          Discord server, in order. The user confirms each call unless the bot connection lets you \
+                          act.",
+        }
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        BOT
+    }
+
+    fn approval_title(&self, a: &DiscordChange) -> String {
+        let all: Vec<String> = a.changes.iter().map(Change::describe).collect();
+        format!("{} on the Discord server ({})", all.join(", "), bot_name(&a.connection))
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, a: DiscordChange) -> BoxFut<'a, Result<Value, String>> {
+        Box::pin(change(cx.st, a))
+    }
+}
+
+pub(crate) struct MakeWebhook;
+
+impl Action for MakeWebhook {
+    type Input = DiscordWebhookArgs;
+    type Output = Value;
+
+    fn tool(&self) -> ToolFace {
+        ToolFace {
+            decl: ToolDecl::new("discord_webhook", "Make a Discord webhook for discord.post steps")
+                .asks()
+                .open_world()
+                .pm(),
+            title: "Make a Discord webhook",
+            description: "Makes a webhook on a channel (and the channel, with createChannel) and saves it as a \
+                          discord_webhook connection that discord.post steps use by name. Its URL is never shown. \
+                          The user confirms each call unless the bot connection lets you act.",
+        }
+    }
+
+    fn connection(&self) -> Option<ConnectionFace> {
+        BOT
+    }
+
+    fn approval_title(&self, a: &DiscordWebhookArgs) -> String {
+        format!("make a webhook on {} saved as {} ({})", a.channel, a.name, bot_name(&a.connection))
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, a: DiscordWebhookArgs) -> BoxFut<'a, Result<Value, String>> {
+        Box::pin(webhook_tool(cx.st, a))
+    }
 }
 
 fn api(e: crate::error::ApiError) -> String {
