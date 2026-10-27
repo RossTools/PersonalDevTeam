@@ -69,8 +69,18 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
 - Otherwise a local merge with the user's identity: a `--no-ff` merge commit, or with `{style: "squash"}` one
   single-parent commit (`<KEY>: <title>`; PDT-65), in the checkout that has the base (which must be clean;
   `merge --squash` + `commit` for a squash), else `merge-tree` + `commit-tree` + `update-ref`. The dialog's Merge
-  commit | Squash is remembered per project in localStorage. It ends the attempt as merged, then the dialog runs
-  `finishMerged` (Remove the worktree on, Delete the branch off) or just moves the ticket to Done.
+  commit | Squash is remembered per project in localStorage. It ends the attempt as merged: a person's merge with
+  `via: merged_here`, then the dialog runs `finishMerged` (Remove the worktree on, Delete the branch off) or just
+  moves the ticket to Done; an automated one with `via: automated` and its `finishOnMerge`/`deleteBranch` recorded, so
+  Finish merged tickets finishes it (PDT-181).
+- A pull request that already merged (PDT-181: GitHub merged it through the auto-merge an earlier merge turned on, and
+  PR notices' merge again on `ci.run_passed` came moments later) never merges locally: an automated merge reads the
+  PR from GitHub first, and any merge whose PR is merged ends the attempt as merge detection would (`via: detected`,
+  the PR's number, `outcome: merged` with no commit), so Finish merged tickets finishes it.
+- An automated merge never merges locally (`review::no_local_merge`, PDT-181) when GitHub couldn't be read (409
+  `pr_unreadable`: a PR may be there), when the branch's PR was closed without merging, or when the project's attempts
+  merge through pull requests (an earlier `merged` event of the project names a PR; pdt-store `project_merged_a_pr`):
+  409 `merge_blocked`. A person's Merge… still can.
 - A project whose settings say Merge through pull requests (`project_settings.merge_via_pr`, `mergeViaPr` in the
   settings API, kept when a PUT leaves it out) never merges locally: no open PR is `no_pr`.
 - `POST /api/attempts/{id}/ask-agent` asks the coder to fix a `conflict` (merge the base in) or `no_pr` (push and

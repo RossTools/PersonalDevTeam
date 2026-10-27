@@ -343,8 +343,11 @@ pub struct PrEvent {
 pub enum MergeVia {
     /// Merge detection found it (git or GitHub): the usual way, after a PR merges.
     Detected,
-    /// The user merged it locally in PDT (Merge…).
+    /// The user merged it locally in PDT (Merge…), which finishes the ticket itself.
     MergedHere,
+    /// A workflow or an agent merged it locally in PDT (`attempt.merge`, or the API without `by: "user"`, PDT-181):
+    /// Finish merged tickets finishes it, as a detected merge.
+    Automated,
     /// The user closed the ticket (Done says the work landed).
     Closed,
 }

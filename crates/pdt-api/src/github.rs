@@ -340,10 +340,12 @@ impl Tick {
     }
 }
 
-/// Reads one active attempt's PR now (the ticket was opened).
-pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) {
-    if let Some(repo) = github_repo(&info.repo_path).await {
-        refresh_one(st, info, &repo, &mut Tick::new(st).await, true).await;
+/// Reads one active attempt's PR now (the ticket was opened). False when GitHub couldn't be read (the watch keeps
+/// the last look); true too for a project not on GitHub.
+pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) -> bool {
+    match github_repo(&info.repo_path).await {
+        Some(repo) => refresh_one(st, info, &repo, &mut Tick::new(st).await, true).await,
+        None => true,
     }
 }
 
@@ -358,8 +360,8 @@ pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
     .flatten()
 }
 
-/// Reads one attempt's PR into the watch; with `tell`, queues its news.
-async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut Tick, tell: bool) {
+/// Reads one attempt's PR into the watch; with `tell`, queues its news. False when the read failed.
+async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut Tick, tell: bool) -> bool {
     let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
     let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
     let cached_queue = tick.queue_runs.get(repo).cloned();
@@ -374,7 +376,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "the PR check task failed");
-            return;
+            return false;
         }
     };
     let what = format!("pr:{}", info.project_id);
@@ -390,7 +392,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
             if let Some(p) = watch(st).by_attempt.get_mut(&info.attempt.id) {
                 p.error = Some(msg);
             }
-            return;
+            return false;
         }
     };
     if let Some(q) = queue {
@@ -401,7 +403,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
     }
     let Some(mut now) = found else {
         watch(st).by_attempt.remove(&info.attempt.id);
-        return;
+        return true;
     };
     now.checked_at = now_ms();
     {
@@ -439,6 +441,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, repo: &str, tick: &mut T
             refresh_feedback(st, info, repo, &now).await;
         }
     }
+    true
 }
 
 pub(crate) fn attempt_ref(info: &AttemptInfo) -> AttemptRef {

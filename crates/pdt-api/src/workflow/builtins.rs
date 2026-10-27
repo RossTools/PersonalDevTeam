@@ -334,12 +334,12 @@ fn pr_notices() -> WorkflowDoc {
 fn finish_merged() -> WorkflowDoc {
     doc(json!({
         "name": "Finish merged tickets",
-        "description": "When a ticket's branch is found merged and Merge… asked to finish it then, moves it to Done \
-                        and cleans up (sessions, runs, worktree, workspace) and pulls the base. Uncommitted changes \
-                        leave it for the merged banner.",
+        "description": "When a ticket's branch is found merged, or a workflow or an agent merged it, and the merge \
+                        asked to finish it then, moves it to Done and cleans up (sessions, runs, worktree, workspace) \
+                        and pulls the base. Uncommitted changes leave it for the merged banner.",
         "nodes": [
             {"id": "merged", "kind": "attempt.merged", "version": 1, "position": {"x": 0, "y": 0},
-             "config": {"where": [{"left": "{{trigger.via}}", "op": "eq", "right": "detected"}]}},
+             "config": {"where": [{"left": "{{trigger.via}}", "op": "in", "right": ["detected", "automated"]}]}},
             {"id": "ask", "kind": "gate", "version": 1, "position": {"x": 280, "y": 0}, "config": {
                 "question": "Move {{trigger.ticketKey}} to Done and remove its worktree?",
                 "choices": ["finish"],
