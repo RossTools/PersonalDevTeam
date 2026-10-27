@@ -233,12 +233,22 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 
 ## Pull requests and CI (PDT-25)
 
-crates/pdt-github, pdt-api `github.rs`, pure rules in pdt-core `pr.rs`.
+crates/pdt-forge (the `Forge` trait), crates/pdt-github (the GitHub forge), pdt-api `forge.rs` and `github.rs`, pure
+rules in pdt-core `pr.rs`.
 
+- A project's **forge** (PDT-176) is where its PRs, CI, reviews and issues live: the one `.pdt/project.toml` names
+  (`forge = "github"` or `"none"`, docs/run-config.md "Forge"), else GitHub when its `origin` is on github.com, else
+  none (no PR, CI or feedback is read and Merge is local). A forge declares its capabilities (`Forge::capabilities`:
+  merge queue, required checks, issues, reviews) and the steps below skip or adapt what it can't do: no merge-queue
+  runs or queue setting without a merge queue, no `pr.commented`/`pr.reviewed` without reviews, no issue triage or
+  `github.*` issue actions without issues, and without required checks a workflow's or agent's merge always waits
+  for green CI (Review "Merge"). Each forge also writes its part of agents' instructions (docs/reference/agents.md).
+  GitHub can do all of it.
 - Every 60 s (before the merge check) and when a ticket is opened (`check-merge`), pdtd reads each active attempt's PR
-  through the user's `gh` (`PDT_GH_BIN`, else the login shell's PATH, then pdtd's own, then the standard install
-  folders; tests get `pdt_github::Unavailable` or `testing::FakeGithub`, and pdtd's own tests set `PDT_GH_BIN` to
-  nothing). Only projects whose `origin` is on GitHub.
+  from its project's forge; GitHub's goes through the user's `gh` (`PDT_GH_BIN`, else the login shell's PATH, then
+  pdtd's own, then the standard install folders; tests get `pdt_github::Unavailable` or `pdt_forge::testing::FakeForge`,
+  whose capabilities a test can turn off, and pdtd's own tests set `PDT_GH_BIN` to nothing). Only projects with a
+  forge.
 - One GraphQL query reads state, draft, mergeable, `BEHIND`, auto-merge, merge-queue entry and newest merge-queue
   event; then `gh run list --branch` gives CI on the PR head (the newest run of each workflow; the fine-grained token
   cannot read check runs) and, while queued or just out of the queue, `gh run list --event merge_group` gives the runs

@@ -2,7 +2,7 @@
 
 Phase 6, PDT-3. Spec: docs/superpowers/specs/2026-10-19-review-design.md; plan:
 docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, pdt-core `review.rs`, pdt-api
-`review.rs`, pdt-github `merge_pr`, web/src/review.
+`review.rs`, the project's forge (pdt-forge `Forge::merge`; GitHub's in pdt-github), web/src/review.
 
 ## Changes
 
@@ -58,8 +58,9 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
   A person's merge doesn't wait.
 - With an open PR (`attempt.pr`) it runs `gh pr merge --auto` and records the attempt as set to merge
-  (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (pdt-github `merge_pr`; the method from
-  `merge_settings`, none with a merge queue; when GitHub says the PR is already clean it merges at once) and the merge
+  (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (the forge's `merge`; the strategy from
+  `merge_settings`, none with a merge queue (and no queue on a forge without them); when GitHub says the PR is already
+  clean it merges at once) and the merge
   check ends the attempt later. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
   branch off) sends `{finishOnMerge, deleteBranch}` (left out: what an earlier merge asked stays), kept on the attempt (`attempts.finish_on_merge`,
   `finish_delete_branch`, PDT-75): when the merge check ends the attempt as merged, pdt-api `finish.rs` does what
@@ -75,9 +76,9 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   Finish merged tickets finishes it (PDT-181).
 - A pull request that already merged (PDT-181: GitHub merged it through the auto-merge an earlier merge turned on, and
   PR notices' merge again on `ci.run_passed` came moments later) never merges locally: an automated merge reads the
-  PR from GitHub first, and any merge whose PR is merged ends the attempt as merge detection would (`via: detected`,
+  PR from its forge first, and any merge whose PR is merged ends the attempt as merge detection would (`via: detected`,
   the PR's number, `outcome: merged` with no commit), so Finish merged tickets finishes it.
-- An automated merge never merges locally (`review::no_local_merge`, PDT-181) when GitHub couldn't be read (409
+- An automated merge never merges locally (`review::no_local_merge`, PDT-181) when the forge couldn't be read (409
   `pr_unreadable`: a PR may be there), when the branch's PR was closed without merging, or when the project's attempts
   merge through pull requests (an earlier `merged` event of the project names a PR; pdt-store `project_merged_a_pr`):
   409 `merge_blocked`. A person's Merge… still can.

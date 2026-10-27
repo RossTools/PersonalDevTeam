@@ -97,6 +97,27 @@ async fn issue(State(f): State<Fake>, h: HeaderMap, axum::Json(body): axum::Json
         .into_response()
 }
 
+/// `v0.1.5...v0.1.7`: two squashed merges; `abc1234...v0.1.7` (a dev build): one; `v0.1.1...v0.1.7`: 300 commits, of
+/// which GitHub sends the oldest 250; anything else is not found.
+async fn compare(Path(range): Path<String>, h: HeaderMap) -> Response {
+    if !authed(&h) {
+        return (StatusCode::UNAUTHORIZED, r#"{"message":"Bad credentials"}"#).into_response();
+    }
+    let commit = |sha: String, message: &str| serde_json::json!({"sha": sha, "commit": {"message": message}});
+    let commits: Vec<serde_json::Value> = match range.as_str() {
+        "v0.1.5...v0.1.7" => vec![
+            commit("a1".into(), "PDT-5: First change (#10)\n\nIts body."),
+            commit("a2".into(), "PDT-6: Second change (#11)"),
+        ],
+        "abc1234...v0.1.7" => vec![commit("a2".into(), "PDT-6: Second change (#11)")],
+        "v0.1.1...v0.1.7" => (0..250).map(|i| commit(format!("s{i}"), &format!("Change {i} (#{i})"))).collect(),
+        _ => return (StatusCode::NOT_FOUND, r#"{"message":"Not Found"}"#).into_response(),
+    };
+    let total = if range == "v0.1.1...v0.1.7" { 300 } else { commits.len() };
+    let url = format!("https://github.com/o/r/compare/{range}");
+    axum::Json(serde_json::json!({"total_commits": total, "html_url": url, "commits": commits})).into_response()
+}
+
 async fn serve() -> (GitHubClient, Fake) {
     let fake = Fake {
         base: Default::default(),
@@ -108,6 +129,7 @@ async fn serve() -> (GitHubClient, Fake) {
     let app = Router::new()
         .route("/repos/o/r/releases/latest", get(latest))
         .route("/repos/o/r/releases/assets/{id}", get(asset))
+        .route("/repos/o/r/compare/{range}", get(compare))
         .route("/storage/{id}", get(storage))
         .route("/repos/o/r/issues", axum::routing::post(issue))
         .with_state(fake.clone());
@@ -127,6 +149,42 @@ async fn latest_release_and_token_expiry() {
     assert_eq!(l.release.assets.len(), 3);
     assert_eq!(l.token_expires_at, parse_expiry("2030-01-02 03:04:05 UTC"));
     assert!(l.token_expires_at.is_some());
+}
+
+#[tokio::test]
+async fn changes_between_two_releases_are_newest_first() {
+    let (c, _) = serve().await;
+    let ch = c.compare("good", "v0.1.5", "v0.1.7").await.unwrap();
+    let got: Vec<_> =
+        ch.entries.iter().map(|e| (e.sha.as_str(), e.title.as_str(), e.ticket.as_deref(), e.pr)).collect();
+    assert_eq!(
+        got,
+        [("a2", "Second change", Some("PDT-6"), Some(11)), ("a1", "First change", Some("PDT-5"), Some(10))]
+    );
+    assert_eq!((ch.total, ch.truncated()), (2, false));
+    assert_eq!(ch.url, "https://github.com/o/r/compare/v0.1.5...v0.1.7");
+}
+
+#[tokio::test]
+async fn changes_since_a_dev_builds_commit() {
+    let (c, _) = serve().await;
+    let ch = c.compare("good", "abc1234", "v0.1.7").await.unwrap();
+    assert_eq!(ch.entries.iter().map(|e| e.sha.as_str()).collect::<Vec<_>>(), ["a2"]);
+}
+
+#[tokio::test]
+async fn an_unknown_base_or_a_rejected_token_fails_the_comparison() {
+    let (c, _) = serve().await;
+    assert_eq!(c.compare("good", "v0.0.9", "v0.1.7").await.unwrap_err(), UpdateError::NotFound);
+    assert_eq!(c.compare("expired", "v0.1.5", "v0.1.7").await.unwrap_err(), UpdateError::Unauthorized);
+}
+
+#[tokio::test]
+async fn a_long_range_says_it_was_cut_off() {
+    let (c, _) = serve().await;
+    let ch = c.compare("good", "v0.1.1", "v0.1.7").await.unwrap();
+    assert_eq!((ch.entries.len(), ch.total, ch.truncated()), (250, 300, true));
+    assert_eq!(ch.entries[0].sha, "s249", "newest of those sent first");
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Buildkite CI (Phase 7e-2, PDT-85) through the API: a started ticket's builds become its CI (with or without a
 //! pull request), `ci.*` events with `provider: buildkite` once per build state, and the retry and trigger actions.
-//! Buildkite is a fake local server; GitHub is `FakeGithub`.
+//! Buildkite is a fake local server; GitHub is `FakeForge`.
 
 mod common;
 
@@ -11,8 +11,8 @@ use common::{argv_agent, call, git};
 use http_body_util::BodyExt;
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
-use pdt_github::PullRequest;
-use pdt_github::testing::FakeGithub;
+use pdt_forge::ChangeRequest;
+use pdt_forge::testing::FakeForge;
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -98,7 +98,7 @@ fn build(number: u64, state: &str, commit: &str, retries: u64) -> Value {
 struct Env {
     app: axum::Router,
     state: AppState,
-    gh: Arc<FakeGithub>,
+    gh: Arc<FakeForge>,
     bk: Shared,
     ticket: String,
     head: String,
@@ -121,7 +121,7 @@ async fn setup() -> Env {
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
-    let gh = Arc::new(FakeGithub::default());
+    let gh = Arc::new(FakeForge::default());
     state.github = gh.clone();
     let app = router(state.clone(), None);
     let (s, p) =
@@ -248,7 +248,7 @@ async fn a_pr_shows_both_providers() {
     let branch = attempt(&env).await["branch"].as_str().unwrap().to_string();
     env.gh.set_pr(
         &branch,
-        Some(PullRequest {
+        Some(ChangeRequest {
             number: 12,
             url: "https://github.com/o/r/pull/12".into(),
             title: "Ship it".into(),

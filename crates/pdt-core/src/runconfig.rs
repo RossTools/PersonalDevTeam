@@ -2,12 +2,13 @@
 //! the host's overrides (same schema, matched by `name`). Pure.
 
 use crate::brand::PROJECT_CONFIG_FILE;
+use crate::forge::ForgeKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
-/// The top-level sections this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 3] = ["run", "test", "area"];
+/// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
+const SECTIONS: [&str; 4] = ["run", "test", "area", "forge"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -18,6 +19,10 @@ pub struct ConfigFile {
     pub tests: Vec<EntryFile>,
     #[serde(default, rename = "area")]
     pub areas: Vec<AreaFile>,
+    /// `forge = "github"`: the project's forge (PDT-176), when it names one this PDT knows (one it doesn't is listed
+    /// in `ignored` as `forge`, like an unknown section).
+    #[serde(skip)]
+    pub forge: Option<ForgeKind>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
@@ -87,6 +92,8 @@ pub struct RunConfig {
     pub runs: Vec<RunDef>,
     pub tests: Vec<RunDef>,
     pub areas: Vec<AreaDef>,
+    /// The forge the file or the overrides name (the overrides' wins); None: chosen from the project's `origin`.
+    pub forge: Option<ForgeKind>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -143,7 +150,13 @@ pub fn parse(text: &str, origin: Source) -> Result<ConfigFile, RunConfigError> {
     let err = |e: toml::de::Error| RunConfigError::Parse { origin, message: e.to_string() };
     let mut file: ConfigFile = toml::from_str(text).map_err(err)?;
     let table: toml::Table = toml::from_str(text).map_err(err)?;
-    file.ignored = table.into_iter().map(|(k, _)| k).filter(|k| !SECTIONS.contains(&k.as_str())).collect();
+    file.forge = table.get("forge").and_then(|v| v.clone().try_into::<ForgeKind>().ok());
+    let unknown_forge = table.contains_key("forge") && file.forge.is_none();
+    file.ignored = table
+        .into_iter()
+        .map(|(k, _)| k)
+        .filter(|k| !SECTIONS.contains(&k.as_str()) || (k == "forge" && unknown_forge))
+        .collect();
     Ok(file)
 }
 
@@ -270,9 +283,10 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     let runs = merge_list(file.runs, over.runs)?.into_iter().map(|e| finish(e, false)).collect::<Result<_, _>>()?;
     let tests = merge_list(file.tests, over.tests)?.into_iter().map(|e| finish(e, true)).collect::<Result<_, _>>()?;
     let areas = merge_areas(file.areas, over.areas)?;
+    let forge = over.forge.or(file.forge);
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, ignored })
+    Ok(RunConfig { runs, tests, areas, forge, ignored })
 }
 
 /// The values PDT provides to a run (spec §4.2 "Variables PDT sets").
@@ -481,6 +495,20 @@ command = "cargo run"
         assert_eq!(merge(Some(bad_env), None), Err(RunConfigError::BadEnvName("A=B".into())));
         let web_test = parse("[[test]]\nname = \"t\"\ncommand = \"x\"\nweb = true\n", Source::File).unwrap();
         assert_eq!(merge(Some(web_test), None), Err(RunConfigError::WebTest("t".into())));
+    }
+
+    #[test]
+    fn the_forge_is_named_at_the_top_and_the_overrides_win() {
+        let f = parse("forge = \"github\"\n", Source::File).unwrap();
+        assert_eq!((f.forge, f.ignored.is_empty()), (Some(ForgeKind::Github), true));
+        assert_eq!(merge(Some(f.clone()), None).unwrap().forge, Some(ForgeKind::Github));
+        let none = parse("forge = \"none\"\n", Source::Overrides).unwrap();
+        assert_eq!(merge(Some(f), Some(none)).unwrap().forge, Some(ForgeKind::None));
+        assert_eq!(merge(None, None).unwrap().forge, None, "chosen from the origin");
+        // One a newer PDT knows is skipped like an unknown section, so the file still works.
+        let later = parse("forge = \"gitlab\"\n[[run]]\nname = \"a\"\ncommand = \"x\"\n", Source::File).unwrap();
+        assert_eq!((later.forge, later.ignored.as_slice()), (None, ["forge".to_string()].as_slice()));
+        assert_eq!(merge(Some(later), None).unwrap().runs.len(), 1);
     }
 
     #[test]

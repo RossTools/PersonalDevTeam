@@ -7,8 +7,8 @@ use axum::http::StatusCode;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{Mergeable, PrState};
-use pdt_github::testing::FakeGithub;
-use pdt_github::{MergeSettings, PullRequest};
+use pdt_forge::testing::FakeForge;
+use pdt_forge::{ChangeRequest, MergeSettings};
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ fn reading_agent(dir: &Path) -> PathBuf {
 struct Env {
     app: axum::Router,
     state: AppState,
-    gh: Arc<FakeGithub>,
+    gh: Arc<FakeForge>,
     repo: PathBuf,
     ticket: String,
     attempt: String,
@@ -70,7 +70,7 @@ async fn setup(tmp: &Path, mode: &str) -> Env {
     state.platform.login_path = None;
     state.platform.claude_program =
         if mode == "conversation" { FAKE.to_string() } else { reading_agent(&bin).to_string_lossy().into_owned() };
-    let gh = Arc::new(FakeGithub::default());
+    let gh = Arc::new(FakeForge::default());
     state.github = gh.clone();
     let app = router(state.clone(), None);
     let (s, p) =
@@ -404,7 +404,7 @@ async fn with_an_open_pr_merge_turns_on_auto_merge() {
     let env = setup(tmp.path(), "terminal").await;
     git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
     git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
-    let mut pr = PullRequest {
+    let mut pr = ChangeRequest {
         number: 12,
         url: "https://github.com/o/r/pull/12".into(),
         title: "Ship it".into(),
@@ -507,7 +507,7 @@ async fn a_project_that_merges_through_prs_never_merges_locally() {
 }
 
 /// Merge… on a pull request with "Move to Done and clean up once it merges" (PDT-75).
-async fn queue_with_finish(env: &Env) -> PullRequest {
+async fn queue_with_finish(env: &Env) -> ChangeRequest {
     git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
     git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
     std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
@@ -523,7 +523,7 @@ async fn queue_with_finish(env: &Env) -> PullRequest {
     .unwrap()
     .trim()
     .to_string();
-    let pr = PullRequest {
+    let pr = ChangeRequest {
         number: 12,
         url: "https://github.com/o/r/pull/12".into(),
         title: "Ship it".into(),
@@ -646,12 +646,12 @@ async fn finish_runs(env: &Env) -> Vec<Value> {
 }
 
 /// A commit on the branch and its open pull request `number`, which PDT has seen; no merge asked for yet.
-async fn open_pr(env: &Env, number: u32) -> PullRequest {
+async fn open_pr(env: &Env, number: u32) -> ChangeRequest {
     git(&env.repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
     git(&env.repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
     std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
     commit_all(&env.wt_path, "add c");
-    let pr = PullRequest {
+    let pr = ChangeRequest {
         number,
         url: format!("https://github.com/o/r/pull/{number}"),
         title: "Ship it".into(),

@@ -1,12 +1,12 @@
 //! GitHub issue actions (PDT-154), modelled on the Jira ones: `github.import` (an issue as a linked Draft ticket),
-//! `github.comment` and `github.close`, through the user's own `gh` (the access the `github.issue.opened` trigger
-//! uses). A ticket links an issue as `owner/name#12` ([`pdt_core::github_issue`]); linking is the dedupe.
+//! `github.comment` and `github.close`, through the GitHub forge (PDT-176; the user's own `gh`, the access the
+//! `github.issue.opened` trigger uses). A ticket links an issue as `owner/name#12` ([`pdt_core::github_issue`]); linking is the dedupe.
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::github_issue::{CloseReason, GITHUB, issue_key, parse_issue, repo_id, valid_repo};
 use pdt_core::ticket::{NewTicket, Priority};
-use pdt_github::{GhError, GithubApi, IssueDetail};
+use pdt_forge::{Forge, ForgeError, IssueDetail};
 use pdt_store::StoredExternalLink;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,12 +14,15 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use ts_rs::TS;
 
-/// Runs a gh call off the async threads.
+/// Runs an issue call on the GitHub forge off the async threads.
 async fn gh<T: Send + 'static>(
     st: &AppState,
-    f: impl FnOnce(&dyn GithubApi) -> Result<T, GhError> + Send + 'static,
+    f: impl FnOnce(&dyn Forge) -> Result<T, ForgeError> + Send + 'static,
 ) -> Result<T, String> {
-    let api: Arc<dyn GithubApi> = st.github.clone();
+    let api: Arc<dyn Forge> = st.github.clone();
+    if !api.capabilities().issues {
+        return Err(format!("{} has no issues", api.name()));
+    }
     tokio::task::spawn_blocking(move || f(api.as_ref()))
         .await
         .map_err(|e| format!("the GitHub task failed: {e}"))?
@@ -181,7 +184,7 @@ pub(crate) async fn import_issue(
     let d = gh(st, move |g| g.issue(&r, number))
         .await?
         .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or gh can't see it)"))?;
-    if d.pull_request {
+    if d.change_request {
         return Err(format!("{repo}#{number} is a pull request, not an issue"));
     }
     let title: String = match d.issue.title.trim() {

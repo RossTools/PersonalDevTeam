@@ -93,7 +93,8 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 
 - Every push to main publishes GitHub release `v0.1.<run number>` of ross-game-tools/PersonalDevTeam
   (`*-setup.exe`, `*.app.tar.gz`), built with that version (`PDT_BUILD_VERSION`, read at compile time). PR and local
-  builds keep the checked-in 0.1.0.
+  builds keep the checked-in 0.1.0. A release's notes are its head commit's whole message (a squashed PR's subject
+  and body).
 - scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd and
   pdt-host are sidecars via desktop/src-tauri/tauri.bundle.conf.json). When pdt-host supervises the stable pdtd they
   hand the build to it as an update; otherwise they stop the stable tray app and pdtd, install and launch.
@@ -113,6 +114,14 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   to pdt-host, which installs it, health-checks the new version and rolls back on failure. pdt-host copies the
   database to `update/db-before-update` before installing and restores it on rollback (an old version cannot open a
   database a newer one migrated).
+- Release notes (PDT-169): when a check finds a newer release, pdtd asks GitHub to compare the installed version's
+  tag (`v0.1.741`, or the commit of a dev build `0.1.741+g<sha>`) with the new tag, and `latest.changes` in
+  `/api/host/update` lists every commit between them, newest first (`subject`, `title`, `ticket` key, `pr`, `prUrl`,
+  `sha`). The comparison is cached for that pair of versions; each answer looks the ticket keys up on this instance
+  (`ticketHere`). The update banner's Release notes show "N changes since v…" with ticket links (to tickets here)
+  and PR links; GitHub sends at most 250 commits, so a longer range has `moreUrl` (its compare page, "…and N more").
+  When the comparison fails (the tag is gone, a local build, GitHub errs) `changes` is null and the release's own
+  `notes` show as before; a failure is not cached and does not set the update `error`.
 - Keychain calls time out after 5 s and the startup token read runs in the background, so a keychain prompt never
   blocks serving.
 - Updates are offered only when pdt-host supervises a stable pdtd; dev instances never update (and a dev pdt-host

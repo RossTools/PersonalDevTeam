@@ -3,12 +3,14 @@
 //! attempt's pull request on GitHub).
 
 use crate::error::ApiError;
+use crate::forge::ProjectForge;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use pdt_core::brand::SHORT_NAME;
 use pdt_core::conversation::SessionMode;
 use pdt_core::policy::{Merger, may_merge};
 use pdt_core::pr::{CiGate, Mergeable, PrState};
@@ -23,6 +25,7 @@ use pdt_core::session::{Session, SessionKind};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, Ticket};
 use pdt_core::workflow::events::MergeVia;
 use pdt_core::worktree::Worktree;
+use pdt_forge::{MergeSettings, MergeStrategy};
 use pdt_store::AttemptInfo;
 use serde::Deserialize;
 use serde_json::json;
@@ -451,15 +454,19 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         return Ok(p);
     }
     let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|pr| pr.state == PrState::Open);
-    if let Some(pr) = pr {
-        let repo = crate::github::github_repo(&info.repo_path).await.unwrap_or_default();
-        let gh = st.github.clone();
+    let forge = match &pr {
+        Some(_) => crate::forge::project_forge(st, &info.project_id, &info.repo_path).await,
+        None => None,
+    };
+    if let (Some(pr), Some(forge)) = (pr, forge) {
+        let (gh, repo) = (forge.api.clone(), forge.repo.clone());
         let base_branch = pr.base_branch.clone();
-        let queue = tokio::task::spawn_blocking(move || gh.merge_settings(&repo, &base_branch))
-            .await
-            .map_err(ApiError::internal)?
-            .map(|s| s.queue)
-            .unwrap_or(false);
+        let queue = forge.caps().merge_queue
+            && tokio::task::spawn_blocking(move || gh.merge_settings(&repo, &base_branch))
+                .await
+                .map_err(ApiError::internal)?
+                .map(|s| s.queue)
+                .unwrap_or(false);
         p.method = MergeMethod::Github;
         p.base = pr.base_branch.clone();
         p.pr = Some(MergePr { number: pr.number, url: pr.url.clone(), queue });
@@ -632,10 +639,14 @@ pub(crate) async fn merge_attempt(
         }
     }
     if let Some(pr) = &p.pr {
+        let forge = crate::forge::project_forge(&st, &info.project_id, &info.repo_path)
+            .await
+            .ok_or_else(|| conflict("merge_failed", "the project no longer has a forge to merge the pull request"))?;
         // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
-        // asks: `gh pr merge --auto` merges at once where nothing is required.
-        let no_ci = if automated && policy.require_green_ci {
-            match ci_gate(&st, &info).await.map_err(|m| conflict("ci_unreadable", m))? {
+        // asks: `gh pr merge --auto` merges at once where nothing is required. On a forge that doesn't hold merges for
+        // required checks, it always waits (PDT-176).
+        let no_ci = if automated && (policy.require_green_ci || !forge.caps().required_checks) {
+            match ci_gate(&st, &info, &forge).await.map_err(|m| conflict("ci_unreadable", m))? {
                 CiGate::Passed => false,
                 CiGate::NoCi => true,
                 CiGate::Pending(reason) => return Ok(Err(Refusal { code: "ci_pending", reason, fixable: false })),
@@ -644,15 +655,15 @@ pub(crate) async fn merge_attempt(
         } else {
             false
         };
-        let repo = crate::github::github_repo(&info.repo_path).await.unwrap_or_default();
-        let (gh, base, number) = (st.github.clone(), p.base.clone(), pr.number);
+        let queues = forge.caps().merge_queue;
+        let (gh, repo, base, number) = (forge.api.clone(), forge.repo.clone(), p.base.clone(), pr.number);
         tokio::task::spawn_blocking(move || {
-            let flag = match gh.merge_settings(&repo, &base) {
-                Ok(s) => pdt_core::pr::merge_flag(s.squash, s.merge, s.rebase, s.queue),
+            let strategy = match gh.merge_settings(&repo, &base) {
+                Ok(s) => MergeSettings { queue: s.queue && queues, ..s }.strategy(),
                 // Unknown: squash (with a merge queue gh only notes that the queue sets the method).
-                Err(_) => Some("--squash"),
+                Err(_) => Some(MergeStrategy::Squash),
             };
-            gh.merge_pr(&repo, number, flag)
+            gh.merge(&repo, number, strategy)
         })
         .await
         .map_err(ApiError::internal)?
@@ -727,12 +738,12 @@ async fn pr_merged(
     Ok(MergeResult { outcome: MergeOutcome::Merged, commit: None })
 }
 
-/// Why a workflow's or an agent's merge must not merge the branch locally (PDT-181), if it must not: GitHub couldn't be
+/// Why a workflow's or an agent's merge must not merge the branch locally (PDT-181), if it must not: the forge couldn't be
 /// read (`read` false: a PR may be there), the attempt had a pull request (closed without merging), or the project's
 /// attempts merge through pull requests (an earlier one merged through one).
 async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result<Option<Refusal>, ApiError> {
     if !read {
-        let reason = "PDT couldn't read the branch's pull request from GitHub, so it won't merge it locally".into();
+        let reason = format!("{SHORT_NAME} couldn't read the branch's pull request, so it won't merge it locally");
         return Ok(Some(Refusal { code: "pr_unreadable", reason, fixable: false }));
     }
     if let Some(pr) = crate::github::watched_pr(st, &info.attempt.id) {
@@ -752,27 +763,29 @@ async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result
     Ok(None)
 }
 
-/// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from GitHub now.
-/// The repository has CI when the head (or the branch) has GitHub Actions workflows or the project a Buildkite
-/// pipeline, so no run yet is CI still to come. A project with Buildkite waits for its builds on the head too, so
-/// green Actions alone don't pass while Buildkite hasn't reported on that head.
-/// A read from GitHub that fails is an error (`ci_unreadable`), as a failing `gh pr merge` is: the last look may be
-/// older than the head's CI, and no CI event would end a wait once GitHub answers again.
-async fn ci_gate(st: &AppState, info: &AttemptInfo) -> Result<CiGate, String> {
+/// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from the forge
+/// now. The repository has CI when the head (or the branch) has the forge's CI configuration (GitHub Actions
+/// workflows) or the project a Buildkite pipeline, so no run yet is CI still to come. A project with Buildkite waits
+/// for its builds on the head too, so green Actions alone don't pass while Buildkite hasn't reported on that head.
+/// A read from the forge that fails is an error (`ci_unreadable`), as a failing merge is: the last look may be older
+/// than the head's CI, and no CI event would end a wait once the forge answers again.
+async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Result<CiGate, String> {
     crate::github::refresh_attempt(st, info).await;
+    let name = forge.api.name();
     let Some((pr, ci, bk_on_head)) = crate::github::head_ci(st, &info.attempt.id) else {
-        return Err("PDT couldn't read the pull request's CI from GitHub".into());
+        return Err(format!("{SHORT_NAME} couldn't read the pull request's CI from {name}"));
     };
     // A failed read keeps the last look, which may be older than the head's CI.
     if let Some(e) = &pr.error {
-        return Err(format!("PDT couldn't read the pull request's CI from GitHub: {e}"));
+        return Err(format!("{SHORT_NAME} couldn't read the pull request's CI from {name}: {e}"));
     }
     let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite).is_some();
     let has_ci = buildkite || {
         let repo = PathBuf::from(&info.repo_path);
         let (head, branch) = (pr.head_sha.clone(), format!("refs/heads/{}", info.attempt.branch));
+        let dirs = forge.api.ci_dirs();
         tokio::task::spawn_blocking(move || {
-            [head, branch].iter().any(|rev| pdt_git::has_files_under(&repo, rev, ".github/workflows"))
+            [head, branch].iter().any(|rev| dirs.iter().any(|d| pdt_git::has_files_under(&repo, rev, d)))
         })
         .await
         .unwrap_or(true)

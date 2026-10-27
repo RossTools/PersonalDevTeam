@@ -96,8 +96,11 @@ fn baseline_key(repo: &str) -> String {
 async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String>)> {
     let mut project_repos: Vec<(String, String)> = vec![];
     for p in st.store.list_projects().await.unwrap_or_default() {
-        if let Some(r) = crate::github::github_repo(&p.repo_path).await {
-            project_repos.push((p.id.clone(), r));
+        // Projects whose forge is GitHub (the trigger's issues are GitHub's).
+        if let Some(f) = crate::forge::project_forge(st, &p.id, &p.repo_path).await
+            && f.kind == pdt_core::forge::ForgeKind::Github
+        {
+            project_repos.push((p.id.clone(), f.repo));
         }
     }
     let project_of = |repo: &str| project_repos.iter().find(|(_, r)| same_repo(r, repo)).map(|(p, _)| p.clone());
@@ -133,6 +136,9 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String
 /// One look at every watched repo's newest issues. pdtd runs it every 60 s. Never fails; problems are logged (a
 /// failing `gh` once per repo until it works again).
 pub async fn refresh_issues(st: &AppState) {
+    if !st.github.capabilities().issues {
+        return;
+    }
     for (repo, project) in watched_repos(st).await.into_values() {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;

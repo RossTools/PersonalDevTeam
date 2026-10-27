@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 pdt-core.workspace = true
+pdt-forge.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 which = "8.0.6"

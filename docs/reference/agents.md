@@ -16,9 +16,11 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   `agentInstructions` in the settings API; kept when a PUT leaves it out, max 16 KB), written to
   `<data dir>/sessions/<id>/instructions.md`.
 - A session on an active attempt, or a workflow step's session about one (a new Reviewer or QA session has no attempt
-  of its own), outside Personal projects, is told to read CI from the attempt's `pr.ci` or Actions runs (`gh run list
-  --branch <its branch>`, `gh run view`), never `gh pr checks` or the check-runs API, which fine-grained tokens can't
-  read (PDT-165).
+  of its own), outside Personal projects, is told how to read CI by the project's forge (PDT-176, `Forge::agent_notes`;
+  none without a forge). GitHub's: from the attempt's `pr.ci` or Actions runs (`gh run list --branch <its branch>`,
+  `gh run view`), never `gh pr checks` or the check-runs API, which fine-grained tokens can't read (PDT-165). The
+  forge also names how to answer a PR comment (`gh pr comment`) and the CI watch not to run (`gh run watch`) in
+  "Messages from PDT".
 - A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
   follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
   workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how

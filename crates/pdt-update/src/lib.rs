@@ -3,7 +3,7 @@
 //! hand, without it (decision 13).
 
 use futures_util::StreamExt;
-use pdt_core::release::{HostOs, SUMS_ASSET, Version, parse_sums, parse_version, select_asset};
+use pdt_core::release::{Change, HostOs, SUMS_ASSET, Version, parse_change, parse_sums, parse_version, select_asset};
 use reqwest::header::{ACCEPT, LOCATION};
 use serde::Deserialize;
 use sha2::Digest;
@@ -38,6 +38,41 @@ pub struct Latest {
     pub release: Release,
     /// From `GitHub-Authentication-Token-Expiration` (ms); None for tokens without an expiry.
     pub token_expires_at: Option<i64>,
+}
+
+/// The commits from an installed version to a newer one (`compare`), newest first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Changes {
+    pub entries: Vec<Change>,
+    /// Every commit in the range; more than `entries` when GitHub cut the list off (it sends 250 at most).
+    pub total: u64,
+    /// The range's page on github.com.
+    pub url: String,
+}
+
+impl Changes {
+    pub fn truncated(&self) -> bool {
+        self.total > self.entries.len() as u64
+    }
+}
+
+#[derive(Deserialize)]
+struct CompareJson {
+    total_commits: u64,
+    html_url: String,
+    #[serde(default)]
+    commits: Vec<CompareCommitJson>,
+}
+
+#[derive(Deserialize)]
+struct CompareCommitJson {
+    sha: String,
+    commit: CommitJson,
+}
+
+#[derive(Deserialize)]
+struct CommitJson {
+    message: String,
 }
 
 /// An issue `create_issue` made.
@@ -199,6 +234,23 @@ impl GitHubClient {
             },
             token_expires_at,
         })
+    }
+
+    /// The commits after `base` up to `head` (tags or commits), newest first (PDT-169). GitHub sends the oldest 250
+    /// of a longer range; `total` says how many there are.
+    pub async fn compare(&self, token: &str, base: &str, head: &str) -> Result<Changes, UpdateError> {
+        let path = format!("compare/{base}...{head}");
+        let res = self
+            .api_get(&path, token, "application/vnd.github+json")
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(net)?;
+        let text = check(res).await?.text().await.map_err(net)?;
+        let c: CompareJson = serde_json::from_str(&text)
+            .map_err(|e| UpdateError::Http(200, format!("an answer that is not a comparison: {e}")))?;
+        let entries = c.commits.iter().rev().map(|k| parse_change(&k.sha, &k.commit.message)).collect();
+        Ok(Changes { entries, total: c.total_commits, url: c.html_url })
     }
 
     /// Streams an asset to `dest`, refusing more than its announced size. The API answers 200 or a redirect (fact 6);
