@@ -22,7 +22,7 @@ const passed: CiStatus = { state: 'passed', url: 'https://gh/runs/1', runs: [] }
 const pr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
   number: 12, url: 'https://gh/pull/12', title: 'Fix login', state: 'open', draft: false, baseBranch: 'main', headSha: 'abc',
   mergeable: 'mergeable', behind: false, autoMerge: true, inMergeQueue: false, queuePosition: null, ci: passed, queueCi: null,
-  checkedAt: 1, error: null, ...over,
+  checkedAt: 1, error: null, local: false, ...over,
 });
 
 const attempt = (p: PullRequestStatus | null): AttemptSummary => ({
@@ -66,6 +66,16 @@ describe('pull request status', () => {
     rerender(<PrDetails pr={pr({ autoMerge: false, queueCi: failed })} />);
     expect(screen.getByText('Left the merge queue')).toBeInTheDocument();
     expect(screen.getByText(/Merge queue: failed/)).toBeInTheDocument();
+  });
+
+  it('shows a local change request (PDT-178) with its CI log on this origin', () => {
+    const log = 'http://127.0.0.1:7420/api/local-ci/runs/7/log';
+    const ci: CiStatus = { state: 'failed', url: log, runs: [{ id: 7, attempt: 1, workflow: 'ci', state: 'failed', url: log, failedJobs: ['cargo test'] }] };
+    render(<PrDetails pr={pr({ local: true, number: 3, url: log, ci })} />);
+    expect(screen.getByRole('link', { name: /Change #3/ })).toHaveAttribute('href', '/api/local-ci/runs/7/log');
+    expect(screen.getByText(/Merges when CI passes/)).toBeInTheDocument();
+    expect(screen.getByText(/Failed: cargo test/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Log' })).toHaveAttribute('href', '/api/local-ci/runs/7/log');
   });
 
   it('says when the PR was last read, and why it is stale when reading it fails', () => {

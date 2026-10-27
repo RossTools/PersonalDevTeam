@@ -20,6 +20,7 @@ mod host_guard;
 mod identity_guard;
 mod inbox;
 mod jira;
+mod local_forge;
 mod local_network;
 pub mod loops;
 mod mcp;
@@ -63,6 +64,7 @@ pub use conversations::{
 pub use error::ApiErrorBody;
 pub use github::refresh_prs;
 pub use github_issues::refresh_issues;
+pub use local_forge::run_local_ci_watch;
 
 /// Stops the MCP servers workflows use (pdtd is stopping).
 pub async fn shutdown_mcp(st: &AppState) {

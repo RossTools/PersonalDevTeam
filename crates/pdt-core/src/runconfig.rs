@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 4] = ["run", "test", "area", "forge"];
+const SECTIONS: [&str; 5] = ["run", "test", "area", "forge", "ci"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -23,9 +23,28 @@ pub struct ConfigFile {
     /// in `ignored` as `forge`, like an unknown section).
     #[serde(skip)]
     pub forge: Option<ForgeKind>,
+    /// `[ci]`: the command the local forge runs as CI (PDT-178).
+    #[serde(default)]
+    pub ci: Option<CiFile>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
+}
+
+/// `[ci]` as written: `command = "cargo test"`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CiFile {
+    pub command: Option<String>,
+}
+
+/// The project's own CI (PDT-178): the command a project on the local forge (`forge = "local"`) runs in an attempt's
+/// worktree on each new commit of its branch. It passes when the command exits 0.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CiDef {
+    pub command: String,
 }
 
 /// An `[[area]]` as written (tickets spec §3): a named part of the project, for overlap detection.
@@ -94,6 +113,8 @@ pub struct RunConfig {
     pub areas: Vec<AreaDef>,
     /// The forge the file or the overrides name (the overrides' wins); None: chosen from the project's `origin`.
     pub forge: Option<ForgeKind>,
+    /// `[ci]`: the command the local forge runs as CI (the overrides' wins).
+    pub ci: Option<CiDef>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -284,9 +305,11 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     let tests = merge_list(file.tests, over.tests)?.into_iter().map(|e| finish(e, true)).collect::<Result<_, _>>()?;
     let areas = merge_areas(file.areas, over.areas)?;
     let forge = over.forge.or(file.forge);
+    let command = |c: Option<CiFile>| c.and_then(|c| c.command).map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    let ci = command(over.ci).or(command(file.ci)).map(|command| CiDef { command });
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, forge, ignored })
+    Ok(RunConfig { runs, tests, areas, forge, ci, ignored })
 }
 
 /// The values PDT provides to a run (spec §4.2 "Variables PDT sets").
@@ -509,6 +532,20 @@ command = "cargo run"
         let later = parse("forge = \"gitlab\"\n[[run]]\nname = \"a\"\ncommand = \"x\"\n", Source::File).unwrap();
         assert_eq!((later.forge, later.ignored.as_slice()), (None, ["forge".to_string()].as_slice()));
         assert_eq!(merge(Some(later), None).unwrap().runs.len(), 1);
+    }
+
+    #[test]
+    fn the_local_forge_and_its_ci_command() {
+        let f = parse("forge = \"local\"\n[ci]\ncommand = \"cargo test\"\n", Source::File).unwrap();
+        assert!(f.ignored.is_empty(), "{:?}", f.ignored);
+        let c = merge(Some(f.clone()), None).unwrap();
+        assert_eq!(c.forge, Some(ForgeKind::Local));
+        assert_eq!(c.ci, Some(CiDef { command: "cargo test".into() }));
+        let over = parse("[ci]\ncommand = \"make check\"\n", Source::Overrides).unwrap();
+        assert_eq!(merge(Some(f.clone()), Some(over)).unwrap().ci.unwrap().command, "make check", "the overrides win");
+        let blank = parse("[ci]\ncommand = \" \"\n", Source::Overrides).unwrap();
+        assert_eq!(merge(Some(f), Some(blank)).unwrap().ci.unwrap().command, "cargo test", "a blank one is none");
+        assert!(matches!(parse("[ci]\ncmd = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
     }
 
     #[test]

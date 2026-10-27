@@ -12,6 +12,9 @@ use ts_rs::TS;
 #[ts(export)]
 pub enum ForgeKind {
     Github,
+    /// PDT itself (PDT-178), for a repository with no remote: a change request is the attempt's branch compared with
+    /// its base, CI is the `[ci]` command run in the attempt's worktree, and merging is a local merge into the base.
+    Local,
     /// No forge: no change requests, CI or issues are read; merges are local.
     None,
 }

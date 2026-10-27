@@ -159,9 +159,18 @@ pub struct PullRequestStatus {
     /// Why the reads since `checked_at` failed (`gh` signed out, GitHub down): the rest is that older look.
     #[serde(default)]
     pub error: Option<String>,
+    /// A change request on the local forge (PDT-178): PDT's own, with CI it runs and merges it makes itself. Its
+    /// `url` is its newest CI run's log.
+    #[serde(default)]
+    pub local: bool,
 }
 
 impl PullRequestStatus {
+    /// What the agent and the user call it: `PR #12`, or `change request #3` on the local forge.
+    pub fn name(&self) -> String {
+        if self.local { format!("change request #{}", self.number) } else { format!("PR #{}", self.number) }
+    }
+
     /// Whether GitHub merged this PR with `head` as its head: the attempt whose branch head (or last known head) is
     /// `head` is merged, even when git cannot see it (the merge queue squashed it onto a newer base).
     pub fn merged_at(&self, head: &str) -> bool {
@@ -229,7 +238,11 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
     let base = &now.base_branch;
     let mut out = vec![];
     if now.state == PrState::Merged {
-        out.push(merged_notice(Some(n), branch, base));
+        let mut m = merged_notice(Some(n), branch, base);
+        if now.local {
+            m.text = m.text.replacen(&format!("PR #{n}"), &now.name(), 1);
+        }
+        out.push(m);
         return out;
     }
     if now.state != PrState::Open {
@@ -242,17 +255,24 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
         let ids: Vec<String> = failed.iter().map(|r| format!("{}.{}", r.id, r.attempt)).collect();
         let jobs: Vec<String> = failed.iter().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
         let first = failed.first().map(|r| r.id);
-        let mut text = format!("[PDT] CI failed on PR #{n} ({branch}) at {}", short(&now.head_sha));
+        let mut text = format!("[PDT] CI failed on {} ({branch}) at {}", now.name(), short(&now.head_sha));
         if !jobs.is_empty() {
             text.push_str(&format!(": {}", jobs.join(", ")));
         }
         text.push_str(&format!(". Run: {}.", ci.url));
-        if let Some(id) = first {
-            text.push_str(&format!(" Read the failure with `gh run view {id} --log-failed`,"));
+        if now.local {
+            // No remote: the log is PDT's, and a commit on the branch is what runs CI again.
+            text.push_str(&format!(" Read its log with `curl -s {}`, fix it, run the checks and commit.", ci.url));
+        } else {
+            if let Some(id) = first {
+                text.push_str(&format!(" Read the failure with `gh run view {id} --log-failed`,"));
+            }
+            text.push_str(" fix it, run the checks and push.");
         }
-        text.push_str(" fix it, run the checks and push.");
         // A merge in flight (PDT-151): the fix is what it merges.
-        if now.in_merge_queue {
+        if now.local && now.auto_merge {
+            text.push_str(" It is set to merge, so it merges once the fix passes.");
+        } else if now.in_merge_queue {
             text.push_str(" The pull request is in the merge queue, so it merges once the fix passes.");
         } else if now.auto_merge {
             text.push_str(" Auto-merge is on for the pull request, so it merges once the fix passes.");
@@ -273,10 +293,18 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
             pr: Some(n),
             url: Some(now.url.clone()),
             jobs: vec![],
-            text: format!(
-                "[PDT] PR #{n} ({branch}) conflicts with {base}. Merge it in (`git fetch origin && git merge \
-                 origin/{base}`), resolve the conflicts, run the checks and push."
-            ),
+            text: if now.local {
+                format!(
+                    "[PDT] {} ({branch}) conflicts with {base}. Merge it in (`git merge {base}`), resolve the \
+                     conflicts, run the checks and commit.",
+                    now.name()
+                )
+            } else {
+                format!(
+                    "[PDT] PR #{n} ({branch}) conflicts with {base}. Merge it in (`git fetch origin && git merge \
+                     origin/{base}`), resolve the conflicts, run the checks and push."
+                )
+            },
         });
     }
     if let Some(r) = now.queue_removal.as_ref().filter(|r| r.by_queue && r.reason != "merged")
@@ -453,32 +481,33 @@ pub enum CiGate {
 /// The gate for `pr` with `ci` on its head (GitHub Actions and Buildkite together). `has_ci`: the repository has CI
 /// (workflow files, a Buildkite pipeline), so no run yet means one is still to come.
 pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> CiGate {
-    let (n, at) = (pr.number, short(&pr.head_sha));
+    let (n, at) = (pr.name(), short(&pr.head_sha));
     let Some(ci) = ci else {
-        return if has_ci {
-            CiGate::Pending(format!("CI hasn't started on PR #{n} at {at} yet"))
-        } else {
-            CiGate::NoCi
-        };
+        return if has_ci { CiGate::Pending(format!("CI hasn't started on {n} at {at} yet")) } else { CiGate::NoCi };
     };
     match ci.state {
         CiState::Passed => CiGate::Passed,
         CiState::Queued | CiState::Running => {
-            CiGate::Pending(format!("CI is still running on PR #{n} at {at}: {}", ci.url))
+            CiGate::Pending(format!("CI is still running on {n} at {at}: {}", ci.url))
+        }
+        CiState::Cancelled if pr.local => {
+            CiGate::Failed(format!("CI was cancelled on {n} at {at} ({}); commit a fix to run it again", ci.url))
         }
         CiState::Cancelled => CiGate::Failed(format!(
-            "CI was cancelled on PR #{n} at {at} ({}); run it again (`gh run rerun`) or push a fix",
+            "CI was cancelled on {n} at {at} ({}); run it again (`gh run rerun`) or push a fix",
             ci.url
         )),
         CiState::Failed => {
             let failed: Vec<&CiRun> = ci.failed().collect();
             let jobs: Vec<String> = failed.iter().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
-            let mut why = format!("CI failed on PR #{n} at {at}");
+            let mut why = format!("CI failed on {n} at {at}");
             if !jobs.is_empty() {
                 why.push_str(&format!(" ({})", jobs.join(", ")));
             }
             why.push_str(&format!(": {}", ci.url));
-            if let Some(r) = failed.iter().find(|r| r.url.contains("github.com")) {
+            if pr.local {
+                why.push_str(&format!(". Read its log with `curl -s {}`", ci.url));
+            } else if let Some(r) = failed.iter().find(|r| r.url.contains("github.com")) {
                 why.push_str(&format!(". Read it with `gh run view {} --log-failed`", r.id));
             }
             CiGate::Failed(why)
@@ -676,7 +705,37 @@ pub(crate) mod tests {
             queue_removal: None,
             checked_at: 0,
             error: None,
+            local: false,
         }
+    }
+
+    /// The local forge's change request (PDT-178): no remote, no `gh`; its log is PDT's and a commit runs CI again.
+    #[test]
+    fn a_local_change_request_points_at_pdts_log_and_git_alone() {
+        let mut p = pr();
+        p.local = true;
+        p.number = 3;
+        let mut failed = run(7, "ci", "abcdef0123", "t", CiState::Failed);
+        failed.url = "http://127.0.0.1:7420/api/local-ci/runs/7/log".into();
+        failed.failed_jobs = vec!["cargo test".into()];
+        p.ci = CiStatus::of(&[failed], "abcdef0123");
+        let n = notices(&p, "b");
+        let t = &n[0].text;
+        assert!(t.contains("CI failed on change request #3 (b) at abcdef0: cargo test"), "{t}");
+        assert!(
+            t.contains("`curl -s http://127.0.0.1:7420/api/local-ci/runs/7/log`") && t.contains("and commit."),
+            "{t}"
+        );
+        assert!(t.contains("It is set to merge") && !t.contains("gh ") && !t.contains("push"), "{t}");
+        let CiGate::Failed(why) = ci_gate(&p, p.ci.as_ref(), true) else { panic!() };
+        assert!(why.contains("change request #3") && why.contains("curl -s http://127.0.0.1"), "{why}");
+        p.ci = None;
+        p.mergeable = Mergeable::Conflicting;
+        let t = &notices(&p, "b")[0].text;
+        assert!(t.contains("Merge it in (`git merge main`)") && !t.contains("origin"), "{t}");
+        p.state = PrState::Merged;
+        let t = &notices(&p, "b")[0].text;
+        assert!(t.starts_with("[PDT] change request #3 (b) was merged into main."), "{t}");
     }
 
     #[test]
