@@ -27,11 +27,12 @@ export interface PopoverProps {
 
 /**
  * An anchored panel (filters, pickers). Click outside or Escape closes it, focus returns to the trigger. Draws above
- * dialogs and sheets (z-(--pdt-z-menu)), so a picker inside a dialog works.
+ * dialogs and sheets (z-(--pdt-z-menu)), so a picker inside a dialog works. It keeps to the height react-aria allows
+ * (less when a phone's keyboard is open) and scrolls inside it, like a Menu.
  */
 export function Popover({ trigger, anchor, label, title, children, placement = 'bottom start', open, onOpenChange, className }: PopoverProps) {
   const panel = (
-    <AriaDialog aria-label={title ? undefined : label} className="flex min-h-0 flex-col gap-2 outline-none">
+    <AriaDialog aria-label={title ? undefined : label} className="flex min-h-0 flex-col gap-2 overflow-y-auto outline-none">
       {({ close }) => (
         <>
           {title && (
