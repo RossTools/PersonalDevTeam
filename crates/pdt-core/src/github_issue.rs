@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn issue_keys_are_lower_case_owner_name_and_number() {
-        assert_eq!(issue_key(" Ross-Game-Tools/PersonalDevTeam ", 12), "ross-game-tools/personaldevteam#12");
+        assert_eq!(issue_key(" Example-Org/PersonalDevTeam ", 12), "example-org/personaldevteam#12");
         assert_eq!(repo_id("O/R"), "o/r");
     }
 

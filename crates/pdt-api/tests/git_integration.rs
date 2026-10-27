@@ -120,9 +120,9 @@ async fn base_branch_defaults_to_the_default_branch_and_can_be_changed() {
 #[tokio::test]
 async fn github_origins_are_recognised() {
     let env = setup().await;
-    git(&env.repo, &["remote", "add", "origin", "git@github.com:ross-game-tools/PersonalDevTeam.git"]);
+    git(&env.repo, &["remote", "add", "origin", "git@github.com:example-org/PersonalDevTeam.git"]);
     let (_, p) = call(&env.app, "GET", &format!("/api/projects/{}", env.pid), None).await;
-    assert_eq!(p["githubRepo"], "ross-game-tools/PersonalDevTeam");
+    assert_eq!(p["githubRepo"], "example-org/PersonalDevTeam");
 }
 
 #[tokio::test]

@@ -24,7 +24,7 @@ pub const TRAY_AUTOSTART_NAME: &str = "Personal Dev Team";
 /// `AssociatedBundleIdentifiers`, so macOS counts pdt-host and pdtd as the app's (Local Network permission, PDT-156).
 pub const APP_BUNDLE_ID: &str = "dev.personaldevteam.desktop";
 /// GitHub repository (owner/name) whose releases hosts update from, through the GitHub REST API and a token.
-pub const RELEASE_REPO: &str = "ross-game-tools/PersonalDevTeam";
+pub const RELEASE_REPO: &str = "RossTools/PersonalDevTeam";
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
 pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
 /// The client ID of PDT's GitHub OAuth App (PDT-177): the in-app "Connect GitHub" login (OAuth device flow) uses it.

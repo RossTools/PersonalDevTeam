@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn repo_names_from_urls() {
         for (url, want) in [
-            ("https://github.com/ross-game-tools/PersonalDevTeam", Some("PersonalDevTeam")),
+            ("https://github.com/example-org/PersonalDevTeam", Some("PersonalDevTeam")),
             ("https://github.com/o/r.git", Some("r")),
             ("https://github.com/o/r/", Some("r")),
             ("git@github.com:o/r.git", Some("r")),
@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn github_repos_from_remotes() {
         for (url, want) in [
-            ("https://github.com/ross-game-tools/PersonalDevTeam.git", Some("ross-game-tools/PersonalDevTeam")),
+            ("https://github.com/example-org/PersonalDevTeam.git", Some("example-org/PersonalDevTeam")),
             ("https://github.com/o/r", Some("o/r")),
             ("https://token@github.com/o/r.git", Some("o/r")),
             ("git@github.com:o/r.git", Some("o/r")),
