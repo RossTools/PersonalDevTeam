@@ -30,4 +30,9 @@ checkedAt: number,
 /**
  * Why the reads since `checked_at` failed (GitHub not connected, or down): the rest is that older look.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * A change request on the local forge (PDT-178): PDT's own, with CI it runs and merges it makes itself. Its
+ * `url` is its newest CI run's log.
+ */
+local: boolean, };

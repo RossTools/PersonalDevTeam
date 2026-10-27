@@ -1,4 +1,5 @@
-// An attempt's pull request on GitHub (PDT-25): the board card's one-badge summary and the ticket's PR details.
+// An attempt's pull request on GitHub (PDT-25), or its change request on the local forge (PDT-178): the board card's
+// one-badge summary and the ticket's PR details.
 import { GitPullRequest, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Badge, Link, relativeTime, type BadgeTone } from '@ui';
@@ -17,6 +18,15 @@ const CI_TONE: Record<CiState, BadgeTone> = {
 export function failedJobs(ci: CiStatus | null): string[] {
   return ci ? ci.runs.flatMap((r) => r.failedJobs) : [];
 }
+
+/** `PR #12`, or `Change #3` on the local forge. */
+export const prName = (pr: PullRequestStatus) => `${pr.local ? 'Change' : 'PR'} #${pr.number}`;
+
+/**
+ * Where a link of the PR goes. The local forge's (its CI logs) name pdtd at 127.0.0.1 for agents; the UI opens them
+ * on its own origin, so they work remotely too.
+ */
+export const prHref = (pr: PullRequestStatus, url: string) => (pr.local ? url.replace(/^https?:\/\/[^/]+/, '') : url);
 
 /** True when the PR left the merge queue because its queue run failed (and has not been re-queued). */
 const queueFailed = (pr: PullRequestStatus) => pr.state === 'open' && !pr.inMergeQueue && pr.queueCi?.state === 'failed';
@@ -55,7 +65,7 @@ export function prFreshness(pr: PullRequestStatus): string {
 export function PrBadge({ pr, attemptMerged = false }: { pr: PullRequestStatus; attemptMerged?: boolean }) {
   const s = prSummary(pr, attemptMerged);
   const jobs = failedJobs(pr.ci);
-  const title = `PR #${pr.number}: ${pr.title}${jobs.length ? ` — failed: ${jobs.join(', ')}` : ''}\n${prFreshness(pr)}`;
+  const title = `${prName(pr)}: ${pr.title}${jobs.length ? ` — failed: ${jobs.join(', ')}` : ''}\n${prFreshness(pr)}`;
   return (
     <Badge tone={s.tone} title={title} className="shrink-0">
       {pr.error ? <TriangleAlert aria-label="Not updated" /> : <GitPullRequest aria-hidden />} #{pr.number} · {s.label}
@@ -74,9 +84,15 @@ export function PrDetails({ pr, attemptMerged = false, className }: {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1 text-xs', className)} aria-label="Pull request">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <Link href={pr.url} external className="min-w-0 truncate" title={pr.title}>
-          <GitPullRequest aria-hidden className="size-3.5 shrink-0" /> PR #{pr.number}
-        </Link>
+        {pr.url ? (
+          <Link href={prHref(pr, pr.url)} external className="min-w-0 truncate" title={pr.title}>
+            <GitPullRequest aria-hidden className="size-3.5 shrink-0" /> {prName(pr)}
+          </Link>
+        ) : (
+          <span className="inline-flex min-w-0 items-center gap-1 truncate" title={pr.title}>
+            <GitPullRequest aria-hidden className="size-3.5 shrink-0" /> {prName(pr)}
+          </span>
+        )}
         {merged && <Badge tone="accent">Merged</Badge>}
         {pr.state === 'closed' && <Badge>Closed</Badge>}
         {open && pr.draft && <Badge>Draft</Badge>}
@@ -86,13 +102,13 @@ export function PrDetails({ pr, attemptMerged = false, className }: {
         {open && pr.inMergeQueue && (
           <Badge tone="waiting">In merge queue{pr.queuePosition ? ` · #${pr.queuePosition}` : ''}</Badge>
         )}
-        {open && !pr.inMergeQueue && pr.autoMerge && <Badge>Auto-merge on</Badge>}
+        {open && !pr.inMergeQueue && pr.autoMerge && <Badge>{pr.local ? 'Merges when CI passes' : 'Auto-merge on'}</Badge>}
         {open && queueFailed(pr) && <Badge tone="failed">Left the merge queue</Badge>}
       </div>
       {open && pr.ci && pr.ci.state !== 'passed' && (
         <p className="text-meta text-muted-foreground">
           {jobs.length > 0 && <>Failed: {jobs.join(', ')} · </>}
-          <Link href={pr.ci.url} external>Run</Link>
+          <Link href={prHref(pr, pr.ci.url)} external>{pr.local ? 'Log' : 'Run'}</Link>
         </p>
       )}
       {open && pr.queueCi && (pr.inMergeQueue || queueFailed(pr)) && (

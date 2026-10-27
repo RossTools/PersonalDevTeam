@@ -469,7 +469,7 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
                 .unwrap_or(false);
         p.method = MergeMethod::Github;
         p.base = pr.base_branch.clone();
-        p.pr = Some(MergePr { number: pr.number, url: pr.url.clone(), queue });
+        p.pr = Some(MergePr { number: pr.number, url: pr.url.clone(), queue, local: pr.local });
         p.problem = if pr.draft || pr.mergeable == Mergeable::Conflicting {
             Some(MergeProblem::PrNotMergeable)
         } else if pr.auto_merge || pr.in_merge_queue {
@@ -670,16 +670,27 @@ pub(crate) async fn merge_attempt(
         .map_err(|e| conflict("merge_failed", e.to_string()))?;
         record_merge(&st, &info, input).await?;
         if no_ci {
-            let body = format!(
-                "Set PR #{} to merge without waiting for CI: the repository has no CI (no GitHub Actions workflows, \
-                 no Buildkite pipeline).",
-                pr.number
-            );
+            let body = if pr.local {
+                format!(
+                    "Set change request #{} to merge without waiting for CI: the project has no `[ci]` command.",
+                    pr.number
+                )
+            } else {
+                format!(
+                    "Set PR #{} to merge without waiting for CI: the repository has no CI (no GitHub Actions \
+                     workflows, no Buildkite pipeline).",
+                    pr.number
+                )
+            };
             if let Err(e) = st.store.add_comment_by(&info.ticket_id, &body, Actor::System, None, now_ms()).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %e, "could not note a merge without CI");
             }
         }
         crate::github::refresh_attempt(&st, &info).await;
+        // The local forge merges here, at once when CI already passed (PDT-178).
+        if pr.local && crate::start::end_if_merged(&st, &info).await {
+            return Ok(Ok(MergeResult { outcome: MergeOutcome::Merged, commit: None }));
+        }
         return Ok(Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
     }
     if automated && let Some(refusal) = no_local_merge(&st, &info, read).await? {
@@ -773,23 +784,27 @@ async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Res
     crate::github::refresh_attempt(st, info).await;
     let name = forge.api.name();
     let Some((pr, ci, bk_on_head)) = crate::github::head_ci(st, &info.attempt.id) else {
-        return Err(format!("{SHORT_NAME} couldn't read the pull request's CI from {name}"));
+        return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}"));
     };
     // A failed read keeps the last look, which may be older than the head's CI.
     if let Some(e) = &pr.error {
-        return Err(format!("{SHORT_NAME} couldn't read the pull request's CI from {name}: {e}"));
+        return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}: {e}"));
     }
     let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite()).is_some();
-    let has_ci = buildkite || {
-        let repo = PathBuf::from(&info.repo_path);
-        let (head, branch) = (pr.head_sha.clone(), format!("refs/heads/{}", info.attempt.branch));
-        let dirs = forge.api.ci_dirs();
-        tokio::task::spawn_blocking(move || {
-            [head, branch].iter().any(|rev| dirs.iter().any(|d| pdt_git::has_files_under(&repo, rev, d)))
-        })
-        .await
-        .unwrap_or(true)
-    };
+    let has_ci = buildkite
+        || match forge.api.has_ci() {
+            Some(known) => known,
+            None => {
+                let repo = PathBuf::from(&info.repo_path);
+                let (head, branch) = (pr.head_sha.clone(), format!("refs/heads/{}", info.attempt.branch));
+                let dirs = forge.api.ci_dirs();
+                tokio::task::spawn_blocking(move || {
+                    [head, branch].iter().any(|rev| dirs.iter().any(|d| pdt_git::has_files_under(&repo, rev, d)))
+                })
+                .await
+                .unwrap_or(true)
+            }
+        };
     Ok(match pdt_core::pr::ci_gate(&pr, ci.as_ref(), has_ci) {
         CiGate::Passed | CiGate::NoCi if buildkite && !bk_on_head => CiGate::Pending(format!(
             "Buildkite hasn't reported on PR #{} at {} yet",

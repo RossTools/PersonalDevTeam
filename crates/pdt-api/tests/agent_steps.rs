@@ -382,6 +382,138 @@ async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     let (_, log) = call(&env.app, "GET", &format!("/api/events?type=agent.outcome&ticket={t}"), None).await;
     assert_eq!(log.as_array().unwrap().len(), 1, "{log}");
     assert!(inbox(&env).await.is_empty());
+    // PDT-183: a `new` step's session is done once its outcome is in.
+    session_finished(&env, &session).await;
+}
+
+/// Ticks until a session is Finished.
+async fn session_finished(env: &Env, id: &str) {
+    tick_until(env, "the session finished", || async {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await;
+        (s["status"] == "finished").then_some(s)
+    })
+    .await;
+}
+
+/// PDT-183: an `own` step goes on in the session it had on an earlier pass of the run, never in the attempt's (the
+/// Coder's), is parked between passes, and is stopped when the run ends; the attempt's session goes on.
+#[tokio::test]
+async fn an_own_step_keeps_one_session_across_passes_and_closes_it() {
+    let env = setup().await;
+    let t = ticket(&env, "Twice reviewed").await;
+    let (s, started) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{t}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "conversation"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let coder = started["session"]["id"].as_str().unwrap().to_string();
+    let wf = create_workflow(
+        &env,
+        json!({
+            "name": "Fix and review",
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "fix", "kind": "agent", "version": 1, "config": {"persona": "Coder", "owner": "user",
+                    "prompt": "Fix it.", "outcomes": [{"id": "submitted"}]}},
+                {"id": "review", "kind": "agent", "version": 1, "config": {"persona": "Reviewer", "session": "own",
+                    "nudges": 0,
+                    "prompt": r#"mcp: submit_outcome {"outcome": "changes_requested", "summary": "Not yet."}"#,
+                    "outcomes": [{"id": "approved"}, {"id": "changes_requested"}]}},
+                {"id": "done", "kind": "end", "version": 1},
+            ],
+            "edges": [
+                {"from": "go", "to": "fix"},
+                {"from": "fix", "port": "submitted", "to": "review"},
+                {"from": "review", "port": "changes_requested", "to": "fix"},
+                {"from": "review", "port": "approved", "to": "done"},
+            ],
+        }),
+    )
+    .await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let fixed = |n: usize| {
+        let env = &env;
+        async move {
+            let item = tick_until(env, "the fix step", || async {
+                inbox(env).await.into_iter().find(|i| i["kind"] == "manual")
+            })
+            .await;
+            let (s, v) = call(
+                &env.app,
+                "POST",
+                &format!("/api/inbox/{}/answer", item["id"].as_str().unwrap()),
+                Some(json!({"choice": "outcome:submitted", "text": format!("Fix {n}.")})),
+            )
+            .await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+        }
+    };
+    fixed(1).await;
+    let reviewer = tick_until(&env, "the first review", || async {
+        let r = run(&env, &id).await;
+        let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review" && s["port"].is_string());
+        step.map(|s| s["output"]["sessionId"].clone())
+    })
+    .await;
+    let reviewer = reviewer.as_str().unwrap().to_string();
+    assert_ne!(reviewer, coder, "never the attempt's session");
+    // Between passes it is parked, not stopped.
+    tick_until(&env, "the reviewer parked", || async {
+        (!pdt_api::conversation_live(&env.state, &reviewer)).then_some(json!(null))
+    })
+    .await;
+    let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{reviewer}"), None).await;
+    assert_ne!(s["status"], "finished", "{s}");
+
+    fixed(2).await;
+    tick_until(&env, "the second pass in the same session", || async {
+        let said = agent_says(&env, &reviewer).await;
+        said.iter().any(|m| m.contains("back for another pass") && m.contains("Fix 2.")).then_some(json!(null))
+    })
+    .await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/sessions/{reviewer}/messages"),
+        Some(json!({"text": r#"mcp: submit_outcome {"outcome": "approved", "summary": "Good now."}"#})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r:#}");
+    let reviews: Vec<&Value> = r["steps"].as_array().unwrap().iter().filter(|s| s["nodeId"] == "review").collect();
+    assert_eq!(reviews.len(), 2, "{r:#}");
+    assert!(reviews.iter().all(|s| s["output"]["sessionId"].as_str() == Some(reviewer.as_str())), "{r:#}");
+    assert_eq!(reviews[1]["port"], "approved");
+    // The run ended: the Reviewer's session is stopped, the Coder's goes on and never got the review.
+    session_finished(&env, &reviewer).await;
+    let (_, c) = call(&env.app, "GET", &format!("/api/sessions/{coder}"), None).await;
+    assert_ne!(c["status"], "finished", "{c}");
+    assert!(!agent_says(&env, &coder).await.iter().any(|m| m.contains("submit_outcome") || m.contains("Reviewer")));
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    let reviewers = v["sessions"].as_array().unwrap().iter().filter(|s| s["persona"] == "Reviewer").count();
+    assert_eq!(reviewers, 1, "{v:#}");
+}
+
+/// PDT-183: a cancelled run stops its steps' sessions at once, even mid-turn.
+#[tokio::test]
+async fn a_cancelled_run_stops_its_steps_sessions() {
+    let env = setup().await;
+    let t = ticket(&env, "Cancel me").await;
+    let wf = create_workflow(&env, review_doc("slow", json!({}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = tick_until(&env, "the review session", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        v["sessions"][0]["id"].as_str().map(|s| json!(s))
+    })
+    .await;
+    let session = session.as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/cancel"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    session_finished(&env, &session).await;
 }
 
 /// PDT-152: a personal workflow's agent step, with no project or ticket, runs in the host project as the PM does, and

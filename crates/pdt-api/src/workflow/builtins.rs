@@ -178,7 +178,7 @@ fn pr_notices() -> WorkflowDoc {
             -140,
             "Review the fix",
             json!({
-            "persona": "Reviewer", "prompt": FIX_REVIEW_PROMPT, "session": "new",
+            "persona": "Reviewer", "prompt": FIX_REVIEW_PROMPT, "session": "own",
             "outcomes": [
                 {"id": "approved", "description": "the fix can merge as is"},
                 {"id": "changes_requested", "description": "something must change first"},

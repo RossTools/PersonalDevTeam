@@ -22,6 +22,7 @@ mod identity_guard;
 mod inbox;
 mod integrations;
 mod jira;
+mod local_forge;
 mod local_network;
 pub mod loops;
 mod mcp;
@@ -59,12 +60,13 @@ pub use activity::run_activity_ticker;
 pub use buildkite::refresh_buildkite;
 pub use checks::{HostChecks, run_host_checks};
 pub use conversations::{
-    IDLE_PARK, expire_pending_messages, park_idle_conversations, recover_conversations, run_conversation_ticker,
-    shutdown_conversations,
+    IDLE_PARK, conversation_live, expire_pending_messages, park_idle_conversations, recover_conversations,
+    run_conversation_ticker, shutdown_conversations,
 };
 pub use error::ApiErrorBody;
 pub use github::refresh_prs;
 pub use github_issues::refresh_issues;
+pub use local_forge::run_local_ci_watch;
 
 /// Stops the MCP servers workflows use (pdtd is stopping).
 pub async fn shutdown_mcp(st: &AppState) {

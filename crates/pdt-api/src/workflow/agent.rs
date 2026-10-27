@@ -165,7 +165,8 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     };
     let reused = match (c.owner, c.session) {
         _ if resumed.is_some() => resumed.clone(),
-        (Owner::Agent, SessionChoice::Reuse) => reusable_session(st, cx, &t).await,
+        (Owner::Agent, SessionChoice::Reuse) => reusable_session(st, cx, Some(&t)).await,
+        (Owner::Agent, SessionChoice::Own) => reusable_session(st, cx, None).await,
         _ => None,
     };
     // A new session runs a turn at once: under the host's cap it waits for a slot (Phase 7c §6.2). A reused one gets
@@ -227,7 +228,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     }
     // A later pass in a new session (the earlier one's terminal stopped, PDT-144): the whole task, and why it is back.
     if reused.is_none()
-        && c.session == SessionChoice::Reuse
+        && c.session != SessionChoice::New
         && resume_of.is_none()
         && !passes.is_empty()
         && let Some(why) = why_back(st, cx).await
@@ -374,11 +375,11 @@ async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
     Ok(())
 }
 
-/// A session `reuse` can take: this node's earlier session in the run, else the attempt's agent session. A
-/// conversation that was not stopped (a parked or interrupted one reopens to take the message, PDT-144), or a terminal
+/// A session `reuse` can take: this node's earlier session in the run, else the attempt's agent session (`t`; `own`
+/// passes none, so it never lands in the Coder's conversation, PDT-183). A conversation that was not stopped (a parked or interrupted one reopens to take the message, PDT-144), or a terminal
 /// that runs or is about to resume after a restart; a stopped terminal can't take a message, so the step gets a new
 /// session.
-async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: &Target) -> Option<Session> {
+async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: Option<&Target>) -> Option<Session> {
     let alive = |s: &Session| {
         s.kind == SessionKind::AgentTui
             && match (s.mode, s.status) {
@@ -397,6 +398,7 @@ async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: &Target) -> Option<
             return Some(s);
         }
     }
+    let t = t?;
     let attempt = t.attempt.as_ref()?;
     let sessions = st.store.list_sessions(&t.project_id).await.ok()?;
     sessions.into_iter().rev().find(|s| s.attempt_id.as_deref() == Some(attempt.attempt.id.as_str()) && alive(s))
@@ -646,7 +648,94 @@ async fn finish_with(
             tracing::warn!(ticket = %ticket, error = %e, "could not record an outcome on the timeline");
         }
     }
-    super::engine::complete_step(st, step, outcome, outcome_output(&a)).await
+    super::engine::complete_step(st, step, outcome, outcome_output(&a)).await?;
+    close_step_session(st, &a, step);
+    Ok(())
+}
+
+/// What becomes of a step's session once its outcome is in (PDT-183): a `new` one is stopped (it is never used again)
+/// and an `own` one parked until its node's next pass, each once its turn has ended. A `reuse` one (the Coder's) goes on.
+fn close_step_session(st: &AppState, a: &AgentStep, step: &Step) {
+    let Some(sid) = a.session_id.clone() else { return };
+    let Ok(c) = serde_json::from_value::<AgentConfig>(step.input.clone()) else { return };
+    let close = match c.session {
+        SessionChoice::New => Close::Stop,
+        SessionChoice::Own => Close::Park,
+        SessionChoice::Reuse => return,
+    };
+    let st = st.clone();
+    tokio::spawn(async move { close_after_turn(&st, &sid, close, true).await });
+}
+
+/// A run ended (PDT-183): its steps' sessions that are still open are stopped, once their turn ends (at once when it
+/// was cancelled). Kept: the attempt's own session (the Coder's), and the session of a timed-out step the run can still
+/// be resumed from (its agent may yet hand in a late outcome, PDT-123).
+pub(crate) async fn run_ended(st: &AppState, run: &pdt_core::workflow::api::Run) {
+    let Ok(bindings) = st.store.agent_steps_of_run(&run.id).await else { return };
+    let cancelled = run.status == pdt_core::workflow::api::RunStatus::Cancelled;
+    let resumable = match st.store.list_steps(&run.id).await {
+        Ok(steps) if !cancelled => resumable_step(&steps).map(|x| x.id.clone()),
+        _ => None,
+    };
+    let mut seen = std::collections::HashSet::new();
+    for a in bindings {
+        let Some(sid) = a.session_id.clone() else { continue };
+        if resumable.as_deref() == Some(a.step_id.as_str()) {
+            seen.insert(sid);
+            continue;
+        }
+        if !seen.insert(sid.clone()) {
+            continue;
+        }
+        match st.store.get_session(&sid).await {
+            Ok(Some(s)) if s.attempt_id.is_none() && s.status != SessionStatus::Finished => {}
+            _ => continue,
+        }
+        let st = st.clone();
+        tokio::spawn(async move { close_after_turn(&st, &sid, Close::Stop, !cancelled).await });
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Close {
+    /// Stopped and marked Finished.
+    Stop,
+    /// Its process closed; the next message reopens it.
+    Park,
+}
+
+/// How long a session's turn may go on after its step ended before it is closed anyway.
+const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Closes a step's conversation, unless a step took it up meanwhile; once it is not at work (the turn that handed in
+/// the outcome ended) when `after_turn`. A terminal is left alone.
+async fn close_after_turn(st: &AppState, session_id: &str, close: Close, after_turn: bool) {
+    let deadline = tokio::time::Instant::now() + CLOSE_WAIT;
+    while after_turn
+        && crate::conversations::background(st, session_id).is_some_and(|b| b.busy)
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
+    if s.kind != SessionKind::AgentTui || s.mode != SessionMode::Conversation || s.status == SessionStatus::Finished {
+        return;
+    }
+    if matches!(st.store.active_agent_step(session_id).await, Ok(Some(_))) {
+        return;
+    }
+    match close {
+        Close::Stop => {
+            if let Err(e) = crate::sessions::stop(st, session_id).await {
+                tracing::warn!(session = %session_id, error = %e.message(), "could not stop a step's session");
+            } else {
+                tracing::info!(session = %session_id, "stopped a step's session after its outcome");
+            }
+        }
+        Close::Park => {
+            crate::conversations::park_idle(st, session_id).await;
+        }
+    }
 }
 
 /// The run a session's step belongs to, for its lock: its active binding's, else the step the session was started

@@ -237,13 +237,24 @@ crates/pdt-forge (the `Forge` trait), crates/pdt-github (the GitHub forge), pdt-
 rules in pdt-core `pr.rs`.
 
 - A project's **forge** (PDT-176) is where its PRs, CI, reviews and issues live: the one `.pdt/project.toml` names
-  (`forge = "github"` or `"none"`, docs/run-config.md "Forge"), else GitHub when its `origin` is on github.com, else
+  (`forge = "github"`, `"local"` or `"none"`, docs/run-config.md "Forge"), else GitHub when its `origin` is on github.com, else
   none (no PR, CI or feedback is read and Merge is local). A forge declares its capabilities (`Forge::capabilities`:
   merge queue, required checks, issues, reviews) and the steps below skip or adapt what it can't do: no merge-queue
   runs or queue setting without a merge queue, no `pr.commented`/`pr.reviewed` without reviews, no issue triage or
   `github.*` issue actions without issues, and without required checks a workflow's or agent's merge always waits
   for green CI (Review "Merge"). Each forge also writes its part of agents' instructions (docs/reference/agents.md).
   GitHub can do all of it.
+- The **local forge** (PDT-178, pdt-api `local_forge.rs`, store `local_changes` / `local_ci_runs`) is PDT itself, for
+  repositories with no remote: change requests, CI and merges with required checks only. Each read of a branch's
+  change request (the poller's, Merge's) also moves it on: opens one once the active attempt's branch has commits its
+  base lacks (title `<key>: <ticket title>`), follows the head, marks it merged when its commits reach the base some
+  other way, stops CI on an older head and starts the `[ci]` command in the worktree on a new one (a run marked
+  running that this pdtd isn't running was cut short by a restart: cancelled and run again), and merges one set to
+  merge (`Forge::merge`) whose CI passed or that has no `[ci]` (`pdt_git::merge_fast_forward`). Its log is
+  `<data dir>/local-ci/<run>.log`, served at `/api/local-ci/runs/{id}/log`, and is each run's `url`. A run that ends
+  wakes `run_local_ci_watch`, which reads the attempt again and runs the merge check for it at once. `attempt.pr` has
+  `local: true`; notices and the CI gate name a "change request", point at the log with `curl` and say commit, not
+  push. A merge in the read that sees CI pass logs `pr.merged` without a `ci.run_passed`, as auto-merge does on GitHub.
 - Every 60 s (before the merge check) and when a ticket is opened (`check-merge`), pdtd reads each active attempt's PR
   from its project's forge; GitHub's goes over GitHub's REST and GraphQL APIs with the in-app GitHub login
   ([github.md](github.md); no `gh`). Without a login every read fails as "GitHub is not connected" and the Inbox asks

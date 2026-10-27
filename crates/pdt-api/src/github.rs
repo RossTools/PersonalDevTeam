@@ -378,8 +378,10 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
     let known_jobs = tick.jobs.clone();
     let (gh, repo_s, branch) = (forge.api.clone(), repo.to_string(), info.attempt.branch.clone());
     let since = info.attempt.created_at;
+    let local = forge.kind == pdt_core::forge::ForgeKind::Local;
     let read = tokio::task::spawn_blocking(move || {
         read_pr(gh.as_ref(), &repo_s, &branch, since, was_queued, cached_queue, &known_jobs)
+            .map(|(pr, q, j)| (pr.map(|p| PullRequestStatus { local, ..p }), q, j))
     })
     .await;
     let read = match read {
@@ -680,6 +682,7 @@ fn read_pr(
         queue_removal: pr.queue_removal,
         checked_at: 0,
         error: None,
+        local: false,
     };
     Ok((Some(status), fresh_queue, fetched_jobs))
 }
@@ -804,6 +807,7 @@ mod tests {
             queue_removal: None,
             checked_at: 0,
             error: None,
+            local: false,
         };
         w.by_attempt.insert("a".into(), status(vec![failed.clone()]));
         w.jobs.insert((1, 1), vec!["test".into()]);
@@ -888,6 +892,7 @@ mod tests {
             }),
             checked_at: 0,
             error: None,
+            local: false,
         };
         let on = status(true, false, None);
         assert!(turned_off_by_hand(Some(&on), &status(false, false, None)));

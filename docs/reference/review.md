@@ -61,7 +61,8 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (the forge's `merge`; the strategy from
   `merge_settings`, none with a merge queue (and no queue on a forge without them); when GitHub says the PR is already
   clean it merges at once, or joins the merge queue when there is one) and the merge
-  check ends the attempt later. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
+  check ends the attempt later. On the local forge (PDT-178) the change request is set to merge once its CI passes, and
+  one whose CI has passed merges here at once: then the attempt ends and Merge answers `merged`. The dialog's "Move to Done and clean up once it merges" (on by default; Delete the
   branch off) sends `{finishOnMerge, deleteBranch}` (left out: what an earlier merge asked stays), kept on the attempt (`attempts.finish_on_merge`,
   `finish_delete_branch`, PDT-75): when the merge check ends the attempt as merged, pdt-api `finish.rs` does what
   `finishMerged` does without its questions (Done; the worktree's and the Start workspace's sessions and runs

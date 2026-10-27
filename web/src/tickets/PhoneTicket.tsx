@@ -29,6 +29,7 @@ import { AttemptSection, MergedBanner } from './Attempt';
 import { agentLine } from './Board';
 import { isClosed } from './model';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
+import { prName } from './PullRequest';
 import { ticketKeys } from './queries';
 import { TicketBadges } from './TicketBadges';
 import { FoldedSectionContext, OverviewSection, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline } from './TicketParts';
@@ -288,7 +289,7 @@ function attemptSummary(t: Ticket): string {
   return [
     a.branch,
     a.state === 'active' ? null : a.state,
-    a.pr ? `PR #${a.pr.number}${a.pr.state === 'open' ? '' : ` ${a.pr.state}`}` : null,
+    a.pr ? `${prName(a.pr)}${a.pr.state === 'open' ? '' : ` ${a.pr.state}`}` : null,
     ci ? `CI ${ci.state}` : null,
   ].filter(Boolean).join(' · ');
 }

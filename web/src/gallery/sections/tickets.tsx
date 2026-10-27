@@ -289,7 +289,7 @@ const attempt = { id: 'ga', branch: 'pdt/PDT-44-board-and-start', baseBranch: 'm
 const galleryPr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
   number: 12, url: 'https://github.com/o/r/pull/12', title: 'Board and Start', state: 'open', draft: false, baseBranch: 'main',
   headSha: 'abc1234', mergeable: 'mergeable', behind: false, autoMerge: true, inMergeQueue: false, queuePosition: null,
-  ci: { state: 'running', url: 'https://github.com/o/r/actions/runs/1', runs: [] }, queueCi: null, checkedAt: NOW, error: null, ...over,
+  ci: { state: 'running', url: 'https://github.com/o/r/actions/runs/1', runs: [] }, queueCi: null, checkedAt: NOW, error: null, local: false, ...over,
 });
 const failedCi = { state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2',
   runs: [{ id: 2, attempt: 1, workflow: 'ci', state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2', failedJobs: ['test (linux)', 'web (linux)'] }] };

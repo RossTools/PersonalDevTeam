@@ -13,6 +13,7 @@ import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { useOpenChanges } from '../review/open';
 import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
+import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 import { navigate } from '../shell/router';
@@ -465,9 +466,9 @@ function TicketWork({ item }: { item: InboxItem }) {
           Open changes
         </Button>
       )}
-      {pr && (
-        <Button variant="secondary" size="sm" title={`#${pr.number} ${pr.title}`} onClick={() => window.open(pr.url, '_blank', 'noopener')}>
-          Open PR
+      {pr && pr.url && (
+        <Button variant="secondary" size="sm" title={`#${pr.number} ${pr.title}`} onClick={() => window.open(prHref(pr, pr.url), '_blank', 'noopener')}>
+          {pr.local ? 'Open CI log' : 'Open PR'}
         </Button>
       )}
       {worktreeId && choices.length > 0 && (

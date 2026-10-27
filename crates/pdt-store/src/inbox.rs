@@ -396,6 +396,13 @@ impl Store {
         rows.iter().map(to_step).collect()
     }
 
+    /// A run's agent steps, oldest first.
+    pub async fn agent_steps_of_run(&self, run_id: &str) -> Result<Vec<AgentStep>, StoreError> {
+        let sql = format!("SELECT {STEP_COLUMNS} FROM agent_steps WHERE run_id = ? ORDER BY created_at");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(run_id).fetch_all(&self.pool).await?;
+        rows.iter().map(to_step).collect()
+    }
+
     /// A run's steps of one node, oldest first (earlier passes).
     pub async fn agent_steps_of_node(&self, run_id: &str, node_id: &str) -> Result<Vec<AgentStep>, StoreError> {
         let sql =
