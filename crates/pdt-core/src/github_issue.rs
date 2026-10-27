@@ -1,5 +1,5 @@
 //! A ticket's link to a GitHub issue (PDT-154): how the link names the issue, and how an issue is closed. Pure:
-//! pdt-api reads and writes issues through `gh` (pdt-github).
+//! pdt-api reads and writes issues through the GitHub forge (pdt-github).
 
 /// The `system` of a ticket's link to a GitHub issue.
 pub const GITHUB: &str = "github";

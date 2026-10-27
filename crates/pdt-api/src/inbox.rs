@@ -25,6 +25,7 @@ pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>)
     let mut items = st.store.open_inbox_items(q.project.as_deref()).await?;
     items.extend(approvals(&st, q.project.as_deref()).await?);
     items.extend(sessions_waiting(&st, q.project.as_deref()).await?);
+    items.extend(connect_forge(&st));
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
@@ -98,6 +99,38 @@ async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<In
         });
     }
     Ok(out)
+}
+
+/// "Connect GitHub" (PDT-177) while the GitHub forge has no login and something (the PR poller, a merge, an agent's
+/// tool) wanted it. Not stored: it goes once the user connects.
+fn connect_forge(st: &AppState) -> Option<InboxItem> {
+    if !st.github.login_needed() {
+        return None;
+    }
+    Some(InboxItem {
+        id: "connect:github".into(),
+        kind: InboxKind::Connect,
+        group: InboxGroup::Notice,
+        status: InboxStatus::Open,
+        project_id: None,
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        title: "Connect GitHub".into(),
+        body: json!({"forge": "github", "text": "PDT reads pull requests, CI and issues, merges and comments on \
+GitHub with your GitHub login, and it has none: until you connect, it can't follow pull requests or CI, merge, or \
+let agents read CI logs. Connect GitHub in Settings › This host › GitHub."}),
+        choices: vec![],
+        resolution: Value::Null,
+        created_at: now_ms(),
+        resolved_at: None,
+    })
 }
 
 /// The open permission requests of live conversations, as items.

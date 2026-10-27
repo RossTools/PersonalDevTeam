@@ -10,7 +10,7 @@ import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
-import { after, grouped, step } from './model';
+import { after, dismissable, grouped, step } from './model';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -210,6 +210,19 @@ describe('inbox', () => {
     expect(openTicket).toHaveBeenCalledWith({ id: 't', projectId: 'p' });
     fireEvent.keyDown(window, { key: 'e' });
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/n/dismiss')).toBe(true));
+  });
+
+  it('asks to connect GitHub: Enter opens Settings › This host › GitHub, and it is not dismissed', async () => {
+    const connect = item('connect:github', {
+      kind: 'connect', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null, title: 'Connect GitHub',
+      body: { forge: 'github', text: 'PDT reads pull requests with your GitHub login, and it has none.' },
+    });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[connect]} selectedId="connect:github" onSelect={() => {}} />);
+    expect(screen.getByRole('region', { name: 'Connect GitHub' })).toHaveTextContent('it has none');
+    expect(dismissable(connect)).toBe(false);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/host/github'));
   });
 
   it('asks the user to do a manual stage and pick its outcome, with their note as the summary', async () => {

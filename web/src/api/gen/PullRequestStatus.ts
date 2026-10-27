@@ -28,7 +28,7 @@ queueCi: CiStatus | null,
  */
 checkedAt: number, 
 /**
- * Why the reads since `checked_at` failed (`gh` signed out, GitHub down): the rest is that older look.
+ * Why the reads since `checked_at` failed (GitHub not connected, or down): the rest is that older look.
  */
 error: string | null, 
 /**

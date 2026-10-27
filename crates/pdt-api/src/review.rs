@@ -643,7 +643,7 @@ pub(crate) async fn merge_attempt(
             .await
             .ok_or_else(|| conflict("merge_failed", "the project no longer has a forge to merge the pull request"))?;
         // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
-        // asks: `gh pr merge --auto` merges at once where nothing is required. On a forge that doesn't hold merges for
+        // asks: GitHub's auto-merge merges at once where nothing is required. On a forge that doesn't hold merges for
         // required checks, it always waits (PDT-176).
         let no_ci = if automated && (policy.require_green_ci || !forge.caps().required_checks) {
             match ci_gate(&st, &info, &forge).await.map_err(|m| conflict("ci_unreadable", m))? {

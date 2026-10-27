@@ -14,6 +14,7 @@
 pub mod action;
 mod bug_reports;
 mod core;
+mod forge;
 mod github;
 mod http;
 mod mcp;
@@ -192,6 +193,7 @@ pub trait Integration: Send + Sync {
 fn own() -> Vec<Arc<dyn Integration>> {
     vec![
         Arc::new(core::Core),
+        Arc::new(forge::ForgeTools),
         Arc::new(webhook::Webhook),
         Arc::new(github::Github),
         Arc::new(http::Http),

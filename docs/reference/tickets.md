@@ -256,15 +256,16 @@ rules in pdt-core `pr.rs`.
   `local: true`; notices and the CI gate name a "change request", point at the log with `curl` and say commit, not
   push. A merge in the read that sees CI pass logs `pr.merged` without a `ci.run_passed`, as auto-merge does on GitHub.
 - Every 60 s (before the merge check) and when a ticket is opened (`check-merge`), pdtd reads each active attempt's PR
-  from its project's forge; GitHub's goes through the user's `gh` (`PDT_GH_BIN`, else the login shell's PATH, then
-  pdtd's own, then the standard install folders; tests get `pdt_github::Unavailable` or `pdt_forge::testing::FakeForge`,
-  whose capabilities a test can turn off, and pdtd's own tests set `PDT_GH_BIN` to nothing). Only projects with a
-  forge.
+  from its project's forge; GitHub's goes over GitHub's REST and GraphQL APIs with the in-app GitHub login
+  ([github.md](github.md); no `gh`). Without a login every read fails as "GitHub is not connected" and the Inbox asks
+  the user to connect. Tests get `GithubApi::offline()` (no network, no login) or `pdt_forge::testing::FakeForge`,
+  whose capabilities a test can turn off, and pdtd's own tests set `PDT_GITHUB_OFFLINE=1`. Only projects with a
+  forge (a GitHub Enterprise Server's origin counts once the login is for that host).
 - One GraphQL query reads state, draft, mergeable, `BEHIND`, auto-merge, merge-queue entry and newest merge-queue
-  event; then `gh run list --branch` gives CI on the PR head (the newest run of each workflow; the fine-grained token
-  cannot read check runs) and, while queued or just out of the queue, `gh run list --event merge_group` gives the runs
-  on `gh-readonly-queue/<base>/pr-<n>-…`; failed job names come from `gh run view --json jobs` (cached per run
-  attempt).
+  event; then the Actions runs API (`…/actions/runs?branch=`) gives CI on the PR head (the newest run of each workflow;
+  fine-grained tokens cannot read check runs) and, while queued or just out of the queue, `…/actions/runs?event=
+  merge_group` gives the runs on `gh-readonly-queue/<base>/pr-<n>-…`; failed job names come from the run attempt's
+  jobs (cached per run attempt). The GETs are conditional (ETags), so an unchanged answer costs no rate limit.
 - The PR is the branch's newest open one, else its newest, but a closed or merged PR opened before the attempt started
   (`createdAt`) is not the attempt's: a ticket reopened and started again on its old branch name has no PR (no merge
   from it, no news) until one is opened for it. A PR still open on the branch is the branch's, whoever opened it.

@@ -18,7 +18,8 @@ import { PrDetails } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
-import { after, dismissable, KIND_LABEL, merges, noticeText, passesOf, questionsOf, resends, selectedUpdate, step } from './model';
+import { navigate } from '../shell/router';
+import { after, CONNECT_PATH, dismissable, KIND_LABEL, merges, noticeText, passesOf, questionsOf, resends, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
@@ -345,6 +346,10 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
         </>
       );
       bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={withNote} />;
+      break;
+    case 'connect':
+      content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
+      bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open GitHub settings', primary: true }]} onPick={() => navigate(CONNECT_PATH)} />;
       break;
     case 'notice':
       content = (

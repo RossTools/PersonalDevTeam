@@ -371,9 +371,15 @@ pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) -> bool {
 
 /// The project's GitHub repository (`owner/name`) from its `origin`, as project responses report it.
 pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
+    github_repo_on(repo_path, None).await
+}
+
+/// [`github_repo`], or on GitHub Enterprise Server `host` (the GitHub login's).
+pub(crate) async fn github_repo_on(repo_path: &str, host: Option<String>) -> Option<String> {
     let path = std::path::PathBuf::from(repo_path);
     tokio::task::spawn_blocking(move || {
-        pdt_git::remote_url(&path, "origin").and_then(|u| pdt_core::git_url::github_repo(&u))
+        let url = pdt_git::remote_url(&path, "origin")?;
+        pdt_core::git_url::github_repo(&url).or_else(|| host.and_then(|h| pdt_core::git_url::github_repo_on(&url, &h)))
     })
     .await
     .ok()

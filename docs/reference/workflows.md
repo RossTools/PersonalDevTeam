@@ -146,7 +146,7 @@ config), event types, node kinds and pdt-mcp tools with their `readOnly`, `asks`
 flags (and how to run them, what an asking call acts on, its approval title, credentials to keep out of the
 transcript), its lines of the PM's instructions, project settings, whether it is a project's CI provider, its members
 of the 60 s poll, its routes (under `/api`, 404 while it is off), its built-in workflows and its templates. PDT's own
-pieces are always on: core, webhook (incoming), github (issues), http, mcp, bug_reports (`report_bug`), in pdt-api
+pieces are always on: core, forge (the forge tools, PDT-177), webhook (incoming), github (issues), http, mcp, bug_reports (`report_bug`), in pdt-api
 `integrations/`. The `Registry` gathers PDT's own and the enabled integrations, in that order, into the catalog,
 `tools/list` and `tools/call`, the personas' tools (`GET /api/personas/tools`, the PM's set, which ask), the event
 types and `GET /api/connections/kinds`. An integration's tools are the PM's only with its `pm` flag, and in another
@@ -615,10 +615,10 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   revoked token, the service down, no such connection), the connection gets `lastError` / `lastErrorAt` (shown on its
   row in Settings → Connections) and one `connection.failed` notification (dedupe key `connection:<name>`, opening
   Settings → Connections), however many polls fail; the first poll that works clears both. A pass in which any use of
-  a connection failed counts as failing. A failing `gh` (issues, PR comments, PRs) is logged once per read until it
+  a connection failed counts as failing. A failing GitHub read (issues, PR comments, PRs) is logged once per read until it
   works again; a PR it can't read keeps its last look with `error` set (`attempt.pr.error`, [tickets.md](tickets.md)).
 - **GitHub issues** (`github_issues.rs` `refresh_issues`, pdtd every 60 s): the repos enabled `github.issue.opened`
-  nodes name, else the GitHub repos of the projects in their scope, through `gh api …/issues` (pull requests left out;
+  nodes name, else the GitHub repos of the projects in their scope, through GitHub's `…/issues` API (pull requests left out;
   100 a page, read back page by page to the last issue seen, up to 10 pages). The newest number logged per repo is
   kept in `host_settings` (`sensor.github_issues.<repo>`); the first look only records it (from one page). Event key `github:<repo>:issue:<n>`, payload `repo`, `number`, `title`, `body`, `url`, `author`, `labels`,
   `createdAt`, `projectId` (when it is a project's repo).
