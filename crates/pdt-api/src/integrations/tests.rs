@@ -453,3 +453,139 @@ fn exports_the_project_settings_for_the_web_tests() {
         std::fs::write(&path, text).unwrap();
     }
 }
+
+/// The calls the PM hooks are checked with (PDT-175): each integration's asking tools, as Claude names them.
+fn pm_calls() -> Vec<(&'static str, Value)> {
+    vec![
+        ("mcp__pdt__create_ticket", json!({"project": "PDT", "title": "Add a logout"})),
+        ("mcp__pdt__get_ticket", json!({"ticket": "PDT-4"})),
+        (
+            "mcp__pdt__discord_change",
+            json!({"connection": "home", "changes": [
+            {"op": "rename", "channel": "#ai-briefs", "name": "Morning Briefs"}, {"op": "archive", "channel": "general"}]}),
+        ),
+        ("mcp__pdt__discord_change", json!({})),
+        ("mcp__pdt__discord_webhook", json!({"channel": "#ai-briefs", "name": "briefs", "createChannel": true})),
+        (
+            "mcp__pdt__scryer_add",
+            json!({"connection": "media", "facet": "series", "tvdbId": 371980, "name": "Severance"}),
+        ),
+        (
+            "mcp__pdt__scryer_mutate",
+            json!({"mutation": "updateGeneralSettings", "args": {"input": {"logLevel": "debug"}}}),
+        ),
+        (
+            "mcp__pdt__scryer_mutate",
+            json!({"mutation": "createIndexerConfig", "args": {"input": {
+            "name": "NZBgeek", "apiKey": "geek-key-123", "isEnabled": true}}}),
+        ),
+        (
+            "mcp__pdt__scryer_mutate",
+            json!({"connection": "home", "mutation": "deleteIndexerConfig", "args": {"id": "7"}}),
+        ),
+        ("mcp:pdt/scryer_query", json!({"query": "{ x }", "variables": {"password": "hunter2-secret"}})),
+    ]
+}
+
+/// The PM's instructions with the registry's tools (no briefing), as a PM session gets them.
+fn pm_text(r: &Registry) -> String {
+    let t = r.tool_table();
+    let tools = pdt_core::persona::builtin_persona("pm").unwrap().setup(t).tool_set(t);
+    pdt_core::pm::instructions(&pdt_core::pm::PmContext {
+        session_id: "s1",
+        port: 7421,
+        work_folder: "/w",
+        tools: &tools,
+        tool_table: t,
+        persona: pdt_core::persona::PM_INSTRUCTIONS,
+        integrations: &r.pm_prompt(&tools),
+        briefing: "# Briefing",
+        step: None,
+    })
+}
+
+/// What the PM sees and the user approves with every integration (the prompt, each asking call's target, title and
+/// redaction), against `pm_snapshot.md`. Write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test` and check the diff.
+#[test]
+fn the_pm_hooks_match_the_snapshot() {
+    let r = registry();
+    let mut text = format!("# The PM's instructions\n\n{}\n# Calls\n", pm_text(r));
+    for (tool, input) in pm_calls() {
+        let mut redacted = input.clone();
+        let secrets = r.redact_call(tool, &mut redacted);
+        text.push_str(&format!(
+            "\n`{tool}` {input}\n- target: {:?}\n- title: {:?}\n- redacted: {redacted} (took {secrets:?})\n",
+            r.ask_target(tool, &input),
+            r.approval_title(tool, &input),
+        ));
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/integrations/pm_snapshot.md");
+    if std::env::var_os("PDT_UPDATE_SNAPSHOT").is_some() {
+        std::fs::write(&path, &text).unwrap();
+    }
+    let was = std::fs::read_to_string(&path).unwrap_or_default().replace("\r\n", "\n");
+    assert!(was == text, "the PM hooks changed (run with PDT_UPDATE_SNAPSHOT=1 and check the diff):\n{text}");
+}
+
+/// The hooks give what PDT's PM code gave before they moved into Discord's and Scryer's integrations.
+#[test]
+fn discord_and_scryer_answer_the_pm_hooks_as_before() {
+    let r = registry();
+    let conn =
+        |kind: &'static str, name: Option<&str>| Some(AskTarget::Connection { kind, name: name.map(String::from) });
+    let calls = pm_calls();
+    let target = |i: usize| r.ask_target(calls[i].0, &calls[i].1);
+    let title = |i: usize| r.approval_title(calls[i].0, &calls[i].1);
+    assert_eq!(target(0), Some(AskTarget::Project("PDT".into())));
+    assert_eq!((target(1), title(1)), (None, None), "get_ticket doesn't ask; core titles stay the parser's");
+    assert_eq!(target(2), conn("discord_bot", Some("home")));
+    assert_eq!(title(2).as_deref(), Some("Discord (home): rename #ai-briefs to Morning Briefs; archive general"));
+    assert_eq!(title(3).as_deref(), Some("Discord"), "a call it can't read");
+    assert_eq!(target(4), conn("discord_bot", None));
+    assert_eq!(
+        title(4).as_deref(),
+        Some("Discord: a webhook on #ai-briefs (made if missing), saved as connection briefs")
+    );
+    assert_eq!(target(5), conn("scryer", Some("media")));
+    assert_eq!(title(5).as_deref(), Some("Scryer (media): add the series Severance (tvdb 371980), monitored"));
+    assert_eq!(target(6), conn("scryer", None));
+    assert_eq!(target(7), conn("scryer", None), "a credential written out (not a `$secret`) is only redacted");
+    assert_eq!(target(8), Some(AskTarget::Always), "deleting always asks");
+    assert_eq!(target(9), None, "scryer_query doesn't ask");
+
+    let mut input = calls[7].1.clone();
+    assert_eq!(r.redact_call(calls[7].0, &mut input), ["geek-key-123"]);
+    assert_eq!(input["args"]["input"]["apiKey"], pdt_core::secret::REDACTED);
+    assert!(title(7).is_some_and(|t| !t.contains("geek-key-123")));
+    let mut input = calls[9].1.clone();
+    assert_eq!(r.redact_call(calls[9].0, &mut input), ["hunter2-secret"], "Codex's name for the tool too");
+    let mut input = json!({"password": "not-a-scryer-call"});
+    assert!(
+        r.redact_call("mcp__pdt__create_ticket", &mut input).is_empty() && input["password"] == "not-a-scryer-call"
+    );
+
+    let text = pm_text(r);
+    for fragment in [discord::PM_PROMPT, scryer::PM_PROMPT] {
+        assert!(text.contains(fragment), "{fragment}");
+    }
+    assert!(!pdt_core::persona::PM_INSTRUCTIONS.to_lowercase().contains("scryer"));
+}
+
+/// With Discord and Scryer left out, none of their text, tools or hooks reach the PM.
+#[test]
+fn without_discord_and_scryer_the_pm_has_none_of_them() {
+    let r = Registry::new(all().into_iter().filter(|i| !matches!(i.id(), "discord" | "scryer")).collect());
+    let text = pm_text(&r).to_lowercase();
+    for name in ["discord", "scryer"] {
+        assert!(!text.contains(name), "{name} in\n{text}");
+        assert!(r.tool_table().names().iter().all(|t| !t.contains(name)));
+    }
+    for (tool, input) in pm_calls().into_iter().skip(2) {
+        assert_eq!(r.ask_target(tool, &input), None, "{tool}");
+        assert_eq!(r.approval_title(tool, &input), None, "{tool}");
+        assert!(r.redact_call(tool, &mut input.clone()).is_empty(), "{tool}");
+    }
+    assert_eq!(r.connection_label("scryer"), "scryer");
+    assert_eq!(registry().connection_label("scryer"), "Scryer");
+    assert!(text.contains("`create_ticket`"), "PDT's own tools stay");
+}

@@ -146,14 +146,15 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `discord_webhook` (a webhook on `channel`, made first with `createChannel`, saved as a `discord_webhook` connection
   called `name` that `discord.post` uses; the URL goes to the keychain and never into the result; a taken name is
   refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
-  line per change (pdt-core `discord::ask_title`).
+  line per change (pdt-core `discord::ask_title`, through the integration's `approval_title` hook).
 - **Scryer** (PDT-147; pdt-api `scryer.rs`, pdt-core `scryer.rs`). Through a `scryer` connection (`connection`: its
   name, or the only one), the same calls as the `scryer.*` nodes ([workflows.md](workflows.md)), each tool's schema
   its node's config with `connection` optional: `scryer_library` (the library a page at a time: facet, words in the
   title, monitored), `scryer_search` (metadata by title, each result's ids and whether the library has it),
   `scryer_queue` (what is downloading), and the asking tool `scryer_add` (a title by facet and ids, monitored by
   default; one already in the library is left as it is and the result says `alreadyInLibrary`). The approval card's
-  title is pdt-core `scryer::ask_title` ("Scryer: add the movie Dune (tmdb 438631), monitored"). The API key never
+  title is pdt-core `scryer::ask_title` ("Scryer: add the movie Dune (tmdb 438631), monitored"), through the
+  integration's `approval_title` hook. The API key never
   reaches the agent.
 - **Scryer's whole API** (PDT-150; pdt-api `scryer/graphql.rs`, pdt-core `scryer.rs`), so the PM can find, read and
   change any setting Scryer's GraphQL schema has (indexers, download clients, seeding profiles, quality, general
@@ -184,17 +185,19 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
     `{"$secret": "<connection>"}` anywhere in `args`: PDT puts that connection's secret there just before sending
     (any kind: an HTTP service connection suits an indexer's API key), so the agent never sees it; a reference to a
     connection without a secret fails before anything is sent, and queries take none. Written out literally, a
-    credential is redacted (`[redacted]`) from the conversation's tool-call and request events and their raw lines
-    (conversations.rs `redact_credentials`, for every `scryer_*` tool), so from the transcript and the card. What
+    credential is redacted (`[redacted]`) from the conversation's tool-call and request events (input and output)
+    and their raw lines (the Scryer integration's `redact_call` hook, for every `scryer_*` tool; conversations.rs
+    `integration_hooks`), so from the transcript and the card. What
     Scryer answers is redacted the same way, also any secret PDT sent that it echoes. The log line for a change names
     the connection and the mutation only.
 - **Asking.** Claude asks before each asking tool (the approval card shows the arguments, also in the Inbox's
   Approvals). When the request's target project (`create_ticket`'s `project`, `edit_ticket`'s, `link_tickets`', `unlink_tickets`' and `stop_ticket`'s ticket,
   `send_to_session`'s session) has the policy **The PM acts without asking** (`project_settings.pm_acts`, `pmActs` in
-  project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`); for the Discord tools the
-  setting is the bot connection's `config.pmActs` (a Discord server is in no project), and for `scryer_add` and
-  `scryer_mutate` the Scryer connection's (`AskTarget::Connection` with the connection's kind; `AskTarget::Always`,
-  for the calls that always ask, is never answered for the user). Codex and Devin can't ask per tool, so
+  project settings), PDT answers yes itself (conversations.rs → `pm::request_opened`, the target from the registry's
+  `ask_target`); for an integration's tools the setting is their connection's `config.pmActs` (a Discord server is in
+  no project): the Discord bot's for the Discord tools, the Scryer connection's for `scryer_add` and `scryer_mutate`
+  (`AskTarget::Connection` with the connection's kind; `AskTarget::Always`, for the calls that always ask, is never
+  answered for the user). Codex and Devin can't ask per tool, so
   there the asking tools are refused unless the project (or the connection) lets the PM act.
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
@@ -202,7 +205,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   lines), the last three journal entries, the other open PM conversations (title, last activity, and their last
   message's first line), and pinned notes (id, project, title). Sections are capped at 30 lines. The
   instructions are pdt-core `pm::instructions`: who the PM is, its work folder, its tools (the asking ones named; its
-  agent's own), PDT's API and guides, the persona's instructions, the briefing (each project with its folder).
+  agent's own), PDT's API and guides, the persona's instructions, an "Integrations" section with the prompt
+  fragment of each integration the session has a tool of (`Integration::pm_prompt`: Discord's and Scryer's), the
+  briefing (each project with its folder). The PM persona's own text names no integration.
 - **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal | user, host-wide or per
   project, pinned or not. `GET /api/pm/notes?q=&project=&kind=&limit=` (words are quoted prefixes, all required; a
   project gets its own and host-wide notes, pinned first), `POST` (`kind` note, the default, or user; never journal),

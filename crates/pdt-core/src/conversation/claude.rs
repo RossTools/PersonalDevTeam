@@ -250,11 +250,6 @@ pub fn tool_title(tool: &str, input: &Value) -> String {
             format!("Stop {}'s work{}{gone}", field("ticket"), to.unwrap_or_default())
         }
         (_, Some("send_to_session")) => format!("To session {}: {}", field("session"), field("text")),
-        (_, Some(t @ ("discord_change" | "discord_webhook"))) => {
-            crate::discord::ask_title(t, input).unwrap_or_else(|| "Discord".into())
-        }
-        (_, Some("scryer_add")) => crate::scryer::ask_title(input).unwrap_or_else(|| "Scryer".into()),
-        (_, Some("scryer_mutate")) => crate::scryer::mutate_ask_title(input).unwrap_or_else(|| "Scryer".into()),
         ("Bash", _) => field("command"),
         ("Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit", _) => {
             let f = field("file_path");
@@ -267,6 +262,11 @@ pub fn tool_title(tool: &str, input: &Value) -> String {
         ("Skill", _) => field("skill"),
         _ => String::new(),
     };
+    title_line(&raw)
+}
+
+/// A tool call's title from its subject: the first line, at most 200 characters (`…` when cut).
+pub fn title_line(raw: &str) -> String {
     let line = raw.lines().next().unwrap_or("").trim();
     let mut t: String = line.chars().take(200).collect();
     if line.chars().count() > 200 || raw.lines().nth(1).is_some() {

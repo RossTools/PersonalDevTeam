@@ -472,29 +472,34 @@ async fn pump(
 }
 
 /// Stores an event (updating its item in place), applies it to the runtime state and sends it to viewers.
-/// A credential the agent wrote into a call to one of PDT's Scryer tools (PDT-150) is redacted from the event (the
-/// transcript and the approval card) and its raw line; the call itself still gets it. The raw line without them, when
-/// there were any.
-fn redact_credentials(event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
-    let (AgentEvent::ToolCall { tool, input, .. } | AgentEvent::Request { tool, input, .. }) = event else {
+/// A call to an integration's tool gets the title its integration gives it (`Integration::approval_title`: what the
+/// user says yes to), and a credential the agent wrote into it (PDT-150) is redacted from the event (the transcript and
+/// the approval card, the call's input and output) and its raw line (`Integration::redact_call`); the call itself
+/// still gets it. The raw line without them, when there were any.
+fn integration_hooks(event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
+    let registry = crate::integrations::registry();
+    let (AgentEvent::ToolCall { tool, title, input, .. } | AgentEvent::Request { tool, title, input, .. }) = event
+    else {
         return None;
     };
-    if !tool.contains("scryer_") {
-        return None;
+    if let Some(t) = registry.approval_title(tool, input) {
+        *title = t;
     }
-    let secrets = pdt_core::scryer::secret_values(input);
+    let secrets = registry.redact_call(tool, input);
     if secrets.is_empty() {
         return None;
     }
-    *input = pdt_core::scryer::redact(input);
-    let mut text = raw?.to_string();
-    for s in &secrets {
-        let escaped = serde_json::to_string(s).unwrap_or_default();
-        text = text
-            .replace(escaped.trim_matches('"'), pdt_core::scryer::REDACTED)
-            .replace(s.as_str(), pdt_core::scryer::REDACTED);
+    use pdt_core::secret::REDACTED;
+    let scrub = |text: &str| {
+        secrets.iter().fold(text.to_string(), |t, s| {
+            let escaped = serde_json::to_string(s).unwrap_or_default();
+            t.replace(escaped.trim_matches('"'), REDACTED).replace(s.as_str(), REDACTED)
+        })
+    };
+    if let AgentEvent::ToolCall { output: Some(output), .. } = event {
+        *output = scrub(output);
     }
-    Some(text)
+    raw.map(scrub)
 }
 
 async fn append(
@@ -521,7 +526,7 @@ async fn append(
             }
         }
     }
-    let scrubbed = redact_credentials(&mut event, raw);
+    let scrubbed = integration_hooks(&mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
     let row = match st
         .store

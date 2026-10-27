@@ -82,4 +82,19 @@ describe('Popover', () => {
     await user.keyboard('{Escape}');
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it('keeps to the height it is given and scrolls inside it', async () => {
+    const user = userEvent.setup();
+    render(
+      <Popover trigger={<Button>Filters</Button>} label="Filters">
+        body
+      </Popover>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Filters' }));
+    const panel = screen.getByRole('dialog', { name: 'Filters' });
+    // The panel (inside the box) shrinks and scrolls; the box keeps react-aria's max height and scrolls too.
+    expect(panel).toHaveClass('min-h-0', 'overflow-y-auto');
+    const box = panel.closest('[data-slot="popover-content"]');
+    expect(box).toHaveClass('max-h-[inherit]', 'overflow-y-auto', 'bg-popover');
+  });
 });

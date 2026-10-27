@@ -159,6 +159,16 @@ On actions: Scryer's library, search, queue, add, query and mutate (each `scryer
 (`integrations/tests.rs`, `snapshot.json`) keeps every tool's `tools/list` entry and flags, the PM's tools and every
 kind's spec as they were.
 
+**PM hooks** (PDT-175). An integration also says how the PM treats its tools, so PDT's PM code names none:
+`Integration::ask_target` (what an asking call of its non-action tools acts on; an action's comes from
+`Action::ask_target`), `approval_title` (the title Claude's approval card, the Inbox and the transcript show; set on
+the tool-call and request events as they are stored), `redact_call` (takes credentials an agent wrote out of a call's
+input and gives them back, for PDT to take out of its output and raw line too) and `pm_prompt` (Markdown list items for
+the PM's instructions, given to a PM session with any of its tools). The `Registry` answers each by the tool's name as
+an agent gives it (`mcp__pdt__<tool>`, Codex's `mcp:pdt/<tool>`, or bare; pdt-core `mcp::pdt_tool`). A registry
+without an integration gives none of its text, tools or hooks; `pm_snapshot.md` keeps the PM's instructions and the
+hooks' answers for a set of calls as they were.
+
 **Project settings** (PDT-174): an integration a project links to declares a `ProjectSettingsSchema` (pdt-core
 `integration.rs`: its label, description, the connection kind it links through, and `ConfigField`s, text, choice or
 lines, with `default` and `optional`), and may check the result (`check_project_settings`, e.g. Buildkite's pipeline
