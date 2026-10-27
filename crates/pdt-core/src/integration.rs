@@ -195,6 +195,10 @@ pub struct ConfigField {
     /// May be left empty (otherwise a shown setting is required).
     #[serde(default)]
     pub optional: bool,
+    /// What an empty value becomes (a project's integration setting).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default: Option<String>,
 }
 
 impl ConfigField {
@@ -242,9 +246,159 @@ impl FieldWhen {
     }
 }
 
+/// What a project sets for an integration on this host (PDT-174): the connection it links through, and the
+/// integration's own fields. The project settings form is made from it, and a project's settings for the integration
+/// are kept as a JSON object under its id: `connection` and each field's key (text and choices as strings, lists as
+/// arrays of strings). `GET /api/integrations/project-settings` lists them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProjectSettingsSchema {
+    /// The integration's id, the key of its settings.
+    pub integration: String,
+    pub label: String,
+    /// What linking a project does.
+    pub description: String,
+    /// The kind of connection the project links through; no connection, no link.
+    pub connection_kind: String,
+    /// Its settings, shown once a connection is picked. Text, choice and lines only.
+    #[serde(default)]
+    pub fields: Vec<ConfigField>,
+}
+
+/// A project's settings for one integration: `connection` and the schema's fields.
+pub type IntegrationSettings = serde_json::Map<String, serde_json::Value>;
+
+impl ProjectSettingsSchema {
+    /// The settings `input` makes over `current`. A key left out keeps its current value (or its default); an empty
+    /// value takes the default. None: unlinked (no connection). Err is a message for the user. The connection's kind
+    /// is not checked here (that needs the store).
+    pub fn apply(
+        &self,
+        input: &IntegrationSettings,
+        current: Option<&IntegrationSettings>,
+    ) -> Result<Option<IntegrationSettings>, String> {
+        use serde_json::Value;
+        if let Some(k) = input.keys().find(|k| *k != "connection" && !self.fields.iter().any(|f| f.key == **k)) {
+            return Err(format!("{} has no setting {k}", self.label));
+        }
+        let given = |key: &str| input.get(key).or_else(|| current.and_then(|c| c.get(key))).filter(|v| !v.is_null());
+        let connection = match given("connection") {
+            None => "",
+            Some(Value::String(s)) => s.trim(),
+            Some(_) => return Err(format!("{}'s connection is a name", self.label)),
+        };
+        if connection.is_empty() {
+            return Ok(None);
+        }
+        let mut out = IntegrationSettings::new();
+        out.insert("connection".into(), Value::String(connection.into()));
+        for f in &self.fields {
+            let v = match f.r#type.unwrap_or(FieldType::Text) {
+                FieldType::Lines => {
+                    let mut list: Vec<String> = vec![];
+                    match given(&f.key) {
+                        None => {}
+                        Some(Value::Array(items)) => {
+                            for item in items {
+                                let Value::String(s) = item else {
+                                    return Err(format!("{} is a list of text", f.label));
+                                };
+                                let s = s.trim();
+                                if !s.is_empty() && !list.iter().any(|x| x == s) {
+                                    list.push(s.into());
+                                }
+                            }
+                        }
+                        Some(_) => return Err(format!("{} is a list of text", f.label)),
+                    }
+                    if list.is_empty() && !f.optional {
+                        return Err(format!("{} needs at least one", f.label));
+                    }
+                    Value::Array(list.into_iter().map(Value::String).collect())
+                }
+                FieldType::Text | FieldType::Choice | FieldType::Env => {
+                    let text = match given(&f.key) {
+                        None => "",
+                        Some(Value::String(s)) => s.trim(),
+                        Some(_) => return Err(format!("{} is text", f.label)),
+                    };
+                    let text = if text.is_empty() { f.default.as_deref().unwrap_or("") } else { text };
+                    if text.is_empty() && !f.optional {
+                        return Err(format!("{} is required", f.label));
+                    }
+                    if let Some(options) = f.options.as_ref().filter(|_| !text.is_empty())
+                        && !options.iter().any(|o| o.value == text)
+                    {
+                        return Err(format!("{text:?} is not one of {}'s options", f.label));
+                    }
+                    Value::String(text.into())
+                }
+            };
+            out.insert(f.key.clone(), v);
+        }
+        Ok(Some(out))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
+
+    fn schema() -> ProjectSettingsSchema {
+        ProjectSettingsSchema {
+            integration: "tracker".into(),
+            label: "Tracker".into(),
+            connection_kind: "tracker".into(),
+            fields: vec![
+                ConfigField { optional: true, ..ConfigField::new("scope", "Scope") },
+                ConfigField { default: Some("Done".into()), ..ConfigField::new("done", "Done") },
+                ConfigField { r#type: Some(FieldType::Lines), optional: true, ..ConfigField::new("tags", "Tags") },
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn map(v: Value) -> IntegrationSettings {
+        v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn project_settings_take_defaults_and_tidy_lists() {
+        let got = schema().apply(&map(json!({"connection": " t ", "tags": ["a", " a ", "", "b"]})), None).unwrap();
+        assert_eq!(got, Some(map(json!({"connection": "t", "scope": "", "done": "Done", "tags": ["a", "b"]}))));
+    }
+
+    #[test]
+    fn project_settings_left_out_are_kept_and_no_connection_unlinks() {
+        let current = map(json!({"connection": "t", "scope": "x = 1", "done": "Close", "tags": ["a"]}));
+        let got = schema().apply(&map(json!({"done": ""})), Some(&current)).unwrap().unwrap();
+        assert_eq!(got, map(json!({"connection": "t", "scope": "x = 1", "done": "Done", "tags": ["a"]})));
+        assert_eq!(schema().apply(&map(json!({"connection": ""})), Some(&current)).unwrap(), None);
+        assert_eq!(schema().apply(&map(json!({"scope": "y"})), None).unwrap(), None, "nothing to link through");
+    }
+
+    #[test]
+    fn project_settings_refuse_unknown_keys_and_wrong_types() {
+        let s = schema();
+        assert!(s.apply(&map(json!({"connection": "t", "nope": 1})), None).unwrap_err().contains("nope"));
+        assert!(s.apply(&map(json!({"connection": "t", "tags": "a"})), None).is_err());
+        assert!(s.apply(&map(json!({"connection": "t", "scope": 3})), None).is_err());
+        assert!(s.apply(&map(json!({"connection": 3})), None).is_err());
+        let required = ProjectSettingsSchema { fields: vec![ConfigField::new("must", "Must")], ..schema() };
+        assert!(required.apply(&map(json!({"connection": "t"})), None).unwrap_err().contains("Must"));
+        let choice = ProjectSettingsSchema {
+            fields: vec![ConfigField {
+                r#type: Some(FieldType::Choice),
+                options: Some(vec![FieldOption { value: "a".into(), label: "A".into() }]),
+                ..ConfigField::new("pick", "Pick")
+            }],
+            ..schema()
+        };
+        assert!(choice.apply(&map(json!({"connection": "t", "pick": "b"})), None).is_err());
+        assert!(choice.apply(&map(json!({"connection": "t", "pick": "a"})), None).unwrap().is_some());
+    }
 
     #[test]
     fn a_table_keeps_the_first_of_a_name_and_answers_by_flag() {

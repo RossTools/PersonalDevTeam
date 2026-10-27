@@ -144,11 +144,11 @@ async fn setup() -> Env {
         "PUT",
         &format!("/api/projects/{pid}/settings"),
         Some(json!({"agentCredentials": null, "runOverrides": null,
-            "buildkite": {"connection": "bk", "pipelines": ["app", " app "]}})),
+            "integrations": {"buildkite": {"connection": "bk", "pipelines": ["app", " app "]}}})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["buildkite"], json!({"connection": "bk", "pipelines": ["app"]}));
+    assert_eq!(v["integrations"]["buildkite"], json!({"connection": "bk", "pipelines": ["app"]}));
     let (_, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Ship it"}))).await;
     let ticket = t["id"].as_str().unwrap().to_string();
     let (s, started) = call(

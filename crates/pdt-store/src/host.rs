@@ -1,13 +1,15 @@
 use crate::{Store, StoreError};
 use pdt_core::host::{CredentialPolicy, HostSettings};
+use pdt_core::integration::IntegrationSettings;
 use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
+use std::collections::BTreeMap;
 
 const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
 /// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels, the PM
-/// may act), and the Jira and Buildkite links (connection, scope, done; connection, pipelines). sqlx reads tuples of
-/// at most 16, so later columns (the start delay) are read on their own.
+/// may act), the integrations' settings (JSON), the start delay and green CI. (0027's Jira and Buildkite columns are
+/// unused since the integration settings took them in, PDT-174.)
 type ProjectSettingsRow = (
     Option<String>,
     Option<String>,
@@ -20,11 +22,9 @@ type ProjectSettingsRow = (
     String,
     String,
     bool,
-    Option<String>,
     String,
-    String,
-    Option<String>,
-    String,
+    i64,
+    bool,
 );
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
@@ -42,10 +42,25 @@ pub struct ProjectSettings {
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
     /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c §4).
     pub policy: ProjectPolicy,
-    /// Its Jira project (Phase 7e §6.1): issues assigned to the user become tickets.
-    pub jira: Option<pdt_core::jira::JiraSettings>,
-    /// Its Buildkite pipelines (Phase 7e §6.4): CI of its attempts' branches.
-    pub buildkite: Option<pdt_core::buildkite::BuildkiteSettings>,
+    /// Its settings for each integration it is linked to, by the integration's id (PDT-174): `jira` (Phase 7e §6.1,
+    /// issues assigned to the user become tickets), `buildkite` (§6.4, CI of its attempts' branches).
+    pub integrations: BTreeMap<String, IntegrationSettings>,
+}
+
+impl ProjectSettings {
+    /// Its Jira link, if it has a readable one.
+    pub fn jira(&self) -> Option<pdt_core::jira::JiraSettings> {
+        serde_json::from_value(self.integration(pdt_core::jira::JIRA)?).ok()
+    }
+
+    /// Its Buildkite pipelines, if it has readable ones.
+    pub fn buildkite(&self) -> Option<pdt_core::buildkite::BuildkiteSettings> {
+        serde_json::from_value(self.integration(pdt_core::buildkite::BUILDKITE)?).ok()
+    }
+
+    fn integration(&self, id: &str) -> Option<serde_json::Value> {
+        self.integrations.get(id).map(|m| serde_json::Value::Object(m.clone()))
+    }
 }
 
 impl Store {
@@ -106,7 +121,7 @@ impl Store {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
              merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels, pm_acts, \
-             jira_connection, jira_scope, jira_done, buildkite_connection, buildkite_pipelines \
+             integration_settings, start_delay_seconds, require_green_ci \
              FROM project_settings \
              WHERE project_id = ?",
         )
@@ -125,11 +140,9 @@ impl Store {
             auto,
             exempt,
             pm_acts,
-            jira_connection,
-            jira_scope,
-            jira_done,
-            buildkite_connection,
-            buildkite_pipelines,
+            integrations,
+            start_delay,
+            require_green_ci,
         )) = row
         else {
             return Ok(ProjectSettings::default());
@@ -141,11 +154,8 @@ impl Store {
             None => None,
         };
         let agent_permission_mode = mode.as_deref().and_then(pdt_core::conversation::PermissionMode::parse);
-        let (start_delay, require_green_ci): (i64, bool) =
-            sqlx::query_as("SELECT start_delay_seconds, require_green_ci FROM project_settings WHERE project_id = ?")
-                .bind(project_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let integrations = serde_json::from_str(&integrations)
+            .map_err(|e| StoreError::Corrupt(format!("integration settings {integrations:?}: {e}")))?;
         Ok(ProjectSettings {
             run_overrides,
             agent_credentials,
@@ -165,19 +175,7 @@ impl Store {
                 start_delay_seconds: u32::try_from(start_delay).unwrap_or(0),
                 require_green_ci,
             },
-            jira: jira_connection.filter(|c| !c.is_empty()).map(|connection| pdt_core::jira::JiraSettings {
-                connection,
-                scope: jira_scope,
-                done: jira_done,
-            }),
-            buildkite: match buildkite_connection.filter(|c| !c.is_empty()) {
-                Some(connection) => Some(pdt_core::buildkite::BuildkiteSettings {
-                    connection,
-                    pipelines: serde_json::from_str(&buildkite_pipelines)
-                        .map_err(|_| StoreError::Corrupt(format!("buildkite pipelines {buildkite_pipelines:?}")))?,
-                }),
-                None => None,
-            },
+            integrations,
         })
     }
 
@@ -185,18 +183,15 @@ impl Store {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
-             approval_exempt_labels, pm_acts, jira_connection, jira_scope, jira_done, buildkite_connection, \
-             buildkite_pipelines, start_delay_seconds, require_green_ci) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             approval_exempt_labels, pm_acts, integration_settings, start_delay_seconds, require_green_ci) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
              agent_permission_mode = excluded.agent_permission_mode, merge_by = excluded.merge_by, \
              require_approval = excluded.require_approval, max_running_attempts = excluded.max_running_attempts, \
              auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels, \
-             pm_acts = excluded.pm_acts, jira_connection = excluded.jira_connection, \
-             jira_scope = excluded.jira_scope, jira_done = excluded.jira_done, \
-             buildkite_connection = excluded.buildkite_connection, buildkite_pipelines = excluded.buildkite_pipelines, \
+             pm_acts = excluded.pm_acts, integration_settings = excluded.integration_settings, \
              start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci",
         )
         .bind(project_id)
@@ -211,14 +206,7 @@ impl Store {
         .bind(s.policy.auto_start.as_str())
         .bind(serde_json::to_string(&s.policy.approval_exempt_labels).expect("a list of labels"))
         .bind(s.policy.pm_acts)
-        .bind(s.jira.as_ref().map(|j| j.connection.as_str()))
-        .bind(s.jira.as_ref().map_or("", |j| j.scope.as_str()))
-        .bind(s.jira.as_ref().map_or(pdt_core::jira::DEFAULT_DONE, |j| j.done.as_str()))
-        .bind(s.buildkite.as_ref().map(|b| b.connection.as_str()))
-        .bind(
-            serde_json::to_string(&s.buildkite.as_ref().map(|b| b.pipelines.clone()).unwrap_or_default())
-                .expect("a list of pipelines"),
-        )
+        .bind(serde_json::to_string(&s.integrations).expect("JSON objects"))
         .bind(i64::from(s.policy.start_delay_seconds))
         .bind(s.policy.require_green_ci)
         .execute(&self.pool)
@@ -232,6 +220,7 @@ mod tests {
     use crate::worktrees::tests::store_with_project;
     use crate::{ProjectSettings, StoreError};
     use pdt_core::host::{CredentialPolicy, HostSettings, UpdatePolicy};
+    use serde_json::json;
 
     #[tokio::test]
     async fn host_settings_default_then_roundtrip() {
@@ -301,18 +290,19 @@ mod tests {
                 start_delay_seconds: 30,
                 require_green_ci: false,
             },
-            jira: Some(pdt_core::jira::JiraSettings {
-                connection: "work-jira".into(),
-                scope: "project = ABC".into(),
-                done: "Close".into(),
-            }),
-            buildkite: Some(pdt_core::buildkite::BuildkiteSettings {
-                connection: "bk".into(),
-                pipelines: vec!["app".into(), "e2e".into()],
-            }),
+            integrations: [
+                ("jira", json!({"connection": "work-jira", "scope": "project = ABC", "done": "Close"})),
+                ("buildkite", json!({"connection": "bk", "pipelines": ["app", "e2e"]})),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.as_object().unwrap().clone()))
+            .collect(),
         };
         store.put_project_settings("p", &s).await.unwrap();
-        assert_eq!(store.get_project_settings("p").await.unwrap(), s);
+        let got = store.get_project_settings("p").await.unwrap();
+        assert_eq!(got, s);
+        assert_eq!(got.jira().unwrap().done, "Close");
+        assert_eq!(got.buildkite().unwrap().pipelines, ["app", "e2e"]);
         store.put_project_settings("p", &ProjectSettings::default()).await.unwrap();
         assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
         assert!(store.put_project_settings("missing", &s).await.is_err(), "foreign key enforced");

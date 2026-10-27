@@ -1384,7 +1384,7 @@ async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge()
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{c}");
-    settings(&env, json!({"buildkite": {"connection": "bk", "pipelines": ["app"]}})).await;
+    settings(&env, json!({"integrations": {"buildkite": {"connection": "bk", "pipelines": ["app"]}}})).await;
     let t = ticket(&env, "Change it").await;
     let attempt = start_with_a_commit(&env, &t, "c.txt").await;
     let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());

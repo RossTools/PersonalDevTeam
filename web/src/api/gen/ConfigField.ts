@@ -18,4 +18,8 @@ when?: FieldWhen,
 /**
  * May be left empty (otherwise a shown setting is required).
  */
-optional: boolean, };
+optional: boolean, 
+/**
+ * What an empty value becomes (a project's integration setting).
+ */
+default?: string, };

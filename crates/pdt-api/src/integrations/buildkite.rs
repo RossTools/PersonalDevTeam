@@ -4,7 +4,7 @@ use super::Integration;
 use crate::workflow::catalog::NodeKind;
 use crate::workflow::nodes::buildkite::{Retry, TriggerBuild};
 use pdt_core::buildkite::BUILDKITE;
-use pdt_core::integration::{ConfigField, ConnectionKind};
+use pdt_core::integration::{ConfigField, ConnectionKind, FieldType, IntegrationSettings, ProjectSettingsSchema};
 
 pub struct Buildkite;
 
@@ -37,6 +37,35 @@ impl Integration for Buildkite {
                 .into(),
             ..Default::default()
         }]
+    }
+
+    fn project_settings(&self) -> Option<ProjectSettingsSchema> {
+        Some(ProjectSettingsSchema {
+            integration: "buildkite".into(),
+            label: "Buildkite".into(),
+            description: "Builds of the tickets' branches show as their CI, and failures are told to the agent like \
+                          GitHub's."
+                .into(),
+            connection_kind: BUILDKITE.into(),
+            fields: vec![ConfigField {
+                placeholder: Some("my-app\nmy-app-e2e".into()),
+                hint: Some("The pipelines (slugs) that build this project's branches, one per line.".into()),
+                r#type: Some(FieldType::Lines),
+                optional: true,
+                ..ConfigField::new("pipelines", "Pipelines")
+            }],
+        })
+    }
+
+    fn check_project_settings(&self, settings: &IntegrationSettings) -> Result<(), String> {
+        let pipelines = settings.get("pipelines").and_then(|p| p.as_array()).into_iter().flatten();
+        match pipelines
+            .filter_map(|p| p.as_str())
+            .find(|p| !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        {
+            Some(p) => Err(format!("{p:?} is not a pipeline slug")),
+            None => Ok(()),
+        }
     }
 
     fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {

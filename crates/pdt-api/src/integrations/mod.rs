@@ -1,7 +1,8 @@
 //! Integrations (PDT-171): each one declares, in one [`Integration`], what it adds to PDT: connection kinds, workflow
 //! node kinds, event types (each a trigger), pdt-mcp tools and actions (each both a node kind and a tool, PDT-172). The [`Registry`] gathers every registered integration's
 //! into the lists the rest of PDT reads: the node catalog, `tools/list` and `tools/call`, the personas' tools, the
-//! event types and `GET /api/connections/kinds`. PDT's own pieces register the same way ([`core::Core`]).
+//! event types, `GET /api/connections/kinds` and the project settings form (`GET /api/integrations/project-settings`).
+//! PDT's own pieces register the same way ([`core::Core`]).
 //!
 //! Adding an integration: a module here implementing [`Integration`], and a line in [`all`].
 
@@ -23,7 +24,7 @@ use crate::mcp::tools::Cx;
 use crate::workflow::catalog::{BoxFut, NodeKind};
 use crate::workflow::nodes::trigger::EventTrigger;
 use action::AnyAction;
-use pdt_core::integration::{ConnectionKind, ToolDecl, ToolTable};
+use pdt_core::integration::{ConnectionKind, IntegrationSettings, ProjectSettingsSchema, ToolDecl, ToolTable};
 use pdt_core::mcp::ToolInfo;
 use pdt_core::workflow::events::EventType;
 use serde_json::{Value, json};
@@ -90,6 +91,18 @@ pub trait Integration: Send + Sync {
         vec![]
     }
 
+    /// What a project sets for it on this host (its connection and fields), if anything. The schema's `integration`
+    /// is the integration's id.
+    fn project_settings(&self) -> Option<ProjectSettingsSchema> {
+        None
+    }
+
+    /// Checks a project's settings for it, once [`ProjectSettingsSchema::apply`] has tidied them. Err is a message for
+    /// the user.
+    fn check_project_settings(&self, _settings: &IntegrationSettings) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Runs one of its tools (`name` is one of [`Integration::tools`]). Err is a message for the agent.
     fn call_tool<'a>(&'a self, _cx: &'a Cx<'a>, name: &'a str, _args: Value) -> BoxFut<'a, Result<Value, String>> {
         Box::pin(async move { Err(format!("no tool is called {name}")) })
@@ -129,6 +142,8 @@ pub struct Registry {
     table: ToolTable,
     events: Vec<&'static EventType>,
     kinds: Vec<ConnectionKind>,
+    /// Every project settings schema, with the index of its integration.
+    project_settings: Vec<(usize, ProjectSettingsSchema)>,
 }
 
 impl Registry {
@@ -139,7 +154,12 @@ impl Registry {
         let mut decls: Vec<ToolDecl> = vec![];
         let mut events: Vec<&'static EventType> = vec![];
         let mut kinds: Vec<ConnectionKind> = vec![];
+        let mut project_settings: Vec<(usize, ProjectSettingsSchema)> = vec![];
         for (i, int) in integrations.iter().enumerate() {
+            if let Some(s) = int.project_settings() {
+                debug_assert_eq!(s.integration, int.id(), "an integration's project settings are under its id");
+                project_settings.push((i, s));
+            }
             debug_assert!(integrations[..i].iter().all(|x| x.id() != int.id()), "{} is registered twice", int.id());
             let own = int
                 .actions()
@@ -164,7 +184,7 @@ impl Registry {
             }
         }
         let table = ToolTable::new(decls);
-        Self { integrations, tools, table, events, kinds }
+        Self { integrations, tools, table, events, kinds, project_settings }
     }
 
     /// Every pdt-mcp tool's declaration, in `tools/list` order.
@@ -198,6 +218,27 @@ impl Registry {
     /// Every connection kind, in the Connections page's order.
     pub fn connection_kinds(&self) -> &[ConnectionKind] {
         &self.kinds
+    }
+
+    /// Every integration's project settings, in the settings page's order.
+    pub fn project_settings(&self) -> impl Iterator<Item = &ProjectSettingsSchema> {
+        self.project_settings.iter().map(|(_, s)| s)
+    }
+
+    /// The settings `input` makes over `current` for integration `id` ([`ProjectSettingsSchema::apply`], then the
+    /// integration's own check). None: unlinked. Err is a message for the user.
+    pub fn apply_project_settings(
+        &self,
+        id: &str,
+        input: &IntegrationSettings,
+        current: Option<&IntegrationSettings>,
+    ) -> Result<Option<(&ProjectSettingsSchema, IntegrationSettings)>, String> {
+        let Some((i, schema)) = self.project_settings.iter().find(|(_, s)| s.integration == id) else {
+            return Err(format!("no integration {id} has project settings"));
+        };
+        let Some(out) = schema.apply(input, current)? else { return Ok(None) };
+        self.integrations[*i].check_project_settings(&out)?;
+        Ok(Some((schema, out)))
     }
 
     /// Every node kind: a plain trigger for each event type no kind claims, then each integration's kinds and its
@@ -237,6 +278,11 @@ pub fn tool_names() -> Vec<&'static str> {
 /// `GET /api/connections/kinds`: every kind of connection, for the Connections page.
 pub(crate) async fn connection_kinds() -> axum::Json<Vec<ConnectionKind>> {
     axum::Json(registry().connection_kinds().to_vec())
+}
+
+/// `GET /api/integrations/project-settings`: what a project sets for each integration, for its settings form.
+pub(crate) async fn project_settings() -> axum::Json<Vec<ProjectSettingsSchema>> {
+    axum::Json(registry().project_settings().cloned().collect())
 }
 
 #[cfg(test)]

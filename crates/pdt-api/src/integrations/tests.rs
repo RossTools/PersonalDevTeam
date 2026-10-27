@@ -305,7 +305,8 @@ fn every_tool_is_listed_once_with_an_object_schema() {
 
 /// What agents see of the tools (each one's `tools/list` entry and declaration, the PM's tools, the personas' list) and
 /// the spec of every node kind an [`Action`](super::action::Action) makes, against `snapshot.json`: moving a capability
-/// onto an action changes none of it (PDT-172). Other kinds are left out, so a change to one doesn't touch this. After a change meant to show, write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test`.
+/// onto an action changes none of it (PDT-172). Other kinds are left out, so a change to one doesn't touch this. After
+/// a change meant to show, write it again with `PDT_UPDATE_SNAPSHOT=1 cargo test`.
 #[test]
 fn tools_and_node_kinds_match_the_snapshot() {
     let r = registry();
@@ -392,4 +393,40 @@ fn an_action_is_both_a_node_kind_and_a_tool() {
     assert!(catalog.facts(&node(json!({"times": 2}))).unwrap().config_error.unwrap().contains("connection"));
     // A tool-only action has no node kind.
     assert!(catalog.specs().iter().all(|s| s.id != "dummy_wink" && !s.id.contains("wink")));
+}
+
+#[test]
+fn jira_and_buildkite_declare_project_settings() {
+    let ids: Vec<&str> = registry().project_settings().map(|s| s.integration.as_str()).collect();
+    assert_eq!(ids, ["jira", "buildkite"]);
+    let map = |v: Value| v.as_object().unwrap().clone();
+    let r = registry();
+    let (_, jira) = r.apply_project_settings("jira", &map(json!({"connection": "j"})), None).unwrap().unwrap();
+    assert_eq!(Value::Object(jira), json!({"connection": "j", "scope": "", "done": "Done"}));
+    let bk = |pipelines: Value| {
+        r.apply_project_settings("buildkite", &map(json!({"connection": "b", "pipelines": pipelines})), None)
+    };
+    assert_eq!(
+        Value::Object(bk(json!(["app", " app ", "e2e"])).unwrap().unwrap().1),
+        json!({"connection": "b", "pipelines": ["app", "e2e"]})
+    );
+    assert!(bk(json!(["no spaces"])).unwrap_err().contains("not a pipeline slug"));
+    assert!(r.apply_project_settings("discord", &map(json!({})), None).is_err(), "no project settings");
+}
+
+/// The web tests' stand-in for `GET /api/integrations/project-settings`, like the connection kinds'.
+#[test]
+fn exports_the_project_settings_for_the_web_tests() {
+    let Ok(dir) = std::env::var("TS_RS_EXPORT_DIR") else { return };
+    let path = std::path::Path::new(&dir).join("projectSettingsSchemas.ts");
+    let list: Vec<_> = registry().project_settings().collect();
+    let text = format!(
+        "// Written by pdt-api's integrations tests (`exports_the_project_settings_for_the_web_tests`). Do not edit \
+         this file manually.\nimport type {{ ProjectSettingsSchema }} from \"./ProjectSettingsSchema\";\n\nexport \
+         const projectSettingsSchemas: ProjectSettingsSchema[] = {};\n",
+        serde_json::to_string_pretty(&list).unwrap()
+    );
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        std::fs::write(&path, text).unwrap();
+    }
 }

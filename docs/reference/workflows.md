@@ -159,6 +159,15 @@ On actions: Scryer's library, search, queue, add, query and mutate (each `scryer
 (`integrations/tests.rs`, `snapshot.json`) keeps every tool's `tools/list` entry and flags, the PM's tools and every
 kind's spec as they were.
 
+**Project settings** (PDT-174): an integration a project links to declares a `ProjectSettingsSchema` (pdt-core
+`integration.rs`: its label, description, the connection kind it links through, and `ConfigField`s, text, choice or
+lines, with `default` and `optional`), and may check the result (`check_project_settings`, e.g. Buildkite's pipeline
+slugs). `GET /api/integrations/project-settings` lists them (jira, buildkite); the project's settings page makes its
+Integrations section from them. A project's settings are one JSON object per integration in
+`project_settings.integration_settings`, keyed by the integration's id: `connection` plus each field (lists as
+arrays). `ProjectSettingsSchema::apply` tidies an update: keys left out keep their value, an empty one takes its
+default, an unknown key or wrong type is `400`, no connection unlinks.
+
 ## Catalog
 
 `GET /api/workflows/catalog` lists every kind: `id`, `version`, `category`, `title`, `description`,

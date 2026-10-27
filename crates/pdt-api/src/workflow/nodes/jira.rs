@@ -245,7 +245,7 @@ impl NodeKind for JiraTransition {
                             let summary = cx.st.store.get_ticket_summary(ticket).await.map_err(|e| e.to_string())?;
                             let project = summary.map(|t| t.project_id).unwrap_or_default();
                             let s = cx.st.store.get_project_settings(&project).await.map_err(|e| e.to_string())?;
-                            s.jira.map(|j| j.done).unwrap_or_else(|| DEFAULT_DONE.into())
+                            s.jira().map(|j| j.done).unwrap_or_else(|| DEFAULT_DONE.into())
                         }
                     };
                     (conn.name, link.key, to)

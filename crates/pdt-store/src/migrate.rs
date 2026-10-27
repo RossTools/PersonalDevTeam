@@ -357,3 +357,87 @@ mod session_title_tests {
         assert_eq!(titles, ["feature-x", "Fix login", "main", "Claude · named by hand", "My own title", "Claude · "]);
     }
 }
+
+#[cfg(test)]
+mod integration_settings_tests {
+    use crate::Store;
+    use serde_json::json;
+    use sqlx::migrate::Migrator;
+
+    /// PDT-174: the Jira and Buildkite columns move into the integration settings, read back the same, and the database
+    /// is copied before the migration rewrites it.
+    #[tokio::test]
+    async fn jira_and_buildkite_settings_move_into_the_integration_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let before = tmp.path().join("before");
+        std::fs::create_dir_all(&before).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            if !name.ends_with("_integration_settings.sql") {
+                std::fs::copy(src.join(&name), before.join(&name)).unwrap();
+            }
+        }
+        let db = tmp.path().join("t.db");
+        let backups = tmp.path().join("backups");
+        let s = Store::open_with(&db, &Migrator::new(before.as_path()).await.unwrap(), &backups).await.unwrap();
+        for (id, key) in [("both", "B"), ("jira", "J"), ("none", "N"), ("bad", "X")] {
+            sqlx::query("INSERT INTO projects (id, name, repo_path, base_branch, created_at, key) VALUES (?, ?, '/r/' || ?, 'main', 0, ?)")
+                .bind(id)
+                .bind(id)
+                .bind(id)
+                .bind(key)
+                .execute(&s.pool)
+                .await
+                .unwrap();
+        }
+        let rows = [
+            ("both", Some("work-jira"), "project = ABC", "Close", Some("bk"), r#"["app","e2e"]"#),
+            ("jira", Some("work-jira"), "", "Done", Some(""), "[]"),
+            ("none", None, "", "Done", None, "[]"),
+            ("bad", None, "", "Done", Some("bk"), "not json"),
+        ];
+        for (id, jc, scope, done, bc, pipelines) in rows {
+            sqlx::query(
+                "INSERT INTO project_settings (project_id, jira_connection, jira_scope, jira_done, buildkite_connection, \
+                 buildkite_pipelines) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(jc)
+            .bind(scope)
+            .bind(done)
+            .bind(bc)
+            .bind(pipelines)
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        }
+        s.close().await;
+
+        let s = Store::open_with(&db, &super::MIGRATOR, &backups).await.unwrap();
+        assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 1, "copied before migrating");
+        let both = s.get_project_settings("both").await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&both.integrations).unwrap(),
+            json!({"jira": {"connection": "work-jira", "scope": "project = ABC", "done": "Close"},
+                   "buildkite": {"connection": "bk", "pipelines": ["app", "e2e"]}})
+        );
+        let jira = both.jira().unwrap();
+        assert_eq!(
+            (jira.connection.as_str(), jira.scope.as_str(), jira.done.as_str()),
+            ("work-jira", "project = ABC", "Close")
+        );
+        let bk = both.buildkite().unwrap();
+        assert_eq!(
+            (bk.connection.as_str(), bk.pipelines.as_slice()),
+            ("bk", ["app".to_string(), "e2e".into()].as_slice())
+        );
+        let only = s.get_project_settings("jira").await.unwrap();
+        assert_eq!(only.integrations.keys().collect::<Vec<_>>(), ["jira"], "an empty connection is no link");
+        assert!(only.buildkite().is_none());
+        assert!(s.get_project_settings("none").await.unwrap().integrations.is_empty());
+        let bad = s.get_project_settings("bad").await.unwrap().buildkite().unwrap();
+        assert!(bad.pipelines.is_empty(), "unreadable pipelines become none rather than failing the migration");
+        s.close().await;
+    }
+}

@@ -64,7 +64,7 @@ async fn link_jira(env: &Env, url: &str) {
         "PUT",
         &format!("/api/projects/{}/settings", env.project),
         Some(json!({"agentCredentials": null, "runOverrides": null,
-            "jira": {"connection": "work-jira", "scope": "project = ABC"}})),
+            "integrations": {"jira": {"connection": "work-jira", "scope": "project = ABC"}}})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");

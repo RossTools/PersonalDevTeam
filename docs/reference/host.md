@@ -16,7 +16,8 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   `pdtd.<date>.log`). pdt-host moves `pdt-host.log` and `pdtd-launch.log` to `<name>.1`
   (replacing the one before) once they pass 5 MB.
 - Database (`<data dir>/pdt.db`, SQLite in WAL mode, `synchronous=NORMAL`): before applying a pending migration pdtd
-  copies it to `<data dir>/backups/pdt-<ms>.db` (`VACUUM INTO`) and keeps the newest 3 copies. Every 10 minutes
+  copies it to `<data dir>/backups/pdt-<ms>.db` (`VACUUM INTO`) and keeps the newest 3 copies, so a migration that
+  rewrites data (PDT-174's move of the Jira and Buildkite settings) can be undone by hand. Every 10 minutes
   `maintain_workflows` empties the WAL (`wal_checkpoint(TRUNCATE)`), so it cannot grow between restarts while
   readers keep SQLite's own checkpoints from resetting it. Housekeeping prunes events, finished workflow runs,
   resolved outbox messages, ended Inbox items and notifications after 30 days, and conversation frames after 7

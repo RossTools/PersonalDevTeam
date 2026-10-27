@@ -187,7 +187,7 @@ pub async fn refresh_buildkite(st: &AppState) {
         let bk = match settings.get(&info.project_id) {
             Some(s) => s.clone(),
             None => {
-                let s = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite);
+                let s = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite());
                 settings.insert(info.project_id.clone(), s.clone());
                 s
             }

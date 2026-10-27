@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { ConfirmProvider, Toaster } from '@ui';
 import { connectionKinds } from './api/gen/connectionKinds';
+import { projectSettingsSchemas } from './api/gen/projectSettingsSchemas';
 
 export function renderWithQuery(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -31,10 +32,15 @@ type Route = ((call: Call) => unknown) | object | string | number | boolean | nu
 /**
  * Stubs fetch with `"METHOD /path"` routes. `undefined` responds 204; unknown routes respond 404. A request with a query
  * string matches its exact route first, then the route without the query (a function route can read `call.path`).
- * `GET /api/connections/kinds` answers PDT's kinds of connection unless a test stubs it.
+ * `GET /api/connections/kinds` answers PDT's kinds of connection, and `GET /api/integrations/project-settings` its
+ * integrations' project settings, unless a test stubs them.
  */
 export function stubApi(given: Record<string, Route>): Call[] {
-  const routes: Record<string, Route> = { 'GET /api/connections/kinds': connectionKinds, ...given };
+  const routes: Record<string, Route> = {
+    'GET /api/connections/kinds': connectionKinds,
+    'GET /api/integrations/project-settings': projectSettingsSchemas,
+    ...given,
+  };
   const calls: Call[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const call: Call = {

@@ -59,7 +59,7 @@ pub const FIELDS: &[&str] = &[
     "comment",
 ];
 
-/// A project's link to Jira on this host (its settings, not the repo's).
+/// A project's link to Jira on this host (its settings, not the repo's): its `jira` integration settings, read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -67,9 +67,15 @@ pub struct JiraSettings {
     /// A `jira` connection's name.
     pub connection: String,
     /// JQL for the project's issues (`project = ABC`); empty: every issue the account can see.
+    #[serde(default)]
     pub scope: String,
     /// The transition or status a ticket moved to Done moves its issue to.
+    #[serde(default = "default_done")]
     pub done: String,
+}
+
+fn default_done() -> String {
+    DEFAULT_DONE.into()
 }
 
 /// One issue, as PDT reads it.
