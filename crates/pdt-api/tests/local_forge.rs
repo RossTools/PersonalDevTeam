@@ -52,8 +52,13 @@ async fn setup(tmp: &Path, config: &str) -> Env {
     let pid = p["id"].as_str().unwrap();
     let (_, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Ship it"}))).await;
     let ticket = t["id"].as_str().unwrap().to_string();
-    let (s, started) =
-        call(&app, "POST", &format!("/api/tickets/{ticket}/start"), Some(json!({"agent": "claude"}))).await;
+    let (s, started) = call(
+        &app,
+        "POST",
+        &format!("/api/tickets/{ticket}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "terminal"})),
+    )
+    .await;
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let attempt = started["attempt"]["id"].as_str().unwrap().to_string();
     let wt = started["attempt"]["worktreeId"].as_str().unwrap();
