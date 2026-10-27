@@ -131,11 +131,8 @@ pub trait AnyAction: Send + Sync {
     /// Runs it as a tool. Err is a message for the agent.
     fn call<'a>(&'a self, cx: &'a Cx<'a>, args: Value) -> BoxFut<'a, Result<Value, String>>;
 
-    /// What a call with these arguments acts on, when the tool asks ([`Action::ask_target`]).
-    fn ask_target(&self, args: &Value) -> Option<AskTarget>;
-
-    /// The title of the user's approval of a call with these arguments ([`Action::approval_title`]), when they read.
-    fn title(&self, args: &Value) -> Option<String>;
+    /// What an asking call acts on ([`Action::ask_target`]).
+    fn ask_target(&self, args: &Value) -> AskTarget;
 }
 
 impl<A: Action> AnyAction for A {
@@ -150,15 +147,6 @@ impl<A: Action> AnyAction for A {
 
     fn node_kind(self: Arc<Self>) -> Option<Box<dyn NodeKind>> {
         self.node().is_some().then(|| Box::new(ActionNode(self)) as Box<dyn NodeKind>)
-    }
-
-    fn ask_target(&self, args: &Value) -> Option<AskTarget> {
-        self.tool().decl.asks.then(|| Action::ask_target(self, args))
-    }
-
-    fn title(&self, args: &Value) -> Option<String> {
-        let input: A::Input = serde_json::from_value(args.clone()).ok()?;
-        Some(self.approval_title(&input))
     }
 
     fn call<'a>(&'a self, cx: &'a Cx<'a>, args: Value) -> BoxFut<'a, Result<Value, String>> {
@@ -179,6 +167,10 @@ impl<A: Action> AnyAction for A {
             let out = self.run(&ActionCx { st: cx.st, via: Via::Tool }, input).await?;
             self.tool_output(out)
         })
+    }
+
+    fn ask_target(&self, args: &Value) -> AskTarget {
+        Action::ask_target(self, args)
     }
 }
 

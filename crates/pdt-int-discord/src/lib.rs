@@ -17,12 +17,6 @@ use std::sync::Arc;
 pub use bot::{EnsureChannelConfig, EnsureChannelOutput};
 pub use post::{DiscordConfig, DiscordOutput, split_content};
 
-/// What the PM is told about the Discord tools.
-const PM: &str = "- Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` creates, renames, \
-moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it as a \
-`discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \
-user's yes unless the bot connection lets you act; say what you will change first.";
-
 pub struct Discord;
 
 impl Integration for Discord {
@@ -39,14 +33,6 @@ impl Integration for Discord {
             core::bot_config(config)?;
         }
         Ok(())
-    }
-
-    fn ask_title(&self, tool: &str, input: &Value) -> Option<String> {
-        core::ask_title(tool, input)
-    }
-
-    fn pm_instructions(&self) -> Option<&'static str> {
-        Some(PM)
     }
 
     fn templates(&self) -> Vec<Template> {
@@ -97,4 +83,19 @@ impl Integration for Discord {
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
         bot::actions()
     }
+
+    fn approval_title(&self, tool: &str, input: &Value) -> Option<String> {
+        matches!(tool, "discord_change" | "discord_webhook")
+            .then(|| core::ask_title(tool, input).unwrap_or_else(|| "Discord".into()))
+    }
+
+    fn pm_prompt(&self) -> Option<&'static str> {
+        Some(PM_PROMPT)
+    }
 }
+
+/// What the PM's prompt says about the Discord tools.
+pub(crate) const PM_PROMPT: &str = "- Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` \
+creates, renames, moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it \
+as a `discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \
+user's yes unless the bot connection lets you act; say what you will change first.";

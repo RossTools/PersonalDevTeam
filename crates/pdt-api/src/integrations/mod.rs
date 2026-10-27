@@ -1,10 +1,11 @@
 //! Integrations (PDT-171): each one declares, in one [`Integration`], what it adds to PDT: connection kinds, workflow
 //! node kinds, event types (each a trigger), pdt-mcp tools and actions (each both a node kind and a tool, PDT-172), and
-//! the rest of what it hooks into (its part of the poll, routes, built-in workflows and templates, CI, the PM's
-//! instructions). The [`Registry`] gathers every enabled integration's into the lists the rest of PDT reads: the node
-//! catalog, `tools/list` and `tools/call`, the personas' tools, the event types, `GET /api/connections/kinds` and the
-//! project settings form (`GET /api/integrations/project-settings`). PDT's own pieces register the same way
-//! ([`core::Core`]) and are always on.
+//! how the PM treats its tools (PDT-175: what an asking call acts on, the approval's title, credentials to redact, a
+//! prompt fragment), and the rest of what it hooks into (its part of the poll, routes, built-in workflows and
+//! templates, CI). The [`Registry`] gathers every enabled integration's into the lists the rest of PDT reads: the node
+//! catalog, `tools/list` and `tools/call`, the personas' tools, the event types, `GET /api/connections/kinds`, the
+//! project settings form (`GET /api/integrations/project-settings`) and the PM's prompt, approvals and transcripts.
+//! PDT's own pieces register the same way ([`core::Core`]) and are always on.
 //!
 //! The optional integrations live in crates of their own (`crates/pdt-int-<id>`, PDT-173), each behind a pdtd cargo
 //! feature; pdtd hands the ones it was built with to [`Integrations::new`], and an instance enables those it uses
@@ -123,29 +124,6 @@ pub trait Integration: Send + Sync {
         Box::pin(async move { Err(format!("no tool is called {name}")) })
     }
 
-    /// What a call of one of its asking tools acts on, so the PM's policy can be found: by default its action's
-    /// ([`action::Action::ask_target`]).
-    fn ask_target(&self, tool: &str, input: &Value) -> Option<AskTarget> {
-        self.actions().into_iter().find(|a| a.decl().name == tool).and_then(|a| a.ask_target(input))
-    }
-
-    /// The title of the user's approval of a call of one of its tools: by default its action's
-    /// ([`action::Action::approval_title`]).
-    fn ask_title(&self, tool: &str, input: &Value) -> Option<String> {
-        self.actions().into_iter().find(|a| a.decl().name == tool).and_then(|a| a.title(input))
-    }
-
-    /// Takes credentials an agent wrote into a call of one of its tools out of the call as PDT stores and shows it
-    /// (the call itself still gets them). Returns the values taken out, so the raw line can lose them too.
-    fn redact_tool_input(&self, _tool: &str, _input: &mut Value) -> Vec<String> {
-        vec![]
-    }
-
-    /// What the PM is told about its tools, as a line of the PM's instructions (`- Chat: …`).
-    fn pm_instructions(&self) -> Option<&'static str> {
-        None
-    }
-
     /// What a project sets for it on this host (its connection and fields), if anything. The schema's `integration`
     /// is the integration's id.
     fn project_settings(&self) -> Option<ProjectSettingsSchema> {
@@ -183,6 +161,31 @@ pub trait Integration: Send + Sync {
     fn templates(&self) -> Vec<Template> {
         vec![]
     }
+
+    /// What a call to one of its asking [`Integration::tools`] acts on (`tool` is the bare name), whose policy says
+    /// whether the PM acts without asking. Its actions answer for themselves ([`action::Action::ask_target`]).
+    fn ask_target(&self, _tool: &str, _input: &Value) -> Option<AskTarget> {
+        None
+    }
+
+    /// The title of the user's approval of a call to one of its tools or actions (Claude's approval card, the Inbox,
+    /// the transcript): what they say yes to. None keeps the agent's.
+    fn approval_title(&self, _tool: &str, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Takes the credentials an agent wrote into a call to one of its tools or actions out of `input` (each becomes
+    /// [`pdt_core::secret::REDACTED`]) and gives them back, for PDT to take out of the call's output and its raw
+    /// transcript line too. The call itself still gets them.
+    fn redact_call(&self, _tool: &str, _input: &mut Value) -> Vec<String> {
+        vec![]
+    }
+
+    /// What the PM's prompt says about its tools, as Markdown list items. A PM session gets it when it has any of
+    /// them.
+    fn pm_prompt(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// PDT's own integrations, always on, in the catalog's order.
@@ -206,16 +209,25 @@ pub(crate) fn test_registry() -> &'static Registry {
 
 /// What runs a tool.
 enum Runner {
-    /// Its integration's [`Integration::call_tool`].
-    Integration,
+    /// The integration with this index ([`Integration::call_tool`]).
+    Integration(usize),
     Action(Arc<dyn AnyAction>),
+}
+
+/// A registered tool.
+struct Entry {
+    /// As `tools/list` gives it.
+    info: ToolInfo,
+    runner: Runner,
+    /// The index of the integration it is from.
+    owner: usize,
 }
 
 /// The enabled integrations, and what they add, gathered.
 pub struct Registry {
     integrations: Vec<Arc<dyn Integration>>,
-    /// Every tool as `tools/list` gives it, what runs it and the index of its integration.
-    tools: Vec<(ToolInfo, Runner, usize)>,
+    /// Every tool, in `tools/list` order.
+    tools: Vec<Entry>,
     table: ToolTable,
     events: Vec<&'static EventType>,
     /// Every connection kind, with the index of its integration.
@@ -230,7 +242,7 @@ impl Registry {
     /// the catalog can tell a node of a turned-off integration from one this build lacks. A tool, event type or
     /// connection kind another integration already has is left out (the first keeps it).
     pub fn new(integrations: Vec<Arc<dyn Integration>>, built: Vec<&'static str>) -> Self {
-        let mut tools: Vec<(ToolInfo, Runner, usize)> = vec![];
+        let mut tools: Vec<Entry> = vec![];
         let mut decls: Vec<ToolDecl> = vec![];
         let mut events: Vec<&'static EventType> = vec![];
         let mut kinds: Vec<(ConnectionKind, usize)> = vec![];
@@ -245,11 +257,11 @@ impl Registry {
                 .actions()
                 .into_iter()
                 .map(|a| (a.decl(), a.info(), Runner::Action(a)))
-                .chain(int.tools().into_iter().map(|t| (t.decl, t.info(), Runner::Integration)));
+                .chain(int.tools().into_iter().map(|t| (t.decl, t.info(), Runner::Integration(i))));
             for (decl, info, runner) in own {
                 if !decls.iter().any(|x| x.name == decl.name) {
                     decls.push(decl);
-                    tools.push((info, runner, i));
+                    tools.push(Entry { info, runner, owner: i });
                 }
             }
             for e in int.event_types() {
@@ -305,53 +317,66 @@ impl Registry {
 
     /// Every pdt-mcp tool as `tools/list` gives them.
     pub fn tool_infos(&self) -> Vec<ToolInfo> {
-        self.tools.iter().map(|(t, _, _)| t.clone()).collect()
+        self.tools.iter().map(|t| t.info.clone()).collect()
+    }
+
+    /// A tool by its bare name.
+    fn entry(&self, name: &str) -> Option<&Entry> {
+        self.tools.iter().find(|t| t.info.name == name)
+    }
+
+    /// A tool by the name an agent gives it ([`pdt_core::mcp::pdt_tool`]): its bare name, entry and integration.
+    fn agent_tool<'a>(&'a self, tool: &'a str) -> Option<(&'a str, &'a Entry, &'a dyn Integration)> {
+        let name = pdt_core::mcp::pdt_tool(tool);
+        let e = self.entry(name)?;
+        Some((name, e, self.integrations[e.owner].as_ref()))
     }
 
     /// Runs a tool by name. Err is a message for the agent.
     pub async fn call_tool(&self, cx: &Cx<'_>, name: &str, args: Value) -> Result<Value, String> {
-        match self.tools.iter().find(|(t, _, _)| t.name == name) {
-            Some((_, Runner::Integration, i)) => self.integrations[*i].call_tool(cx, name, args).await,
-            Some((_, Runner::Action(a), _)) => a.call(cx, args).await,
+        match self.entry(name).map(|e| &e.runner) {
+            Some(Runner::Integration(i)) => self.integrations[*i].call_tool(cx, name, args).await,
+            Some(Runner::Action(a)) => a.call(cx, args).await,
             None => Err(format!("no tool is called {name}")),
         }
     }
 
-    /// The integration with the pdt-mcp tool `name` (Claude's `mcp__pdt__<name>`, Codex's `mcp:pdt/<name>` or the
-    /// bare name), and the bare name.
-    fn tool_owner<'a>(&self, name: &'a str) -> Option<(&dyn Integration, &'a str)> {
-        let server = pdt_core::mcp::SERVER_NAME;
-        let bare = name
-            .strip_prefix(&format!("mcp__{server}__"))
-            .or_else(|| name.strip_prefix(&format!("mcp:{server}/")))
-            .unwrap_or(name);
-        let (_, _, i) = self.tools.iter().find(|(t, _, _)| t.name == bare)?;
-        Some((self.integrations[*i].as_ref(), bare))
-    }
-
-    /// What a call of an integration's asking tool acts on ([`Integration::ask_target`]).
+    /// What a call to an asking tool acts on, from its name as the agent gives it and its arguments; None for a tool
+    /// that doesn't ask, or a call that names nothing.
     pub fn ask_target(&self, tool: &str, input: &Value) -> Option<AskTarget> {
-        let (int, bare) = self.tool_owner(tool)?;
-        int.ask_target(bare, input)
+        let (name, e, int) = self.agent_tool(tool)?;
+        if !self.table.asks(name) {
+            return None;
+        }
+        match &e.runner {
+            Runner::Action(a) => Some(a.ask_target(input)),
+            Runner::Integration(_) => int.ask_target(name, input),
+        }
     }
 
-    /// The title of the user's approval of a call of an integration's tool ([`Integration::ask_title`]).
-    pub fn ask_title(&self, tool: &str, input: &Value) -> Option<String> {
-        let (int, bare) = self.tool_owner(tool)?;
-        int.ask_title(bare, input)
+    /// The title of the user's approval of a tool call, when its integration gives one ([`Integration::approval_title`]).
+    pub fn approval_title(&self, tool: &str, input: &Value) -> Option<String> {
+        let (name, _, int) = self.agent_tool(tool)?;
+        int.approval_title(name, input).map(|t| pdt_core::conversation::claude::title_line(&t))
     }
 
-    /// Takes the credentials out of a call of an integration's tool ([`Integration::redact_tool_input`]).
-    pub fn redact_tool_input(&self, tool: &str, input: &mut Value) -> Vec<String> {
-        match self.tool_owner(tool) {
-            Some((int, bare)) => int.redact_tool_input(bare, input),
+    /// Takes the credentials out of a tool call's input ([`Integration::redact_call`]); the ones it took.
+    pub fn redact_call(&self, tool: &str, input: &mut Value) -> Vec<String> {
+        match self.agent_tool(tool) {
+            Some((name, _, int)) => int.redact_call(name, input),
             None => vec![],
         }
     }
 
-    /// The enabled integrations' lines of the PM's instructions.
-    pub fn pm_instructions(&self) -> Vec<&'static str> {
-        self.integrations.iter().filter_map(|i| i.pm_instructions()).collect()
+    /// The prompt fragments ([`Integration::pm_prompt`]) of the integrations a PM session with `tools` has any tool
+    /// of, in registry order.
+    pub fn pm_prompt(&self, tools: &[String]) -> Vec<&'static str> {
+        self.integrations
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.tools.iter().any(|e| e.owner == *i && tools.contains(&e.info.name)))
+            .filter_map(|(_, int)| int.pm_prompt())
+            .collect()
     }
 
     /// Every event type, in catalog order.

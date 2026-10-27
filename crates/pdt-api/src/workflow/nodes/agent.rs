@@ -20,12 +20,15 @@ const DEFAULT_BACKGROUND_WAIT_MS: u64 = 30 * 60 * 1000;
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum SessionChoice {
-    /// A fresh session for each pass (Reviewer, QA, Refiner).
+    /// A fresh session for each pass, stopped once its outcome is in (Refiner).
     #[default]
     New,
     /// The session this node used earlier in the run, else the attempt's running agent session, else a new one that
     /// becomes the attempt's (Coder).
     Reuse,
+    /// The session this node used earlier in the run, else a new one of its own: never the attempt's, and parked once
+    /// its outcome is in (Reviewer, QA; PDT-183).
+    Own,
 }
 
 /// Who does an agent step's work.
@@ -187,7 +190,11 @@ impl NodeKind for Agent {
                 let would = format!(
                     "run {} ({} session{}) and wait for one of: {}",
                     persona.name,
-                    if c.session == SessionChoice::Reuse { "reused" } else { "a new" },
+                    match c.session {
+                        SessionChoice::New => "a new",
+                        SessionChoice::Reuse => "reused",
+                        SessionChoice::Own => "its own, reused across passes",
+                    },
                     if t.host { ", in the host project with no ticket, as the PM runs" } else { "" },
                     c.outcomes.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
                 );

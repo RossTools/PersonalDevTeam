@@ -4,4 +4,4 @@
  * The forge a project names in `.pdt/project.toml` (`forge = "github"`). Without one, a project whose `origin` is
  * on github.com uses GitHub and any other has none.
  */
-export type ForgeKind = "github" | "none";
+export type ForgeKind = "github" | "local" | "none";

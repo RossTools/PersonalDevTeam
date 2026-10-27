@@ -413,7 +413,7 @@ pub(crate) async fn request_opened(
     tool: &str,
     input: &serde_json::Value,
 ) {
-    let Some(target) = pm::ask_target(tool, input).or_else(|| st.registry().ask_target(tool, input)) else { return };
+    let Some(target) = st.registry().ask_target(tool, input) else { return };
     let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
     if !acts_without_asking(st, &target).await {
         return;
@@ -477,11 +477,7 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
         None => None,
     }
     .unwrap_or_else(|| pdt_core::persona::PM_INSTRUCTIONS.to_string());
-    // The enabled integrations' tools (PDT-173).
     let reg = st.registry();
-    let lines = reg.pm_instructions();
-    let persona_text =
-        if lines.is_empty() { persona_text } else { format!("{persona_text}\nIntegrations:\n{}\n", lines.join("\n")) };
     let tools = crate::mcp::session_tools(st, s).await;
     // An agent step of a personal workflow runs here too (PDT-152): its role and outcome rules.
     let step = crate::workflow::agent::step_section_for(st, s).await;
@@ -491,6 +487,7 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
         work_folder: &s.cwd,
         tools: &tools,
         tool_table: reg.tool_table(),
+        integrations: &reg.pm_prompt(&tools),
         persona: &persona_text,
         briefing: &briefing,
         step: step.as_deref(),

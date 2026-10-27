@@ -262,6 +262,11 @@ pub fn tool_title(tool: &str, input: &Value) -> String {
         ("Skill", _) => field("skill"),
         _ => String::new(),
     };
+    title_line(&raw)
+}
+
+/// A tool call's title from its subject: the first line, at most 200 characters (`…` when cut).
+pub fn title_line(raw: &str) -> String {
     let line = raw.lines().next().unwrap_or("").trim();
     let mut t: String = line.chars().take(200).collect();
     if line.chars().count() > 200 || raw.lines().nth(1).is_some() {

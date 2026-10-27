@@ -14,6 +14,9 @@ use ts_rs::TS;
 /// The shortest value PDT keeps: a shorter one would be found (and redacted) all over ordinary text.
 pub const MIN_VALUE_LEN: usize = 6;
 pub const MAX_VALUE_LEN: usize = 16 * 1024;
+
+/// What a credential an agent wrote into a tool call reads as wherever the call is shown or logged.
+pub const REDACTED: &str = "[redacted]";
 const MAX_NAME: usize = 64;
 const MAX_DESCRIPTION: usize = 500;
 

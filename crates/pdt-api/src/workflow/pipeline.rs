@@ -162,7 +162,7 @@ pub fn doc() -> WorkflowDoc {
             400,
             "Review",
             json!({
-            "persona": "{{params.reviewer}}", "prompt": REVIEW_PROMPT, "session": "new",
+            "persona": "{{params.reviewer}}", "prompt": REVIEW_PROMPT, "session": "own",
             "owner": "{{params.reviewBy}}", "pipelineStage": "review",
             "outcomes": [
                 {"id": "approved", "description": "it can merge as is"},
@@ -176,7 +176,7 @@ pub fn doc() -> WorkflowDoc {
             400,
             "QA",
             json!({
-            "persona": "{{params.qa}}", "prompt": QA_PROMPT, "session": "new",
+            "persona": "{{params.qa}}", "prompt": QA_PROMPT, "session": "own",
             "owner": "{{params.qaBy}}", "pipelineStage": "qa",
             "outcomes": [
                 {"id": "pass", "description": "it works as the ticket asks"},
@@ -273,7 +273,7 @@ pub fn doc() -> WorkflowDoc {
             100,
             "Review the fix",
             json!({
-            "persona": "{{params.reviewer}}", "prompt": FIX_REVIEW_PROMPT, "session": "new",
+            "persona": "{{params.reviewer}}", "prompt": FIX_REVIEW_PROMPT, "session": "own",
             "owner": "{{params.reviewBy}}", "pipelineStage": "review",
             "outcomes": [
                 {"id": "approved", "description": "the fix can merge as is"},

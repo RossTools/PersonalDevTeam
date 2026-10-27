@@ -4,6 +4,7 @@
 use super::{Integration, Tool};
 use crate::mcp::tools::Cx;
 use crate::workflow::catalog::{BoxFut, NodeKind};
+use pdt_core::pm::AskTarget;
 use pdt_core::workflow::events::{EVENT_TYPES, EventType};
 use serde_json::Value;
 
@@ -52,5 +53,9 @@ impl Integration for Core {
 
     fn call_tool<'a>(&'a self, cx: &'a Cx<'a>, name: &'a str, args: Value) -> BoxFut<'a, Result<Value, String>> {
         Box::pin(crate::mcp::tools::call(cx, name, args))
+    }
+
+    fn ask_target(&self, tool: &str, input: &Value) -> Option<AskTarget> {
+        pdt_core::pm::ask_target(tool, input)
     }
 }

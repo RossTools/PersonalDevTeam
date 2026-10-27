@@ -59,6 +59,8 @@ pub struct AppState {
     pub github: std::sync::Arc<dyn pdt_forge::Forge>,
     /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
     pub(crate) pr_watch: crate::github::SharedPrWatch,
+    /// The local forge's CI runs in this pdtd (PDT-178).
+    pub(crate) local_ci: std::sync::Arc<crate::local_forge::LocalCi>,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
     /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -186,6 +188,7 @@ impl AppState {
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
             github: std::sync::Arc::new(pdt_github::Unavailable),
             pr_watch: Default::default(),
+            local_ci: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
@@ -406,6 +409,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
         .route("/attempts/{id}/approve", axum::routing::post(crate::review::approve))
         .route("/attempts/{id}/merge", get(crate::review::merge_preview).post(crate::review::merge))
+        .route("/local-ci/runs/{id}/log", get(crate::local_forge::run_log))
         .route("/attempts/{id}/ask-agent", axum::routing::post(crate::review::ask_agent))
         .route("/workspaces", get(crate::workspaces::list).post(crate::workspaces::create))
         .route("/workspaces/{id}", axum::routing::patch(crate::workspaces::update).delete(crate::workspaces::remove))

@@ -177,8 +177,7 @@ const SECRET_WORDS: &[&str] = &[
     "authorization",
 ];
 
-/// What a credential reads as wherever a call is shown or logged.
-pub const REDACTED: &str = "[redacted]";
+pub use pdt_core::secret::REDACTED;
 
 /// Whether a field called `name` holds a credential (`password`, `apiKey`, `secretValue`, `token`, …).
 pub fn is_secret_name(name: &str) -> bool {

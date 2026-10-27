@@ -4,4 +4,8 @@ export type MergePr = { number: number, url: string,
 /**
  * The base branch has a merge queue (it picks the method).
  */
-queue: boolean, };
+queue: boolean, 
+/**
+ * A change request on the local forge (PDT-178): PDT merges it here once its CI passes.
+ */
+local: boolean, };

@@ -267,7 +267,7 @@ describe('inbox', () => {
     const blocked = item('b', { group: 'gate', ticketId: 't1', attemptId: 'a1', title: 'Merge blocked on PDT-7: a draft', choices: [{ id: 'merge_again', title: 'Merge again', primary: true }, { id: 'stop', title: 'Stop', primary: false }] });
     const pr: PullRequestStatus = {
       number: 12, url: 'https://github.com/o/r/pull/12', title: 'Ship it', state: 'open', draft: false, baseBranch: 'main', headSha: 'abc',
-      mergeable: 'conflicting', behind: false, autoMerge: false, inMergeQueue: false, queuePosition: null, ci: null, queueCi: null, checkedAt: 1, error: null,
+      mergeable: 'conflicting', behind: false, autoMerge: false, inMergeQueue: false, queuePosition: null, ci: null, queueCi: null, checkedAt: 1, error: null, local: false,
     };
     const attempt = { id: 'a1', branch: 'pdt-PDT-7-x', baseBranch: 'main', worktreeId: null, state: 'active' as const, createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, ci: null, pr };
     stubApi({ 'GET /api/tickets/t1': ticket(1, { attempts: [attempt], sessions: [] }), 'GET /api/inbox': { items: [], total: 0 } });

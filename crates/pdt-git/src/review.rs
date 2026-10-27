@@ -356,6 +356,32 @@ pub fn merge_local(
     Ok(MergeOutcome::Merged { commit })
 }
 
+/// Merges `branch` into `base` by a fast-forward when `base` hasn't moved since the branch left it, else as
+/// [`merge_local`] does with a merge commit (`message`). A fast-forward moves the checkout that has `base` checked out
+/// (`git merge --ff-only`, which needs it clean) or, with none, only the ref.
+pub fn merge_fast_forward(repo: &Path, branch: &str, base: &str, message: &str) -> Result<MergeOutcome, GitError> {
+    let (base_ref, branch_ref) = (head_ref(base), head_ref(branch));
+    let old = rev_parse(repo, &base_ref).ok_or_else(|| GitError::UnknownRef(base.to_string()))?;
+    let theirs = rev_parse(repo, &branch_ref).ok_or_else(|| GitError::UnknownRef(branch.to_string()))?;
+    if old == theirs || !is_ancestor(repo, &old, &theirs) {
+        return merge_local(repo, branch, base, message, false);
+    }
+    let preview = merge_preview(repo, branch, base)?;
+    match preview.base_checkout.filter(|d| d.is_dir()) {
+        Some(dir) if preview.base_dirty => Ok(MergeOutcome::BaseDirty { checkout: dir }),
+        Some(dir) => {
+            if let Err(f) = git_with_env(&dir, &["merge", "--ff-only", &branch_ref], &[])? {
+                return Err(GitError::Command(f.stderr));
+            }
+            Ok(MergeOutcome::Merged { commit: run(&dir, &["rev-parse", "HEAD"])? })
+        }
+        None => {
+            run(repo, &["update-ref", "-m", message, &base_ref, &theirs, &old])?;
+            Ok(MergeOutcome::Merged { commit: theirs })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,6 +547,39 @@ mod tests {
         assert_eq!(git(&repo, &["log", "-1", "--format=%s", "main"]), "Merge feature");
         assert!(is_ancestor(&repo, &head, &commit));
         assert_eq!(git(&repo, &["rev-parse", "main^2"]), head, "a merge commit, not a fast-forward");
+    }
+
+    #[test]
+    fn fast_forwards_when_the_base_has_not_moved_else_makes_a_merge_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, wt, _base) = setup(tmp.path());
+        assert_eq!(merge_fast_forward(&repo, "feature", "main", "m").unwrap(), MergeOutcome::Nothing);
+        write(&wt, "a.txt", b"one\nTWO\nthree\n");
+        let head = commit_all(&wt, "two");
+        write(&repo, "a.txt", b"dirty\n");
+        assert!(matches!(merge_fast_forward(&repo, "feature", "main", "m").unwrap(), MergeOutcome::BaseDirty { .. }));
+        git(&repo, &["checkout", "--", "a.txt"]);
+        let done = merge_fast_forward(&repo, "feature", "main", "m").unwrap();
+        assert_eq!(done, MergeOutcome::Merged { commit: head.clone() }, "a fast-forward");
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\nTWO\nthree\n", "checkout moved");
+
+        // No checkout of main: the ref moves alone.
+        write(&wt, "c.txt", b"c\n");
+        let head = commit_all(&wt, "c");
+        git(&repo, &["switch", "-q", "-c", "elsewhere"]);
+        assert_eq!(merge_fast_forward(&repo, "feature", "main", "m").unwrap(), MergeOutcome::Merged { commit: head });
+
+        // main moved on: a merge commit.
+        git(&repo, &["switch", "-q", "main"]);
+        write(&repo, "d.txt", b"d\n");
+        commit_all(&repo, "main moves");
+        write(&wt, "e.txt", b"e\n");
+        let head = commit_all(&wt, "e");
+        let MergeOutcome::Merged { commit } = merge_fast_forward(&repo, "feature", "main", "Merge e").unwrap() else {
+            panic!("not merged")
+        };
+        assert_eq!(git(&repo, &["rev-parse", &format!("{commit}^2")]), head);
+        assert_eq!(git(&repo, &["log", "-1", "--format=%s", "main"]), "Merge e");
     }
 
     #[test]

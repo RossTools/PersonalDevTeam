@@ -472,33 +472,35 @@ async fn pump(
 }
 
 /// Stores an event (updating its item in place), applies it to the runtime state and sends it to viewers.
-/// A call to one of an integration's pdt-mcp tools gets the title its integration gives it (what the user says yes
-/// to), and a credential the agent wrote into it (a password, PDT-150) is redacted from the event (the
-/// transcript and the approval card) and its raw line; the call itself still gets it. The raw line without them, when
-/// there were any.
-fn redact_credentials(st: &AppState, event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
-    let (AgentEvent::ToolCall { tool, input, title, .. } | AgentEvent::Request { tool, input, title, .. }) = event
+/// A call to an integration's tool gets the title its integration gives it (`Integration::approval_title`: what the
+/// user says yes to), and a credential the agent wrote into it (PDT-150) is redacted from the event (the transcript and
+/// the approval card, the call's input and output) and its raw line (`Integration::redact_call`); the call itself
+/// still gets it. The raw line without them, when there were any.
+fn integration_hooks(st: &AppState, event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
+    let registry = st.registry();
+    let (AgentEvent::ToolCall { tool, title, input, .. } | AgentEvent::Request { tool, title, input, .. }) = event
     else {
         return None;
     };
-    let reg = st.registry();
-    if let Some(t) = reg.ask_title(tool, input) {
+    if let Some(t) = registry.approval_title(tool, input) {
         *title = t;
     }
-    let secrets = reg.redact_tool_input(tool, input);
+    let secrets = registry.redact_call(tool, input);
     if secrets.is_empty() {
         return None;
     }
-    let mut text = raw?.to_string();
-    for s in &secrets {
-        let escaped = serde_json::to_string(s).unwrap_or_default();
-        text = text.replace(escaped.trim_matches('"'), REDACTED).replace(s.as_str(), REDACTED);
+    use pdt_core::secret::REDACTED;
+    let scrub = |text: &str| {
+        secrets.iter().fold(text.to_string(), |t, s| {
+            let escaped = serde_json::to_string(s).unwrap_or_default();
+            t.replace(escaped.trim_matches('"'), REDACTED).replace(s.as_str(), REDACTED)
+        })
+    };
+    if let AgentEvent::ToolCall { output: Some(output), .. } = event {
+        *output = scrub(output);
     }
-    Some(text)
+    raw.map(scrub)
 }
-
-/// What a redacted credential reads as.
-pub const REDACTED: &str = "[redacted]";
 
 async fn append(
     st: &AppState,
@@ -524,7 +526,7 @@ async fn append(
             }
         }
     }
-    let scrubbed = redact_credentials(st, &mut event, raw);
+    let scrubbed = integration_hooks(st, &mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
     let row = match st
         .store
@@ -789,6 +791,11 @@ pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
     state.live || state.turn_running || !state.pending.is_empty()
 }
 
+/// Whether a conversation's agent process is running (false: parked, or not loaded).
+pub fn conversation_live(st: &AppState, id: &str) -> bool {
+    st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some_and(|c| c.state().live)
+}
+
 /// Whether a conversation is loaded in this pdtd. Removing a session forgets it first, so a turn its closing ended
 /// finds it gone.
 pub(crate) fn is_loaded(st: &AppState, id: &str) -> bool {
@@ -883,6 +890,21 @@ pub(crate) async fn apply_settings(st: &AppState, session: &Session, change: Ses
     }
     c.push_state();
     Ok(())
+}
+
+/// Parks a loaded conversation's process now if it is idle (no turn, request or pending message), instead of after
+/// `idle_park` (an `own` step's session between passes, PDT-183).
+pub(crate) async fn park_idle(st: &AppState, id: &str) {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else { return };
+    let idle = {
+        let s = c.state();
+        s.live && !s.turn_running && s.open_requests.is_empty() && s.pending.is_empty()
+    };
+    if idle {
+        tracing::info!(session = %id, "parking a step's conversation after its outcome");
+        park(st, &c).await;
+        c.push_state();
+    }
 }
 
 /// Forgets a removed session's runtime, closing its process.

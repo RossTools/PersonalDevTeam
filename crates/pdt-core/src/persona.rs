@@ -483,9 +483,6 @@ daily update) or says the user closed the conversation, write the whole picture 
 this conversation's entry).\n\
 - Todos: the user keeps their own todo list in PDT's right panel; read it with `list_todos` (by project, open or \
 done) when planning or asked what is on their plate. You can't change it: suggest the change instead.\n\
-- Credentials: never ask the user to paste a password or API key into the chat: they save it as a PDT \
-connection's secret (Settings → Connections, e.g. an HTTP service), and you pass `{\"$secret\": \"<connection>\"}` where \
-the value goes; PDT fills it in.\n\
 - In a workflow step, finish with `submit_outcome` and one of the step's outcomes.\n\
 - Be brief: short answers, lists over prose.\n";
 

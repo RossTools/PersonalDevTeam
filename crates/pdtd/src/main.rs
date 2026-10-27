@@ -194,6 +194,8 @@ async fn run() -> anyhow::Result<()> {
     tokio::spawn(pdt_api::run_conversation_ticker(state.clone()));
     // Notifications (PDT-108): rows made from sessions' and the Inbox's state, cleared when their cause goes away.
     tokio::spawn(pdt_api::run_notifier(state.clone()));
+    // The local forge's CI runs (PDT-178): one that ends has its attempt read again at once.
+    tokio::spawn(pdt_api::run_local_ci_watch(state.clone()));
     // macOS asks for the Local Network permission now, while the user is likely at the Mac (PDT-156).
     tokio::spawn({
         let st = state.clone();
