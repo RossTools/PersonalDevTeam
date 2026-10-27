@@ -10,6 +10,7 @@ import type { RepeatFrom } from '../api/gen/RepeatFrom';
 import type { TodoPatch } from '../api/gen/TodoPatch';
 import { addDays, formatDay, localDay, quickPicks, repeatPresets, repeatText, sameRule, WEEKDAYS, weekdayOf, type QuickPick } from './model';
 import { parseTodo } from './parse';
+import { useMediaQuery } from '../common/useMediaQuery';
 
 /** What the picker edits: a todo's due day, time and repeat rule. */
 export type DueValue = { dueOn: string | null; dueTime: string | null; recurrence: Recurrence | null };
@@ -137,6 +138,8 @@ function DatePanel({ value, now, onPick, onTime, onRepeat, onClear }: {
   onClear: (p: TodoPatch) => void;
 }) {
   const [typed, setTyped] = useState('');
+  // On a touch screen the keyboard would open over the calendar (and shrink the popover), so it waits for a tap.
+  const coarse = useMediaQuery('(pointer: coarse)');
   const today = localDay(now);
   const parsed = typed.trim() ? parseTodo(typed, now) : null;
   const understood = parsed && (parsed.dueOn || parsed.recurrence) ? parsed : null;
@@ -150,7 +153,7 @@ function DatePanel({ value, now, onPick, onTime, onRepeat, onClear }: {
           aria-label="Type a date"
           placeholder="Type a date: “fri 9am”, “in 2 weeks”"
           value={typed}
-          autoFocus
+          autoFocus={!coarse}
           onChange={(e) => setTyped(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== 'Enter' || !understood) return;
