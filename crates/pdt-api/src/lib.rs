@@ -19,6 +19,7 @@ mod host;
 mod host_guard;
 mod identity_guard;
 mod inbox;
+mod integrations;
 mod jira;
 mod local_forge;
 mod local_network;
@@ -71,6 +72,7 @@ pub async fn shutdown_mcp(st: &AppState) {
     st.mcp.shutdown().await;
 }
 pub use host_guard::{AllowedHosts, with_host_guard};
+pub use integrations::tool_names;
 pub use jira::refresh_jira;
 pub use local_network::prompt as prompt_local_network;
 pub use loops::poll_pass;

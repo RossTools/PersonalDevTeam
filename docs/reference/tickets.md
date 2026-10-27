@@ -198,8 +198,10 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   "CB-25: 1 commit pushed after PR #308 merged: cd5d0b7 …", `list`, and the `notice` for the agent). The built-in
   "Commits pushed after a merge" ([workflows.md](workflows.md#workflows)) tells the agent and asks the user in the
   Inbox.
-- Ending an attempt as merged logs `attempt.merged` (with `via`: `detected` by this check, `merged_here` by a local
-  Merge…, `closed` when the ticket was moved to Done or Won't do) for workflows (docs/reference/workflows.md).
+- Ending an attempt as merged logs `attempt.merged` (with `via`: `detected` by this check or by a merge that found
+  the attempt's PR merged already, `merged_here` by a person's local Merge…, `automated` by a workflow's or an agent's
+  local merge, `closed` when the ticket was moved to Done or Won't do) for workflows (docs/reference/workflows.md).
+  Finish merged tickets finishes `detected` and `automated` merges (PDT-181); a person's Merge… finishes its own.
 - Finishing is one server command, `POST /api/tickets/{id}/finish {stopRunning, discardChanges, deleteBranch,
   keepWorktree}` (pdt-api `finish.rs`, PDT-76). It checks first and changes nothing when something would be lost:
   `outcome: blocked` with `blocked {sessions, runs, dirty}` for sessions or runs still going (unless `stopRunning`)
@@ -212,6 +214,9 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   closes the ticket's tab elsewhere, deletes that workspace with its tabs, and pulls the base branch (`pull`).
   `keepWorktree` only moves to Done (ending the attempt and cancelling the runs as above) and pulls (`outcome: kept`). The route runs it in a task of its own, so it
   completes when the caller goes away first (PDT-97: an agent finishing its own ticket is stopped by it).
+  A ticket already closed whose attempt ended and whose worktree is gone is finished already: the command does
+  nothing (`finished`), so a second finish after one merge (the Pipeline's Finish, then Finish merged tickets) doesn't
+  clean up again or cancel runs (PDT-181). Two finishes at the same moment both still run.
 - A merged attempt shows the banner "Move to Done and remove the worktree" (once Done with the worktree still there,
   kept or left behind, "Remove the worktree"; web/src/tickets/actions.ts
   `finishMerged`; in the ticket peek, and above every tab of the ticket's workspace while it is on screen, PDT-71,
@@ -313,11 +318,14 @@ For a work project whose issues are in Jira Cloud and whose CI is Buildkite. pdt
 pdt-api `jira.rs`, `buildkite.rs`; the sensors and actions are in [workflows.md](workflows.md) "Sensors and webhooks".
 
 - **The link** is host settings, not `.pdt/project.toml` (work repos may not take a `.pdt/` folder): the project's
-  settings page, section Jira and Buildkite, names a `jira` connection, a JQL scope (`project = ABC`) and the done
-  transition or status (default `Done`), and a `buildkite` connection with the pipelines (slugs) that build its
-  branches. API: `GET/PUT /api/projects/{id}/settings` `jira` `{connection, scope, done}` and `buildkite`
-  `{connection, pipelines}`; left out keeps them, a `connection` of `""` unlinks, a connection of another kind is
-  `400`.
+  settings page, section Integrations (made from what each integration declares, [workflows.md](workflows.md)
+  "Integrations"), names a `jira` connection, a JQL scope (`project = ABC`) and the done transition or status
+  (default `Done`), and a `buildkite` connection with the pipelines (slugs, one per line) that build its branches.
+  API: `GET/PUT /api/projects/{id}/settings` `integrations` `{"jira": {connection, scope, done}, "buildkite":
+  {connection, pipelines}}`; an integration left out is kept, a key left out keeps its value, `null` or a
+  `connection` of `""` unlinks, a connection of another kind is `400`. Stored as JSON in
+  `project_settings.integration_settings` (PDT-174; 0027's `jira_*` and `buildkite_*` columns were copied in and
+  are unused).
 - **Linked tickets**: `ticket_links_external (ticket_id, system 'jira', connection_id, key, url)`, unique per
   `(system, connection_id, key)`, gone with the ticket. Every ticket response has `external: [{system, key, url}]`;
   the Board card shows the key, the ticket page links it to the issue.

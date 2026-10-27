@@ -173,6 +173,21 @@ async fn setup() -> Env {
     Env { app, state, jira, project, _tmp: tmp }
 }
 
+/// PDT-171: the Jira integration's connection kind and event triggers come from its registration.
+#[tokio::test]
+async fn the_jira_integration_serves_its_connection_kind_and_triggers() {
+    let env = setup().await;
+    let (s, kinds) = call(&env.app, "GET", "/api/connections/kinds", None).await;
+    assert_eq!(s, StatusCode::OK, "{kinds}");
+    let jira = kinds.as_array().unwrap().iter().find(|k| k["id"] == "jira").expect("a jira kind").clone();
+    assert_eq!((jira["label"].as_str(), jira["url"].as_bool()), (Some("Jira Cloud"), Some(true)));
+    assert_eq!(jira["fields"][0]["key"], "email");
+    let (s, catalog) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
+    assert_eq!(s, StatusCode::OK);
+    let trigger = catalog.as_array().unwrap().iter().find(|k| k["id"] == "jira.issue.created").expect("its trigger");
+    assert_eq!(trigger["category"], "trigger");
+}
+
 async fn link(env: &Env) {
     link_project(env, &env.project).await;
 }
@@ -183,11 +198,11 @@ async fn link_project(env: &Env, project: &str) {
         "PUT",
         &format!("/api/projects/{project}/settings"),
         Some(json!({"agentCredentials": null, "runOverrides": null,
-            "jira": {"connection": "work-jira", "scope": "project = ABC"}})),
+            "integrations": {"jira": {"connection": "work-jira", "scope": "project = ABC"}}})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["jira"], json!({"connection": "work-jira", "scope": "project = ABC", "done": "Done"}));
+    assert_eq!(v["integrations"]["jira"], json!({"connection": "work-jira", "scope": "project = ABC", "done": "Done"}));
 }
 
 /// Sets the sensor's last look to `t`, as if it had polled then.
@@ -490,18 +505,25 @@ async fn settings_check_the_connection() {
     let env = setup().await;
     call(&env.app, "POST", "/api/connections", Some(json!({"name": "hook", "kind": "webhook"}))).await;
     let path = format!("/api/projects/{}/settings", env.project);
-    let put = |jira: Value| json!({"agentCredentials": null, "runOverrides": null, "jira": jira});
+    let put = |jira: Value| json!({"agentCredentials": null, "runOverrides": null, "integrations": {"jira": jira}});
     let (s, _) = call(&env.app, "PUT", &path, Some(put(json!({"connection": "hook"})))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "a webhook is not Jira");
     let (s, _) = call(&env.app, "PUT", &path, Some(put(json!({"connection": "nope"})))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     let (s, v) = call(&env.app, "PUT", &path, Some(put(json!({"connection": "work-jira", "done": "Close"})))).await;
-    assert_eq!((s, v["jira"]["done"].clone()), (StatusCode::OK, json!("Close")));
-    // Left out: kept; "" unlinks.
+    assert_eq!((s, v["integrations"]["jira"]["done"].clone()), (StatusCode::OK, json!("Close")));
+    let (s, e) = call(&env.app, "PUT", &path, Some(put(json!({"connection": "work-jira", "nope": "x"})))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
+    // Left out: kept, the integration's other keys too; "" or null unlinks.
     let (_, v) = call(&env.app, "PUT", &path, Some(json!({"agentCredentials": null, "runOverrides": null}))).await;
-    assert_eq!(v["jira"]["connection"], "work-jira");
+    assert_eq!(v["integrations"]["jira"]["connection"], "work-jira");
+    let (_, v) = call(&env.app, "PUT", &path, Some(put(json!({"scope": "project = X"})))).await;
+    assert_eq!(v["integrations"]["jira"], json!({"connection": "work-jira", "scope": "project = X", "done": "Close"}));
     let (_, v) = call(&env.app, "PUT", &path, Some(put(json!({"connection": ""})))).await;
-    assert!(v["jira"].is_null());
+    assert!(v["integrations"]["jira"].is_null());
+    call(&env.app, "PUT", &path, Some(put(json!({"connection": "work-jira"})))).await;
+    let (_, v) = call(&env.app, "PUT", &path, Some(put(Value::Null))).await;
+    assert!(v["integrations"]["jira"].is_null());
     let (s, r) =
         call(&env.app, "POST", &format!("/api/projects/{}/jira/import", env.project), Some(json!({"key": "ABC-1"})))
             .await;

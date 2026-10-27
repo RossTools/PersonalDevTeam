@@ -248,7 +248,7 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    fn new(kinds: Vec<Box<dyn NodeKind>>) -> Self {
+    pub(crate) fn new(kinds: Vec<Box<dyn NodeKind>>) -> Self {
         Self { kinds: kinds.into_iter().map(|k| (k.spec(), k)).collect() }
     }
 
@@ -330,57 +330,11 @@ pub fn listed_spec(st: &AppState, id: &str) -> Option<KindSpec> {
     catalog().spec(id).cloned().or_else(|| listed(st).into_iter().find(|k| k.id == id))
 }
 
-/// Every kind PDT knows. Adding one: a module in `nodes/` and a line here.
+/// Every kind PDT knows: every registered integration's ([`crate::integrations::Registry::node_kinds`]). Adding one:
+/// a module in `nodes/` and a line in its integration's `node_kinds`.
 pub fn catalog() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
-    CATALOG.get_or_init(|| {
-        use super::nodes::*;
-        let mut kinds: Vec<Box<dyn NodeKind>> = vec![];
-        kinds.extend(trigger::event_triggers());
-        kinds.push(Box::new(trigger::Manual));
-        kinds.push(Box::new(schedule::ScheduleTrigger));
-        kinds.push(Box::new(webhook::WebhookTrigger));
-        kinds.push(Box::new(crate::github_issues::IssueOpened));
-        kinds.push(Box::new(condition::ConditionKind));
-        kinds.push(Box::new(switch::Switch));
-        kinds.push(Box::new(gate::Gate));
-        kinds.push(Box::new(wait::Wait));
-        kinds.push(Box::new(call::Call));
-        kinds.push(Box::new(end::End));
-        kinds.push(Box::new(state::StateSet));
-        kinds.push(Box::new(session_send::SessionSend));
-        kinds.push(Box::new(ticket::Finish));
-        kinds.push(Box::new(ticket::Move));
-        kinds.push(Box::new(ticket::Comment));
-        kinds.push(Box::new(ticket::Create));
-        kinds.push(Box::new(agent::Agent));
-        kinds.push(Box::new(command::Command));
-        kinds.push(Box::new(http::Http));
-        kinds.push(Box::new(discord::Discord));
-        kinds.push(Box::new(crate::discord::EnsureChannel));
-        kinds.push(Box::new(notify::Notify));
-        kinds.push(Box::new(inbox_notice::InboxNotice));
-        kinds.extend(arr::kinds());
-        kinds.push(Box::new(plex::Search));
-        kinds.push(Box::new(plex::RecentlyAdded));
-        kinds.push(Box::new(plex::Refresh));
-        kinds.extend(crate::scryer::kinds());
-        kinds.push(Box::new(brief::Archive));
-        kinds.push(Box::new(brief::Read));
-        kinds.push(Box::new(mcp_tool::McpToolKind));
-        kinds.push(Box::new(jira::JiraImport));
-        kinds.push(Box::new(jira::JiraCreate));
-        kinds.push(Box::new(jira::JiraTransition));
-        kinds.push(Box::new(jira::JiraComment));
-        kinds.push(Box::new(github::GithubImport));
-        kinds.push(Box::new(github::GithubComment));
-        kinds.push(Box::new(github::GithubClose));
-        kinds.push(Box::new(buildkite::Retry));
-        kinds.push(Box::new(buildkite::TriggerBuild));
-        kinds.push(Box::new(merge::Merge));
-        kinds.push(Box::new(attempt::AgentWorking));
-        Catalog::new(kinds)
-    })
+    CATALOG.get_or_init(|| Catalog::new(crate::integrations::registry().node_kinds()))
 }
 
 #[cfg(test)]
@@ -396,8 +350,7 @@ mod tests {
             assert!(s.config_schema.is_object(), "{}", s.id);
             assert!(!s.title.is_empty() && !s.description.is_empty(), "{}", s.id);
         }
-        use pdt_core::workflow::events::EVENT_TYPES;
-        for t in EVENT_TYPES {
+        for t in crate::integrations::registry().events() {
             let kinds: Vec<_> = catalog()
                 .specs()
                 .into_iter()

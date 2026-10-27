@@ -485,6 +485,7 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
         port: st.listen_port,
         work_folder: &s.cwd,
         tools: &tools,
+        tool_table: crate::integrations::registry().tool_table(),
         persona: &persona_text,
         briefing: &briefing,
         step: step.as_deref(),

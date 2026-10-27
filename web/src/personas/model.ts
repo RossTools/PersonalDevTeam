@@ -25,7 +25,7 @@ export const AGENTS: AgentKind[] = ['claude', 'codex', 'devin'];
 
 export const AUTHOR_LABEL: Record<PersonaAuthor, string> = { user: 'You', builtin: 'PDT (built in)', agent: 'An agent' };
 
-/** Every pdt-mcp tool a persona may pick, from the server (`ALL_TOOLS`), in pdt-mcp's order. */
+/** Every pdt-mcp tool a persona may pick, from the server (every integration's), in pdt-mcp's order. */
 export function usePersonaTools() {
   return useQuery({ queryKey: personaKeys.tools, queryFn: api.personaTools, staleTime: Infinity });
 }

@@ -343,10 +343,12 @@ impl Tick {
     }
 }
 
-/// Reads one active attempt's PR now (the ticket was opened).
-pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) {
-    if let Some(forge) = crate::forge::project_forge(st, &info.project_id, &info.repo_path).await {
-        refresh_one(st, info, &forge, &mut Tick::new(st).await, true).await;
+/// Reads one active attempt's PR now (the ticket was opened). False when the forge couldn't be read (the watch keeps
+/// the last look); true too for a project on no forge.
+pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) -> bool {
+    match crate::forge::project_forge(st, &info.project_id, &info.repo_path).await {
+        Some(forge) => refresh_one(st, info, &forge, &mut Tick::new(st).await, true).await,
+        None => true,
     }
 }
 
@@ -361,8 +363,8 @@ pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
     .flatten()
 }
 
-/// Reads one attempt's PR into the watch; with `tell`, queues its news.
-async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, tick: &mut Tick, tell: bool) {
+/// Reads one attempt's PR into the watch; with `tell`, queues its news. False when the read failed.
+async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, tick: &mut Tick, tell: bool) -> bool {
     let repo = forge.repo.as_str();
     let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
     let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
@@ -380,7 +382,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "the PR check task failed");
-            return;
+            return false;
         }
     };
     let what = format!("pr:{}", info.project_id);
@@ -396,7 +398,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
             if let Some(p) = watch(st).by_attempt.get_mut(&info.attempt.id) {
                 p.error = Some(msg);
             }
-            return;
+            return false;
         }
     };
     if let Some(q) = queue {
@@ -407,7 +409,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
     }
     let Some(mut now) = found else {
         watch(st).by_attempt.remove(&info.attempt.id);
-        return;
+        return true;
     };
     now.checked_at = now_ms();
     {
@@ -445,6 +447,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
             refresh_feedback(st, info, forge, &now).await;
         }
     }
+    true
 }
 
 pub(crate) fn attempt_ref(info: &AttemptInfo) -> AttemptRef {

@@ -710,6 +710,8 @@ pub struct PmContext<'a> {
     pub work_folder: &'a str,
     /// pdt-mcp tools the session has.
     pub tools: &'a [String],
+    /// Every pdt-mcp tool PDT has (which of them ask).
+    pub tool_table: &'a crate::integration::ToolTable,
     /// The persona's instructions.
     pub persona: &'a str,
     /// A workflow step's section (`workflow::agent::step_section`, PDT-152): the role and its outcome rules, in place
@@ -724,7 +726,7 @@ pub fn instructions(ctx: &PmContext) -> String {
     let tools = |asking: bool| {
         ctx.tools
             .iter()
-            .filter(|t| crate::persona::asks(t) == asking)
+            .filter(|t| ctx.tool_table.asks(t) == asking)
             .map(|t| format!("`{t}`"))
             .collect::<Vec<_>>()
             .join(", ")
@@ -990,11 +992,15 @@ mod tests {
     #[test]
     fn instructions_split_the_tools_that_ask() {
         let tools: Vec<String> = ["get_overview", "create_ticket"].map(String::from).to_vec();
+        use crate::integration::{ToolDecl, ToolTable};
+        let table =
+            ToolTable::new([ToolDecl::new("get_overview", "").read_only(), ToolDecl::new("create_ticket", "").asks()]);
         let text = instructions(&PmContext {
             session_id: "s1",
             port: 7421,
             work_folder: "/w",
             tools: &tools,
+            tool_table: &table,
             persona: "You are the PM.",
             briefing: "# Briefing\n",
             step: None,
@@ -1013,6 +1019,7 @@ mod tests {
             port: 7421,
             work_folder: "/w",
             tools: &tools,
+            tool_table: &table,
             persona: "You are the PM.",
             briefing: "# Briefing\n",
             step: Some("\n# Your role: PM\n\nFinish by calling `submit_outcome`.\n"),

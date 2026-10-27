@@ -23,6 +23,7 @@ use pdt_core::review::{
 };
 use pdt_core::session::{Session, SessionKind};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, Ticket};
+use pdt_core::workflow::events::MergeVia;
 use pdt_core::worktree::Worktree;
 use pdt_forge::{MergeSettings, MergeStrategy};
 use pdt_store::AttemptInfo;
@@ -595,6 +596,16 @@ pub(crate) async fn merge_attempt(
 ) -> Result<Result<MergeResult, Refusal>, ApiError> {
     let st = st.clone();
     let info = load_attempt(&st, id).await?;
+    let automated = merger == Merger::Automated;
+    // What GitHub has now (PDT-181): a PR that merged a moment ago (the auto-merge an earlier merge turned on) must not
+    // look like no PR, which would merge the branch locally a second time.
+    let read =
+        info.attempt.state != AttemptState::Active || !automated || crate::github::refresh_attempt(&st, &info).await;
+    if info.attempt.state == AttemptState::Active
+        && let Some(pr) = crate::github::watched_pr(&st, &info.attempt.id).filter(|p| p.state == PrState::Merged)
+    {
+        return Ok(Ok(pr_merged(&st, &info, pr.number, input, merger).await?));
+    }
     let policy = st.store.get_project_settings(&info.project_id).await?.policy;
     let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
     let labels = ticket.as_ref().map(|t| t.labels.as_slice()).unwrap_or_default();
@@ -604,7 +615,6 @@ pub(crate) async fn merge_attempt(
         return Ok(Err(Refusal { code: refusal.code(), reason, fixable: false }));
     }
     let p = preview(&st, &info).await?;
-    let automated = merger == Merger::Automated;
     match p.problem {
         None => {}
         // Already set to merge (a person, or PR notices, got there first): for a workflow that is what it asked.
@@ -683,6 +693,9 @@ pub(crate) async fn merge_attempt(
         }
         return Ok(Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
     }
+    if automated && let Some(refusal) = no_local_merge(&st, &info, read).await? {
+        return Ok(Err(refusal));
+    }
     let (key, title) = ticket.map(|t| (t.key, t.title)).unwrap_or_default();
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
@@ -704,10 +717,61 @@ pub(crate) async fn merge_attempt(
         let _ = st.store.set_attempt_head(&info.attempt.id, &head, true).await;
     }
     let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
-    let via = Some(pdt_core::workflow::events::MergeVia::MergedHere);
-    let actor = if merger == Merger::User { Actor::User } else { Actor::System };
-    st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, via, pr, now_ms()).await?;
+    // The user's own Merge… finishes the ticket itself; a workflow's or an agent's leaves it to Finish merged tickets,
+    // as asked.
+    if let Some(finish) = input.finish_on_merge {
+        st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
+    }
+    let (actor, via) = match merger {
+        Merger::User => (Actor::User, MergeVia::MergedHere),
+        Merger::Automated => (Actor::System, MergeVia::Automated),
+    };
+    st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, Some(via), pr, now_ms()).await?;
     Ok(Ok(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
+}
+
+/// The attempt's pull request merged already: the attempt ends as merge detection would end it (`detected`, with the
+/// PR's number), so Finish merged tickets finishes the ticket as the merge asked, and nothing merges locally (PDT-181).
+async fn pr_merged(
+    st: &AppState,
+    info: &AttemptInfo,
+    pr: u32,
+    input: &MergeRequest,
+    merger: Merger,
+) -> Result<MergeResult, ApiError> {
+    if let Some(finish) = input.finish_on_merge {
+        st.store.set_attempt_finish(&info.attempt.id, finish, input.delete_branch.unwrap_or(false)).await?;
+    }
+    let actor = if merger == Merger::User { Actor::User } else { Actor::System };
+    let via = Some(MergeVia::Detected);
+    st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, via, Some(pr), now_ms()).await?;
+    tracing::info!(ticket = %info.ticket_key, pr, "a merge found the attempt's pull request merged already");
+    Ok(MergeResult { outcome: MergeOutcome::Merged, commit: None })
+}
+
+/// Why a workflow's or an agent's merge must not merge the branch locally (PDT-181), if it must not: the forge couldn't be
+/// read (`read` false: a PR may be there), the attempt had a pull request (closed without merging), or the project's
+/// attempts merge through pull requests (an earlier one merged through one).
+async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result<Option<Refusal>, ApiError> {
+    if !read {
+        let reason = format!("{SHORT_NAME} couldn't read the branch's pull request, so it won't merge it locally");
+        return Ok(Some(Refusal { code: "pr_unreadable", reason, fixable: false }));
+    }
+    if let Some(pr) = crate::github::watched_pr(st, &info.attempt.id) {
+        let reason = match pr.state {
+            PrState::Closed => format!(
+                "PR #{} was closed without merging; reopen it or open a new pull request, and merge that",
+                pr.number
+            ),
+            _ => format!("the branch has PR #{}, so it merges on GitHub, not here", pr.number),
+        };
+        return Ok(Some(Refusal { code: "merge_blocked", reason, fixable: false }));
+    }
+    if st.store.project_merged_a_pr(&info.project_id).await? {
+        let reason = "this project's tickets merge through pull requests, and the branch has none yet".into();
+        return Ok(Some(Refusal { code: "merge_blocked", reason, fixable: false }));
+    }
+    Ok(None)
 }
 
 /// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from the forge
@@ -726,7 +790,7 @@ async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Res
     if let Some(e) = &pr.error {
         return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}: {e}"));
     }
-    let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite).is_some();
+    let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite()).is_some();
     let has_ci = buildkite
         || match forge.api.has_ci() {
             Some(known) => known,

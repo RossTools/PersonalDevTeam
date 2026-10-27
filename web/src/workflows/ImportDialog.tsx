@@ -12,7 +12,7 @@ import type { ImportPreview } from '../api/gen/ImportPreview';
 import type { ImportResult } from '../api/gen/ImportResult';
 import type { ImportTarget } from '../api/gen/ImportTarget';
 import type { Project } from '../api/gen/Project';
-import { kindLabel } from '../connections/kinds';
+import { useConnectionKinds } from '../connections/kinds';
 
 /** The Select value for "leave it unmapped". */
 const UNMAPPED = '\u0000unmapped';
@@ -60,6 +60,7 @@ function Report({ check, answers, setAnswers, choices, setChoices, projects }: {
 }) {
   const connections = useQuery({ queryKey: ['connections'], queryFn: api.listConnections });
   const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
+  const { kindLabel } = useConnectionKinds();
   const answer = (g: Group, name: string, v: string | null) => setAnswers({ ...answers, [g]: { ...answers[g], [name]: v } });
   const choose = (i: number, c: Partial<Choice>) => setChoices(choices.map((x, n) => (n === i ? { ...x, ...c } : x)));
   const needs = check.connections.length + check.personas.length + check.projects.length;

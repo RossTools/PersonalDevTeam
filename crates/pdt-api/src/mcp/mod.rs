@@ -4,6 +4,7 @@
 
 pub(crate) mod tools;
 
+use crate::integrations::registry;
 use crate::routes::AppState;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -106,7 +107,7 @@ pub(crate) async fn session_tools(st: &AppState, s: &Session) -> Vec<String> {
     if let Some(p) = &s.persona
         && let Ok(Some(v)) = st.store.get_persona_version(&p.id, p.version).await
     {
-        return v.setup.tool_set();
+        return v.setup.tool_set(crate::integrations::registry().tool_table());
     }
     pdt_core::persona::DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect()
 }
@@ -133,7 +134,10 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
         url: format!("http://127.0.0.1:{}/api/mcp", st.listen_port),
         token,
         // Asking tools (PDT-81) stay out of Claude's allowed list, so it asks before each call.
-        tools: session_tools(st, s).await.into_iter().filter(|t| !pdt_core::persona::asks(t)).collect(),
+        tools: {
+            let table = crate::integrations::registry().tool_table();
+            session_tools(st, s).await.into_iter().filter(|t| !table.asks(t)).collect()
+        },
         claude_config: None,
         pm: crate::pm::is_pm_session(st, s).await,
     };
@@ -213,7 +217,7 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
         "ping" => Ok(json!({})),
         "tools/list" => {
             let allowed = session_tools(st, session).await;
-            let list: Vec<_> = tools::infos().into_iter().filter(|t| allowed.contains(&t.name)).collect();
+            let list: Vec<_> = registry().tool_infos().into_iter().filter(|t| allowed.contains(&t.name)).collect();
             Ok(json!({"tools": list}))
         }
         "tools/call" => {
@@ -222,7 +226,7 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
             };
             let args = req.params.get("arguments").cloned().unwrap_or(json!({}));
             let allowed = session_tools(st, session).await;
-            if !tools::infos().iter().any(|t| t.name == name) {
+            if !registry().tool_table().contains(name) {
                 return Some(RpcResponse::err(id, proto::INVALID_PARAMS, format!("no tool is called {name}")));
             }
             if !allowed.iter().any(|t| t == name) {
@@ -231,7 +235,7 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
                 let cx = tools::Cx { st, session };
                 // No secret's value ever goes back to an agent (PDT-158).
                 let r = st.store.redactor();
-                Ok(match tools::call(&cx, name, args).await {
+                Ok(match registry().call_tool(&cx, name, args).await {
                     Ok(v) => proto::tool_result(&r.json(&v)),
                     Err(e) => proto::tool_error(&r.string(&e)),
                 })
