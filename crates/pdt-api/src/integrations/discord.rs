@@ -7,6 +7,7 @@ use crate::workflow::catalog::NodeKind;
 use crate::workflow::nodes::discord::DISCORD_WEBHOOK;
 use pdt_core::discord::DISCORD_BOT;
 use pdt_core::integration::ConnectionKind;
+use serde_json::Value;
 use std::sync::Arc;
 
 pub struct Discord;
@@ -60,4 +61,19 @@ impl Integration for Discord {
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
         crate::discord::actions()
     }
+
+    fn approval_title(&self, tool: &str, input: &Value) -> Option<String> {
+        matches!(tool, "discord_change" | "discord_webhook")
+            .then(|| pdt_core::discord::ask_title(tool, input).unwrap_or_else(|| "Discord".into()))
+    }
+
+    fn pm_prompt(&self) -> Option<&'static str> {
+        Some(PM_PROMPT)
+    }
 }
+
+/// What the PM's prompt says about the Discord tools.
+pub(super) const PM_PROMPT: &str = "- Discord: `discord_get` shows the server (channels, categories, webhooks). `discord_change` \
+creates, renames, moves and archives channels and categories; `discord_webhook` makes a channel's webhook and saves it \
+as a `discord_webhook` connection that `discord.post` steps use by name (its URL never reaches you). Both wait for the \
+user's yes unless the bot connection lets you act; say what you will change first.";

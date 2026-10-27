@@ -323,24 +323,26 @@ pub enum AskTarget {
     /// A ticket id or key.
     Ticket(String),
     Session(String),
-    /// A connection of `kind` (`discord_bot`, `scryer`) by name (None: the only one of its kind), whose
-    /// `config.pmActs` says whether the PM acts without asking.
+    /// A connection of `kind` by name (None: the only one of its kind), whose `config.pmActs` says whether the PM
+    /// acts without asking (an integration's tools, through their connection).
     Connection {
         kind: &'static str,
         name: Option<String>,
     },
-    /// A call no policy answers for the user: a destructive Scryer change, or one that sends a connection's secret.
+    /// A call no policy answers for the user (a destructive change through a connection, or one that sends a
+    /// connection's secret).
     Always,
 }
 
-/// Whether a connection the PM acts through (a Discord bot, a Scryer) lets it act without asking (`config.pmActs`).
+/// Whether a connection the PM acts through lets it act without asking (`config.pmActs`).
 pub fn connection_lets_pm_act(config: &Value) -> bool {
     config.get("pmActs").and_then(Value::as_bool) == Some(true)
 }
 
-/// The target of an asking tool's input, from its arguments (Claude's tool name `mcp__pdt__<tool>` or the bare name).
+/// The target of a call to one of PDT's own asking tools, from its arguments (an agent's tool name, `mcp__pdt__<tool>`,
+/// or the bare name). An integration's tools say theirs themselves (pdt-api's `Integration::ask_target`).
 pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
-    let tool = tool.strip_prefix(&format!("mcp__{}__", crate::mcp::SERVER_NAME)).unwrap_or(tool);
+    let tool = crate::mcp::pdt_tool(tool);
     let field = |k: &str| input.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
     match tool {
         "create_ticket" => field("project").map(|p| AskTarget::Project(p.into())),
@@ -348,17 +350,6 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
             field("ticket").map(|t| AskTarget::Ticket(t.into()))
         }
         "send_to_session" => field("session").map(|s| AskTarget::Session(s.into())),
-        "discord_change" | "discord_webhook" => Some(AskTarget::Connection {
-            kind: crate::discord::DISCORD_BOT,
-            name: field("connection").map(String::from),
-        }),
-        "scryer_add" => {
-            Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
-        }
-        "scryer_mutate" if crate::scryer::mutate_always_asks(input) => Some(AskTarget::Always),
-        "scryer_mutate" => {
-            Some(AskTarget::Connection { kind: crate::scryer::SCRYER, name: field("connection").map(String::from) })
-        }
         _ => None,
     }
 }
@@ -714,6 +705,9 @@ pub struct PmContext<'a> {
     pub tool_table: &'a crate::integration::ToolTable,
     /// The persona's instructions.
     pub persona: &'a str,
+    /// What the integrations whose tools the session has say about them (pdt-api's `Integration::pm_prompt`), as
+    /// Markdown list items.
+    pub integrations: &'a [&'a str],
     /// A workflow step's section (`workflow::agent::step_section`, PDT-152): the role and its outcome rules, in place
     /// of the persona's instructions.
     pub step: Option<&'a str>,
@@ -752,7 +746,7 @@ pub fn instructions(ctx: &PmContext) -> String {
     if !asking.is_empty() {
         out.push_str(&format!(
             "- These act for the user, so each call waits for their yes (they see the call and its arguments) unless \
-             the project (for Discord and Scryer, the connection) lets you act without asking: {asking}. A refusal is an \
+             the project (for an integration's tools, their connection) lets you act without asking: {asking}. A refusal is an \
              answer: don't retry it unchanged.\n"
         ));
     }
@@ -760,10 +754,12 @@ pub fn instructions(ctx: &PmContext) -> String {
         Some(step) => step.trim().to_string(),
         None => format!("## Your role\n\n{}", ctx.persona.trim()),
     };
-    out.push_str(&format!(
-        "- Messages starting `[{SHORT_NAME}]` come from {SHORT_NAME}, not the user.\n\n{role}\n\n{}",
-        ctx.briefing.trim_end()
-    ));
+    out.push_str(&format!("- Messages starting `[{SHORT_NAME}]` come from {SHORT_NAME}, not the user.\n\n{role}\n\n"));
+    if !ctx.integrations.is_empty() {
+        let items: Vec<&str> = ctx.integrations.iter().map(|t| t.trim()).collect();
+        out.push_str(&format!("## Integrations\n\n{}\n\n", items.join("\n")));
+    }
+    out.push_str(ctx.briefing.trim_end());
     out.push('\n');
     out
 }
@@ -853,23 +849,7 @@ mod tests {
         assert_eq!(t("mcp__pdt__unlink_tickets", json!({"ticket": "PDT-5"})), Some(AskTarget::Ticket("PDT-5".into())));
         assert_eq!(t("send_to_session", json!({"session": "s1"})), Some(AskTarget::Session("s1".into())));
         assert_eq!(t("create_ticket", json!({})), None);
-        assert_eq!(
-            t("discord_change", json!({"connection": "home"})),
-            Some(AskTarget::Connection { kind: "discord_bot", name: Some("home".into()) })
-        );
-        assert_eq!(
-            t("mcp__pdt__discord_webhook", json!({})),
-            Some(AskTarget::Connection { kind: "discord_bot", name: None })
-        );
-        assert_eq!(
-            t("mcp__pdt__scryer_add", json!({"connection": "media"})),
-            Some(AskTarget::Connection { kind: "scryer", name: Some("media".into()) })
-        );
-        assert_eq!(
-            t("scryer_mutate", json!({"mutation": "updateGeneralSettings"})),
-            Some(AskTarget::Connection { kind: "scryer", name: None })
-        );
-        assert_eq!(t("scryer_mutate", json!({"mutation": "deleteIndexerConfig"})), Some(AskTarget::Always));
+        assert_eq!(t("mcp:pdt/stop_ticket", json!({"ticket": "PDT-4"})), Some(AskTarget::Ticket("PDT-4".into())));
         assert_eq!(t("get_ticket", json!({"ticket": "PDT-4"})), None);
     }
 
@@ -1002,6 +982,7 @@ mod tests {
             tools: &tools,
             tool_table: &table,
             persona: "You are the PM.",
+            integrations: &[],
             briefing: "# Briefing\n",
             step: None,
         });
@@ -1021,6 +1002,7 @@ mod tests {
             tools: &tools,
             tool_table: &table,
             persona: "You are the PM.",
+            integrations: &[],
             briefing: "# Briefing\n",
             step: Some("\n# Your role: PM\n\nFinish by calling `submit_outcome`.\n"),
         });
@@ -1029,6 +1011,26 @@ mod tests {
             "{step}"
         );
         assert!(!step.contains("## Your role"), "{step}");
+        // PDT-175: what the session's integrations say about their tools, between the role and the briefing.
+        let with = instructions(&PmContext {
+            session_id: "s1",
+            port: 7421,
+            work_folder: "/w",
+            tools: &tools,
+            tool_table: &table,
+            persona: "You are the PM.",
+            integrations: &["- Lights: `blink` blinks them.\n", "- Doors: `lock` locks them."],
+            briefing: "# Briefing\n",
+            step: None,
+        });
+        assert!(
+            with.contains(
+                "You are the PM.\n\n## Integrations\n\n- Lights: `blink` blinks them.\n- Doors: `lock` locks them.\n\n\
+                 # Briefing\n"
+            ),
+            "{with}"
+        );
+        assert!(!text.contains("## Integrations"), "none without integrations: {text}");
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! Integrations (PDT-171): each one declares, in one [`Integration`], what it adds to PDT: connection kinds, workflow
-//! node kinds, event types (each a trigger), pdt-mcp tools and actions (each both a node kind and a tool, PDT-172). The [`Registry`] gathers every registered integration's
-//! into the lists the rest of PDT reads: the node catalog, `tools/list` and `tools/call`, the personas' tools, the
-//! event types, `GET /api/connections/kinds` and the project settings form (`GET /api/integrations/project-settings`).
+//! node kinds, event types (each a trigger), pdt-mcp tools and actions (each both a node kind and a tool, PDT-172), and
+//! how the PM treats its tools (PDT-175: what an asking call acts on, the approval's title, credentials to redact, a
+//! prompt fragment). The [`Registry`] gathers every registered integration's into the lists the rest of PDT reads: the
+//! node catalog, `tools/list` and `tools/call`, the personas' tools, the event types, `GET /api/connections/kinds`, the
+//! project settings form (`GET /api/integrations/project-settings`) and the PM's prompt, approvals and transcripts.
 //! PDT's own pieces register the same way ([`core::Core`]).
 //!
 //! Adding an integration: a module here implementing [`Integration`], and a line in [`all`].
@@ -26,6 +28,7 @@ use crate::workflow::nodes::trigger::EventTrigger;
 use action::AnyAction;
 use pdt_core::integration::{ConnectionKind, IntegrationSettings, ProjectSettingsSchema, ToolDecl, ToolTable};
 use pdt_core::mcp::ToolInfo;
+use pdt_core::pm::AskTarget;
 use pdt_core::workflow::events::EventType;
 use serde_json::{Value, json};
 use std::sync::{Arc, OnceLock};
@@ -107,6 +110,31 @@ pub trait Integration: Send + Sync {
     fn call_tool<'a>(&'a self, _cx: &'a Cx<'a>, name: &'a str, _args: Value) -> BoxFut<'a, Result<Value, String>> {
         Box::pin(async move { Err(format!("no tool is called {name}")) })
     }
+
+    /// What a call to one of its asking [`Integration::tools`] acts on (`tool` is the bare name), whose policy says
+    /// whether the PM acts without asking. Its actions answer for themselves ([`action::Action::ask_target`]).
+    fn ask_target(&self, _tool: &str, _input: &Value) -> Option<AskTarget> {
+        None
+    }
+
+    /// The title of the user's approval of a call to one of its tools or actions (Claude's approval card, the Inbox,
+    /// the transcript): what they say yes to. None keeps the agent's.
+    fn approval_title(&self, _tool: &str, _input: &Value) -> Option<String> {
+        None
+    }
+
+    /// Takes the credentials an agent wrote into a call to one of its tools or actions out of `input` (each becomes
+    /// [`pdt_core::secret::REDACTED`]) and gives them back, for PDT to take out of the call's output and its raw
+    /// transcript line too. The call itself still gets them.
+    fn redact_call(&self, _tool: &str, _input: &mut Value) -> Vec<String> {
+        vec![]
+    }
+
+    /// What the PM's prompt says about its tools, as Markdown list items. A PM session gets it when it has any of
+    /// them.
+    fn pm_prompt(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Every integration PDT has, PDT's own first. The order is the catalog's, `tools/list`'s and the Connections page's.
@@ -134,11 +162,20 @@ enum Runner {
     Action(Arc<dyn AnyAction>),
 }
 
+/// A registered tool.
+struct Entry {
+    /// As `tools/list` gives it.
+    info: ToolInfo,
+    runner: Runner,
+    /// The index of the integration it is from.
+    owner: usize,
+}
+
 /// The registered integrations, and what they add, gathered.
 pub struct Registry {
     integrations: Vec<Box<dyn Integration>>,
-    /// Every tool as `tools/list` gives it, and what runs it.
-    tools: Vec<(ToolInfo, Runner)>,
+    /// Every tool, in `tools/list` order.
+    tools: Vec<Entry>,
     table: ToolTable,
     events: Vec<&'static EventType>,
     kinds: Vec<ConnectionKind>,
@@ -150,7 +187,7 @@ impl Registry {
     /// The registry of `integrations`. A tool, event type or connection kind another integration already has is left
     /// out (the first keeps it).
     pub fn new(integrations: Vec<Box<dyn Integration>>) -> Self {
-        let mut tools: Vec<(ToolInfo, Runner)> = vec![];
+        let mut tools: Vec<Entry> = vec![];
         let mut decls: Vec<ToolDecl> = vec![];
         let mut events: Vec<&'static EventType> = vec![];
         let mut kinds: Vec<ConnectionKind> = vec![];
@@ -169,7 +206,7 @@ impl Registry {
             for (decl, info, runner) in own {
                 if !decls.iter().any(|x| x.name == decl.name) {
                     decls.push(decl);
-                    tools.push((info, runner));
+                    tools.push(Entry { info, runner, owner: i });
                 }
             }
             for e in int.event_types() {
@@ -194,16 +231,71 @@ impl Registry {
 
     /// Every pdt-mcp tool as `tools/list` gives them.
     pub fn tool_infos(&self) -> Vec<ToolInfo> {
-        self.tools.iter().map(|(t, _)| t.clone()).collect()
+        self.tools.iter().map(|t| t.info.clone()).collect()
+    }
+
+    /// A tool by its bare name.
+    fn entry(&self, name: &str) -> Option<&Entry> {
+        self.tools.iter().find(|t| t.info.name == name)
+    }
+
+    /// A tool by the name an agent gives it ([`pdt_core::mcp::pdt_tool`]): its bare name, entry and integration.
+    fn agent_tool<'a>(&'a self, tool: &'a str) -> Option<(&'a str, &'a Entry, &'a dyn Integration)> {
+        let name = pdt_core::mcp::pdt_tool(tool);
+        let e = self.entry(name)?;
+        Some((name, e, self.integrations[e.owner].as_ref()))
     }
 
     /// Runs a tool by name. Err is a message for the agent.
     pub async fn call_tool(&self, cx: &Cx<'_>, name: &str, args: Value) -> Result<Value, String> {
-        match self.tools.iter().find(|(t, _)| t.name == name).map(|(_, r)| r) {
+        match self.entry(name).map(|e| &e.runner) {
             Some(Runner::Integration(i)) => self.integrations[*i].call_tool(cx, name, args).await,
             Some(Runner::Action(a)) => a.call(cx, args).await,
             None => Err(format!("no tool is called {name}")),
         }
+    }
+
+    /// What a call to an asking tool acts on, from its name as the agent gives it and its arguments; None for a tool
+    /// that doesn't ask, or a call that names nothing.
+    pub fn ask_target(&self, tool: &str, input: &Value) -> Option<AskTarget> {
+        let (name, e, int) = self.agent_tool(tool)?;
+        if !self.table.asks(name) {
+            return None;
+        }
+        match &e.runner {
+            Runner::Action(a) => Some(a.ask_target(input)),
+            Runner::Integration(_) => int.ask_target(name, input),
+        }
+    }
+
+    /// The title of the user's approval of a tool call, when its integration gives one ([`Integration::approval_title`]).
+    pub fn approval_title(&self, tool: &str, input: &Value) -> Option<String> {
+        let (name, _, int) = self.agent_tool(tool)?;
+        int.approval_title(name, input).map(|t| pdt_core::conversation::claude::title_line(&t))
+    }
+
+    /// Takes the credentials out of a tool call's input ([`Integration::redact_call`]); the ones it took.
+    pub fn redact_call(&self, tool: &str, input: &mut Value) -> Vec<String> {
+        match self.agent_tool(tool) {
+            Some((name, _, int)) => int.redact_call(name, input),
+            None => vec![],
+        }
+    }
+
+    /// The prompt fragments ([`Integration::pm_prompt`]) of the integrations a PM session with `tools` has any tool
+    /// of, in registry order.
+    pub fn pm_prompt(&self, tools: &[String]) -> Vec<&'static str> {
+        self.integrations
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.tools.iter().any(|e| e.owner == *i && tools.contains(&e.info.name)))
+            .filter_map(|(_, int)| int.pm_prompt())
+            .collect()
+    }
+
+    /// A connection kind's label (`Discord bot`); the id for a kind no integration has.
+    pub fn connection_label<'a>(&'a self, kind: &'a str) -> &'a str {
+        self.kinds.iter().find(|k| k.id == kind).map_or(kind, |k| k.label.as_str())
     }
 
     /// Every event type, in catalog order.

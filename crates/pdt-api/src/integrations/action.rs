@@ -130,6 +130,9 @@ pub trait AnyAction: Send + Sync {
 
     /// Runs it as a tool. Err is a message for the agent.
     fn call<'a>(&'a self, cx: &'a Cx<'a>, args: Value) -> BoxFut<'a, Result<Value, String>>;
+
+    /// What an asking call acts on ([`Action::ask_target`]).
+    fn ask_target(&self, args: &Value) -> AskTarget;
 }
 
 impl<A: Action> AnyAction for A {
@@ -151,7 +154,7 @@ impl<A: Action> AnyAction for A {
             let decl = self.tool().decl;
             let mut args = if args.is_null() { json!({}) } else { args };
             if decl.asks {
-                confirmable(cx, decl.name, &self.ask_target(&args)).await?;
+                confirmable(cx, decl.name, &Action::ask_target(self, &args)).await?;
             }
             if let Some(c) = self.connection()
                 && let Some(a) = args.as_object_mut()
@@ -164,6 +167,10 @@ impl<A: Action> AnyAction for A {
             let out = self.run(&ActionCx { st: cx.st, via: Via::Tool }, input).await?;
             self.tool_output(out)
         })
+    }
+
+    fn ask_target(&self, args: &Value) -> AskTarget {
+        Action::ask_target(self, args)
     }
 }
 

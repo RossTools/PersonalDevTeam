@@ -413,7 +413,7 @@ pub(crate) async fn request_opened(
     tool: &str,
     input: &serde_json::Value,
 ) {
-    let Some(target) = pm::ask_target(tool, input) else { return };
+    let Some(target) = crate::integrations::registry().ask_target(tool, input) else { return };
     let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
     if !acts_without_asking(st, &target).await {
         return;
@@ -486,6 +486,7 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
         work_folder: &s.cwd,
         tools: &tools,
         tool_table: crate::integrations::registry().tool_table(),
+        integrations: &crate::integrations::registry().pm_prompt(&tools),
         persona: &persona_text,
         briefing: &briefing,
         step: step.as_deref(),
