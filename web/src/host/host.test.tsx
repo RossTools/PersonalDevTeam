@@ -29,7 +29,7 @@ const update = (over: object = {}) => ({
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
 const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
-const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null };
+const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null, changes: null };
 
 describe('HostSettingsPage', () => {
   it('sets the owner from this device, then turns on remote access', async () => {
@@ -307,6 +307,38 @@ describe('UpdateBanner', () => {
     expect(screen.getByText('Fixes things')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+  });
+
+  it('lists every change since the installed version, linking tickets here and pull requests', async () => {
+    const entry = (sha: string, title: string, ticket: string | null, pr: number | null, ticketHere: object | null = null) => ({
+      sha, subject: title, title, ticket, ticketHere, pr, prUrl: pr ? `https://github.com/o/r/pull/${pr}` : null,
+    });
+    const changes = {
+      since: '0.1.741', total: 2, moreUrl: null,
+      entries: [entry('a2', 'Second change', 'PDT-9', 11), entry('a1', 'First change', 'PDT-5', 10, { id: 't5', projectId: 'p' })],
+    };
+    stubApi({ 'GET /api/host/update': update({ state: 'available', latest: { ...release, changes } }) });
+    renderWithQuery(<UpdateBanner />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Release notes' }));
+    const notes = screen.getByRole('region', { name: 'Release notes' });
+    expect(within(notes).getByText('2 changes since v0.1.741')).toBeInTheDocument();
+    const items = within(notes).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual(['PDT-9 Second change #11', 'PDT-5 First change #10']);
+    expect(within(items[0]).getByRole('link', { name: '#11' })).toHaveAttribute('href', 'https://github.com/o/r/pull/11');
+    // Only a ticket this instance has is a link.
+    expect(within(items[0]).queryByRole('link', { name: 'PDT-9' })).toBeNull();
+    expect(within(items[1]).getByRole('link', { name: 'PDT-5' })).toBeInTheDocument();
+    expect(within(notes).queryByText('Fixes')).toBeNull();
+  });
+
+  it('links to the rest of a range too long to list', async () => {
+    const entries = [{ sha: 's1', subject: 'One', title: 'One', ticket: null, ticketHere: null, pr: null, prUrl: null }];
+    const changes = { since: '0.1.1', total: 300, moreUrl: 'https://github.com/o/r/compare/v0.1.1...v0.1.7', entries };
+    stubApi({ 'GET /api/host/update': update({ state: 'available', latest: { ...release, changes } }) });
+    renderWithQuery(<UpdateBanner />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Release notes' }));
+    expect(screen.getByText('300 changes since v0.1.1')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /and 299 more/ })).toHaveAttribute('href', changes.moreUrl);
   });
 
   it('confirms before updating a busy host', async () => {
