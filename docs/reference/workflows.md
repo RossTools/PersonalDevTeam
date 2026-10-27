@@ -873,7 +873,14 @@ opens, for older ones) its open questions close (`resolution` `{sessionGone: tru
 `sessionId`, so the Inbox never offers Open session for a session that is gone (PDT-93). **Sessions waiting** (group
 `session`, kind `session`, id `session:<session>`, after Approvals) are the live `session.needs_you` notifications
 ([Notifications](#notifications)): not answerable here (Open session, Enter); viewing the session takes it out. `total`
-counts every item, sessions waiting included: the rail badge and the page title (`(n) …`) show it.
+counts every item, sessions waiting included: the rail badge shows it.
+
+The page title and favicon (PDT-168, web/src/notifications/attention.ts `useAttention`) combine everything that wants
+the user, from the queries the rail already reads (the notification stream refreshes them): the Inbox's open items,
+sessions that need the user or are unseen (the tree's dots), unread PM replies and unread Updates, each session once.
+The title is prefixed with their count (`(3) …`), and the favicon gets a dot: amber (`--pdt-waiting`) while anything
+blocks on the user (every Inbox kind but an unheard notice, a session that needs them), the accent for news only. With
+nothing left the plain icon and title come back.
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, a dot when Updates are unread, `Ctrl+] i`): the list
 has two sections, **Needs you** (the items, grouped by kind) and **Updates** (the notification feed, newest first, unread
