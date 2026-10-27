@@ -660,7 +660,7 @@ pub(crate) async fn merge_attempt(
         tokio::task::spawn_blocking(move || {
             let strategy = match gh.merge_settings(&repo, &base) {
                 Ok(s) => MergeSettings { queue: s.queue && queues, ..s }.strategy(),
-                // Unknown: squash (with a merge queue gh only notes that the queue sets the method).
+                // Unknown: squash (with a merge queue the queue's own method applies whatever is asked).
                 Err(_) => Some(MergeStrategy::Squash),
             };
             gh.merge(&repo, number, strategy)

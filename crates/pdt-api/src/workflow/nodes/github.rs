@@ -183,7 +183,7 @@ pub(crate) async fn import_issue(
     let r = repo.to_string();
     let d = gh(st, move |g| g.issue(&r, number))
         .await?
-        .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or gh can't see it)"))?;
+        .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or PDT's GitHub login can't see it)"))?;
     if d.change_request {
         return Err(format!("{repo}#{number} is a pull request, not an issue"));
     }
@@ -461,7 +461,7 @@ impl NodeKind for GithubClose {
             let r = repo.clone();
             let d = gh(cx.st, move |g| g.issue(&r, number))
                 .await?
-                .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or gh can't see it)"))?;
+                .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or PDT's GitHub login can't see it)"))?;
             if d.closed {
                 return Ok(Outcome::next(
                     "out",
