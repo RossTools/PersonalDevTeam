@@ -422,7 +422,7 @@ async fn an_issue_that_could_not_be_logged_is_logged_on_the_next_look() {
     pdt_api::refresh_issues(&env.state).await;
     assert_eq!(mark().await, Some(4));
 
-    // gh failing: nothing moves.
+    // GitHub failing: nothing moves.
     *env.gh.error.lock().unwrap() = Some("HTTP 401: Bad credentials".into());
     env.gh.set_issues("o/r", vec![issue(5, "New"), issue(4, "Old")]);
     pdt_api::refresh_issues(&env.state).await;

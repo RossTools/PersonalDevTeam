@@ -709,7 +709,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The local forge's change request (PDT-178): no remote, no `gh`; its log is PDT's and a commit runs CI again.
+    /// The local forge's change request (PDT-178): no remote, no GitHub; its log is PDT's and a commit runs CI again.
     #[test]
     fn a_local_change_request_points_at_pdts_log_and_git_alone() {
         let mut p = pr();

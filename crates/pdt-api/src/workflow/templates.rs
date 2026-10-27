@@ -144,7 +144,7 @@ fn issue_triage() -> Template {
         "issue-triage",
         params(json!([
             {"id": "repo", "title": "Repository", "type": "string", "required": true,
-             "description": "owner/name on GitHub (read through gh)."},
+             "description": "owner/name on GitHub (read through PDT's GitHub login)."},
             {"id": "project", "title": "Project for its tickets", "type": "string", "required": true,
              "description": "The key of the project new tickets go in (PDT)."},
             {"id": "persona", "title": "Persona", "type": "string", "default": "PM",
