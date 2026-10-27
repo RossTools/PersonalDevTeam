@@ -58,8 +58,8 @@ pub use activity::run_activity_ticker;
 pub use buildkite::refresh_buildkite;
 pub use checks::{HostChecks, run_host_checks};
 pub use conversations::{
-    IDLE_PARK, expire_pending_messages, park_idle_conversations, recover_conversations, run_conversation_ticker,
-    shutdown_conversations,
+    IDLE_PARK, conversation_live, expire_pending_messages, park_idle_conversations, recover_conversations,
+    run_conversation_ticker, shutdown_conversations,
 };
 pub use error::ApiErrorBody;
 pub use github::refresh_prs;

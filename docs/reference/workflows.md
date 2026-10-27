@@ -74,7 +74,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     `state.set` `tries.{{trigger.attemptId}}` `add: 1`, and over 3 (`FIX_TRIES`) → a `ticket.comment` the first time
     (4) → the `session.send`; within 3 → `fix` (agent, Coder, `session: reuse`; the prompt is the notice plus "this
     pull request was set to merge…"; outcomes `submitted`: pushed, `review`: a large fix, committed, not pushed) →
-    `submitted` → `remerge` (`attempt.merge` with `again`); `review` → `review` (agent, Reviewer, new session):
+    `submitted` → `remerge` (`attempt.merge` with `again`); `review` → `review` (agent, Reviewer, its own session):
     `approved` → `push` (agent, Coder, reuse: push it; `submitted` → `remerge`), `changes_requested` → `fix`.
     `timeout` / `stopped` of these → a ticket comment. `remerge` `refused` for CI (`ci_pending` / `ci_failed`,
     PDT-151: the push's CI hasn't passed; the merge node records it as set to merge) → a quiet end, as CI passing
@@ -170,7 +170,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
 | `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `event {type, also, where, any}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
-| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `backgroundWaitMs`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
+| `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse \| own`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `backgroundWaitMs`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
 | `wait` (`ms`, `until`, or `event {type, also, where, any}` with `timeoutMs`; `also`: more event types that end it, `any`: with `where`, one of these holds too, PDT-151; `pipelineStage`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
 | `end` (`quiet`, `output`) | — |
@@ -678,13 +678,15 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
 The `agent` node (pdt-api `workflow/nodes/agent.rs`, the work in `workflow/agent.rs`) runs a persona in a session and
 waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) "pdt-mcp").
 
-- **Session.** `new` (default; Reviewer, QA, Refiner): a fresh conversation of the persona's agent and model in the
+- **Session.** `new` (default; Refiner): a fresh conversation of the persona's agent and model in the
   attempt's worktree (else the project's main checkout, or a Personal project's ticket folder), recording the persona
   and version (`sessions.persona_id`, `persona_version`, `step_id`), with no attempt (so PR notices still go to the
   attempt's own session) but linked to the ticket (`sessions.ticket_id`, PDT-105): it is titled `<Persona> · <KEY>`,
   carries the ticket like an attempt's session and is in the ticket's `sessions` (with `persona`, `attemptId` null).
   `reuse` (Coder): the session this node used earlier in the run, else the attempt's agent session, else a new
-  one that becomes the attempt's. A conversation the user didn't stop can be reused even when it isn't running (a
+  one that becomes the attempt's. `own` (Reviewer, QA, Review the fix; PDT-183): the session this node used earlier
+  in the run, else a new one like `new`'s: it never falls back to the attempt's session and never becomes it, so a
+  Reviewer never lands in the Coder's conversation, and three review rounds make one Reviewer session. A conversation the user didn't stop can be reused even when it isn't running (a
   pdtd restart interrupted it): the step's message reopens it (PDT-144). A terminal only while it runs, or while a
   restart is about to resume it; one that stopped can't take a message, so the step starts a new conversation with
   the whole first message and, on a later pass, why it is back. Every new session a step starts on a ticket opens its tab at the end of the
@@ -697,6 +699,14 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   sending step's outcome and summary, then its line comments as a list of findings, PDT-161; or the user's gate
   choice and note: pdt-core `next_pass_message`), the ask to address each point, and the outcomes, not the task and
   rules again.
+- **Closing sessions** (PDT-183). Once a step's outcome is in (the agent's, or the user's Take over), its session
+  closes when the turn that handed it in ends (`agent::close_step_session`): a `new` step's is stopped (Finished), an
+  `own` step's is parked at once (its process closes; the node's next pass reopens it) instead of after the 15 min
+  idle park; a `reuse` step's goes on. When a run ends (succeeded, failed or cancelled), its steps' sessions still
+  open are stopped (`agent::run_ended`; a cancelled run's at once, mid-turn too), except the attempt's own session
+  (the Coder's) and the session of a timed-out step the run can still be resumed from (a late outcome, PDT-123). A
+  session a step took up meanwhile is left alone. Transcripts stay in the session history until the ticket's
+  cleanup.
 - **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
   A step with neither runs in the run's (or workflow's) project. One with no project either (a personal or scheduled
   workflow, PDT-152) runs in the host project as the PM does ([agents.md](agents.md) "The PM"): no ticket, attempt or
@@ -808,8 +818,8 @@ deleted (`409 persona_in_use`).
 - **The Pipeline template** (`builtin:pipeline`, pdt-api `workflow/pipeline.rs`): instantiated per project (off until
   enabled); an untouched instance follows newer versions of it (Templates, above). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
   `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
-  | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (new) → QA
-  (new); `changes_requested` and `fail` go back to Code (whose pass lists the Reviewer's or QA's findings first; a PR
+  | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (own) → QA
+  (own); `changes_requested` and `fail` go back to Code (whose pass lists the Reviewer's or QA's findings first; a PR
   notice for the attempt that comes meanwhile goes in after them, and `submitted` needs the worktree committed and
   pushed, PDT-161: see "Agent steps" and the outbox above); `pass` → a switch on `{{params.accept}}`: `user` → a
   condition (`{{trigger.labels}}` `contains_any` `{{params.autoAcceptLabels}}`): a ticket with one of those labels
@@ -826,7 +836,7 @@ deleted (`409 persona_in_use`).
   failing CI; not recorded as set
   to merge, so nothing merges the fix before its review, even when the loop ends early) → Fix the merge (agent `{{params.coder}}`, `session: reuse`, owner
   `{{params.codeBy}}`, `pipelineStage: code`, `loopLimit`; the prompt has the refusal's reason) → Review the fix (agent
-  `{{params.reviewer}}`, new session, `pipelineStage: review`): `approved` → `attempt.merge` again,
+  `{{params.reviewer}}`, `session: own`, `pipelineStage: review`): `approved` → `attempt.merge` again,
   `changes_requested` → Fix again; a later refusal's reason is what Fix hears on its next pass. Not fixable (the
   policy, a draft, no PR, …) → Merge blocked (a gate, Needs you: "Merge blocked on <key>: <reason>", `merge_again`
   (records the approval, then `attempt.merge`) | `stop` (quiet end), `pipelineStage: merge_blocked`, `event`: this

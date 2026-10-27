@@ -786,6 +786,11 @@ pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
     state.live || state.turn_running || !state.pending.is_empty()
 }
 
+/// Whether a conversation's agent process is running (false: parked, or not loaded).
+pub fn conversation_live(st: &AppState, id: &str) -> bool {
+    st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some_and(|c| c.state().live)
+}
+
 /// Whether a conversation is loaded in this pdtd. Removing a session forgets it first, so a turn its closing ended
 /// finds it gone.
 pub(crate) fn is_loaded(st: &AppState, id: &str) -> bool {
@@ -880,6 +885,21 @@ pub(crate) async fn apply_settings(st: &AppState, session: &Session, change: Ses
     }
     c.push_state();
     Ok(())
+}
+
+/// Parks a loaded conversation's process now if it is idle (no turn, request or pending message), instead of after
+/// `idle_park` (an `own` step's session between passes, PDT-183).
+pub(crate) async fn park_idle(st: &AppState, id: &str) {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else { return };
+    let idle = {
+        let s = c.state();
+        s.live && !s.turn_running && s.open_requests.is_empty() && s.pending.is_empty()
+    };
+    if idle {
+        tracing::info!(session = %id, "parking a step's conversation after its outcome");
+        park(st, &c).await;
+        c.push_state();
+    }
 }
 
 /// Forgets a removed session's runtime, closing its process.
