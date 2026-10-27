@@ -5,7 +5,7 @@
  */
 export type Connection = { id: string, name: string, 
 /**
- * What it is (`discord_webhook`, `http`, `radarr`, …).
+ * What it is (`http`, `webhook`, `mcp`, or an integration's).
  */
 kind: string, url: string, config: Record<string, unknown>, hasSecret: boolean, createdAt: number, updatedAt: number, 
 /**

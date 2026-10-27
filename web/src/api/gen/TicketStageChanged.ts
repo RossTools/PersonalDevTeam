@@ -5,10 +5,11 @@
  */
 export type TicketStageChanged = { projectId: string, ticketId: string, ticketKey: string, from: string, to: string, actor: string, 
 /**
- * The Jira issue the ticket is linked to, if any (`ABC-123`).
- */
-jiraKey: string | null, 
-/**
  * The GitHub issue the ticket is linked to, if any (`owner/name#12`).
  */
-githubIssue: string | null, };
+githubIssue: string | null, 
+/**
+ * The issue in each other tracker the ticket is linked to, by the tracker (an integration's id, or `github`):
+ * `{{trigger.external.<tracker>}}`.
+ */
+external: { [key in string]: string }, };

@@ -11,6 +11,6 @@ id: string, title: string, description: string, type: ParamType, choices?: Array
  */
 required: boolean, 
 /**
- * A `connection` param's kind (`discord_webhook`); none: any.
+ * A `connection` param's kind (`http`); none: any.
  */
 connectionKind?: string, };

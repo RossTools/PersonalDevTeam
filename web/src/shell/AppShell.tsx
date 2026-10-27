@@ -25,6 +25,7 @@ import { HOST_SECTIONS, HostSettingsPage } from '../host/HostSettingsPage';
 import { sectionLabel } from '../common/SettingsScreens';
 import { ConnectionsPage } from '../connections/ConnectionsPage';
 import { SecretsPage } from '../secrets/SecretsPage';
+import { IntegrationsPage } from '../integrations/IntegrationsPage';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
@@ -85,6 +86,8 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
  * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
 const PHONE_LIST_SCREENS: readonly ViewId[] = ['pm', 'sessions', 'inbox', 'notes', 'workflows', 'personas', 'files', 'settings'];
 
+/** The Settings page of integrations (PDT-173). */
+const INTEGRATIONS = 'integrations';
 /** The Settings page of connections (in place of a project id). */
 const CONNECTIONS = 'connections';
 /** The Settings page of notifications. */
@@ -443,7 +446,7 @@ export function AppShell() {
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
   // The Settings list's current row: a project's id, connections, or null (this host).
   const settingsProjectId = settingsProject?.id
-    ?? (settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'secrets' ? SECRETS
+    ?? (settingsPage.kind === 'integrations' ? INTEGRATIONS : settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'secrets' ? SECRETS
       : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
   const section = settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
   // On a phone a section is a screen of its own; on a desktop the page scrolls to it.
@@ -482,12 +485,12 @@ export function AppShell() {
     if (folder.file) setSheetOpen(false);
   }, [folder.file]);
 
-  /** Settings for a project (by id), connections, secrets, notifications, or this host (null). */
+  /** Settings for a project (by id), integrations, connections, secrets, notifications, or this host (null). */
   const showProjectSettings = (id: string | null) => {
     const key = ws.projects.find((p) => p.id === id)?.key;
     go({
       view: 'settings',
-      page: id === CONNECTIONS ? { kind: 'connections' } : id === SECRETS ? { kind: 'secrets' } : id === NOTIFICATIONS ? { kind: 'notifications' }
+      page: id === INTEGRATIONS ? { kind: 'integrations' } : id === CONNECTIONS ? { kind: 'connections' } : id === SECRETS ? { kind: 'secrets' } : id === NOTIFICATIONS ? { kind: 'notifications' }
         : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null },
     });
     setSheetOpen(false);
@@ -626,9 +629,10 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => showProjectSettings(id === CONNECTIONS || id === SECRETS || id === NOTIFICATIONS ? id : null)}>
+      <List aria-label="Host" onAction={(id) => showProjectSettings(id === INTEGRATIONS || id === CONNECTIONS || id === SECRETS || id === NOTIFICATIONS ? id : null)}>
         <ListRow id="host" title="This host" current={!phone && settingsProjectId === null} />
         <ListRow id={NOTIFICATIONS} title="Notifications" current={settingsProjectId === NOTIFICATIONS} />
+        <ListRow id={INTEGRATIONS} title="Integrations" current={settingsProjectId === INTEGRATIONS} />
         <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
         <ListRow id={SECRETS} title="Secrets" current={settingsProjectId === SECRETS} />
       </List>
@@ -725,6 +729,7 @@ export function AppShell() {
     switch (settingsPage.kind) {
       case 'host': return (section && sectionLabel(HOST_SECTIONS, section)) || 'This host';
       case 'project': return (section && sectionLabel(PROJECT_SECTIONS, section)) || (settingsProject?.name ?? settingsPage.key);
+      case 'integrations': return 'Integrations';
       case 'connections': return 'Connections';
       case 'secrets': return 'Secrets';
       case 'notifications': return 'Notifications';
@@ -932,7 +937,8 @@ export function AppShell() {
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => (phone ? go(viewRoute('settings'), { replace: true }) : showProjectSettings(null))}
                   drill={phone} section={section} onSection={showSection} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
-              ) : settingsPage.kind === 'connections' ? <ConnectionsPage />
+              ) : settingsPage.kind === 'integrations' ? <IntegrationsPage />
+                : settingsPage.kind === 'connections' ? <ConnectionsPage />
                 : settingsPage.kind === 'secrets' ? <SecretsPage />
                 : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage drill={phone} section={section} onSection={showSection} />
             ) : ws.tab?.ticketId ? (

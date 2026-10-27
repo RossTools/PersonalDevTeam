@@ -5,6 +5,9 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
 
 ## The daemon
 
+- pdtd is built with a cargo feature per integration (discord, jira, buildkite, arr, scryer, plex; all on by default,
+  so release builds have them all) and logs which it has and which this instance enabled at start (Settings →
+  Integrations, the host value `integrations.enabled`; [workflows.md](workflows.md) "Integrations").
 - A bare pdtd serves no UI unless `PDT_WEB_DIR` is set or a `web/` dir sits next to the exe (or `../Resources/web`,
   the macOS bundle layout; crates/pdtd/src/config.rs).
 - Data lives in `<local data dir>/pdt` (stable) or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir

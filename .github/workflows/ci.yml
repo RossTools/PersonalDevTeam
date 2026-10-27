@@ -27,8 +27,8 @@ env:
 # What a pull request, and its run in the merge queue, waits for (docs/superpowers/notes/ci.md):
 # - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`, except the guides pdtd builds in):
 #   every other job is skipped.
-# - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types)
-#   and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
+# - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types;
+#   pdtd also without its integration features) and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
 # - build (macos-latest): on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break: clippy, nextest
 #   and the desktop crate. It is most of the Namespace bill (60 units a minute against linux-8's 8), so it runs in
 #   the merge queue, and on a PR only with the `macos` label or a change under `.github/`.
@@ -112,6 +112,8 @@ jobs:
       - uses: ./.github/actions/setup
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
+      # pdtd builds with no integration at all as well as with all of them (its default; PDT-173).
+      - run: cargo clippy -p pdtd --no-default-features --all-targets -- -D warnings
 
   test-linux:
     name: test (linux)
@@ -127,6 +129,8 @@ jobs:
           zsh: "true"
       # nextest runs all test binaries at once (cargo test runs them one after another); it also writes the TS types.
       - run: cargo nextest run --profile ci
+      # pdtd with no integration built in (the run above has them all; PDT-173).
+      - run: cargo nextest run --profile ci -p pdtd --no-default-features
       - name: Generated TS types are committed
         run: |
           out="$(git status --porcelain -- web/src/api/gen)"; if [ -n "$out" ]; then echo "Generated TS types are out of date:"; echo "$out"; exit 1; fi

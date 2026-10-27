@@ -316,7 +316,8 @@ rules in pdt-core `pr.rs`.
 ## Jira and Buildkite (Phase 7e-2, PDT-85)
 
 For a work project whose issues are in Jira Cloud and whose CI is Buildkite. pdt-core `jira.rs`, `buildkite.rs`;
-pdt-api `jira.rs`, `buildkite.rs`; the sensors and actions are in [workflows.md](workflows.md) "Sensors and webhooks".
+crates/pdt-int-jira and crates/pdt-int-buildkite (each on only when enabled, [workflows.md](workflows.md)
+"Integrations"); the sensors and actions are in [workflows.md](workflows.md) "Sensors and webhooks".
 
 - **The link** is host settings, not `.pdt/project.toml` (work repos may not take a `.pdt/` folder): the project's
   settings page, section Integrations (made from what each integration declares, [workflows.md](workflows.md)

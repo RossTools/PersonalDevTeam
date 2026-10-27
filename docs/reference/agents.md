@@ -138,7 +138,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `send_to_session` (through the outbox, "[PDT] From the project manager: …"), and `report_bug` (a bug in PDT itself,
   routed as Host settings' Bug reports say: [host.md](host.md) "Bug reports"; it always asks, `AskTarget::Always`, so
   Codex and Devin can't call it).
-- **Discord** (PDT-98; pdt-api `discord.rs`, pdt-core `discord.rs`). Through a `discord_bot` connection (`connection`:
+- **Discord** (PDT-98; crates/pdt-int-discord, only while the Discord integration is enabled: [workflows.md](workflows.md)
+  "Integrations"). Through a `discord_bot` connection (`connection`:
   its name, or the only one), with Discord's REST API (no gateway): `discord_get` (the server, its categories,
   channels and webhooks, each webhook with the connection it is saved as), and the asking tools `discord_change`
   (`changes`, in order: `create` a channel or category, `rename`, `move` into a category or out, `archive`: move into
@@ -146,8 +147,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `discord_webhook` (a webhook on `channel`, made first with `createChannel`, saved as a `discord_webhook` connection
   called `name` that `discord.post` uses; the URL goes to the keychain and never into the result; a taken name is
   refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
-  line per change (pdt-core `discord::ask_title`, through the integration's `approval_title` hook).
-- **Scryer** (PDT-147; pdt-api `scryer.rs`, pdt-core `scryer.rs`). Through a `scryer` connection (`connection`: its
+  line per change (crates/pdt-int-discord `core::ask_title`, through the integration's `approval_title` hook).
+- **Scryer** (PDT-147; crates/pdt-int-scryer `actions.rs`, `core.rs`, only while the Scryer integration is enabled). Through a `scryer` connection (`connection`: its
   name, or the only one), the same calls as the `scryer.*` nodes ([workflows.md](workflows.md)), each tool's schema
   its node's config with `connection` optional: `scryer_library` (the library a page at a time: facet, words in the
   title, monitored), `scryer_search` (metadata by title, each result's ids and whether the library has it),
@@ -156,11 +157,11 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   title is pdt-core `scryer::ask_title` ("Scryer: add the movie Dune (tmdb 438631), monitored"), through the
   integration's `approval_title` hook. The API key never
   reaches the agent.
-- **Scryer's whole API** (PDT-150; pdt-api `scryer/graphql.rs`, pdt-core `scryer.rs`), so the PM can find, read and
+- **Scryer's whole API** (PDT-150; crates/pdt-int-scryer `graphql.rs`, `core.rs`), so the PM can find, read and
   change any setting Scryer's GraphQL schema has (indexers, download clients, seeding profiles, quality, general
   settings, jobs). Every document is checked against Scryer's schema before it is sent (apollo-compiler): the live
   one from introspection, kept per connection for 10 minutes, else the copy PDT bundles
-  (`crates/pdt-api/src/scryer/schema.graphql`, asked for again after a minute). Subscriptions are not offered.
+  (`crates/pdt-int-scryer/src/schema.graphql`, asked for again after a minute). Subscriptions are not offered.
   - `scryer_schema` (read): `search` (words in operation and type names and descriptions, a name match first, 30 at
     most), `operation` (one query or mutation: its arguments, the input types and enums they take, its return type,
     and for a mutation whether it asks), `type` (one type's fields, input fields, values or members); with none, the
@@ -206,8 +207,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   message's first line), and pinned notes (id, project, title). Sections are capped at 30 lines. The
   instructions are pdt-core `pm::instructions`: who the PM is, its work folder, its tools (the asking ones named; its
   agent's own), PDT's API and guides, the persona's instructions, an "Integrations" section with the prompt
-  fragment of each integration the session has a tool of (`Integration::pm_prompt`: Discord's and Scryer's), the
-  briefing (each project with its folder). The PM persona's own text names no integration.
+  fragment of each enabled integration the session has a tool of (`Integration::pm_prompt`: Discord's and Scryer's),
+  the briefing (each project with its folder). The PM persona's own text names no integration.
 - **Notes** (`pm_notes`, FTS5 table `pm_notes_fts` kept by triggers): `kind` note | journal | user, host-wide or per
   project, pinned or not. `GET /api/pm/notes?q=&project=&kind=&limit=` (words are quoted prefixes, all required; a
   project gets its own and host-wide notes, pinned first), `POST` (`kind` note, the default, or user; never journal),

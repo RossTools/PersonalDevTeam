@@ -1,0 +1,27 @@
+[package]
+name = "pdt-int-arr"
+description = "Sonarr and Radarr: search, add and queue actions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+pdt-core.workspace = true
+pdt-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+schemars = "1.2.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "json", "system-proxy", "query"] }
+
+
+[dev-dependencies]
+pdt-store.workspace = true
+pdt-forge.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+sqlx.workspace = true
+tempfile = "3.27.0"
+http-body-util = "0.1.5"

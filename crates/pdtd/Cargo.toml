@@ -23,6 +23,23 @@ serde_json.workspace = true
 pdt-update.workspace = true
 pdt-git.workspace = true
 uuid.workspace = true
+pdt-int-discord = { workspace = true, optional = true }
+pdt-int-jira = { workspace = true, optional = true }
+pdt-int-buildkite = { workspace = true, optional = true }
+pdt-int-arr = { workspace = true, optional = true }
+pdt-int-scryer = { workspace = true, optional = true }
+pdt-int-plex = { workspace = true, optional = true }
+
+# One feature per integration (PDT-173); release builds have them all, and a build may leave any out
+# (`--no-default-features --features jira,…`). An instance enables the ones it uses in Settings → Integrations.
+[features]
+default = ["discord", "jira", "buildkite", "arr", "scryer", "plex"]
+discord = ["dep:pdt-int-discord"]
+jira = ["dep:pdt-int-jira"]
+buildkite = ["dep:pdt-int-buildkite"]
+arr = ["dep:pdt-int-arr"]
+scryer = ["dep:pdt-int-scryer"]
+plex = ["dep:pdt-int-plex"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

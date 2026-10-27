@@ -476,8 +476,8 @@ async fn pump(
 /// user says yes to), and a credential the agent wrote into it (PDT-150) is redacted from the event (the transcript and
 /// the approval card, the call's input and output) and its raw line (`Integration::redact_call`); the call itself
 /// still gets it. The raw line without them, when there were any.
-fn integration_hooks(event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
-    let registry = crate::integrations::registry();
+fn integration_hooks(st: &AppState, event: &mut AgentEvent, raw: Option<&str>) -> Option<String> {
+    let registry = st.registry();
     let (AgentEvent::ToolCall { tool, title, input, .. } | AgentEvent::Request { tool, title, input, .. }) = event
     else {
         return None;
@@ -526,7 +526,7 @@ async fn append(
             }
         }
     }
-    let scrubbed = integration_hooks(&mut event, raw);
+    let scrubbed = integration_hooks(st, &mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
     let row = match st
         .store

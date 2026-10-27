@@ -78,6 +78,7 @@ impl Store {
         let store = Self::open_with(db_path, &migrate::MIGRATOR, &backup_dir).await?;
         store.backfill_project_keys().await?;
         store.backfill_permission_modes().await?;
+        store.backfill_enabled_integrations().await?;
         store.release_gone_sessions().await?;
         Ok(store)
     }

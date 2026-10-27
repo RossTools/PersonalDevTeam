@@ -111,8 +111,8 @@ impl CiStatus {
         self.runs.iter().filter(|r| r.state == CiState::Failed)
     }
 
-    /// Two providers' CI on one commit as one (GitHub Actions and Buildkite): their runs together, rolled up the same
-    /// way.
+    /// Two providers' CI on one commit as one (the forge's and a CI integration's): their runs together, rolled up the
+    /// same way.
     pub fn merge(a: Option<CiStatus>, b: Option<CiStatus>) -> Option<CiStatus> {
         match (a, b) {
             (Some(mut a), Some(b)) => {
@@ -478,8 +478,8 @@ pub enum CiGate {
     Failed(String),
 }
 
-/// The gate for `pr` with `ci` on its head (GitHub Actions and Buildkite together). `has_ci`: the repository has CI
-/// (workflow files, a Buildkite pipeline), so no run yet means one is still to come.
+/// The gate for `pr` with `ci` on its head (the forge's CI and the CI integrations' together). `has_ci`: the repository
+/// has CI (workflow files, a CI integration's pipeline), so no run yet means one is still to come.
 pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> CiGate {
     let (n, at) = (pr.name(), short(&pr.head_sha));
     let Some(ci) = ci else {

@@ -678,7 +678,7 @@ pub(crate) async fn merge_attempt(
             } else {
                 format!(
                     "Set PR #{} to merge without waiting for CI: the repository has no CI (no GitHub Actions \
-                     workflows, no Buildkite pipeline).",
+                     workflows, no CI integration).",
                     pr.number
                 )
             };
@@ -776,22 +776,28 @@ async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result
 
 /// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from the forge
 /// now. The repository has CI when the head (or the branch) has the forge's CI configuration (GitHub Actions
-/// workflows) or the project a Buildkite pipeline, so no run yet is CI still to come. A project with Buildkite waits
-/// for its builds on the head too, so green Actions alone don't pass while Buildkite hasn't reported on that head.
+/// workflows) or the project a CI integration (its pipelines), so no run yet is CI still to come. A project
+/// with a CI integration waits for its builds on the head too, so green Actions alone don't pass while it hasn't
+/// reported on that head.
 /// A read from the forge that fails is an error (`ci_unreadable`), as a failing merge is: the last look may be older
 /// than the head's CI, and no CI event would end a wait once the forge answers again.
 async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Result<CiGate, String> {
     crate::github::refresh_attempt(st, info).await;
     let name = forge.api.name();
-    let Some((pr, ci, bk_on_head)) = crate::github::head_ci(st, &info.attempt.id) else {
+    let Some((pr, ci, reported)) = crate::github::head_ci(st, &info.attempt.id) else {
         return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}"));
     };
     // A failed read keeps the last look, which may be older than the head's CI.
     if let Some(e) = &pr.error {
         return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}: {e}"));
     }
-    let buildkite = st.store.get_project_settings(&info.project_id).await.ok().and_then(|s| s.buildkite()).is_some();
-    let has_ci = buildkite
+    let reg = st.registry();
+    let providers = match st.store.get_project_settings(&info.project_id).await {
+        Ok(s) => reg.integrations().iter().filter_map(|i| i.project_ci(&s).map(|label| (i.id(), label))).collect(),
+        Err(_) => vec![],
+    };
+    let waiting_for = providers.iter().find(|(id, _)| !reported.iter().any(|r| r == id)).map(|(_, label)| *label);
+    let has_ci = !providers.is_empty()
         || match forge.api.has_ci() {
             Some(known) => known,
             None => {
@@ -806,8 +812,8 @@ async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Res
             }
         };
     Ok(match pdt_core::pr::ci_gate(&pr, ci.as_ref(), has_ci) {
-        CiGate::Passed | CiGate::NoCi if buildkite && !bk_on_head => CiGate::Pending(format!(
-            "Buildkite hasn't reported on PR #{} at {} yet",
+        CiGate::Passed | CiGate::NoCi if let Some(label) = waiting_for => CiGate::Pending(format!(
+            "{label} hasn't reported on PR #{} at {} yet",
             pr.number,
             pr.head_sha.get(..7).unwrap_or(&pr.head_sha)
         )),

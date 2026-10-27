@@ -3409,7 +3409,6 @@ dependencies = [
 name = "pdt-api"
 version = "0.1.0"
 dependencies = [
- "apollo-compiler",
  "axum",
  "flate2",
  "futures-util",
@@ -3523,11 +3522,147 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdt-int-arr"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "pdt-store",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "ts-rs",
+]
+
+[[package]]
+name = "pdt-int-buildkite"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "pdt-git",
+ "pdt-store",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "ts-rs",
+]
+
+[[package]]
+name = "pdt-int-discord"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "pdt-store",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "ts-rs",
+]
+
+[[package]]
+name = "pdt-int-jira"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "http-body-util",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "pdt-store",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "ts-rs",
+ "uuid",
+]
+
+[[package]]
+name = "pdt-int-plex"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "pdt-store",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "ts-rs",
+]
+
+[[package]]
+name = "pdt-int-scryer"
+version = "0.1.0"
+dependencies = [
+ "apollo-compiler",
+ "axum",
+ "http-body-util",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "pdt-store",
+ "reqwest",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "ts-rs",
+]
+
+[[package]]
 name = "pdt-store"
 version = "0.1.0"
 dependencies = [
  "jiff",
  "pdt-core",
+ "serde",
  "serde_json",
  "sqlx",
  "tempfile",
@@ -3576,6 +3711,12 @@ dependencies = [
  "pdt-core",
  "pdt-git",
  "pdt-github",
+ "pdt-int-arr",
+ "pdt-int-buildkite",
+ "pdt-int-discord",
+ "pdt-int-jira",
+ "pdt-int-plex",
+ "pdt-int-scryer",
  "pdt-store",
  "pdt-tailscale",
  "pdt-update",

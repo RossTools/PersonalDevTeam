@@ -320,7 +320,7 @@ impl NewLogEvent {
 pub struct Connection {
     pub id: String,
     pub name: String,
-    /// What it is (`discord_webhook`, `http`, `radarr`, …).
+    /// What it is (`http`, `webhook`, `mcp`, or an integration's).
     pub kind: String,
     pub url: String,
     #[ts(type = "Record<string, unknown>")]

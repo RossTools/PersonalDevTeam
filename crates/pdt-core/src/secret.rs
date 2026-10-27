@@ -243,7 +243,7 @@ pub fn names_in(v: &Value) -> Named {
 /// `values` (keyed by name as written): `{{secret.<name>}}` in the same single pass as every other reference, so text
 /// a reference brings in (a trigger's payload, a ticket, an earlier step's output) is never read as a reference, and
 /// `{"$secret": "<name>"}` only where the config itself has one. References under `keep` stay as written, and so do
-/// `$secret` references to names not in `values` (a connection's, for the Scryer nodes).
+/// `$secret` references to names not in `values` (a connection's, for an integration's nodes).
 pub fn resolve_with_secrets(config: &Value, ctx: &Value, keep: &[&str], values: &HashMap<String, String>) -> Value {
     let mut ctx = ctx.clone();
     if let Value::Object(m) = &mut ctx {

@@ -21,6 +21,6 @@ workspaceId: string | null,
  */
 pr: PullRequestStatus | null, 
 /**
- * CI of its branch without a pull request (Buildkite builds branches; with a PR it is in `pr.ci`). In memory.
+ * CI of its branch without a pull request (a CI integration's builds of the branch; with a PR it is in `pr.ci`). In memory.
  */
 ci: CiStatus | null, };

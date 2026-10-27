@@ -18,7 +18,7 @@ use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::events::{self as ev, AttemptRef, CiEvent, CiRunRef, PrEvent};
 use pdt_forge::{ChangeComment, ChangeReview, Forge, ForgeError};
 use pdt_store::AttemptInfo;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// How long after an attempt ends pdtd keeps reading a PR it last saw open (PDT-59: git's merge check can end the
@@ -37,8 +37,9 @@ pub(crate) struct PrWatch {
     errors: HashMap<String, String>,
     /// The login `gh` is authenticated as (comments by it are the user's own).
     viewer: Option<String>,
-    /// Buildkite CI of each active attempt's head (Phase 7e), shown with its PR's CI or on its own.
-    buildkite: HashMap<String, CiStatus>,
+    /// The CI integrations report for each active attempt's head (Phase 7e), by attempt and then by
+    /// integration id; shown with its PR's CI or on its own.
+    other_ci: HashMap<String, BTreeMap<String, CiStatus>>,
 }
 
 /// The newest comment and review ids a PR's feedback was read up to (`sensor.pr_comments.<attempt>`).
@@ -221,31 +222,47 @@ impl PrWatch {
     }
 }
 
+/// Every integration's CI of an attempt as one (None: none reported).
+fn other_ci(w: &PrWatch, attempt_id: &str, head: Option<&str>) -> Option<CiStatus> {
+    let on_head = |c: &&CiStatus| head.is_none_or(|h| c.runs.iter().all(|r| r.head_sha == h));
+    w.other_ci.get(attempt_id)?.values().filter(on_head).cloned().fold(None, |all, c| CiStatus::merge(all, Some(c)))
+}
+
 fn decorate_attempt(w: &PrWatch, a: &mut AttemptSummary) {
     a.pr = w.by_attempt.get(&a.id).cloned();
-    let bk = w.buildkite.get(&a.id).cloned();
     match a.pr.as_mut().filter(|p| p.state == PrState::Open) {
-        // On the PR's head: one badge for both providers.
-        Some(pr) if bk.as_ref().is_some_and(|b| b.runs.iter().all(|r| r.head_sha == pr.head_sha)) => {
-            pr.ci = CiStatus::merge(pr.ci.take(), bk);
+        // On the PR's head: one badge for every provider.
+        Some(pr) => {
+            if let Some(ci) = other_ci(w, &a.id, Some(&pr.head_sha)) {
+                pr.ci = CiStatus::merge(pr.ci.take(), Some(ci));
+            }
         }
-        Some(_) => {}
-        None => a.ci = bk,
+        None => a.ci = other_ci(w, &a.id, None),
     }
 }
 
-/// Keeps (or with None, drops) an attempt's Buildkite CI.
-pub(crate) fn set_buildkite(st: &AppState, attempt_id: &str, ci: Option<CiStatus>) {
+/// Keeps (or with None, drops) the CI integration `provider` reports for an attempt's head.
+pub fn set_other_ci(st: &AppState, provider: &str, attempt_id: &str, ci: Option<CiStatus>) {
     let mut w = watch(st);
     match ci {
-        Some(c) => w.buildkite.insert(attempt_id.to_string(), c),
-        None => w.buildkite.remove(attempt_id),
-    };
+        Some(c) => {
+            w.other_ci.entry(attempt_id.to_string()).or_default().insert(provider.to_string(), c);
+        }
+        None => {
+            if let Some(m) = w.other_ci.get_mut(attempt_id) {
+                m.remove(provider);
+            }
+        }
+    }
 }
 
-/// Drops the Buildkite CI of attempts no longer active.
-pub(crate) fn keep_buildkite(st: &AppState, active: &HashSet<String>) {
-    watch(st).buildkite.retain(|id, _| active.contains(id));
+/// Drops the CI `provider` reported for attempts no longer active.
+pub fn keep_other_ci(st: &AppState, provider: &str, active: &HashSet<String>) {
+    for (id, m) in watch(st).other_ci.iter_mut() {
+        if !active.contains(id) {
+            m.remove(provider);
+        }
+    }
 }
 
 /// Fills in `attempt.pr` of a backlog row.
@@ -456,7 +473,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
     true
 }
 
-pub(crate) fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
+pub fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
     AttemptRef {
         project_id: info.project_id.clone(),
         ticket_id: info.ticket_id.clone(),
@@ -467,7 +484,7 @@ pub(crate) fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
     }
 }
 
-pub(crate) fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
+pub fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
     ci.runs
         .iter()
         .map(|r| CiRunRef {
@@ -497,7 +514,7 @@ pub(crate) fn turned_off_by_hand(prev: Option<&PullRequestStatus>, now: &PullReq
 /// Whether the attempt's open PR is (or was) set to merge and hasn't merged (PDT-104): PDT recorded it (Merge…,
 /// `attempt.merge`, or auto-merge seen on), auto-merge is on, it is queued, or the merge queue itself removed it. A
 /// person taking it out of the queue says not to.
-pub(crate) fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
+pub fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
     if pr.state != PrState::Open || pr.queue_removal.as_ref().is_some_and(|r| !r.by_queue && !pr.in_merge_queue) {
         return false;
     }
@@ -506,7 +523,7 @@ pub(crate) fn merge_requested(info: &AttemptInfo, pr: &PullRequestStatus) -> boo
 
 /// Whether a workflow's merge of the attempt was refused for something its agent can fix and the PR is still open
 /// (PDT-139).
-pub(crate) fn merge_refused(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
+pub fn merge_refused(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
     info.merge_refused && pr.state == PrState::Open
 }
 
@@ -728,19 +745,25 @@ pub(crate) async fn log_late_commits(
     }
 }
 
-/// The attempt's open PR as last seen, with the CI on its head from GitHub Actions and Buildkite together (as its badge
-/// shows it), and whether Buildkite has reported on that head (its last look may be of an older one).
-pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, Option<CiStatus>, bool)> {
+/// The attempt's open PR as last seen, with the CI on its head from the forge and the CI integrations together (as
+/// its badge shows it), and the integrations that have reported on that head (a last look may be of an older one).
+pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, Option<CiStatus>, Vec<String>)> {
     let w = watch(st);
     let pr = w.by_attempt.get(attempt_id).filter(|p| p.state == PrState::Open).cloned()?;
-    let bk = w.buildkite.get(attempt_id).filter(|b| b.runs.iter().all(|r| r.head_sha == pr.head_sha)).cloned();
-    let bk_on_head = bk.is_some();
-    let ci = CiStatus::merge(pr.ci.clone(), bk);
-    Some((pr, ci, bk_on_head))
+    let reported: Vec<String> = w
+        .other_ci
+        .get(attempt_id)
+        .map(|m| {
+            let on_head = |c: &CiStatus| c.runs.iter().all(|r| r.head_sha == pr.head_sha);
+            m.iter().filter(|(_, c)| on_head(c)).map(|(p, _)| p.clone()).collect()
+        })
+        .unwrap_or_default();
+    let ci = CiStatus::merge(pr.ci.clone(), other_ci(&w, attempt_id, Some(&pr.head_sha)));
+    Some((pr, ci, reported))
 }
 
 /// The attempt's PR as last seen (None when it has none, or the project has no forge).
-pub(crate) fn watched_pr(st: &AppState, attempt_id: &str) -> Option<PullRequestStatus> {
+pub fn watched_pr(st: &AppState, attempt_id: &str) -> Option<PullRequestStatus> {
     watch(st).by_attempt.get(attempt_id).cloned()
 }
 

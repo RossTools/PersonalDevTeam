@@ -23,7 +23,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 /// What a tool call knows: PDT and the calling session.
-pub(crate) struct Cx<'a> {
+pub struct Cx<'a> {
     pub st: &'a AppState,
     pub session: &'a Session,
 }
@@ -1164,6 +1164,7 @@ async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
         .await
         .map_err(store)?
         .into_iter()
+        .filter(|w| !crate::workflow::builtins::hidden(&st.registry(), w))
         .find(|w| w.name.eq_ignore_ascii_case(name.trim()))
         .map(|w| w.id)
         .ok_or_else(|| format!("no workflow is called {name}"))
@@ -1173,9 +1174,7 @@ async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
 /// there) runs only where the project lets the PM act. Claude asks through its permission prompt (spec §4).
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
-    if !crate::integrations::registry().tool_table().asks(tool)
-        || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
-    {
+    if !cx.st.registry().tool_table().asks(tool) || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
         return Ok(());
     }
     if crate::pm::acts_without_asking(cx.st, target).await {

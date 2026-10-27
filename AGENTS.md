@@ -23,9 +23,10 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - crates/pdt-tailscale — tailscale CLI wrapper (serve, status)
 - crates/pdt-forge — the `Forge` trait (change requests, CI, merges, reviews, issues; declared capabilities) + `FakeForge`
 - crates/pdt-github — the GitHub forge over GitHub's REST and GraphQL APIs (no `gh`): an attempt's PR, Actions runs, merges, issues; the OAuth device-flow login
+- crates/pdt-int-* — the optional integrations (discord, jira, buildkite, arr, scryer, plex), one crate each on pdt-api's `sdk` and `Integration` trait; pdtd's cargo features, enabled per instance in Settings → Integrations (docs/reference/workflows.md "Integrations"). The only list naming them outside their crates is pdt-core `integration::KNOWN` (and pdtd's features)
 - crates/pdt-update — GitHub release client (token, verified downloads)
 - crates/pdt-host — the supervisor: runs pdtd, installs updates, rolls back
-- crates/pdtd — daemon binary (also `pdtd hook …` for agent hooks; demo seed in src/seed.rs)
+- crates/pdtd — daemon binary (also `pdtd hook …` for agent hooks; demo seed in src/seed.rs; the integrations it is built with in src/integrations/)
 - test-support — shared test helpers (`port_blocks.rs`)
 - .pdt/project.toml — this repo's run configuration (dev instance + tests + areas)
 - web/ — React + Vite UI; web/ui is the design system (web/ui/README.md): tokens.css is the only place colors live; public components in web/ui/*.tsx exported from `@ui`; shadcn/ui (React Aria base, Nova) sources in web/ui/primitives (ours to edit, never imported by features; add with `pnpm dlx shadcn@latest add <name> -y -o -c web < /dev/null`, which otherwise can hang on an overwrite prompt); app-level shared components in web/src/common

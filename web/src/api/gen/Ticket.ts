@@ -108,6 +108,6 @@ agent: TicketAgent | null,
  */
 autoStartAt: number | null, 
 /**
- * The issues in other trackers it is linked to (a Jira issue it was imported from).
+ * The issues in other trackers it is linked to (an issue it was imported from).
  */
 external: Array<ExternalLink>, };

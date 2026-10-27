@@ -25,19 +25,12 @@ pub const PR_REVIEWED: &str = "pr.reviewed";
 pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
 pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
-pub const JIRA_ISSUE_CREATED: &str = "jira.issue.created";
-pub const JIRA_ISSUE_UPDATED: &str = "jira.issue.updated";
-pub const JIRA_ISSUE_TRANSITIONED: &str = "jira.issue.transitioned";
-pub const JIRA_ISSUE_COMMENTED: &str = "jira.issue.commented";
 
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
 /// The CI provider of GitHub Actions runs.
 pub const GITHUB_ACTIONS: &str = "github_actions";
-
-/// The CI provider of Buildkite builds.
-pub const BUILDKITE: &str = crate::buildkite::BUILDKITE;
 
 /// One event type: its id, what it means and its payload's schema.
 pub struct EventType {
@@ -52,22 +45,22 @@ pub fn schema_of<T: JsonSchema>() -> Schema {
     schemars::schema_for!(T)
 }
 
-/// PDT's own event types, in catalog order; an integration declares its own (pdt-api's `Integration::event_types`, e.g.
-/// Jira's in [`crate::jira::EVENT_TYPES`]). A trigger kind of an event type is the plain event trigger unless a node
+/// PDT's own event types, in catalog order; an integration declares its own (pdt-api's `Integration::event_types`). A trigger kind of an event type is the plain event trigger unless a node
 /// kind claims the type (pdt-api `NodeKind::event_type`: a schedule, a webhook, GitHub issues). Adding one: a constant,
 /// an entry here, and a sensor or command that emits it.
 pub const EVENT_TYPES: &[EventType] = &[
     EventType {
         id: CI_RUN_FAILED,
         title: "CI failed",
-        description: "CI failed on the head commit of an attempt's pull request, or of its branch on Buildkite (once per \
-                      set of failed runs).",
+        description: "CI failed on the head commit of an attempt's pull request, or of its branch on a CI \
+                      integration (once per set of failed runs).",
         schema: schema_of::<CiEvent>,
     },
     EventType {
         id: CI_RUN_PASSED,
         title: "CI passed",
-        description: "Every CI run on the head commit of an attempt's pull request (or its branch on Buildkite) passed.",
+        description: "Every CI run on the head commit of an attempt's pull request (or its branch on a CI integration) \
+                      passed.",
         schema: schema_of::<CiEvent>,
     },
     EventType {
@@ -229,7 +222,7 @@ pub struct CiEvent {
     #[serde(flatten)]
     #[ts(flatten)]
     pub attempt: AttemptRef,
-    /// `github_actions` or `buildkite`.
+    /// `github_actions`, or a CI integration's id.
     pub provider: String,
     pub pr: Option<u32>,
     pub head_sha: String,
@@ -365,12 +358,13 @@ pub struct TicketStageChanged {
     pub from: String,
     pub to: String,
     pub actor: String,
-    /// The Jira issue the ticket is linked to, if any (`ABC-123`).
-    #[serde(default)]
-    pub jira_key: Option<String>,
     /// The GitHub issue the ticket is linked to, if any (`owner/name#12`).
     #[serde(default)]
     pub github_issue: Option<String>,
+    /// The issue in each other tracker the ticket is linked to, by the tracker (an integration's id, or `github`):
+    /// `{{trigger.external.<tracker>}}`.
+    #[serde(default)]
+    pub external: std::collections::BTreeMap<String, String>,
 }
 
 /// `ticket.commented`.
@@ -553,83 +547,6 @@ pub struct TicketRefineRequested {
     pub actor: String,
 }
 
-/// The issue every `jira.issue.*` event is about.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraIssueRef {
-    /// The PDT project whose Jira scope it is in.
-    pub project_id: String,
-    /// The `jira` connection's name.
-    pub connection: String,
-    /// `ABC-123`.
-    pub key: String,
-    pub url: String,
-    pub summary: String,
-    /// Text (from Jira's rich text).
-    pub description: String,
-    pub status: String,
-    pub assignee: Option<String>,
-    /// Assigned to the account the connection uses (the user).
-    pub assigned_to_me: bool,
-    pub reporter: Option<String>,
-    pub issue_type: String,
-    pub priority: Option<String>,
-    pub labels: Vec<String>,
-    /// The PDT ticket linked to it, if any.
-    pub ticket_id: Option<String>,
-}
-
-/// `jira.issue.created`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraIssueCreated {
-    #[serde(flatten)]
-    #[ts(flatten)]
-    pub issue: JiraIssueRef,
-}
-
-/// `jira.issue.updated`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraIssueUpdated {
-    #[serde(flatten)]
-    #[ts(flatten)]
-    pub issue: JiraIssueRef,
-    /// The fields that changed, as Jira names them (`assignee`, `status`, `priority`, …).
-    pub changed: Vec<String>,
-}
-
-/// `jira.issue.transitioned`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraIssueTransitioned {
-    #[serde(flatten)]
-    #[ts(flatten)]
-    pub issue: JiraIssueRef,
-    pub from: String,
-    pub to: String,
-}
-
-/// `jira.issue.commented`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraIssueCommented {
-    #[serde(flatten)]
-    #[ts(flatten)]
-    pub issue: JiraIssueRef,
-    pub comment_id: String,
-    pub author: String,
-    /// Text (from Jira's rich text).
-    pub body: String,
-    /// Written by the account the connection uses (the user).
-    pub by_me: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,7 +554,7 @@ mod tests {
     #[test]
     fn every_type_is_unique_and_has_a_schema() {
         let mut ids = std::collections::HashSet::new();
-        for t in EVENT_TYPES.iter().chain(crate::jira::EVENT_TYPES) {
+        for t in EVENT_TYPES {
             assert!(ids.insert(t.id), "{} twice", t.id);
             assert!(t.id.contains('.'));
             assert!((t.schema)().as_object().is_some_and(|o| o.contains_key("properties")), "{}", t.id);

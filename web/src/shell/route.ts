@@ -6,11 +6,12 @@ import type { ViewId } from './views';
 
 /**
  * A Settings page: the index (`/settings`: this host on desktop, the list of pages on a phone), this host (and a
- * section of it), connections, secrets, notifications, or a project by key.
+ * section of it), integrations, connections, secrets, notifications, or a project by key.
  */
 export type SettingsPage =
   | { kind: 'index' }
   | { kind: 'host'; section: string | null }
+  | { kind: 'integrations' }
   | { kind: 'connections' }
   | { kind: 'secrets' }
   | { kind: 'notifications' }
@@ -84,6 +85,7 @@ export function parseRoute(pathname: string, search = ''): Route {
         worktree: q.get('worktree'),
       };
     case 'settings':
+      if (a === 'integrations') return { view: 'settings', page: { kind: 'integrations' } };
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
       if (a === 'secrets') return { view: 'settings', page: { kind: 'secrets' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
@@ -131,6 +133,7 @@ export function routePath(r: Route): string {
       switch (p.kind) {
         case 'index': return '/settings';
         case 'host': return p.section ? `/settings/host/${enc(p.section)}` : '/settings/host';
+        case 'integrations': return '/settings/integrations';
         case 'connections': return '/settings/connections';
         case 'secrets': return '/settings/secrets';
         case 'notifications': return '/settings/notifications';

@@ -155,7 +155,7 @@ pub struct AppState {
     pub loops: std::sync::Arc<crate::loops::Loops>,
     /// The longest one member of the 60 s poll may take (tests shorten it).
     pub poll_part_limit: std::time::Duration,
-    /// The longest one call of a sensor (Jira, Buildkite) to its service may take, connecting included (tests
+    /// The longest one call of a sensor (an integration's check) to its service may take, connecting included (tests
     /// shorten it). A half-open connection then fails the call instead of holding up the poll.
     pub sensor_timeout: std::time::Duration,
     /// How long a session may be unable to take its outbox messages (not idle, yet not working either: stuck at
@@ -168,6 +168,9 @@ pub struct AppState {
     pub(crate) outbox_stuck: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
     /// Bug reports filed in the last minute, by nonce (PDT-153).
     pub(crate) bug_report_nonces: crate::bug_reports::Nonces,
+    /// The integrations this build has and the ones this instance enabled (PDT-173). `new` has none of the optional
+    /// ones; pdtd (and a test) sets the ones it was built with, then [`crate::integrations::load_enabled`].
+    pub integrations: std::sync::Arc<crate::integrations::Integrations>,
 }
 
 impl AppState {
@@ -236,6 +239,7 @@ impl AppState {
             workflow_docs: Default::default(),
             auto_start_failed: Default::default(),
             mcp: Default::default(),
+            integrations: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             personas_installed: Default::default(),
@@ -311,7 +315,7 @@ impl AppState {
     }
 }
 
-pub(crate) fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
@@ -406,7 +410,6 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/runs/{id}/reset-data", axum::routing::post(crate::runs::reset_data))
         .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
         .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
-        .route("/projects/{id}/jira/import", axum::routing::post(crate::jira::import_route))
         .route("/projects/{id}/labels", get(crate::tickets::labels))
         .route("/projects/{id}/areas", get(crate::overlap::areas))
         .route("/tickets", get(crate::tickets::list))
@@ -502,6 +505,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             get(crate::notifications::get_settings).patch(crate::notifications::patch_settings),
         )
         .route("/notifications/{id}/read", axum::routing::post(crate::notifications::read))
+        .merge(crate::integrations::routes(&state))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
             ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")

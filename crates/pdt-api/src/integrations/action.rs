@@ -23,7 +23,7 @@ pub struct ToolFace {
     pub description: &'static str,
 }
 
-/// An action as a workflow node kind: its id (`scryer.search`), title, description and ports (the first is the one a
+/// An action as a workflow node kind: its id (`media.search`), title, description and ports (the first is the one a
 /// dry run takes).
 pub struct NodeFace {
     pub id: &'static str,
@@ -36,7 +36,7 @@ pub struct NodeFace {
 /// the only connection of the kind.
 pub struct ConnectionFace {
     pub kind: &'static str,
-    /// The kind as a tool's schema names it (`Scryer`, `Discord bot`).
+    /// The kind as a tool's schema names it (`Media server`, `Chat bot`).
     pub label: &'static str,
 }
 
@@ -81,7 +81,7 @@ pub trait Action: Send + Sync + 'static {
         Ok(())
     }
 
-    /// What a call does, in a line (`add the series tvdb 371980 to Scryer (media)`): a dry run's `would`, and the title
+    /// What a call does, in a line (`add the series tvdb 371980 to the media server (home)`): a dry run's `would`, and the title
     /// of the user's approval.
     fn approval_title(&self, input: &Self::Input) -> String;
 

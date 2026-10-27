@@ -55,6 +55,8 @@ async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
     if let Some(gh) = gh {
         state.github = gh;
     }
+    state.integrations = std::sync::Arc::new(pdt_api::Integrations::new(vec![std::sync::Arc::new(FakeCi)]));
+    state.integrations.enable(&["fakeci".into()]);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
     let app = router(state.clone(), None);
@@ -64,6 +66,28 @@ async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
     Env { app, state, project: p["id"].as_str().unwrap().into(), repo, _tmp: tmp }
+}
+
+/// A CI integration (PDT-173): a project linked to it has CI from it.
+struct FakeCi;
+
+impl pdt_api::Integration for FakeCi {
+    fn id(&self) -> &'static str {
+        "fakeci"
+    }
+
+    fn project_settings(&self) -> Option<pdt_core::integration::ProjectSettingsSchema> {
+        Some(pdt_core::integration::ProjectSettingsSchema {
+            integration: "fakeci".into(),
+            label: "Fake CI".into(),
+            connection_kind: "http".into(),
+            ..Default::default()
+        })
+    }
+
+    fn project_ci(&self, settings: &pdt_store::ProjectSettings) -> Option<&'static str> {
+        settings.integrations.contains_key("fakeci").then_some("Fake CI")
+    }
 }
 
 async fn ticket(env: &Env, title: &str) -> String {
@@ -1370,21 +1394,21 @@ async fn a_ci_event_logged_before_the_wait_still_ends_it() {
     assert_eq!(merges(), 0, "the merge read CI again: still running");
 }
 
-/// PDT-151: in a project with Buildkite, green GitHub Actions alone don't pass while Buildkite hasn't reported on the
-/// head; and a read from GitHub that fails is an error, not a wait.
+/// PDT-151: in a project with a CI integration, green GitHub Actions alone don't pass while it hasn't
+/// reported on the head; and a read from GitHub that fails is an error, not a wait.
 #[tokio::test]
-async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge() {
+async fn a_ci_integration_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge() {
     let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
     let (s, c) = call(
         &env.app,
         "POST",
         "/api/connections",
-        Some(json!({"name": "bk", "kind": "buildkite", "url": "http://127.0.0.1:1", "config": {"org": "acme"}})),
+        Some(json!({"name": "ci", "kind": "http", "url": "http://127.0.0.1:1"})),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{c}");
-    settings(&env, json!({"integrations": {"buildkite": {"connection": "bk", "pipelines": ["app"]}}})).await;
+    settings(&env, json!({"integrations": {"fakeci": {"connection": "ci"}}})).await;
     let t = ticket(&env, "Change it").await;
     let attempt = start_with_a_commit(&env, &t, "c.txt").await;
     let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
@@ -1393,7 +1417,7 @@ async fn buildkite_not_yet_on_the_head_and_an_unreadable_github_hold_the_merge()
     pdt_api::refresh_prs(&env.state).await;
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_pending")), "{v}");
-    assert!(v["message"].as_str().unwrap().contains("Buildkite hasn't reported"), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Fake CI hasn't reported"), "{v}");
 
     *gh.error.lock().unwrap() = Some("gh: signed out".into());
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;

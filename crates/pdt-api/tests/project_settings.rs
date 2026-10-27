@@ -64,15 +64,29 @@ async fn agent_instructions_are_kept_unless_sent() {
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
 }
 
+/// PDT-173: Settings → Integrations lists the integrations PDT knows; one this build lacks can't be enabled, and a
+/// connection of its kind is refused, naming it.
 #[tokio::test]
-async fn integrations_declare_what_a_project_sets() {
+async fn integrations_this_build_lacks_are_listed_and_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, _) = setup(tmp.path()).await;
-    let (s, v) = call(&app, "GET", "/api/integrations/project-settings", None).await;
+    let (s, v) = call(&app, "GET", "/api/integrations", None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let jira = v.as_array().unwrap().iter().find(|x| x["integration"] == "jira").expect("jira's");
-    assert_eq!(jira["connectionKind"], "jira");
-    let keys: Vec<&str> = jira["fields"].as_array().unwrap().iter().map(|f| f["key"].as_str().unwrap()).collect();
-    assert_eq!(keys, ["scope", "done"]);
-    assert_eq!(jira["fields"][1]["default"], "Done");
+    let list = v.as_array().unwrap();
+    assert_eq!(list.len(), pdt_core::integration::KNOWN.len(), "{v}");
+    assert!(list.iter().all(|i| i["built"] == false && i["enabled"] == false), "{v}");
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": ["jira"]}))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("built without the Jira integration"), "{v}");
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": []}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = call(&app, "GET", "/api/integrations/project-settings", None).await;
+    assert_eq!((s, v), (StatusCode::OK, json!([])));
+    let (s, v) =
+        call(&app, "POST", "/api/connections", Some(json!({"name": "work", "kind": "jira", "url": "https://x"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Jira integration, which this PDT was built without"), "{v}");
+    let (_, kinds) = call(&app, "GET", "/api/connections/kinds", None).await;
+    let ids: Vec<&str> = kinds.as_array().unwrap().iter().map(|k| k["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["webhook", "http", "mcp"]);
 }

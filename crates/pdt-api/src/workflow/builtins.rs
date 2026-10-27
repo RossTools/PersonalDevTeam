@@ -8,6 +8,7 @@ use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
 use pdt_core::workflow::doc::WorkflowDoc;
 use serde_json::json;
 
+#[derive(Clone, Copy)]
 pub struct Builtin {
     pub id: &'static str,
     /// Enabled when first installed.
@@ -20,8 +21,6 @@ pub const FINISH_MERGED: &str = "finish-merged";
 pub const COMMENTS_TO_AGENT: &str = "comments-to-agent";
 pub const BASE_MOVED: &str = "base-moved";
 pub const PR_FEEDBACK: &str = "pr-feedback";
-pub const JIRA_IMPORT: &str = "jira-import";
-pub const JIRA_DONE: &str = "jira-done";
 pub const LATE_COMMITS: &str = "late-commits";
 pub const PDT_BUG_TRIAGE: &str = "pdt-bug-triage";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
@@ -33,12 +32,23 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin { id: COMMENTS_TO_AGENT, enabled: true, doc: comments_to_agent },
     Builtin { id: BASE_MOVED, enabled: false, doc: base_moved },
     Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
-    Builtin { id: JIRA_IMPORT, enabled: true, doc: jira_import },
-    Builtin { id: JIRA_DONE, enabled: true, doc: jira_done },
     // Enabled when installed only on a host with a project whose repository is the release repository (PDT's own).
     Builtin { id: PDT_BUG_TRIAGE, enabled: false, doc: pdt_bug_triage },
     Builtin { id: GITHUB_ISSUE_DONE, enabled: true, doc: github_issue_done },
 ];
+
+/// PDT's built-ins, then the enabled integrations' ([`crate::integrations::Integration::builtin_workflows`]).
+pub fn all(reg: &crate::integrations::Registry) -> Vec<Builtin> {
+    BUILTINS.iter().copied().chain(reg.builtin_workflows()).collect()
+}
+
+/// Whether a stored workflow is the built-in of an integration that is turned off (or not in this build; PDT-173): an
+/// install from before integrations could be turned off has Jira's, enabled. It can't run (its kinds aren't
+/// registered) nor be deleted, so it is left out of the workflow list and the engine until its integration is on
+/// again, when it comes back as it was.
+pub fn hidden(reg: &crate::integrations::Registry, w: &Workflow) -> bool {
+    w.builtin.as_deref().is_some_and(|id| !all(reg).iter().any(|b| b.id == id))
+}
 
 fn doc(v: serde_json::Value) -> WorkflowDoc {
     serde_json::from_value(v).expect("a built-in workflow is a valid document")
@@ -504,43 +514,6 @@ fn pr_feedback() -> WorkflowDoc {
     }))
 }
 
-fn jira_import() -> WorkflowDoc {
-    let mine = json!([
-        {"left": "{{trigger.assignedToMe}}", "op": "truthy"},
-        {"left": "{{trigger.ticketId}}", "op": "missing"},
-    ]);
-    doc(json!({
-        "name": "Import assigned Jira issues",
-        "description": "An issue in a linked project's Jira scope that is assigned to you and has no ticket yet becomes \
-                        a Draft ticket, linked to it. Does nothing until a project links Jira in its settings.",
-        "nodes": [
-            {"id": "created", "kind": "jira.issue.created", "version": 1, "position": {"x": 0, "y": 0},
-             "config": {"where": mine}},
-            {"id": "updated", "kind": "jira.issue.updated", "version": 1, "position": {"x": 0, "y": 140},
-             "config": {"where": mine}},
-            {"id": "import", "kind": "jira.import", "version": 1, "position": {"x": 320, "y": 70}, "config": {
-                "key": "{{trigger.key}}", "project": "{{trigger.projectId}}"}},
-        ],
-        "edges": [{"from": "created", "to": "import"}, {"from": "updated", "to": "import"}],
-    }))
-}
-
-fn jira_done() -> WorkflowDoc {
-    doc(json!({
-        "name": "Done moves the Jira issue",
-        "description": "Moving a ticket linked to a Jira issue to Done moves the issue to Done too (the project's done \
-                        transition, in its settings). Nothing else goes to Jira unless a workflow says so.",
-        "nodes": [
-            {"id": "done", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 0}, "config": {"where": [
-                {"left": "{{trigger.to}}", "op": "eq", "right": "done"},
-                {"left": "{{trigger.jiraKey}}", "op": "exists"}]}},
-            {"id": "move", "kind": "jira.transition", "version": 1, "position": {"x": 320, "y": 0}, "config": {
-                "ticket": "{{trigger.ticketId}}"}},
-        ],
-        "edges": [{"from": "done", "to": "move"}],
-    }))
-}
-
 /// What the triage step asks of the PM (PDT-154).
 const BUG_TRIAGE_PROMPT: &str = "A bug report from another PDT instance arrived as issue #{{trigger.number}} on \
 {{trigger.repo}}: \"{{trigger.title}}\" by {{trigger.author}} ({{trigger.url}}).\n\n{{trigger.body}}\n\nTriage it \
@@ -710,7 +683,7 @@ pub(crate) async fn ensure_installed(st: &AppState) {
         return;
     }
     let mut ok = true;
-    for b in BUILTINS {
+    for b in &all(&st.registry()) {
         if let Err(e) = install(st, b).await {
             ok = false;
             tracing::warn!(builtin = b.id, error = %e, "could not install a built-in workflow");
@@ -769,7 +742,7 @@ mod tests {
     fn every_builtin_is_valid() {
         for b in BUILTINS {
             let d = (b.doc)();
-            let issues = validate(&d, crate::workflow::catalog::catalog());
+            let issues = validate(&d, crate::integrations::test_registry().catalog());
             let errors: Vec<_> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
             assert!(errors.is_empty(), "{}: {errors:?}", b.id);
         }
@@ -778,7 +751,7 @@ mod tests {
     /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.
     #[test]
     fn pr_notices_leaves_no_notice_untold() {
-        let issues = validate(&pr_notices(), crate::workflow::catalog::catalog());
+        let issues = validate(&pr_notices(), crate::integrations::test_registry().catalog());
         let open: Vec<_> =
             issues.iter().filter(|i| i.code == "open_port" && i.node.as_deref() == Some("tell")).collect();
         assert!(open.iter().all(|i| !i.message.contains("untold")), "{open:?}");

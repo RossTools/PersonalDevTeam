@@ -150,7 +150,7 @@ async fn personas_are_built_in_versioned_and_diffed() {
     let (s, tools) = call(&env.app, "GET", "/api/personas/tools", None).await;
     assert_eq!(s, StatusCode::OK, "{tools}");
     let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, pdt_api::tool_names());
+    assert_eq!(names, env.state.registry().tool_table().names());
     let link = tools.as_array().unwrap().iter().find(|t| t["name"] == "link_tickets").unwrap();
     assert_eq!((link["asks"].as_bool(), link["default"].as_bool()), (Some(true), Some(false)));
 
@@ -566,7 +566,7 @@ async fn an_agent_step_in_a_personal_workflow_runs_in_the_host_project() {
     assert_eq!(work.canonicalize().unwrap(), env._tmp.path().canonicalize().unwrap(), "{s}");
     let instructions =
         std::fs::read_to_string(env.state.data_dir.join("sessions").join(&session).join("instructions.md")).unwrap();
-    for want in ["project manager", "# Your role: PM", "`nothing_ready`", "scryer_query"] {
+    for want in ["project manager", "# Your role: PM", "`nothing_ready`", "`catalog_search`"] {
         assert!(instructions.contains(want), "missing {want:?} in\n{instructions}");
     }
     assert!(inbox(&env).await.is_empty());
@@ -856,7 +856,13 @@ async fn a_late_outcome_after_a_timeout_continues_the_run() {
     );
     assert!(r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "fix" && s["status"] == "succeeded"));
     assert!(inbox(&env).await.is_empty(), "the timed-out item is resolved");
-    // The run has moved on: another outcome finds no step.
+    // The run has moved on: another outcome finds no step. The run's end stops the step's session once its turn is over
+    // (PDT-183); wait for that, so the message reopens it rather than landing in a turn the stop then cuts short.
+    tick_until(&env, "the step's session stopped", || async {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+        (s["status"] == "finished").then_some(s)
+    })
+    .await;
     send(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Again."}"#).await;
     tick_until(&env, "the refusal", || async {
         let said = agent_says(&env, &session).await;

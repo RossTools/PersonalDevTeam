@@ -17,8 +17,8 @@ struct Instance {
     _tmp: tempfile::TempDir,
 }
 
-/// A PDT with one project (`key`) and a `discord_webhook` connection called `discord`.
-async fn instance(key: &str, discord: &str) -> Instance {
+/// A PDT with one project (`key`) and an `http` connection called `alerts`.
+async fn instance(key: &str, alerts: &str) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -33,7 +33,7 @@ async fn instance(key: &str, discord: &str) -> Instance {
     let (s, p) = call(&app, "POST", "/api/projects", Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
     let (s, c) =
-        call(&app, "POST", "/api/connections", Some(json!({"name": discord, "kind": "discord_webhook"}))).await;
+        call(&app, "POST", "/api/connections", Some(json!({"name": alerts, "kind": "http", "url": "https://x"}))).await;
     assert_eq!(s, StatusCode::CREATED, "{c}");
     Instance { app, _state: state, project: p["id"].as_str().unwrap().to_string(), _tmp: tmp }
 }
@@ -41,13 +41,13 @@ async fn instance(key: &str, discord: &str) -> Instance {
 fn alerts_doc(project: &str, persona: &str) -> Value {
     json!({
         "name": "Review alerts",
-        "description": "Reviews a moved ticket and posts to Discord.",
+        "description": "Reviews a moved ticket and posts the outcome.",
         "nodes": [
             {"id": "moved", "kind": "ticket.stage_changed", "version": 1, "config": {"projects": [project]}},
             {"id": "review", "kind": "agent", "version": 1, "config": {"persona": persona, "prompt": "Review it.",
                 "outcomes": [{"id": "approved"}, {"id": "changes_requested"}]}},
-            {"id": "post", "kind": "discord.post", "version": 1, "config": {"connection": "alerts",
-                "content": "{{steps.review.outcome}}"}},
+            {"id": "post", "kind": "http.request", "version": 1, "config": {"connection": "alerts",
+                "method": "POST", "url": "/alerts", "body": {"outcome": "{{steps.review.outcome}}"}}},
             {"id": "done", "kind": "end", "version": 1},
         ],
         "edges": [
@@ -96,11 +96,11 @@ async fn a_pasted_export_imports_disabled_with_its_names_remapped() {
     let doc = &export["workflows"][0]["doc"];
     assert_eq!(doc["nodes"][0]["config"]["projects"], json!([{"$project": "SRC"}]), "{doc}");
     assert!(!text(&export).contains(&a.project), "no project id travels");
-    assert_eq!(export["requires"]["connections"], json!([{"name": "alerts", "kind": "discord_webhook", "tools": []}]));
+    assert_eq!(export["requires"]["connections"], json!([{"name": "alerts", "kind": "any", "tools": []}]));
     assert_eq!(export["requires"]["personas"], json!(["Critic"]));
     assert_eq!(export["requires"]["projects"], json!([{"key": "SRC", "name": "Project SRC"}]));
 
-    // Another PDT: a differently named Discord connection, no Critic, another project.
+    // Another PDT: a differently named connection, no Critic, another project.
     let b = instance("DST", "team-alerts").await;
     let paste = text(&export);
     let (s, c) = import(&b, json!({"text": paste, "check": true})).await;
@@ -201,7 +201,7 @@ async fn several_workflows_travel_in_one_paste() {
 async fn a_bare_document_imports_and_bad_text_is_refused() {
     let b = instance("DST", "alerts").await;
     let doc = json!({"name": "Bare", "nodes": [{"id": "go", "kind": "manual", "version": 1},
-        {"id": "post", "kind": "discord.post", "version": 1, "config": {"connection": "alerts", "content": "hi"}}],
+        {"id": "post", "kind": "http.request", "version": 1, "config": {"connection": "alerts", "url": "/hi"}}],
         "edges": [{"from": "go", "to": "post"}]});
     let (s, c) = import(&b, json!({"text": doc.to_string(), "check": true})).await;
     assert_eq!(s, StatusCode::OK, "{c}");

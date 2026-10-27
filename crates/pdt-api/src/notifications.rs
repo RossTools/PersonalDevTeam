@@ -362,7 +362,7 @@ pub(crate) async fn session_exited(st: &AppState, id: &str, code: i32) {
 }
 
 /// An event just logged (PR and CI news): its notification, or the one it clears.
-pub(crate) async fn on_event(st: &AppState, e: &LogEvent) {
+pub async fn on_event(st: &AppState, e: &LogEvent) {
     let kind = match e.kind.as_str() {
         ev::CI_RUN_FAILED => K::PrCiFailed,
         ev::PR_CONFLICT => K::PrConflict,

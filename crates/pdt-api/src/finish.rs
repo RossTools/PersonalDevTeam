@@ -71,7 +71,7 @@ pub struct FinishResult {
 
 /// Who finished it, when not the user: the workflow and run (recorded on the `moved` event).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct By {
+pub struct By {
     pub workflow_id: String,
     pub workflow_name: String,
     pub run_id: String,

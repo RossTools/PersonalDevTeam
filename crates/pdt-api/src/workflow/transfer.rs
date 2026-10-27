@@ -2,7 +2,6 @@
 //! same text copied or downloaded; importing checks it against this host, applies the user's mapping and creates the
 //! workflows disabled. The pure part is pdt-core `workflow::transfer`.
 
-use super::catalog::catalog;
 use super::routes::{body, checked, conflict, create_workflow, invalid, load, validate_with_tools};
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -25,12 +24,12 @@ use std::path::Path as FsPath;
 use ts_rs::TS;
 
 /// The fields of a kind's config that name a connection (its schema's `x-connection-kind`) or a persona.
-pub(crate) fn ref_fields(kind: &str) -> Vec<RefField> {
+pub(crate) fn ref_fields(reg: &crate::integrations::Registry, kind: &str) -> Vec<RefField> {
     let mut out = vec![];
     if kind == super::nodes::agent::KIND {
         out.push(RefField::Persona { field: "persona".into() });
     }
-    let Some(spec) = catalog().spec(kind) else { return out };
+    let Some(spec) = reg.catalog().spec(kind) else { return out };
     if let Some(props) = spec.config_schema.get("properties").and_then(Value::as_object) {
         for (field, p) in props {
             if let Some(k) = p.get("x-connection-kind").and_then(Value::as_str) {
@@ -91,7 +90,7 @@ pub(crate) async fn export(st: &AppState, ids: &[String]) -> Result<WorkflowExpo
         projects: here.projects.iter().map(|p| NeedProject { key: p.key.clone(), name: p.name.clone() }).collect(),
         ..Default::default()
     };
-    let requires = requires_of(&workflows, &ref_fields, &tool_of, &names);
+    let requires = requires_of(&workflows, &|k: &str| ref_fields(&st.registry(), k), &tool_of, &names);
     Ok(WorkflowExport {
         format: FORMAT.into(),
         format_version: FORMAT_VERSION,
@@ -176,7 +175,7 @@ fn parsed(text: &str) -> Result<WorkflowExport, ApiError> {
 pub(crate) async fn check(st: &AppState, text: &str) -> Result<ImportCheck, ApiError> {
     let e = parsed(text)?;
     let here = local(st).await?;
-    let requires = requires_of(&e.workflows, &ref_fields, &tool_of, &e.requires);
+    let requires = requires_of(&e.workflows, &|k: &str| ref_fields(&st.registry(), k), &tool_of, &e.requires);
     let (connections, personas, projects) = matches(&requires, &here);
     let all = st.store.list_workflows(None).await?;
     let mut warnings = vec![];
@@ -216,7 +215,7 @@ struct Planned {
 pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> Result<ImportResult, ApiError> {
     let e = parsed(&r.text)?;
     let here = local(st).await?;
-    let requires = requires_of(&e.workflows, &ref_fields, &tool_of, &e.requires);
+    let requires = requires_of(&e.workflows, &|k: &str| ref_fields(&st.registry(), k), &tool_of, &e.requires);
     let resolved = resolve(&requires, &r.mapping, &here).map_err(|m| conflict("needs_mapping", m))?;
     let all = st.store.list_workflows(None).await?;
     let mut taken: Vec<String> = all.iter().map(|w| w.name.to_lowercase()).collect();
@@ -228,7 +227,7 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
             continue;
         }
         let mut doc = w.doc.clone();
-        rename_refs(&mut doc, &ref_fields, &resolved.connections, &resolved.personas);
+        rename_refs(&mut doc, &|k: &str| ref_fields(&st.registry(), k), &resolved.connections, &resolved.personas);
         fill_placeholders(&mut doc, &|k| resolved.projects.get(k).cloned().unwrap_or_else(|| k.into()));
         warnings.extend(folder_warnings(&doc));
         let version_of = match &t.version_of {
@@ -256,7 +255,7 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
             }
             taken.push(doc.name.to_lowercase());
         }
-        checked(&doc)
+        checked(st, &doc)
             .map_err(|err| ApiError::new(err.status(), err.code(), format!("{}: {}", w.name, err.message())))?;
         let (scope, project_id) = target_scope(w, &t, &resolved.projects, &here)?;
         planned.push(Planned { doc, scope, project_id, version_of });
@@ -338,7 +337,7 @@ pub(crate) async fn reference_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Is
         message,
     };
     let mut out = vec![];
-    for r in name_refs(doc, &ref_fields) {
+    for r in name_refs(doc, &|k: &str| ref_fields(&st.registry(), k)) {
         match &r.kind {
             Some(kind) => {
                 let need = pdt_core::workflow::transfer::NeedConnection {

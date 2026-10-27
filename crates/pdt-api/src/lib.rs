@@ -1,11 +1,9 @@
 mod activity;
 mod attachments;
 mod bug_reports;
-mod buildkite;
 mod checks;
 mod connection_health;
 mod conversations;
-mod discord;
 mod error;
 mod files;
 mod finish;
@@ -21,7 +19,6 @@ mod host_guard;
 mod identity_guard;
 mod inbox;
 mod integrations;
-mod jira;
 mod local_forge;
 mod local_network;
 pub mod loops;
@@ -42,7 +39,7 @@ mod run_manager;
 mod runconfig;
 mod runs;
 mod scheduler;
-mod scryer;
+pub mod sdk;
 pub mod secrets;
 mod sessions;
 mod slow;
@@ -57,7 +54,6 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::run_activity_ticker;
-pub use buildkite::refresh_buildkite;
 pub use checks::{HostChecks, run_host_checks};
 pub use conversations::{
     IDLE_PARK, conversation_live, expire_pending_messages, park_idle_conversations, recover_conversations,
@@ -73,8 +69,7 @@ pub async fn shutdown_mcp(st: &AppState) {
     st.mcp.shutdown().await;
 }
 pub use host_guard::{AllowedHosts, with_host_guard};
-pub use integrations::tool_names;
-pub use jira::refresh_jira;
+pub use integrations::{Integration, Integrations, Registry, load_enabled as load_enabled_integrations};
 pub use local_network::prompt as prompt_local_network;
 pub use loops::poll_pass;
 pub use notifications::{Notifier, run_notifier, sync as sync_notifications};

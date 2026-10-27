@@ -539,7 +539,7 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Only the references the node's `config` itself holds count: they are filled in as the config is resolved again
 /// against the run's context, so a reference that comes in as data (a trigger's payload, a ticket's text, an earlier
 /// step's output) is neither filled nor an error (`secret::resolve_with_secrets`). `{{secret.<name>}}` must name a
-/// secret; `{"$secret": "<name>"}` naming none is left for the node (a connection, for the Scryer nodes). Nodes that
+/// secret; `{"$secret": "<name>"}` naming none is left for the node (a connection, for an integration's nodes). Nodes that
 /// send text to an agent take no secrets. Without any, `input` is used as it is.
 pub(crate) async fn fill_step(
     cx: &crate::workflow::catalog::StepCx<'_>,
@@ -562,9 +562,7 @@ pub(crate) async fn fill_step(
     }
     let kind = &cx.step.kind;
     let to_agent = kind == "session.send"
-        || crate::workflow::catalog::catalog()
-            .spec(kind)
-            .is_some_and(|s| s.category == crate::workflow::catalog::Category::Agent);
+        || st.registry().catalog().spec(kind).is_some_and(|s| s.category == crate::workflow::catalog::Category::Agent);
     if to_agent {
         return Err(format!("a {kind} step sends its text to an agent: secrets can't go in it"));
     }

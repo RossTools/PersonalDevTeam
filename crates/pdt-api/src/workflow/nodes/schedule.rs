@@ -105,9 +105,7 @@ pub(crate) async fn fire_schedules(st: &AppState) {
         }
         let state = st.store.workflow_state(&wf.id).await.unwrap_or_default();
         for node in nodes {
-            let Ok(cfg) =
-                crate::workflow::catalog::catalog().current_config(node).and_then(|c| parse::<ScheduleConfig>(&c))
-            else {
+            let Ok(cfg) = st.registry().catalog().current_config(node).and_then(|c| parse::<ScheduleConfig>(&c)) else {
                 continue;
             };
             let Ok(schedule) = cfg.schedule() else { continue };

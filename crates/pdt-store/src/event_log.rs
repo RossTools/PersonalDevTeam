@@ -177,19 +177,18 @@ pub(crate) async fn mirror_timeline(
     let null = serde_json::Value::Null;
     let data = data.unwrap_or(&null);
     let s = |k: &str| data.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let (jira_key, github_issue) = if kind == K::Moved {
-        let first = |system: &'static str| {
-            sqlx::query_as::<_, (String,)>(
-                "SELECT key FROM ticket_links_external WHERE ticket_id = ? AND system = ? ORDER BY key LIMIT 1",
-            )
-            .bind(ticket_id)
-            .bind(system)
-        };
-        let jira = first("jira").fetch_optional(&mut *conn).await?.map(|(k,)| k);
-        let github = first("github").fetch_optional(&mut *conn).await?.map(|(k,)| k);
-        (jira, github)
+    // The first issue of each other tracker it is linked to, by system (`github` also as `github_issue`).
+    let external: std::collections::BTreeMap<String, String> = if kind == K::Moved {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT system, MIN(key) FROM ticket_links_external WHERE ticket_id = ? GROUP BY system",
+        )
+        .bind(ticket_id)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect()
     } else {
-        (None, None)
+        Default::default()
     };
     let event = match kind {
         K::Moved => NewLogEvent::new(
@@ -203,8 +202,8 @@ pub(crate) async fn mirror_timeline(
                 from: s("from"),
                 to: s("to"),
                 actor: actor.as_str().into(),
-                jira_key,
-                github_issue,
+                github_issue: external.get("github").cloned(),
+                external,
             },
         ),
         K::Comment => {

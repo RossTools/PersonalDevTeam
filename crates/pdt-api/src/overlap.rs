@@ -118,7 +118,7 @@ async fn index_of(st: &AppState, rows: &[OverlapRow]) -> Result<OverlapIndex, Ap
 }
 
 /// The ticket with its overlap fields filled in.
-pub(crate) async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, ApiError> {
+pub async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, ApiError> {
     index(st, Some(&t.summary.project_id)).await?.apply(&mut t);
     crate::github::apply(st, &mut t);
     crate::parts::apply(st, &mut t).await?;

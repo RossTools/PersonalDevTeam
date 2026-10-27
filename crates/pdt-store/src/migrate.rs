@@ -422,22 +422,16 @@ mod integration_settings_tests {
             json!({"jira": {"connection": "work-jira", "scope": "project = ABC", "done": "Close"},
                    "buildkite": {"connection": "bk", "pipelines": ["app", "e2e"]}})
         );
-        let jira = both.jira().unwrap();
-        assert_eq!(
-            (jira.connection.as_str(), jira.scope.as_str(), jira.done.as_str()),
-            ("work-jira", "project = ABC", "Close")
-        );
-        let bk = both.buildkite().unwrap();
-        assert_eq!(
-            (bk.connection.as_str(), bk.pipelines.as_slice()),
-            ("bk", ["app".to_string(), "e2e".into()].as_slice())
-        );
         let only = s.get_project_settings("jira").await.unwrap();
         assert_eq!(only.integrations.keys().collect::<Vec<_>>(), ["jira"], "an empty connection is no link");
-        assert!(only.buildkite().is_none());
+        assert!(!only.integrations.contains_key("buildkite"));
         assert!(s.get_project_settings("none").await.unwrap().integrations.is_empty());
-        let bad = s.get_project_settings("bad").await.unwrap().buildkite().unwrap();
-        assert!(bad.pipelines.is_empty(), "unreadable pipelines become none rather than failing the migration");
+        let bad = s.get_project_settings("bad").await.unwrap();
+        assert_eq!(
+            bad.integrations["buildkite"]["pipelines"],
+            json!([]),
+            "unreadable pipelines become none rather than failing the migration"
+        );
         s.close().await;
     }
 }
