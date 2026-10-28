@@ -158,6 +158,21 @@ pub(crate) async fn deliver(st: &AppState) {
             continue;
         }
         st.outbox_stuck.lock().unwrap_or_else(|e| e.into_inner()).remove(&sid);
+        // A conversation stopped since it was listed (its step's run was cancelled, PDT-203) takes only what reopens
+        // it: looked at under its lock, so a stop can't land between the look and the send. One that is busy (a stop,
+        // a restart) waits for a later tick, so the engine never waits on it.
+        let _session = if conversation {
+            let Some(g) = st.try_lock_session(&sid) else { continue };
+            Some(g)
+        } else {
+            None
+        };
+        if conversation
+            && !list.iter().any(|m| m.by_user || m.reopens)
+            && !matches!(st.store.get_session(&sid).await, Ok(Some(s)) if s.status == SessionStatus::Running)
+        {
+            continue;
+        }
         if !list.iter().any(|m| m.by_user) {
             let slots = match free {
                 Some(n) => n,

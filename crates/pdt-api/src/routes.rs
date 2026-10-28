@@ -280,6 +280,13 @@ impl AppState {
         lock.lock_owned().await
     }
 
+    /// The session's lock if nobody holds it now.
+    pub(crate) fn try_lock_session(&self, id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock =
+            self.session_locks.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone();
+        lock.try_lock_owned().ok()
+    }
+
     pub(crate) fn resume_pending(&self, id: &str) -> bool {
         self.pending_resume.lock().unwrap_or_else(|e| e.into_inner()).contains(id)
     }
