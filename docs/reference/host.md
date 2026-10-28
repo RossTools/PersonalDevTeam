@@ -164,6 +164,10 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 - The web UI reloads itself when `/api/host/update` reports a different `current` version than it loaded against
   (polled every 2 s while downloading/installing, else every 60 s and on window focus); index.html is `no-cache`, so
   the reload gets the new bundle.
+- A page that still runs the old bundle (a phone tab woken before that check runs) can't load a lazy view's chunk
+  the new build no longer has: Vite's `vite:preloadError` reloads the page then, at most once every 30 s
+  (web/src/common/staleBuild.ts, PDT-209). Otherwise the view's error boundary says a newer version is out, with
+  Reload.
 
 ### Renaming or moving the release repository
 

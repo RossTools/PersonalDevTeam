@@ -77,6 +77,69 @@ function triage(items: InboxItem[], itemId: string, routes: Parameters<typeof st
   return { calls, onMove, onList };
 }
 
+// Real-shaped items, as `GET /api/inbox` returns them (PDT-209): an `ask_user` question from a workflow step, and an
+// approval wrapping Claude's AskUserQuestion request, with the session's request event in its body.
+const asked = item('01a182c0-9fea-719f-b79e-2d6418ebc334', {
+  kind: 'question', group: 'question', attemptId: 'a1', sessionId: 'sess', personaId: 'qa', personaName: 'QA',
+  title: 'PDT-7 QA: one point needs a fork with the signing secrets. How should I treat it?',
+  body: { questions: [{
+    choices: ['Pass now: I will do the dry run myself', 'Hold: I will do the dry run first', 'Fail until the dry run has been done'],
+    question: 'PDT-7 QA: everything I can check locally passes. One point needs a fork with the signing secrets. How should I treat it?',
+  }] },
+});
+const askInput = { questions: [{ question: 'Which library?', header: 'Library', multiSelect: false,
+  options: [{ label: 'zod', description: 'Schemas' }, { label: 'valibot', description: 'Smaller' }] }] };
+const asking = item('approval:sess:req-9', {
+  kind: 'approval', group: 'approval', attemptId: 'a1', sessionId: 'sess', ticketKey: null, ticketTitle: null, title: 'AskUserQuestion',
+  body: { requestId: 'req-9', sessionTitle: 'Coder · PDT-7', tool: 'AskUserQuestion', description: null, input: askInput, diff: null,
+    request: { type: 'request', id: 'req-9', requestKind: 'question', tool: 'AskUserQuestion', title: '', input: askInput, canAlways: false, state: 'open' } },
+  choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+});
+
+/** The phone's Inbox as the shell shows it: the list, and an item once one is tapped. */
+function PhoneInbox({ items }: { items: InboxItem[] }) {
+  const [id, setId] = useState<string | null>(null);
+  return id
+    ? <PhoneInboxItem items={items} updates={[]} itemId={id} onMove={setId} onList={() => setId(null)} />
+    : <PhoneInboxList items={items} updates={[]} onOpen={setId} onReadAll={() => {}} onSettings={() => {}} />;
+}
+
+describe('phone inbox: opening a question (PDT-209)', () => {
+  it("opens an agent's ask_user question from the list and answers it", async () => {
+    const calls = stubApi({ 'POST /api/notifications/read-all': undefined, [`POST /api/inbox/${asked.id}/answer`]: {} });
+    renderWithQuery(<PhoneInbox items={[asked, asking]} />);
+    await userEvent.click(screen.getByText(asked.title));
+    expect(screen.getByRole('heading', { name: asked.title })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Hold: I will do the dry run first' }));
+    await userEvent.click(bar().getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(answered(calls)).toEqual({ answers: ['Hold: I will do the dry run first'] }));
+  });
+
+  it("opens an approval wrapping the agent's AskUserQuestion from the list and answers it in its session", async () => {
+    const calls = stubApi({ 'POST /api/notifications/read-all': undefined, 'POST /api/sessions/sess/requests/req-9': undefined });
+    renderWithQuery(<PhoneInbox items={[asked, asking]} />);
+    await userEvent.click(screen.getByText('AskUserQuestion'));
+    expect(screen.getByText('Which library?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /valibot/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/req-9')?.body)
+      .toEqual({ answer: { type: 'question', answers: { 'Which library?': ['valibot'] } } }));
+  });
+
+  it('shows Something went wrong, not a blank page, when an item fails to render', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A malformed item: `choices` missing throws while it renders.
+    const broken = item('bad', { title: 'Broken gate', choices: null as unknown as InboxItem['choices'] });
+    const { onList } = triage([broken], 'bad');
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong');
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(error).toHaveBeenCalledWith('A view failed to render:', expect.any(TypeError), expect.anything());
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Inbox' }));
+    expect(onList).toHaveBeenCalled();
+    error.mockRestore();
+  });
+});
+
 describe('phone inbox model', () => {
   it('titles an item by its kind and place in the list', () => {
     expect(triageTitle([stalled, approval, question, accept], 'approval:sess:r1')).toBe('Approval · 2 of 4');

@@ -65,6 +65,7 @@ import { useNotesFilters } from '../notes/useNotes';
 import type { Whose } from '../notes/model';
 import { useInbox } from '../inbox/useInbox';
 import { triageTitle } from '../inbox/model';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
 import { useReadAllUpdates, useUpdates } from '../notifications/queries';
@@ -888,6 +889,7 @@ export function AppShell() {
         )}
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
+            <ErrorBoundary resetKey={loc} onBack={() => go(viewRoute('inbox'))}>
             {phone && view === 'sessions' && !phoneList && overviewOpen ? (
               <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
             ) : phoneList && view === 'inbox' ? (
@@ -969,6 +971,7 @@ export function AppShell() {
             ) : (
               <EmptyState>{ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}</EmptyState>
             )}
+            </ErrorBoundary>
           </div>
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}

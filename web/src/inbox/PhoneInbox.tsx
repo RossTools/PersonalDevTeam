@@ -9,6 +9,7 @@ import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 import { Markdown } from '../common/Markdown';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { SecretRequest } from './SecretRequest';
@@ -174,17 +175,18 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <TriageItem
-        key={item.id}
-        item={item}
-        busy={busy}
-        className={cn('animate-in duration-200 motion-reduce:animate-none', dir === 1 ? 'slide-in-from-right' : 'slide-in-from-left')}
-        onAnswer={answer}
-        onApproved={() => finish(item)}
-        onOpenSession={() => item.sessionId && item.projectId && openSession({ id: item.sessionId, projectId: item.projectId })}
-        onOpenTicket={() => item.ticketId && item.projectId && openTicket({ id: item.ticketId, projectId: item.projectId })}
-        onDismiss={() => void dismiss()}
-      />
+      <ErrorBoundary key={item.id} onBack={onList}>
+        <TriageItem
+          item={item}
+          busy={busy}
+          className={cn('animate-in duration-200 motion-reduce:animate-none', dir === 1 ? 'slide-in-from-right' : 'slide-in-from-left')}
+          onAnswer={answer}
+          onApproved={() => finish(item)}
+          onOpenSession={() => item.sessionId && item.projectId && openSession({ id: item.sessionId, projectId: item.projectId })}
+          onOpenTicket={() => item.ticketId && item.projectId && openTicket({ id: item.ticketId, projectId: item.projectId })}
+          onDismiss={() => void dismiss()}
+        />
+      </ErrorBoundary>
     </div>
   );
 }
