@@ -31,6 +31,53 @@ describe('MarkdownEditor', () => {
     expect(editorText(box)).toBe('- [x] done\n- [ ] ');
   });
 
+  // PDT-208: Enter at the end of an item puts the next one on the very next line, with the caret after its marker, never
+  // after a blank line (lang-markdown adds one to a loose list even with `nonTightLists: false`).
+  it.each([
+    ['a tight list', '- one\n- two', '- one\n- two\n- '],
+    ['a list with a blank line between its items', '- one\n\n- two', '- one\n\n- two\n- '],
+    ['a list with a blank line further down', '- one\n- two\n\n- three', '- one\n- two\n\n- three\n- '],
+    ['a trailing space', '- one\n- two ', '- one\n- two\n- '],
+    ['a numbered list', '1. one\n\n2. two', '1. one\n\n2. two\n3. '],
+    ['a task list', '- [ ] one\n\n- [x] two', '- [ ] one\n\n- [x] two\n- [ ] '],
+    ['a nested list', '- one\n\n  - a\n\n  - b', '- one\n\n  - a\n\n  - b\n  - '],
+    ['a list in a quote', '> - one\n>\n> - two', '> - one\n>\n> - two\n> - '],
+  ])('continues %s on the very next line', (_, text, after) => {
+    const box = editor(text);
+    press(box, 'Enter');
+    expect(editorText(box)).toBe(after);
+    expect(caret(box)).toBe(after.length);
+  });
+
+  it('continues an item that is not the last line of the document on the very next line', () => {
+    render(<MarkdownEditor label="Note" value={'- one\n\n- two\n\nAfter'} onChange={vi.fn()} autoFocus={12} />);
+    const box = screen.getByRole('textbox', { name: 'Note' });
+    press(box, 'Enter');
+    expect(editorText(box)).toBe('- one\n\n- two\n- \n\nAfter');
+    expect(caret(box)).toBe(15);
+  });
+
+  it('continues a loose list with Windows line endings on the very next line', () => {
+    const onChange = vi.fn();
+    const box = editor('- one\r\n\r\n- two', onChange);
+    press(box, 'Enter');
+    expect(onChange).toHaveBeenLastCalledWith('- one\r\n\r\n- two\r\n- ');
+    expect(caret(box)).toBe(15);
+  });
+
+  it('continues a list at the end of a long text, parsed only part of the way yet', () => {
+    const text = `${'A paragraph of text, *with* some **marks** in it.\n\n'.repeat(300)}- one\n- two`;
+    const box = editor(text);
+    press(box, 'Enter');
+    expect(editorText(box).slice(-15)).toBe('\n- one\n- two\n- ');
+  });
+
+  it('ends a loose list on Enter in an empty item', () => {
+    const box = editor('- one\n\n- two\n- ');
+    press(box, 'Enter');
+    expect(editorText(box)).toBe('- one\n\n- two\n');
+  });
+
   it('ends the list on Enter in an empty item', () => {
     const box = editor('- one\n- ');
     press(box, 'Enter');
