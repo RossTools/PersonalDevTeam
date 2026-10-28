@@ -88,15 +88,7 @@ async fn run() -> anyhow::Result<()> {
     }
     state.owner_from_env = cfg.owner_login.clone();
     state.refresh_owner().await;
-    state.secrets = if cfg.memory_secrets {
-        std::sync::Arc::new(pdt_api::secrets::MemorySecretStore::default())
-    } else {
-        // A keychain waiting on an approval prompt must never hang pdtd (or its health check).
-        std::sync::Arc::new(pdt_api::secrets::TimeLimited::new(
-            std::sync::Arc::new(pdt_api::secrets::KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE)),
-            std::time::Duration::from_secs(5),
-        ))
-    };
+    (state.secrets, state.secret_store) = secret_store(&cfg).await;
     state.listen_port = cfg.port;
     state.instance = pdt_core::instance::InstanceInfo::new(cfg.profile, cfg.port);
     state.remote_https_port = cfg.remote_https_port;
@@ -259,6 +251,75 @@ async fn run() -> anyhow::Result<()> {
     store.close().await;
     tracing::info!("stopped");
     Ok(())
+}
+
+/// The secret store: the OS keychain (bounded by a timeout, so an approval prompt never hangs pdtd), or on Linux
+/// without a Secret Service the data folder's file (PDT-197); memory for tests and rehearsals. On Linux the choice
+/// sticks to this data folder (`StoreHistory`): the file once it exists, the keychain once it was chosen.
+async fn secret_store(
+    cfg: &config::Config,
+) -> (std::sync::Arc<dyn pdt_api::secrets::SecretStore>, pdt_api::secrets::SecretStoreInfo) {
+    use pdt_api::secrets::{
+        FileSecretStore, KeyringStore, MemorySecretStore, SecretBackend, SecretStoreInfo, StoreHistory, TimeLimited,
+        choose_backend, keychain_marker, secrets_file,
+    };
+    let forced = if cfg.memory_secrets {
+        Some("memory")
+    } else if cfg.file_secrets {
+        Some("file")
+    } else {
+        None
+    };
+    let linux = cfg!(target_os = "linux");
+    let (file, marker) = (secrets_file(&cfg.data_dir), keychain_marker(&cfg.data_dir));
+    let history = StoreHistory { file: file.is_file(), keychain: marker.is_file() };
+    // Asked only on Linux, and not once secrets went to the file; a D-Bus that does not answer counts as no Secret
+    // Service. A keychain used before is still asked, to report one that does not answer.
+    let reachable = || async {
+        let probe = tokio::task::spawn_blocking(|| KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE).reachable());
+        tokio::time::timeout(Duration::from_secs(5), probe).await.ok().and_then(Result::ok).unwrap_or(false)
+    };
+    let service = if linux && forced.is_none() && !history.file { reachable().await } else { true };
+    let backend = choose_backend(linux, forced, history, || service);
+    match backend {
+        SecretBackend::Memory => {
+            (std::sync::Arc::new(MemorySecretStore::default()), SecretStoreInfo { backend, path: None, problem: None })
+        }
+        SecretBackend::File => {
+            tracing::warn!(file = %file.display(), "secrets are kept in a file in the data folder that only this user \
+                can read (no Secret Service was reachable when this data folder first stored one)");
+            let store = FileSecretStore::new(file.clone());
+            // Made now, so the next start keeps using it even if a Secret Service turns up.
+            if let Err(e) = store.ensure() {
+                tracing::error!("{e}");
+            }
+            let info = SecretStoreInfo { backend, path: Some(file.to_string_lossy().into_owned()), problem: None };
+            (std::sync::Arc::new(store), info)
+        }
+        SecretBackend::Keychain => {
+            let mut problem = None;
+            if linux && forced.is_none() {
+                if service {
+                    if !history.keychain
+                        && let Err(e) = std::fs::write(&marker, b"")
+                    {
+                        tracing::error!(file = %marker.display(), "could not record that secrets use the keychain: {e}");
+                    }
+                } else {
+                    let why = "the Secret Service (system keyring) this data folder uses did not answer at startup: \
+                               it may not be running yet, or be locked. Secrets cannot be read until it answers; PDT \
+                               keeps trying it and never moves them to a file.";
+                    tracing::warn!("{why}");
+                    problem = Some(why.to_string());
+                }
+            }
+            let store = TimeLimited::new(
+                std::sync::Arc::new(KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE)),
+                Duration::from_secs(5),
+            );
+            (std::sync::Arc::new(store), SecretStoreInfo { backend, path: None, problem })
+        }
+    }
 }
 
 /// An upgrade rehearsal (`PDT_REHEARSAL`, PDT-179): the copy is migrated and served for `scripts/rehearse-upgrade.sh`

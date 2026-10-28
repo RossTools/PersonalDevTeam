@@ -1,6 +1,7 @@
 // Settings → Secrets (PDT-158): secrets agents and workflows can use but never see. A value goes to this machine's
 // keychain and is never shown again; the list shows each secret's name, who may use it and its last use, and each
-// secret's uses on request.
+// secret's uses on request. It also says where values are kept: the system keyring, or (Linux without a Secret
+// Service, PDT-197) a file in the data folder.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Checkbox, Dialog, Field, Input, Page, Section, Skeleton, Textarea, relativeTime, useConfirm } from '@ui';
@@ -131,6 +132,28 @@ function Row({ s, names, onEdit, onDelete }: {
   );
 }
 
+/** Where this machine keeps secret values. */
+function StoreNote() {
+  const store = useQuery({ queryKey: [...secretsKey, 'store'], queryFn: api.secretStore });
+  if (!store.data) return null;
+  if (store.data.backend === 'file') {
+    return (
+      <Alert tone="warning">
+        Secrets: file in the data folder. No system keyring (Secret Service) is reachable on this machine, so values are kept in
+        {' '}<code>{store.data.path}</code>, which only your user can read.
+      </Alert>
+    );
+  }
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">
+        Secrets: {store.data.backend === 'keychain' ? 'system keyring' : 'in memory (gone when PDT stops)'}
+      </p>
+      {store.data.problem && <Alert tone="warning">{store.data.problem}</Alert>}
+    </>
+  );
+}
+
 export function SecretsPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -161,6 +184,7 @@ export function SecretsPage() {
       title="Secrets"
       description="API keys, tokens and passwords agents and workflows can use but never see. Values are kept in this machine's keychain and replaced by [secret:NAME] wherever PDT stores, shows or logs them."
     >
+      <StoreNote />
       {list.error && <Alert tone="error">Secrets could not be loaded: {list.error.message}</Alert>}
       {list.isLoading && <Skeleton label="Loading secrets" className="h-24" />}
       {!list.isLoading && (

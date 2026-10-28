@@ -183,6 +183,11 @@ pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Secret>>
     Ok(Json(st.store.list_secrets().await?))
 }
 
+/// `GET /api/secrets/store`: where values are kept (the keychain, or the data folder's file on Linux without one).
+pub(crate) async fn store_info(State(st): State<AppState>) -> Json<crate::secrets::SecretStoreInfo> {
+    Json(st.secret_store.clone())
+}
+
 /// `POST /api/secrets`.
 pub(crate) async fn create(
     State(st): State<AppState>,
@@ -274,6 +279,7 @@ pub(crate) fn router() -> axum::Router<AppState> {
     use axum::routing::get;
     axum::Router::new()
         .route("/secrets", get(list).post(create))
+        .route("/secrets/store", get(store_info))
         .route("/secrets/{id}", axum::routing::patch(patch).delete(delete))
         .route("/secrets/{id}/uses", get(uses))
 }

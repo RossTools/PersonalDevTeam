@@ -18,6 +18,8 @@ pub struct Config {
     pub owner_login: Option<String>,
     /// `PDT_SECRET_STORE=memory`: keep secrets in memory (tests); otherwise the OS keychain.
     pub memory_secrets: bool,
+    /// `PDT_SECRET_STORE=file` (Linux only): the data folder's secrets file even when a Secret Service is there.
+    pub file_secrets: bool,
     /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
     /// nothing, so they never reach the machine's Tailscale).
     pub tailscale_bin: Option<PathBuf>,
@@ -113,6 +115,7 @@ impl Config {
         }
         // A rehearsal never reads the keychain: the copy's secrets are the real instance's.
         let memory_secrets = rehearsal || lookup("PDT_SECRET_STORE").as_deref() == Some("memory");
+        let file_secrets = !memory_secrets && lookup("PDT_SECRET_STORE").as_deref() == Some("file");
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
         let github_offline = lookup("PDT_GITHUB_OFFLINE").as_deref() == Some("1");
         let github_client_id = lookup("PDT_GITHUB_CLIENT_ID").filter(|c| !c.trim().is_empty());
@@ -141,6 +144,7 @@ impl Config {
             allowed_hosts,
             owner_login,
             memory_secrets,
+            file_secrets,
             tailscale_bin,
             github_offline,
             github_client_id,
@@ -303,7 +307,9 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!((c.owner_login.as_deref(), c.memory_secrets), (Some("me@example.com"), true));
+        assert_eq!((c.owner_login.as_deref(), c.memory_secrets, c.file_secrets), (Some("me@example.com"), true, false));
+        let c = Config::from_lookup(lookup(&[("PDT_SECRET_STORE", "file")]), Some("/d".into()), None).unwrap();
+        assert_eq!((c.memory_secrets, c.file_secrets), (false, true));
     }
 
     #[test]

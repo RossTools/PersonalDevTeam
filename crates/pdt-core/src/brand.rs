@@ -16,6 +16,8 @@ pub const HOST_BIN: &str = "pdt-host";
 pub const HOST_LABEL: &str = "dev.personaldevteam.host";
 /// Name of the per-user autostart entry for pdt-host (Windows `HKCU\…\Run` value).
 pub const HOST_AUTOSTART_NAME: &str = "Personal Dev Team host";
+/// The systemd user unit that runs pdt-host (Linux): `~/.config/systemd/user/<this>`.
+pub const HOST_SYSTEMD_UNIT: &str = "pdt-host.service";
 /// launchd label of the per-user LaunchAgent that starts the tray app at login (macOS, PDT-148).
 pub const TRAY_LABEL: &str = "dev.personaldevteam.tray";
 /// Name of the per-user autostart entry for the tray app (Windows `HKCU\…\Run` value, PDT-148).

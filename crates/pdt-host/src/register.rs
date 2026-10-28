@@ -1,8 +1,12 @@
 //! Starting pdt-host at login (spec §3.1): a per-user launchd LaunchAgent on macOS (RunAtLoad, KeepAlive), and a
-//! per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on Windows (decision 14; no admin needed).
+//! per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on Windows (decision 14; no admin needed),
+//! and a systemd user service on Linux (`~/.config/systemd/user/pdt-host.service`, enabled; with linger it starts at
+//! boot, PDT-197).
 //! On Windows pdt-host runs from a copy in the data folder, so the installer can replace the install folder while it
 //! runs. On macOS it runs from the app bundle: a bundle can be swapped while its programs run, and a login item whose
 //! program is rewritten after every update looks like malware hiding in a persistence item (PDT-40, SentinelOne).
+//! On Linux it runs from the install folder (the tarball's, or an AppImage's payload in `<data dir>/app`), which an
+//! update swaps as a whole.
 //!
 //! The tray app's own login item is in [`crate::tray_login`]; uninstalling removes it too.
 //!
@@ -10,7 +14,9 @@
 
 use crate::config::HostConfig;
 use crate::health::{Probe, probe, request_shutdown};
-use pdt_core::brand::{APP_BUNDLE_ID, DAEMON_BIN, HOST_AUTOSTART_NAME, HOST_BIN, HOST_LABEL};
+use pdt_core::brand::{
+    APP_BUNDLE_ID, DAEMON_BIN, HOST_AUTOSTART_NAME, HOST_BIN, HOST_LABEL, HOST_SYSTEMD_UNIT, PRODUCT_NAME,
+};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,9 +32,10 @@ pub fn bundled_host_path(install_dir: &Path) -> PathBuf {
     install_dir.join(format!("{HOST_BIN}{}", std::env::consts::EXE_SUFFIX))
 }
 
-/// The program the login registration starts: the bundle's pdt-host on macOS, the data folder copy on Windows.
+/// The program the login registration starts: the bundle's (macOS) or install folder's (Linux) pdt-host, the data
+/// folder copy on Windows.
 pub fn registered_program(os: Os, cfg: &HostConfig) -> PathBuf {
-    if os == Os::Mac { bundled_host_path(&cfg.install_dir) } else { installed_host_path(&cfg.data_dir) }
+    if os == Os::Windows { installed_host_path(&cfg.data_dir) } else { bundled_host_path(&cfg.install_dir) }
 }
 
 pub fn launch_agent_path(home: &Path) -> PathBuf {
@@ -88,10 +95,66 @@ pub fn run_key_command(program: &Path, install_dir: &Path) -> String {
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
+/// The systemd unit runs pdt-host with this variable set to `systemd`: after an update that changes pdt-host it then
+/// just exits and systemd starts the new one, as launchd does on macOS.
+pub const SERVICE_ENV: &str = "PDT_HOST_SERVICE";
+
+/// pdt-host's exit status when another pdt-host already supervises the data folder. The unit does not restart it
+/// then (`RestartPreventExitStatus`), so it never loops against a pdt-host the tray started.
+pub const ALREADY_RUNNING_EXIT: i32 = 3;
+
+/// Where systemd reads the user's own units: `<config dir>/systemd/user/pdt-host.service` (`~/.config/…`).
+pub fn systemd_unit_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("systemd").join("user").join(HOST_SYSTEMD_UNIT)
+}
+
+/// One word of an `ExecStart` line: quoted, with `\` and `"` escaped, and `%` (specifiers) and `$` (variables)
+/// doubled so systemd takes them literally.
+fn systemd_word(s: &str) -> String {
+    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%").replace('$', "$$");
+    format!("\"{escaped}\"")
+}
+
+/// The user service: started with the user's systemd (at login, or at boot with linger), restarted whenever it exits.
+/// `KillMode=process`: stopping or restarting pdt-host leaves pdtd (and the agents it runs) running, and the next
+/// pdt-host adopts it, as on macOS.
+pub fn systemd_unit(program: &Path, install_dir: &Path) -> String {
+    format!(
+        "[Unit]
+Description={PRODUCT_NAME} host ({HOST_BIN})
+
+[Service]
+Type=simple
+ExecStart={program} run --install-dir {dir}
+Environment={SERVICE_ENV}=systemd
+Restart=always
+RestartSec=2
+RestartPreventExitStatus={ALREADY_RUNNING_EXIT}
+KillMode=process
+
+[Install]
+WantedBy=default.target
+",
+        program = systemd_word(&program.to_string_lossy()),
+        dir = systemd_word(&install_dir.to_string_lossy()),
+    )
+}
+
+fn systemctl<I, S>(args: I) -> Command
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("--user").args(args.into_iter().map(Into::into));
+    cmd
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
     Mac,
     Windows,
+    Linux,
     Other,
 }
 
@@ -101,6 +164,8 @@ impl Os {
             Os::Mac
         } else if cfg!(windows) {
             Os::Windows
+        } else if cfg!(target_os = "linux") {
+            Os::Linux
         } else {
             Os::Other
         }
@@ -138,11 +203,13 @@ impl Runner for System {
     }
 }
 
-/// Where `install` registers: the platform, the executable to copy and the home folder (macOS).
+/// Where `install` registers: the platform, the executable to copy, the home folder (macOS) and the config folder
+/// (Linux: `$XDG_CONFIG_HOME`, `~/.config`).
 pub struct Target<'a> {
     pub os: Os,
     pub exe: &'a Path,
     pub home: Option<&'a Path>,
+    pub config: Option<&'a Path>,
     /// macOS: take over from a pdt-host that is already running (another copy of the app, PDT-51): its launchd job is
     /// booted out, and it is stopped if it still runs, before this one is bootstrapped. pdtd keeps running (its own
     /// process group); the new pdt-host adopts it.
@@ -215,13 +282,14 @@ where
 /// own pdt-host and removes the copy older versions made.
 pub fn install(cfg: &HostConfig, replace: bool) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let home = std::env::home_dir();
-    install_with(cfg, &Target { os: Os::current(), exe: &exe, home: home.as_deref(), replace }, &mut System)
+    let (home, config) = (std::env::home_dir(), dirs::config_dir());
+    let target = Target { os: Os::current(), exe: &exe, home: home.as_deref(), config: config.as_deref(), replace };
+    install_with(cfg, &target, &mut System)
 }
 
 pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) -> Result<(), String> {
     if target.os == Os::Other {
-        return Err("registration is supported on macOS and Windows only".into());
+        return Err("registration is supported on macOS, Windows and Linux only".into());
     }
     if cfg.dev {
         return Err("only the stable profile is started at login; unset PDT_PROFILE to register pdt-host".into());
@@ -287,6 +355,36 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
                 runner.spawn(cmd)?;
             }
         }
+        Os::Linux => {
+            if !program.is_file() {
+                return Err(format!("{} does not exist", program.display()));
+            }
+            let unit = systemd_unit_path(target.config.ok_or("no config folder")?);
+            std::fs::create_dir_all(unit.parent().expect("systemd/user")).map_err(|e| e.to_string())?;
+            std::fs::write(&unit, systemd_unit(&program, &cfg.install_dir)).map_err(|e| e.to_string())?;
+            if !runner.status(systemctl(["daemon-reload"]))? {
+                return Err("systemctl --user daemon-reload failed (is there a systemd user instance? `loginctl \
+                            enable-linger` starts one at boot)"
+                    .into());
+            }
+            if running && target.replace {
+                // Stopping the service stops a pdt-host systemd runs; one the tray started is killed.
+                let _ = runner.status(systemctl(["stop", HOST_SYSTEMD_UNIT]));
+                if !stop_running_host(cfg, target.os, runner) {
+                    return Err("the running pdt-host did not stop".into());
+                }
+            }
+            // A pdt-host that runs already (the service's, or one the tray started) keeps running: the service is
+            // only enabled, for the next boot or login.
+            let enable = if running && !target.replace {
+                systemctl(["enable", HOST_SYSTEMD_UNIT])
+            } else {
+                systemctl(["enable", "--now", HOST_SYSTEMD_UNIT])
+            };
+            if !runner.status(enable)? {
+                return Err(format!("systemctl --user enable {HOST_SYSTEMD_UNIT} failed"));
+            }
+        }
         Os::Other => unreachable!(),
     }
     Ok(())
@@ -350,10 +448,19 @@ pub fn migrate_launch_agent(cfg: &HostConfig, home: &Path) -> Result<bool, Strin
 /// Stops this data folder's pdt-host and pdtd (so the install folder can be removed), then removes the login
 /// registration.
 pub fn uninstall(cfg: &HostConfig) -> Result<(), String> {
-    uninstall_with(cfg, Os::current(), std::env::home_dir().as_deref(), &mut System)
+    let (home, config) = (std::env::home_dir(), dirs::config_dir());
+    uninstall_with(cfg, Os::current(), Dirs { home: home.as_deref(), config: config.as_deref() }, &mut System)
 }
 
-pub fn uninstall_with(cfg: &HostConfig, os: Os, home: Option<&Path>, runner: &mut dyn Runner) -> Result<(), String> {
+/// The user's folders `uninstall` looks in: home (macOS) and config (Linux).
+#[derive(Clone, Copy, Default)]
+pub struct Dirs<'a> {
+    pub home: Option<&'a Path>,
+    pub config: Option<&'a Path>,
+}
+
+pub fn uninstall_with(cfg: &HostConfig, os: Os, dirs: Dirs, runner: &mut dyn Runner) -> Result<(), String> {
+    let home = dirs.home;
     if cfg.dev {
         return Err("only the stable profile is registered at login; unset PDT_PROFILE to unregister pdt-host".into());
     }
@@ -361,6 +468,10 @@ pub fn uninstall_with(cfg: &HostConfig, os: Os, home: Option<&Path>, runner: &mu
     if os == Os::Mac {
         let domain = launchd_domain(runner)?;
         let _ = runner.status(launchctl(["bootout".to_string(), format!("{domain}/{HOST_LABEL}")]));
+    }
+    if os == Os::Linux {
+        // Stops a pdt-host systemd runs; pdtd is left (KillMode=process) and stopped below.
+        let _ = runner.status(systemctl(["disable", "--now", HOST_SYSTEMD_UNIT]));
     }
     stop_host(cfg, os, runner);
     stop_pdtd(cfg);
@@ -374,6 +485,12 @@ pub fn uninstall_with(cfg: &HostConfig, os: Os, home: Option<&Path>, runner: &mu
             let mut reg = Command::new("reg");
             reg.args(["delete", RUN_KEY, "/v", HOST_AUTOSTART_NAME, "/f"]);
             let _ = runner.status(reg);
+        }
+        Os::Linux => {
+            if let Some(config) = dirs.config {
+                let _ = std::fs::remove_file(systemd_unit_path(config));
+                let _ = runner.status(systemctl(["daemon-reload"]));
+            }
         }
         Os::Other => {}
     }
@@ -465,7 +582,7 @@ mod tests {
         assert!(err.contains("stable profile"), "{err}");
         assert!(r.ran.is_empty());
         assert!(!installed_host_path(&s.cfg.data_dir).exists());
-        assert!(uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).is_err());
+        assert!(uninstall_with(&s.cfg, Os::Windows, s.dirs(), &mut r).is_err());
         assert!(r.ran.is_empty());
     }
 
@@ -511,6 +628,13 @@ mod tests {
         cfg: HostConfig,
         exe: PathBuf,
         home: PathBuf,
+        config: PathBuf,
+    }
+
+    impl Setup {
+        fn dirs(&self) -> Dirs<'_> {
+            Dirs { home: Some(&self.home), config: Some(&self.config) }
+        }
     }
 
     fn setup() -> Setup {
@@ -528,11 +652,12 @@ mod tests {
         // Never the stable port: uninstall probes it.
         cfg.port = free_port();
         cfg.stop_timeout = Duration::from_millis(300);
-        Setup { _tmp: tmp, cfg, exe, home }
+        let config = home.join(".config");
+        Setup { _tmp: tmp, cfg, exe, home, config }
     }
 
     fn target(s: &Setup, os: Os) -> Target<'_> {
-        Target { os, exe: &s.exe, home: Some(&s.home), replace: false }
+        Target { os, exe: &s.exe, home: Some(&s.home), config: Some(&s.config), replace: false }
     }
 
     /// Holds the data folder's pdt-host lock, as a running pdt-host does.
@@ -797,8 +922,93 @@ mod tests {
     fn mac_uninstall_removes_the_old_copy() {
         let s = setup();
         let copy = old_copy(&s);
-        uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut Recorder::default()).unwrap();
+        uninstall_with(&s.cfg, Os::Mac, s.dirs(), &mut Recorder::default()).unwrap();
         assert!(!copy.exists());
+    }
+
+    #[test]
+    fn the_systemd_unit_runs_the_install_folders_host_and_survives_its_restarts() {
+        let u = systemd_unit(Path::new("/home/me/opt/p d t/pdt-host"), Path::new("/home/me/opt/p d t"));
+        assert!(
+            u.contains("ExecStart=\"/home/me/opt/p d t/pdt-host\" run --install-dir \"/home/me/opt/p d t\"\n"),
+            "{u}"
+        );
+        for line in [
+            "Description=Personal Dev Team host (pdt-host)",
+            "Type=simple",
+            "Environment=PDT_HOST_SERVICE=systemd",
+            "Restart=always",
+            "RestartPreventExitStatus=3",
+            "KillMode=process",
+            "WantedBy=default.target",
+        ] {
+            assert!(u.lines().any(|l| l == line), "{line} missing from\n{u}");
+        }
+        // Specifiers, variables, quotes and backslashes are taken literally.
+        let u = systemd_unit(Path::new(r#"/x/50%$HOME"q\pdt-host"#), Path::new("/x"));
+        assert!(u.contains(r#"ExecStart="/x/50%%$$HOME\"q\\pdt-host" run"#), "{u}");
+        assert_eq!(
+            systemd_unit_path(Path::new("/home/me/.config")),
+            Path::new("/home/me/.config/systemd/user/pdt-host.service")
+        );
+    }
+
+    #[test]
+    fn linux_install_writes_the_unit_and_enables_and_starts_it() {
+        let s = setup();
+        let program = bundle_host(&s);
+        let mut r = Recorder::default();
+        install_with(&s.cfg, &target(&s, Os::Linux), &mut r).unwrap();
+        let unit = systemd_unit_path(&s.config);
+        assert_eq!(std::fs::read_to_string(&unit).unwrap(), systemd_unit(&program, &s.cfg.install_dir));
+        assert_eq!(
+            r.ran,
+            ["systemctl | --user | daemon-reload", "systemctl | --user | enable | --now | pdt-host.service"]
+        );
+        assert!(r.spawned.is_empty());
+        assert!(!installed_host_path(&s.cfg.data_dir).exists(), "nothing is copied to the data folder");
+    }
+
+    #[test]
+    fn linux_install_while_a_host_runs_only_enables_the_service() {
+        let s = setup();
+        bundle_host(&s);
+        let _lock = hold_lock(&s.cfg);
+        let mut r = Recorder::default();
+        install_with(&s.cfg, &target(&s, Os::Linux), &mut r).unwrap();
+        assert_eq!(r.ran, ["systemctl | --user | daemon-reload", "systemctl | --user | enable | pdt-host.service"]);
+    }
+
+    #[test]
+    fn linux_install_reports_a_missing_program_or_systemd() {
+        let s = setup();
+        let mut r = Recorder::default();
+        let err = install_with(&s.cfg, &target(&s, Os::Linux), &mut r).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(r.ran.is_empty() && !systemd_unit_path(&s.config).exists());
+
+        bundle_host(&s);
+        let mut r = Recorder { statuses: [false].into(), ..Default::default() };
+        let err = install_with(&s.cfg, &target(&s, Os::Linux), &mut r).unwrap_err();
+        assert!(err.contains("daemon-reload failed") && err.contains("enable-linger"), "{err}");
+        let mut r = Recorder { statuses: [true, false].into(), ..Default::default() };
+        let err = install_with(&s.cfg, &target(&s, Os::Linux), &mut r).unwrap_err();
+        assert!(err.contains("enable pdt-host.service failed"), "{err}");
+    }
+
+    #[test]
+    fn linux_uninstall_disables_the_service_and_removes_the_unit() {
+        let s = setup();
+        let unit = systemd_unit_path(&s.config);
+        std::fs::create_dir_all(unit.parent().unwrap()).unwrap();
+        std::fs::write(&unit, "x").unwrap();
+        let mut r = Recorder::default();
+        uninstall_with(&s.cfg, Os::Linux, s.dirs(), &mut r).unwrap();
+        assert_eq!(
+            r.ran,
+            ["systemctl | --user | disable | --now | pdt-host.service", "systemctl | --user | daemon-reload"]
+        );
+        assert!(!unit.exists());
     }
 
     #[test]
@@ -814,7 +1024,7 @@ mod tests {
     fn uninstall_removes_the_registration() {
         let s = setup();
         let mut r = Recorder::default();
-        uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).unwrap();
+        uninstall_with(&s.cfg, Os::Windows, s.dirs(), &mut r).unwrap();
         assert_eq!(
             r.ran,
             [
@@ -830,7 +1040,7 @@ mod tests {
         std::fs::write(&plist, "x").unwrap();
         std::fs::write(&tray, "x").unwrap();
         let mut r = Recorder::default();
-        uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut r).unwrap();
+        uninstall_with(&s.cfg, Os::Mac, s.dirs(), &mut r).unwrap();
         assert_eq!(r.ran, ["id | -u", "launchctl | bootout | gui/501/dev.personaldevteam.host"]);
         assert!(!plist.exists() && !tray.exists());
     }
@@ -866,7 +1076,7 @@ mod tests {
         let lock = hold_lock(&s.cfg);
         std::fs::write(pid_path(&s.cfg.data_dir), "4242\n").unwrap();
         let mut r = Recorder::default();
-        uninstall_with(&s.cfg, Os::Windows, Some(&s.home), &mut r).unwrap();
+        uninstall_with(&s.cfg, Os::Windows, s.dirs(), &mut r).unwrap();
         assert_eq!(r.ran[0], "taskkill | /F | /PID | 4242");
         assert!(r.ran[1].starts_with("reg | delete | "), "{:?}", r.ran);
         let seen: Vec<String> = requests.try_iter().collect();
@@ -875,7 +1085,7 @@ mod tests {
         // No lock holder: nothing is killed.
         drop(lock);
         let mut r = Recorder::default();
-        uninstall_with(&s.cfg, Os::Mac, Some(&s.home), &mut r).unwrap();
+        uninstall_with(&s.cfg, Os::Mac, s.dirs(), &mut r).unwrap();
         assert!(!r.ran.iter().any(|l| l.starts_with("kill")), "{:?}", r.ran);
     }
 }

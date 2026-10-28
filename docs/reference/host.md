@@ -10,7 +10,8 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   Integrations, the host value `integrations.enabled`; [workflows.md](workflows.md) "Integrations").
 - A bare pdtd serves no UI unless `PDT_WEB_DIR` is set or a `web/` dir sits next to the exe (or `../Resources/web`,
   the macOS bundle layout; crates/pdtd/src/config.rs).
-- Data lives in `<local data dir>/pdt` (stable) or `pdt-dev`; a `pdtd.lock` file prevents two daemons sharing a dir
+- Data lives in `<local data dir>/pdt` (stable) or `pdt-dev` (`dirs::data_local_dir()`: `~/Library/Application
+  Support` on macOS, `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux); a `pdtd.lock` file prevents two daemons sharing a dir
   (pdt-host keeps its own `pdt-host.lock`).
 - Logs: `<data dir>/logs/pdtd.<date>.log` (daily, 14 kept) and `pdt-host.log`; a spawned pdt-host's and pdtd's
   startup output goes to `<data dir>/logs/pdtd-launch.log`; on macOS launchd's output goes to `pdt-host.launchd.log`.
@@ -97,7 +98,9 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 
 - Releases are deliberate; merges don't ship (docs/SDLC.md "Releases"). A merge to main builds and publishes nothing.
   A release is GitHub release `vX.Y.Z` (SemVer, no pre-releases) of the release repository (`RELEASE_REPO` in
-  brand.rs), with `*-setup.exe`, `*.app.tar.gz` and `SHA256SUMS`. Its version is the workspace version in
+  brand.rs), with `*-setup.exe`, `*.app.tar.gz`, `pdt-linux-<arch>.tar.gz` and `pdt-linux-<arch>.AppImage`
+  (`x86_64`, `aarch64`) and `SHA256SUMS` listing them all. Each host installs its own (pdt-core `select_asset`: on
+  Linux by exact name for its CPU and package, see "Linux"). Its version is the workspace version in
   `Cargo.toml`, which `desktop/src-tauri/tauri.conf.json` repeats (`scripts/version.sh check`, run in CI); it changes
   only in a release PR. A release build reports it as is (`PDT_BUILD_VERSION`, read at compile time); every other
   build reports `<version>-local`. Until 0.2.0, every push to main published `v0.1.<run number>`, with its head
@@ -232,9 +235,10 @@ pdtd (built with `cargo build -p pdtd`, or `--bin`) against a copy of a real dat
 
 ## pdt-host at login
 
-- `pdt-host install` registers a LaunchAgent that runs the app bundle's pdt-host (macOS), or copies itself to
+- `pdt-host install` registers a LaunchAgent that runs the app bundle's pdt-host (macOS), copies itself to
   `<data dir>/host` and registers that copy in an HKCU Run value (Windows; the NSIS hooks in
-  desktop/src-tauri/windows/hooks.nsh run it).
+  desktop/src-tauri/windows/hooks.nsh run it), or writes and enables a systemd user service running the install
+  folder's pdt-host (Linux, below).
 - macOS never copies or rewrites the registered program (PDT-40: SentinelOne flags a login item whose program changes
   as "persistence deception"); after an update pdt-host just restarts from the new bundle. An older install's agent
   naming `<data dir>/host/pdt-host` is rewritten by pdt-host at startup, which then execs the bundle's pdt-host
@@ -265,3 +269,42 @@ pdtd (built with `cargo build -p pdtd`, or `--bin`) against a copy of a real dat
 - pdt-host writes its program path to `<data dir>/pdt-host.program`; a tray whose bundle differs from the running
   pdt-host's offers "switch to this one" (asking at startup when the other copy is misplaced), which runs
   `pdt-host install --replace` (boots out and stops the other pdt-host, bootstraps this bundle's) and restarts pdtd.
+
+## Linux (PDT-197)
+
+Two release assets per CPU (`x86_64`, `aarch64`; built on native runners, Ubuntu 22.04, so glibc 2.35 or newer):
+`pdt-linux-<arch>.tar.gz`, headless, and `pdt-linux-<arch>.AppImage`, the desktop app. Both run pdt-host and pdtd
+from a plain install folder holding `pdtd`, `pdt-host` and `web/` (pdt-host `linux.rs`). There is no `.deb`, `.rpm`,
+Flatpak or Snap, and the tray has no "Start at login" on Linux.
+
+- **Install, headless:** unpack the tarball where it can stay, then register it:
+  `mkdir -p ~/.local/opt && tar -xzf pdt-linux-x86_64.tar.gz -C ~/.local/opt && ~/.local/opt/pdt/pdt-host install`.
+  The folder's parent must be writable by the user (an update replaces the folder); `/opt` owned by root works, but
+  then updates are refused (`installer_for`) and pdtd shows them as off.
+- **Install, desktop:** run the AppImage. The stable app, when no unit exists yet, runs its own `pdt-host install
+  --appimage <file>` (desktop daemon.rs): pdtd, pdt-host and the web UI are copied out of the mounted AppImage to
+  `<data dir>/app` (with `appimage.path` naming the AppImage), and that folder is registered. A mounted AppImage goes
+  away when its process exits, so nothing runs from it; the tray then starts pdt-host from `<data dir>/app` too.
+- **Service:** `~/.config/systemd/user/pdt-host.service` (`$XDG_CONFIG_HOME`), `ExecStart=<folder>/pdt-host run
+  --install-dir <folder>`, `Restart=always`, `KillMode=process` (stopping or restarting pdt-host leaves pdtd and its
+  agents running; the next pdt-host adopts pdtd, as on macOS), `Environment=PDT_HOST_SERVICE=systemd`,
+  `WantedBy=default.target`. `install` runs `systemctl --user daemon-reload`, then `enable --now` (just `enable` when a
+  pdt-host already runs; `--replace` stops it first). A pdt-host that finds another one holding the data folder exits
+  with status 3, which the unit does not restart (`RestartPreventExitStatus`). Its output goes to the journal
+  (`journalctl --user -u pdt-host`); the logs are in the data folder as elsewhere.
+- **Linger:** a user's systemd starts at their first login and stops at their last logout. To run PDT from boot on a
+  headless machine: `loginctl enable-linger "$USER"` (once; `install` prints it). Check with `loginctl show-user
+  "$USER" -p Linger`.
+- **Data:** `$XDG_DATA_HOME/pdt`, i.e. `~/.local/share/pdt` (dev: `pdt-dev`).
+- **Secrets:** the Secret Service (gnome-keyring, KWallet) when pdtd can reach one over D-Bus the first time the data
+  folder starts; otherwise `<data dir>/secrets.json`, readable only by the user (0600), and Settings → Secrets says
+  "Secrets: file in the data folder". The choice sticks to the data folder: it never switches between restarts
+  ([secrets.md](secrets.md)). A headless machine without a desktop session normally has no Secret Service.
+- **Update:** pdtd picks the asset for its CPU, the AppImage when its folder holds `appimage.path`, else the tarball,
+  and hands it to pdt-host (`LinuxInstaller`): the tarball is extracted (or the AppImage extracted with
+  `--appimage-extract`, which needs no FUSE) into `.pdt-update-staging` beside the install folder, the folder is
+  moved to `<folder>.previous` and the new one moved into place; for the AppImage the AppImage file is swapped the same
+  way (`<file>.previous`). Health check, watch and rollback are the same as elsewhere; a release that changes pdt-host
+  makes it exit, and systemd starts the new one. A running tray keeps its old version until it is started again.
+- **Uninstall:** `<folder>/pdt-host uninstall` (stops pdt-host and pdtd, `systemctl --user disable --now`, removes the
+  unit), then delete the install folder (for the AppImage, `<data dir>/app` and the AppImage). The data folder is left.

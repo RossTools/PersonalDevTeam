@@ -47,33 +47,64 @@ pub fn parse_version(s: &str) -> Option<Version> {
 pub enum HostOs {
     Windows,
     Mac,
+    /// `arch` is Rust's name for the CPU (`std::env::consts::ARCH`: `x86_64`, `aarch64`); `appimage` when pdt-host runs
+    /// the payload of an AppImage (its install folder holds [`APPIMAGE_MARKER`]), else the headless tarball.
+    Linux {
+        arch: &'static str,
+        appimage: bool,
+    },
     Other,
 }
 
 impl HostOs {
+    /// This platform; on Linux, the tarball (see [`HostOs::current_linux`] for the AppImage).
     pub fn current() -> HostOs {
+        Self::current_linux(false)
+    }
+
+    /// This platform, with `appimage` saying which Linux package is installed (ignored elsewhere).
+    pub fn current_linux(appimage: bool) -> HostOs {
         if cfg!(windows) {
             HostOs::Windows
         } else if cfg!(target_os = "macos") {
             HostOs::Mac
+        } else if cfg!(target_os = "linux") {
+            HostOs::Linux { arch: std::env::consts::ARCH, appimage }
         } else {
             HostOs::Other
         }
     }
 }
 
-/// The release asset each platform installs: the NSIS installer, or the tarred `.app` bundle.
-pub fn asset_suffix(os: HostOs) -> Option<&'static str> {
-    match os {
-        HostOs::Windows => Some("-setup.exe"),
-        HostOs::Mac => Some(".app.tar.gz"),
-        HostOs::Other => None,
-    }
+/// The CPUs Linux releases are built for (Rust's names, which the asset names use).
+pub const LINUX_ARCHES: [&str; 2] = ["x86_64", "aarch64"];
+
+/// The file in a Linux install folder that marks it as an AppImage's payload; it holds the AppImage's path.
+pub const APPIMAGE_MARKER: &str = "appimage.path";
+
+/// The headless Linux tarball for `arch`: `pdt-linux-x86_64.tar.gz` (a `pdt/` folder with pdtd, pdt-host and `web/`).
+pub fn linux_tarball_name(arch: &str) -> String {
+    format!("{}-linux-{arch}.tar.gz", crate::brand::SLUG)
 }
 
+/// The Linux AppImage for `arch`: `pdt-linux-x86_64.AppImage`.
+pub fn linux_appimage_name(arch: &str) -> String {
+    format!("{}-linux-{arch}.AppImage", crate::brand::SLUG)
+}
+
+/// The release asset each platform installs: the NSIS installer (`*-setup.exe`), the tarred `.app` bundle
+/// (`*.app.tar.gz`), or on Linux the tarball or AppImage for this CPU, by exact name.
 pub fn select_asset<'a>(names: &[&'a str], os: HostOs) -> Option<&'a str> {
-    let suffix = asset_suffix(os)?;
-    names.iter().copied().find(|n| n.len() > suffix.len() && n.ends_with(suffix))
+    let suffix = |suffix: &str| names.iter().copied().find(|n| n.len() > suffix.len() && n.ends_with(suffix));
+    match os {
+        HostOs::Windows => suffix("-setup.exe"),
+        HostOs::Mac => suffix(".app.tar.gz"),
+        HostOs::Linux { arch, appimage } if LINUX_ARCHES.contains(&arch) => {
+            let want = if appimage { linux_appimage_name(arch) } else { linux_tarball_name(arch) };
+            names.iter().copied().find(|n| *n == want)
+        }
+        HostOs::Linux { .. } | HostOs::Other => None,
+    }
 }
 
 pub const SUMS_ASSET: &str = "SHA256SUMS";
@@ -217,6 +248,31 @@ mod tests {
         assert_eq!(select_asset(&names, HostOs::Mac), Some("Personal.Dev.Team.app.tar.gz"));
         assert_eq!(select_asset(&names, HostOs::Other), None);
         assert_eq!(select_asset(&["-setup.exe"], HostOs::Windows), None);
+        assert_eq!(select_asset(&names, HostOs::Linux { arch: "x86_64", appimage: false }), None);
+    }
+
+    #[test]
+    fn linux_picks_its_own_package_and_cpu() {
+        let names = [
+            "Personal.Dev.Team_0.2.0_x64-setup.exe",
+            "Personal.Dev.Team.app.tar.gz",
+            "pdt-linux-x86_64.tar.gz",
+            "pdt-linux-aarch64.tar.gz",
+            "pdt-linux-x86_64.AppImage",
+            "pdt-linux-aarch64.AppImage",
+            "SHA256SUMS",
+        ];
+        let linux = |arch, appimage| select_asset(&names, HostOs::Linux { arch, appimage });
+        assert_eq!(linux("x86_64", false), Some("pdt-linux-x86_64.tar.gz"));
+        assert_eq!(linux("aarch64", false), Some("pdt-linux-aarch64.tar.gz"));
+        assert_eq!(linux("x86_64", true), Some("pdt-linux-x86_64.AppImage"));
+        assert_eq!(linux("aarch64", true), Some("pdt-linux-aarch64.AppImage"));
+        assert_eq!(linux("riscv64", false), None, "no release for other CPUs");
+        // The macOS tarball is never taken for the Linux one.
+        assert_eq!(select_asset(&names[..2], HostOs::Linux { arch: "x86_64", appimage: false }), None);
+        if cfg!(target_os = "linux") {
+            assert_eq!(HostOs::current_linux(true), HostOs::Linux { arch: std::env::consts::ARCH, appimage: true });
+        }
     }
 
     #[test]

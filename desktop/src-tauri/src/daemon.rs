@@ -118,16 +118,36 @@ fn host_to_run(os: pdt_host::register::Os, data_dir: Option<&Path>, exe_dir: Opt
         .unwrap_or_else(|| bundled_host(exe_dir))
 }
 
+/// The AppImage this app runs from (Linux; its runtime sets `APPIMAGE`).
+fn appimage() -> Option<PathBuf> {
+    std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// Linux, from an AppImage: the install folder its payload was copied to (`<data dir>/app`), once it has a pdt-host.
+/// pdt-host and pdtd run from there, never from the mounted AppImage, which goes away when the app quits.
+fn appimage_payload(os: pdt_host::register::Os, appimage: bool, data_dir: Option<&Path>) -> Option<PathBuf> {
+    if os != pdt_host::register::Os::Linux || !appimage {
+        return None;
+    }
+    let dir = pdt_host::linux::appimage_install_dir(data_dir?);
+    pdt_host::register::bundled_host_path(&dir).is_file().then_some(dir)
+}
+
 /// Starts pdt-host (which starts and supervises pdtd), detached; it keeps running if the app exits. A pdt-host that is
 /// already running (login item) makes this one exit at once.
 pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
-    let exe_dir = exe_dir();
-    let mut cmd = host_command(
-        &host_to_run(pdt_host::register::Os::current(), data_dir(profile).as_deref(), exe_dir.as_deref()),
-        profile,
-    );
+    let os = pdt_host::register::Os::current();
+    let data = data_dir(profile);
+    let (program, install_dir) = match appimage_payload(os, appimage().is_some(), data.as_deref()) {
+        Some(dir) => (bundled_host(Some(&dir)), Some(dir)),
+        None => {
+            let exe_dir = exe_dir();
+            (host_to_run(os, data.as_deref(), exe_dir.as_deref()), exe_dir)
+        }
+    };
+    let mut cmd = host_command(&program, profile);
     cmd.arg("run");
-    if let Some(dir) = exe_dir {
+    if let Some(dir) = install_dir {
         cmd.arg("--install-dir").arg(dir);
     }
     let log = launch_log_path(profile).and_then(|p| {
@@ -160,8 +180,37 @@ pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
 /// not start another and only waits for pdtd.
 pub fn ensure_registered(profile: Profile) -> bool {
     let os = pdt_host::register::Os::current();
+    if os == pdt_host::register::Os::Linux {
+        let (appimage, config) = (appimage(), dirs::config_dir());
+        return ensure_registered_linux(
+            profile,
+            exe_dir().as_deref(),
+            appimage.as_deref(),
+            config.as_deref(),
+            &mut pdt_host::register::System,
+        );
+    }
     let home = std::env::home_dir();
     ensure_registered_with(os, profile, exe_dir().as_deref(), home.as_deref(), &mut pdt_host::register::System)
+}
+
+/// Linux: the stable app run from an AppImage registers pdt-host's systemd user service once: `pdt-host install
+/// --appimage` copies the AppImage's pdtd, pdt-host and web UI to `<data dir>/app` and enables and starts the service
+/// there. True when it did, so the tray only waits for pdtd.
+fn ensure_registered_linux(
+    profile: Profile,
+    exe_dir: Option<&Path>,
+    appimage: Option<&Path>,
+    config: Option<&Path>,
+    runner: &mut dyn pdt_host::register::Runner,
+) -> bool {
+    let (Some(exe_dir), Some(appimage), Some(config)) = (exe_dir, appimage, config) else { return false };
+    if profile != Profile::Stable || pdt_host::register::systemd_unit_path(config).exists() {
+        return false;
+    }
+    let mut cmd = host_command(&bundled_host(Some(exe_dir)), profile);
+    cmd.arg("install").arg("--appimage").arg(appimage);
+    runner.status(cmd).unwrap_or(false)
 }
 
 fn ensure_registered_with(
@@ -481,6 +530,37 @@ mod tests {
         assert!(!ensure_registered_with(Os::Mac, Profile::Stable, Some(&moved), Some(&home), &mut r));
         assert!(!ensure_registered_with(Os::Windows, Profile::Stable, Some(&exe_dir), Some(&home), &mut r));
         assert!(r.ran.is_empty(), "{:?}", r.ran);
+    }
+
+    #[test]
+    fn an_appimage_registers_its_payload_once_and_then_runs_it() {
+        use pdt_host::register::Os;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mount, config) = (tmp.path().join("mount").join("usr").join("bin"), tmp.path().join("config"));
+        let image = tmp.path().join("pdt-linux-x86_64.AppImage");
+        let mut r = Recorder { ran: vec![], ok: true };
+        assert!(ensure_registered_linux(Profile::Stable, Some(&mount), Some(&image), Some(&config), &mut r));
+        assert_eq!(r.ran, [format!("install --appimage {}", image.display())]);
+
+        // Registered already, a dev app, or not from an AppImage: nothing runs.
+        let mut r = Recorder { ran: vec![], ok: true };
+        assert!(!ensure_registered_linux(Profile::Dev, Some(&mount), Some(&image), Some(&config), &mut r));
+        assert!(!ensure_registered_linux(Profile::Stable, Some(&mount), None, Some(&config), &mut r));
+        let unit = pdt_host::register::systemd_unit_path(&config);
+        std::fs::create_dir_all(unit.parent().unwrap()).unwrap();
+        std::fs::write(&unit, "").unwrap();
+        assert!(!ensure_registered_linux(Profile::Stable, Some(&mount), Some(&image), Some(&config), &mut r));
+        assert!(r.ran.is_empty(), "{:?}", r.ran);
+
+        // pdt-host then runs from the payload folder, not the mount.
+        let data = tmp.path().join("data");
+        assert_eq!(appimage_payload(Os::Linux, true, Some(&data)), None, "not copied yet");
+        let dir = pdt_host::linux::appimage_install_dir(&data);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pdt-host"), "").unwrap();
+        assert_eq!(appimage_payload(Os::Linux, true, Some(&data)), Some(dir));
+        assert_eq!(appimage_payload(Os::Linux, false, Some(&data)), None, "a plain build runs its own");
+        assert_eq!(appimage_payload(Os::Mac, true, Some(&data)), None);
     }
 
     #[test]

@@ -14,7 +14,7 @@ const LOCK_WAIT: Duration = Duration::from_secs(10);
 fn usage() -> ! {
     let bin = pdt_core::brand::HOST_BIN;
     eprintln!("usage: {bin} run [--install-dir <dir>]");
-    eprintln!("       {bin} install [--install-dir <dir>] [--replace]");
+    eprintln!("       {bin} install [--install-dir <dir>] [--replace] [--appimage <file>]");
     eprintln!("       {bin} uninstall [--install-dir <dir>]");
     std::process::exit(2);
 }
@@ -32,6 +32,11 @@ const FROM_COPY: &str = "--from-copy";
 
 fn run(args: &[String]) -> anyhow::Result<()> {
     let mut cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
+    // An update moves the install folder itself: through a symlink it would move the link (Linux).
+    #[cfg(target_os = "linux")]
+    if let Ok(dir) = std::fs::canonicalize(&cfg.install_dir) {
+        cfg.install_dir = dir;
+    }
     std::fs::create_dir_all(&cfg.data_dir)?;
     let exe = std::env::current_exe()?;
     let bundled = pdt_host::register::bundled_host_path(&cfg.install_dir);
@@ -42,6 +47,10 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     let lock_path = cfg.data_dir.join(format!("{}.lock", pdt_core::brand::HOST_BIN));
     let Some(lock) = pdt_host::supervise::acquire_lock(&lock_path, LOCK_WAIT)? else {
         log(&cfg, "another pdt-host is already supervising this data folder; exiting");
+        if under_systemd() {
+            // The unit does not restart it for this status, so it never loops against the other one.
+            std::process::exit(pdt_host::register::ALREADY_RUNNING_EXIT);
+        }
         return Ok(());
     };
     if let Err(e) = pdt_host::register::write_pid(&cfg.data_dir) {
@@ -109,18 +118,71 @@ fn under_launchd() -> bool {
     std::env::var("XPC_SERVICE_NAME").is_ok_and(|v| v == pdt_core::brand::HOST_LABEL)
 }
 
+/// Started by its systemd user unit (Linux), which restarts it whenever it exits.
+fn under_systemd() -> bool {
+    std::env::var(pdt_host::register::SERVICE_ENV).is_ok_and(|v| v == "systemd")
+}
+
 /// `install --replace` (macOS): take over from a pdt-host another copy of the app runs (the tray's "Switch to this
 /// copy", PDT-51).
 const REPLACE: &str = "--replace";
 
-/// Registers pdt-host to start at login (Windows: a copy in the data folder; macOS: the bundle's).
+/// `install --appimage <file>` (Linux): run from a mounted AppImage, it first copies the AppImage's payload to the
+/// install folder (`<data dir>/app` when none is given) and registers that.
+const APPIMAGE: &str = "--appimage";
+
+/// Registers pdt-host to start at login (Windows: a copy in the data folder; macOS: the bundle's; Linux: the install
+/// folder's, as a systemd user service).
 fn install(args: &[String]) -> anyhow::Result<()> {
-    let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
-    pdt_host::register::install(&cfg, args.iter().any(|a| a == REPLACE)).map_err(|e| {
+    let appimage = match args.iter().position(|a| a == APPIMAGE) {
+        Some(i) => Some(PathBuf::from(args.get(i + 1).context("--appimage needs a value")?)),
+        None => None,
+    };
+    let dir = match &appimage {
+        Some(_) if !args.iter().any(|a| a == "--install-dir") => {
+            let probe = HostConfig::from_env(PathBuf::new()).map_err(anyhow::Error::msg)?;
+            pdt_host::linux::appimage_install_dir(&probe.data_dir)
+        }
+        _ => install_dir(args)?,
+    };
+    let cfg = HostConfig::from_env(dir).map_err(anyhow::Error::msg)?;
+    let fail = |e: String| {
         // Also logged: the installer's hook runs this without a console.
         log(&cfg, &format!("registering pdt-host failed: {e}"));
         anyhow::Error::msg(e)
-    })
+    };
+    if let Some(appimage) = &appimage {
+        copy_appimage_payload(&cfg, appimage).map_err(fail)?;
+    }
+    pdt_host::register::install(&cfg, args.iter().any(|a| a == REPLACE)).map_err(fail)?;
+    if cfg!(target_os = "linux") {
+        println!(
+            "{} is registered as the systemd user service {}. To start it at boot without logging in, run: \
+             loginctl enable-linger \"$USER\"",
+            pdt_core::brand::HOST_BIN,
+            pdt_core::brand::HOST_SYSTEMD_UNIT
+        );
+    }
+    Ok(())
+}
+
+/// Copies the mounted AppImage's pdtd, pdt-host and web UI (beside this program) to the install folder, unless a
+/// pdt-host runs from there already or this program is the installed one.
+fn copy_appimage_payload(cfg: &HostConfig, appimage: &std::path::Path) -> Result<(), String> {
+    if cfg.dev {
+        return Err("only the stable profile is started at login; unset PDT_PROFILE to register pdt-host".into());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let bin = exe.parent().ok_or("no exe folder")?;
+    let installed = std::fs::canonicalize(&cfg.install_dir).ok();
+    if installed.is_some_and(|d| std::fs::canonicalize(bin).is_ok_and(|b| b == d)) {
+        return Ok(());
+    }
+    if pdt_host::register::host_running(&cfg.data_dir) && cfg.pdtd_path().is_file() {
+        return Ok(());
+    }
+    let appimage = std::path::absolute(appimage).map_err(|e| e.to_string())?;
+    pdt_host::linux::install_payload(bin, &cfg.install_dir, &appimage)
 }
 
 /// Stops this data folder's pdt-host and pdtd and removes the login registration.
@@ -130,10 +192,11 @@ fn uninstall(args: &[String]) -> anyhow::Result<()> {
     pdt_host::register::uninstall(&cfg).map_err(anyhow::Error::msg)
 }
 
-/// Starts the new pdt-host and exits. Under launchd, exiting is enough: KeepAlive starts the new one. pdtd keeps
+/// Starts the new pdt-host and exits. Under launchd or systemd, exiting is enough: KeepAlive (Restart=always) starts
+/// the new one. pdtd keeps
 /// running; the new pdt-host adopts it. Returns (and this one keeps supervising) only when the new one cannot start.
 fn relaunch(cfg: &HostConfig, exe: &std::path::Path, args: &[String]) {
-    if under_launchd() {
+    if under_launchd() || under_systemd() {
         std::process::exit(0);
     }
     let mut cmd = std::process::Command::new(exe);

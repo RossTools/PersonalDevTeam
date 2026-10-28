@@ -40,6 +40,8 @@ pub struct AppState {
     pub data_dir: std::path::PathBuf,
     /// Where secrets live. pdtd sets the keychain store; `new` uses an in-memory one (tests).
     pub secrets: std::sync::Arc<dyn crate::secrets::SecretStore>,
+    /// Which store `secrets` is (Settings → Secrets shows it).
+    pub secret_store: crate::secrets::SecretStoreInfo,
     /// `PDT_OWNER_LOGIN`: when set, it is the owner and Settings shows it read-only.
     pub owner_from_env: Option<String>,
     /// Serializes read-modify-write of host settings and the side effects applied with them.
@@ -196,6 +198,11 @@ impl AppState {
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
             data_dir,
             secrets: std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
+            secret_store: crate::secrets::SecretStoreInfo {
+                backend: crate::secrets::SecretBackend::Memory,
+                path: None,
+                problem: None,
+            },
             owner_from_env: None,
             settings_lock: Default::default(),
             owner_cache: Default::default(),

@@ -6,8 +6,20 @@ pdt-api `vault.rs` (keychain, routes, tools, the Inbox answer, workflow filling)
 
 ## Where they live
 
-- **Values**: the OS keychain only (`SecretStore`, account `secret:<id>`; `PDT_SECRET_STORE=memory` in tests), and,
+- **Values**: the OS keychain (`SecretStore`, account `secret:<id>`; `PDT_SECRET_STORE=memory` in tests), and,
   while pdtd runs, the store's `Redactor`. Never in the database, a response, a log or a tool result.
+- **Linux without a Secret Service** (PDT-197; a headless machine has no gnome-keyring or KWallet): the first time a
+  data folder starts, pdtd reads a missing entry from the Secret Service (5 s at most). When it answers, the keychain
+  is used and `<data dir>/secrets.keychain` records that; when it does not, every secret (and the update token and
+  GitHub login) goes to `<data dir>/secrets.json` instead (`FileSecretStore`: name → value, written to a 0600
+  temporary file and renamed over it; created empty at once), and pdtd logs a warning. The choice sticks
+  (`choose_backend`, `StoreHistory`): a data folder with `secrets.json` keeps the file even once a Secret Service
+  appears, and one with the marker keeps the keychain even when it does not answer at a later start (not up yet at
+  boot, or locked). pdtd then keeps calling it and reports the problem instead of falling back. `PDT_SECRET_STORE=file`
+  chooses the file on Linux even with a Secret Service. macOS and Windows always use the keychain. `GET
+  /api/secrets/store` says which (`backend`: `keychain`, `file` or `memory`; `path` for the file; `problem` when the
+  keychain did not answer), and Settings → Secrets shows "Secrets: system keyring" or "Secrets: file in the data
+  folder" with the path, and the problem. Nothing moves secrets between the two.
 - **Rows** (`secrets`): `name` (unique ignoring case; letters, digits, `_`, `-`, starting with a letter, at most 64),
   `description`, `projects` and `personas` (JSON id lists: who may use it; empty means any), `last_used_at`,
   `last_used_by`. `secret_uses`: every use (`by`: the session's title or `workflow <name>`, `how`: the tool or node

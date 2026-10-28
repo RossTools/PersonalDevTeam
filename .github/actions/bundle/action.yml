@@ -1,8 +1,8 @@
 name: PDT bundle
-description: Builds the installer (nsis) or app bundle (app) at the checked-in version and keeps it as a workflow artifact (bundle-<bundles>). It publishes nothing.
+description: Builds the installer (nsis), app bundle (app) or Linux packages (linux, the headless tarball and the AppImage for the runner's CPU) at the checked-in version and keeps them as a workflow artifact (bundle-<bundles>, bundle-linux-<arch>). It publishes nothing.
 inputs:
   bundles:
-    description: nsis or app
+    description: nsis, app or linux
     required: true
   release:
     description: '"true" for a release build (the release workflow): reports the checked-in version instead of <version>-local, must be signed, and is notarized when the API key is given'
@@ -25,6 +25,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # What Tauri needs to build on Linux (WebKitGTK, the tray's appindicator); the AppImage tools run without FUSE.
+    - name: Linux build dependencies
+      if: inputs.bundles == 'linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends build-essential file libwebkit2gtk-4.1-dev libxdo-dev \
+          libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+        echo "PDT_ARCH=$(uname -m)" >> "$GITHUB_ENV"
     - uses: pnpm/action-setup@v6
     - uses: actions/setup-node@v7
       with:
@@ -50,8 +60,10 @@ runs:
     - name: Build the bundle
       shell: bash
       run: |
+        bundles="${{ inputs.bundles }}"
+        if [ "$bundles" = linux ]; then bundles=appimage; fi
         pnpm --dir desktop exec tauri build --config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" \
-          --bundles "${{ inputs.bundles }}"
+          --bundles "$bundles"
     # One certificate signs every macOS release (scripts/sign-macos.sh). With a Developer ID certificate the keychain
     # trusts every release; a self-signed one still makes it ask after each update (docs/superpowers/notes/
     # developer-id.md). Releases must be signed; other builds are signed when the secret is available to them.
@@ -77,7 +89,8 @@ runs:
         MACOS_NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
         MACOS_NOTARY_ISSUER: ${{ inputs.notary-issuer }}
       run: scripts/notarize-macos.sh "$(ls -d target/release/bundle/macos/*.app | head -n 1)"
-    # Asset names must match what hosts install (pdt_core::release::asset_suffix): *-setup.exe and *.app.tar.gz.
+    # Asset names must match what hosts install (pdt_core::release::select_asset): *-setup.exe, *.app.tar.gz, and on
+    # Linux pdt-linux-<arch>.tar.gz and pdt-linux-<arch>.AppImage (<arch>: x86_64 or aarch64, as `uname -m` says).
     - name: Collect the bundle
       shell: bash
       run: |
@@ -85,6 +98,15 @@ runs:
         if [ "${{ inputs.bundles }}" = nsis ]; then
           # Only this version's installer (a cached target dir can hold older ones).
           cp target/release/bundle/nsis/*_"$PDT_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
+        elif [ "${{ inputs.bundles }}" = linux ]; then
+          # The headless tarball: a pdt/ folder with pdtd, pdt-host and the web UI (crates/pdt-host/src/linux.rs).
+          stage="$RUNNER_TEMP/tarball"
+          rm -rf "$stage" && mkdir -p "$stage/pdt"
+          cp target/release/pdtd target/release/pdt-host "$stage/pdt/"
+          cp -R web/dist "$stage/pdt/web"
+          tar -czf "$RUNNER_TEMP/release/pdt-linux-$PDT_ARCH.tar.gz" -C "$stage" pdt
+          # Only this version's AppImage (a cached target dir can hold older ones).
+          cp target/release/bundle/appimage/*_"$PDT_VERSION"_*.AppImage "$RUNNER_TEMP/release/pdt-linux-$PDT_ARCH.AppImage"
         else
           cd target/release/bundle/macos
           app="$(ls -d *.app | head -n 1)"
@@ -94,7 +116,7 @@ runs:
         ls -l "$RUNNER_TEMP/release"
     - uses: actions/upload-artifact@v7
       with:
-        name: bundle-${{ inputs.bundles }}
+        name: bundle-${{ inputs.bundles }}${{ inputs.bundles == 'linux' && format('-{0}', env.PDT_ARCH) || '' }}
         path: ${{ runner.temp }}/release/*
         if-no-files-found: error
         retention-days: ${{ inputs.release == 'true' && 30 || 5 }}

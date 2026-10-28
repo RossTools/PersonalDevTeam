@@ -15,6 +15,7 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
 | bundle (macos-latest, app) | GitHub macOS | the app, signed when the secret is there; a workflow artifact | never | never | with "Build bundles" |
 | bundle (windows-latest, nsis) | GitHub Windows | the installer (also the only Windows compile of the desktop crate); a workflow artifact | never | never | with "Build bundles" |
+| bundle (linux, x86_64) / bundle (linux, aarch64) | GitHub `ubuntu-22.04` / `ubuntu-22.04-arm` (native, no cross-compiling) | the headless tarball and the AppImage (also the only Linux compile of the desktop crate); a workflow artifact | never | never | with "Build bundles" |
 
 **Main runs nothing** (PDT-192): `ci.yml` has no `push` trigger. The merge queue (group size 1, squash) has just run
 the checks on the tree that lands on main, and releases are deliberate, so a merge builds no bundle and publishes no
@@ -22,8 +23,9 @@ release (docs/SDLC.md "Releases"). A push that bypasses the queue (an admin bypa
 PDT-192 every push to main ran the Windows checks and the bundles and published `v0.1.<run number>`.
 
 **Bundles by hand:** `gh workflow run ci --ref <branch>` (or Actions → ci → Run workflow, "Build bundles" ticked) runs
-every check and builds the macOS app and the Windows installer at the checked-in version, reporting
-`<version>-local`. They are uploaded as workflow artifacts (`bundle-app`, `bundle-nsis`, kept 5 days) and published
+every check and builds the macOS app, the Windows installer and the Linux tarball and AppImage (both CPUs) at the
+checked-in version, reporting `<version>-local`. They are uploaded as workflow artifacts (`bundle-app`, `bundle-nsis`,
+`bundle-linux-x86_64`, `bundle-linux-aarch64`, kept 5 days) and published
 nowhere: use it to try a packaging change (`desktop/`, `scripts/`, `.github/actions/bundle`) before a release. The
 bundle action's `release: "true"` input is for the release workflow: it reports the version as is, requires the
 signing certificate and notarizes.
