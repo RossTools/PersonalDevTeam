@@ -316,7 +316,8 @@ async fn a_refined_external_ticket_waits_in_ready_for_the_user() {
     assert_eq!(get_ticket(&env, &t).await["stage"], "ready", "auto-start never takes it");
 
     // The user moves it to To do: let in, auto-start takes it.
-    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    let (s, v) =
+        common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     tick_until(&env, "the ticket started", || async {
         let v = get_ticket(&env, &t).await;
@@ -366,7 +367,7 @@ async fn a_session_on_an_external_ticket_gets_no_secrets_until_it_is_let_in() {
     assert!(said.contains("failed") && said.contains("no secrets"), "{said}");
 
     // Let in: the same call runs.
-    call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
     let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": run}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     let said = answer(1).await;

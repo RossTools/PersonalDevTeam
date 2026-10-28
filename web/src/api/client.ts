@@ -154,8 +154,8 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await send(path, init);
+async function request<T>(path: string, init?: RequestInit, opts?: { asUser?: boolean }): Promise<T> {
+  const res = opts?.asUser ? await sendAsUser(path, init) : await send(path, init);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
@@ -167,16 +167,48 @@ async function requestText(path: string): Promise<string> {
 
 async function send(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
-  if (!res.ok) {
-    let body: Partial<ApiErrorBody> = {};
-    try {
-      body = await res.json();
-    } catch {
-      // non-JSON error body (proxy, crash page)
-    }
-    throw new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw await errorOf(res);
   return res;
+}
+
+async function errorOf(res: Response): Promise<ApiError> {
+  let body: Partial<ApiErrorBody> = {};
+  try {
+    body = await res.json();
+  } catch {
+    // non-JSON error body (proxy, crash page)
+  }
+  return new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`);
+}
+
+/** This pdtd's UI token (PDT-204), fetched once; it changes when pdtd restarts. */
+let uiToken: Promise<string> | null = null;
+
+function fetchUiToken(): Promise<string> {
+  uiToken ??= send('/api/ui/token')
+    .then((r) => r.json())
+    .then((b: { token: string }) => b.token)
+    .catch((e: unknown) => {
+      uiToken = null;
+      throw e;
+    });
+  return uiToken;
+}
+
+/**
+ * A change only the user may make (letting an external ticket in, PDT-204): sent with the UI token, which tells the
+ * user's click from an agent's curl. A token from before a pdtd restart is fetched again and the change retried once.
+ */
+async function sendAsUser(path: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const token = await fetchUiToken();
+    try {
+      return await send(path, { ...init, headers: { ...init?.headers, 'x-ui-token': token } });
+    } catch (e) {
+      if (attempt > 0 || !(e instanceof ApiError) || e.code !== 'stale_ui_token') throw e;
+      uiToken = null;
+    }
+  }
 }
 
 const enc = encodeURIComponent;
@@ -255,7 +287,7 @@ export const api = {
     request<void>(`/api/sessions/${enc(id)}/requests/${enc(requestId)}`, {
       method: 'POST',
       body: JSON.stringify({ answer } satisfies AnswerRequest),
-    }),
+    }, { asUser: true }),
   interruptSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/interrupt`, { method: 'POST' }),
   /** Codex conversations: opens the agent's own TUI on the same thread, live (PTY at the session's pty socket). */
   openSessionTerminal: (id: string, size: TerminalSize) =>
@@ -296,11 +328,12 @@ export const api = {
     request<JiraImportResult>(`/api/projects/${enc(projectId)}/jira/import`, { method: 'POST', body: JSON.stringify({ key }) }),
   getTicket: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}`),
   updateTicket: (id: string, p: TicketPatch) =>
-    request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+    request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }, { asUser: true }),
   deleteTicket: (id: string) => request<void>(`/api/tickets/${enc(id)}`, { method: 'DELETE' }),
   rankTicket: (id: string, m: RankMove) =>
     request<Ticket>(`/api/tickets/${enc(id)}/rank`, { method: 'POST', body: JSON.stringify(m) }),
-  bulkTickets: (b: BulkRequest) => request<BulkResult>('/api/tickets/bulk', { method: 'POST', body: JSON.stringify(b) }),
+  bulkTickets: (b: BulkRequest) =>
+    request<BulkResult>('/api/tickets/bulk', { method: 'POST', body: JSON.stringify(b) }, { asUser: true }),
   linkTicket: (id: string, l: TicketLink) =>
     request<Ticket>(`/api/tickets/${enc(id)}/links`, { method: 'POST', body: JSON.stringify(l) }),
   unlinkTicket: (id: string, l: TicketLink) =>
@@ -313,7 +346,7 @@ export const api = {
   createParts: (id: string, b: NewParts) =>
     request<PartsCreated>(`/api/tickets/${enc(id)}/parts`, { method: 'POST', body: JSON.stringify(b) }),
   startTicket: (id: string, b: StartTicket) =>
-    request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }),
+    request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }, { asUser: true }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
   /** Asks the project's pipeline to refine a Draft or Ready ticket (Phase 7c). */
   refineTicket: (id: string) =>

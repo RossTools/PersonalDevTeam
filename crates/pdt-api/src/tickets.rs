@@ -6,11 +6,11 @@ use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use pdt_core::ticket::{
     Actor, AttemptState, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket,
     PipelineStage, RankMove, Ticket, TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, TicketStage,
-    valid_comment,
+    ValidBulk, ValidPatch, valid_comment,
 };
 use pdt_core::workflow::api::{NewLogEvent, RunStatus};
 use pdt_store::{DeleteTicket, TicketError};
@@ -66,10 +66,18 @@ pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) 
 pub(crate) async fn update(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     payload: Result<Json<TicketPatch>, JsonRejection>,
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(patch) = payload?;
     let patch = patch.validate()?;
+    // Only the user's own click lets an external ticket in (PDT-204): an agent's curl counts as the user otherwise.
+    if !crate::untrusted::from_ui(&st, &headers)?
+        && let Some(t) = st.store.get_ticket_summary(&id).await?
+        && crate::untrusted::lets_in(&t, &patch)
+    {
+        return Err(crate::untrusted::refused(&t.key));
+    }
     let since = now_ms();
     let t = st.store.patch_ticket(&id, &patch, since).await?.ok_or_else(unknown_ticket)?;
     // Closing a ticket ends its attempt (tickets spec §6), once the close went through; moving it back before work
@@ -120,13 +128,31 @@ pub(crate) async fn rank(
 
 pub(crate) async fn bulk(
     State(st): State<AppState>,
+    headers: HeaderMap,
     payload: Result<Json<BulkRequest>, JsonRejection>,
 ) -> Result<Json<BulkResult>, ApiError> {
     let Json(req) = payload?;
     let action = req.validate()?;
+    // As `update`: only the user's own click lets an external ticket in (PDT-204).
+    let patch = match &action {
+        ValidBulk::Stage(stage) => Some(ValidPatch { stage: Some(*stage), ..Default::default() }),
+        ValidBulk::AddLabel(label) => Some(ValidPatch { labels: Some(vec![label.clone()]), ..Default::default() }),
+        _ => None,
+    };
+    if let Some(patch) = patch
+        && !crate::untrusted::from_ui(&st, &headers)?
+    {
+        for id in &req.ids {
+            if let Some(t) = st.store.get_ticket_summary(id).await?
+                && crate::untrusted::lets_in(&t, &patch)
+            {
+                return Err(crate::untrusted::refused(&t.key));
+            }
+        }
+    }
     let since = now_ms();
     let count = st.store.bulk_tickets(&req.ids, &action, since).await?;
-    if let pdt_core::ticket::ValidBulk::Stage(stage) = action
+    if let ValidBulk::Stage(stage) = action
         && stage.is_closed()
     {
         // The tickets are closed: end every attempt there is, whatever one of them does.
@@ -135,7 +161,7 @@ pub(crate) async fn bulk(
                 tracing::warn!(ticket = %id, error = %e.message(), "could not end the closed ticket's attempt");
             }
         }
-    } else if let pdt_core::ticket::ValidBulk::Stage(stage) = action {
+    } else if let ValidBulk::Stage(stage) = action {
         // Moved back before work: their work stops (PDT-159).
         let ids = req.ids.clone();
         let task = tokio::spawn({

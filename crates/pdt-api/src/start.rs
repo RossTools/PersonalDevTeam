@@ -42,21 +42,34 @@ async fn load_ticket(st: &AppState, id: &str) -> Result<Ticket, ApiError> {
 pub(crate) async fn start(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     payload: Result<Json<StartTicket>, JsonRejection>,
 ) -> Result<(StatusCode, Json<StartResult>), ApiError> {
     let Json(input) = payload?;
     let v = input.validate()?;
-    let r = start_ticket(&st, id, v, false).await?;
+    let by = if crate::untrusted::from_ui(&st, &headers)? { Starter::User } else { Starter::Api };
+    let r = start_ticket(&st, id, v, by).await?;
     Ok((StatusCode::CREATED, Json(r)))
 }
 
-/// The Start command (the route, and the scheduler with `auto`): checks, then the branch, worktree, attempt, session
+/// Who asked for a Start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Starter {
+    /// The user, from PDT's web client.
+    User,
+    /// A request to the HTTP API without the UI token: an agent's curl, as far as PDT can tell (PDT-204).
+    Api,
+    /// The scheduler's auto-start.
+    Auto,
+}
+
+/// The Start command (the route, and the scheduler with [`Starter::Auto`]): checks, then the branch, worktree, attempt, session
 /// and tabs.
 pub(crate) async fn start_ticket(
     st: &AppState,
     id: String,
     v: ValidStart,
-    auto: bool,
+    by: Starter,
 ) -> Result<StartResult, ApiError> {
     let st = st.clone();
     let guard = st.ticket_start_lock.lock().await;
@@ -82,12 +95,15 @@ pub(crate) async fn start_ticket(
     let key = ticket.summary.key.clone();
     let parent = ticket.summary.parent.clone();
     // Only the user starts an external ticket they haven't let in (PDT-201); starting it lets it in.
-    if auto && crate::untrusted::held_back(&ticket.summary) {
+    if by == Starter::Auto && crate::untrusted::held_back(&ticket.summary) {
         return Err(ApiError::new(
             axum::http::StatusCode::FORBIDDEN,
             "untrusted_ticket",
             format!("{key} came from outside PDT: only you can start it, or move it to To do"),
         ));
+    }
+    if by == Starter::Api && crate::untrusted::held_back(&ticket.summary) {
+        return Err(crate::untrusted::refused(&key));
     }
     if ticket.summary.stage.is_closed() {
         return Err(conflict("ticket_closed", format!("{key} is closed; move it back to Ready to start it")));
@@ -170,7 +186,7 @@ pub(crate) async fn start_ticket(
         json!({"forced": true, "blockers": blockers, "overlaps": overlaps,
                "level": crate::overlap::worst(&ticket.overlaps), "overCap": over_cap})
     };
-    if auto {
+    if by == Starter::Auto {
         extra["auto"] = json!(true);
     }
     let attempt_id = uuid::Uuid::now_v7().to_string();

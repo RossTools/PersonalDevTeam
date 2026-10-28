@@ -50,6 +50,7 @@ pub struct StopResult {
 pub(crate) async fn stop_route(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     payload: Result<Json<StopRequest>, JsonRejection>,
 ) -> Result<Json<StopResult>, ApiError> {
     let req = match payload {
@@ -57,6 +58,15 @@ pub(crate) async fn stop_route(
         Err(JsonRejection::MissingJsonContentType(_)) => StopRequest::default(),
         Err(e) => return Err(e.into()),
     };
+    // Moving it back to To do lets an external ticket in: only from PDT's web client (PDT-204).
+    if let Some(to) = req.stage
+        && !crate::untrusted::from_ui(&st, &headers)?
+        && let Some(t) = st.store.get_ticket_summary(&id).await?
+        && crate::untrusted::held_back(&t)
+        && pdt_core::ticket::boards(Some(t.stage), Some(to), &[], None)
+    {
+        return Err(crate::untrusted::refused(&t.key));
+    }
     let task = tokio::spawn(async move { stop_ticket(&st, &id, &req, Actor::User).await });
     Ok(Json(task.await.map_err(ApiError::internal)??))
 }
