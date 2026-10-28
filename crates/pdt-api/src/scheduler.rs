@@ -144,7 +144,9 @@ pub async fn schedule_tickets(st: &AppState) {
             rows: None,
         };
         let started = match input.validate() {
-            Ok(v) => crate::start::start_ticket(st, id.clone(), v, true).await.map_err(|e| e.message().to_string()),
+            Ok(v) => crate::start::start_ticket(st, id.clone(), v, crate::start::Starter::Auto)
+                .await
+                .map_err(|e| e.message().to_string()),
             Err(e) => Err(e.to_string()),
         };
         match started {

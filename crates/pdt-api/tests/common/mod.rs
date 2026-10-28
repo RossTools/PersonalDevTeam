@@ -9,7 +9,31 @@ use tower::ServiceExt;
 
 /// Sends one request through the router and returns the status and the JSON body (`Null` when it is not JSON).
 pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    call_with(app, method, uri, body, &[]).await
+}
+
+/// [`call`] as PDT's web client makes it (PDT-204): with the UI token it fetches as a same-origin browser fetch.
+pub async fn call_as_ui(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    let req = Request::builder().uri("/api/ui/token").header("sec-fetch-site", "same-origin");
+    let res = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let token = serde_json::from_slice::<Value>(&bytes).unwrap()["token"].as_str().unwrap().to_string();
+    call_with(app, method, uri, body, &[("x-ui-token", &token)]).await
+}
+
+/// [`call`] with extra headers.
+pub async fn call_with(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
     let mut req = Request::builder().method(method).uri(uri);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
     let body = match body {
         Some(v) => {
             req = req.header("content-type", "application/json");

@@ -56,6 +56,8 @@ export function stubApi(given: Record<string, Route>): Call[] {
       path: String(input),
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     };
+    // The UI token the client sends with the user's own changes (PDT-204): not one of the calls a test looks at.
+    if (call.path === '/api/ui/token') return new Response(JSON.stringify({ token: 'ui-token' }), { status: 200 });
     calls.push(call);
     const exact = `${call.method} ${call.path}`;
     const key = exact in routes ? exact : `${call.method} ${call.path.split('?')[0]}`;

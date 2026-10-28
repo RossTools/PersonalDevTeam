@@ -295,3 +295,54 @@ async fn tickets_open_in_tabs_and_deleting_one_closes_its_tab() {
     let (_, ws) = call(&app, "GET", "/api/workspaces", None).await;
     assert_eq!(ws[0]["tabs"], json!([]));
 }
+
+/// PDT-204: an external ticket is let in over the HTTP API only from PDT's web client (its UI token): an agent's curl,
+/// which otherwise counts as the user, is refused.
+#[tokio::test]
+async fn only_the_web_client_lets_an_external_ticket_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st, pid) = setup(tmp.path()).await;
+    let t = pdt_core::ticket::NewTicket { title: "From an issue".into(), ..Default::default() }.validate().unwrap();
+    let t = pdt_core::ticket::ValidNewTicket { source: pdt_core::ticket::TicketSource::External, ..t };
+    st.store.create_ticket("ext", &pid, &t, 1).await.unwrap();
+    let refused = |(s, v): (StatusCode, Value)| {
+        assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("untrusted_ticket")), "{v}");
+        assert!(v["message"].as_str().unwrap().contains("PDT-1"), "{v}");
+    };
+
+    // A curl: To do, In progress, the agentic label (one at a time or in bulk) and Start are refused.
+    for patch in [json!({"stage": "todo"}), json!({"stage": "in_progress"}), json!({"labels": ["agentic"]})] {
+        refused(call(&app, "PATCH", "/api/tickets/ext", Some(patch)).await);
+    }
+    for (action, value) in [("stage", "todo"), ("addLabel", "agentic")] {
+        let body = json!({"ids": ["ext"], "action": action, "value": value});
+        refused(call(&app, "POST", "/api/tickets/bulk", Some(body)).await);
+    }
+    refused(call(&app, "POST", "/api/tickets/ext/start", Some(json!({"agent": "claude"}))).await);
+    // Anything short of that goes through.
+    let (s, v) = call(&app, "PATCH", "/api/tickets/ext", Some(json!({"stage": "ready", "labels": ["bug"]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, v) = call(&app, "GET", "/api/tickets/ext", None).await;
+    assert_eq!((v["stage"].as_str(), v["admitted"].as_bool()), (Some("ready"), Some(false)), "{v}");
+
+    // The token goes only to a browser's same-origin fetch; one from an earlier start is stale.
+    let (s, v) = call(&app, "GET", "/api/ui/token", None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("not_the_ui")), "{v}");
+    let (s, v) = common::call_with(
+        &app,
+        "PATCH",
+        "/api/tickets/ext",
+        Some(json!({"stage": "todo"})),
+        &[("x-ui-token", "from-before")],
+    )
+    .await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("stale_ui_token")), "{v}");
+
+    // The web client: let in.
+    let (s, v) = common::call_as_ui(&app, "PATCH", "/api/tickets/ext", Some(json!({"stage": "todo"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["stage"].as_str(), v["admitted"].as_bool()), (Some("todo"), Some(true)), "{v}");
+    // Once let in, the gate is open to anyone.
+    let (s, v) = call(&app, "PATCH", "/api/tickets/ext", Some(json!({"labels": ["agentic"]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}

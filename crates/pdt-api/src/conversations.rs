@@ -1529,13 +1529,16 @@ pub(crate) async fn post_message(
 pub(crate) async fn post_answer(
     State(st): State<AppState>,
     Path((id, request_id)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
     payload: Result<Json<AnswerRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     let Json(body) = payload?;
+    let from_ui = crate::untrusted::from_ui(&st, &headers)?;
     let session = conversation_session(&st, &id).await?;
     answer_request(&st, &session, &request_id, &body.answer).await?;
-    // The user's own answer: a yes to a call PDT held for them is good for that call (PDT-201).
-    let approved = matches!(body.answer, pdt_core::conversation::Answer::Approve { .. });
+    // The user's own answer: a yes to a call PDT held for them is good for that call (PDT-201), when it came from PDT's
+    // web client and not an agent's curl (PDT-204).
+    let approved = from_ui && matches!(body.answer, pdt_core::conversation::Answer::Approve { .. });
     st.grants.answered(&session.id, &request_id, approved);
     Ok(StatusCode::NO_CONTENT)
 }
