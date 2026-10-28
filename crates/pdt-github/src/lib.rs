@@ -11,7 +11,7 @@ use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
-    IssueDetail, JobLog, MergeSettings, MergeStrategy,
+    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, OpenedChangeRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -443,6 +443,13 @@ fn queue_removal(e: &Value) -> Option<QueueRemoval> {
     })
 }
 
+/// A created pull request (`POST …/pulls`).
+pub fn parse_opened(v: &Value) -> Result<OpenedChangeRequest, GhError> {
+    let number = v["number"].as_u64().and_then(|n| u32::try_from(n).ok());
+    let number = number.ok_or_else(|| GhError::BadAnswer("no pull request number in the answer".into()))?;
+    Ok(OpenedChangeRequest { number, url: s(v, "html_url") })
+}
+
 /// The `MERGE_SETTINGS_QUERY` answer's `data`.
 pub fn parse_merge_settings(data: &Value) -> Result<MergeSettings, GhError> {
     let r = &data["repository"];
@@ -661,6 +668,24 @@ impl Forge for GithubApi {
         match self.graphql(&pr_number_query(), json!({"owner": owner, "name": name, "number": number})) {
             Ok(d) => Ok(Some(&d["repository"]["pullRequest"]).filter(|n| n.is_object()).map(parse_pr)),
             Err(GhError::Status(200, m)) if m.contains("Could not resolve to a PullRequest") => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn open_change_request(&self, repo: &str, new: &NewChangeRequest) -> Result<OpenedChangeRequest, ForgeError> {
+        let body = json!({
+            "title": new.title,
+            "head": new.head,
+            "base": new.base,
+            "body": comment_body(&new.body),
+            "draft": new.draft,
+        });
+        match self.send_json("POST", &format!("repos/{repo}/pulls"), body) {
+            Ok(v) => Ok(parse_opened(&v)?),
+            // A head GitHub doesn't have, or one with nothing the base lacks.
+            Err(GhError::Status(422, m)) => Err(ForgeError::Failed(format!(
+                "GitHub refused the pull request: {m}. Is {} pushed, with commits {} doesn't have?",
+                new.head, new.base
+            ))),
             Err(e) => Err(e.into()),
         }
     }

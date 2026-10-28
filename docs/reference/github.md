@@ -84,6 +84,8 @@ works but that organization's private repositories answer 404.
 ## The forge tools
 
 Agents read and answer on GitHub through PDT's tools instead of `gh` ([agents.md](agents.md), "Agent sessions"):
-`change_request_view`, `change_request_comment` (`replyTo` answers a review comment), `ci_runs`, `ci_failed_logs`,
-`issue_view` and `issue_comment`, on the session's project forge and branch. They are in the default tool set, so the
+`change_request_view`, `change_request_comment` (`replyTo` answers a review comment), `change_request_open` (`POST
+/repos/{repo}/pulls`; GitHub's 422 for an unpushed head, or one with nothing new, names that), `change_request_merge`
+(auto-merge or the queue again after a queue drop, PDT-185), `ci_runs`, `ci_failed_logs`, `issue_view` and
+`issue_comment`, on the session's project forge and branch. They are in the default tool set, so the
 Coder, Reviewer and QA have them; the PM has `issue_view`. Agents still push with plain `git`.

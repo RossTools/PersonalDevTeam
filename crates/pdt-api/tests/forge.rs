@@ -323,3 +323,45 @@ async fn connect_github_enters_a_code_then_signs_in() {
     let (_, v) = call(&env.app, "DELETE", "/api/github/login/device", None).await;
     assert!(v["pending"].is_null() && v["connected"] == true, "{v}");
 }
+
+#[tokio::test]
+async fn an_agent_opens_its_pr_and_asks_for_the_merge_again_after_a_queue_drop() {
+    let gh = Arc::new(FakeForge::default());
+    let env = setup(Some(gh.clone()), None).await;
+    let (s, branch) = session(&env).await;
+    wait_said(&env, &s, 1).await;
+
+    let said = say(&env, &s, "mcp: change_request_open {\"title\": \" \"}").await;
+    assert!(said.contains("needs a title"), "{said}");
+    let said = say(&env, &s, "mcp: change_request_open {\"title\": \"Fix CI\", \"body\": \"Why\"}").await;
+    assert!(said.contains("\"number\": 100") && said.contains("\"existing\": false"), "{said}");
+    assert!(said.contains("\"base\": \"main\""), "the attempt's base: {said}");
+    let opened = gh.opened.lock().unwrap().clone();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(
+        (opened[0].head.as_str(), opened[0].base.as_str(), opened[0].body.as_str()),
+        (branch.as_str(), "main", "Why")
+    );
+    let said = say(&env, &s, "mcp: change_request_open {\"title\": \"Again\"}").await;
+    assert!(said.contains("\"number\": 100") && said.contains("\"existing\": true"), "{said}");
+    assert_eq!(gh.opened.lock().unwrap().len(), 1, "the branch's open one, not a second");
+
+    // Never set to merge: the merge is the user's or the workflow's.
+    let said = say(&env, &s, "mcp: change_request_merge {}").await;
+    assert!(said.contains("was never set to merge"), "{said}");
+    assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")), "nothing merged");
+
+    // The merge queue dropped it: asking again sets it to merge.
+    let mut p = pr(100);
+    p.queue_removal =
+        Some(pdt_core::pr::QueueRemoval { id: "RFMQE_1".into(), reason: "failed_checks".into(), by_queue: true });
+    gh.set_pr(&branch, Some(p.clone()));
+    let said = say(&env, &s, "mcp: change_request_merge {}").await;
+    assert!(said.contains("\"outcome\": \"queued\""), "{said}");
+    assert!(gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 100")), "{:?}", gh.calls.lock().unwrap());
+
+    p.auto_merge = true;
+    gh.set_pr(&branch, Some(p));
+    let said = say(&env, &s, "mcp: change_request_merge {}").await;
+    assert!(said.contains("\"outcome\": \"already\""), "{said}");
+}
