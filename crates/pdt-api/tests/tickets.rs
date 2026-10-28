@@ -319,6 +319,7 @@ async fn only_the_web_client_lets_an_external_ticket_in() {
         refused(call(&app, "POST", "/api/tickets/bulk", Some(body)).await);
     }
     refused(call(&app, "POST", "/api/tickets/ext/start", Some(json!({"agent": "claude"}))).await);
+    refused(call(&app, "POST", "/api/tickets/ext/stop", Some(json!({"stage": "todo"}))).await);
     // Anything short of that goes through.
     let (s, v) = call(&app, "PATCH", "/api/tickets/ext", Some(json!({"stage": "ready", "labels": ["bug"]}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
