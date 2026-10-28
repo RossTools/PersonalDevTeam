@@ -78,7 +78,7 @@ pub fn registered(t: &Target, runner: &mut dyn Runner) -> bool {
             reg.args(["query", RUN_KEY, "/v", TRAY_AUTOSTART_NAME]);
             runner.status(reg).unwrap_or(false)
         }
-        Os::Other => false,
+        Os::Linux | Os::Other => false,
     }
 }
 
@@ -124,7 +124,7 @@ fn register(t: &Target, runner: &mut dyn Runner) -> Result<(), String> {
                 .arg("/f");
             if runner.status(reg)? { Ok(()) } else { Err("reg add failed".into()) }
         }
-        Os::Other => Err("starting at login is supported on macOS and Windows only".into()),
+        Os::Linux | Os::Other => Err("starting at login is supported on macOS and Windows only".into()),
     }
 }
 
@@ -145,7 +145,7 @@ pub fn unregister(os: Os, home: Option<&Path>, runner: &mut dyn Runner) -> Resul
             let _ = runner.status(reg)?;
             Ok(())
         }
-        Os::Other => Ok(()),
+        Os::Linux | Os::Other => Ok(()),
     }
 }
 

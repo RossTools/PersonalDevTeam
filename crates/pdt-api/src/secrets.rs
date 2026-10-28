@@ -1,5 +1,7 @@
 //! Secrets (the update token, the GitHub login) live only in the OS keychain / credential manager (spec §3.2). Never logged, never
-//! returned by the API, never written to a file or the database.
+//! returned by the API, never written to the database. The one exception is Linux without a Secret Service (a headless
+//! machine, PDT-197): there they go to a file in the data folder only the user can read ([`FileSecretStore`]), and
+//! Settings → Secrets says so. macOS and Windows never fall back.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -102,6 +104,117 @@ impl SecretStore for KeyringStore {
             Ok(()) | Err(keyring::v1::Error::NoEntry) => Ok(()),
             Err(e) => Err(SecretError(e.to_string())),
         }
+    }
+}
+
+impl KeyringStore {
+    /// Whether the keychain answers: reading an entry that does not exist succeeds (with nothing). On Linux this fails
+    /// when no Secret Service (gnome-keyring, KWallet) is reachable over D-Bus.
+    pub fn reachable(&self) -> bool {
+        self.get("pdt-store-probe").is_ok()
+    }
+}
+
+/// Where this instance keeps secrets (Settings → Secrets shows it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SecretBackend {
+    /// The OS keychain: macOS login keychain, Windows Credential Manager, a Secret Service on Linux.
+    Keychain,
+    /// `secrets.json` in the data folder, readable only by the user (Linux without a Secret Service).
+    File,
+    /// In memory, gone when pdtd stops (tests, `PDT_SECRET_STORE=memory`, rehearsals).
+    Memory,
+}
+
+/// `GET /api/secrets/store`.
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SecretStoreInfo {
+    pub backend: SecretBackend,
+    /// The file, for [`SecretBackend::File`].
+    pub path: Option<String>,
+}
+
+/// Which store pdtd uses. `forced` is `PDT_SECRET_STORE`: `memory` anywhere, `file` on Linux only. Otherwise the
+/// keychain, except on Linux when `secret_service` (asked only there) finds none.
+pub fn choose_backend(linux: bool, forced: Option<&str>, secret_service: impl FnOnce() -> bool) -> SecretBackend {
+    match forced {
+        Some("memory") => SecretBackend::Memory,
+        Some("file") if linux => SecretBackend::File,
+        _ if linux && !secret_service() => SecretBackend::File,
+        _ => SecretBackend::Keychain,
+    }
+}
+
+/// The file [`FileSecretStore`] uses: `<data dir>/secrets.json`.
+pub fn secrets_file(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("secrets.json")
+}
+
+/// Secrets in a JSON file (name → value) that only the user can read (0600), for Linux hosts without a Secret
+/// Service. Each change rewrites it whole: written to a temporary file with those permissions, then renamed over it.
+pub struct FileSecretStore {
+    path: std::path::PathBuf,
+    lock: Mutex<()>,
+}
+
+impl FileSecretStore {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self { path, lock: Mutex::new(()) }
+    }
+
+    fn err(&self, what: &str, e: impl std::fmt::Display) -> SecretError {
+        SecretError(format!("{what} {}: {e}", self.path.display()))
+    }
+
+    fn read(&self) -> Result<std::collections::BTreeMap<String, String>, SecretError> {
+        match std::fs::read(&self.path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| self.err("reading", e)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+            Err(e) => Err(self.err("reading", e)),
+        }
+    }
+
+    fn write(&self, map: &std::collections::BTreeMap<String, String>) -> Result<(), SecretError> {
+        use std::io::Write;
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| self.err("writing", e))?;
+        }
+        let tmp = self.path.with_extension("json.tmp");
+        let _ = std::fs::remove_file(&tmp);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        let mut f = opts.open(&tmp).map_err(|e| self.err("writing", e))?;
+        let bytes = serde_json::to_vec_pretty(map).expect("json");
+        f.write_all(&bytes).and_then(|()| f.sync_all()).map_err(|e| self.err("writing", e))?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| self.err("writing", e))
+    }
+
+    fn change(
+        &self,
+        f: impl FnOnce(&mut std::collections::BTreeMap<String, String>) -> bool,
+    ) -> Result<(), SecretError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.read()?;
+        if f(&mut map) { self.write(&map) } else { Ok(()) }
+    }
+}
+
+impl SecretStore for FileSecretStore {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(self.read()?.get(name).cloned())
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretError> {
+        self.change(|m| m.insert(name.into(), value.into()).as_deref() != Some(value))
+    }
+    fn delete(&self, name: &str) -> Result<(), SecretError> {
+        self.change(|m| m.remove(name).is_some())
     }
 }
 
@@ -228,6 +341,51 @@ mod tests {
         s.delete("a").unwrap();
         s.delete("a").unwrap();
         assert_eq!(s.get("a").unwrap(), None);
+    }
+
+    #[test]
+    fn only_linux_without_a_secret_service_falls_back_to_the_file() {
+        let asked = std::cell::Cell::new(false);
+        let probe = |found: bool| {
+            asked.set(true);
+            found
+        };
+        // macOS and Windows: the keychain, never asked about and never a file, even when told.
+        assert_eq!(choose_backend(false, None, || probe(false)), SecretBackend::Keychain);
+        assert_eq!(choose_backend(false, Some("file"), || probe(false)), SecretBackend::Keychain);
+        assert!(!asked.get(), "only Linux looks for a Secret Service");
+        assert_eq!(choose_backend(true, None, || probe(true)), SecretBackend::Keychain);
+        assert_eq!(choose_backend(true, None, || probe(false)), SecretBackend::File);
+        assert_eq!(choose_backend(true, Some("file"), || true), SecretBackend::File);
+        for linux in [true, false] {
+            assert_eq!(choose_backend(linux, Some("memory"), || true), SecretBackend::Memory);
+        }
+    }
+
+    #[test]
+    fn file_store_roundtrip_is_private_to_the_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = secrets_file(&tmp.path().join("data"));
+        let s = FileSecretStore::new(path.clone());
+        assert_eq!(s.get("a").unwrap(), None);
+        s.delete("a").unwrap();
+        assert!(!path.exists(), "nothing is written until there is a secret");
+        s.set("a", "1").unwrap();
+        s.set("b", "2").unwrap();
+        assert_eq!(s.get("a").unwrap().as_deref(), Some("1"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // Another instance on the same file sees them (pdtd restarted).
+        let again = FileSecretStore::new(path.clone());
+        assert_eq!(again.get("b").unwrap().as_deref(), Some("2"));
+        again.delete("a").unwrap();
+        assert_eq!(s.get("a").unwrap(), None);
+        assert!(!path.with_extension("json.tmp").exists());
+        std::fs::write(&path, "not json").unwrap();
+        assert!(s.get("b").is_err(), "a damaged file is an error, never an empty store");
     }
 
     /// Touches the real keychain: run by hand only (`cargo test -p pdt-api keyring -- --ignored`).

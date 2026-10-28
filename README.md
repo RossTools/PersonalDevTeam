@@ -35,7 +35,10 @@ Coming next (tracked as tickets in PDT itself): a pipeline of agent personas tha
 ## Install
 
 Releases are published on GitHub when they are cut (`vX.Y.Z`; merges to `main` don't ship): `*-setup.exe` for
-Windows and `*.app.tar.gz` for macOS. Run the installer on Windows; on macOS unpack the app into Applications and open it once. From then on
+Windows, `*.app.tar.gz` for macOS, and `pdt-linux-<arch>.tar.gz` (headless) or `pdt-linux-<arch>.AppImage` for Linux
+(x86_64, aarch64). Run the installer on Windows; on macOS unpack the app into Applications and open it once; on Linux
+run the AppImage, or unpack the tarball and run `pdt/pdt-host install` (a systemd user service; see
+docs/reference/host.md "Linux" for starting at boot with `loginctl enable-linger`). From then on
 `pdt-host` starts at login and keeps `pdtd` running on http://127.0.0.1:7420. Updates install
 themselves after that. The repo is private, so release downloads need a GitHub token (stored in the OS keychain from
 Host settings).

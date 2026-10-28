@@ -100,6 +100,7 @@ import type { Connection } from './gen/Connection';
 import type { NewSecret } from './gen/NewSecret';
 import type { Secret } from './gen/Secret';
 import type { SecretPatch } from './gen/SecretPatch';
+import type { SecretStoreInfo } from './gen/SecretStoreInfo';
 import type { SecretUse } from './gen/SecretUse';
 import type { ConnectionInput } from './gen/ConnectionInput';
 import type { McpTools } from './gen/McpTools';
@@ -395,6 +396,7 @@ export const api = {
     request<WorkflowRunDetail>(`/api/workflow-runs/${enc(run)}/steps/${enc(step)}/answer`, { method: 'POST', body: JSON.stringify({ choice }) }),
   listLogEvents: (q: { type?: string; limit?: number; after?: number } = {}) => request<LogEvent[]>(`/api/events${queryString(q)}`),
   listSecrets: () => request<Secret[]>('/api/secrets'),
+  secretStore: () => request<SecretStoreInfo>('/api/secrets/store'),
   createSecret: (s: NewSecret) => request<Secret>('/api/secrets', { method: 'POST', body: JSON.stringify(s) }),
   patchSecret: (id: string, p: SecretPatch) =>
     request<Secret>(`/api/secrets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),

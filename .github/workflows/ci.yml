@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       bundles:
-        description: Build bundles (the macOS app and the Windows installer; published nowhere)
+        description: Build bundles (the macOS app, the Windows installer, the Linux tarball and AppImage; published nowhere)
         type: boolean
         default: true
 
@@ -43,7 +43,8 @@ env:
 #   Namespace is down); .github/actions/setup picks the cache to match.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files.
 # - bundles: never on a PR or in the queue; only when run by hand (workflow_dispatch with `bundles`) and in the
-#   release workflow. They publish nothing here.
+#   release workflow. They publish nothing here. Linux builds the tarball and AppImage on native x86_64 and arm64
+#   runners (bundle (linux, <arch>)); a release's SHA256SUMS lists them with the others.
 # - version: the workspace version in Cargo.toml and desktop/src-tauri/tauri.conf.json agree (in `lint (linux)`).
 # - changelog: on PRs (not docs-only ones), a changelog fragment or the `no-changelog` label (docs/SDLC.md).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
@@ -276,3 +277,27 @@ jobs:
       - uses: ./.github/actions/bundle
         with:
           bundles: nsis
+
+  # Linux (PDT-197): the headless tarball and the AppImage, each CPU on its own native runner (no cross-compiling).
+  # Ubuntu 22.04, so the AppImage and the binaries run on glibc 2.35 and newer.
+  bundle-linux:
+    name: bundle (linux, ${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.bundle == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/bundle
+        with:
+          bundles: linux

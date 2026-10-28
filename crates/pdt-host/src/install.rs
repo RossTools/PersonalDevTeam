@@ -1,5 +1,6 @@
 //! Installing a release and rolling it back (spec §3.4 steps 3–4): the silent NSIS installer on Windows, a bundle swap
-//! on macOS. The previous version is kept: a copy of the install folder (Windows) or the old bundle (macOS).
+//! on macOS, an install folder (and AppImage) swap on Linux ([`crate::linux`]). The previous version is kept: a copy
+//! of the install folder (Windows), the old bundle (macOS) or the old folder (Linux).
 
 use crate::config::HostConfig;
 use crate::process::no_window;
@@ -306,9 +307,31 @@ pub fn installer_for(cfg: &HostConfig) -> Result<Box<dyn Installer + Send>, Stri
             return Err(reason);
         }
         Ok(Box::new(BundleInstaller { bundle, timeout: INSTALL_TIMEOUT }))
+    } else if cfg!(target_os = "linux") {
+        linux_installer(cfg)
     } else {
         Err("updates are not supported on this platform".into())
     }
+}
+
+/// Linux: the tarball's folder, or an AppImage's payload folder (it names its AppImage). The folder is moved aside
+/// during an update, so its parent must be writable.
+fn linux_installer(cfg: &HostConfig) -> Result<Box<dyn Installer + Send>, String> {
+    let dir = &cfg.install_dir;
+    if !cfg.pdtd_path().is_file() {
+        return Err(format!("{} is not an install folder (it has no pdtd)", dir.display()));
+    }
+    let parent = dir.parent().ok_or("the install folder has no parent folder")?;
+    if !crate::linux::writable(parent) {
+        return Err(format!("{} is not writable, so the install folder cannot be replaced", parent.display()));
+    }
+    let appimage = crate::linux::appimage_of(dir);
+    if let Some(a) = appimage.as_ref().and_then(|a| a.parent())
+        && !crate::linux::writable(a)
+    {
+        return Err(format!("{} is not writable, so the AppImage cannot be replaced", a.display()));
+    }
+    Ok(Box::new(crate::linux::LinuxInstaller { dir: dir.clone(), appimage, timeout: INSTALL_TIMEOUT }))
 }
 
 /// Stops the tray running from a place and starts it again when dropped, whichever way the install ends.
@@ -490,6 +513,23 @@ mod tests {
         assert!(err.contains("temporary read-only folder"), "{err}");
         assert_eq!(host_installer(&mut c).backup_path(), None);
         assert_eq!(c.updates_unsupported.as_deref(), Some(err.as_str()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_installs_into_a_folder_with_pdtd_and_names_its_appimage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = |dir: PathBuf| {
+            let data = tmp.path().join("data").to_string_lossy().into_owned();
+            HostConfig::from_lookup(move |k| (k == "PDT_DATA_DIR").then(|| data.clone()), None, dir).unwrap()
+        };
+        let dir = tmp.path().join("pdt");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = installer_for(&cfg(dir.clone())).err().unwrap();
+        assert!(err.contains("no pdtd"), "{err}");
+        std::fs::write(dir.join("pdtd"), "x").unwrap();
+        let i = installer_for(&cfg(dir.clone())).unwrap();
+        assert_eq!(i.backup_path(), Some(tmp.path().join("pdt.previous")));
     }
 
     #[test]

@@ -6,8 +6,16 @@ pdt-api `vault.rs` (keychain, routes, tools, the Inbox answer, workflow filling)
 
 ## Where they live
 
-- **Values**: the OS keychain only (`SecretStore`, account `secret:<id>`; `PDT_SECRET_STORE=memory` in tests), and,
+- **Values**: the OS keychain (`SecretStore`, account `secret:<id>`; `PDT_SECRET_STORE=memory` in tests), and,
   while pdtd runs, the store's `Redactor`. Never in the database, a response, a log or a tool result.
+- **Linux without a Secret Service** (PDT-197; a headless machine has no gnome-keyring or KWallet): at startup pdtd
+  reads a missing entry from the Secret Service (5 s at most); when that fails, every secret (and the update token and
+  GitHub login) goes to `<data dir>/secrets.json` instead (`FileSecretStore`: name → value, written to a 0600 temporary
+  file and renamed over it), and pdtd logs a warning. `PDT_SECRET_STORE=file` chooses the file on Linux even with a
+  Secret Service. macOS and Windows always use the keychain (`choose_backend`). `GET /api/secrets/store` says which
+  (`backend`: `keychain`, `file` or `memory`; `path` for the file), and Settings → Secrets shows "Secrets: system
+  keyring" or "Secrets: file in the data folder" with the path. Moving between the two copies nothing: secrets saved
+  in one are not in the other.
 - **Rows** (`secrets`): `name` (unique ignoring case; letters, digits, `_`, `-`, starting with a letter, at most 64),
   `description`, `projects` and `personas` (JSON id lists: who may use it; empty means any), `last_used_at`,
   `last_used_by`. `secret_uses`: every use (`by`: the session's title or `workflow <name>`, `how`: the tool or node

@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use pdt_core::activity::Activity;
 use pdt_core::handoff::{UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path};
 use pdt_core::host::{DEFAULT_UPDATE_CHECK_MINUTES, UpdatePolicy};
-use pdt_core::release::{HostOs, TokenState, Version, compare_base, parse_version, token_state};
+use pdt_core::release::{APPIMAGE_MARKER, HostOs, TokenState, Version, compare_base, parse_version, token_state};
 use pdt_core::run::RunState;
 use pdt_core::session::SessionStatus;
 use pdt_update::{Changes, GitHubClient, Release, UpdateError, fetch_verified};
@@ -572,6 +572,16 @@ pub(crate) async fn busy_reasons(st: &AppState) -> Vec<String> {
     out
 }
 
+/// The platform whose release asset this pdtd installs. On Linux, an AppImage's payload folder (where pdtd runs from)
+/// holds `APPIMAGE_MARKER`; a tarball's does not.
+fn this_host() -> HostOs {
+    let appimage = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join(APPIMAGE_MARKER)))
+        .is_some_and(|m| m.is_file());
+    HostOs::current_linux(appimage)
+}
+
 fn conflict(code: &'static str, msg: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, msg)
 }
@@ -681,7 +691,7 @@ async fn download_and_hand_off(
     };
     let version = release.version.to_string();
     let downloads = downloads_dir(&st.data_dir);
-    let asset = fetch_verified(&svc.client, &tok, &release, HostOs::current(), &downloads.join(&version))
+    let asset = fetch_verified(&svc.client, &tok, &release, this_host(), &downloads.join(&version))
         .await
         .map_err(|e| fail(StatusCode::BAD_GATEWAY, "update_failed", e.to_string()))?;
     // The download can take minutes: ask again, keeping the verified file for the next attempt.
