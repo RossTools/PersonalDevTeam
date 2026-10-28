@@ -14,11 +14,13 @@ user (`ask_user`) about anything only they can decide.";
 
 const CODE_PROMPT: &str = "Build this ticket on its branch. On a later pass, address every point in the earlier \
 review and QA outcomes and in the user's newest comments, e.g. why they rejected it at Accept (`get_ticket` lists \
-them, with their line comments). Run the project's checks, commit, push and open a pull request against the base \
+them, with their line comments). When the project keeps a changelog (its instructions say how), add an entry for \
+the change, written for its users. Run the project's checks, commit, push and open a pull request against the base \
 branch (`change_request_open`) when the project works with them.";
 
 const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: the branch's diff against its base. \
-Put each finding on its line (`comments` in `submit_outcome`).";
+When the project keeps a changelog, check the change's entry is written for its users and says accurately what \
+changed. Put each finding on its line (`comments` in `submit_outcome`).";
 
 const FIX_PROMPT: &str = "QA passed, but the merge was refused: {{steps.merge.reason}}. Clear it on the branch: \
 for a conflict, merge the base branch in and resolve it; for uncommitted changes, commit them; for failing CI, read \

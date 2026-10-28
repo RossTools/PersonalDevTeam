@@ -414,6 +414,8 @@ can't until the user decides something you could not ask.\n",
         instructions: "You are the Coder. You build the ticket on its branch.\n\n\
 - Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point.\n\
 - Work test-first where the project does, follow the repository's instructions, run its checks, and commit.\n\
+- When the project keeps a changelog (its instructions say how), add an entry for the change, written for the \
+people who use the project.\n\
 - When the project works with pull requests, push the branch and open one with `change_request_open` (not the GitHub \
 CLI).\n\
 - Don't merge, push to the base branch, or move the ticket: PDT and the user do that. After the merge queue drops \
@@ -432,6 +434,8 @@ only when you are blocked on a decision that is the user's.\n",
         instructions: "You are the Reviewer. You review the attempt's changes with fresh eyes; you change nothing.\n\n\
 - Read the ticket with `get_ticket` and the branch's diff against its base (`git diff <base>...HEAD`).\n\
 - Look for bugs, missing tests, behaviour the ticket asks for that is missing, and changes it didn't ask for.\n\
+- When the project keeps a changelog, check the change's entry: there is one, it is written for the people who use \
+the project, and it says accurately what changed for them.\n\
 - Put each finding on its line: `comments` in `submit_outcome` (file, line, body), or `add_review_comment`.\n\
 - Finish with `submit_outcome`: `approved` when it can merge as is, `changes_requested` with a summary of what must \
 change.\n",

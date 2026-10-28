@@ -10,6 +10,7 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    docs/superpowers/specs and a plan in docs/superpowers/plans first.
 2. **Make a worktree** for a new branch (below). Never commit on `main` in the main checkout.
 3. **Build it test-first** in the worktree (TDD for core logic). Run the checks before every push (below).
+   Add a changelog fragment for the change (below, "Changelog").
 4. **Push and open a PR** against `main`. CI runs the full checks on Linux on every push (Namespace); the macOS checks
    run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks and the
    bundles run on a PR only with the `windows` / `bundle` label or when it touches their files, and always on main.
@@ -83,6 +84,33 @@ A new push starts a new run (the old one is cancelled), so look the run up again
 A fresh worktree needs `pnpm install --frozen-lockfile` once. Its `target/` starts empty, so the first build is slow.
 CI runs `cargo nextest run`; nextest isn't installed on the dev machine, and plain `cargo test` covers the same tests.
 Tests never touch port 7420, the real data folders or the real keychain.
+
+## Changelog
+
+Release notes are written for people who use PDT, by whoever makes the change, when they make it: every PR adds a
+**fragment**, `.changes/unreleased/<TICKET>.md` (a second note for the same ticket: `<TICKET>-<anything>.md`):
+
+```markdown
+---
+kind: fixed
+---
+The board no longer jumps back to the top when a ticket moves.
+```
+
+- `kind` is `added`, `changed`, `fixed`, `breaking` or `internal`. The text is one or two sentences (or a short
+  Markdown list) saying what changed for the user, not how the code changed; it says nothing about tickets, crates or
+  file names unless the user sees them. `internal` is for changes users never notice (refactors, tooling) and is left
+  out of the release notes.
+- `scripts/changelog.sh check` checks the fragments (name, front matter, kind, text).
+- **CI** (the `changelog` job, pull requests only) fails a PR that adds no fragment unless it has the `no-changelog`
+  label, which is for PRs that only change docs, CI or tests. Adding the label re-runs CI. Docs-only PRs skip the
+  job. It also runs the script's tests (`scripts/changelog.test.sh`).
+- In the Pipeline, the Coder writes the fragment (this repo's AGENTS.md says how) and the Reviewer checks that it is
+  written for users and accurate.
+- **At release**, `scripts/changelog.sh <version>` adds a `## <version> (<date>)` section to the top of
+  `CHANGELOG.md`, grouped Breaking, Added, Changed, Fixed (Internal left out), prints the same notes without the
+  heading to stdout (`scripts/changelog.sh 0.2.0 > notes.md` for the release notes), and moves the fragments to
+  `.changes/<version>/`. It refuses an existing version folder or an invalid fragment, changing nothing.
 
 ## Testing a branch in a dev instance
 

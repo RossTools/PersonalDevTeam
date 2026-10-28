@@ -874,7 +874,7 @@ deleted (`409 persona_in_use`).
   enabled); an untouched instance follows newer versions of it (Templates, above). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
   `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
   | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (own) → QA
-  (own); `changes_requested` and `fail` go back to Code (whose pass lists the Reviewer's or QA's findings first; a PR
+  (own; the Code prompt asks for a changelog entry when the project keeps one, the Review prompt checks it, PDT-193); `changes_requested` and `fail` go back to Code (whose pass lists the Reviewer's or QA's findings first; a PR
   notice for the attempt that comes meanwhile goes in after them, and `submitted` needs the worktree committed and
   pushed, PDT-161: see "Agent steps" and the outbox above); `pass` → a switch on `{{params.accept}}`: `user` → a
   condition (`{{trigger.labels}}` `contains_any` `{{params.autoAcceptLabels}}`): a ticket with one of those labels

@@ -39,6 +39,7 @@ env:
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
 #   always on main.
 # - bundles: only with the `bundle` label or a change to what they pack; always on main (releases).
+# - changelog: on PRs (not docs-only ones), a changelog fragment or the `no-changelog` label (docs/SDLC.md).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
 # those required checks, so they must not change without changing the ruleset.
 jobs:
@@ -100,6 +101,48 @@ jobs:
           macos=false
           if has macos || { [ "$code" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
           out "$code" "$code" "$macos" "$windows" "$bundle"
+
+  # A pull request adds a changelog fragment, or carries the `no-changelog` label (docs/SDLC.md "Changelog").
+  # Docs-only PRs, the merge queue and main skip it (the queue runs main plus a PR that already passed it).
+  changelog:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/changelog.test.sh
+      - name: The pull request adds a changelog fragment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Every unreleased fragment is well formed, whoever added it.
+          scripts/changelog.sh check
+          added="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | select(.status != "removed") | .filename' | grep -E '^\.changes/unreleased/[^/]+\.md$' || true)"
+          if [ -n "$added" ]; then printf 'Fragments:\n%s\n' "$added"; exit 0; fi
+          if printf '%s' "$LABELS" | grep -q '"no-changelog"'; then echo "No fragment: the PR has the no-changelog label."; exit 0; fi
+          echo "::error title=No changelog fragment::Add .changes/unreleased/<TICKET>.md, or the no-changelog label for a docs, CI or tests-only PR."
+          cat <<'EOF'
+          This pull request adds no changelog fragment. Add one at .changes/unreleased/<TICKET>.md (for example
+          .changes/unreleased/PDT-193.md; a second note for the same ticket is <TICKET>-<anything>.md):
+
+          ---
+          kind: fixed
+          ---
+          One or two sentences, written for people who use PDT, saying what changed for them.
+
+          kind is one of: added, changed, fixed, breaking, internal (internal is left out of the release notes).
+          Check it with: scripts/changelog.sh check
+
+          A PR that only changes docs, CI or tests needs no fragment: add the no-changelog label instead (that
+          re-runs CI). See docs/SDLC.md "Changelog".
+          EOF
+          exit 1
 
   lint-linux:
     name: lint (linux)
