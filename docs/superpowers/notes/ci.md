@@ -46,6 +46,11 @@ PR, which never reaches main); add the `macos` label to a PR that touches macOS-
 
 Every job in the table is a required check of the "Main" ruleset.
 
+**changelog** (GitHub `ubuntu-latest`, pull requests only, not docs-only ones): the PR adds a fragment under
+`.changes/unreleased/` or has the `no-changelog` label; every unreleased fragment is valid; the compile script's
+tests pass (docs/SDLC.md "Changelog"). The merge queue and main skip it. Make it a required check of the "Main"
+ruleset (Settings → Rules) so a PR without a fragment can't merge.
+
 **Docs-only PRs** (every changed file under `docs/` or ending in `.md`) skip every job but `changes`; a `windows`,
 `macos` or `bundle` label still runs those jobs. The guides pdtd builds in with `include_str!` (`docs/agent-guide.md`,
 `docs/run-config.md`, `docs/prompts/*`; crates/pdt-api/src/guides.rs) count as code, since their tests check them.
