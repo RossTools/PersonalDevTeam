@@ -792,6 +792,8 @@ export function AppShell() {
             projectId={stored.projectId}
             onProject={stored.setProjectId}
             onRenameTab={setRenamingTabId}
+            theme={theme}
+            onTheme={setTheme}
           />
           <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
             <RightPanelContent
@@ -816,6 +818,7 @@ export function AppShell() {
             top={<InstanceBadge stacked />}
             counts={{ inbox: inbox.data?.total ?? 0 }}
             dots={{ inbox: unreadUpdates, pm: pmDot }}
+            theme={{ value: theme, onChange: setTheme }}
           />
           <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', view === 'notes' && 'w-80')}>
             <div className="flex-1 overflow-auto px-1">{list}</div>

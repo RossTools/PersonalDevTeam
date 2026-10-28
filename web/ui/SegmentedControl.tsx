@@ -23,6 +23,8 @@ export interface SegmentedControlProps<V extends string = string> {
   /** sm 24px, md 28px (default); 44px on touch screens. */
   size?: 'sm' | 'md';
   disabled?: boolean;
+  /** `vertical` stacks the segments (a narrow column, such as the collapsed side rail). */
+  orientation?: 'horizontal' | 'vertical';
   className?: string;
 }
 
@@ -33,14 +35,18 @@ export function SegmentedControl<V extends string = string>({
   onChange,
   size = 'md',
   disabled,
+  orientation = 'horizontal',
   className,
   ...aria
 }: SegmentedControlProps<V>) {
+  const vertical = orientation === 'vertical';
+  const height = size === 'sm' ? 'h-control-sm' : 'h-control-md';
   return (
     <ToggleGroup
       {...aria}
       variant="segment"
       spacing={0.5}
+      orientation={orientation}
       selectionMode="single"
       disallowEmptySelection
       selectedKeys={[value]}
@@ -49,7 +55,7 @@ export function SegmentedControl<V extends string = string>({
         if (k !== undefined && k !== value) onChange(String(k) as V);
       }}
       isDisabled={disabled}
-      className={cn(size === 'sm' ? 'h-control-sm' : 'h-control-md', 'pointer-coarse:h-control-touch', className)}
+      className={cn(vertical ? 'w-fit' : [height, 'pointer-coarse:h-control-touch'], className)}
     >
       {options.map((o) => (
         <ToggleGroupItem
@@ -57,7 +63,11 @@ export function SegmentedControl<V extends string = string>({
           id={o.value}
           isDisabled={o.disabled}
           aria-label={o['aria-label']}
-          className={cn('h-full min-w-0 rounded-sm px-2 pointer-coarse:h-full', size === 'sm' ? 'text-xs' : 'text-sm')}
+          className={cn(
+            'min-w-0 rounded-sm px-2',
+            vertical ? [height, 'pointer-coarse:h-control-touch'] : 'h-full pointer-coarse:h-full',
+            size === 'sm' ? 'text-xs' : 'text-sm',
+          )}
         >
           {o.icon}
           {o.label}

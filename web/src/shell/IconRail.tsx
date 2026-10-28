@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, IconButton } from '@ui';
+import { Button, IconButton, type ThemePref } from '@ui';
+import { ThemeSwitch } from './ThemeSwitch';
 import { VIEWS, type ViewId } from './views';
 
 const item = 'size-9 pointer-coarse:size-11';
@@ -28,9 +29,10 @@ function writeExpanded(expanded: boolean) {
 
 /**
  * The views in a column on the left (desktop; phones have the drawer, PDT-112). `top` sits above the views (the DEV
- * badge). A toggle at the bottom expands the column to show each view's name beside its icon.
+ * badge). At the bottom, the theme switch (with `theme`), and a toggle that expands the column to show each view's name
+ * beside its icon.
  */
-export function IconRail({ active, onSelect, top, counts, dots }: {
+export function IconRail({ active, onSelect, top, counts, dots, theme }: {
   active: ViewId;
   onSelect: (v: ViewId) => void;
   top?: ReactNode;
@@ -38,6 +40,8 @@ export function IconRail({ active, onSelect, top, counts, dots }: {
   counts?: Partial<Record<ViewId, number>>;
   /** A dot on a view's item with no count to show (the Inbox's unread Updates, the PM's unread reply). */
   dots?: Partial<Record<ViewId, boolean>>;
+  /** The theme choice and its setter (AppShell's `useThemePref`, shared with the command palette). */
+  theme?: { value: ThemePref; onChange: (pref: ThemePref) => void };
 }) {
   const [expandedPref, setExpandedPref] = useState(readExpanded);
   const expanded = expandedPref;
@@ -99,7 +103,8 @@ export function IconRail({ active, onSelect, top, counts, dots }: {
       {top && <div className="flex justify-center pb-1">{top}</div>}
       {VIEWS.filter((v) => v !== settings).map(view)}
       {view(settings)}
-      <div className="mt-auto flex flex-col items-stretch pt-1">
+      <div className="mt-auto flex flex-col items-stretch gap-1 pt-1">
+        {theme && <ThemeSwitch {...theme} layout={expanded ? 'icons' : 'column'} />}
         {expanded ? (
           <Button variant="ghost" aria-label="Collapse side rail" aria-expanded onClick={toggle} className={cn(wide, 'text-muted-foreground')}>
             <PanelLeftClose aria-hidden />

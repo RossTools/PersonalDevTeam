@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { page, summary, ticket } from '../tickets/fixtures';
+import { applyThemePref } from '@ui';
 import { AppShell } from './AppShell';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -70,6 +71,27 @@ describe('AppShell', () => {
     await userEvent.click(within(rail).getByRole('button', { name: 'Files' }));
     expect(within(rail).getByRole('button', { name: 'Files' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText(/arrives with/)).not.toBeInTheDocument();
+  });
+
+  it('switches the theme in one click from the rail, keeping the choice for the next visit', async () => {
+    localStorage.removeItem('pdt.theme');
+    stubApi({ 'GET /api/projects': [], ...hostRoutes });
+    const { unmount } = renderWithQuery(<AppShell />);
+    const rail = screen.getByRole('navigation', { name: 'Views' });
+    const theme = within(rail).getByRole('radiogroup', { name: 'Theme' });
+    expect(within(theme).getByRole('radio', { name: 'System' })).toBeChecked();
+    await userEvent.click(within(theme).getByRole('radio', { name: 'Dark' }));
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    // The expanded rail keeps it, in a row.
+    await userEvent.click(within(rail).getByRole('button', { name: 'Expand side rail' }));
+    expect(within(rail).getByRole('radio', { name: 'Dark' })).toBeChecked();
+    unmount();
+    renderWithQuery(<AppShell />);
+    expect(screen.getByRole('radio', { name: 'Dark' })).toBeChecked();
+    await userEvent.click(screen.getByRole('radio', { name: 'System' }));
+    expect(document.documentElement).not.toHaveAttribute('data-theme');
+    expect(localStorage.getItem('pdt.theme')).toBe('system');
+    localStorage.removeItem('pdt.rail.expanded');
   });
 
   it('shows the DEV badge at the top of the rail when /api/health says dev', async () => {
@@ -824,6 +846,25 @@ describe('phone', () => {
     // Choosing replaced the drawer's history entry: Back goes to the screen before.
     await act(() => window.history.back());
     await waitFor(() => expect(here()).toBe('/sessions'));
+  });
+
+  it("switches the theme from the drawer's footer, keeping the choice", async () => {
+    localStorage.removeItem('pdt.theme');
+    stubPhone();
+    stubWorkspaces();
+    const { unmount } = renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    let d = await openDrawer();
+    await userEvent.click(within(within(d).getByRole('radiogroup', { name: 'Theme' })).getByRole('radio', { name: 'Light' }));
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    // The drawer stays open: the theme is not a place to go.
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument();
+    unmount();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    d = await openDrawer();
+    expect(within(d).getByRole('radio', { name: 'Light' })).toBeChecked();
+    applyThemePref('system');
   });
 
   it('closes the drawer on Back, staying on the screen', async () => {

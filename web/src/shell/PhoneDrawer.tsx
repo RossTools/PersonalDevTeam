@@ -1,8 +1,8 @@
 // The phone's drawer (PDT-112): the project, the views, the workspaces (folding open to their tabs), the agents,
-// and Settings with the host's connection state. Opened from ☰ only.
+// the theme switch, and Settings with the host's connection state. Opened from ☰ only.
 import { useState } from 'react';
 import { Plus, Settings } from 'lucide-react';
-import { Button, IconButton, Select, Sheet, StatusDot, TreeView, type TreeChildren, type TreeNode } from '@ui';
+import { Button, IconButton, Select, Sheet, StatusDot, TreeView, type ThemePref, type TreeChildren, type TreeNode } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Tab } from '../api/gen/Tab';
 import { AgentDot, AgentLabel, itemState, UnseenDot } from '../common/AgentState';
@@ -12,6 +12,7 @@ import { itemOf } from '../workspaces/model';
 import { AgentsSection, workspaceState } from '../workspaces/Sidebar';
 import type { WorkspacesApi } from '../workspaces/useWorkspaces';
 import { useBackCloses } from './router';
+import { ThemeSwitch } from './ThemeSwitch';
 import { VIEWS, type ViewId } from './views';
 
 const ALL = 'all';
@@ -20,7 +21,7 @@ const row = 'h-11 w-full justify-start gap-3 px-2.5 font-normal';
 
 type Node = TreeNode & { tab?: Tab };
 
-export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws, projectId, onProject, onRenameTab }: {
+export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws, projectId, onProject, onRenameTab, theme, onTheme }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   view: ViewId;
@@ -33,6 +34,8 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
   projectId: string | null;
   onProject: (id: string | null) => void;
   onRenameTab: (tabId: string) => void;
+  theme: ThemePref;
+  onTheme: (pref: ThemePref) => void;
 }) {
   const [adding, setAdding] = useState(false);
   const close = () => { setAdding(false); onOpenChange(false); };
@@ -130,7 +133,10 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
         <div className="px-1">
           <AgentsSection ws={ws} onRenameTab={onRenameTab} onChoose={close} />
         </div>
-        <div className="mt-auto flex items-center gap-2 border-t border-border px-1 pt-2">
+        <div className="mt-auto border-t border-border px-2 pt-2">
+          <ThemeSwitch value={theme} onChange={onTheme} layout="labels" />
+        </div>
+        <div className="flex items-center gap-2 px-1 pt-1">
           <Button variant="ghost" aria-current={view === 'settings' ? 'page' : undefined} onClick={() => choose('settings')}
             className={cn(row, 'flex-1', view === 'settings' ? 'bg-accent text-foreground' : 'text-muted-foreground')}>
             <Settings aria-hidden />
