@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banner, Button, Link, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { ReleaseChanges } from '../api/gen/ReleaseChanges';
+import type { ReleaseNotes } from '../api/gen/ReleaseNotes';
+import { Markdown } from '../common/Markdown';
 import { useOpenTicket } from '../tickets/actions';
 
 // Banner buttons stay 24px on touch screens too: the strip is a fixed h-8 (a 44px button would be clipped, and growing
@@ -42,9 +44,11 @@ export function UpdateBanner() {
   const s = status.data;
   if (!s) return null;
   const r = s.lastResult;
-  // Every change since the installed version when GitHub could list them, else the release's own notes.
+  // The notes of every release since the installed version when GitHub could list them, else every commit since
+  // it, else the new release's own notes.
+  const releases = s.latest?.releases?.length ? s.latest.releases : null;
   const changes = s.latest?.changes?.entries.length ? s.latest.changes : null;
-  const hasNotes = !!(changes || s.latest?.notes);
+  const hasNotes = !!(releases || changes || s.latest?.notes);
   // Every strip is one line of fixed height, and the release notes float over the page: the banner sits above the
   // terminal, so any change in its height resizes the PTY and makes the agent redraw (on a phone, a wrapped banner
   // with open notes left Claude one row).
@@ -85,7 +89,9 @@ export function UpdateBanner() {
               aria-label="Release notes"
               className="absolute inset-x-0 top-full z-(--pdt-z-popover) max-h-[50vh] overflow-auto border-b border-border bg-popover p-3 shadow-popover"
             >
-              {changes
+              {releases
+                ? <ReleaseList releases={releases} since={s.current} />
+                : changes
                 ? <ChangeList changes={changes} onOpened={() => setNotesOpen(false)} />
                 : <pre className="font-sans text-xs whitespace-pre-wrap text-foreground">{s.latest.notes}</pre>}
               <Button size="sm" variant="ghost" className="mt-2" onClick={() => setNotesOpen(false)}>Close</Button>
@@ -103,6 +109,23 @@ export function UpdateBanner() {
 }
 
 const BUSY: string[] = ['downloading', 'installing'];
+
+/** Each release the update brings, newest first, with its notes (written for people who use PDT, in Markdown). */
+function ReleaseList({ releases, since }: { releases: ReleaseNotes[]; since: string }) {
+  return (
+    <div className="space-y-3 text-xs text-foreground">
+      {releases.length > 1 && <p className="font-medium">{releases.length} releases since v{since.replace(/[-+].*$/, '')}</p>}
+      {releases.map((r) => (
+        <section key={r.tag} aria-label={`v${r.version}`}>
+          <h3 className="font-medium">v{r.version}</h3>
+          {r.notes.trim()
+            ? <Markdown className="text-xs">{r.notes}</Markdown>
+            : <p className="text-muted-foreground">No notes.</p>}
+        </section>
+      ))}
+    </div>
+  );
+}
 
 /** One line per change (a squashed pull request), newest first: its ticket here and its pull request on GitHub. */
 function ChangeList({ changes, onOpened }: { changes: ReleaseChanges; onOpened: () => void }) {

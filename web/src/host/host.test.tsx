@@ -31,7 +31,7 @@ const update = (over: object = {}) => ({
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
 const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
-const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null, changes: null };
+const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null, changes: null, releases: null };
 
 describe('HostSettingsPage', () => {
   it('sets the owner from this device, then turns on remote access', async () => {
@@ -353,6 +353,24 @@ describe('UpdateBanner', () => {
     expect(screen.getByText('Fixes things')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+  });
+
+  it('shows the notes of every release since the installed version, newest first', async () => {
+    const rel = (version: string, notes: string) => ({ version, tag: `v${version}`, notes, publishedAt: null });
+    const changes = { since: '0.1.6', total: 1, moreUrl: null, entries: [{ sha: 'a', subject: 'A commit', title: 'A commit', ticket: null, ticketHere: null, pr: null, prUrl: null }] };
+    const releases = [rel('0.2.1', '### Fixed\n\n- The banner lists every release.'), rel('0.2.0', '')];
+    stubApi({ 'GET /api/host/update': update({ current: '0.1.840', state: 'available', latest: { ...release, version: '0.2.1', changes, releases } }) });
+    renderWithQuery(<UpdateBanner />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Release notes' }));
+    const notes = screen.getByRole('region', { name: 'Release notes' });
+    expect(within(notes).getByText('2 releases since v0.1.840')).toBeInTheDocument();
+    const sections = within(notes).getAllByRole('region');
+    expect(sections.map((r) => r.getAttribute('aria-label'))).toEqual(['v0.2.1', 'v0.2.0']);
+    expect(within(sections[0]).getByRole('heading', { name: 'Fixed' })).toBeInTheDocument();
+    expect(within(sections[0]).getByText('The banner lists every release.')).toBeInTheDocument();
+    expect(within(sections[1]).getByText('No notes.')).toBeInTheDocument();
+    // The release notes take the place of the commit list.
+    expect(within(notes).queryByText('A commit')).toBeNull();
   });
 
   it('lists every change since the installed version, linking tickets here and pull requests', async () => {

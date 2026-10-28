@@ -1,9 +1,12 @@
 name: PDT bundle
-description: Builds the installer (nsis) or app bundle (app); on pushes to main, versions it and uploads it as a release asset.
+description: Builds the installer (nsis) or app bundle (app) at the checked-in version and keeps it as a workflow artifact (bundle-<bundles>). It publishes nothing.
 inputs:
   bundles:
     description: nsis or app
     required: true
+  release:
+    description: '"true" for a release build (the release workflow): reports the checked-in version instead of <version>-local, must be signed, and is notarized when the API key is given'
+    default: "false"
   signing-p12:
     description: base64 .p12 of the macOS release certificate
     default: ''
@@ -29,15 +32,15 @@ runs:
         cache: pnpm
     - run: pnpm install --frozen-lockfile
       shell: bash
-    # Pushes to main are released as 0.1.<run number>; other builds keep the checked-in version.
-    - name: Release version
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The version is the checked-in one (Cargo.toml, matched by tauri.conf.json; scripts/version.sh). Only a release
+    # build reports it as is; any other reports <version>-local, which never counts as newer than a release.
+    - name: Version
       shell: bash
       run: |
-        version="0.1.${{ github.run_number }}"
-        echo "PDT_BUILD_VERSION=$version" >> "$GITHUB_ENV"
-        printf '{"version":"%s"}' "$version" > "$RUNNER_TEMP/release.conf.json"
-        echo "Building release $version"
+        version="$(scripts/version.sh)"
+        echo "PDT_VERSION=$version" >> "$GITHUB_ENV"
+        if [ "${{ inputs.release }}" = true ]; then echo "PDT_BUILD_VERSION=$version" >> "$GITHUB_ENV"; fi
+        echo "Building $version (release: ${{ inputs.release }})"
     - run: pnpm --dir web build
       shell: bash
     - run: cargo build --release -p pdtd -p pdt-host
@@ -47,9 +50,8 @@ runs:
     - name: Build the bundle
       shell: bash
       run: |
-        args=(--config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" --bundles "${{ inputs.bundles }}")
-        if [ -n "${PDT_BUILD_VERSION:-}" ]; then args+=(--config "$RUNNER_TEMP/release.conf.json"); fi
-        pnpm --dir desktop exec tauri build "${args[@]}"
+        pnpm --dir desktop exec tauri build --config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" \
+          --bundles "${{ inputs.bundles }}"
     # One certificate signs every macOS release (scripts/sign-macos.sh). With a Developer ID certificate the keychain
     # trusts every release; a self-signed one still makes it ask after each update (docs/superpowers/notes/
     # developer-id.md). Releases must be signed; other builds are signed when the secret is available to them.
@@ -68,7 +70,7 @@ runs:
     # Notarized only when the API key secrets are set (they need a Developer ID signature), and only for releases:
     # Apple's service takes minutes.
     - name: Notarize the app bundle
-      if: inputs.bundles == 'app' && inputs.notary-key != '' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: inputs.bundles == 'app' && inputs.notary-key != '' && inputs.release == 'true'
       shell: bash
       env:
         MACOS_NOTARY_KEY: ${{ inputs.notary-key }}
@@ -76,14 +78,13 @@ runs:
         MACOS_NOTARY_ISSUER: ${{ inputs.notary-issuer }}
       run: scripts/notarize-macos.sh "$(ls -d target/release/bundle/macos/*.app | head -n 1)"
     # Asset names must match what hosts install (pdt_core::release::asset_suffix): *-setup.exe and *.app.tar.gz.
-    - name: Collect the release asset
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    - name: Collect the bundle
       shell: bash
       run: |
         mkdir -p "$RUNNER_TEMP/release"
         if [ "${{ inputs.bundles }}" = nsis ]; then
           # Only this version's installer (a cached target dir can hold older ones).
-          cp target/release/bundle/nsis/*_"$PDT_BUILD_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
+          cp target/release/bundle/nsis/*_"$PDT_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
         else
           cd target/release/bundle/macos
           app="$(ls -d *.app | head -n 1)"
@@ -91,9 +92,9 @@ runs:
           tar -czf "$RUNNER_TEMP/release/$app.tar.gz" "$app"
         fi
         ls -l "$RUNNER_TEMP/release"
-    - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: actions/upload-artifact@v7
+    - uses: actions/upload-artifact@v7
       with:
-        name: release-${{ inputs.bundles }}
+        name: bundle-${{ inputs.bundles }}
         path: ${{ runner.temp }}/release/*
         if-no-files-found: error
+        retention-days: ${{ inputs.release == 'true' && 30 || 5 }}

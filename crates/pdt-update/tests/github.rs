@@ -24,6 +24,8 @@ struct Fake {
     loop_hits: Arc<AtomicUsize>,
     /// Requests by the repository's id (`/repositories/77/…`).
     id_hits: Arc<AtomicUsize>,
+    /// The pages of `/releases` asked for.
+    release_pages: Arc<std::sync::Mutex<Vec<usize>>>,
 }
 
 const WIN: &[u8] = b"windows installer bytes";
@@ -137,6 +139,33 @@ async fn redirect_loop(State(f): State<Fake>) -> Response {
     (StatusCode::FOUND, [(header::LOCATION, format!("/repos/loop/r/releases/latest?hop={n}"))]).into_response()
 }
 
+/// Every release, newest first as GitHub lists them: v0.2.1, a draft v0.3.0, a pre-release v0.2.2, v0.2.0, then the
+/// per-merge releases v0.1.840 down to v0.1.1.
+fn all_releases() -> Vec<serde_json::Value> {
+    let r = |tag: &str, draft: bool, prerelease: bool| {
+        serde_json::json!({"tag_name": tag, "body": format!("Notes for {tag}"), "published_at": null,
+                           "draft": draft, "prerelease": prerelease, "assets": []})
+    };
+    let mut out =
+        vec![r("v0.2.1", false, false), r("v0.3.0", true, false), r("v0.2.2", false, true), r("v0.2.0", false, false)];
+    out.extend((1..=840).rev().map(|n| r(&format!("v0.1.{n}"), false, false)));
+    out
+}
+
+async fn releases(
+    State(f): State<Fake>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, usize>>,
+    h: HeaderMap,
+) -> Response {
+    if !authed(&h) {
+        return (StatusCode::UNAUTHORIZED, r#"{"message":"Bad credentials"}"#).into_response();
+    }
+    let (page, per) = (q.get("page").copied().unwrap_or(1), q.get("per_page").copied().unwrap_or(30));
+    f.release_pages.lock().unwrap().push(page);
+    let list: Vec<_> = all_releases().into_iter().skip((page - 1) * per).take(per).collect();
+    axum::Json(list).into_response()
+}
+
 /// `v0.1.5...v0.1.7`: two squashed merges; `abc1234...v0.1.7` (a dev build): one; `v0.1.1...v0.1.7`: 300 commits, of
 /// which GitHub sends the oldest 250; anything else is not found.
 async fn compare(Path(range): Path<String>, h: HeaderMap) -> Response {
@@ -169,6 +198,7 @@ async fn serve() -> (GitHubClient, Fake) {
         other_hits: Default::default(),
         loop_hits: Default::default(),
         id_hits: Default::default(),
+        release_pages: Default::default(),
     };
     let other = Router::new()
         .route(
@@ -187,6 +217,7 @@ async fn serve() -> (GitHubClient, Fake) {
     tokio::spawn(async move { axum::serve(ol, other).await.unwrap() });
     let app = Router::new()
         .route("/repos/o/r/releases/latest", get(latest))
+        .route("/repos/o/r/releases", get(releases))
         .route("/repos/o/r/releases/assets/{id}", get(asset))
         .route("/repos/o/r/compare/{range}", get(compare))
         .route("/storage/{id}", get(storage))
@@ -214,6 +245,28 @@ async fn latest_release_and_token_expiry() {
     assert_eq!(l.release.assets.len(), 3);
     assert_eq!(l.token_expires_at, parse_expiry("2030-01-02 03:04:05 UTC"));
     assert!(l.token_expires_at.is_some());
+}
+
+#[tokio::test]
+async fn the_releases_an_update_brings_skip_drafts_and_pre_releases() {
+    let (c, fake) = serve().await;
+    let v = |s| pdt_core::release::parse_version(s).unwrap();
+    let got = c.releases_between("good", &v("0.1.840"), &v("0.2.1")).await.unwrap();
+    let tags: Vec<_> = got.iter().map(|r| r.tag.as_str()).collect();
+    assert_eq!(tags, ["v0.2.1", "v0.2.0"], "newest first, no draft or pre-release");
+    assert_eq!(got[1].notes, "Notes for v0.2.0");
+    assert_eq!(*fake.release_pages.lock().unwrap(), [1], "the first page reached the installed version");
+
+    // Up to the latest release only, and across pages when the installed version is further back.
+    fake.release_pages.lock().unwrap().clear();
+    let got = c.releases_between("good", &v("0.1.700"), &v("0.2.0")).await.unwrap();
+    assert_eq!(got.len(), 141);
+    assert_eq!((got[0].tag.as_str(), got[140].tag.as_str()), ("v0.2.0", "v0.1.701"));
+    assert_eq!(*fake.release_pages.lock().unwrap(), [1, 2]);
+
+    // Nothing newer than the installed version: nothing listed.
+    assert!(c.releases_between("good", &v("0.2.1"), &v("0.2.1")).await.unwrap().is_empty());
+    assert_eq!(c.releases_between("bad", &v("0.1.1"), &v("0.2.1")).await, Err(UpdateError::Unauthorized));
 }
 
 #[tokio::test]

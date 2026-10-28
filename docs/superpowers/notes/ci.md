@@ -6,20 +6,30 @@ steps in `.github/actions/bundle`.
 Linux does every check that doesn't depend on the OS, split into parallel jobs. macOS and Windows run only what they
 can break on their own: clippy (for `cfg` code) and the Rust tests (paths, processes, PTYs).
 
-| Check | Runs on | Does | Pull requests | Merge queue | main |
+| Check | Runs on | Does | Pull requests | Merge queue | Run by hand |
 |---|---|---|---|---|---|
-| lint (linux) | Namespace `linux-8` | fmt, clippy (pdtd also with no integration features) | unless docs only | unless docs only | never |
-| test (linux) | Namespace `linux-8` | nextest (pdtd also with no integration features), generated TS types are committed | unless docs only | unless docs only | never |
-| web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only | never |
-| build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | never |
+| lint (linux) | Namespace `linux-8` | version sync (`scripts/version.sh check`), fmt, clippy (pdtd also with no integration features) | unless docs only | unless docs only | always |
+| test (linux) | Namespace `linux-8` | nextest (pdtd also with no integration features), generated TS types are committed | unless docs only | unless docs only | always |
+| web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only | always |
+| build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | always |
 | build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
-| bundle (macos-latest, app) | GitHub macOS | release app, signed | `bundle` label, or a change under `desktop/`, `scripts/`, `.github/` | same | always (release) |
-| bundle (windows-latest, nsis) | GitHub Windows | installer (also the only Windows compile of the desktop crate) | same | same | always (release) |
+| bundle (macos-latest, app) | GitHub macOS | the app, signed when the secret is there; a workflow artifact | never | never | with "Build bundles" |
+| bundle (windows-latest, nsis) | GitHub Windows | the installer (also the only Windows compile of the desktop crate); a workflow artifact | never | never | with "Build bundles" |
 
-**Why main skips the Linux and macOS checks:** the merge queue (group size 1, squash) has just run them on the tree
-that lands on main, so running them again on the push only cost money. Windows checks still run on main, the one
-place they always run. `release` uses `always()` and refuses only failed or cancelled needs, since the skipped checks
-would otherwise skip it. A push that bypasses the queue (an admin bypass) is not checked on main.
+**Main runs nothing** (PDT-192): `ci.yml` has no `push` trigger. The merge queue (group size 1, squash) has just run
+the checks on the tree that lands on main, and releases are deliberate, so a merge builds no bundle and publishes no
+release (docs/SDLC.md "Releases"). A push that bypasses the queue (an admin bypass) is not checked on main. Before
+PDT-192 every push to main ran the Windows checks and the bundles and published `v0.1.<run number>`.
+
+**Bundles by hand:** `gh workflow run ci --ref <branch>` (or Actions → ci → Run workflow, "Build bundles" ticked) runs
+every check and builds the macOS app and the Windows installer at the checked-in version, reporting
+`<version>-local`. They are uploaded as workflow artifacts (`bundle-app`, `bundle-nsis`, kept 5 days) and published
+nowhere: use it to try a packaging change (`desktop/`, `scripts/`, `.github/actions/bundle`) before a release. The
+bundle action's `release: "true"` input is for the release workflow: it reports the version as is, requires the
+signing certificate and notarizes.
+
+**Windows cache:** GitHub's runners save rust-cache only from main, which no longer runs CI, so Windows check runs
+start from a cold cache unless a dispatch on main warms it.
 
 **Why macOS waits for the queue:** Namespace bills macOS at 10× Linux per vCPU, so `macos-6` costs 60 units a minute
 and `linux-8` 8. In October 2026, when it ran on every PR push, in the queue and on main, it was 80% of a ~$600/month
@@ -36,8 +46,8 @@ PR, which never reaches main); add the `macos` label to a PR that touches macOS-
   multiplier (Linux 1, macOS 10), $0.0015 a unit on pay-as-you-go; the Team plan ($100/month) includes 100,000.
 - Namespace's Linux image is not GitHub's: no `SHELL` and no zsh. pdtd's terminal tests start `/bin/zsh` when no
   shell is given, so `setup` with `zsh: true` installs it (with an empty `~/.zshrc` and `skip_global_compinit=1`).
-- **GitHub** runs Windows (checks and installer), the macOS release bundle (signing) and the small `changes` and
-  `release` jobs; the standard runners are covered by the plan's included minutes.
+- **GitHub** runs Windows (checks and installer), the macOS bundle (signing) and the small `changes` and `changelog`
+  jobs; the standard runners are covered by the plan's included minutes.
 - Repo variables `PDT_LINUX_RUNNER` / `PDT_MACOS_RUNNER` override the Namespace runners, e.g. `ubuntu-latest` /
   `macos-latest` if Namespace is down or out of credit (`gh variable set PDT_LINUX_RUNNER --body ubuntu-latest`, and
   `gh variable delete` to go back). `setup` notices the runner (`nsc-runner-*` names) and uses rust-cache and
@@ -52,7 +62,7 @@ tests pass (docs/SDLC.md "Changelog"). The merge queue and main skip it. Make it
 ruleset (Settings → Rules) so a PR without a fragment can't merge.
 
 **Docs-only PRs** (every changed file under `docs/` or ending in `.md`) skip every job but `changes`; a `windows`,
-`macos` or `bundle` label still runs those jobs. The guides pdtd builds in with `include_str!` (`docs/agent-guide.md`,
+`macos` label still runs those jobs. The guides pdtd builds in with `include_str!` (`docs/agent-guide.md`,
 `docs/run-config.md`, `docs/prompts/*`; crates/pdt-api/src/guides.rs) count as code, since their tests check them.
 If other code starts reading a Markdown file, add it to that rule in the `changes` job.
 
@@ -62,8 +72,8 @@ the ruleset's required check names. Renaming a job means editing the "Main" rule
 Why: on GitHub's 2-vCPU runners (this internal repo's size) vitest alone took ~3 min on Linux and 6m37s on Windows,
 and the web code is the same on every OS. Namespace ran the Linux checks in 1.8 min (vs 6.4) and macOS in 1.4 (vs
 2.7–3.9). CI no longer runs on the Mac mini, which also runs the agents and the stable PDT
-(docs/superpowers/notes/runners.md). A Windows-only break is caught on the push to main that merges it instead of
-on the PR (and that push publishes no release); add the `windows` label to a PR that touches platform-specific code
+(docs/superpowers/notes/runners.md). A Windows-only break in a PR without the label and without Windows-specific
+files is not caught before it merges (main runs nothing); add the `windows` label to a PR that touches platform-specific code
 (`cfg(windows)`, process spawning, paths).
 
 ## Merge queue
@@ -76,8 +86,7 @@ files runs everything), the labels from PR `<n>` in the queue branch's name, whi
 The required checks report on the queue run the same way they do on a PR (skipped counts as passing), and the PR
 merges when they pass. A PR that conflicts with main or fails there leaves the queue.
 
-So each merge runs the Linux checks on every PR push and in the queue, macOS in the queue, and on main only Windows
-and the release. The queue runs only once a PR is ready.
+So each merge runs the Linux checks on every PR push and in the queue, macOS in the queue, and nothing on main. The queue runs only once a PR is ready.
 
 ## The old Mac mini runner (retired)
 CI ran `build (macos-latest)` on a self-hosted runner on the Mac mini until PDT-27; no job targets it now and its
