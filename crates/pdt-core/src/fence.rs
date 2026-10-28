@@ -59,23 +59,31 @@ impl Fence {
     }
 }
 
-/// `ctx` with each of `paths` under `root` (`trigger`; dotted, as in references) put in a block of `fence`: a string as
-/// it is, another value as its JSON. Missing and null values stay as they are.
-pub fn fence_fields(ctx: &serde_json::Value, root: &str, paths: &[&str], fence: &Fence) -> serde_json::Value {
+/// Whether a reference's `path` (`trigger.body.message`) reads one of the outside fields `paths` under `root` (the
+/// field itself, or something inside it).
+pub fn reads_outside(path: &str, root: &str, paths: &[&str]) -> bool {
+    let Some(rest) = path.trim().strip_prefix(root).and_then(|r| r.strip_prefix('.')) else { return false };
+    paths.iter().any(|p| rest == *p || rest.strip_prefix(p).is_some_and(|r| r.starts_with('.')))
+}
+
+/// `template` (a config field: a string, or strings in arrays and objects) with its references filled in from `ctx`
+/// (those under `keep`'s roots left as written), each one that reads an outside field ([`reads_outside`]) put in a
+/// block of `fence`: a string as it is, another value as its JSON. A missing or null value stays empty.
+pub fn resolve_fenced(
+    template: &serde_json::Value,
+    ctx: &serde_json::Value,
+    keep: &[&str],
+    root: &str,
+    paths: &[&str],
+    fence: &Fence,
+) -> serde_json::Value {
     use serde_json::Value;
-    let mut out = ctx.clone();
-    for path in paths {
-        let pointer = format!("/{root}/{}", path.split('.').collect::<Vec<_>>().join("/"));
-        if let Some(v) = out.pointer_mut(&pointer) {
-            let text = match &*v {
-                Value::Null => continue,
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            *v = Value::String(fence.wrap(&text));
-        }
-    }
-    out
+    crate::workflow::refs::resolve_mapped(template, ctx, keep, &|path, v| match v {
+        Value::Null => Value::Null,
+        v if !reads_outside(path, root, paths) => v,
+        Value::String(s) => Value::String(fence.wrap(&s)),
+        other => Value::String(fence.wrap(&other.to_string())),
+    })
 }
 
 /// Whether `text` holds a block of any fence (the start of one).
@@ -143,14 +151,27 @@ mod tests {
     }
 
     #[test]
-    fn fields_of_the_trigger_are_fenced() {
+    fn references_into_outside_fields_are_fenced_where_they_end() {
         let f = Fence::new("q");
-        let ctx = serde_json::json!({"trigger": {"title": "T", "body": null, "n": 3, "issue": {"body": "x"}}});
-        let got = fence_fields(&ctx, "trigger", &["title", "body", "issue.body", "missing", "n"], &f);
-        assert_eq!(got["trigger"]["title"], f.wrap("T"));
-        assert_eq!(got["trigger"]["issue"]["body"], f.wrap("x"));
-        assert_eq!(got["trigger"]["n"], f.wrap("3"));
-        assert!(got["trigger"]["body"].is_null() && got["trigger"].get("missing").is_none());
+        let ctx = serde_json::json!({"trigger": {
+            "title": "T", "hook": "h", "n": 3, "missing": null,
+            "body": {"message": "deploy failed", "tags": ["a"]},
+            "headers": {"x-github-event": "push"}}});
+        let paths = ["title", "body", "headers", "missing"];
+        let fill = |s: &str| resolve_fenced(&serde_json::json!(s), &ctx, &["secret"], "trigger", &paths, &f);
+        // A nested reference finds its value, fenced (PDT-202 review: webhooks' fields).
+        assert_eq!(fill("{{trigger.body.message}}"), f.wrap("deploy failed"));
+        assert_eq!(fill("Event {{trigger.headers.x-github-event}}"), format!("Event {}", f.wrap("push")));
+        assert_eq!(fill("{{trigger.body.tags.0}}"), f.wrap("a"));
+        // The whole field: its JSON, fenced.
+        assert_eq!(fill("{{trigger.body}}"), f.wrap(r#"{"message":"deploy failed","tags":["a"]}"#));
+        assert_eq!(fill("[{{trigger.title}}]"), format!("[{}]", f.wrap("T")));
+        // Not outside: as it is; missing or null: empty; kept roots: as written.
+        assert_eq!(fill("{{trigger.hook}} {{trigger.n}}"), "h 3");
+        assert_eq!(fill("<{{trigger.missing}}{{trigger.body.nope}}>"), "<>");
+        assert_eq!(fill("{{secret.k}}"), "{{secret.k}}");
+        assert!(reads_outside("trigger.body", "trigger", &paths) && !reads_outside("trigger.bodyx", "trigger", &paths));
+        assert!(!reads_outside("steps.body", "trigger", &paths));
     }
 
     #[test]

@@ -182,14 +182,16 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Pull request commented",
         description: "Someone commented on an attempt's pull request: on the conversation, or on a line in a review.",
         schema: schema_of::<PrCommented>,
-        outside: &[],
+        // Only collaborators' reach agents (`outside`); their text is still fenced where a workflow quotes it.
+        outside: &["body"],
     },
     EventType {
         id: PR_REVIEWED,
         title: "Pull request reviewed",
         description: "Someone submitted a review of an attempt's pull request (approved, changes requested, commented).",
         schema: schema_of::<PrReviewed>,
-        outside: &[],
+        // Only collaborators' reach agents (`outside`); their text is still fenced where a workflow quotes it.
+        outside: &["body"],
     },
     EventType {
         id: GITHUB_ISSUE_OPENED,

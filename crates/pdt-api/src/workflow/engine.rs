@@ -142,9 +142,10 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
     })
 }
 
-/// The outside text an agent gets, fenced (PDT-202): each of `fields` (`NodeKind::agent_text`) is resolved again with
-/// the trigger's outside fields (its event type's `outside`) each in a block tagged with an id picked for this prompt,
-/// and the fixed instruction goes before it. Other fields, and other nodes, get the text as it is.
+/// The outside text an agent gets, fenced (PDT-202): each of `fields` (`NodeKind::agent_text`) is resolved again, each
+/// reference that reads one of the trigger's outside fields (its event type's `outside`, or something inside one:
+/// `{{trigger.body.message}}`) put in a block tagged with an id picked for this prompt, and the fixed instruction goes
+/// before it. Other fields, and other nodes, get the text as it is.
 pub(crate) fn fence_input(
     reg: &crate::integrations::Registry,
     fields: &[&str],
@@ -160,10 +161,10 @@ pub(crate) fn fence_input(
         return;
     }
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
-    let fenced = pdt_core::fence::fence_fields(ctx, "trigger", t.outside, &fence);
     for f in fields {
         let (Some(raw), Some(slot)) = (config.get(*f), input.get_mut(*f)) else { continue };
-        if let Value::String(text) = resolve_keeping(raw, &fenced, &["event", "secret"]) {
+        let fenced = pdt_core::fence::resolve_fenced(raw, ctx, &["event", "secret"], "trigger", t.outside, &fence);
+        if let Value::String(text) = fenced {
             *slot = Value::String(fence.with_note(&text));
         }
     }
