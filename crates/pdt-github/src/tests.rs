@@ -262,6 +262,36 @@ fn comments_and_replies_on_a_pr() {
 }
 
 #[test]
+fn opens_a_pull_request_and_names_an_unpushed_head() {
+    let (g, t) = forge();
+    let url = format!("{API}/repos/o/r/pulls");
+    t.ok("POST", &url, r#"{"number":42,"html_url":"https://github.com/o/r/pull/42"}"#);
+    let new = NewChangeRequest {
+        head: "pdt/x".into(),
+        base: "main".into(),
+        title: "Fix it".into(),
+        body: "Why".into(),
+        draft: true,
+    };
+    let opened = g.open_change_request("o/r", &new).unwrap();
+    assert_eq!(opened, OpenedChangeRequest { number: 42, url: "https://github.com/o/r/pull/42".into() });
+    assert_eq!(
+        body_of(&t.sent()[0]),
+        json!({"title": "Fix it", "head": "pdt/x", "base": "main", "body": "Why", "draft": true})
+    );
+    t.on(
+        "POST",
+        &url,
+        Response::new(
+            422,
+            r#"{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"invalid","field":"head"}]}"#,
+        ),
+    );
+    let e = g.open_change_request("o/r", &new).unwrap_err().to_string();
+    assert!(e.contains("Validation Failed (invalid)") && e.contains("Is pdt/x pushed"), "{e}");
+}
+
+#[test]
 fn issue_pages_are_read_back_to_the_last_issue_seen() {
     // 250 issues and PRs, newest first, 100 a page.
     let page = |n: u32| -> Result<Vec<Value>, GhError> {

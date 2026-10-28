@@ -337,8 +337,8 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
             jobs,
             text: format!(
                 "[PDT] PR #{n} ({branch}) was removed from the merge queue: {why}. Fix it on {branch} (merge \
-                 origin/{base} if needed), run the checks and push. The merge then has to be asked for again \
-                 (Merge on the ticket)."
+                 origin/{base} if needed), run the checks and push. Then ask for the merge again: \
+                 `change_request_merge` (or Merge on the ticket)."
             ),
         });
     }
@@ -819,7 +819,7 @@ pub(crate) mod tests {
             "{}",
             n[0].text
         );
-        assert!(n[0].text.contains("The merge then has to be asked for again (Merge on the ticket)."));
+        assert!(n[0].text.contains("Then ask for the merge again: `change_request_merge` (or Merge on the ticket)."));
         // Merged, removed by hand, back in the queue or auto-merge on again (someone dealt with it): nothing.
         p.queue_removal = removal("RFMQE_2", "merged");
         assert!(notices(&p, "b").is_empty());

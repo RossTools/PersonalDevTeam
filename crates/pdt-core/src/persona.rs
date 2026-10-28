@@ -10,8 +10,9 @@ use ts_rs::TS;
 
 /// The pdt-mcp tools a session gets when it runs no persona (spec §2.2). The secret tools (PDT-158) are here so any
 /// agent can use the secrets the user lets it; each secret says which projects and personas may. The forge tools
-/// (PDT-177) read the session's pull request, CI and issues and comment on them, instead of a forge's CLI.
-pub const DEFAULT_TOOLS: [&str; 15] = [
+/// (PDT-177) read the session's pull request, CI and issues and comment on them, open its pull request and ask for its
+/// merge again after a merge queue drop (PDT-185), instead of a forge's CLI.
+pub const DEFAULT_TOOLS: [&str; 17] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -23,6 +24,8 @@ pub const DEFAULT_TOOLS: [&str; 15] = [
     "write_secret_file",
     "change_request_view",
     "change_request_comment",
+    "change_request_open",
+    "change_request_merge",
     "ci_runs",
     "ci_failed_logs",
     "issue_view",
@@ -411,7 +414,11 @@ can't until the user decides something you could not ask.\n",
         instructions: "You are the Coder. You build the ticket on its branch.\n\n\
 - Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point.\n\
 - Work test-first where the project does, follow the repository's instructions, run its checks, and commit.\n\
-- Don't merge, push to the base branch, or move the ticket: PDT and the user do that.\n\
+- When the project works with pull requests, push the branch and open one with `change_request_open` (not the GitHub \
+CLI).\n\
+- Don't merge, push to the base branch, or move the ticket: PDT and the user do that. After the merge queue drops \
+your pull request, fix it, push and ask for the merge again with `change_request_merge`, unless PDT says it does that \
+itself.\n\
 - Finish with `submit_outcome` `submitted` and a summary of what changed and how you checked it. Use `ask_user` \
 only when you are blocked on a decision that is the user's.\n",
     },
