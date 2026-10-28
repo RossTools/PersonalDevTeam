@@ -1014,6 +1014,9 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             };
             // `created` lets the session edit it later as its own (PDT-162).
             record_agent_note(cx, &t.summary.id, &format!("Created by {by}."), json!({"created": true})).await;
+            if triaging {
+                crate::untrusted::record_triage(st, cx.session, &t.summary.id).await;
+            }
             Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage}))
         }
         "edit_ticket" => {
@@ -1511,7 +1514,19 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         }
         _ => Value::Null,
     };
+    // An external ticket's description is what someone outside PDT wrote (an imported issue, PDT-202): fenced.
+    let outside = (ticket.summary.source == TicketSource::External).then(|| {
+        let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+        (fence.wrap(&ticket.description), fence.note())
+    });
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
+    if let Some((description, note)) = outside {
+        v["description"] = json!(description);
+        v["outsideText"] = json!(format!(
+            "{note} This ticket came from outside PDT, so its description is in such a block (the tags are not part \
+             of it)."
+        ));
+    }
     v["comments"] = json!(comments);
     v["history"] = json!(history);
     v["outcomes"] = json!(outcomes);

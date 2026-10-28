@@ -142,6 +142,33 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
     })
 }
 
+/// The outside text an agent gets, fenced (PDT-202): each of `fields` (`NodeKind::agent_text`) is resolved again with
+/// the trigger's outside fields (its event type's `outside`) each in a block tagged with an id picked for this prompt,
+/// and the fixed instruction goes before it. Other fields, and other nodes, get the text as it is.
+pub(crate) fn fence_input(
+    reg: &crate::integrations::Registry,
+    fields: &[&str],
+    config: &Value,
+    ctx: &Value,
+    input: &mut Value,
+) {
+    if fields.is_empty() {
+        return;
+    }
+    let Some(t) = ctx.pointer("/trigger/type").and_then(Value::as_str).and_then(|k| reg.event_type(k)) else { return };
+    if t.outside.is_empty() {
+        return;
+    }
+    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let fenced = pdt_core::fence::fence_fields(ctx, "trigger", t.outside, &fence);
+    for f in fields {
+        let (Some(raw), Some(slot)) = (config.get(*f), input.get_mut(*f)) else { continue };
+        if let Value::String(text) = resolve_keeping(raw, &fenced, &["event", "secret"]) {
+            *slot = Value::String(fence.with_note(&text));
+        }
+    }
+}
+
 pub(crate) fn new_step(run_id: &str, seq: i64, node_id: &str, kind: &str) -> Step {
     Step {
         id: uuid::Uuid::now_v7().to_string(),
@@ -248,6 +275,8 @@ async fn match_events(st: &AppState) {
         let trigger = trigger_value(&e);
         let ctx = json!({"trigger": trigger});
         let reg = st.registry();
+        // The triage cap (PDT-202), looked up once per event for the workflows with an agent step it starts.
+        let mut capped = None;
         for (wf, doc) in &enabled {
             for node in &doc.nodes {
                 let Some(kind) = reg.catalog().get(&node.kind).filter(|k| k.event_type() == Some(e.kind.as_str()))
@@ -270,6 +299,17 @@ async fn match_events(st: &AppState) {
                     .map(|k| resolve(&Value::String(k), &ctx))
                     .and_then(|v| v.as_str().map(String::from).or_else(|| (!v.is_null()).then(|| v.to_string())))
                     .unwrap_or_else(|| format!("{}:{}", node.id, e.id));
+                if pdt_core::workflow::events::untrusted(&e.kind)
+                    && doc.nodes.iter().any(|n| n.kind == super::nodes::agent::KIND)
+                {
+                    if capped.is_none() {
+                        capped = Some(crate::untrusted::triage_cap(st, &e, &trigger).await);
+                    }
+                    if let Some(Some(cap)) = capped {
+                        crate::untrusted::skip_triage(st, wf, &e, &trigger, cap).await;
+                        continue;
+                    }
+                }
                 if let Err(x) = start_run(st, wf, doc, &node.id, trigger.clone(), Some(e.id.clone()), key, None).await {
                     tracing::warn!(workflow = %wf.name, error = %x, "could not start a workflow run");
                 }
@@ -604,7 +644,8 @@ async fn claim<'a>(
     };
     let state = st.store.workflow_state(&wf.id).await.map_err(err)?;
     let ctx = context(wf, run, steps, state, false);
-    let input = resolve_keeping(&config, &ctx, &["event", "secret"]);
+    let mut input = resolve_keeping(&config, &ctx, &["event", "secret"]);
+    fence_input(&reg, kind.agent_text(), &config, &ctx, &mut input);
     // Found running, it was cut short by a restart (PDT-131); a retry after a timeout says so in its wait. A restart
     // doesn't use up one of the node's retries.
     let restarted = step.status == StepStatus::Running;
@@ -1218,7 +1259,8 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
             break;
         };
         let ctx = context(wf, &run, &done, state.clone(), true);
-        let input = resolve_keeping(&config, &ctx, &["event", "secret"]);
+        let mut input = resolve_keeping(&config, &ctx, &["event", "secret"]);
+        fence_input(&reg, kind.agent_text(), &config, &ctx, &mut input);
         ds.input = input.clone();
         let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true, rerun: false };
         let result = kind.dry_run(&cx, input).await;

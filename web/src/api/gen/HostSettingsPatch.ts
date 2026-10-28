@@ -18,7 +18,15 @@ projectsDir?: string, defaultAgent?: AgentKind, defaultSessionMode?: SessionMode
 /**
  * 0 for no cap.
  */
-maxAgentTurns?: number, bugReports?: BugReportSetting, 
+maxAgentTurns?: number, 
+/**
+ * 0 for no cap.
+ */
+triagePerAuthorHour?: number, 
+/**
+ * 0 for no cap.
+ */
+triagePerRepoHour?: number, bugReports?: BugReportSetting, 
 /**
  * Blank clears it (back to the built-in release repository).
  */

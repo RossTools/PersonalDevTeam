@@ -367,11 +367,51 @@ function Agents({ v }: { v: HostSettingsView }) {
           onChange={(n) => turns.mutate({ maxAgentTurns: Number(n) })}
         />
       </SettingsRow>
+      <TriageCaps v={v} />
       <SettingsRow label="Credentials" description="Subscription removes ANTHROPIC_API_KEY and OPENAI_API_KEY from agents' environment; pass through keeps them (API keys, Bedrock/Vertex, proxies). A project can override it.">
         <SaveNote s={save} />
         <Select aria-label="Host agent credentials" className="w-72 max-w-full" options={credentialPolicies} value={v.settings.agentCredentials} onChange={(c) => save.mutate({ agentCredentials: c })} />
       </SettingsRow>
     </Section>
+  );
+}
+
+const TRIAGE_CAPS = [1, 2, 3, 5, 10, 20, 50, 100];
+
+/** The hourly caps on triage runs started by outside input (PDT-202). */
+function TriageCaps({ v }: { v: HostSettingsView }) {
+  const author = useSaveSettings();
+  const repo = useSaveSettings();
+  const options = (n: number) => {
+    const all = [...new Set([...TRIAGE_CAPS, n])].filter((x) => x > 0).sort((a, b) => a - b);
+    return [{ value: '0', label: 'No cap' }, ...all.map((x) => ({ value: String(x), label: `${x} an hour` }))];
+  };
+  return (
+    <>
+      <SettingsRow
+        label="Triage per author"
+        description="The most new issues one author gets triaged an hour (a workflow with an agent step started by a new issue or a webhook). More are skipped, and the Inbox sums them up."
+      >
+        <SaveNote s={author} />
+        <Select<string>
+          aria-label="Triage per author"
+          className="w-40"
+          options={options(v.settings.triagePerAuthorHour)}
+          value={String(v.settings.triagePerAuthorHour)}
+          onChange={(n) => author.mutate({ triagePerAuthorHour: Number(n) })}
+        />
+      </SettingsRow>
+      <SettingsRow label="Triage per repository" description="The same for each repository (or webhook).">
+        <SaveNote s={repo} />
+        <Select<string>
+          aria-label="Triage per repository"
+          className="w-40"
+          options={options(v.settings.triagePerRepoHour)}
+          value={String(v.settings.triagePerRepoHour)}
+          onChange={(n) => repo.mutate({ triagePerRepoHour: Number(n) })}
+        />
+      </SettingsRow>
+    </>
   );
 }
 

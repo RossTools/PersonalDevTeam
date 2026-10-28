@@ -177,6 +177,12 @@ pub trait NodeKind: Send + Sync {
         5 * 60 * 1000
     }
 
+    /// The config fields whose text goes to an agent (an agent step's prompt, a message): the trigger's outside text
+    /// in them is fenced (PDT-202).
+    fn agent_text(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Whether an action's body runs under the engine lock (PDT-128): for a quick one whose wait the engine's own
     /// passes end (the outbox's delivery), so it is waiting before they look. Other actions and agent steps run
     /// outside it; flow, gate, wait and condition kinds always run under it.

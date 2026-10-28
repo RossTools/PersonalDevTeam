@@ -207,6 +207,7 @@ pub(crate) async fn start_ticket(
         {
             tracing::warn!(ticket = %id, error = %e, "could not record the chat on the timeline");
         }
+        outside_ticket(&st, &ticket.summary, &chat.id).await;
         open_tab_before_chat(&st, &project.id, &key, &id, &attempt_id, &chat.id, &v).await;
         if let Some(p) = &parent {
             part_started(&st, p).await;
@@ -293,6 +294,7 @@ pub(crate) async fn start_ticket(
     if let Err(e) = st.store.add_ticket_event(&id, EventKind::Session, Actor::User, None, Some(data), now_ms()).await {
         tracing::warn!(ticket = %id, error = %e, "could not record the started session on the timeline");
     }
+    outside_ticket(&st, &ticket.summary, &session.id).await;
     open_tabs(&st, &project.id, &key, &id, &attempt_id, Some(&session.id), &v).await;
     if let Some(p) = &parent {
         part_started(&st, p).await;
@@ -622,5 +624,22 @@ pub async fn check_merges(st: &AppState) {
                 Err(e) => tracing::warn!(attempt = %info.attempt.id, error = %e, "could not end the merged attempt"),
             }
         }
+    }
+}
+
+/// An external ticket's description is outside input (PDT-202): its new session reading it is recorded.
+async fn outside_ticket(st: &AppState, t: &pdt_core::ticket::TicketSummary, session_id: &str) {
+    if let Some((source, url)) = crate::untrusted::ticket_source(t) {
+        let e = pdt_core::workflow::events::OutsideInput {
+            project_id: Some(t.project_id.clone()),
+            ticket_id: Some(t.id.clone()),
+            session_id: session_id.to_string(),
+            source,
+            url,
+            via: "ticket".into(),
+            run_id: None,
+            workflow_name: None,
+        };
+        crate::untrusted::record_input(st, e).await;
     }
 }

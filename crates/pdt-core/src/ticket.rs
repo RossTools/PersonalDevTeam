@@ -206,12 +206,16 @@ pub enum EventKind {
     /// An agent step's outcome (Phase 7b): `{outcome, summary, persona, personaVersion, by, sessionId, attemptId,
     /// workflowId, workflowName, runId}`.
     Outcome,
+    /// Outside input reached an agent session, or was held back from one (PDT-202): `{source, url, sessionId, via,
+    /// runId, workflowName}`; a comment held back: `{held: true, source, url, author, pr}` with its text as the body.
+    OutsideInput,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
     Parted => "parted", Feedback => "feedback", Review => "review", Outcome => "outcome",
+    OutsideInput => "outside_input",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

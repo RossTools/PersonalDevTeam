@@ -167,6 +167,10 @@ impl NodeKind for Agent {
         Ok(())
     }
 
+    fn agent_text(&self) -> &'static [&'static str] {
+        &["prompt"]
+    }
+
     /// Agents take a while: the engine's timeout covers starting the session, not the work.
     fn default_timeout_ms(&self) -> u64 {
         2 * 60 * 1000
@@ -183,6 +187,9 @@ impl NodeKind for Agent {
                         c.outcomes.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
                     );
                     return Ok(Outcome::next(&first, json!({"would": would})));
+                }
+                if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx) {
+                    return Err(why);
                 }
                 // What a real run would check first (PDT-152): the persona, and where the step runs.
                 let persona = crate::workflow::agent::step_persona(cx.st, &c.persona).await?;

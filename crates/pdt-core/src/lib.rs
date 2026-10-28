@@ -5,6 +5,7 @@ pub mod agent_context;
 pub mod brand;
 pub mod bug_report;
 pub mod conversation;
+pub mod fence;
 pub mod forge;
 pub mod git_url;
 pub mod github_issue;

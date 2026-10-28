@@ -149,6 +149,9 @@ pub struct ChangeComment {
     pub path: Option<String>,
     pub line: Option<u32>,
     pub in_review: bool,
+    /// Its author is the repository's owner, a member of its organization or a collaborator on it (PDT-202): an
+    /// insider. Comments by anyone else are never sent into agent sessions.
+    pub collaborator: bool,
 }
 
 /// A submitted review of a change request.
@@ -161,6 +164,8 @@ pub struct ChangeReview {
     pub state: String,
     pub body: String,
     pub url: String,
+    /// As on [`ChangeComment`].
+    pub collaborator: bool,
 }
 
 /// A failed CI job and the end of its log.
@@ -533,6 +538,7 @@ pub mod testing {
                     path: None,
                     line: None,
                     in_review: false,
+                    collaborator: true,
                 })
                 .collect())
         }

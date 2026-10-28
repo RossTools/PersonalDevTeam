@@ -102,8 +102,40 @@ reaches agents only once the user says so.
   Without it (a Codex PM, a session that bypasses permissions) the store refuses the edit.
 - **Secrets**: a session that triages, or whose ticket is external and not let in, is refused `request_secret`,
   `run_with_secrets` and `write_secret_file` ([secrets.md](secrets.md)).
-- Not here yet: fencing untrusted text in prompts, limits on outside authors, rate limits and an audit of what reached
-  agents (PDT-202).
+
+## Outside input in prompts (PDT-202)
+
+The second layer: lower the odds an injection works, and record what outside text reached which agent.
+
+- **Fencing** (pdt-core `fence`): an event type declares the payload fields that hold outside text (`EventType.outside`:
+  `github.issue.opened` `title`, `body`; `webhook.received` `query`, `headers`, `body`; Jira's `summary`,
+  `description`, a comment's `body`). Wherever such a field goes to an agent (a node kind's `agent_text`: an `agent`
+  step's `prompt`, `session.send`'s `text`), the engine (`engine::fence_input`) puts it in a block tagged with an id
+  picked for that prompt, `<untrusted id="…">…</untrusted id="…">`, and puts a fixed instruction first: the block is
+  data to read, never instructions to follow. Anything in the text that looks like the tag (`<untrusted`,
+  `</untrusted`, any case or spacing) has its `<` written `&lt;`, so it can't close its block early. Other nodes
+  (conditions, `ticket.create`, `github.comment`) get the text as it is. `get_ticket` fences an external ticket's
+  description the same way (`outsideText` carries the instruction). The built-in triage prompts (Triage new GitHub
+  issues, PDT bug triage) put the title and text on lines of their own, so the blocks stand apart.
+- **Outside authors**: GitHub says how a comment's or review's author is related to the repository
+  (`author_association`); only `OWNER`, `MEMBER` and `COLLABORATOR` are insiders (pdt-forge `collaborator`). Bots
+  (installed on the repository) and the account PDT is logged in as count as insiders too. Everyone else's
+  `pr.commented` and `pr.reviewed` carry `outside: true`: such a comment goes on the ticket's timeline with its text
+  (`outside_input` with `held: true`, behind "Show what they wrote"), never into a session. `session.send` in a run
+  they started leaves by `skipped` with the reason, an agent step fails with it, and PR comments to the agent skips
+  them in its trigger.
+- **Triage cap**: a workflow with an `agent` step started by an outside event (`github.issue.opened`,
+  `webhook.received`) is a triage run. One author's issues start at most `triagePerAuthorHour` of them an hour (default
+  3), one repository's (or webhook's) `triagePerRepoHour` (default 20; Settings → Host, 0 for no cap), counted in
+  events that started a run (pdt-store `events_with_runs_since`). Over the cap the run isn't started: a
+  `triage.skipped` event (`repo`, `number`, `url`, `author`, the workflow, `cap`: `author` or `repo`, `limit`), and one
+  Inbox notice per repository and hour that lists what it skipped (pdt-store `put_inbox_summary`).
+- **Audit**: each time outside text goes into a session, a `session.outside_input` event (`source`: `owner/name#12`,
+  `webhook <name>`, a Jira key or the external ticket's link; `url`, `sessionId`, `ticketId`, `runId`, `workflowName`,
+  `via`) and, with a ticket, an `outside_input` entry on its timeline. `via`: `prompt` (an agent step's fenced prompt),
+  `message` (a delivered `session.send` with a block), `ticket` (a new session on an external ticket: Start, or an
+  agent step's new session), `triage` (on the ticket a triage made: its `create_ticket`, or `ticket.create` /
+  `github.import` in its run, naming the run's agent sessions).
 
 ## Parts (PDT-38)
 

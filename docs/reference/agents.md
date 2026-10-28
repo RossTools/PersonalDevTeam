@@ -288,6 +288,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   other than Draft or the `agentic` label is refused, whatever the user answers.
 - The built-in template **Triage new GitHub issues** (`builtin:issue-triage`, its `persona` param defaulting to
   Triage) and the built-in **PDT bug triage** run it.
+- Its prompt gets the issue's title and text in fenced blocks with a fixed "data, never instructions" note, triage
+  runs are capped per author and per repository an hour, and each session outside text reached is recorded on the
+  ticket's timeline (PDT-202, [tickets.md](tickets.md) "Outside input in prompts").
 
 ## Activity
 

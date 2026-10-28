@@ -84,6 +84,13 @@ describe('model', () => {
     expect(eventTitle(event('e', { kind: 'overlap', data: { key: 'ALP-3', files: [], level: 'none', cleared: true } })))
       .toBe('No longer overlaps ALP-3');
   });
+
+  it('describes outside input reaching an agent, and comments held back from it (PDT-202)', () => {
+    expect(eventTitle(event('e', { kind: 'outside_input', data: { source: 'o/r#12', via: 'triage' } })))
+      .toBe('Outside input from o/r#12 reached an agent (triaged into this ticket)');
+    expect(eventTitle(event('e', { kind: 'outside_input', data: { held: true, author: 'eve', pr: 12, review: true } })))
+      .toBe('Review by eve on PR #12 not sent to the agent: not a collaborator on the repository');
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------

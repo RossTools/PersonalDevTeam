@@ -211,7 +211,7 @@ fn comments_and_reviews_follow_their_pages() {
     t.on(
         "GET",
         &c,
-        Response::new(200, r#"[{"id":1,"user":{"login":"al","type":"User"},"body":"hi","html_url":"u1"}]"#)
+        Response::new(200, r#"[{"id":1,"user":{"login":"al","type":"User"},"body":"hi","html_url":"u1","author_association":"MEMBER"}]"#)
             .with_header("Link", &format!("<{API}/repositories/9/issues/3/comments?page=2>; rel=\"next\"")),
     );
     t.ok(
@@ -222,21 +222,24 @@ fn comments_and_reviews_follow_their_pages() {
     t.ok(
         "GET",
         &format!("{API}/repos/o/r/pulls/3/comments"),
-        r#"[{"id":11,"user":{"login":"al","type":"User"},"body":"nit","html_url":"u","path":"src/a.rs","line":40}]"#,
+        r#"[{"id":11,"user":{"login":"x","type":"User"},"body":"nit","html_url":"u","path":"src/a.rs","line":40,
+            "author_association":"CONTRIBUTOR"}]"#,
     );
     let all = g.change_comments("o/r", 3).unwrap();
     assert_eq!(all.iter().map(|c| c.id).collect::<Vec<_>>(), [1, 2, 11]);
     assert!(!all[0].is_bot && all[1].is_bot);
     assert_eq!((all[2].path.as_deref(), all[2].line, all[2].in_review), (Some("src/a.rs"), Some(40), true));
+    // PDT-202: only the owner, members and collaborators are insiders (a contributor or no association is not).
+    assert_eq!(all.iter().map(|c| c.collaborator).collect::<Vec<_>>(), [true, false, false]);
 
     t.ok(
         "GET",
         &format!("{API}/repos/o/r/pulls/3/reviews"),
-        r#"[{"id":5,"user":{"login":"al"},"state":"CHANGES_REQUESTED","body":"no","html_url":"u"},
+        r#"[{"id":5,"user":{"login":"al"},"state":"CHANGES_REQUESTED","body":"no","html_url":"u","author_association":"OWNER"},
            {"id":6,"user":{"login":"al"},"state":"PENDING","body":"","html_url":"u"}]"#,
     );
     let r = g.change_reviews("o/r", 3).unwrap();
-    assert_eq!((r.len(), r[0].state.as_str()), (1, "changes_requested"));
+    assert_eq!((r.len(), r[0].state.as_str(), r[0].collaborator), (1, "changes_requested", true));
 }
 
 #[test]

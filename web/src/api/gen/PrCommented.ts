@@ -20,7 +20,12 @@ inReview: boolean,
 /**
  * Written by the user themself (the account PDT is logged in to GitHub as).
  */
-byOwner: boolean, isBot: boolean, notice: Notice, projectId: string, ticketId: string, 
+byOwner: boolean, isBot: boolean, 
+/**
+ * Written by someone who isn't a collaborator on the repository (not its owner, a member or a collaborator, nor
+ * a bot installed on it; PDT-202): shown in PDT, never sent into an agent session.
+ */
+outside: boolean, notice: Notice, projectId: string, ticketId: string, 
 /**
  * `PDT-42`.
  */

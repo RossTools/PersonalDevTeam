@@ -61,7 +61,8 @@ impl NodeKind for SessionSend {
             "Tell the agent",
             "Types a message into an agent session once it is idle and nobody is typing (a conversation: no turn \
              running). `untold` when the attempt has no running agent session (with `reopen`, nor a conversation to reopen); \
-             `skipped` when the dedupe key was sent.",
+             `skipped` when the dedupe key was sent, or when the trigger is what someone who isn't a collaborator \
+             on the repository wrote (that is never sent into a session).",
             &[("sent", "Told"), ("untold", "No session to tell"), ("skipped", "Already sent")],
             false,
         )
@@ -78,6 +79,10 @@ impl NodeKind for SessionSend {
         Ok(())
     }
 
+    fn agent_text(&self) -> &'static [&'static str] {
+        &["text"]
+    }
+
     /// Its message may be delivered at once: the step is waiting by then.
     fn in_engine_lock(&self) -> bool {
         true
@@ -90,6 +95,11 @@ impl NodeKind for SessionSend {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: SessionSendConfig = parse(&input)?;
+            // What an outsider wrote stays in PDT (PDT-202): the ticket's timeline shows it.
+            if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx) {
+                tracing::info!(run = %cx.run.id, "a message an outsider wrote was not sent to the agent");
+                return Ok(Outcome::next("skipped", json!({"quiet": true, "reason": why})));
+            }
             let attempt = c.attempt.filter(|a| !a.trim().is_empty());
             let session = c.session.filter(|s| !s.trim().is_empty());
             if attempt.is_none() && session.is_none() {

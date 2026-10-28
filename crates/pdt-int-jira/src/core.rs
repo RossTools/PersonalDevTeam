@@ -18,24 +18,28 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "A new issue in a project's Jira scope (checked every minute; linking a project only records where \
                       it is).",
         schema: schema_of::<JiraIssueCreated>,
+        outside: &["summary", "description"],
     },
     EventType {
         id: JIRA_ISSUE_UPDATED,
         title: "Jira issue updated",
         description: "Someone changed fields of an issue in a project's Jira scope (`changed` names them).",
         schema: schema_of::<JiraIssueUpdated>,
+        outside: &["summary", "description"],
     },
     EventType {
         id: JIRA_ISSUE_TRANSITIONED,
         title: "Jira issue transitioned",
         description: "An issue in a project's Jira scope moved to another status.",
         schema: schema_of::<JiraIssueTransitioned>,
+        outside: &["summary", "description"],
     },
     EventType {
         id: JIRA_ISSUE_COMMENTED,
         title: "Jira issue commented",
         description: "Someone commented on an issue in a project's Jira scope.",
         schema: schema_of::<JiraIssueCommented>,
+        outside: &["summary", "description", "body"],
     },
 ];
 

@@ -39,6 +39,10 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   commits pushed after the attempt's PR merged; [tickets.md](tickets.md)). `ticket.stage_changed` carries `external`, the issue in each tracker the
   ticket is linked to by tracker (`{"jira": "ABC-5"}`, `{{trigger.external.jira}}`), and
   `githubIssue` (`owner/name#12`) when it is linked to a GitHub issue.
+- PDT-202 ([tickets.md](tickets.md) "Outside input in prompts"): each event type names its outside-text fields
+  (`EventType.outside`), fenced in what goes to an agent; `pr.commented` / `pr.reviewed` carry `outside` (the author
+  isn't a collaborator on the repository: never sent into a session); the engine logs `triage.skipped` for a triage
+  run over the hourly cap, and `session.outside_input` records outside text reaching a session.
 - The timeline and the conversation events stay as they were; a `pr` timeline event is now the record of a message a
   workflow delivered (`told`, `sessionId`, plus `workflowId`, `workflowName`, `runId`).
 - `GET /api/events?type=&project=&ticket=&attempt=&limit=` (newest first) or `&after=<seq>` (oldest first, to

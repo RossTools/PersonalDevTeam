@@ -384,6 +384,12 @@ fn comment_body(body: &str) -> String {
     out
 }
 
+/// Whether an item's author is an insider on the repository (`author_association` OWNER, MEMBER or COLLABORATOR;
+/// PDT-202). Without the field, they are not.
+fn collaborator(v: &Value) -> bool {
+    matches!(v["author_association"].as_str(), Some("OWNER" | "MEMBER" | "COLLABORATOR"))
+}
+
 fn is_bot(user: &Value) -> bool {
     user["type"] == "Bot" || user["login"].as_str().is_some_and(|l| l.ends_with("[bot]"))
 }
@@ -606,6 +612,7 @@ pub fn parse_comments(items: &[Value], in_review: bool) -> Vec<ChangeComment> {
                 path: v["path"].as_str().map(String::from),
                 line: v["line"].as_u64().and_then(|l| u32::try_from(l).ok()),
                 in_review,
+                collaborator: collaborator(v),
             })
         })
         .collect()
@@ -628,6 +635,7 @@ pub fn parse_reviews(items: &[Value]) -> Vec<ChangeReview> {
                 state: state.into(),
                 body: s(v, "body"),
                 url: s(v, "html_url"),
+                collaborator: collaborator(v),
             })
         })
         .collect()
