@@ -12,4 +12,8 @@ branch: string | null,
 /**
  * Or its number.
  */
-number: number | string | null, };
+number: number | string | null, 
+/**
+ * The port a dry run takes, as it reads nothing: `open` for a branch and `merged` for a number when left out.
+ */
+dryRunPort: string | null, };

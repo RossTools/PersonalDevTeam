@@ -220,3 +220,27 @@ async fn the_builtin_dry_runs_without_calling_github() {
     let calls = env.gh.calls.lock().unwrap().clone();
     assert!(calls.is_empty(), "a dry run calls nothing: {calls:?}");
 }
+
+#[tokio::test]
+async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
+    let env = setup().await;
+    let wf = cut_release(&env).await;
+    // An earlier release PR is still open: the Action would refuse, and that PR is not the bump asked for.
+    env.gh.set_pr("release", Some(pr(5, PrState::Open)));
+    let (_, r) = call(
+        &env.app,
+        "POST",
+        &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
+        Some(json!({"input": {"bump": "minor", "projectId": env.project}})),
+    )
+    .await;
+    let id = r["runId"].as_str().unwrap().to_string();
+    pdt_api::run_workflows(&env.state).await;
+
+    assert!(env.gh.workflow_runs.lock().unwrap().is_empty(), "the release workflow is not started");
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let last = r["steps"].as_array().unwrap().last().unwrap();
+    assert_eq!(last["nodeId"], "not_started", "{r}");
+    assert!(inbox_titles(&env).await.contains(&"Release PR #5 is still open".to_string()));
+}

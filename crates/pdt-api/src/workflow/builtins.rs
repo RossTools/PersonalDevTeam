@@ -708,6 +708,19 @@ fn cut_release() -> WorkflowDoc {
             {"id": "start", "kind": "manual", "version": 1, "position": {"x": 0, "y": 0}, "title": "Cut a release"},
             {"id": "before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": 0},
              "title": "Latest release before", "retry": retry, "config": {}},
+            // The Action refuses while a release PR is open, and that PR isn't the release asked for: say so instead.
+            {"id": "open_already", "kind": "github.change_request", "version": 1, "position": {"x": 390, "y": 200},
+             "title": "A release PR still open?", "retry": retry,
+             "config": {"branch": RELEASE_BRANCH, "dryRunPort": "none"}},
+            {"id": "still_open", "kind": "inbox.notice", "version": 1, "position": {"x": 650, "y": 200},
+             "title": "Inbox: one is still open", "config": {
+                "key": "release-pr-open-{{steps.open_already.number}}",
+                "title": "Release PR #{{steps.open_already.number}} is still open",
+                "text": "No new release was started: [{{steps.open_already.title}}]({{steps.open_already.url}}) is \
+                         still open, and the release workflow opens only one release PR at a time. Merge it (that \
+                         release ships) or close it, then run Cut a release again."}},
+            {"id": "not_started", "kind": "end", "version": 1, "position": {"x": 910, "y": 200},
+             "title": "Not started"},
             {"id": "dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": 0},
              "title": "Run the release workflow", "config": {"workflow": RELEASE_WORKFLOW, "ref": "main",
                 "inputs": {"bump": "{{trigger.bump}}", "version": "{{trigger.version}}"}}},
@@ -754,8 +767,14 @@ fn cut_release() -> WorkflowDoc {
         ],
         "edges": [
             {"from": "start", "to": "before"},
-            {"from": "before", "port": "found", "to": "dispatch"},
-            {"from": "before", "port": "none", "to": "dispatch"},
+            {"from": "before", "port": "found", "to": "open_already"},
+            {"from": "before", "port": "none", "to": "open_already"},
+            {"from": "open_already", "port": "open", "to": "still_open"},
+            {"from": "open_already", "port": "none", "to": "dispatch"},
+            {"from": "open_already", "port": "merged", "to": "dispatch"},
+            {"from": "open_already", "port": "closed", "to": "dispatch"},
+            {"from": "still_open", "port": "added", "to": "not_started"},
+            {"from": "still_open", "port": "skipped", "to": "not_started"},
             {"from": "dispatch", "to": "wait_pr"},
             {"from": "wait_pr", "port": "done", "to": "find_pr"},
             {"from": "find_pr", "port": "open", "to": "tell_pr"},

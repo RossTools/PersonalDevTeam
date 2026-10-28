@@ -641,7 +641,6 @@ pub fn parse_reviews(items: &[Value]) -> Vec<ChangeReview> {
         .collect()
 }
 
-/// GraphQL's name for a merge strategy.
 /// A release from `GET /releases/...`; drafts and pre-releases are not releases here.
 pub fn parse_release(v: &Value) -> Result<Option<Release>, GhError> {
     let tag = s(v, "tag_name");
@@ -660,6 +659,7 @@ pub fn parse_release(v: &Value) -> Result<Option<Release>, GhError> {
     }))
 }
 
+/// GraphQL's name for a merge strategy.
 fn merge_method(s: MergeStrategy) -> &'static str {
     match s {
         MergeStrategy::Squash => "SQUASH",

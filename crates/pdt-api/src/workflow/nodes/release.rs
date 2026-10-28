@@ -173,6 +173,9 @@ pub struct GithubChangeRequestConfig {
     #[serde(default)]
     #[ts(type = "number | string | null")]
     pub number: Option<Value>,
+    /// The port a dry run takes, as it reads nothing: `open` for a branch and `merged` for a number when left out.
+    #[serde(default)]
+    pub dry_run_port: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -227,7 +230,8 @@ impl NodeKind for GithubChangeRequest {
             "Read a GitHub pull request",
             "Reads a pull request by its head branch or its number and leaves by its state: `open`, `merged`, \
              `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. \
-             Between waits it polls one (a dry run takes `open` for a branch, `merged` for a number).",
+             Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, `merged` for a \
+             number).",
             &[("open", "Open"), ("merged", "Merged"), ("closed", "Closed unmerged"), ("none", "No pull request")],
             false,
         )
@@ -236,6 +240,11 @@ impl NodeKind for GithubChangeRequest {
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: GithubChangeRequestConfig = parse(config)?;
         check_repo(&c.repo)?;
+        if let Some(p) = &c.dry_run_port
+            && !["open", "merged", "closed", "none"].contains(&p.as_str())
+        {
+            return Err(format!("dryRunPort {p:?} is not open, merged, closed or none"));
+        }
         match (nonblank(&c.branch), number_of(&c.number)) {
             (Some(_), None) => Ok(()),
             (None, Some(Ok(_))) => Ok(()),
@@ -253,10 +262,12 @@ impl NodeKind for GithubChangeRequest {
             let repo = repo_of(cx, &c.repo).await?;
             if cx.dry_run {
                 // The number may come from a step a dry run didn't really run.
-                return Ok(match nonblank(&c.branch) {
-                    Some(b) => Outcome::next("open", json!({"would": format!("read {repo}'s pull request from {b}")})),
-                    None => Outcome::next("merged", json!({"would": format!("read a pull request of {repo}")})),
-                });
+                let (default, would) = match nonblank(&c.branch) {
+                    Some(b) => ("open", format!("read {repo}'s pull request from {b}")),
+                    None => ("merged", format!("read a pull request of {repo}")),
+                };
+                let port = c.dry_run_port.as_deref().unwrap_or(default);
+                return Ok(Outcome::next(port, json!({"would": would})));
             }
             let by = match (nonblank(&c.branch), number_of(&c.number)) {
                 (Some(b), None) => Err(b.to_string()),

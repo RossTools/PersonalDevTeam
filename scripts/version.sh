@@ -15,7 +15,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "${1:-}" = "-C" ]; then root="$2"; shift 2; fi
 
 die() { printf 'version: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '4,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 is_version() { printf '%s' "$1" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; }
 
 # `version = "…"` in Cargo.toml's [workspace.package] section.
@@ -92,5 +92,5 @@ case "${1:-}" in
   check) check ;;
   next) [ $# -eq 2 ] || usage; next "$2" ;;
   set) [ $# -eq 2 ] || usage; set_version "$2" ;;
-  *) usage | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  *) usage ;;
 esac

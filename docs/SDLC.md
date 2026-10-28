@@ -162,10 +162,13 @@ macOS signing and notarizing secrets.
 
 **Dry run**: on a fork with the same secrets, set the repo variable `PDT_RELEASE_TAG_PREFIX` to a test prefix
 (`test-v`) and run it end to end: the tag becomes `test-vX.Y.Z` and the release a pre-release, which no PDT installs.
+"Cut a release" doesn't count pre-releases either, so in such a dry run it waits at the last step and never says the
+release is published.
 
 **"Cut a release"** (a built-in PDT workflow, off by default; Settings → Workflows): the PM starts it with a bump kind
 (only when the user asks for a release). It runs the release workflow, puts the release PR in the Inbox for review,
-and tells the user when the release is published.
+and tells the user when the release is published. While an earlier release PR is still open it starts nothing and
+says so in the Inbox: merge or close that one first.
 
 ## Testing a branch in a dev instance
 

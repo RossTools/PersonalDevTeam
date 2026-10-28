@@ -33,11 +33,6 @@ on:
     types: [closed]
     branches: [main]
 
-# One release at a time; never cancel one half way.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -47,6 +42,11 @@ env:
 jobs:
   prepare:
     if: github.event_name == 'workflow_dispatch'
+    # One release PR at a time. Concurrency is per job, not per workflow: the workflow runs (and skips every job) for
+    # every PR closed into main, and a workflow-level group would let such a run cancel a pending release run.
+    concurrency:
+      group: release-prepare
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -119,6 +119,11 @@ jobs:
       github.event_name == 'pull_request' && github.event.pull_request.merged &&
       github.event.pull_request.head.ref == 'release' &&
       github.event.pull_request.head.repo.full_name == github.repository
+    # Its own group, so a dispatch's `prepare` never cancels a tag waiting to run (a newer pending job in a group
+    # cancels the pending one).
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
