@@ -296,9 +296,10 @@ Flatpak or Snap, and the tray has no "Start at login" on Linux.
   headless machine: `loginctl enable-linger "$USER"` (once; `install` prints it). Check with `loginctl show-user
   "$USER" -p Linger`.
 - **Data:** `$XDG_DATA_HOME/pdt`, i.e. `~/.local/share/pdt` (dev: `pdt-dev`).
-- **Secrets:** the Secret Service (gnome-keyring, KWallet) when pdtd can reach one over D-Bus at startup; otherwise
-  `<data dir>/secrets.json`, readable only by the user (0600), and Settings → Secrets says "Secrets: file in the data
-  folder" ([secrets.md](secrets.md)). A headless machine without a desktop session normally has no Secret Service.
+- **Secrets:** the Secret Service (gnome-keyring, KWallet) when pdtd can reach one over D-Bus the first time the data
+  folder starts; otherwise `<data dir>/secrets.json`, readable only by the user (0600), and Settings → Secrets says
+  "Secrets: file in the data folder". The choice sticks to the data folder: it never switches between restarts
+  ([secrets.md](secrets.md)). A headless machine without a desktop session normally has no Secret Service.
 - **Update:** pdtd picks the asset for its CPU, the AppImage when its folder holds `appimage.path`, else the tarball,
   and hands it to pdt-host (`LinuxInstaller`): the tarball is extracted (or the AppImage extracted with
   `--appimage-extract`, which needs no FUSE) into `.pdt-update-staging` beside the install folder, the folder is

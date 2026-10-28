@@ -8,4 +8,9 @@ export type SecretStoreInfo = { backend: SecretBackend,
 /**
  * The file, for [`SecretBackend::File`].
  */
-path: string | null, };
+path: string | null, 
+/**
+ * Why the store may not work right now: the keychain this instance uses did not answer at startup (Linux, a
+ * Secret Service that is not up or locked). Calls keep trying it; Settings → Secrets shows this.
+ */
+problem: string | null, };

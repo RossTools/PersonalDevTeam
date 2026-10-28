@@ -145,9 +145,12 @@ function StoreNote() {
     );
   }
   return (
-    <p className="text-sm text-muted-foreground">
-      Secrets: {store.data.backend === 'keychain' ? 'system keyring' : 'in memory (gone when PDT stops)'}
-    </p>
+    <>
+      <p className="text-sm text-muted-foreground">
+        Secrets: {store.data.backend === 'keychain' ? 'system keyring' : 'in memory (gone when PDT stops)'}
+      </p>
+      {store.data.problem && <Alert tone="warning">{store.data.problem}</Alert>}
+    </>
   );
 }
 

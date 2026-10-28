@@ -136,17 +136,47 @@ pub struct SecretStoreInfo {
     pub backend: SecretBackend,
     /// The file, for [`SecretBackend::File`].
     pub path: Option<String>,
+    /// Why the store may not work right now: the keychain this instance uses did not answer at startup (Linux, a
+    /// Secret Service that is not up or locked). Calls keep trying it; Settings → Secrets shows this.
+    pub problem: Option<String>,
 }
 
-/// Which store pdtd uses. `forced` is `PDT_SECRET_STORE`: `memory` anywhere, `file` on Linux only. Otherwise the
-/// keychain, except on Linux when `secret_service` (asked only there) finds none.
-pub fn choose_backend(linux: bool, forced: Option<&str>, secret_service: impl FnOnce() -> bool) -> SecretBackend {
+/// What [`choose_backend`] knows of this data folder on Linux: which store it used before, so the choice never flips
+/// between restarts (secrets saved in one store would look lost in the other).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StoreHistory {
+    /// `secrets.json` exists: secrets went to the file.
+    pub file: bool,
+    /// [`keychain_marker`] exists: secrets went to the Secret Service.
+    pub keychain: bool,
+}
+
+/// Which store pdtd uses. `forced` is `PDT_SECRET_STORE`: `memory` anywhere, `file` on Linux only. macOS and Windows:
+/// always the keychain. Linux sticks to the store it used before (`history`; the file wins if both exist, since
+/// that is where secrets went last), and only a data folder that has used neither asks `secret_service`: the
+/// keychain when one answers, else the file. A keychain used before that does not answer now is kept (and reported),
+/// never swapped for the file.
+pub fn choose_backend(
+    linux: bool,
+    forced: Option<&str>,
+    history: StoreHistory,
+    secret_service: impl FnOnce() -> bool,
+) -> SecretBackend {
     match forced {
         Some("memory") => SecretBackend::Memory,
         Some("file") if linux => SecretBackend::File,
-        _ if linux && !secret_service() => SecretBackend::File,
-        _ => SecretBackend::Keychain,
+        _ if !linux => SecretBackend::Keychain,
+        _ if history.file => SecretBackend::File,
+        _ if history.keychain => SecretBackend::Keychain,
+        _ if secret_service() => SecretBackend::Keychain,
+        _ => SecretBackend::File,
     }
+}
+
+/// Written on Linux once the Secret Service is chosen, so a later start that cannot reach it keeps using it instead of
+/// falling back to the file: `<data dir>/secrets.keychain`.
+pub fn keychain_marker(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("secrets.keychain")
 }
 
 /// The file [`FileSecretStore`] uses: `<data dir>/secrets.json`.
@@ -202,6 +232,12 @@ impl FileSecretStore {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut map = self.read()?;
         if f(&mut map) { self.write(&map) } else { Ok(()) }
+    }
+
+    /// Creates the (empty) file if it is missing, so the next start keeps choosing it ([`StoreHistory::file`]).
+    pub fn ensure(&self) -> Result<(), SecretError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        if self.path.exists() { Ok(()) } else { self.write(&Default::default()) }
     }
 }
 
@@ -350,16 +386,47 @@ mod tests {
             asked.set(true);
             found
         };
-        // macOS and Windows: the keychain, never asked about and never a file, even when told.
-        assert_eq!(choose_backend(false, None, || probe(false)), SecretBackend::Keychain);
-        assert_eq!(choose_backend(false, Some("file"), || probe(false)), SecretBackend::Keychain);
+        let new = StoreHistory::default();
+        let file = StoreHistory { file: true, keychain: false };
+        // macOS and Windows: the keychain, never asked about and never a file, even when told or found.
+        assert_eq!(choose_backend(false, None, new, || probe(false)), SecretBackend::Keychain);
+        assert_eq!(choose_backend(false, Some("file"), new, || probe(false)), SecretBackend::Keychain);
+        assert_eq!(choose_backend(false, None, file, || probe(false)), SecretBackend::Keychain);
         assert!(!asked.get(), "only Linux looks for a Secret Service");
-        assert_eq!(choose_backend(true, None, || probe(true)), SecretBackend::Keychain);
-        assert_eq!(choose_backend(true, None, || probe(false)), SecretBackend::File);
-        assert_eq!(choose_backend(true, Some("file"), || true), SecretBackend::File);
+        assert_eq!(choose_backend(true, None, new, || probe(true)), SecretBackend::Keychain);
+        assert_eq!(choose_backend(true, None, new, || probe(false)), SecretBackend::File);
+        assert_eq!(choose_backend(true, Some("file"), new, || true), SecretBackend::File);
         for linux in [true, false] {
-            assert_eq!(choose_backend(linux, Some("memory"), || true), SecretBackend::Memory);
+            assert_eq!(choose_backend(linux, Some("memory"), file, || true), SecretBackend::Memory);
         }
+    }
+
+    #[test]
+    fn linux_keeps_the_store_it_used_before() {
+        let never = || -> bool { panic!("a data folder with a store never asks again") };
+        // The file stays the store even once a Secret Service appears (a desktop login after a headless start).
+        let file = StoreHistory { file: true, keychain: false };
+        assert_eq!(choose_backend(true, None, file, never), SecretBackend::File);
+        // The keychain stays the store even when it does not answer (gnome-keyring not up or locked yet).
+        let keychain = StoreHistory { file: false, keychain: true };
+        assert_eq!(choose_backend(true, None, keychain, never), SecretBackend::Keychain);
+        // Both (the file was forced once): the file, where secrets went last.
+        assert_eq!(choose_backend(true, None, StoreHistory { file: true, keychain: true }, never), SecretBackend::File);
+        // Memory for tests overrides any history.
+        assert_eq!(choose_backend(true, Some("memory"), keychain, never), SecretBackend::Memory);
+    }
+
+    #[test]
+    fn an_ensured_file_store_exists_empty_and_keeps_its_secrets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = secrets_file(tmp.path());
+        let s = FileSecretStore::new(path.clone());
+        s.ensure().unwrap();
+        assert!(path.is_file());
+        assert_eq!(s.get("a").unwrap(), None);
+        s.set("a", "1").unwrap();
+        s.ensure().unwrap();
+        assert_eq!(s.get("a").unwrap().as_deref(), Some("1"), "ensure never empties it");
     }
 
     #[test]

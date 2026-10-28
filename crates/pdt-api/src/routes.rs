@@ -201,6 +201,7 @@ impl AppState {
             secret_store: crate::secrets::SecretStoreInfo {
                 backend: crate::secrets::SecretBackend::Memory,
                 path: None,
+                problem: None,
             },
             owner_from_env: None,
             settings_lock: Default::default(),
