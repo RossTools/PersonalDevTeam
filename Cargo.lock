@@ -3498,6 +3498,7 @@ dependencies = [
 name = "pdt-github"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "pdt-core",
  "pdt-forge",
  "reqwest",
@@ -3505,6 +3506,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3697,6 +3699,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

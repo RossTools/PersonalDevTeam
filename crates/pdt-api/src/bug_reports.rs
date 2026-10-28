@@ -86,7 +86,7 @@ pub(crate) type Nonces = std::sync::Arc<tokio::sync::Mutex<HashMap<String, (i64,
 
 /// The first project whose origin is the release repository: the instance PDT is developed on.
 async fn release_project(st: &AppState) -> Result<Option<BugReportProject>, ApiError> {
-    let repo = st.update.client.repo().to_string();
+    let repo = st.update.client.repo();
     let projects = crate::projects::with_github(st.store.list_projects().await?).await;
     Ok(projects
         .into_iter()
@@ -176,13 +176,14 @@ async fn diagnostics(st: &AppState) -> String {
 }
 
 pub(crate) async fn preview(State(st): State<AppState>) -> Result<Json<BugReportPreview>, ApiError> {
+    crate::update::refresh_settings(&st).await;
     let setting = st.store.get_host_settings().await?.bug_reports;
     let project = release_project(&st).await?;
     let token_present = crate::update::read_token(&st).await.ok().flatten().is_some();
     Ok(Json(BugReportPreview {
         setting,
         route: setting.route(project.is_some()),
-        repo: st.update.client.repo().to_string(),
+        repo: st.update.client.repo(),
         project,
         token_present,
         diagnostics: diagnostics(&st).await,
@@ -239,6 +240,7 @@ pub(crate) async fn file(
     if let Some((_, filed)) = nonce.as_ref().and_then(|n| nonces.get(n)) {
         return Ok(filed.clone());
     }
+    crate::update::refresh_settings(st).await;
     let setting = st.store.get_host_settings().await?.bug_reports;
     let project = release_project(st).await?;
     let diagnostics = match r.include_diagnostics.unwrap_or(false) {
@@ -302,7 +304,7 @@ pub(crate) async fn file(
             let issue = client
                 .create_issue(&token, &title, &body, &ISSUE_LABELS)
                 .await
-                .map_err(|e| issue_error(e, client.repo()))?;
+                .map_err(|e| issue_error(e, &client.repo()))?;
             tracing::info!(number = issue.number, "filed a bug report");
             BugReportFiled::Issue { number: issue.number, url: issue.url }
         }

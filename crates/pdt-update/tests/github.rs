@@ -17,6 +17,13 @@ struct Fake {
     storage_hits: Arc<AtomicUsize>,
     /// The issues posted (their JSON bodies).
     issues: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    /// Another host: what `/repos/away/r/…` redirects to.
+    other_base: Arc<std::sync::OnceLock<String>>,
+    other_hits: Arc<AtomicUsize>,
+    /// Requests on `/repos/loop/r/…`, which redirects to itself.
+    loop_hits: Arc<AtomicUsize>,
+    /// Requests by the repository's id (`/repositories/77/…`).
+    id_hits: Arc<AtomicUsize>,
 }
 
 const WIN: &[u8] = b"windows installer bytes";
@@ -97,6 +104,39 @@ async fn issue(State(f): State<Fake>, h: HeaderMap, axum::Json(body): axum::Json
         .into_response()
 }
 
+/// `old/r` was renamed: GitHub sends its API requests to the repository's id, 301 for GET and 307 for the rest.
+async fn renamed(State(f): State<Fake>, method: axum::http::Method, Path(rest): Path<String>) -> Response {
+    let code =
+        if method == axum::http::Method::GET { StatusCode::MOVED_PERMANENTLY } else { StatusCode::TEMPORARY_REDIRECT };
+    (code, [(header::LOCATION, format!("{}/repositories/77/{rest}", f.base.get().unwrap()))]).into_response()
+}
+
+async fn by_id_latest(State(f): State<Fake>, h: HeaderMap) -> Response {
+    f.id_hits.fetch_add(1, Ordering::SeqCst);
+    latest(h).await
+}
+
+async fn by_id_asset(State(f): State<Fake>, id: Path<u64>, h: HeaderMap) -> Response {
+    f.id_hits.fetch_add(1, Ordering::SeqCst);
+    asset(State(f), id, h).await
+}
+
+async fn by_id_issue(State(f): State<Fake>, h: HeaderMap, body: axum::Json<serde_json::Value>) -> Response {
+    f.id_hits.fetch_add(1, Ordering::SeqCst);
+    issue(State(f), h, body).await
+}
+
+/// `away/r` points at another host.
+async fn away(State(f): State<Fake>) -> Response {
+    let to = format!("{}/repositories/77/releases/latest", f.other_base.get().unwrap());
+    (StatusCode::MOVED_PERMANENTLY, [(header::LOCATION, to)]).into_response()
+}
+
+async fn redirect_loop(State(f): State<Fake>) -> Response {
+    let n = f.loop_hits.fetch_add(1, Ordering::SeqCst);
+    (StatusCode::FOUND, [(header::LOCATION, format!("/repos/loop/r/releases/latest?hop={n}"))]).into_response()
+}
+
 /// `v0.1.5...v0.1.7`: two squashed merges; `abc1234...v0.1.7` (a dev build): one; `v0.1.1...v0.1.7`: 300 commits, of
 /// which GitHub sends the oldest 250; anything else is not found.
 async fn compare(Path(range): Path<String>, h: HeaderMap) -> Response {
@@ -125,13 +165,38 @@ async fn serve() -> (GitHubClient, Fake) {
         token_leaked: Default::default(),
         storage_hits: Default::default(),
         issues: Default::default(),
+        other_base: Default::default(),
+        other_hits: Default::default(),
+        loop_hits: Default::default(),
+        id_hits: Default::default(),
     };
+    let other = Router::new()
+        .route(
+            "/{*rest}",
+            get(|State(f): State<Fake>, h: HeaderMap| async move {
+                f.other_hits.fetch_add(1, Ordering::SeqCst);
+                if h.contains_key(header::AUTHORIZATION) {
+                    f.token_leaked.store(true, Ordering::SeqCst);
+                }
+                latest(h).await
+            }),
+        )
+        .with_state(fake.clone());
+    let ol = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    fake.other_base.set(format!("http://127.0.0.1:{}", ol.local_addr().unwrap().port())).unwrap();
+    tokio::spawn(async move { axum::serve(ol, other).await.unwrap() });
     let app = Router::new()
         .route("/repos/o/r/releases/latest", get(latest))
         .route("/repos/o/r/releases/assets/{id}", get(asset))
         .route("/repos/o/r/compare/{range}", get(compare))
         .route("/storage/{id}", get(storage))
         .route("/repos/o/r/issues", axum::routing::post(issue))
+        .route("/repos/old/r/{*rest}", get(renamed).post(renamed))
+        .route("/repositories/77/releases/latest", get(by_id_latest))
+        .route("/repositories/77/releases/assets/{id}", get(by_id_asset))
+        .route("/repositories/77/issues", axum::routing::post(by_id_issue))
+        .route("/repos/away/r/releases/latest", get(away))
+        .route("/repos/loop/r/releases/latest", get(redirect_loop))
         .with_state(fake.clone());
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
@@ -326,4 +391,80 @@ async fn issue_errors_say_why_and_never_hold_the_token() {
     assert_eq!(e, UpdateError::Unauthorized);
     assert!(!format!("{e} {e:?}").contains("bad-token-value"));
     assert!(fake.issues.lock().unwrap().is_empty());
+}
+
+async fn client(repo: &str) -> (GitHubClient, Fake) {
+    let (_, fake) = serve().await;
+    (GitHubClient::new(fake.base.get().unwrap(), repo), fake)
+}
+
+#[tokio::test]
+async fn a_renamed_repository_is_followed_with_the_token_and_remembered() {
+    let (c, fake) = client("old/r").await;
+    let l = c.latest("good").await.unwrap();
+    assert_eq!(l.release.tag, "v0.1.7", "the token went along to the same host");
+    assert_eq!(l.token_expires_at, parse_expiry("2030-01-02 03:04:05 UTC"));
+    assert_eq!(c.moved_to().as_deref(), Some("repositories/77"));
+    // Later requests (an asset download too) go to where it moved, without asking the old name again.
+    let dir = tempfile::tempdir().unwrap();
+    let path = fetch_verified(&c, "good", &l.release, HostOs::Windows, dir.path()).await.unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), WIN);
+    assert!(fake.id_hits.load(Ordering::SeqCst) >= 3, "latest, SHA256SUMS and the asset by id");
+    assert!(!fake.token_leaked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn a_redirect_to_another_host_is_not_followed_with_the_token() {
+    let (c, fake) = client("away/r").await;
+    let e = c.latest("good").await.unwrap_err();
+    assert_eq!(e, UpdateError::Redirected(301));
+    assert_eq!(fake.other_hits.load(Ordering::SeqCst), 0, "the other host never saw the request");
+    assert!(!fake.token_leaked.load(Ordering::SeqCst));
+    assert_eq!(c.moved_to(), None);
+}
+
+#[tokio::test]
+async fn a_redirect_loop_stops_after_three_hops() {
+    let (c, fake) = client("loop/r").await;
+    let e = c.latest("good").await.unwrap_err();
+    assert_eq!(e, UpdateError::Redirected(302));
+    assert_eq!(fake.loop_hits.load(Ordering::SeqCst), 1 + pdt_update::MAX_API_HOPS);
+}
+
+#[tokio::test]
+async fn the_id_path_is_used_when_set() {
+    let (c, fake) = client("gone/r").await;
+    let c = c.with_id(Some(77));
+    assert_eq!(c.latest("good").await.unwrap().release.tag, "v0.1.7");
+    assert_eq!(fake.id_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(c.repo_id(), Some(77));
+}
+
+#[tokio::test]
+async fn an_unknown_id_falls_back_to_the_name() {
+    let (c, fake) = client("o/r").await;
+    let c = c.with_id(Some(99));
+    assert_eq!(c.latest("good").await.unwrap().release.tag, "v0.1.7");
+    assert_eq!(fake.id_hits.load(Ordering::SeqCst), 0);
+    // A rejected token is not retried elsewhere.
+    assert_eq!(c.latest("expired").await.unwrap_err(), UpdateError::Unauthorized);
+}
+
+#[tokio::test]
+async fn bug_reports_reach_a_moved_repository() {
+    let (c, fake) = client("old/r").await;
+    let i = c.create_issue("good", "It broke", "Steps", &["bug"]).await.unwrap();
+    assert_eq!(i.number, 41);
+    assert_eq!(fake.id_hits.load(Ordering::SeqCst), 1, "the POST followed GitHub's 307 with its body");
+    assert_eq!(fake.issues.lock().unwrap()[0]["title"], "It broke");
+}
+
+#[tokio::test]
+async fn pointing_the_client_elsewhere_forgets_the_move() {
+    let (c, _) = client("old/r").await;
+    c.latest("good").await.unwrap();
+    assert!(c.moved_to().is_some());
+    c.set_repo("o/r", None);
+    assert_eq!((c.repo(), c.moved_to()), ("o/r".to_string(), None));
+    assert_eq!(c.latest("good").await.unwrap().release.tag, "v0.1.7");
 }

@@ -178,6 +178,11 @@ function Updates({ v }: { v: HostSettingsView }) {
   const update = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus });
   const policy = useSaveSettings();
   const interval = useSaveSettings();
+  const repoSave = useSaveSettings();
+  const [repo, setRepo] = useState(v.settings.releaseRepo ?? '');
+  useEffect(() => setRepo(v.settings.releaseRepo ?? ''), [v.settings.releaseRepo]);
+  const repoError = useFormError(repoSave.error);
+  const repoDirty = repo.trim() !== (v.settings.releaseRepo ?? '');
   const [secret, setSecret] = useState('');
   const token = useMutation({
     mutationFn: (t: string) => api.saveToken(t),
@@ -193,6 +198,12 @@ function Updates({ v }: { v: HostSettingsView }) {
   const updatesOff = u?.state === 'disabled';
   const badge = tokenBadge(v.tokenPresent, u?.token);
   const checked = u?.lastCheckedAt ? `Last checked ${new Date(u.lastCheckedAt).toLocaleString()}.` : null;
+  const where = u?.releaseRepo;
+  const fromEnv = where?.overriddenBy === 'environment';
+  const repoNote = fromEnv ? `Set by PDT_RELEASE_REPO: ${where.repo}.`
+    : where?.movedTo ? `GitHub says it moved (to ${where.movedTo}); PDT follows it.`
+      : 'Where updates come from and bug reports go. PDT follows GitHub\'s redirects when it is renamed or moved: set another one only if it can\'t find it.';
+  const saveRepo = (r: string) => repoSave.mutate({ releaseRepo: r }, { onSuccess: () => void qc.invalidateQueries({ queryKey: ['host-update'] }) });
   return (
     <Section label="Updates" description="New releases of PDT, from GitHub.">
       <SettingsRow
@@ -221,6 +232,25 @@ function Updates({ v }: { v: HostSettingsView }) {
           onChange={(m) => interval.mutate({ updateCheckMinutes: Number(m) })}
         />
       </SettingsRow>
+      <form onSubmit={submit(() => { if (repoDirty) saveRepo(repo.trim()); })} className="flex flex-col gap-2">
+        <SettingsRow label="Release repository" description={repoNote}>
+          <Input
+            aria-label="Release repository"
+            className="w-56"
+            value={fromEnv ? where.repo : repo}
+            disabled={fromEnv}
+            placeholder={where?.overriddenBy ? undefined : where?.repo}
+            onChange={(e) => setRepo(e.target.value)}
+          />
+          {!fromEnv && v.settings.releaseRepo && (
+            <Button size="sm" onClick={() => saveRepo('')}>Use the built-in one</Button>
+          )}
+          {!fromEnv && (
+            <Button type="submit" size="sm" variant="primary" aria-label="Save release repository" disabled={!repoDirty} pending={repoSave.isPending}>Save</Button>
+          )}
+        </SettingsRow>
+        {repoError}
+      </form>
       {v.tokenError && (
         <Alert tone="error" title="Token: cannot be read.">
           <p>{v.tokenError}</p>

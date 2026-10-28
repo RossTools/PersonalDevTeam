@@ -19,6 +19,10 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   never-started jobs, each job's log through `…/actions/jobs/<id>/logs` (a redirect to storage; reqwest drops the
   token when it leaves GitHub's host), cut to its last 200 lines (30,000 characters), timestamps and terminal colours
   dropped. A log GitHub no longer has says so instead of failing the call.
+- **Redirects** (PDT-195): the transport follows at most 3, so a project repository that was renamed or transferred
+  keeps working (GitHub answers 301 for a GET and 307 for the rest, so a POST keeps its body). The token goes along
+  only while a redirect stays on the same host, scheme and port; reqwest drops it at the first hop elsewhere (a job
+  log's storage link). A permanent move on the API host is logged with both locations, without query strings.
 - **Conditional requests**: every API GET but logs sends the ETag of its last answer (`If-None-Match`); a 304 gives
   the cached body and costs no rate limit. The cache holds 500 answers and is cleared when the login changes.
 - **Rate limits**: an answer with `x-ratelimit-remaining: 0` records `x-ratelimit-reset`; a 403 or 429 with

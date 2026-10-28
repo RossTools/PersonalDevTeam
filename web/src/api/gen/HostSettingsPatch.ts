@@ -18,4 +18,8 @@ projectsDir?: string, defaultAgent?: AgentKind, defaultSessionMode?: SessionMode
 /**
  * 0 for no cap.
  */
-maxAgentTurns?: number, bugReports?: BugReportSetting, };
+maxAgentTurns?: number, bugReports?: BugReportSetting, 
+/**
+ * Blank clears it (back to the built-in release repository).
+ */
+releaseRepo?: string, };
