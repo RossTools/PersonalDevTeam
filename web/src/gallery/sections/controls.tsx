@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Folder, Link2, Maximize2, Play, Plus, Settings, Square, Trash2, X } from 'lucide-react';
+import { Folder, Link2, Maximize2, Monitor, Moon, Play, Plus, Settings, Square, Sun, Trash2, X } from 'lucide-react';
 import { Button, type ButtonVariant } from '@ui/Button';
 import { IconButton } from '@ui/IconButton';
 import { Input } from '@ui/Input';
@@ -72,6 +72,19 @@ function FormDemo() {
         ]}
         value={source}
         onChange={setSource}
+      />
+      {/* Vertical, icons only: the collapsed side rail's theme switch. */}
+      <SegmentedControl
+        aria-label="Theme (vertical)"
+        size="sm"
+        orientation="vertical"
+        options={[
+          { value: 'system', label: null, icon: <Monitor />, 'aria-label': 'System' },
+          { value: 'light', label: null, icon: <Sun />, 'aria-label': 'Light' },
+          { value: 'dark', label: null, icon: <Moon />, 'aria-label': 'Dark' },
+        ]}
+        value={theme}
+        onChange={setTheme}
       />
       <Field label="Name" hint="Shown in the sidebar and tabs.">
         <Input value={name} onChange={(e) => setName(e.target.value)} />
