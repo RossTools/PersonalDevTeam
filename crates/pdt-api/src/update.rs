@@ -86,6 +86,32 @@ pub struct TicketHere {
     pub project_id: String,
 }
 
+/// What points this host at a release repository other than the built-in one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RepoOverride {
+    /// Settings → This host → Updates.
+    Setting,
+    /// `PDT_RELEASE_REPO` in pdtd's environment (it wins over the setting).
+    Environment,
+}
+
+/// Where updates come from and bug reports go (PDT-195).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReleaseRepo {
+    /// `owner/name`.
+    pub repo: String,
+    /// Its numeric GitHub id, tried first (the built-in repository only).
+    #[ts(type = "number | null")]
+    pub id: Option<u64>,
+    /// Where a GitHub redirect showed the repository moved (`repositories/{id}` or `repos/{owner}/{name}`).
+    pub moved_to: Option<String>,
+    pub overridden_by: Option<RepoOverride>,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -100,6 +126,7 @@ pub struct UpdateStatus {
     pub error: Option<String>,
     pub token: TokenState,
     pub last_result: Option<UpdateResult>,
+    pub release_repo: ReleaseRepo,
 }
 
 /// Why an unsupervised pdtd never updates.
@@ -107,6 +134,10 @@ pub const UNSUPERVISED_REASON: &str = "updates are installed by pdt-host, and th
 
 pub struct UpdateService {
     pub(crate) client: GitHubClient,
+    /// The built-in release repository and its id.
+    default_repo: (String, Option<u64>),
+    /// `PDT_RELEASE_REPO`: the release repository this pdtd uses whatever the setting says.
+    env_repo: Option<String>,
     /// Whether this pdtd may check for and hand off updates (only a supervised stable instance does).
     pub(crate) enabled: bool,
     current: String,
@@ -140,6 +171,8 @@ impl UpdateService {
         let enabled = disabled_reason.is_none();
         Self {
             client: GitHubClient::new(api_base, repo),
+            default_repo: (repo.to_string(), None),
+            env_repo: None,
             enabled,
             current: current.into(),
             status: Mutex::new(UpdateStatus {
@@ -152,6 +185,7 @@ impl UpdateService {
                 error: None,
                 token: TokenState::Missing,
                 last_result: None,
+                release_repo: ReleaseRepo { repo: repo.to_string(), id: None, moved_to: None, overridden_by: None },
             }),
             release: Mutex::new(None),
             changes: Mutex::new(None),
@@ -161,6 +195,44 @@ impl UpdateService {
             check_interval: None,
             settings_poll: Duration::from_secs(60),
         }
+    }
+
+    /// Pins the built-in repository by its numeric id (`brand::RELEASE_REPO_ID`).
+    pub fn with_repo_id(mut self, id: u64) -> Self {
+        self.default_repo.1 = Some(id);
+        self.use_repo(None);
+        self
+    }
+
+    /// `PDT_RELEASE_REPO`: use this repository (`owner/name`) instead of the built-in one, whatever the setting says.
+    pub fn with_env_repo(mut self, repo: Option<String>) -> Self {
+        self.env_repo = repo;
+        self.use_repo(None);
+        self
+    }
+
+    /// Points the client at the repository to use: the environment's, else the host setting's, else the built-in
+    /// one (only that one by its id).
+    fn use_repo(&self, setting: Option<&str>) {
+        let (repo, by) = match (&self.env_repo, setting) {
+            (Some(r), _) => (r.as_str(), Some(RepoOverride::Environment)),
+            (None, Some(r)) => (r, Some(RepoOverride::Setting)),
+            (None, None) => (self.default_repo.0.as_str(), None),
+        };
+        let id = self.default_repo.1.filter(|_| repo.eq_ignore_ascii_case(&self.default_repo.0));
+        self.client.set_repo(repo, id);
+        self.note_repo(by);
+    }
+
+    /// Copies where the client finds the repository into the status (`by`: what overrides it).
+    fn note_repo(&self, by: Option<RepoOverride>) {
+        let r = ReleaseRepo {
+            repo: self.client.repo(),
+            id: self.client.repo_id(),
+            moved_to: self.client.moved_to(),
+            overridden_by: by,
+        };
+        self.edit(|s| s.release_repo = r);
     }
 
     pub fn set_last_result(&self, r: Option<UpdateResult>) {
@@ -238,9 +310,15 @@ pub async fn sync_token_state(st: &AppState) {
     }
 }
 
-async fn refresh_policy(st: &AppState) -> UpdatePolicy {
-    let p = st.store.get_host_settings().await.map(|s| s.update_policy).unwrap_or(UpdatePolicy::Notify);
+/// Reads the host settings this service follows: the update policy, and the release repository override (a failed
+/// read keeps the repository it has).
+pub(crate) async fn refresh_settings(st: &AppState) -> UpdatePolicy {
+    let settings = st.store.get_host_settings().await;
+    let p = settings.as_ref().map(|s| s.update_policy).unwrap_or(UpdatePolicy::Notify);
     st.update.edit(|s| s.policy = p);
+    if let Ok(s) = &settings {
+        st.update.use_repo(s.release_repo.as_deref());
+    }
     p
 }
 
@@ -256,7 +334,7 @@ pub(crate) async fn check(st: &AppState) -> UpdateStatus {
 
 async fn check_now(st: &AppState) -> UpdateStatus {
     let svc = &st.update;
-    refresh_policy(st).await;
+    refresh_settings(st).await;
     if !svc.enabled {
         return svc.snapshot();
     }
@@ -299,6 +377,7 @@ async fn check_now(st: &AppState) -> UpdateStatus {
     let now = now_ms();
     let mut s = svc.status.lock().unwrap_or_else(|e| e.into_inner());
     s.last_checked_at = Some(now);
+    s.release_repo.moved_to = svc.client.moved_to();
     // An install that started while GitHub was answering keeps its state and release.
     let busy = in_progress(s.state);
     match result {
@@ -338,7 +417,7 @@ async fn release_changes(svc: &UpdateService, tok: &str, release: &Release) -> O
         }
     };
     let since = parse_version(&svc.current).map_or_else(|| svc.current.clone(), |v| v.to_string());
-    let out = summarize(&changes, &since, svc.client.repo());
+    let out = summarize(&changes, &since, &svc.client.repo());
     *svc.changes.lock().unwrap_or_else(|e| e.into_inner()) = Some((base, release.tag.clone(), out.clone()));
     Some(out)
 }
@@ -606,7 +685,7 @@ pub async fn run_update_loop(st: AppState) {
         }
         let interval = check_interval(&st).await;
         let due = last_check.is_none_or(|t| t.elapsed() >= interval);
-        let policy = refresh_policy(&st).await;
+        let policy = refresh_settings(&st).await;
         if due && policy != UpdatePolicy::Manual {
             last_check = Some(tokio::time::Instant::now());
             let s = check(&st).await;
@@ -655,7 +734,7 @@ fn settle_handed_off(st: &AppState) {
 
 pub(crate) async fn get_status(State(st): State<AppState>) -> Json<UpdateStatus> {
     settle_handed_off(&st);
-    refresh_policy(&st).await;
+    refresh_settings(&st).await;
     sync_token_state(&st).await;
     Json(link_tickets(&st, st.update.snapshot()).await)
 }

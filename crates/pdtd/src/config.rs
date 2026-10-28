@@ -25,6 +25,9 @@ pub struct Config {
     pub github_offline: bool,
     /// `PDT_GITHUB_CLIENT_ID`: the OAuth App Connect GitHub signs in with, instead of the built-in one.
     pub github_client_id: Option<String>,
+    /// `PDT_RELEASE_REPO`: the GitHub repository (`owner/name`) to take updates from and file bug reports on instead
+    /// of the built-in one, whatever the host setting says (PDT-195's emergency override).
+    pub release_repo: Option<String>,
     /// The HTTPS port remote access claims: 443 only on the stable instance's port, else the instance's own port,
     /// so a dev instance (or any explicit `PDT_PORT`) never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -113,6 +116,12 @@ impl Config {
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
         let github_offline = lookup("PDT_GITHUB_OFFLINE").as_deref() == Some("1");
         let github_client_id = lookup("PDT_GITHUB_CLIENT_ID").filter(|c| !c.trim().is_empty());
+        let release_repo = match lookup("PDT_RELEASE_REPO").map(|r| r.trim().to_string()) {
+            None => None,
+            Some(r) if r.is_empty() => None,
+            Some(r) if pdt_core::host::is_repo_name(&r) => Some(r),
+            Some(r) => bail!("PDT_RELEASE_REPO must be a GitHub owner/name, not {r:?}"),
+        };
         let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
@@ -135,6 +144,7 @@ impl Config {
             tailscale_bin,
             github_offline,
             github_client_id,
+            release_repo,
             remote_https_port,
             claude_program,
             codex_program,
@@ -205,6 +215,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!((c.port, c.data_dir, c.web_dir), (9999, PathBuf::from("/x"), Some(PathBuf::from("/w"))));
+    }
+
+    #[test]
+    fn the_release_repository_can_be_overridden() {
+        let root = || Some(PathBuf::from("/data"));
+        let with = |r: &str| Config::from_lookup(lookup(&[("PDT_RELEASE_REPO", r)]), root(), None);
+        assert_eq!(with(" Acme/pdt ").unwrap().release_repo.as_deref(), Some("Acme/pdt"));
+        assert_eq!(with("").unwrap().release_repo, None);
+        assert!(with("https://github.com/Acme/pdt").is_err());
+        assert_eq!(Config::from_lookup(lookup(&[]), root(), None).unwrap().release_repo, None);
     }
 
     #[test]

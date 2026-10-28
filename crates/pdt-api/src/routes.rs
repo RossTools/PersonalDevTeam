@@ -220,12 +220,15 @@ impl AppState {
             activity_order: Default::default(),
             activity_timing: Default::default(),
             activity_tick: std::time::Duration::from_secs(5),
-            update: std::sync::Arc::new(crate::update::UpdateService::new(
-                pdt_update::GITHUB_API,
-                pdt_core::brand::RELEASE_REPO,
-                false,
-                pdt_core::BUILD_VERSION,
-            )),
+            update: std::sync::Arc::new(
+                crate::update::UpdateService::new(
+                    pdt_update::GITHUB_API,
+                    pdt_core::brand::RELEASE_REPO,
+                    false,
+                    pdt_core::BUILD_VERSION,
+                )
+                .with_repo_id(pdt_core::brand::RELEASE_REPO_ID),
+            ),
             update_token_account,
             checks: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),

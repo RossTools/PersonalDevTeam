@@ -736,3 +736,52 @@ async fn a_range_too_long_for_github_links_to_the_rest() {
     assert_eq!(c["moreUrl"], "https://github.com/o/r/compare/v0.1.1...v0.1.7");
     assert_eq!(c["entries"][0]["sha"], "s249");
 }
+
+/// A pdtd whose built-in release repository (`gone/r`, id 1) is not on the fake GitHub; `env` stands for
+/// `PDT_RELEASE_REPO`.
+async fn setup_moved(tmp: &std::path::Path, env: Option<&str>) -> (axum::Router, pdt_api::AppState) {
+    let (base, _) = fake_github().await;
+    let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
+    let mut state = pdt_api::AppState::new(store, tmp.join("data"));
+    let svc = pdt_api::UpdateService::new(&base, "gone/r", true, "0.1.5")
+        .with_repo_id(1)
+        .with_env_repo(env.map(String::from));
+    state.update = Arc::new(svc);
+    store_token(&state);
+    (pdt_api::router(state.clone(), None), state)
+}
+
+#[tokio::test]
+async fn the_release_repository_can_be_overridden_in_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _) = setup_moved(tmp.path(), None).await;
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["releaseRepo"], json!({"repo": "gone/r", "id": 1, "movedTo": null, "overriddenBy": null}));
+    assert!(v["error"].is_string() && v["latest"].is_null(), "{v}");
+
+    let (s, e) = call(&app, "PUT", "/api/host/settings", Some(json!({"releaseRepo": "not a repo"}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
+    let (s, _) = call(&app, "PUT", "/api/host/settings", Some(json!({"releaseRepo": "o/r"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["releaseRepo"], json!({"repo": "o/r", "id": null, "movedTo": null, "overriddenBy": "setting"}));
+    assert_eq!((v["latest"]["version"].as_str(), &v["error"]), (Some("0.1.7"), &Value::Null), "{v}");
+    let (_, b) = call(&app, "GET", "/api/bug-reports/preview", None).await;
+    assert_eq!(b["repo"], "o/r", "bug reports go there too");
+
+    // Cleared: back to the built-in repository, by its id.
+    call(&app, "PUT", "/api/host/settings", Some(json!({"releaseRepo": ""}))).await;
+    let (_, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert_eq!(v["releaseRepo"]["repo"], "gone/r");
+    assert_eq!(v["releaseRepo"]["id"], 1);
+}
+
+#[tokio::test]
+async fn the_environment_override_wins_over_the_setting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _) = setup_moved(tmp.path(), Some("o/r")).await;
+    call(&app, "PUT", "/api/host/settings", Some(json!({"releaseRepo": "x/y"}))).await;
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["releaseRepo"], json!({"repo": "o/r", "id": null, "movedTo": null, "overriddenBy": "environment"}));
+    assert_eq!(v["latest"]["version"], "0.1.7", "{v}");
+}

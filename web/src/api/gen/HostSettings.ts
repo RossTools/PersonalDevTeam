@@ -44,4 +44,9 @@ maxAgentTurns: number,
 /**
  * Where "Report a bug" sends reports (PDT-153).
  */
-bugReports: BugReportSetting, };
+bugReports: BugReportSetting, 
+/**
+ * The GitHub repository (`owner/name`) to take updates from and file bug reports on instead of the built-in one:
+ * an emergency override for a move redirects cannot cover (PDT-195). `PDT_RELEASE_REPO` overrides it.
+ */
+releaseRepo: string | null, };

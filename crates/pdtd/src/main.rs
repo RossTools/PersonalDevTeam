@@ -120,12 +120,16 @@ async fn run() -> anyhow::Result<()> {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
         None => std::sync::Arc::new(pdt_tailscale::TailscaleCli::detect(state.platform.login_path.as_deref())),
     };
-    state.update = std::sync::Arc::new(pdt_api::UpdateService::with_disabled_reason(
-        pdt_update::GITHUB_API,
-        pdt_core::brand::RELEASE_REPO,
-        cfg.update_disabled_reason(),
-        pdt_core::BUILD_VERSION,
-    ));
+    state.update = std::sync::Arc::new(
+        pdt_api::UpdateService::with_disabled_reason(
+            pdt_update::GITHUB_API,
+            pdt_core::brand::RELEASE_REPO,
+            cfg.update_disabled_reason(),
+            pdt_core::BUILD_VERSION,
+        )
+        .with_repo_id(pdt_core::brand::RELEASE_REPO_ID)
+        .with_env_repo(cfg.release_repo.clone()),
+    );
     if let Ok(bytes) = std::fs::read(pdt_core::handoff::result_path(&cfg.data_dir))
         && let Ok(r) = serde_json::from_slice::<pdt_core::handoff::UpdateResult>(&bytes)
     {

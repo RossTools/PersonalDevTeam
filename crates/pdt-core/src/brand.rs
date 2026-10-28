@@ -25,6 +25,10 @@ pub const TRAY_AUTOSTART_NAME: &str = "Personal Dev Team";
 pub const APP_BUNDLE_ID: &str = "dev.personaldevteam.desktop";
 /// GitHub repository (owner/name) whose releases hosts update from, through the GitHub REST API and a token.
 pub const RELEASE_REPO: &str = "RossTools/PersonalDevTeam";
+/// RELEASE_REPO's numeric GitHub id. Updates and bug reports reach the repository by it (`/repositories/{id}`), which
+/// survives renames, org renames and transfers (PDT-195); the name is the fallback. Renaming or moving the repository:
+/// docs/reference/host.md "Renaming or moving the release repository".
+pub const RELEASE_REPO_ID: u64 = 1420061987;
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
 pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
 /// The client ID of PDT's GitHub OAuth App (PDT-177): the in-app "Connect GitHub" login (OAuth device flow) uses it.

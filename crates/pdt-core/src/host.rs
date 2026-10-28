@@ -86,6 +86,17 @@ pub struct HostSettings {
     pub max_agent_turns: u32,
     /// Where "Report a bug" sends reports (PDT-153).
     pub bug_reports: crate::bug_report::BugReportSetting,
+    /// The GitHub repository (`owner/name`) to take updates from and file bug reports on instead of the built-in one:
+    /// an emergency override for a move redirects cannot cover (PDT-195). `PDT_RELEASE_REPO` overrides it.
+    pub release_repo: Option<String>,
+}
+
+/// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
+pub fn is_repo_name(s: &str) -> bool {
+    let ok = |p: &str| {
+        !p.is_empty() && p != "." && p != ".." && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+    };
+    matches!(s.split_once('/'), Some((owner, name)) if ok(owner) && ok(name))
 }
 
 impl Default for HostSettings {
@@ -105,6 +116,7 @@ impl Default for HostSettings {
             update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
             max_agent_turns: DEFAULT_MAX_AGENT_TURNS,
             bug_reports: Default::default(),
+            release_repo: None,
         }
     }
 }
@@ -158,6 +170,10 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub bug_reports: Option<crate::bug_report::BugReportSetting>,
+    /// Blank clears it (back to the built-in release repository).
+    #[serde(default)]
+    #[ts(optional)]
+    pub release_repo: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -174,6 +190,8 @@ pub enum HostSettingsError {
     BadUpdateInterval,
     #[error("the most agents running at once must be between 0 (no cap) and 64")]
     BadMaxAgentTurns,
+    #[error("the release repository must be a GitHub owner/name, e.g. RossTools/PersonalDevTeam")]
+    BadReleaseRepo,
 }
 
 impl HostSettings {
@@ -251,6 +269,13 @@ impl HostSettings {
         if let Some(b) = p.bug_reports {
             s.bug_reports = b;
         }
+        if let Some(r) = &p.release_repo {
+            let r = r.trim();
+            if !r.is_empty() && !is_repo_name(r) {
+                return Err(HostSettingsError::BadReleaseRepo);
+            }
+            s.release_repo = (!r.is_empty()).then(|| r.to_string());
+        }
         Ok(s)
     }
 }
@@ -316,6 +341,18 @@ mod tests {
         assert_eq!(s.apply(&minutes(7 * 24 * 60 + 1)), Err(HostSettingsError::BadUpdateInterval));
         assert_eq!(s.apply(&minutes(5)).unwrap().update_check_minutes, 5);
         assert_eq!(s.apply(&patch()).unwrap(), s, "an empty patch keeps them");
+    }
+
+    #[test]
+    fn the_release_repository_override_is_an_owner_and_name() {
+        let set =
+            |r: &str| HostSettings::default().apply(&HostSettingsPatch { release_repo: Some(r.into()), ..patch() });
+        assert_eq!(set(" Acme/pdt.fork ").unwrap().release_repo.as_deref(), Some("Acme/pdt.fork"));
+        assert_eq!(set("").unwrap().release_repo, None, "blank clears it");
+        for bad in ["acme", "acme/", "/pdt", "a/b/c", "a b/c", "../x", "https://github.com/a/b"] {
+            assert_eq!(set(bad), Err(HostSettingsError::BadReleaseRepo), "{bad}");
+        }
+        assert!(is_repo_name(crate::brand::RELEASE_REPO));
     }
 
     /// The dev instance's runs default to their own port range, so they never collide with (or take over the

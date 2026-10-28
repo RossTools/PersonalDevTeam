@@ -15,6 +15,7 @@ const settingsView = (over: object = {}) => ({
     remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 },
     maxConcurrentRuns: 4, agentCredentials: 'subscription', projectsDir: null, defaultAgent: 'claude',
     defaultSessionMode: 'conversation', ticketPermissionMode: 'bypass', sessionPermissionMode: 'ask', updateCheckMinutes: 60,
+    releaseRepo: null,
   },
   ownerFromEnv: null,
   tokenPresent: false,
@@ -24,7 +25,8 @@ const settingsView = (over: object = {}) => ({
 });
 const update = (over: object = {}) => ({
   current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null,
-  error: null, token: { state: 'missing' }, lastResult: null, ...over,
+  error: null, token: { state: 'missing' }, lastResult: null,
+  releaseRepo: { repo: 'RossTools/PersonalDevTeam', id: 1, movedTo: null, overriddenBy: null }, ...over,
 });
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
 const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
@@ -154,6 +156,50 @@ describe('HostSettingsPage', () => {
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Manual (no checks)' }));
     expect(await screen.findByText('Off while updates are manual.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Update check interval/ })).toBeDisabled();
+  });
+
+  it('sets another release repository, and goes back to the built-in one', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const input = await screen.findByRole('textbox', { name: 'Release repository' });
+    await waitFor(() => expect(input).toHaveAttribute('placeholder', 'RossTools/PersonalDevTeam'));
+    await userEvent.type(input, ' Acme/pdt ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save release repository' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ releaseRepo: 'Acme/pdt' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use the built-in one' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toContainEqual({ releaseRepo: '' }));
+  });
+
+  it('shows a release repository set by the environment, or a move GitHub reported', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update({ releaseRepo: { repo: 'Acme/pdt', id: null, movedTo: null, overriddenBy: 'environment' } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    const { unmount } = renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByText('Set by PDT_RELEASE_REPO: Acme/pdt.')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Release repository' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save release repository' })).not.toBeInTheDocument();
+    unmount();
+    vi.unstubAllGlobals();
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update({ releaseRepo: { repo: 'RossTools/PersonalDevTeam', id: 1, movedTo: 'repositories/1', overriddenBy: null } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByText(/GitHub says it moved \(to repositories\/1\)/)).toBeInTheDocument();
   });
 
   it('saves the default agent and view', async () => {

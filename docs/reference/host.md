@@ -126,6 +126,21 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   and PR links; GitHub sends at most 250 commits, so a longer range has `moreUrl` (its compare page, "…and N more").
   When the comparison fails (the tag is gone, a local build, GitHub errs) `changes` is null and the release's own
   `notes` show as before; a failure is not cached and does not set the update `error`.
+- The release repository (PDT-195): pdtd reaches it by its numeric id first (`RELEASE_REPO_ID` in brand.rs,
+  `/repositories/<id>/…`, which survives renames, org renames and transfers), then by `RELEASE_REPO`'s
+  `/repos/<owner>/<name>/…` when the id path fails (404 or another refusal; never after a rejected token or a network
+  error). API requests follow redirects (301, 302, 307, 308) only while they stay on the API host (`api.github.com`,
+  or the Enterprise API host), with the token, for 3 hops at most; a redirect to another host is not followed and the
+  check fails with "GitHub redirected the request…". Each hop is logged with its old and new location (no query
+  strings). A permanent redirect (301/308) to another repository path is remembered as where it moved
+  (`releaseRepo.movedTo` in `/api/host/update`) and tried first until pdtd restarts. Asset downloads keep their own
+  rule: no API redirect is followed with the token; the storage redirect is followed without it. Bug reports use the
+  same client, so they reach a moved repository the same way.
+- Emergency override, for a move redirects cannot cover (someone claimed the old name): Host settings → Updates →
+  Release repository (`releaseRepo`, an `owner/name`; blank is the built-in one), or `PDT_RELEASE_REPO` in pdtd's
+  environment, which wins over the setting. An override is reached by name only (the id belongs to the built-in
+  repository). `/api/host/update` `releaseRepo` says which repository is used (`repo`, `id`, `movedTo`,
+  `overriddenBy`: `setting` or `environment`), and Settings shows it.
 - Keychain calls time out after 5 s and the startup token read runs in the background, so a keychain prompt never
   blocks serving.
 - Updates are offered only when pdt-host supervises a stable pdtd; dev instances never update (and a dev pdt-host
@@ -133,6 +148,20 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 - The web UI reloads itself when `/api/host/update` reports a different `current` version than it loaded against
   (polled every 2 s while downloading/installing, else every 60 s and on window focus); index.html is `no-cache`, so
   the reload gets the new bundle.
+
+### Renaming or moving the release repository
+
+GitHub redirects a renamed or transferred repository's API requests, and every install since PDT-195 follows them
+and reaches the repository by its id anyway. Older installs (0.1.778 and before) follow nothing and need a manual
+install. To move it:
+
+1. Ship a release that knows the new location **before** the rename: `RELEASE_REPO` set to the new `owner/name`
+   (`RELEASE_REPO_ID` stays: the id never changes), and let the installs take it.
+2. Rename or transfer the repository.
+3. Never create a repository under the old name again: that ends GitHub's redirects for it.
+4. Check one install's update status afterwards (Settings → This host → Updates: a recent "Last checked" and no
+   error; `releaseRepo` in `GET /api/host/update`). An install that cannot find it can be pointed at the new
+   repository with the Release repository setting.
 
 ## Upgrade rehearsal (PDT-179)
 
